@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { getDiffStats, getSingleFileDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent, editComment as apiEditComment, editReply as apiEditReply, deleteReply as apiDeleteReply, bulkDeleteComments as apiBulkDeleteComments } from '../../api/review';
 import type { DiffFile, DiffStatsResult } from '../../api/review';
-import { getReviewComments, getCommits, getTaskFiles, getTaskDirEntries, listTasks } from '../../api/tasks';
+import { getReviewComments, getCommits, getTaskFiles, getTaskDirEntries, getTask, openTaskFile } from '../../api/tasks';
 import type { ReviewCommentEntry, ReviewCommentsResponse, DirEntry, CommitsResponse } from '../../api/tasks';
 import { buildMentionItems } from '../../utils/fileMention';
 
@@ -108,24 +108,17 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const [taskPath, setTaskPath] = useState<string | null>(null);
   useEffect(() => {
     const ac = new AbortController();
-    const lookup = async () => {
-      for (const filter of ['active', 'archived'] as const) {
-        if (ac.signal.aborted) return;
-        try {
-          const tasks = await listTasks(projectId, filter, ac.signal);
-          if (ac.signal.aborted) return;
-          const match = tasks.find((t) => t.id === taskId);
-          if (match) {
-            setTaskPath(match.path);
-            return;
-          }
-        } catch {
-          // Aborted requests, transient network errors — both fine to swallow.
-          // "Copy Full Path" briefly unavailable; next render will retry.
-        }
-      }
-    };
-    void lookup();
+    // Fetch by id rather than scanning the task list: `listTasks` omits the
+    // Local Task (`_local`), which left `taskPath` null and greyed out "Copy
+    // Full Path". `getTask` resolves both worktree-backed and local tasks.
+    getTask(projectId, taskId, ac.signal)
+      .then((task) => {
+        if (!ac.signal.aborted) setTaskPath(task.path);
+      })
+      .catch(() => {
+        // Aborted requests / transient errors — fine to swallow.
+        // "Copy Full Path" briefly unavailable; next render will retry.
+      });
     return () => ac.abort();
   }, [projectId, taskId]);
   const [allFiles, setAllFiles] = useState<string[]>([]); // All git-tracked files for File Mode
@@ -2266,6 +2259,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
               onLoadFileDiff={viewMode === 'full' && focusMode ? loadFileDiff : undefined}
               taskPath={taskPath}
               projectId={projectId}
+              onOpenInApp={(path) => { void openTaskFile(projectId, taskId, path); }}
               autoViewedRules={autoViewedRules}
               onUpdateAutoViewedRules={setAutoViewedRules}
             />

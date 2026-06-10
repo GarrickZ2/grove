@@ -3137,6 +3137,37 @@ export function TaskChat({
     setActiveChatId,
   });
 
+  // Restore the composer draft on initial mount.
+  //
+  // `useInitialChatLoad` sets `activeChatId` directly, NOT through
+  // `switchChat`/`restoreChatState` — and `restoreChatState` is the only path
+  // that reads `loadChatDraft` back into the editor. So a freshly mounted
+  // TaskChat never restored its draft: it survived chat switches *within* a
+  // task (in-memory `perChatStateRef`) but vanished whenever the component
+  // remounted — switching task, or a page reload — where only localStorage is
+  // left. This one-shot effect closes that gap.
+  //
+  // Strictly one-shot: every later `activeChatId` change goes through
+  // `switchChat → restoreChatState`, which owns draft restoration and may
+  // intentionally restore an *empty* draft (user cleared it on a tab switch).
+  // Re-running here would resurrect a cleared draft — exactly what the
+  // restoreChatState comment warns against.
+  const didInitialDraftRestoreRef = useRef(false);
+  useEffect(() => {
+    if (didInitialDraftRestoreRef.current || !activeChatId) return;
+    didInitialDraftRestoreRef.current = true;
+    const el = editableRef.current;
+    if (!el) return;
+    // Never clobber content the user already typed while the chat connected.
+    const hasChips = el.querySelector("[data-command],[data-file]") !== null;
+    if ((el.textContent?.trim().length ?? 0) > 0 || hasChips) return;
+    const draftHtml = loadChatDraft(activeChatId);
+    if (!draftHtml) return;
+    el.innerHTML = draftHtml;
+    const text = el.textContent?.trim() || "";
+    setHasContent(text.length > 0 || el.querySelector("[data-command],[data-file]") !== null);
+  }, [activeChatId]);
+
   // Forward-declared ref for connectChatWs so handlers defined before its
   // useCallback (e.g. the ChatListChanged refetch handler) can call it
   // without creating a TDZ reference that React Compiler refuses to compile.

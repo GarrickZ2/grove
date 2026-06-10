@@ -13,6 +13,8 @@ export interface StudioFileApi<T extends StudioFileEntry = StudioFileEntry> {
   delete(path: string, extraParams?: Record<string, string>): Promise<void>;
   preview(path: string, extraParams?: Record<string, string>): Promise<string>;
   downloadUrl(path: string, extraParams?: Record<string, string>): string;
+  /** Open a file with the OS default application (runs on the server host). */
+  open(path: string, extraParams?: Record<string, string>): Promise<void>;
 
   listWorkdirs(): Promise<{ entries: StudioWorkDirEntry[] }>;
   addWorkdir(path: string): Promise<StudioWorkDirEntry>;
@@ -62,6 +64,11 @@ export function createStudioFileApi<T extends StudioFileEntry = StudioFileEntry>
     downloadUrl(path: string, extraParams?: Record<string, string>) {
       const params = new URLSearchParams({ path, ...extraParams });
       return `${basePath}/download?${params}`;
+    },
+
+    open(path: string, extraParams?: Record<string, string>) {
+      const params = new URLSearchParams({ path, ...extraParams });
+      return apiClient.postNoContent(`${basePath}/open?${params}`);
     },
 
     listWorkdirs() {

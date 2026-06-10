@@ -15,6 +15,8 @@ interface FileTreeProps {
   onExpandDir?: (path: string) => Promise<DirEntry[]>;
   onMoveFile?: (source: string, destination: string) => void;
   onUploadFile?: (parentPath: string, file: File) => void;
+  /** Bumped to re-fetch expanded directories in place (preserves expansion). */
+  refreshSignal?: number;
 }
 
 export function FileTree({
@@ -28,6 +30,7 @@ export function FileTree({
   onExpandDir,
   onMoveFile,
   onUploadFile,
+  refreshSignal,
 }: FileTreeProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isTreeDragOver, setIsTreeDragOver] = useState(false);
@@ -111,6 +114,7 @@ export function FileTree({
           onExpandDir={onExpandDir}
           onMoveFile={onMoveFile}
           onUploadFile={onUploadFile}
+          refreshSignal={refreshSignal}
         />
       ))}
     </div>
@@ -181,6 +185,7 @@ interface FileTreeItemProps {
   onExpandDir?: (path: string) => Promise<DirEntry[]>;
   onMoveFile?: (source: string, destination: string) => void;
   onUploadFile?: (parentPath: string, file: File) => void;
+  refreshSignal?: number;
 }
 
 function FileTreeItem({
@@ -196,6 +201,7 @@ function FileTreeItem({
   onExpandDir,
   onMoveFile,
   onUploadFile,
+  refreshSignal,
 }: FileTreeItemProps) {
   // Lazy mode: always start collapsed (load on first click).
   // Static mode: auto-expand root level (depth < 1).
@@ -208,47 +214,67 @@ function FileTreeItem({
   const [isDragOver, setIsDragOver] = useState(false);
 
 
+  // Fetch (or re-fetch) this directory's children. Returns false on failure.
+  const loadChildren = useCallback(async (): Promise<boolean> => {
+    if (!onExpandDir) return false;
+    setLoading(true);
+    try {
+      const entries = await onExpandDir(node.path);
+      loadedRef.current = true;
+      const childNodes: FileTreeNode[] = entries
+        .sort((a, b) => {
+          if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+          const aName = a.path.split('/').pop() || a.path;
+          const bName = b.path.split('/').pop() || b.path;
+          return aName.localeCompare(bName);
+        })
+        .map(e => {
+          const name = e.path.split('/').pop() || e.path;
+          return {
+            name,
+            path: e.path,
+            isDir: e.is_dir,
+            children: e.is_dir ? [] : undefined,
+          };
+        });
+      setChildren(childNodes);
+      setExpandError(null);
+      setLoading(false);
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isForbidden = msg.includes('403') || msg.toLowerCase().includes('forbidden');
+      setExpandError(isForbidden ? 'Symlink folders cannot be expanded' : 'Failed to load folder');
+      setLoading(false);
+      return false;
+    }
+  }, [node.path, onExpandDir]);
+
   const handleClick = useCallback(async () => {
     if (node.isDir) {
       // Once a symlink/forbidden error is set, treat the folder as non-expandable
       if (expandError) return;
       if (!expanded && onExpandDir && !loadedRef.current) {
-        setLoading(true);
-        let failed = false;
-        try {
-          const entries = await onExpandDir(node.path);
-          loadedRef.current = true;
-          const childNodes: FileTreeNode[] = entries
-            .sort((a, b) => {
-              if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-              const aName = a.path.split('/').pop() || a.path;
-              const bName = b.path.split('/').pop() || b.path;
-              return aName.localeCompare(bName);
-            })
-            .map(e => {
-              const name = e.path.split('/').pop() || e.path;
-              return {
-                name,
-                path: e.path,
-                isDir: e.is_dir,
-                children: e.is_dir ? [] : undefined,
-              };
-            });
-          setChildren(childNodes);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          const isForbidden = msg.includes('403') || msg.toLowerCase().includes('forbidden');
-          setExpandError(isForbidden ? 'Symlink folders cannot be expanded' : 'Failed to load folder');
-          failed = true;
-        }
-        setLoading(false);
-        if (failed) return;
+        const ok = await loadChildren();
+        if (!ok) return;
       }
       setExpanded((prev) => !prev);
     } else {
       onSelectFile(node.path);
     }
-  }, [node, onSelectFile, onExpandDir, expanded, expandError]);
+  }, [node, onSelectFile, onExpandDir, expanded, expandError, loadChildren]);
+
+  // On a refresh signal, re-fetch children for directories that are currently
+  // expanded and already loaded — keeps the tree's expansion state intact
+  // instead of remounting and collapsing everything.
+  const prevRefreshSignal = useRef(refreshSignal);
+  useEffect(() => {
+    if (prevRefreshSignal.current === refreshSignal) return;
+    prevRefreshSignal.current = refreshSignal;
+    if (expanded && loadedRef.current && onExpandDir && !expandError) {
+      void loadChildren();
+    }
+  }, [refreshSignal, expanded, onExpandDir, expandError, loadChildren]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -408,6 +434,7 @@ function FileTreeItem({
               onExpandDir={onExpandDir}
               onMoveFile={onMoveFile}
               onUploadFile={onUploadFile}
+              refreshSignal={refreshSignal}
             />
           ))}
         </>

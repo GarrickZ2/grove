@@ -70,6 +70,7 @@ pub struct NotificationsConfigDto {
     pub notification_show_done: bool,
     pub notification_show_running: bool,
     pub menubar_shortcut: Option<String>,
+    pub tray_done_retention: config::RetentionPolicy,
 }
 
 #[derive(Debug, Serialize)]
@@ -198,6 +199,7 @@ impl From<&Config> for ConfigResponse {
                 notification_show_done: config.notifications.notification_show_done,
                 notification_show_running: config.notifications.notification_show_running,
                 menubar_shortcut: config.notifications.menubar_shortcut.clone(),
+                tray_done_retention: config.notifications.tray_done_retention,
             },
             indexing: IndexingConfigDto {
                 enabled: config.indexing.enabled,
@@ -262,6 +264,8 @@ pub struct NotificationsConfigPatch {
     pub notification_show_running: Option<bool>,
     /// `Some("")` clears the shortcut, `Some("Cmd+Shift+M")` sets it.
     pub menubar_shortcut: Option<String>,
+    /// `Some(Forever)` / `Some(Expire{..})` sets; `None` leaves untouched.
+    pub tray_done_retention: Option<config::RetentionPolicy>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -500,6 +504,19 @@ pub async fn patch_config(
                 None
             } else {
                 Some(shortcut)
+            };
+        }
+        if let Some(policy) = n.tray_done_retention {
+            // Clamp `value` to a sane range: 1..=365 days equivalent. The
+            // front-end already enforces this, but defense-in-depth keeps a
+            // malicious or buggy client from zeroing it out (which would prune
+            // every done chat on the next apply).
+            config.notifications.tray_done_retention = match policy {
+                config::RetentionPolicy::Forever => config::RetentionPolicy::Forever,
+                config::RetentionPolicy::Expire { value, unit } => {
+                    let v = value.clamp(1, 8760); // 1 hour .. 365 days
+                    config::RetentionPolicy::Expire { value: v, unit }
+                }
             };
         }
     }

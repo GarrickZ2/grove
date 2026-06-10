@@ -34,8 +34,9 @@ import {
   createDirectory,
   deleteFileOrDir,
   moveFileOrDir,
+  openTaskFile,
   lookupSymbol,
-  listTasks,
+  getTask,
   getConfig,
 } from "../../../api";
 import type { DirEntry } from "../../../api";
@@ -452,7 +453,20 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const { isMobile } = useIsMobile();
   const { theme } = useTheme();
   const [fileNodes, setFileNodes] = useState<FileTreeNode[]>([]);
-  const [treeKey, setTreeKey] = useState(0);
+  // Bumped on every refresh/reload. Threaded into FileTree so expanded
+  // directories re-fetch their children IN PLACE (without remounting and
+  // losing expansion state), and appended to image URLs as a cache-buster so
+  // a Refresh shows the latest bytes instead of the browser-cached copy.
+  const [refreshSignal, setRefreshSignal] = useState(0);
+
+  // Cache-buster for image/media preview URLs. Bumped every time a file is
+  // opened and on Refresh, so the webview (WKWebView caches images
+  // aggressively, even with `no-cache`) always re-fetches the current bytes
+  // instead of serving a stale copy for the same path. `imageNonceFile` tracks
+  // the file the nonce was last bumped for, so the render-time adjustment only
+  // fires on an actual file switch.
+  const [imageNonce, setImageNonce] = useState(0);
+  const [imageNonceFile, setImageNonceFile] = useState<string | null>(null);
   const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
 
   // Dynamically adapt Monaco Editor background and text colors to match active theme
@@ -656,23 +670,18 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
 
   useEffect(() => {
     const ac = new AbortController();
-    const lookup = async () => {
-      for (const filter of ['active', 'archived'] as const) {
-        if (ac.signal.aborted) return;
-        try {
-          const tasks = await listTasks(projectId, filter, ac.signal);
-          if (ac.signal.aborted) return;
-          const match = tasks.find((t) => t.id === taskId);
-          if (match) {
-            setTaskPath(match.path);
-            return;
-          }
-        } catch {
-          // Aborted requests, transient network errors — both fine to swallow.
-        }
-      }
-    };
-    lookup();
+    // Fetch this task by id rather than scanning the task list: `listTasks`
+    // omits the Local Task (`_local`), so the old list-and-find approach left
+    // `taskPath` null for it and greyed out "Copy Full Path". `getTask`
+    // resolves both worktree-backed and local tasks.
+    getTask(projectId, taskId, ac.signal)
+      .then((task) => {
+        if (!ac.signal.aborted) setTaskPath(task.path);
+      })
+      .catch(() => {
+        // Aborted requests / transient errors — fine to swallow; the button
+        // simply stays disabled until a later mount retries.
+      });
     return () => ac.abort();
   }, [projectId, taskId]);
 
@@ -865,8 +874,8 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     try {
       const res = await getTaskDirEntries(projectId, taskId, '');
       setFileNodes(dirEntriesToNodes(res.entries));
-      // Remount lazy tree items so expanded directories drop stale loaded children.
-      setTreeKey(k => k + 1);
+      // Re-fetch expanded directories in place; keeps expansion state.
+      setRefreshSignal(s => s + 1);
     } catch (err) {
       console.error('Failed to reload files:', err);
     }
@@ -878,8 +887,10 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     try {
       const res = await getTaskDirEntries(projectId, taskId, '');
       setFileNodes(dirEntriesToNodes(res.entries));
-      // Increment treeKey to remount FileTree, resetting all expanded directory state
-      setTreeKey(k => k + 1);
+      // Re-fetch expanded directories in place (preserves which folders are
+      // open) and bust the image cache so previews show the latest bytes.
+      setRefreshSignal(s => s + 1);
+      setImageNonce(n => n + 1);
 
       if (selectedFile) {
         if (getPreviewType(selectedFile) === 'image') {
@@ -904,6 +915,22 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     const result = await getTaskDirEntries(projectId, taskId, dirPath);
     return result.entries;
   }, [projectId, taskId]);
+
+  // Raw-file URL for image/media preview. `_t=${imageNonce}` busts the cache so
+  // opening a file (or hitting Refresh) reloads the latest bytes for the same
+  // path (the backend also sends `Cache-Control: no-cache`).
+  const rawFileUrl = useCallback((path: string) => {
+    return `/api/v1/projects/${projectId}/tasks/${taskId}/file/raw?path=${encodeURIComponent(path)}&_t=${imageNonce}`;
+  }, [projectId, taskId, imageNonce]);
+
+  // Bump the image cache-buster whenever the open file changes, so switching
+  // away and back to the same image shows its current bytes, not a cached copy.
+  // This render-time state adjustment is React's sanctioned alternative to a
+  // setState-in-effect (https://react.dev/learn/you-might-not-need-an-effect).
+  if (selectedFile !== imageNonceFile) {
+    setImageNonceFile(selectedFile);
+    setImageNonce((n) => n + 1);
+  }
 
   const handleContextMenu = useCallback((e: React.MouseEvent, path: string, isDir: boolean) => {
     setContextMenuPosition({ x: e.clientX, y: e.clientY });
@@ -931,6 +958,13 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       console.error('Failed to copy full path:', err);
     });
   }, [taskPath]);
+
+  // Open with the OS default application (runs on the server host)
+  const handleOpenInApp = useCallback((path: string) => {
+    openTaskFile(projectId, taskId, path).catch((err) => {
+      setError(err instanceof Error ? err.message : 'Failed to open file');
+    });
+  }, [projectId, taskId]);
 
   // Create file submit handler
   const handleCreateFile = useCallback(async (path: string) => {
@@ -1209,7 +1243,6 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               </div>
             </div>
             <FileTree
-              key={treeKey}
               nodes={fileNodes}
               selectedFile={selectedFile}
               onSelectFile={handleSelectFile}
@@ -1220,6 +1253,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               onExpandDir={handleExpandDir}
               onMoveFile={handleMoveFile}
               onUploadFile={handleUploadFile}
+              refreshSignal={refreshSignal}
             />
           </div>
         )}
@@ -1334,10 +1368,10 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                 <div className="max-w-full max-h-full flex flex-col items-center justify-center gap-3">
                   <div className="relative rounded-lg overflow-hidden border border-[var(--color-border)] shadow-md bg-[var(--color-bg)] transition-transform duration-200 hover:scale-[1.01]">
                     <img
-                      src={`/api/v1/projects/${projectId}/tasks/${taskId}/file/raw?path=${encodeURIComponent(selectedFile)}`}
+                      src={rawFileUrl(selectedFile)}
                       alt={selectedFile}
                       className="max-w-full max-h-[70vh] object-contain block cursor-pointer hover:opacity-90 transition-opacity"
-                      onClick={() => setLightboxUrl(`/api/v1/projects/${projectId}/tasks/${taskId}/file/raw?path=${encodeURIComponent(selectedFile)}`)}
+                      onClick={() => setLightboxUrl(rawFileUrl(selectedFile))}
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
                         (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
@@ -1362,7 +1396,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               <div className="flex-1 overflow-auto bg-[var(--color-bg)] p-6">
                 {renderer?.renderFull({
                   content: renderer.contentType === 'url'
-                    ? `/api/v1/projects/${projectId}/tasks/${taskId}/file/raw?path=${encodeURIComponent(selectedFile)}`
+                    ? rawFileUrl(selectedFile)
                     : (renderer.id === 'html' ? rewriteHtmlUrls(fileContent, projectId, taskId, parentDirPath) : fileContent),
                   fileName: selectedFile,
                   sketchContext: { projectId, taskId },
@@ -1431,7 +1465,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                 <div className="flex-1 min-w-0 h-full overflow-auto bg-[var(--color-bg)] p-6">
                   {renderer?.renderFull({
                     content: renderer.contentType === 'url'
-                      ? `/api/v1/projects/${projectId}/tasks/${taskId}/file/raw?path=${encodeURIComponent(selectedFile)}`
+                      ? rawFileUrl(selectedFile)
                       : (renderer.id === 'html' ? rewriteHtmlUrls(fileContent, projectId, taskId, parentDirPath) : fileContent),
                     fileName: selectedFile,
                     sketchContext: { projectId, taskId },
@@ -1523,6 +1557,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
         onDelete={handleDelete}
         onCopyRelativePath={handleCopyRelativePath}
         onCopyFullPath={handleCopyFullPath}
+        onOpenInApp={handleOpenInApp}
       />
 
       {/* Confirm Dialog for deletion */}

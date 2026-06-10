@@ -503,7 +503,17 @@ pub async fn get_file_raw(
         .essence_str()
         .to_string();
 
-    Ok(([("content-type", mime)], bytes))
+    // `no-cache` forces the browser to revalidate before reusing a cached copy.
+    // Without it, image/media previews keep serving stale bytes after the file
+    // changes on disk until a hard refresh or server restart. Combined with the
+    // `_t=` cache-buster the editor appends on Refresh, previews stay fresh.
+    Ok((
+        [
+            ("content-type", mime),
+            ("cache-control", "no-cache".to_string()),
+        ],
+        bytes,
+    ))
 }
 
 /// PUT /api/v1/projects/{id}/tasks/{taskId}/file?path=src/main.rs
@@ -748,6 +758,62 @@ pub async fn delete_path(
     Ok(Json(FsOperationResponse {
         success: true,
         message: format!("Deleted: {}", params.path),
+    }))
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/fs/open?path=src/main.rs
+///
+/// Open a worktree file with the OS-configured default application. Used by
+/// the Review and Editor file trees. The `open` runs on the Grove server host
+/// (the user's machine in GUI/local-web mode), mirroring the existing folder
+/// `open` endpoints.
+pub async fn open_file(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(params): Query<FilePathQuery>,
+) -> Result<Json<FsOperationResponse>, (StatusCode, Json<ApiError>)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiError {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: format!("Failed to load task: {}", e),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiError {
+                    error: "Task not found".to_string(),
+                }),
+            )
+        })?;
+
+    let full_path = resolve_safe_path(&task.worktree_path, &params.path)?;
+
+    if !full_path.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: format!("Path not found: {}", params.path),
+            }),
+        ));
+    }
+
+    crate::api::handlers::studio_common::open_with_default_app(&full_path);
+
+    Ok(Json(FsOperationResponse {
+        success: true,
+        message: format!("Opened: {}", params.path),
     }))
 }
 

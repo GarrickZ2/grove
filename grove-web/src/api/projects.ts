@@ -249,6 +249,11 @@ export function resourceDownloadUrl(id: string, path: string) {
   return resourceApi(id).downloadUrl(path);
 }
 
+/** Open a shared-asset file with the OS default application (runs on the server host). */
+export function openResourceFile(id: string, path: string) {
+  return resourceApi(id).open(path);
+}
+
 export function createResourceFolder(id: string, path: string) {
   return resourceApi(id).createFolder(path);
 }

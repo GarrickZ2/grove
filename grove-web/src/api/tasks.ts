@@ -166,8 +166,24 @@ export async function listTasks(
 }
 
 /**
- * Get a single task
+ * Get a single task by id.
+ *
+ * Unlike `listTasks`, whose list deliberately omits the synthetic Local Task
+ * (`_local`) — it's delivered separately via `project.localTask` — the backend
+ * `get_task` handler resolves `_local` too. So this is the correct way to look
+ * up a task's path regardless of whether it's worktree-backed or local.
  */
+export async function getTask(
+  projectId: string,
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<TaskResponse> {
+  return apiClient.get<TaskResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}`,
+    signal,
+  );
+}
+
 /**
  * Create a new task
  */
@@ -869,6 +885,20 @@ export async function deleteFileOrDir(
   );
 }
 
+/**
+ * Open a worktree file (or directory) with the OS default application.
+ * Runs on the machine hosting the Grove server.
+ */
+export async function openTaskFile(
+  projectId: string,
+  taskId: string,
+  path: string
+): Promise<void> {
+  await apiClient.postNoContent(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/fs/open?path=${encodeURIComponent(path)}`
+  );
+}
+
 interface MoveFileRequest {
   source: string;
   destination: string;
@@ -999,6 +1029,11 @@ export function artifactDownloadUrl(projectId: string, taskId: string, dir: stri
 
 export function deleteArtifact(projectId: string, taskId: string, dir: string, path: string) {
   return artifactApi(projectId, taskId).delete(path, { dir });
+}
+
+/** Open an artifact file with the OS default application (runs on the server host). */
+export function openArtifactFile(projectId: string, taskId: string, dir: string, path: string) {
+  return artifactApi(projectId, taskId).open(path, { dir });
 }
 
 export function uploadArtifacts(projectId: string, taskId: string, files: File[]) {

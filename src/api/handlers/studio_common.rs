@@ -672,6 +672,18 @@ pub fn open_in_file_manager(path: &Path) {
     }
 }
 
+/// Open a file with the OS-configured default application.
+///
+/// Delegates to the `open` crate (already used across the codebase for URLs),
+/// which picks the right launcher per platform — macOS `open`, Windows
+/// `cmd /C start`, and a fallback chain on Linux/BSD (`xdg-open`, `gio`,
+/// `gnome-open`, `kde-open`). Unlike `open_in_file_manager` (which reveals a
+/// path in Explorer on Windows), this launches files in their default app. For
+/// a directory the platform file manager is opened.
+pub fn open_with_default_app(path: &Path) {
+    let _ = open::that(path);
+}
+
 /// Delete a file or directory at `path`, which must reside inside `base_dir`.
 pub fn delete_path_contained(base_dir: &Path, relative_path: &str) -> Result<(), ApiErr> {
     let file_path = base_dir.join(relative_path);

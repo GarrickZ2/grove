@@ -30,6 +30,7 @@ import {
   Download,
   Share2,
   ChevronRight,
+  Clock,
 } from "lucide-react";
 import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal, VSCodeIcon } from "../ui";
 import type { ComboboxOption } from "../ui";
@@ -302,6 +303,15 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [systemNotifShowDone, setSystemNotifShowDone] = useState(true);
   const [systemNotifShowRunning, setSystemNotifShowRunning] = useState(false);
 
+  // Tray "Done" chat retention. Two-mode UI: `forever` keeps everything
+  // until the user dismisses; `expire` auto-prunes done chats after N
+  // hours/days. Wire shape matches the Rust enum (externally tagged):
+  //   forever → { "forever": null }
+  //   expire  → { "expire": { "value": <u32>, "unit": "hours" | "days" } }
+  const [trayDoneRetentionMode, setTrayDoneRetentionMode] = useState<"forever" | "expire">("expire");
+  const [trayDoneRetentionValue, setTrayDoneRetentionValue] = useState<number>(3);
+  const [trayDoneRetentionUnit, setTrayDoneRetentionUnit] = useState<"hours" | "days">("days");
+
   // MCP state
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
@@ -474,6 +484,14 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setSystemNotifShowPermission(cfg.notifications.notification_show_permission);
       setSystemNotifShowDone(cfg.notifications.notification_show_done);
       setSystemNotifShowRunning(cfg.notifications.notification_show_running);
+      const ret = cfg.notifications.tray_done_retention;
+      if (ret && "forever" in ret) {
+        setTrayDoneRetentionMode("forever");
+      } else if (ret && "expire" in ret && ret.expire) {
+        setTrayDoneRetentionMode("expire");
+        setTrayDoneRetentionValue(Math.max(1, Math.floor(ret.expire.value ?? 3)));
+        setTrayDoneRetentionUnit(ret.expire.unit === "hours" ? "hours" : "days");
+      }
     }
 
     if (cfg.indexing) {
@@ -658,6 +676,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
         notification_show_done: systemNotifShowDone,
         notification_show_running: systemNotifShowRunning,
         menubar_shortcut: menubarShortcut,
+        tray_done_retention:
+          trayDoneRetentionMode === "forever"
+            ? { forever: null }
+            : { expire: { value: Math.max(1, Math.floor(trayDoneRetentionValue)), unit: trayDoneRetentionUnit } },
       },
       indexing: {
         enabled: indexingEnabled,
@@ -675,7 +697,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, trayDoneRetentionMode, trayDoneRetentionUnit, trayDoneRetentionValue, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
   const handleModeChange = useCallback((newMode: "auto" | "light" | "dark") => {
@@ -1172,7 +1194,109 @@ env_vars = [
         </div>
       ) : null}
     </div>
-  ) : null;
+    ) : null;
+  const trayRetentionControl = (
+    <div>
+      <div className="flex items-center gap-2 mb-3 select-none">
+        <Clock className="w-4 h-4 text-[var(--color-highlight)]" />
+        <span className="text-sm font-medium text-[var(--color-text)]">
+          Done chat retention
+        </span>
+      </div>
+      <div className="space-y-2.5">
+        {/* Mode toggle — "Keep forever" vs "Auto-expire after". Two equal
+            chips so it reads as a question, not a checkbox. */}
+        <div
+          className="grid grid-cols-2 rounded-lg border p-0.5"
+          style={{
+            borderColor: "var(--color-border)",
+            backgroundColor: "var(--color-bg-secondary)",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setTrayDoneRetentionMode("forever")}
+            className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+            style={{
+              color: trayDoneRetentionMode === "forever" ? "var(--color-highlight)" : "var(--color-text-muted)",
+              backgroundColor: trayDoneRetentionMode === "forever" ? "color-mix(in srgb, var(--color-highlight) 15%, transparent)" : "transparent",
+            }}
+          >
+            Keep forever
+          </button>
+          <button
+            type="button"
+            onClick={() => setTrayDoneRetentionMode("expire")}
+            className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+            style={{
+              color: trayDoneRetentionMode === "expire" ? "var(--color-highlight)" : "var(--color-text-muted)",
+              backgroundColor: trayDoneRetentionMode === "expire" ? "color-mix(in srgb, var(--color-highlight) 15%, transparent)" : "transparent",
+            }}
+          >
+            Auto-expire after…
+          </button>
+        </div>
+        {trayDoneRetentionMode === "expire" ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={trayDoneRetentionValue}
+              onChange={(e) => {
+                const n = Math.floor(Number(e.target.value));
+                if (!Number.isFinite(n)) return;
+                setTrayDoneRetentionValue(Math.min(365, Math.max(1, n)));
+              }}
+              className="h-9 w-20 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 text-sm text-[var(--color-text)] focus:border-[var(--color-highlight)] focus:outline-none"
+            />
+            <div
+              className="grid grid-cols-2 rounded-lg border p-0.5"
+              style={{
+                borderColor: "var(--color-border)",
+                backgroundColor: "var(--color-bg-secondary)",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setTrayDoneRetentionUnit("hours")}
+                className="rounded-md px-3 py-1 text-xs font-medium transition-colors"
+                style={{
+                  color: trayDoneRetentionUnit === "hours" ? "var(--color-highlight)" : "var(--color-text-muted)",
+                  backgroundColor: trayDoneRetentionUnit === "hours" ? "color-mix(in srgb, var(--color-highlight) 15%, transparent)" : "transparent",
+                }}
+              >
+                Hours
+              </button>
+              <button
+                type="button"
+                onClick={() => setTrayDoneRetentionUnit("days")}
+                className="rounded-md px-3 py-1 text-xs font-medium transition-colors"
+                style={{
+                  color: trayDoneRetentionUnit === "days" ? "var(--color-highlight)" : "var(--color-text-muted)",
+                  backgroundColor: trayDoneRetentionUnit === "days" ? "color-mix(in srgb, var(--color-highlight) 15%, transparent)" : "transparent",
+                }}
+              >
+                Days
+              </button>
+            </div>
+            <span className="text-xs text-[var(--color-text-muted)]">
+              Running and permission-required chats are never auto-pruned.
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+  const menubarExtraControl = menubarShortcutControl ? (
+    <div className="space-y-4">
+      {menubarShortcutControl}
+      <div className="border-t border-[color-mix(in_srgb,var(--color-border)_60%,transparent)]" />
+      {trayRetentionControl}
+    </div>
+  ) : (
+    trayRetentionControl
+  );
   const windowShortcutControl = isTauriGui ? (
     <div>
       <div className="flex items-center gap-2 mb-3 select-none">
@@ -2394,7 +2518,7 @@ env_vars = [
               onShowDoneChange={setTrayShowDone}
               showRunning={trayShowRunning}
               onShowRunningChange={setTrayShowRunning}
-              extraControl={menubarShortcutControl}
+              extraControl={menubarExtraControl}
               note="Disabling the tray takes effect on next Grove launch."
             />
           </div>

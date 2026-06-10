@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { DiffFile } from '../../api/review';
 import type { DirEntry } from '../../api/tasks';
-import { FolderOpen, Folder, Search, MessageSquare, FilePlus, FolderPlus, Copy, FileText, Eye, EyeOff, Settings, X, Plus, Info } from 'lucide-react';
+import { FolderOpen, Folder, Search, MessageSquare, FilePlus, FolderPlus, Copy, FileText, Eye, EyeOff, Settings, X, Plus, Info, SquareArrowOutUpRight } from 'lucide-react';
 import { VSCodeIcon } from '../ui';
 
 interface FileCommentCount {
@@ -26,6 +26,8 @@ interface FileTreeSidebarProps {
   /** Absolute worktree path — used to compute "Copy Full Path" */
   taskPath?: string | null;
   projectId?: string | null;
+  /** Open a worktree-relative path with the OS default app (server host) */
+  onOpenInApp?: (path: string) => void;
   autoViewedRules?: string[];
   onUpdateAutoViewedRules?: (rules: string[]) => void;
   /** "Hide viewed files" toggle — controlled by the parent (DiffReviewPage) so
@@ -65,6 +67,7 @@ export function FileTreeSidebar({
   onLoadFileDiff,
   taskPath,
   projectId,
+  onOpenInApp,
   autoViewedRules,
   onUpdateAutoViewedRules,
   hideViewed = false,
@@ -143,6 +146,12 @@ export function FileTreeSidebar({
       ? `${taskPath.replace(/\/$/, '')}/${rel}`
       : rel;
     void copyToClipboard(full);
+    setContextMenu(null);
+  };
+
+  const handleOpenInApp = () => {
+    if (!contextMenu) return;
+    onOpenInApp?.(contextMenu.targetPath);
     setContextMenu(null);
   };
 
@@ -273,6 +282,15 @@ export function FileTreeSidebar({
             }}
             onClick={(e) => e.stopPropagation()}
           >
+            {onOpenInApp && (
+              <>
+                <button onClick={handleOpenInApp}>
+                  <SquareArrowOutUpRight style={{ width: 14, height: 14 }} />
+                  Open
+                </button>
+                <div className="file-tree-context-menu-separator" />
+              </>
+            )}
             <button onClick={handleCopyRelativePath}>
               <Copy style={{ width: 14, height: 14 }} />
               Copy Relative Path

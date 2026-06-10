@@ -273,6 +273,21 @@ pub async fn download_resource(
     Ok((headers, content))
 }
 
+/// POST /api/v1/projects/{id}/resource/open?path=<rel>
+///
+/// Open a shared-asset file with the OS-configured default application. Runs
+/// on the Grove server host, mirroring `open_resource_workdir`.
+pub async fn open_resource(
+    Path(id): Path<String>,
+    Query(query): Query<ResourceFileQuery>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let resource_dir = studio_dir.join("resource");
+    let canonical_file = resolve_resource_file(&resource_dir, &query.path)?;
+    studio_common::open_with_default_app(&canonical_file);
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// POST /api/v1/projects/{id}/resource/folder
 pub async fn create_resource_folder(
     Path(id): Path<String>,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useLayoutEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { FileText, FolderPlus, Trash2, Copy } from "lucide-react";
+import { FileText, FolderPlus, Trash2, Copy, SquareArrowOutUpRight } from "lucide-react";
 
 export interface ContextMenuPosition {
   x: number;
@@ -23,6 +23,7 @@ interface FileContextMenuProps {
   onDelete: (path: string) => void;
   onCopyRelativePath: (path: string) => void;
   onCopyFullPath: (path: string) => void;
+  onOpenInApp: (path: string) => void;
 }
 
 export function FileContextMenu({
@@ -36,6 +37,7 @@ export function FileContextMenu({
   onDelete,
   onCopyRelativePath,
   onCopyFullPath,
+  onOpenInApp,
 }: FileContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -108,6 +110,18 @@ export function FileContextMenu({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="py-1">
+          {/* Open in default app */}
+          <button
+            onClick={() => handleAction(() => onOpenInApp(targetPath))}
+            className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-bg-tertiary)] text-left transition-colors"
+          >
+            <SquareArrowOutUpRight className="w-4 h-4 text-[var(--color-text-muted)]" />
+            <span className="text-sm text-[var(--color-text)]">Open</span>
+          </button>
+
+          {/* Divider */}
+          <div className="my-1 h-px bg-[var(--color-border)]" />
+
           {/* New File */}
           <button
             onClick={() => handleAction(() => onNewFile(isDirectory ? targetPath : parentPath))}

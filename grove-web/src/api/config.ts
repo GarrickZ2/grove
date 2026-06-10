@@ -110,7 +110,15 @@ export interface NotificationsConfig {
   notification_show_running: boolean;
   /** Global shortcut to show / hide the menubar popover. Empty = disabled. */
   menubar_shortcut?: string | null;
+  /** Retention policy for tray "Done" chats. Wire shape matches the Rust
+   *  externally-tagged enum (see `RetentionPolicy` in storage/config.rs). */
+  tray_done_retention?: RetentionPolicyWire;
 }
+
+/** Wire shape of `notifications.tray_done_retention` (externally tagged). */
+export type RetentionPolicyWire =
+  | { forever?: null }
+  | { expire?: { value?: number; unit?: "hours" | "days" } };
 
 export interface BrowserControlConfig {
   /** Master switch — when false the AI cannot drive the user's browser at all. */

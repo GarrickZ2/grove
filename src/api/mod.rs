@@ -372,6 +372,10 @@ pub fn create_api_router() -> Router {
             get(handlers::projects::download_resource),
         )
         .route(
+            "/projects/{id}/resource/open",
+            post(handlers::projects::open_resource),
+        )
+        .route(
             "/projects/{id}/resource/folder",
             post(handlers::projects::create_resource_folder),
         )
@@ -597,6 +601,10 @@ pub fn create_api_router() -> Router {
             post(handlers::tasks::open_artifact_workdir),
         )
         .route(
+            "/projects/{id}/tasks/{taskId}/artifacts/open",
+            post(handlers::tasks::open_artifact),
+        )
+        .route(
             "/projects/{id}/tasks/{taskId}/artifacts/sync-to-resource",
             post(handlers::tasks::sync_artifact_to_resource),
         )
@@ -629,6 +637,10 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/tasks/{taskId}/fs/move",
             post(handlers::tasks::move_file),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/fs/open",
+            post(handlers::tasks::open_file),
         )
         // Task Stats API
         .route(

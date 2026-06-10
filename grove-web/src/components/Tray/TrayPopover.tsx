@@ -21,7 +21,7 @@
  *   RECENT (done)          — single-line rows, sticky collapsible header
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, LayoutGroup, AnimatePresence } from "framer-motion";
 import { Settings, ExternalLink, ChevronDown, ChevronLeft, X, Zap, Pin, PinOff, GripVertical, Smartphone } from "lucide-react";
 import { useRadioEvents } from "../../hooks/useRadioEvents";
@@ -29,6 +29,8 @@ import { TrayComposer } from "./TrayComposer";
 import { agentOptions } from "../../data/agents";
 import type { RadioEvent } from "../../api/walkieTalkie";
 import { apiClient } from "../../api/client";
+import { MarkdownRenderer } from "../ui/MarkdownRenderer";
+import type { RetentionPolicyWire } from "../../api/config";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -62,6 +64,49 @@ export interface ChatItem {
 }
 
 type ChatStatusEvent = Extract<RadioEvent, { type: "chat_status" }>;
+
+// ─── Retention + persistence ────────────────────────────────────────────────
+
+const TRAY_CHATS_LS_KEY = "grove.tray.chats.v1";
+const LS_WRITE_DEBOUNCE_MS = 200;
+
+/** Returns the retention window in ms, or `null` for "forever". */
+function retentionMs(policy: RetentionPolicyWire | null | undefined): number | null {
+  if (!policy) return null;
+  // Externally-tagged union: the JSON wire shape is
+  //   { "forever": null }  or  { "expire": { ... } }
+  // Both variants are objects with a single tagged key. Reading the
+  // tagged key directly (instead of `in`) sidesteps TS's
+  // "both variants may overlap" union narrow issue.
+  const obj = policy as Record<string, unknown>;
+  if ("forever" in obj) return null;
+  const e = obj.expire as { value?: number; unit?: "hours" | "days" } | undefined;
+  if (!e) return null;
+  const value = Math.max(1, Math.floor(e.value ?? 3));
+  const unitMs = e.unit === "hours" ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  return value * unitMs;
+}
+
+/** Drop done chats whose `entered_state_at + retentionMs` is in the past.
+ *  Running / permission chats are always kept — they're live. */
+function pruneChatsByRetention(
+  chats: Map<string, ChatItem>,
+  policy: RetentionPolicyWire | null | undefined,
+  now: number,
+): Map<string, ChatItem> {
+  const ms = retentionMs(policy);
+  if (ms == null) return chats;
+  let removed = false;
+  const next = new Map(chats);
+  for (const [id, c] of next) {
+    if (c.status !== "done") continue;
+    if (now - c.entered_state_at > ms) {
+      next.delete(id);
+      removed = true;
+    }
+  }
+  return removed ? next : chats;
+}
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -247,13 +292,51 @@ export interface TrayPlatform {
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function TrayPopover({ platform }: { platform: TrayPlatform }) {
-  const [chats, setChats] = useState<Map<string, ChatItem>>(() => new Map());
+  const [chats, setChats] = useState<Map<string, ChatItem>>(() => {
+    // Only the desktop tray accumulates across launches; the phone page
+    // seeds from the backend snapshot and should start empty.
+    if (typeof window === "undefined") return new Map();
+    if (platform.seedFromSnapshot) return new Map();
+    try {
+      const raw = window.localStorage.getItem(TRAY_CHATS_LS_KEY);
+      if (!raw) return new Map();
+      const parsed = JSON.parse(raw) as { chats?: ChatItem[] };
+      if (!parsed.chats || !Array.isArray(parsed.chats)) return new Map();
+      const map = new Map<string, ChatItem>();
+      for (const c of parsed.chats) {
+        if (c && typeof c.chat_id === "string") map.set(c.chat_id, c);
+      }
+      return map;
+    } catch {
+      return new Map();
+    }
+  });
   const [now, setNow] = useState(() => Date.now());
   const [show, setShow] = useState<TrayShowConfig>(DEFAULT_SHOW);
   const [recentOpen, setRecentOpen] = useState(true);
   // The Done chat being replied to — opens a focused reply view (full response
   // + composer) overlaying the list. Null = list view.
   const [replyTarget, setReplyTarget] = useState<ChatItem | null>(null);
+  // Retention policy for done chats. Loaded from /api/v1/config on mount;
+  // stored in a ref (not state) because no UI subscribes to it — prune runs
+  // inside `setChatsPruned` on every state transition, and the ref is the
+  // source of truth. Null = "not yet loaded" → no pruning (conservative).
+  const retentionRef = useRef<RetentionPolicyWire | null>(null);
+
+  // Wrapper around setChats that runs the retention prune at every state
+  // transition. Done in the updater (not a separate effect) so we don't
+  // trigger React's "setState in effect" lint and avoid a cascading render
+  // for every fresh event. The retention policy is read from a ref so the
+  // wrapper's identity stays stable across policy changes.
+  const setChatsPruned = useCallback(
+    (updater: (prev: Map<string, ChatItem>) => Map<string, ChatItem>) => {
+      setChats((prev) => {
+        const next = updater(prev);
+        return pruneChatsByRetention(next, retentionRef.current, Date.now());
+      });
+    },
+    [],
+  );
 
   const hasLiveCard = useMemo(
     () =>
@@ -276,7 +359,7 @@ export function TrayPopover({ platform }: { platform: TrayPlatform }) {
     let cancelled = false;
     const reload = async () => {
       // apiClient signs requests with HMAC in mobile mode; raw fetch would 401.
-      let cfg: { notifications?: { tray_show_permission?: unknown; tray_show_running?: unknown; tray_show_done?: unknown } };
+      let cfg: { notifications?: { tray_show_permission?: unknown; tray_show_running?: unknown; tray_show_done?: unknown; tray_done_retention?: RetentionPolicyWire } };
       try {
         cfg = await apiClient.get("/api/v1/config");
       } catch (e) {
@@ -291,6 +374,9 @@ export function TrayPopover({ platform }: { platform: TrayPlatform }) {
         running: !!notif.tray_show_running,
         done: !!notif.tray_show_done,
       });
+      if (notif.tray_done_retention) {
+        retentionRef.current = notif.tray_done_retention;
+      }
     };
     reload();
     const onFocus = () => reload();
@@ -328,7 +414,7 @@ export function TrayPopover({ platform }: { platform: TrayPlatform }) {
       // the desktop; rebasing by this skew keeps the live elapsed timer correct
       // regardless of clock drift between the two devices.
       const skew = typeof resp.now === "number" ? ts - resp.now : 0;
-      setChats((prev) => {
+      setChatsPruned((prev) => {
         const next = new Map(prev);
         for (const s of resp.chats!) {
           if (next.has(s.chat_id)) continue;
@@ -355,7 +441,7 @@ export function TrayPopover({ platform }: { platform: TrayPlatform }) {
     return () => {
       cancelled = true;
     };
-  }, [platform.seedFromSnapshot]);
+  }, [platform.seedFromSnapshot, setChatsPruned]);
 
   // Desktop mirror: the tray webview is the only surface that watches the event
   // stream continuously, so it pushes its accumulated state to the backend
@@ -372,6 +458,28 @@ export function TrayPopover({ platform }: { platform: TrayPlatform }) {
     return () => window.clearTimeout(id);
   }, [chats, platform.seedFromSnapshot]);
 
+  // LocalStorage persistence: write the (already-pruned) chats to LS on every
+  // change so the desktop tray recovers after a reload. Phone is excluded —
+  // it seeds from the backend snapshot, and its webview is short-lived.
+  // Pruning happens inside `setChatsPruned` above, not here, so we never
+  // call setState inside an effect.
+  useEffect(() => {
+    if (platform.seedFromSnapshot) return;
+    const id = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          TRAY_CHATS_LS_KEY,
+          JSON.stringify({ chats: Array.from(chats.values()) }),
+        );
+      } catch {
+        // Quota exceeded / private mode — silently skip. In-memory state is
+        // still authoritative; the next mount will re-seed from the backend
+        // mirror or an empty Map.
+      }
+    }, LS_WRITE_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [chats, platform.seedFromSnapshot]);
+
   useRadioEvents({
     onChatStatus: (
       projectId,
@@ -380,7 +488,7 @@ export function TrayPopover({ platform }: { platform: TrayPlatform }) {
       status,
       payload?: ChatStatusEvent,
     ) => {
-      setChats((prev) => {
+      setChatsPruned((prev) => {
         const ts = Date.now();
         const originalExisting = prev.get(chatId);
         const next = new Map(prev);
@@ -544,7 +652,7 @@ export function TrayPopover({ platform }: { platform: TrayPlatform }) {
   const totalAll = totalRunning + totalPending + totalDone;
 
   const dismiss = (chatId: string) =>
-    setChats((prev) => {
+    setChatsPruned((prev) => {
       if (!prev.has(chatId)) return prev;
       const next = new Map(prev);
       next.delete(chatId);
@@ -552,7 +660,7 @@ export function TrayPopover({ platform }: { platform: TrayPlatform }) {
     });
 
   const clearDone = () =>
-    setChats((prev) => {
+    setChatsPruned((prev) => {
       const next = new Map(prev);
       for (const [k, v] of prev) {
         if (v.status === "done") next.delete(k);
@@ -841,6 +949,10 @@ export function TrayPopover({ platform }: { platform: TrayPlatform }) {
             enableVoice={platform.enableVoice}
             onSend={(text) => platform.sendPrompt!(item, text)}
             onClose={() => setReplyTarget(null)}
+            onOpen={platform.openTask ? () => platform.openTask!(item) : undefined}
+            onHeaderMouseDown={handleHeaderMouseDown}
+            headerDragCursor={pinned ? "cursor-grab active:cursor-grabbing select-none" : ""}
+            headerDragRegion={pinned}
           />
         );
       })()}
@@ -858,17 +970,29 @@ function ReplyView({
   enableVoice,
   onSend,
   onClose,
+  onOpen,
+  onHeaderMouseDown,
+  headerDragCursor,
+  headerDragRegion,
 }: {
   item: ChatItem;
   enableVoice?: boolean;
   onSend: (text: string) => Promise<void>;
   onClose: () => void;
+  onOpen?: () => void;
+  onHeaderMouseDown?: (e: React.MouseEvent<HTMLElement>) => void;
+  headerDragCursor?: string;
+  headerDragRegion?: boolean;
 }) {
   const title = item.chat_title || item.task_name;
   const provenance = provenanceOf(item);
   return (
     <div className="absolute inset-0 z-20 flex flex-col bg-[var(--color-bg-secondary)]">
-      <header className="flex shrink-0 items-center gap-2 border-b border-[color-mix(in_srgb,var(--color-border)_35%,transparent)] px-2 py-2">
+      <header
+        className={`flex shrink-0 items-center gap-2 border-b border-[color-mix(in_srgb,var(--color-border)_35%,transparent)] px-2 py-2 ${headerDragCursor ?? ""}`}
+        onMouseDown={onHeaderMouseDown}
+        data-tauri-drag-region={headerDragRegion ? "" : undefined}
+      >
         <button
           onClick={onClose}
           title="Back"
@@ -891,10 +1015,19 @@ function ReplyView({
             {provenance}
           </div>
         </div>
+        {onOpen ? (
+          <button
+            onClick={onOpen}
+            title="Open in app"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
+          >
+            <ExternalLink size={14} />
+          </button>
+        ) : null}
       </header>
-      <div className="flex-1 overflow-y-auto whitespace-pre-wrap break-words px-3 py-2.5 text-[12.5px] leading-relaxed text-[var(--color-text)]">
+      <div className="flex-1 overflow-y-auto px-3 py-2.5 text-[12.5px] leading-relaxed text-[var(--color-text)]">
         {item.message ? (
-          item.message
+          <MarkdownRenderer content={item.message} />
         ) : (
           <span className="italic text-[var(--color-text-muted)]">
             No text response captured for this turn.

@@ -342,6 +342,38 @@ pub struct NotificationsConfig {
     /// Stored in display form (e.g. "Cmd+Shift+M"); empty/None disables.
     #[serde(default)]
     pub menubar_shortcut: Option<String>,
+
+    /// Retention policy for tray "Done" chats. `Forever` keeps them until the
+    /// user dismisses; `Expire` drops any done chat whose `entered_state_at`
+    /// is older than `value` of `unit`. Running/permission chats are never
+    /// dropped by this policy — only done ones.
+    #[serde(default = "default_tray_done_retention")]
+    pub tray_done_retention: RetentionPolicy,
+}
+
+/// How long a tray "Done" chat is kept before automatic cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RetentionUnit {
+    Hours,
+    Days,
+}
+
+/// Externally-tagged enum on the wire:
+///   `{ "forever": null }`              — never auto-prune
+///   `{ "expire": { "value": 3, "unit": "days" } }` — prune after N hours/days
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RetentionPolicy {
+    Forever,
+    Expire { value: u32, unit: RetentionUnit },
+}
+
+fn default_tray_done_retention() -> RetentionPolicy {
+    RetentionPolicy::Expire {
+        value: 3,
+        unit: RetentionUnit::Days,
+    }
 }
 
 impl Default for NotificationsConfig {
@@ -356,6 +388,7 @@ impl Default for NotificationsConfig {
             notification_show_done: true,
             notification_show_running: false,
             menubar_shortcut: None,
+            tray_done_retention: default_tray_done_retention(),
         }
     }
 }

@@ -1440,7 +1440,7 @@ function AppContent() {
                 />
               </div>
               {activeItem !== "tasks" && (
-                <div className={isFullWidthPage ? `h-full transition-[padding] duration-300 ease-out ${inWorkspace && activeItem === "work" ? 'p-2' : 'p-6'}` : "max-w-5xl mx-auto p-6"}>
+                <div className={isFullWidthPage ? `h-full transition-[padding] duration-300 ease-out ${activeItem === "work" ? 'p-2' : 'p-6'}` : "max-w-5xl mx-auto p-6"}>
                   {renderContent()}
                 </div>
               )}
