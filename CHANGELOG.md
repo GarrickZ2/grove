@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4] - 2026-06-11
+
+### Added
+
+- **Menubar tray sync to phone with reply + voice** — The menubar tray panel now mirrors to the mobile shell so notifications, replies, and push-to-talk voice work from a paired phone.
+- **Streaming speech-to-text** — Audio capture supports a streaming STT mode for lower-latency dictation in chat.
+- **Configurable push-to-talk hold delay** — Audio settings expose the hold-delay threshold so users can tune their PTT trigger.
+- **Editor / Studio "Open in default app"** — Right-click an asset to hand it to the OS's default application.
+- **Drag-to-resize sidebars in Editor and Code Review** — File-tree sidebar in the Editor panel and both Code Review sidebars are now drag-resizable.
+- **Per-project last-view memory** — The web shell remembers each project's most recent top-level view and restores it on re-entry.
+- **Agent-graph reply reminders** — Opt-in nudge for stalled allies; the underlying reply instruction is now more forceful and client-agnostic.
+
+### Improved
+
+- **Unified agent marketplace data flow** — Refactored ACP marketplace into a single data path with a v2.5 → v2.6 storage migration.
+- **Agent usage layer split** — `agent_usage` is now `providers/` (pure API) + `agents/` (auth + dispatch), clarifying responsibilities.
+- **Auto-update prompts translated to English** — Update prompts and client messages are now English-only; stray emojis removed.
+- **Editor refresh and image cache** — File preview now passes `fileName` through to enable syntax highlighting; editor refresh and image cache behavior are corrected.
+
+### Fixed
+
+- **Enter-to-send during ACP connect** — Chat no longer fires a send while the ACP session is still connecting; a connecting hint surfaces if Enter is pressed early, while typing remains allowed.
+- **Default agent reset on startup** — Web no longer resets the Claude/Codex default agent back to Gemini on startup.
+- **Global hotkeys after webview reload** — Hotkeys keep working after a webview reload.
+- **Hermes missing from default agent dropdown** — Added Hermes to `BUILTIN_ACP_AGENTS` so it appears in the picker.
+- **OpenCode mode detection** — ACP now extracts modes from `configOptions` as a fallback for OpenCode.
+- **Permission panel stale error** — Panel collapses on the "is no longer pending" stale error instead of getting stuck.
+- **Agent quota popover scroll** — Header and footer are pinned; only the body scrolls.
+- **Chat search viewport jump** — Search no longer yanks the viewport back to the current match while scrolling.
+- **ANSI colors in tool output** — Tool output chips and bash response now render ANSI colors.
+- **TaskChat scroll behavior** — Uses `auto` scroll behavior to prevent a blank viewport.
+- **Code Review search highlight in focus mode** — Cross-span search highlight and sidebar search work correctly in focus mode.
+- **Folder picker, audio errors, preview sandbox** — Folder-picker cancel handling, audio error UX, and preview iframe sandbox are all corrected.
+- **iOS PWA standalone polish** — Eliminated zoom and bottom-gap; safe-area insets are now respected.
+- **macOS traffic lights on mobile/web** — Conditionally avoided on mobile and web viewports.
+- **Code-review follow-ups for v0.11.3** — Addressed outstanding review findings from the prior release.
+
 ## [0.11.3] - 2026-06-04
 
 ### Added
