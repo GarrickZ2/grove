@@ -4885,6 +4885,9 @@ export function TaskChat({
     // Guard activeChatId before consuming any UI state — if we return after
     // clearing the editable, the user's typed message is silently lost.
     if (!activeChatId) return;
+    // Same reason for the connecting phase: input is editable so users can
+    // pre-compose, but the session has nowhere to receive the prompt yet.
+    if (!isConnected) return;
     const prompt = getPromptFromEditable(el);
 
     // Terminal launch mode: chatbox forwards the typed text + any attachment
@@ -5126,7 +5129,7 @@ export function TaskChat({
       onUserMessageSent?.();
       el.focus();
     }
-  }, [isTerminalMode, isBusy, attachments, activeChatId, projectId, task.id, enableAutoStickToBottom, onUserMessageSent, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, task.id, enableAutoStickToBottom, onUserMessageSent, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl]);
 
   const sendPreviewComments = useCallback((comments: PreviewCommentDraft[]) => {
     if (
