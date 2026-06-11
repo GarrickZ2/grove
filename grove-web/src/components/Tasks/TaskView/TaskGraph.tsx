@@ -21,20 +21,16 @@ import {
   updateGraphEdgePurpose,
   deleteGraphEdge,
   remindGraphEdge,
-  checkCommands,
   getConfig,
   deleteChat,
   listCustomAgents,
 } from "../../../api";
+import { listMarketplace } from "../../../api/marketplace";
 import type { CustomAgentServer, CustomAgentPersona } from "../../../api";
 import type { NodeStatus } from "../../../api/walkieTalkie";
 import { useRadioEvents } from "../../../hooks/useRadioEvents";
 import { AgentPicker } from "../../ui/AgentPicker";
-import {
-  agentOptions,
-  applyAcpAvailability,
-  getAcpAvailabilityCommands,
-} from "../../../data/agents";
+import { agentOptions } from "../../../data/agents";
 import {
   agentIconUrl,
   loadCustomAgentPersonas as loadCustomAgentPersonasIcon,
@@ -254,7 +250,7 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   // refresh of newly-added topology.
   const fetchSeqRef = useRef(0);
   const discardFetchUpToRef = useRef(0);
-  const [acpAgentAvailability, setAcpAgentAvailability] = useState<Record<string, boolean>>({});
+  const [launchableAgentIds, setLaunchableAgentIds] = useState<Set<string>>(new Set());
   const [acpAvailabilityLoaded, setAcpAvailabilityLoaded] = useState(false);
   const [customAgents, setCustomAgents] = useState<CustomAgentServer[]>([]);
   const [customAgentPersonas, setCustomAgentPersonas] = useState<CustomAgentPersona[]>([]);
@@ -272,15 +268,25 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
     let cancelled = false;
     (async () => {
       try {
-        const [cmdResults, cfg, personas] = await Promise.all([
-          checkCommands(getAcpAvailabilityCommands()),
+        const [marketplace, cfg, personas] = await Promise.all([
+          listMarketplace(),
           getConfig(),
           loadCustomAgentPersonasIcon(() =>
             listCustomAgents().catch(() => [] as CustomAgentPersona[]),
           ),
         ]);
         if (cancelled) return;
-        setAcpAgentAvailability(cmdResults);
+        const ids = new Set(
+          marketplace.agents
+            .filter(
+              (a) =>
+                (a.install_state === "grove-installed" ||
+                  a.install_state === "auto-detected") &&
+                !(a.installed?.hidden ?? false),
+            )
+            .map((a) => a.id),
+        );
+        setLaunchableAgentIds(ids);
         setCustomAgents(cfg.acp?.custom_agents ?? []);
         setCustomAgentPersonas(personas);
         if (cfg.acp?.agent_command) setDefaultAgent(cfg.acp.agent_command);
@@ -295,11 +301,12 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   }, []);
 
   const acpAgentOptions = useMemo(() => {
-    return agentOptions
-      .filter((opt) => opt.acpCheck)
-      .map((opt) => applyAcpAvailability(opt, acpAgentAvailability, acpAvailabilityLoaded))
-      .filter((opt) => !opt.disabled);
-  }, [acpAgentAvailability, acpAvailabilityLoaded]);
+    if (!acpAvailabilityLoaded) return agentOptions;
+    return agentOptions.filter(
+      (opt) =>
+        launchableAgentIds.has(opt.id) || launchableAgentIds.has(opt.value),
+    );
+  }, [launchableAgentIds, acpAvailabilityLoaded]);
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
 
   useEffect(() => {

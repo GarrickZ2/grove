@@ -1,130 +1,94 @@
-//! Agent marketplace handler.
+//! Marketplace HTTP handlers.
 //!
-//! Single unified view that merges three sources:
-//!   - ACP registry (cached on disk, fetched from CDN)
-//!   - grove builtin supplement (BUILTIN_SUPPLEMENTS)
-//!   - local PATH probe results (auto-detect)
+//! Single source of truth for the agent UX:
+//!   * Catalog (Explore) = registry CDN + two synthetic entries (`traecli`,
+//!     `traex`) injected by `agent_registry::get()`.
+//!   * Installed = rows in the `installed_agents` SQLite table, kept in sync
+//!     by `installed_agents::auto_scan_path_binaries()` which walks every
+//!     registry agent and registers / deregisters External installations
+//!     based on PATH presence.
 //!
-//! Frontend consumes one shape (`MarketplaceAgent`) and decides what to show
-//! where (AgentPicker, Marketplace Modal, per-agent config sheet, etc).
-//!
-//! P2+ will layer installed_agents (SQLite) on top — for now `installState`
-//! is computed purely from probe + null for `installed_version`.
+//! `install_state` is derived strictly from whether/how the row exists.
 
-use axum::{extract::Path, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{Path, Query},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::storage::agent_registry::{
     self, BinaryTarget, NpxDistribution, RegistryAgent, UvxDistribution,
 };
-use crate::storage::agent_supplement::{SupplementEntry, TerminalProfile, BUILTIN_SUPPLEMENTS};
-use crate::storage::installed_agents::{self, InstallMethod, InstallStatus, InstalledAgent};
+use crate::storage::installed_agents::{
+    self, InstallMethod, InstallStatus, Installation, InstalledAgent,
+};
 
-#[cfg(test)]
-use crate::storage::agent_supplement;
+// ─── Response DTOs ───────────────────────────────────────────────────────────
 
-/// Unified agent record returned to the frontend.
 #[derive(Debug, Serialize)]
 pub struct MarketplaceAgent {
-    /// Canonical id — registry id when registered, else supplement.canonical_id.
     pub id: String,
-    /// Legacy ids that historic data may reference (claude → claude-acp).
-    pub legacy_aliases: Vec<String>,
     pub name: String,
     pub description: String,
-    /// Grove-local icon identifier (asset key) — preferred over registry icon
-    /// when supplement defines one.
-    pub icon_id: Option<String>,
-    /// CDN icon URL from registry (fallback / detail-view).
-    pub icon_url: Option<String>,
     pub version: Option<String>,
     pub repository: Option<String>,
     pub website: Option<String>,
     pub authors: Vec<String>,
     pub license: Option<String>,
-    /// `registry` = listed in upstream registry. `supplement-only` = grove
-    /// supplement only (not yet in the registry — `hermes` etc).
-    pub source: &'static str,
-    /// `null` when neither registry nor supplement gives an installable
-    /// channel (supplement-only entries with no distribution).
-    pub distribution: Option<DistributionView>,
-    pub supported_launch_modes: Vec<String>,
-    /// "auto-detected" | "grove-installed" | "not-installed".
-    /// P1 only knows auto-detected (probe pass) vs not-installed (probe fail);
-    /// "grove-installed" lights up once P2 wires installed_agents in.
+    /// Icon URL from the registry CDN. None for synthetic Trae/TraeX (the
+    /// frontend renders a placeholder when no URL is present — we'll wire
+    /// grove-served Trae assets in a follow-up).
+    pub icon_url: Option<String>,
+    /// Channels the user can install via. Derived from the registry's
+    /// `distribution` map; ordered as `npx`, `binary`, `uvx` when present.
+    pub available_install_methods: Vec<InstallMethod>,
+    /// True when this agent's registry entry has a `terminal_launch`
+    /// config — i.e. picking the External channel will spawn the agent
+    /// via PTY using grove's terminal contract. Currently true only for
+    /// claude-acp (via `inject_grove_supplements`).
+    pub supports_terminal_launch: bool,
+    /// One of: `grove-installed` | `auto-detected` | `installing` |
+    /// `install-failed` | `not-installed`.
     pub install_state: &'static str,
-    /// Hint commands the frontend can show in detail view (which PATH
-    /// commands grove probed and what they resolved to). Mirrors what
-    /// SettingsPage's existing AgentPicker availability surfaced.
-    pub probe: ProbeView,
-    /// Terminal-mode spawn template. Present iff supported_launch_modes
-    /// includes "terminal".
-    pub terminal_profile: Option<TerminalProfileView>,
-    /// Local install record (null when no grove-managed install — even if
-    /// `install_state="auto-detected"` we leave this null because grove
-    /// didn't put the binary there).
+    /// Per-channel installation records + selections. None when no
+    /// `installed_agents` row exists.
     pub installed: Option<InstalledAgentView>,
-    /// Effective launch mode for chats created against this agent. Reads
-    /// from `Config.agent_launch_modes[id]`; defaults to "acp". Decoupled
-    /// from install state so auto-detected agents can still be toggled.
-    pub launch_mode: String,
+    /// Resolved binary view for the active installation. Populated for
+    /// auto-detected and Binary-installed channels.
+    pub binary: Option<BinaryView>,
 }
 
-/// Subset of `InstalledAgent` we expose to the frontend. Drops the raw
-/// `installed_at` precision and the `install_path` (security: never leak
-/// absolute filesystem paths in a list endpoint — Per-Agent Config Sheet
-/// can fetch it separately if needed).
 #[derive(Debug, Serialize)]
 pub struct InstalledAgentView {
-    pub version: String,
-    pub install_method: InstallMethod,
-    pub status: InstallStatus,
-    pub failure_reason: Option<String>,
+    pub installations: Vec<Installation>,
+    pub selected_install_method: InstallMethod,
     pub args_override: Vec<String>,
     pub env_override: HashMap<String, String>,
-    pub launch_mode: String,
     pub hidden: bool,
 }
 
 impl From<&InstalledAgent> for InstalledAgentView {
     fn from(a: &InstalledAgent) -> Self {
         Self {
-            version: a.version.clone(),
-            install_method: a.install_method,
-            status: a.status,
-            failure_reason: a.failure_reason.clone(),
+            installations: a.installations.clone(),
+            selected_install_method: a.selected_install_method,
             args_override: a.args_override.clone(),
             env_override: a.env_override.clone(),
-            launch_mode: a.launch_mode.clone(),
             hidden: a.hidden,
         }
     }
 }
 
+/// Concrete executable grove would invoke. Only populated when there's a
+/// resolvable binary path (auto-detected External installs primarily).
 #[derive(Debug, Serialize)]
-pub struct DistributionView {
-    pub npx: Option<NpxDistribution>,
-    pub uvx: Option<UvxDistribution>,
-    pub binary: HashMap<String, BinaryTarget>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProbeView {
-    pub terminal_check: Option<String>,
-    pub acp_check: Option<String>,
-    pub acp_fallback: Option<String>,
-    pub npx_package: Option<String>,
-    /// Results for each probed command (true = on PATH).
-    pub results: HashMap<String, bool>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TerminalProfileView {
-    pub base_command: String,
-    pub fresh_args: Vec<String>,
-    pub resume_args: Vec<String>,
-    pub resume_check_pattern: String,
+pub struct BinaryView {
+    pub command: String,
+    pub path: Option<String>,
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -132,36 +96,66 @@ pub struct MarketplaceResponse {
     pub agents: Vec<MarketplaceAgent>,
     pub registry_fetched_at: Option<String>,
     pub registry_stale: bool,
+    /// Ordered curated id list. Frontend can render a "Recommended" hint
+    /// section, though after the v2.6 changes curated agents are also
+    /// auto-installed for fresh users so they normally appear in Installed.
+    pub curated: Vec<String>,
 }
 
-/// GET /api/v1/agents/marketplace
+// ─── GET /api/v1/agents/marketplace ──────────────────────────────────────────
+
 pub async fn list_marketplace() -> Result<Json<MarketplaceResponse>, MarketplaceError> {
-    // Cache-first read. If the cache is completely empty (first-ever
-    // launch, or the startup background refresh hasn't landed yet) we
-    // attempt one synchronous refresh so the marketplace modal opens with
-    // real data instead of just the 13 supplement entries. Failures are
-    // tolerated — the supplement-only view is still useful and the
-    // `registry_fetched_at=null` field tells the UI to show a warning.
+    // Registry: cache-first, sync-refresh on cold start so the first
+    // marketplace open after a fresh install has data.
     let mut registry = agent_registry::get();
-    if registry.agents.is_empty() {
+    // Cache-empty heuristic: every entry is a grove-injected synthetic
+    // (Trae/TraeX/Hermes/Kiro/OpenClaw — see `inject_trae_and_traex_entries`).
+    // None of these come from upstream, so seeing only them means we
+    // haven't successfully fetched the CDN registry yet.
+    let synthetic_ids: &[&str] = &[
+        installed_agents::TRAE_ID,
+        installed_agents::TRAEX_ID,
+        "hermes",
+        "kiro",
+        "openclaw",
+    ];
+    if registry
+        .agents
+        .iter()
+        .all(|a| synthetic_ids.contains(&a.id.as_str()))
+    {
+        // Only the synthetics are present → registry cache is empty. Try a
+        // sync refresh; on failure we still return the synthetics-only
+        // doc so the user can at least see the synthetics.
         if let Ok(doc) = agent_registry::refresh().await {
             registry = doc;
+            agent_registry::inject_trae_and_traex_after_refresh(&mut registry);
         }
     }
+
+    // Kick off the PATH binary scan in the background — does NOT block this
+    // response. The scan upserts/removes External installations as PATH
+    // contents change; deferring it means the Installed tab opens
+    // instantly from the DB while the scan refreshes state for the next
+    // call. Manual Marketplace "Refresh" awaits a fresh scan via
+    // `refresh_registry`.
+    {
+        let reg_clone = registry.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = installed_agents::auto_scan_path_binaries(&reg_clone);
+        });
+    }
+
+    // Curated seed runs at BOOT (see api::mod::create_router) so chats
+    // and config that reference curated ids resolve before the user ever
+    // opens Marketplace. Nothing to do here.
+
     let stale = agent_registry::is_stale();
     let fetched_at = agent_registry::load_meta()
         .ok()
         .flatten()
         .map(|m| m.fetched_at.to_rfc3339());
 
-    // Index registry by id for O(1) merge lookup.
-    let mut registry_by_id: HashMap<String, RegistryAgent> = registry
-        .agents
-        .into_iter()
-        .map(|a| (a.id.clone(), a))
-        .collect();
-
-    // Snapshot installed agents — we look up by canonical id when merging.
     let installed_list = installed_agents::list()
         .map_err(|e| MarketplaceError::internal(format!("installed_agents: {}", e)))?;
     let installed_by_id: HashMap<String, InstalledAgent> = installed_list
@@ -169,35 +163,24 @@ pub async fn list_marketplace() -> Result<Json<MarketplaceResponse>, Marketplace
         .map(|a| (a.id.clone(), a))
         .collect();
 
-    // launch_mode lives on the installed_agents row now — auto-detected
-    // agents get an `install_method=External` stub the first time the user
-    // edits a setting (see patch_or_create). Agents the user has never
-    // touched don't appear in the table and fall through to "acp".
-    let mut agents: Vec<MarketplaceAgent> = Vec::new();
+    let mut agents: Vec<MarketplaceAgent> = registry
+        .agents
+        .iter()
+        .map(|reg| build_marketplace_agent(reg, installed_by_id.get(&reg.id)))
+        .collect();
 
-    // Pass 1: walk supplement, merge with registry where matched.
-    for supp in BUILTIN_SUPPLEMENTS {
-        let registry_entry = registry_by_id.remove(supp.canonical_id);
-        let installed = installed_by_id.get(supp.canonical_id);
-        let mode = installed
-            .map(|r| r.launch_mode.clone())
-            .unwrap_or_else(|| "acp".to_string());
-        agents.push(merge(supp, registry_entry, installed, mode));
+    // Also surface installed_agents rows whose id isn't in the registry
+    // (e.g. an older install that the upstream registry has since removed).
+    // We render them with whatever data we can recover from the install
+    // record so the user can still uninstall / patch / launch.
+    let registry_ids: std::collections::HashSet<&str> =
+        registry.agents.iter().map(|a| a.id.as_str()).collect();
+    for (id, agent) in &installed_by_id {
+        if !registry_ids.contains(id.as_str()) {
+            agents.push(build_marketplace_agent_orphan(agent));
+        }
     }
 
-    // Pass 2: registry entries with no supplement match — surface them
-    // verbatim with conservative defaults (ACP-only, no aliases).
-    for (_, reg) in registry_by_id.into_iter() {
-        let installed = installed_by_id.get(&reg.id);
-        let mode = installed
-            .map(|r| r.launch_mode.clone())
-            .unwrap_or_else(|| "acp".to_string());
-        agents.push(registry_only(reg, installed, mode));
-    }
-
-    // Stable order: alphabetical by name, then id. Anything supplement-driven
-    // tends to bubble to a similar place across reloads, which keeps the UI
-    // settled without us having to maintain a manual order.
     agents.sort_by(|a, b| {
         a.name
             .to_lowercase()
@@ -209,276 +192,181 @@ pub async fn list_marketplace() -> Result<Json<MarketplaceResponse>, Marketplace
         agents,
         registry_fetched_at: fetched_at,
         registry_stale: stale,
+        curated: crate::storage::curated_agents::load().agents,
     }))
 }
 
 /// POST /api/v1/agents/marketplace/refresh
 pub async fn refresh_registry() -> Result<Json<MarketplaceResponse>, MarketplaceError> {
-    // Manual refresh — surface failures verbatim so the UI can show why the
-    // user is still looking at stale data. Auto-refresh (startup background
-    // task + list endpoint's first-time fallback) tolerates failures
-    // silently; this endpoint is user-initiated so they deserve an answer.
     agent_registry::refresh()
         .await
         .map_err(|e| MarketplaceError::internal(format!("registry refresh failed: {}", e)))?;
+    // User asked for fresh data — invalidate the auto-scan TTL AND run
+    // the scan synchronously so the response reflects current PATH state.
+    installed_agents::reset_auto_scan_cache();
+    let registry = agent_registry::get();
+    let _ =
+        tokio::task::spawn_blocking(move || installed_agents::auto_scan_path_binaries(&registry))
+            .await;
     list_marketplace().await
 }
 
-fn merge(
-    supp: &SupplementEntry,
-    registry: Option<RegistryAgent>,
+fn build_marketplace_agent(
+    reg: &RegistryAgent,
     installed: Option<&InstalledAgent>,
-    launch_mode: String,
 ) -> MarketplaceAgent {
-    let (
-        source,
-        name,
-        description,
-        version,
-        repository,
-        website,
-        authors,
-        license,
-        icon_url,
-        distribution,
-    ) = if let Some(reg) = registry {
-        (
-            "registry",
-            supp.display_name.unwrap_or(&reg.name).to_string(),
-            reg.description.clone(),
-            Some(reg.version.clone()),
-            reg.repository.clone(),
-            reg.website.clone(),
-            reg.authors.clone(),
-            reg.license.clone(),
-            reg.icon.clone(),
-            Some(distribution_view(&reg)),
-        )
-    } else {
-        (
-            "supplement-only",
-            supp.display_name.unwrap_or(supp.canonical_id).to_string(),
-            String::new(),
-            None,
-            None,
-            None,
-            Vec::new(),
-            None,
-            None,
-            None,
-        )
-    };
-
-    let probe = probe_commands(supp);
-    let install_state = compute_install_state(&probe.results, supp, installed);
-
-    MarketplaceAgent {
-        id: supp.canonical_id.to_string(),
-        legacy_aliases: supp.legacy_aliases.iter().map(|s| s.to_string()).collect(),
-        name,
-        description,
-        icon_id: Some(supp.icon_id.to_string()),
-        icon_url,
-        version,
-        repository,
-        website,
-        authors,
-        license,
-        source,
-        distribution,
-        supported_launch_modes: supp
-            .supported_launch_modes
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
-        install_state,
-        probe,
-        terminal_profile: supp.terminal_profile.as_ref().map(terminal_profile_view),
-        installed: installed.map(InstalledAgentView::from),
-        launch_mode,
-    }
-}
-
-fn registry_only(
-    reg: RegistryAgent,
-    installed: Option<&InstalledAgent>,
-    launch_mode: String,
-) -> MarketplaceAgent {
-    let install_state = match installed {
-        Some(a) if a.status == InstallStatus::Installed && !a.hidden => "grove-installed",
-        _ => "not-installed",
-    };
+    let install_state = compute_install_state(installed);
+    let available_install_methods = available_methods_for(reg);
+    let binary = resolve_binary_view(reg, installed);
     MarketplaceAgent {
         id: reg.id.clone(),
-        legacy_aliases: Vec::new(),
         name: reg.name.clone(),
         description: reg.description.clone(),
-        icon_id: None,
-        icon_url: reg.icon.clone(),
-        version: Some(reg.version.clone()),
+        version: if reg.version.is_empty() {
+            None
+        } else {
+            Some(reg.version.clone())
+        },
         repository: reg.repository.clone(),
         website: reg.website.clone(),
         authors: reg.authors.clone(),
         license: reg.license.clone(),
-        source: "registry",
-        distribution: Some(distribution_view(&reg)),
-        supported_launch_modes: vec!["acp".to_string()],
+        icon_url: reg.icon.clone(),
+        available_install_methods,
+        supports_terminal_launch: reg.terminal_launch.is_some(),
         install_state,
-        probe: ProbeView {
-            terminal_check: None,
-            acp_check: None,
-            acp_fallback: None,
-            npx_package: None,
-            results: HashMap::new(),
-        },
-        terminal_profile: None,
         installed: installed.map(InstalledAgentView::from),
-        launch_mode,
+        binary,
     }
 }
 
-fn distribution_view(reg: &RegistryAgent) -> DistributionView {
-    DistributionView {
-        npx: reg.distribution.npx.clone(),
-        uvx: reg.distribution.uvx.clone(),
-        binary: reg.distribution.binary.clone(),
+/// Build a MarketplaceAgent for an installed_agents row whose id isn't in
+/// the (current) registry. Renders just enough data to power the Installed
+/// tab card; install/uninstall via the marketplace endpoint still works.
+fn build_marketplace_agent_orphan(agent: &InstalledAgent) -> MarketplaceAgent {
+    let install_state = compute_install_state(Some(agent));
+    let binary = agent.selected_installation().and_then(|i| {
+        i.install_path.as_ref().map(|p| BinaryView {
+            command: agent.id.clone(),
+            path: Some(p.clone()),
+            version: if i.version.is_empty() {
+                None
+            } else {
+                Some(i.version.clone())
+            },
+        })
+    });
+    MarketplaceAgent {
+        id: agent.id.clone(),
+        name: agent.id.clone(),
+        description: String::new(),
+        version: agent
+            .selected_installation()
+            .map(|i| i.version.clone())
+            .filter(|v| !v.is_empty()),
+        repository: None,
+        website: None,
+        authors: Vec::new(),
+        license: None,
+        icon_url: None,
+        available_install_methods: agent
+            .installations
+            .iter()
+            .map(|i| i.method)
+            .collect::<Vec<_>>(),
+        supports_terminal_launch: false,
+        install_state,
+        installed: Some(InstalledAgentView::from(agent)),
+        binary,
     }
 }
 
-fn terminal_profile_view(p: &TerminalProfile) -> TerminalProfileView {
-    TerminalProfileView {
-        base_command: p.base_command.to_string(),
-        fresh_args: p.fresh_args.iter().map(|s| s.to_string()).collect(),
-        resume_args: p.resume_args.iter().map(|s| s.to_string()).collect(),
-        resume_check_pattern: p.resume_check_pattern.to_string(),
+fn available_methods_for(reg: &RegistryAgent) -> Vec<InstallMethod> {
+    let mut methods = Vec::new();
+    if reg.distribution.npx.is_some() {
+        methods.push(InstallMethod::Npx);
     }
-}
-
-/// Probe each PATH command supplement declared. We only run `which`-style
-/// checks here, never spawn anything heavy. Empty map for entries with no
-/// probe spec.
-fn probe_commands(supp: &SupplementEntry) -> ProbeView {
-    let mut results: HashMap<String, bool> = HashMap::new();
-    for cmd in [supp.terminal_check, supp.acp_check, supp.acp_fallback]
-        .into_iter()
-        .flatten()
-    {
-        // Some probe commands (e.g. "hermes acp") encode a subcommand. We
-        // only test the head — that's also what the existing
-        // env::check_commands logic implicitly relies on (it never sees
-        // multi-word commands today). Splitting here keeps the behavior
-        // identical even if supplement adds a multi-word probe later.
-        let head = cmd.split_whitespace().next().unwrap_or(cmd);
-        if !results.contains_key(head) {
-            results.insert(head.to_string(), crate::check::command_exists(head));
-        }
-    }
-    if supp.npx_package.is_some() && !results.contains_key("npx") {
-        results.insert("npx".to_string(), crate::check::command_exists("npx"));
-    }
-    ProbeView {
-        terminal_check: supp.terminal_check.map(|s| s.to_string()),
-        acp_check: supp.acp_check.map(|s| s.to_string()),
-        acp_fallback: supp.acp_fallback.map(|s| s.to_string()),
-        npx_package: supp.npx_package.map(|s| s.to_string()),
-        results,
-    }
-}
-
-// Mirrors the frontend's existing applyAcpAvailability rule:
-//   - terminal_check on PATH AND
-//   - (acp_check OR acp_fallback on PATH) OR (npx is available and supplement
-//     declared an npx package)
-// → installed (auto-detected). Else not-installed.
-//
-// "grove-installed" path lights up in P2 when SQLite installed_agents
-// records this id.
-fn head_word(cmd: Option<&str>) -> Option<&str> {
-    cmd.and_then(|c| c.split_whitespace().next())
-}
-
-fn compute_install_state(
-    results: &HashMap<String, bool>,
-    supp: &SupplementEntry,
-    installed: Option<&InstalledAgent>,
-) -> &'static str {
-    // Grove-managed install wins when present + healthy + not hidden — the
-    // user explicitly opted into this so we surface it ahead of probe.
-    //
-    // `External` rows are NOT a grove-managed install — they're stub rows
-    // created by `patch_or_create` when a user edits launch_mode/args/env
-    // on an auto-detected agent. The row exists only to store preferences;
-    // the actual binary is still on the user's PATH. We fall through to the
-    // probe path below so the install_state reflects what's reachable.
-    if let Some(a) = installed {
-        let is_grove_managed = !matches!(a.install_method, InstallMethod::External);
-        if is_grove_managed {
-            if a.status == InstallStatus::Installed && !a.hidden {
-                return "grove-installed";
-            }
-            if a.status == InstallStatus::Installing {
-                return "installing";
-            }
-            if a.status == InstallStatus::Failed {
-                return "install-failed";
+    if !reg.distribution.binary.is_empty() {
+        let platform = crate::storage::agent_install::current_platform_key();
+        if let Some(target) = reg.distribution.binary.get(platform) {
+            // Synthetic Trae/TraeX entries carry an empty archive — they
+            // aren't installable, so don't surface Binary as a choice for
+            // them.
+            if !target.archive.is_empty() {
+                methods.push(InstallMethod::Binary);
             }
         }
     }
+    if reg.distribution.uvx.is_some() {
+        methods.push(InstallMethod::Uvx);
+    }
+    methods
+}
 
-    let term_ok = match head_word(supp.terminal_check) {
-        Some(c) => *results.get(c).unwrap_or(&false),
-        None => true, // no terminal_check spec = don't gate on it
+/// Strict, three-line rule. NO auto-detect via PATH or runtime probing —
+/// the `installed_agents` row is the entire story.
+///
+///   - row exists, status=Installed, method != External → grove-installed
+///   - row exists, status=Installed, method == External → auto-detected (Trae/TraeX)
+///   - row exists, status=Installing                    → installing
+///   - row exists, status=Failed                        → install-failed
+///   - no row                                            → not-installed
+fn compute_install_state(installed: Option<&InstalledAgent>) -> &'static str {
+    let Some(agent) = installed else {
+        return "not-installed";
     };
-    let acp_primary = head_word(supp.acp_check)
-        .map(|c| *results.get(c).unwrap_or(&false))
-        .unwrap_or(false);
-    let acp_fallback = head_word(supp.acp_fallback)
-        .map(|c| *results.get(c).unwrap_or(&false))
-        .unwrap_or(false);
-    let npx_ok = supp.npx_package.is_some() && *results.get("npx").unwrap_or(&false);
-
-    if term_ok && (acp_primary || acp_fallback || npx_ok) {
-        "auto-detected"
-    } else {
-        "not-installed"
-    }
-}
-
-pub enum MarketplaceError {
-    NotFound(String),
-    BadRequest(String),
-    Internal(String),
-}
-
-impl IntoResponse for MarketplaceError {
-    fn into_response(self) -> axum::response::Response {
-        match self {
-            MarketplaceError::NotFound(msg) => (StatusCode::NOT_FOUND, msg).into_response(),
-            MarketplaceError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
-            MarketplaceError::Internal(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+    let Some(active) = agent.selected_installation() else {
+        return "not-installed";
+    };
+    match active.status {
+        InstallStatus::Installing => "installing",
+        InstallStatus::Failed => "install-failed",
+        InstallStatus::Installed => {
+            if matches!(active.method, InstallMethod::External) {
+                "auto-detected"
+            } else {
+                "grove-installed"
             }
         }
     }
 }
 
-impl MarketplaceError {
-    fn internal(msg: impl Into<String>) -> Self {
-        MarketplaceError::Internal(msg.into())
+/// Resolve a binary view for the active installation when applicable.
+/// Returns None for npx/uvx installs (where the command is `npx` / `uvx`
+/// and the actual binary lives in npm/uv caches we don't surface).
+fn resolve_binary_view(
+    _reg: &RegistryAgent,
+    installed: Option<&InstalledAgent>,
+) -> Option<BinaryView> {
+    let agent = installed?;
+    let active = agent.selected_installation()?;
+    match active.method {
+        InstallMethod::Binary | InstallMethod::External => {
+            let path = active.install_path.clone();
+            let command = path
+                .as_deref()
+                .and_then(|p| std::path::Path::new(p).file_name())
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| agent.id.clone());
+            Some(BinaryView {
+                command,
+                path,
+                version: if active.version.is_empty() {
+                    None
+                } else {
+                    Some(active.version.clone())
+                },
+            })
+        }
+        InstallMethod::Npx | InstallMethod::Uvx => None,
     }
 }
 
 // ─── Install / Uninstall / Patch ─────────────────────────────────────────────
 
-/// Body for POST /agents/marketplace/{id}/install. `method` lets the user
-/// override which distribution path to use when multiple are available
-/// (e.g. registry agent offering both npx and binary). Defaults to the
-/// preferred order: npx > binary > uvx (chosen for least system disruption
-/// and ubiquity of node).
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct InstallRequest {
-    #[serde(default)]
-    pub method: Option<InstallMethod>,
+    pub method: InstallMethod,
 }
 
 #[derive(Debug, Serialize)]
@@ -487,54 +375,102 @@ pub struct InstallResponse {
 }
 
 /// POST /api/v1/agents/marketplace/{id}/install
+///
+/// Adds a single install channel to the agent's installations array. If the
+/// agent has no row yet, creates one; otherwise upserts the channel,
+/// replacing any existing entry of the same method (re-install / upgrade).
 pub async fn install_agent(
     Path(id): Path<String>,
     Json(body): Json<InstallRequest>,
 ) -> Result<Json<InstallResponse>, MarketplaceError> {
+    // Defense-in-depth: canonicalize before any lookup so a stale
+    // frontend cache carrying a legacy id (e.g. `claude` vs `claude-acp`)
+    // doesn't 404 a real installable agent.
+    let id = installed_agents::canonicalize_agent_id(&id);
     let registry = agent_registry::get();
     let reg = registry
         .agents
         .iter()
         .find(|a| a.id == id)
-        .ok_or_else(|| MarketplaceError::NotFound(format!("agent {} not in registry cache", id)))?
+        .ok_or_else(|| MarketplaceError::NotFound(format!("agent {} not in registry", id)))?
         .clone();
 
-    // Resolve method: explicit > npx > binary > uvx.
-    let method = body.method.unwrap_or_else(|| pick_default_method(&reg));
-    match method {
+    // No PATH short-circuit here — External installations are managed by
+    // the auto-scan (`installed_agents::auto_scan_path_binaries`) which
+    // runs every list_marketplace and registers them automatically. The
+    // explicit Install click is reserved for the channel the user picked.
+    // If both an External row (from scan) and a user-installed channel
+    // exist, the user picks which one is active via
+    // `selected_install_method`.
+
+    match body.method {
         InstallMethod::Npx => install_npx(&reg).await,
         InstallMethod::Binary => install_binary(&reg).await,
         InstallMethod::Uvx => install_uvx(&reg).await,
         InstallMethod::External => Err(MarketplaceError::BadRequest(
-            "External isn't an install method — it's the marker for \
-             auto-detected PATH binaries. Use npx/binary/uvx instead."
+            "External installs are created automatically when grove detects the agent's CLI \
+             on your PATH; there's no Install button to click. Remove the binary from PATH \
+             to deregister."
                 .to_string(),
         )),
     }
 }
 
-fn pick_default_method(reg: &RegistryAgent) -> InstallMethod {
-    if reg.distribution.npx.is_some() {
-        InstallMethod::Npx
-    } else if !reg.distribution.binary.is_empty() {
-        InstallMethod::Binary
-    } else if reg.distribution.uvx.is_some() {
-        InstallMethod::Uvx
-    } else {
-        // Will surface as BadRequest downstream — registry without any usable
-        // channel can't be installed via marketplace.
-        InstallMethod::Npx
+async fn install_npx(reg: &RegistryAgent) -> Result<Json<InstallResponse>, MarketplaceError> {
+    if reg.distribution.npx.is_none() {
+        return Err(MarketplaceError::BadRequest(format!(
+            "agent {} has no npx distribution",
+            reg.id
+        )));
     }
+    if !crate::check::command_exists("npx") {
+        return Err(MarketplaceError::BadRequest(
+            "`npx` not found on PATH — install Node.js to use npx-distributed agents".to_string(),
+        ));
+    }
+    let install = Installation {
+        method: InstallMethod::Npx,
+        version: reg.version.clone(),
+        install_path: None,
+        status: InstallStatus::Installed,
+        failure_reason: None,
+        installed_at: chrono::Utc::now(),
+    };
+    let agent = installed_agents::add_installation(&reg.id, install)
+        .map_err(|e| MarketplaceError::internal(format!("add installation: {}", e)))?;
+    Ok(Json(InstallResponse {
+        agent: InstalledAgentView::from(&agent),
+    }))
 }
 
-/// binary install = pick the current-platform archive, download, extract under
-/// `~/.grove/agents/<id>/<version>/`, record install_path. P5 launcher will
-/// run `<install_path>/<target.cmd>` with `target.args` and `target.env`.
-///
-/// We mark `status="installing"` in the DB before starting the (potentially
-/// slow) download so the marketplace endpoint's poll-based UI can show
-/// progress. On any error we set status="failed" + failure_reason — the row
-/// stays so the user can see what went wrong without re-installing.
+async fn install_uvx(reg: &RegistryAgent) -> Result<Json<InstallResponse>, MarketplaceError> {
+    if reg.distribution.uvx.is_none() {
+        return Err(MarketplaceError::BadRequest(format!(
+            "agent {} has no uvx distribution",
+            reg.id
+        )));
+    }
+    if !crate::check::command_exists("uvx") {
+        return Err(MarketplaceError::BadRequest(
+            "`uvx` not found on PATH — install astral-sh/uv to use uvx-distributed agents"
+                .to_string(),
+        ));
+    }
+    let install = Installation {
+        method: InstallMethod::Uvx,
+        version: reg.version.clone(),
+        install_path: None,
+        status: InstallStatus::Installed,
+        failure_reason: None,
+        installed_at: chrono::Utc::now(),
+    };
+    let agent = installed_agents::add_installation(&reg.id, install)
+        .map_err(|e| MarketplaceError::internal(format!("add installation: {}", e)))?;
+    Ok(Json(InstallResponse {
+        agent: InstalledAgentView::from(&agent),
+    }))
+}
+
 async fn install_binary(reg: &RegistryAgent) -> Result<Json<InstallResponse>, MarketplaceError> {
     let platform = crate::storage::agent_install::current_platform_key();
     let target = reg
@@ -549,72 +485,75 @@ async fn install_binary(reg: &RegistryAgent) -> Result<Json<InstallResponse>, Ma
             ))
         })?;
 
-    // Record installing-status up front so the picker can show a spinner.
-    let now = chrono::Utc::now();
-    let mut agent = InstalledAgent {
-        id: reg.id.clone(),
+    if target.archive.is_empty() {
+        // Synthetic Trae/TraeX have empty archive — they aren't installable
+        // through grove's installer. Reject early so we don't write a
+        // poisoned `installing` row.
+        return Err(MarketplaceError::BadRequest(format!(
+            "{} is PATH-detected only and can't be installed via the marketplace",
+            reg.id
+        )));
+    }
+
+    // Mark installing up front so the UI can render a spinner.
+    let installing = Installation {
+        method: InstallMethod::Binary,
         version: reg.version.clone(),
-        install_method: InstallMethod::Binary,
         install_path: None,
         status: InstallStatus::Installing,
         failure_reason: None,
-        args_override: Vec::new(),
-        env_override: target.env.clone(),
-        launch_mode: "acp".to_string(),
-        hidden: false,
-        installed_at: now,
-        updated_at: now,
+        installed_at: chrono::Utc::now(),
     };
-    installed_agents::upsert(&agent)
+    installed_agents::add_installation(&reg.id, installing)
         .map_err(|e| MarketplaceError::internal(format!("upsert installing-state: {}", e)))?;
 
     match crate::storage::agent_install::download_and_extract(&reg.id, &reg.version, &target).await
     {
         Ok(install_path) => {
-            // Resolve the full binary path here so launchers don't need
-            // to consult the registry at spawn time. `target.cmd` from the
-            // registry is a relative path like `./amp-acp` — strip the
-            // leading "./" and join to the extracted dir, then run it
-            // through the same containment check `extract_*` uses on
-            // archive entries so a malicious registry can't hand us a
-            // `cmd` with `..` segments that escape the install dir and
-            // get spawned as an attacker-chosen system binary later.
+            // Resolve the actual binary path inside the extracted dir,
+            // validating containment against the install root so a
+            // malicious registry can't escape with `..` segments.
             let cmd_rel = target.cmd.trim_start_matches("./");
-            let bin_path = crate::storage::agent_install::sanitize_extract_path(
+            let bin_path = match crate::storage::agent_install::sanitize_extract_path(
                 &install_path,
                 std::path::Path::new(cmd_rel),
-            )
-            .map_err(|e| {
-                // download_and_extract already wrote the archive tree to
-                // disk; if we reject the cmd path here, the row gets marked
-                // Failed but the extracted directory has no DB reference.
-                // Clean it up so we don't accumulate orphans across retries
-                // with different malicious registry payloads.
-                let _ = std::fs::remove_dir_all(&install_path);
-                let _ = installed_agents::set_status(
-                    &reg.id,
-                    InstallStatus::Failed,
-                    Some(format!("invalid cmd path: {}", e)),
-                );
-                MarketplaceError::BadRequest(format!(
-                    "registry entry rejected: cmd path escapes install dir ({:?})",
-                    target.cmd
-                ))
-            })?;
-            agent.status = InstallStatus::Installed;
-            agent.install_path = Some(bin_path.to_string_lossy().into_owned());
-            agent.updated_at = chrono::Utc::now();
-            installed_agents::upsert(&agent).map_err(|e| {
-                MarketplaceError::internal(format!("upsert installed-state: {}", e))
-            })?;
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = std::fs::remove_dir_all(&install_path);
+                    let _ = installed_agents::set_installation_status(
+                        &reg.id,
+                        InstallMethod::Binary,
+                        InstallStatus::Failed,
+                        Some(format!("invalid cmd path: {}", e)),
+                    );
+                    return Err(MarketplaceError::BadRequest(format!(
+                        "registry entry rejected: cmd path escapes install dir ({:?})",
+                        target.cmd
+                    )));
+                }
+            };
+            let installed = Installation {
+                method: InstallMethod::Binary,
+                version: reg.version.clone(),
+                install_path: Some(bin_path.to_string_lossy().into_owned()),
+                status: InstallStatus::Installed,
+                failure_reason: None,
+                installed_at: chrono::Utc::now(),
+            };
+            let agent = installed_agents::add_installation(&reg.id, installed)
+                .map_err(|e| MarketplaceError::internal(format!("upsert installed: {}", e)))?;
             Ok(Json(InstallResponse {
                 agent: InstalledAgentView::from(&agent),
             }))
         }
         Err(e) => {
-            // Persist the failure so the user sees the reason next render.
-            let _ =
-                installed_agents::set_status(&reg.id, InstallStatus::Failed, Some(e.to_string()));
+            let _ = installed_agents::set_installation_status(
+                &reg.id,
+                InstallMethod::Binary,
+                InstallStatus::Failed,
+                Some(e.to_string()),
+            );
             Err(MarketplaceError::internal(format!(
                 "binary install failed: {}",
                 e
@@ -623,106 +562,45 @@ async fn install_binary(reg: &RegistryAgent) -> Result<Json<InstallResponse>, Ma
     }
 }
 
-/// npx install = pin the exact version from registry + mark installed. The
-/// actual download happens on first launch (npx is lazy by design). We don't
-/// pre-warm because that's npm's job, and grove staying out of npm's cache
-/// keeps uninstall clean (we never wrote to it).
-async fn install_npx(reg: &RegistryAgent) -> Result<Json<InstallResponse>, MarketplaceError> {
-    let npx = reg.distribution.npx.as_ref().ok_or_else(|| {
-        MarketplaceError::BadRequest(format!("agent {} has no npx distribution", reg.id))
-    })?;
-
-    // Sanity-check that `npx` itself is on PATH — surface the failure now
-    // rather than at first launch.
-    if !crate::check::command_exists("npx") {
-        return Err(MarketplaceError::BadRequest(
-            "`npx` not found on PATH — install Node.js / npm to use npx-distributed agents"
-                .to_string(),
-        ));
-    }
-
-    let now = chrono::Utc::now();
-    let agent = InstalledAgent {
-        id: reg.id.clone(),
-        version: reg.version.clone(),
-        install_method: InstallMethod::Npx,
-        install_path: None,
-        status: InstallStatus::Installed,
-        failure_reason: None,
-        args_override: Vec::new(),
-        env_override: npx.env.clone(),
-        launch_mode: "acp".to_string(),
-        hidden: false,
-        installed_at: now,
-        updated_at: now,
-    };
-    installed_agents::upsert(&agent)
-        .map_err(|e| MarketplaceError::internal(format!("upsert installed_agents: {}", e)))?;
-    Ok(Json(InstallResponse {
-        agent: InstalledAgentView::from(&agent),
-    }))
+#[derive(Debug, Deserialize)]
+pub struct UninstallQuery {
+    /// REQUIRED — uninstalls a single channel. If no channels remain on the
+    /// agent, the whole row is dropped.
+    pub method: InstallMethod,
 }
 
-/// uvx install — uv's equivalent of npx. Same lazy-launch contract as npx
-/// (mark + version-pin, runtime spawn `uvx <pkg>@<ver>`).
-async fn install_uvx(reg: &RegistryAgent) -> Result<Json<InstallResponse>, MarketplaceError> {
-    let uvx = reg.distribution.uvx.as_ref().ok_or_else(|| {
-        MarketplaceError::BadRequest(format!("agent {} has no uvx distribution", reg.id))
-    })?;
-
-    if !crate::check::command_exists("uvx") {
-        return Err(MarketplaceError::BadRequest(
-            "`uvx` not found on PATH — install astral-sh/uv to use uvx-distributed agents"
-                .to_string(),
-        ));
-    }
-
-    let now = chrono::Utc::now();
-    let agent = InstalledAgent {
-        id: reg.id.clone(),
-        version: reg.version.clone(),
-        install_method: InstallMethod::Uvx,
-        install_path: None,
-        status: InstallStatus::Installed,
-        failure_reason: None,
-        args_override: Vec::new(),
-        env_override: uvx.env.clone(),
-        launch_mode: "acp".to_string(),
-        hidden: false,
-        installed_at: now,
-        updated_at: now,
-    };
-    installed_agents::upsert(&agent)
-        .map_err(|e| MarketplaceError::internal(format!("upsert installed_agents: {}", e)))?;
-    Ok(Json(InstallResponse {
-        agent: InstalledAgentView::from(&agent),
-    }))
-}
-
-/// DELETE /api/v1/agents/marketplace/{id}/install
-pub async fn uninstall_agent(Path(id): Path<String>) -> Result<StatusCode, MarketplaceError> {
+/// DELETE /api/v1/agents/marketplace/{id}/install?method=<method>
+pub async fn uninstall_agent(
+    Path(id): Path<String>,
+    Query(q): Query<UninstallQuery>,
+) -> Result<StatusCode, MarketplaceError> {
+    let id = installed_agents::canonicalize_agent_id(&id);
     let existing = installed_agents::get(&id)
         .map_err(|e| MarketplaceError::internal(format!("installed_agents: {}", e)))?;
     let Some(existing) = existing else {
-        return Err(MarketplaceError::NotFound(format!(
-            "{} not installed by grove",
-            id
-        )));
+        return Err(MarketplaceError::NotFound(format!("{} not installed", id)));
     };
 
-    // Binary installs need on-disk cleanup. Other methods (npx/uvx/external)
-    // have no grove-owned artifact.
-    //
-    // We delete the install **root** computed from id+version, not the stored
-    // `install_path` (which is the binary file inside it — and the field
-    // could in principle be tampered with). Canonicalize both sides and
-    // require strict containment under `~/.grove/agents/` so even if a
-    // future code path lets the registry influence the path, we can't be
-    // tricked into recursing through a symlink or `..` segment into the
-    // user's home directory.
-    if existing.install_method == InstallMethod::Binary {
-        let install_root =
-            crate::storage::agent_install::install_dir(&existing.id, &existing.version);
+    // External channels are auto-managed — the user deregisters by removing
+    // the binary from PATH, not by clicking an uninstall button (no button
+    // is rendered on the frontend). Reject if it leaks through anyway.
+    if matches!(q.method, InstallMethod::External) {
+        return Err(MarketplaceError::BadRequest(
+            "External (auto-detected) installs are managed by PATH presence — \
+             remove the binary from your PATH to deregister."
+                .to_string(),
+        ));
+    }
+
+    // Binary uninstall: cleanup the extracted dir IF the channel being
+    // removed is Binary. Containment check: only paths under
+    // `~/.grove/agents/` are eligible — defends against tampered
+    // install_path values.
+    if matches!(q.method, InstallMethod::Binary) {
+        let install_root = crate::storage::agent_install::install_dir(
+            &existing.id,
+            &registry_version_or_empty(&existing),
+        );
         let agents_root = crate::storage::grove_dir().join("agents");
         if install_root.exists() {
             match (install_root.canonicalize(), agents_root.canonicalize()) {
@@ -741,111 +619,151 @@ pub async fn uninstall_agent(Path(id): Path<String>) -> Result<StatusCode, Marke
         }
     }
 
-    installed_agents::delete(&id)
-        .map_err(|e| MarketplaceError::internal(format!("delete installed_agents: {}", e)))?;
+    installed_agents::remove_installation(&id, q.method)
+        .map_err(|e| MarketplaceError::internal(format!("remove installation: {}", e)))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// PATCH /api/v1/agents/marketplace/{id}
+fn registry_version_or_empty(agent: &InstalledAgent) -> String {
+    agent
+        .installations
+        .iter()
+        .find(|i| i.method == InstallMethod::Binary)
+        .map(|i| i.version.clone())
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PatchRequest {
+    #[serde(default)]
+    pub selected_install_method: Option<InstallMethod>,
     #[serde(default)]
     pub args_override: Option<Vec<String>>,
     #[serde(default)]
     pub env_override: Option<HashMap<String, String>>,
     #[serde(default)]
-    pub launch_mode: Option<String>,
-    #[serde(default)]
     pub hidden: Option<bool>,
 }
 
+/// PATCH /api/v1/agents/marketplace/{id}
 pub async fn patch_agent(
     Path(id): Path<String>,
     Json(body): Json<PatchRequest>,
 ) -> Result<Json<InstalledAgentView>, MarketplaceError> {
-    if let Some(m) = body.launch_mode.as_deref() {
-        if m != "acp" && m != "terminal" {
-            return Err(MarketplaceError::BadRequest(format!(
-                "launch_mode must be 'acp' or 'terminal' (got {:?})",
-                m
-            )));
-        }
-        // Reject modes the agent supplement doesn't claim to support — e.g.
-        // setting an ACP-only agent to `terminal` produces a chat that the
-        // PTY handler rejects at connect time. Catching it at the API
-        // boundary keeps the UI's "supported modes" hint authoritative.
-        // Agents without a supplement entry (registry-only) are accepted
-        // for both modes since we can't prove they don't support either.
-        if let Some(supp) = crate::storage::agent_supplement::find_supplement(&id) {
-            if !supp.supported_launch_modes.contains(&m) {
-                return Err(MarketplaceError::BadRequest(format!(
-                    "{} does not support launch_mode {:?} (supported: {:?})",
-                    id, m, supp.supported_launch_modes
-                )));
+    let id = installed_agents::canonicalize_agent_id(&id);
+    let updated = installed_agents::patch_or_create(
+        &id,
+        body.selected_install_method,
+        body.args_override,
+        body.env_override,
+        body.hidden,
+    )
+    .map_err(|e| match e {
+        // Reject an install-method switch when the target channel isn't
+        // installed → 400 (caller's fault) rather than 500.
+        crate::error::GroveError::StorageTagged {
+            tag: "channel_not_installed",
+            msg,
+        } => MarketplaceError::BadRequest(msg),
+        other => MarketplaceError::internal(format!("patch: {}", other)),
+    })?;
+    Ok(Json(InstalledAgentView::from(&updated)))
+}
+
+// ─── Error type ──────────────────────────────────────────────────────────────
+
+pub enum MarketplaceError {
+    NotFound(String),
+    BadRequest(String),
+    Internal(String),
+}
+
+impl MarketplaceError {
+    fn internal(msg: impl Into<String>) -> Self {
+        MarketplaceError::Internal(msg.into())
+    }
+}
+
+impl IntoResponse for MarketplaceError {
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            MarketplaceError::NotFound(msg) => (StatusCode::NOT_FOUND, msg).into_response(),
+            MarketplaceError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
+            MarketplaceError::Internal(msg) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
             }
         }
     }
-    // installed_agents is the single source of truth for per-agent prefs
-    // (launch_mode, args/env override, hidden). Auto-detected agents get
-    // a minimal `install_method=External` stub upserted here on first
-    // edit — keeps the table sparse but makes lookups uniform.
-    let updated = installed_agents::patch_or_create(
-        &id,
-        body.args_override,
-        body.env_override,
-        body.launch_mode,
-        body.hidden,
-    )
-    .map_err(|e| MarketplaceError::internal(format!("patch: {}", e)))?;
-    Ok(Json(InstalledAgentView::from(&updated)))
 }
+
+// Re-export distribution types under the `distribution` umbrella so older
+// imports continue to work after this rewrite. The frontend doesn't see
+// `Distribution` directly — it only sees `available_install_methods`.
+#[allow(dead_code)]
+pub(crate) fn _types_unused(_n: &NpxDistribution, _u: &UvxDistribution, _b: &BinaryTarget) {}
+
+// Helper for the test in `agent_registry.rs` to add synthetics after a
+// successful refresh — used by `list_marketplace`'s cold-start branch
+// above. Re-injects after the document was wholesale replaced by refresh.
+// (Implemented in agent_registry.rs.)
+#[allow(unused_imports)]
+use agent_registry as _agent_registry_alias;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
-    #[test]
-    fn supplement_only_entry_has_no_distribution() {
-        let supp = agent_supplement::find_supplement("hermes").unwrap();
-        let merged = merge(supp, None, None, "acp".to_string());
-        assert_eq!(merged.source, "supplement-only");
-        assert!(merged.distribution.is_none());
+    fn npx_install(version: &str) -> Installation {
+        Installation {
+            method: InstallMethod::Npx,
+            version: version.into(),
+            install_path: None,
+            status: InstallStatus::Installed,
+            failure_reason: None,
+            installed_at: Utc::now(),
+        }
     }
 
-    #[test]
-    fn merge_prefers_supplement_display_name() {
-        let supp = agent_supplement::find_supplement("claude-acp").unwrap();
-        let reg = RegistryAgent {
+    fn external_install(path: &str) -> Installation {
+        Installation {
+            method: InstallMethod::External,
+            version: "1.0.0".into(),
+            install_path: Some(path.into()),
+            status: InstallStatus::Installed,
+            failure_reason: None,
+            installed_at: Utc::now(),
+        }
+    }
+
+    fn agent_with(installs: Vec<Installation>, selected: InstallMethod) -> InstalledAgent {
+        let now = Utc::now();
+        InstalledAgent {
             id: "claude-acp".into(),
-            name: "Different Name From Registry".into(),
-            version: "9.9.9".into(),
-            description: "from-registry".into(),
-            repository: None,
-            website: None,
-            authors: vec![],
-            license: None,
-            icon: None,
-            distribution: Default::default(),
-        };
-        let merged = merge(supp, Some(reg), None, "acp".to_string());
-        assert_eq!(merged.name, "Claude Code"); // supplement wins
-        assert_eq!(merged.description, "from-registry"); // registry fills the gap
-        assert_eq!(merged.version.as_deref(), Some("9.9.9"));
+            installations: installs,
+            selected_install_method: selected,
+            args_override: vec![],
+            env_override: HashMap::new(),
+            hidden: false,
+            created_at: now,
+            updated_at: now,
+        }
     }
 
     #[test]
-    fn claude_carries_terminal_profile() {
-        let supp = agent_supplement::find_supplement("claude-acp").unwrap();
-        let merged = merge(supp, None, None, "acp".to_string());
-        assert!(merged.terminal_profile.is_some());
-        let tp = merged.terminal_profile.unwrap();
-        assert_eq!(tp.base_command, "claude");
-    }
+    fn install_state_distinguishes_grove_installed_vs_auto_detected() {
+        // Npx with status=Installed → grove-installed.
+        let agent = agent_with(vec![npx_install("1.0.0")], InstallMethod::Npx);
+        assert_eq!(compute_install_state(Some(&agent)), "grove-installed");
 
-    #[test]
-    fn non_terminal_agent_has_no_profile() {
-        let supp = agent_supplement::find_supplement("gemini").unwrap();
-        let merged = merge(supp, None, None, "acp".to_string());
-        assert!(merged.terminal_profile.is_none());
+        // External with status=Installed → auto-detected (Trae path).
+        let agent = agent_with(
+            vec![external_install("/usr/local/bin/traecli")],
+            InstallMethod::External,
+        );
+        assert_eq!(compute_install_state(Some(&agent)), "auto-detected");
+
+        // No row → not-installed.
+        assert_eq!(compute_install_state(None), "not-installed");
     }
 }

@@ -75,7 +75,7 @@ pub(crate) fn fetch_with_credentials(creds: &Credentials) -> Result<AgentUsage, 
         creds.subscription_type.as_deref(),
     );
 
-    let mut usage = AgentUsage::new("claude");
+    let mut usage = AgentUsage::new("claude-acp");
     usage.plan = Some(plan);
 
     push_window(

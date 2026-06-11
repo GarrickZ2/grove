@@ -168,7 +168,7 @@ pub(crate) fn fetch_with_token(token: &str) -> Result<AgentUsage, String> {
         return Err("no usable Copilot quota data".into());
     }
 
-    let mut usage = AgentUsage::new("copilot");
+    let mut usage = AgentUsage::new("github-copilot-cli");
     usage.plan = Some(format_plan(body.copilot_plan.as_deref()));
 
     let resets_at = body.quota_reset_date.clone();

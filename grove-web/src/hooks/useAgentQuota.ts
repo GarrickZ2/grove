@@ -3,14 +3,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAgentUsage, type AgentUsage } from '../api/agentUsage';
 
 /**
- * Built-in agent IDs that support quota fetching. Custom agents and other
- * built-ins (Droid, Kimi, …) return `null` and the badge hides the quota.
+ * Canonical agent IDs that support quota fetching. Custom agents and other
+ * built-ins return `null` and the badge hides the quota. Post-v2.6 every
+ * chat.agent is a canonical id (see `installed_agents::canonicalize_agent_id`).
  */
 const SUPPORTED_AGENTS = new Set([
-  'claude',
-  'codex',
+  'claude-acp',
+  'codex-acp',
   'gemini',
-  'copilot',
+  'github-copilot-cli',
   'kimi',
   'opencode',
   'minimax',

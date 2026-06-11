@@ -19,7 +19,7 @@
  * change.
  */
 
-import { useSyncExternalStore, type ComponentType } from "react";
+import { createElement, useSyncExternalStore, type ComponentType } from "react";
 import { Bot } from "lucide-react";
 import {
   Claude,
@@ -27,6 +27,7 @@ import {
   Copilot,
   Cursor,
   Trae,
+  TraeX,
   Qwen,
   Kimi,
   OpenAI,
@@ -71,7 +72,7 @@ const AGENT_TABLE: AgentRow[] = [
     label: "Claude Code",
     staticFile: "claude-color.svg",
     Component: Claude.Color,
-    aliases: ["claude-code", "claude-color", "claude code", "claude-agent-acp", "claude-code-acp", "@agentclientprotocol/claude-agent-acp"],
+    aliases: ["claude-code", "claude-acp", "claude-color", "claude code", "claude-agent-acp", "claude-code-acp", "@agentclientprotocol/claude-agent-acp"],
   },
   {
     key: "codex",
@@ -99,7 +100,7 @@ const AGENT_TABLE: AgentRow[] = [
     label: "GitHub Copilot",
     staticFile: "githubcopilot.svg",
     Component: Copilot.Color,
-    aliases: ["gh-copilot", "githubcopilot", "github copilot"],
+    aliases: ["gh-copilot", "githubcopilot", "github copilot", "github-copilot-cli"],
   },
   {
     key: "hermes",
@@ -147,7 +148,7 @@ const AGENT_TABLE: AgentRow[] = [
     label: "Qwen",
     staticFile: "qwen-color.svg",
     Component: Qwen.Color,
-    aliases: ["qwen-color"],
+    aliases: ["qwen-color", "qwen-code"],
   },
   {
     key: "traecli",
@@ -155,6 +156,14 @@ const AGENT_TABLE: AgentRow[] = [
     staticFile: "trae-color.svg",
     Component: Trae.Color,
     aliases: ["trae", "trae-color"],
+  },
+  {
+    // TraeX — distinct monochrome icon (traex.svg) and label.
+    // Own row so `resolveAgentIcon("traex").label` returns "TraeX".
+    key: "traex",
+    label: "TraeX",
+    staticFile: "traex.svg",
+    Component: TraeX,
   },
   {
     key: "windsurf",
@@ -182,6 +191,74 @@ const FALLBACK: AgentIconInfo = {
   label: "",
   canonicalKey: "",
 };
+
+// ─── Marketplace icon registry (CDN-served fallback) ─────────────────────────
+//
+// When no bundled brand icon matches, we fall back to whatever the agent's
+// Marketplace registry entry advertised. Surfaces that fetch the marketplace
+// (MarketplaceModal, useACPAvailability, App config validator) call
+// `setMarketplaceIcons` to refresh this map; resolveAgentIcon then consumes
+// it transparently so consumers everywhere keep using a single util.
+//
+// Priority is fixed:  bundled brand SVG  >  marketplace icon_url  >  Bot.
+const marketplaceIcons: Map<string, string> = new Map();
+
+/** Wrap a CDN URL as a React component matching the {size, className} contract
+ *  the rest of the icon system uses. Returned components are stable per URL
+ *  (memoized below) so React doesn't see a fresh fn each render. */
+const imageComponentCache: Map<string, ComponentType<{ size?: number; className?: string }>> =
+  new Map();
+
+function getImageComponent(url: string): ComponentType<{ size?: number; className?: string }> {
+  const cached = imageComponentCache.get(url);
+  if (cached) return cached;
+  const Comp: ComponentType<{ size?: number; className?: string }> = ({ size, className }) =>
+    createElement("img", {
+      src: url,
+      alt: "",
+      width: size,
+      height: size,
+      style: { width: size, height: size },
+      className,
+      // NOT `loading="lazy"`. These icons are tiny (~20px) and live inside
+      // modals / popovers that animate in — the browser's lazy-load
+      // viewport detection misses them and the image never paints until
+      // the user scrolls or resizes, manifesting as "icon takes many
+      // refreshes to show". Eager load is the correct fit.
+    });
+  imageComponentCache.set(url, Comp);
+  return Comp;
+}
+
+/** Bulk-update the marketplace icon map. Fire whenever marketplace data
+ *  is fetched.
+ *
+ *  Merge semantics (not clear-and-rebuild):
+ *    - Empty `entries` → no-op. A fail-open / loading code path would
+ *      otherwise erase every CDN icon until the next successful call.
+ *    - Entry with a non-null `icon_url` → upsert.
+ *    - Entry with an explicit `null` `icon_url` → DELETE the stored URL.
+ *      Lets upstream registry retire an icon without leaving a stale
+ *      URL pinned forever. */
+export function setMarketplaceIcons(
+  entries: Array<{ id: string; icon_url: string | null }>,
+): void {
+  if (entries.length === 0) return;
+  let changed = false;
+  for (const e of entries) {
+    if (e.icon_url) {
+      if (marketplaceIcons.get(e.id) !== e.icon_url) {
+        marketplaceIcons.set(e.id, e.icon_url);
+        changed = true;
+      }
+    } else if (marketplaceIcons.delete(e.id)) {
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  personaRegistryVersion += 1; // reuse the same React subscription bus
+  for (const fn of personaRegistryListeners) fn();
+}
 
 // ─── Custom Agent (persona) registry ─────────────────────────────────────────
 //
@@ -276,13 +353,28 @@ export function resolveAgentIcon(key: string | null | undefined): AgentIconInfo 
     };
   }
   const row = TABLE_BY_KEY[key.toLowerCase()];
-  if (!row) return { ...FALLBACK, label: key, canonicalKey: key };
-  return {
-    Component: row.Component ?? Bot,
-    url: row.staticFile ? `/agent-icon/${row.staticFile}` : null,
-    label: row.label,
-    canonicalKey: row.key,
-  };
+  if (row) {
+    return {
+      Component: row.Component ?? Bot,
+      url: row.staticFile ? `/agent-icon/${row.staticFile}` : null,
+      label: row.label,
+      canonicalKey: row.key,
+    };
+  }
+  // No bundled brand icon → fall back to whatever the marketplace CDN
+  // shipped for this id (if anything). Centralized here so every consumer
+  // (chat list, Open Sessions, Marketplace modal, agent picker) gets the
+  // same priority: local bundle > marketplace CDN > Bot.
+  const cdnUrl = marketplaceIcons.get(key);
+  if (cdnUrl) {
+    return {
+      Component: getImageComponent(cdnUrl),
+      url: cdnUrl,
+      label: key,
+      canonicalKey: key,
+    };
+  }
+  return { ...FALLBACK, label: key, canonicalKey: key };
 }
 
 /** Convenience for raw-DOM consumers: just the static URL or null. */

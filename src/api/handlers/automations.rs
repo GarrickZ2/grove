@@ -187,11 +187,10 @@ fn validate_input(
                     "session_template.agent is required".into(),
                 ));
             }
-            // Resolve aliases (e.g. "claude code" → "claude") and require an
-            // installed_agents row exists — otherwise the executor would
-            // silently default launch_mode to "acp" at run time, which can
-            // mismatch the chat's real launch behaviour (Bug M5).
-            let canonical = crate::storage::agent_supplement::resolve_agent_id(agent).into_owned();
+            // Canonicalize to match what `executor::run` does downstream —
+            // a legacy id (`claude`, `gh-copilot`, …) was previously
+            // rejected here even though execution would resolve fine.
+            let canonical = crate::storage::installed_agents::canonicalize_agent_id(agent);
             let installed = crate::storage::installed_agents::get(&canonical)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if installed.is_none() {

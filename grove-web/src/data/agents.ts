@@ -1,5 +1,12 @@
 /**
- * Agent option catalog — single source of truth for agent metadata.
+ * Agent option catalog — UI metadata for the agent picker.
+ *
+ * After the backend ACP refactor, "is this agent available?" comes
+ * exclusively from the marketplace endpoint (`listMarketplace()` →
+ * `install_state`). This file is now a *static metadata-only* catalog
+ * for icon + label fallback used by surfaces that don't fetch
+ * marketplace data directly (e.g. tray popover label resolution,
+ * AgentPicker dropdown icons).
  *
  * Lives in `data/` (not `components/ui/`) so lightweight surfaces like the
  * menubar tray popover can import the catalog without dragging in the
@@ -29,77 +36,20 @@ export interface AgentOption {
   icon?: React.ComponentType<{ size?: number; className?: string }>;
   disabled?: boolean;
   disabledReason?: string;
-  /** Command to check in terminal mode (defaults to first word of value) */
-  terminalCheck?: string;
-  /** Command to check in chat/ACP mode */
-  acpCheck?: string;
-  /** Fallback ACP command (deprecated, still functional) */
-  acpFallback?: string;
-  /** npm package for npx fallback when acpCheck not on PATH */
-  npxPackage?: string;
-  /**
-   * Launch modes this agent supports. Omitted = ACP only (the default; covers
-   * 13 of the 14 built-in agents). Set explicitly when an agent supports
-   * spawning under a raw PTY (no protocol). Currently only Claude Code offers
-   * `--session-id` / `--resume <uuid>` semantics needed for terminal-mode
-   * resume across Grove restarts.
-   */
-  supportedLaunchModes?: ("acp" | "terminal")[];
 }
 
 export const agentOptions: AgentOption[] = [
-  { id: "claude", label: "Claude Code", value: "claude", icon: Claude.Color, terminalCheck: "claude", acpCheck: "claude-agent-acp", acpFallback: "claude-code-acp", npxPackage: "@agentclientprotocol/claude-agent-acp", supportedLaunchModes: ["acp", "terminal"] },
-  { id: "codex", label: "CodeX", value: "codex", icon: OpenAI, terminalCheck: "codex", acpCheck: "codex-acp", npxPackage: "@zed-industries/codex-acp" },
-  { id: "cursor-agent", label: "Cursor", value: "cursor", icon: Cursor, terminalCheck: "cursor-agent", acpCheck: "cursor-agent" },
-  { id: "gemini", label: "Gemini", value: "gemini", icon: Gemini.Color, terminalCheck: "gemini", acpCheck: "gemini" },
-  { id: "gh-copilot", label: "GitHub Copilot", value: "copilot", icon: Copilot.Color, terminalCheck: "copilot", acpCheck: "copilot" },
-  { id: "hermes", label: "Hermes", value: "hermes", icon: Hermes, terminalCheck: "hermes", acpCheck: "hermes acp" },
-  { id: "junie", label: "Junie", value: "junie", icon: Junie.Color, terminalCheck: "junie", acpCheck: "junie" },
-  { id: "kimi", label: "Kimi", value: "kimi", icon: Kimi.Color, terminalCheck: "kimi", acpCheck: "kimi" },
-  { id: "kiro", label: "Kiro", value: "kiro", icon: Kiro, terminalCheck: "kiro-cli", acpCheck: "kiro-cli acp" },
-  { id: "openclaw", label: "OpenClaw", value: "openclaw", icon: OpenClaw.Color, terminalCheck: "openclaw", acpCheck: "openclaw acp" },
-  { id: "opencode", label: "OpenCode", value: "opencode", icon: OpenCode, terminalCheck: "opencode", acpCheck: "opencode" },
-  { id: "qwen", label: "Qwen", value: "qwen", icon: Qwen.Color, terminalCheck: "qwen", acpCheck: "qwen" },
-  { id: "traecli", label: "Trae", value: "traecli", icon: Trae.Color, terminalCheck: "traecli", acpCheck: "traecli" },
+  { id: "claude-acp", label: "Claude Code", value: "claude-acp", icon: Claude.Color },
+  { id: "codex-acp", label: "CodeX", value: "codex-acp", icon: OpenAI },
+  { id: "cursor", label: "Cursor", value: "cursor", icon: Cursor },
+  { id: "gemini", label: "Gemini", value: "gemini", icon: Gemini.Color },
+  { id: "github-copilot-cli", label: "GitHub Copilot", value: "github-copilot-cli", icon: Copilot.Color },
+  { id: "hermes", label: "Hermes", value: "hermes", icon: Hermes },
+  { id: "junie", label: "Junie", value: "junie", icon: Junie.Color },
+  { id: "kimi", label: "Kimi", value: "kimi", icon: Kimi.Color },
+  { id: "kiro", label: "Kiro", value: "kiro", icon: Kiro },
+  { id: "openclaw", label: "OpenClaw", value: "openclaw", icon: OpenClaw.Color },
+  { id: "opencode", label: "OpenCode", value: "opencode", icon: OpenCode },
+  { id: "qwen-code", label: "Qwen", value: "qwen-code", icon: Qwen.Color },
+  { id: "traecli", label: "Trae", value: "traecli", icon: Trae.Color },
 ];
-
-export function getAcpAvailabilityCommands(options: AgentOption[] = agentOptions): string[] {
-  const commands = new Set<string>();
-  for (const opt of options) {
-    if (!opt.acpCheck) continue;
-    if (opt.terminalCheck) commands.add(opt.terminalCheck);
-    if (opt.acpCheck) commands.add(opt.acpCheck);
-    if (opt.acpFallback) commands.add(opt.acpFallback);
-    if (opt.npxPackage) commands.add("npx");
-  }
-  return [...commands];
-}
-
-export function applyAcpAvailability(
-  opt: AgentOption,
-  availability: Record<string, boolean>,
-  loaded: boolean,
-): AgentOption {
-  if (!loaded || !opt.acpCheck) return opt;
-
-  const terminalOk = opt.terminalCheck ? availability[opt.terminalCheck] !== false : true;
-  const acpOk =
-    (opt.acpCheck && availability[opt.acpCheck] === true) ||
-    (opt.acpFallback && availability[opt.acpFallback] === true);
-  const npxOk = !!opt.npxPackage && availability["npx"] === true;
-  const available = terminalOk && (acpOk || npxOk);
-
-  if (available) return opt;
-
-  const missing = !terminalOk
-    ? opt.terminalCheck
-    : opt.acpFallback
-      ? `${opt.acpCheck} or ${opt.acpFallback}${opt.npxPackage ? " or npx" : ""}`
-      : `${opt.acpCheck}${opt.npxPackage ? " or npx" : ""}`;
-
-  return {
-    ...opt,
-    disabled: true,
-    disabledReason: `${missing} not found`,
-  };
-}

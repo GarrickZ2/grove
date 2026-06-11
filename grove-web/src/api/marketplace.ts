@@ -18,85 +18,75 @@ export type InstallState =
   | "install-failed"
   | "not-installed";
 
-export interface NpxDistribution {
-  package: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
-
-export interface UvxDistribution {
-  package: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
-
-export interface BinaryTarget {
-  archive: string;
-  cmd: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
-
-export interface DistributionView {
-  npx?: NpxDistribution | null;
-  uvx?: UvxDistribution | null;
-  binary?: Record<string, BinaryTarget>;
-}
-
-export interface ProbeView {
-  terminal_check: string | null;
-  acp_check: string | null;
-  acp_fallback: string | null;
-  npx_package: string | null;
-  results: Record<string, boolean>;
-}
-
-export interface TerminalProfileView {
-  base_command: string;
-  fresh_args: string[];
-  resume_args: string[];
-  resume_check_pattern: string;
+export interface Installation {
+  method: InstallMethod;
+  version: string;
+  install_path: string | null;
+  status: InstallStatus;
+  failure_reason: string | null;
+  /** RFC3339 timestamp. */
+  installed_at: string;
 }
 
 export interface InstalledAgentView {
-  version: string;
-  install_method: InstallMethod;
-  status: InstallStatus;
-  failure_reason: string | null;
+  installations: Installation[];
+  selected_install_method: InstallMethod;
   args_override: string[];
   env_override: Record<string, string>;
-  launch_mode: string;
   hidden: boolean;
+}
+
+/** Concrete executable grove would spawn for this agent. */
+export interface BinaryView {
+  /** Head command (`traecli`, `claude`, ...). */
+  command: string;
+  /** Absolute path from PATH lookup. Null if the binary was on PATH at
+   *  probe time but disappeared by the time we resolved it. */
+  path: string | null;
+  /** Version string for grove-installed channels (npx/binary/uvx). For
+   *  auto-detected External installs this is always empty by design —
+   *  probing `--version` per detected binary was too slow on the
+   *  Marketplace hot path. */
+  version: string | null;
 }
 
 export interface MarketplaceAgent {
   id: string;
-  legacy_aliases: string[];
   name: string;
   description: string;
-  icon_id: string | null;
-  icon_url: string | null;
+  /** Latest version from registry; null for synthetic Trae/TraeX. */
   version: string | null;
   repository: string | null;
   website: string | null;
   authors: string[];
   license: string | null;
-  source: "registry" | "supplement-only";
-  distribution: DistributionView | null;
-  supported_launch_modes: string[];
+  /** CDN icon URL (registry-provided) or grove-served asset URL for synthetic agents. */
+  icon_url: string | null;
+  /** Install methods exposed by the registry distribution. */
+  available_install_methods: InstallMethod[];
+  /** True if this agent's registry entry declares a terminal_launch
+   *  config — picking External will spawn it via PTY. */
+  supports_terminal_launch: boolean;
   install_state: InstallState;
-  probe: ProbeView;
-  terminal_profile: TerminalProfileView | null;
   installed: InstalledAgentView | null;
-  /** Effective launch mode from Config.agent_launch_modes — works for any
-   *  agent, including auto-detected (no install row required). */
-  launch_mode: string;
+  binary: BinaryView | null;
 }
 
 export interface MarketplaceResponse {
   agents: MarketplaceAgent[];
   registry_fetched_at: string | null;
   registry_stale: boolean;
+  /** Curated agent ids (kept for backward compatibility — backend now seeds
+   *  curated agents into `installed_agents` so they show up in Installed
+   *  tab naturally). */
+  curated: string[];
+}
+
+export interface PatchAgentRequest {
+  selected_install_method?: InstallMethod;
+  args_override?: string[];
+  env_override?: Record<string, string>;
+  hidden?: boolean;
 }
 
 export async function listMarketplace(): Promise<MarketplaceResponse> {
@@ -110,27 +100,27 @@ export async function refreshRegistry(): Promise<MarketplaceResponse> {
   );
 }
 
+/** Install ONE channel for an agent. The same agent may be installed via
+ *  multiple methods — installing one channel does not remove others. */
 export async function installAgent(
   id: string,
-  method?: InstallMethod,
+  method: InstallMethod,
 ): Promise<{ agent: InstalledAgentView }> {
-  return apiClient.post<{ method?: InstallMethod }, { agent: InstalledAgentView }>(
+  return apiClient.post<{ method: InstallMethod }, { agent: InstalledAgentView }>(
     `/api/v1/agents/marketplace/${encodeURIComponent(id)}/install`,
-    method ? { method } : {},
+    { method },
   );
 }
 
-export async function uninstallAgent(id: string): Promise<void> {
+/** Uninstall ONE channel by method. Backend deletes the whole agent row
+ *  when the last remaining channel is removed. */
+export async function uninstallAgent(
+  id: string,
+  method: InstallMethod,
+): Promise<void> {
   await apiClient.delete<void>(
-    `/api/v1/agents/marketplace/${encodeURIComponent(id)}/install`,
+    `/api/v1/agents/marketplace/${encodeURIComponent(id)}/install?method=${encodeURIComponent(method)}`,
   );
-}
-
-export interface PatchAgentRequest {
-  args_override?: string[];
-  env_override?: Record<string, string>;
-  launch_mode?: string;
-  hidden?: boolean;
 }
 
 export async function patchAgent(

@@ -572,18 +572,44 @@ fn resolve_chat(a: &Automation, task_id: &str) -> Result<String, String> {
                 .clone()
                 .unwrap_or_else(|| format!("{} {}", a.name, stamp));
 
-            let canonical =
-                crate::storage::agent_supplement::resolve_agent_id(&template.agent).into_owned();
-            let launch_mode = installed_agents::get(&canonical)
-                .ok()
-                .flatten()
-                .map(|r| r.launch_mode)
-                .unwrap_or_else(|| "acp".to_string());
+            // Canonicalize the template agent id once. Legacy templates
+            // (`claude`, `gh-copilot`, …) need to resolve to the post-v2.6
+            // canonical row; we also persist the canonical id on the chat
+            // so subsequent reads stay consistent.
+            let canonical_agent = installed_agents::canonicalize_agent_id(&template.agent);
+
+            // Derive launch_mode from selected channel + registry terminal_launch
+            // (same rule as `acp::create_chat`). External + terminal_launch
+            // present → "terminal"; everything else → "acp".
+            let launch_mode = {
+                let installed = installed_agents::get(&canonical_agent).ok().flatten();
+                let is_terminal = installed
+                    .as_ref()
+                    .filter(|r| {
+                        matches!(
+                            r.selected_install_method,
+                            installed_agents::InstallMethod::External
+                        )
+                    })
+                    .and_then(|_| {
+                        crate::storage::agent_registry::get()
+                            .agents
+                            .iter()
+                            .find(|a| a.id == canonical_agent)
+                            .and_then(|a| a.terminal_launch.clone())
+                    })
+                    .is_some();
+                if is_terminal {
+                    "terminal".to_string()
+                } else {
+                    "acp".to_string()
+                }
+            };
 
             let chat = tasks::ChatSession {
                 id: tasks::generate_chat_id(),
                 title,
-                agent: template.agent.clone(),
+                agent: canonical_agent,
                 acp_session_id: None,
                 created_at: now,
                 duty: None,

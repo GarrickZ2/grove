@@ -36,8 +36,9 @@ import { AuthGate } from "./components/AuthGate";
 import { OptionalPerfProfiler } from "./perf/profilerShim";
 import type { Task } from "./data/types";
 import { mockConfig } from "./data/mockData";
-import { getConfig, patchConfig, checkCommands, openIDE, openTerminal, listBaseAgents } from "./api";
-import { agentOptions } from "./components/ui";
+import { getConfig, patchConfig, openIDE, openTerminal } from "./api";
+import { listMarketplace } from "./api/marketplace";
+import { setMarketplaceIcons } from "./utils/agentIcon";
 import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
 import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
@@ -421,30 +422,45 @@ function AppContent() {
   useEffect(() => {
     const initializeAgentConfig = async () => {
       try {
-        // Load current config
-        const cfg = await getConfig();
+        // Load current config + marketplace snapshot (single source of truth
+        // for "what's launchable on this machine").
+        const [cfg, marketplace] = await Promise.all([
+          getConfig(),
+          listMarketplace(),
+        ]);
 
-        // Check command availability
-        const cmds = new Set<string>();
-        for (const opt of agentOptions) {
-          if (opt.terminalCheck) cmds.add(opt.terminalCheck);
-          if (opt.acpCheck) cmds.add(opt.acpCheck);
-        }
-        const commandAvailability = await checkCommands([...cmds]);
+        // Refresh the global icon CDN map (bundled brand > CDN > Bot).
+        setMarketplaceIcons(
+          marketplace.agents.map((a) => ({ id: a.id, icon_url: a.icon_url })),
+        );
+
+        const launchable = marketplace.agents.filter(
+          (a) =>
+            (a.install_state === "grove-installed" ||
+              a.install_state === "auto-detected") &&
+            !(a.installed?.hidden ?? false),
+        );
+        const launchableIds = new Set(launchable.map((a) => a.id));
+        const terminalIds = new Set(
+          launchable
+            .filter((a) => a.supports_terminal_launch)
+            .map((a) => a.id),
+        );
+
+        // Post-v2.6 migration, config.toml's agent_command values are
+        // already canonical, so a direct set lookup is enough.
+        const matches = (saved: string, set: Set<string>): boolean => set.has(saved);
 
         let needsUpdate = false;
         const updates: { layout?: { agent_command?: string }, acp?: { agent_command?: string } } = {};
 
-        // Check Terminal Agent
+        // Terminal agent fallback: only kicks in if user's chosen one isn't
+        // installed terminal-capable any more.
         if (cfg.layout?.agent_command) {
-          const currentAgent = agentOptions.find(a => a.id === cfg.layout.agent_command);
-          const cmd = currentAgent?.terminalCheck;
-          if (cmd && commandAvailability[cmd] === false) {
-            // Find first available terminal agent
-            const firstAvailable = agentOptions.find(a => {
-              const check = a.terminalCheck;
-              return check && commandAvailability[check] !== false;
-            });
+          if (!matches(cfg.layout.agent_command, terminalIds)) {
+            const firstAvailable = launchable.find((a) =>
+              a.supports_terminal_launch,
+            );
             if (firstAvailable) {
               updates.layout = { agent_command: firstAvailable.id };
               needsUpdate = true;
@@ -452,17 +468,10 @@ function AppContent() {
           }
         }
 
-        // Check Chat Agent — use the backend's authoritative base-agent
-        // availability rather than checkCommands(acpCheck). The ACP bridges for
-        // claude / codex run via npx (claude-agent-acp / codex-acp) and are not
-        // PATH binaries, so the command probe would wrongly mark them
-        // unavailable and clobber the saved choice with the first PATH-installed
-        // agent (Gemini). The base-agents endpoint accounts for the npx bridges.
+        // Chat / ACP agent fallback: anything launchable is acp-capable.
         if (cfg.acp?.agent_command) {
-          const baseAgents = await listBaseAgents();
-          const current = baseAgents.find(b => b.id === cfg.acp.agent_command);
-          if (current && !current.available) {
-            const firstAvailable = baseAgents.find(b => b.available);
+          if (!matches(cfg.acp.agent_command, launchableIds)) {
+            const firstAvailable = launchable[0];
             if (firstAvailable) {
               updates.acp = { agent_command: firstAvailable.id };
               needsUpdate = true;
@@ -470,7 +479,6 @@ function AppContent() {
           }
         }
 
-        // Save updated config if needed
         if (needsUpdate) {
           await patchConfig(updates);
         }

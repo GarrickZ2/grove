@@ -74,8 +74,6 @@ pub fn create_api_router() -> Router {
             "/config/applications/icon",
             get(handlers::config::get_app_icon),
         )
-        // Agent discovery API
-        .route("/agents/base", get(handlers::agents::list_base_agents))
         // Custom Agent (Persona) API
         .route(
             "/custom-agents",
@@ -1515,6 +1513,41 @@ pub async fn start_server(
         loop {
             ticker.tick().await;
             crate::storage::agent_registry::refresh_if_stale().await;
+        }
+    });
+
+    // Boot-time PATH scan: register/deregister External installations for
+    // any registry agent whose binary is (or isn't) on the user's PATH.
+    // Without this, the first chat the user opens would resolve against a
+    // stale installed_agents row (e.g. claude-acp's External installation
+    // missing because no Marketplace render has triggered the scan yet),
+    // which manifests as "Waiting for connection…" stuck states.
+    //
+    // Runs once at startup on the blocking pool — the scan is just PATH
+    // stats + sqlite writes, fast but synchronous. We don't await it from
+    // the boot path; the chat WS / launch handlers tolerate missing rows
+    // (resolve_agent falls back to defaults), this just makes the steady
+    // state arrive sooner.
+    tokio::task::spawn_blocking(|| {
+        let registry = crate::storage::agent_registry::get();
+        if let Err(e) = crate::storage::installed_agents::auto_scan_path_binaries(&registry) {
+            eprintln!("[startup] PATH binary scan failed: {}", e);
+        }
+    });
+
+    // Curated agent seed: guarantees every chat / config referencing a
+    // curated id (`claude-acp`, `codex-acp`, `gemini`, `opencode`,
+    // `github-copilot-cli`, `qwen-code`) has a resolvable row before the
+    // user opens any UI. Idempotent — only inserts rows that don't
+    // already exist; never touches user customizations. This covers BOTH:
+    //   - fresh installs (no prior rows) — same effect as the old
+    //     `seed_curated_if_fresh` Marketplace-handler call
+    //   - v2.5→v2.6 upgrades whose chats referenced builtin agents that
+    //     previously needed no `installed_agents` row
+    tokio::task::spawn_blocking(|| {
+        let registry = crate::storage::agent_registry::get();
+        if let Err(e) = crate::storage::installed_agents::ensure_curated_agents_seeded(&registry) {
+            eprintln!("[startup] curated agent seed failed: {}", e);
         }
     });
 

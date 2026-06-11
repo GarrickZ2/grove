@@ -203,6 +203,13 @@ pub async fn check_one(Path(name): Path<String>) -> Json<Option<DependencyStatus
 }
 
 /// POST /api/v1/env/check-commands — batch check if commands exist on PATH
+///
+/// §8: kept as a thin wrapper around `crate::check::command_exists` for
+/// the dashboard's `isOpenCodeAvailable` etc. probes. The pre-§8
+/// `GROVE_TEST_NO_ACP=1` mock + `ACP_AGENT_COMMANDS` whitelist are gone —
+/// marketplace probe results are the source of truth for "is this agent
+/// available", and they come from `GET /api/v1/agents/marketplace` not
+/// from a side-channel env check.
 #[derive(Deserialize)]
 pub struct CheckCommandsRequest {
     pub commands: Vec<String>,
@@ -213,34 +220,11 @@ pub struct CheckCommandsResponse {
     pub results: HashMap<String, bool>,
 }
 
-/// Known ACP agent commands — forced to false when GROVE_TEST_NO_ACP=1
-const ACP_AGENT_COMMANDS: &[&str] = &[
-    "claude-agent-acp",
-    "claude-code-acp",
-    "codex-acp",
-    "npx",
-    "gemini",
-    "copilot",
-    "opencode",
-    "qwen",
-    "kimi",
-    "traecli",
-    "cursor-agent",
-    "agent",
-    "junie",
-];
-
 pub async fn check_commands(Json(body): Json<CheckCommandsRequest>) -> Json<CheckCommandsResponse> {
-    let test_no_acp = std::env::var("GROVE_TEST_NO_ACP").is_ok();
-
     let results: HashMap<String, bool> = body
         .commands
         .iter()
         .map(|cmd| {
-            // 测试模式：GROVE_TEST_NO_ACP=1 模拟所有 ACP agent 命令不存在
-            if test_no_acp && ACP_AGENT_COMMANDS.contains(&cmd.as_str()) {
-                return (cmd.clone(), false);
-            }
             let exists = crate::check::command_exists(cmd);
             (cmd.clone(), exists)
         })

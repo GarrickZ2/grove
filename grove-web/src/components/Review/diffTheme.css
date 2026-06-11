@@ -245,6 +245,11 @@
   color: var(--color-highlight);
 }
 
+.diff-sidebar-item.context-target:not(.active) {
+  background: color-mix(in srgb, var(--color-highlight) 10%, var(--color-bg-secondary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-highlight) 40%, transparent);
+}
+
 /* Virtual file items (planned files) */
 .diff-sidebar-item.virtual {
   opacity: 0.75;

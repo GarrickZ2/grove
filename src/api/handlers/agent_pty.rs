@@ -82,24 +82,28 @@ pub async fn agent_pty_handler(
         )));
     }
 
-    // Currently only claude exposes the `--session-id` / `--resume` UUID
-    // contract that makes resume across Grove restarts work. Other agents
-    // can be added once they have an equivalent contract.
+    // Look up the agent's `terminal_launch` config from the registry. This
+    // is the ONE place that says "this agent supports PTY launch and here
+    // are the argv flags". Set by `inject_grove_supplements` for claude-acp;
+    // any future PTY agent gets a row in the same supplement.
     //
-    // Resolve through the alias map so both `claude` (legacy id stored by
-    // the chat-create path) and `claude-acp` (canonical registry id) hit
-    // the same branch — without this, swapping write/read sides
-    // legacy↔canonical anywhere would produce confusing "not supported"
-    // errors. Today writes use legacy and we accept both sides; future
-    // canonicalization of chat.agent stays safe.
-    let canonical_agent =
-        crate::storage::agent_supplement::resolve_agent_id(&chat.agent).into_owned();
-    if canonical_agent != "claude-acp" {
-        return Err(AgentPtyError::BadRequest(format!(
-            "terminal launch_mode is only supported for 'claude' (got {:?})",
-            chat.agent
-        )));
-    }
+    // Canonicalize first — chat.agent could still be a legacy id on
+    // sessions written before the v2.6 remap migration.
+    let canonical_agent = crate::storage::installed_agents::canonicalize_agent_id(&chat.agent);
+    let registry = crate::storage::agent_registry::get();
+    let terminal_launch = registry
+        .agents
+        .iter()
+        .find(|a| a.id == canonical_agent)
+        .and_then(|a| a.terminal_launch.clone())
+        .ok_or_else(|| {
+            AgentPtyError::BadRequest(format!(
+                "agent {:?} does not have a terminal_launch config — \
+                 PTY mode requires the agent's registry entry to declare \
+                 the launch contract",
+                canonical_agent
+            ))
+        })?;
 
     // First-launch vs resume:
     //   acp_session_id is None  → generate UUID, run `claude --session-id <uuid>`
@@ -128,16 +132,15 @@ pub async fn agent_pty_handler(
         Some(&chat_id),
     );
 
-    // Per-agent overrides from the marketplace settings sheet (matches the
-    // ACP launcher's behavior). Claude is always npx/external in practice
-    // — `spawn_for` returns None for External so we fall back to plain
-    // `claude` on PATH (terminal mode's only supported binary today). When
-    // a future terminal-capable agent ships as Binary, `spawn_for` honors
-    // install_path (with disk-existence fallback) automatically.
+    // Terminal mode launches the bare CLI under a PTY using the contract
+    // declared in registry.terminal_launch:
+    //   - cmd: which binary to spawn (resolved via External installation's
+    //     install_path; falls back to bare cmd for PATH lookup).
+    //   - session_id_arg / resume_arg: how to pass the session UUID.
+    //   - mcp_config_arg: how to point the agent at grove's MCP config.
     let installed_record = crate::storage::installed_agents::get(&canonical_agent)
         .ok()
         .flatten();
-    let supplement = crate::storage::agent_supplement::find_supplement(&canonical_agent);
     let extra_args: Vec<String> = installed_record
         .as_ref()
         .map(|r| r.args_override.clone())
@@ -147,10 +150,45 @@ pub async fn agent_pty_handler(
             grove_env.insert(k.clone(), v.clone());
         }
     }
-    let (claude_cmd, prefix_args) = installed_record
+    // Prefer the resolved absolute path from the External installation
+    // (`auto_scan_path_binaries` records it on PATH detection). Falls back
+    // to the bare cmd name for PATH lookup at spawn time if no record.
+    let claude_cmd = installed_record
         .as_ref()
-        .and_then(|r| crate::storage::installed_agents::spawn_for(r, supplement))
-        .unwrap_or_else(|| ("claude".to_string(), Vec::new()));
+        .and_then(|r| {
+            r.installations
+                .iter()
+                .find(|i| {
+                    matches!(
+                        i.method,
+                        crate::storage::installed_agents::InstallMethod::External
+                    )
+                })
+                .and_then(|i| i.install_path.clone())
+        })
+        .unwrap_or_else(|| terminal_launch.cmd.clone());
+
+    // Pre-flight check: refuse the WebSocket upgrade with a clear 400
+    // when the binary isn't actually launchable. Without this, the WS
+    // upgrades, claude is spawned, fails immediately because the binary
+    // isn't on PATH, and the user sees a silent "Disconnected" with no
+    // hint of why. This is the most common upgrade-day failure mode:
+    // user had a terminal-mode chat in v2.5 but the `claude` CLI isn't
+    // on this machine's PATH right now.
+    let bin_ok = if std::path::Path::new(&claude_cmd).is_absolute() {
+        std::path::Path::new(&claude_cmd).exists()
+    } else {
+        crate::check::command_exists(&claude_cmd)
+    };
+    if !bin_ok {
+        return Err(AgentPtyError::BadRequest(format!(
+            "Terminal-mode chats require the `{}` binary on PATH. \
+             Install it (e.g. `npm install -g @anthropic-ai/claude-code` for Claude) \
+             or switch this chat to ACP mode in the agent selector.",
+            terminal_launch.cmd,
+        )));
+    }
+    let prefix_args: Vec<String> = Vec::new();
 
     // agent_graph MCP token: register one for this chat so claude (via
     // `grove mcp-bridge` spawned out of the mcp-config below) can reach
@@ -191,13 +229,13 @@ pub async fn agent_pty_handler(
         cmd.arg(arg);
     }
     if is_resume {
-        cmd.arg("--resume");
+        cmd.arg(&terminal_launch.resume_arg);
         cmd.arg(&uuid);
     } else {
-        cmd.arg("--session-id");
+        cmd.arg(&terminal_launch.session_id_arg);
         cmd.arg(&uuid);
     }
-    cmd.arg("--mcp-config");
+    cmd.arg(&terminal_launch.mcp_config_arg);
     cmd.arg(mcp_config_path.to_string_lossy().into_owned());
     for arg in &extra_args {
         cmd.arg(arg);

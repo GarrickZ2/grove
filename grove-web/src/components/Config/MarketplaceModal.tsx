@@ -14,16 +14,11 @@
 import { createElement, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
-/** Renders the agent icon with a priority chain:
- *   1. supplement-provided `icon_id` mapped to a bundled local SVG (crisp,
- *      grove-curated). Falls back to lucide Bot when the id is unknown.
- *   2. registry-provided `icon_url` (CDN-hosted SVG) when local lookup
- *      degenerated to the Bot fallback — gives us icons for the 20+
- *      registry-only agents we don't supplement.
- *
- *  This dual-source approach keeps the existing built-in icon set as the
- *  visual baseline and lets registry agents bring their own art without us
- *  needing to commit every vendor's SVG into the repo. */
+/** Renders an agent icon. Delegates to the central `agentIconComponent`,
+ *  which applies the project-wide priority: bundled brand SVG  >  marketplace
+ *  CDN icon  >  lucide Bot. The CDN map is populated by `setMarketplaceIcons`
+ *  in the listMarketplace effect below, so every render site (chat list,
+ *  Open Sessions, picker, this modal) renders the same icon for the same id. */
 function AgentIcon({
   agent,
   size,
@@ -31,23 +26,8 @@ function AgentIcon({
   agent: MarketplaceAgent;
   size: number;
 }) {
-  const Local = agentIconComponent(agent.icon_id ?? agent.id);
-  // `agentIconComponent` returns the lucide Bot when nothing matches —
-  // that's the signal we should try the CDN icon instead.
-  const hitLocalFallback = Local === Bot;
-  if (!hitLocalFallback || !agent.icon_url) {
-    return createElement(Local, { size });
-  }
-  return (
-    <img
-      src={agent.icon_url}
-      alt=""
-      width={size}
-      height={size}
-      style={{ width: size, height: size }}
-      loading="lazy"
-    />
-  );
+  const Component = agentIconComponent(agent.id);
+  return createElement(Component, { size });
 }
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -59,7 +39,6 @@ import {
   Package,
   ExternalLink,
   AlertCircle,
-  Bot,
 } from "lucide-react";
 import {
   listMarketplace,
@@ -70,8 +49,12 @@ import {
   type MarketplaceAgent,
   type MarketplaceResponse,
   type InstallMethod,
+  type PatchAgentRequest,
 } from "../../api/marketplace";
-import { agentIconComponent } from "../../utils/agentIcon";
+import {
+  agentIconComponent,
+  setMarketplaceIcons,
+} from "../../utils/agentIcon";
 
 interface MarketplaceModalProps {
   open: boolean;
@@ -81,7 +64,17 @@ interface MarketplaceModalProps {
 type TabKind = "installed" | "explore";
 
 function isInstalled(a: MarketplaceAgent): boolean {
-  return a.install_state === "grove-installed" || a.install_state === "auto-detected";
+  // "Installed tab" surfaces anything the user has *touched* — including
+  // in-progress and failed installs. Without this, clicking Install would
+  // appear to make the agent vanish (it flips to install_state=installing
+  // and drops out of Explore but never shows up in Installed), and the
+  // Retry CTA for a failed install would live in the wrong tab.
+  return (
+    a.install_state === "grove-installed" ||
+    a.install_state === "auto-detected" ||
+    a.install_state === "installing" ||
+    a.install_state === "install-failed"
+  );
 }
 
 /** Update available iff grove-installed (we know the precise version we put
@@ -90,9 +83,19 @@ function isInstalled(a: MarketplaceAgent): boolean {
  *  ships single-version-per-agent so any mismatch genuinely means "newer
  *  exists upstream". Auto-detected installs don't get update prompts because
  *  the version came from the user's own package manager, not us. */
+function activeInstallation(a: MarketplaceAgent) {
+  if (!a.installed) return null;
+  const sel = a.installed.selected_install_method;
+  return (
+    a.installed.installations.find((i) => i.method === sel) ??
+    a.installed.installations[0] ??
+    null
+  );
+}
+
 function hasUpdate(a: MarketplaceAgent): boolean {
   if (a.install_state !== "grove-installed") return false;
-  const installed = a.installed?.version;
+  const installed = activeInstallation(a)?.version;
   const latest = a.version;
   return Boolean(installed && latest && installed !== latest);
 }
@@ -112,6 +115,10 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
     try {
       const resp = await listMarketplace();
       setData(resp);
+      // Refresh the global icon CDN map so chat lists / pickers / Open
+      // Sessions show registry icons for agents we don't have a bundled
+      // brand SVG for. Util applies bundle > CDN > Bot priority.
+      setMarketplaceIcons(resp.agents.map((a) => ({ id: a.id, icon_url: a.icon_url })));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -142,7 +149,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
     }
   };
 
-  const handleInstall = async (id: string, method?: InstallMethod) => {
+  const handleInstall = async (id: string, method: InstallMethod) => {
     setBusyId(id);
     try {
       await installAgent(id, method);
@@ -154,10 +161,10 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
     }
   };
 
-  const handleUninstall = async (id: string) => {
+  const handleUninstall = async (id: string, method: InstallMethod) => {
     setBusyId(id);
     try {
-      await uninstallAgent(id);
+      await uninstallAgent(id, method);
       await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -166,10 +173,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
     }
   };
 
-  const handlePatch = async (
-    id: string,
-    body: { launch_mode?: string; args_override?: string[]; env_override?: Record<string, string>; hidden?: boolean },
-  ) => {
+  const handlePatch = async (id: string, body: PatchAgentRequest) => {
     setBusyId(id);
     try {
       await patchAgent(id, body);
@@ -336,7 +340,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
                   busy={busyId === selected.id}
                   onClose={() => setSelectedId(null)}
                   onInstall={(method) => handleInstall(selected.id, method)}
-                  onUninstall={() => handleUninstall(selected.id)}
+                  onUninstall={(method) => handleUninstall(selected.id, method)}
                   onPatch={(body) => handlePatch(selected.id, body)}
                 />
               </motion.aside>
@@ -378,7 +382,7 @@ function AgentCard({ agent, selected, onClick }: CardProps) {
             </span>
             {hasUpdate(agent) && (
               <span
-                title={`Update available: v${agent.installed?.version} → v${agent.version}`}
+                title={`Update available: v${activeInstallation(agent)?.version} → v${agent.version}`}
                 className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-highlight)]"
               />
             )}
@@ -401,15 +405,17 @@ function installStateLabel(agent: MarketplaceAgent): string {
   switch (agent.install_state) {
     case "auto-detected":
       return "Detected on PATH";
-    case "grove-installed":
-      return `Installed via ${agent.installed?.install_method ?? "grove"}`;
+    case "grove-installed": {
+      const active = activeInstallation(agent);
+      return `Installed via ${active?.method ?? "grove"}`;
+    }
     case "installing":
       return "Installing…";
     case "install-failed":
       return "Install failed";
     case "not-installed":
     default:
-      if (agent.source === "supplement-only") return "Bring your own";
+      if (agent.available_install_methods.length === 0) return "Bring your own";
       return "Available";
   }
 }
@@ -418,29 +424,23 @@ interface DetailProps {
   agent: MarketplaceAgent;
   busy: boolean;
   onClose: () => void;
-  onInstall: (method?: InstallMethod) => void;
-  onUninstall: () => void;
-  onPatch: (body: { launch_mode?: string; args_override?: string[]; env_override?: Record<string, string>; hidden?: boolean }) => void;
+  onInstall: (method: InstallMethod) => void;
+  onUninstall: (method: InstallMethod) => void;
+  onPatch: (body: PatchAgentRequest) => void;
 }
 
 function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: DetailProps) {
   const installed = agent.installed;
-  const distribution = agent.distribution;
-  const availableMethods = useMemo<InstallMethod[]>(() => {
-    const m: InstallMethod[] = [];
-    if (distribution?.npx) m.push("npx");
-    if (distribution?.binary && Object.keys(distribution.binary).length > 0)
-      m.push("binary");
-    if (distribution?.uvx) m.push("uvx");
-    return m;
-  }, [distribution]);
+  const availableMethods = agent.available_install_methods;
+  const installedMethods = useMemo(
+    () => new Set(installed?.installations.map((i) => i.method) ?? []),
+    [installed],
+  );
+  const installableMethods = useMemo(
+    () => availableMethods.filter((m) => !installedMethods.has(m)),
+    [availableMethods, installedMethods],
+  );
 
-  // launch_mode reads straight from the agent (Config.agent_launch_modes,
-  // populated by patch handler). Toggle clicks dispatch through onPatch
-  // and the parent reload — no local mirror, no Apply button, just a
-  // direct write. Auto-detected agents work the same as grove-installed
-  // because launch_mode is install-state-independent.
-  const launchMode = agent.launch_mode;
   const [argsDraft, setArgsDraft] = useState(
     (installed?.args_override ?? []).join(" "),
   );
@@ -482,11 +482,6 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
   }, [envDraft]);
 
   const canApply = isInstalled(agent);
-  // Show toggle whenever the agent supports more than one launch mode —
-  // independent of install state, because launch_mode is stored in
-  // Config.agent_launch_modes (a global map) and the chat-creation path
-  // reads from there for any agent we ever spawn.
-  const showLaunchToggle = agent.supported_launch_modes.length > 1;
 
   return (
     <div className="flex h-full flex-col">
@@ -519,13 +514,7 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
 
         <div className="space-y-1">
           <DetailRow label="State" value={installStateLabel(agent)} />
-          {agent.installed?.failure_reason && (
-            <DetailRow
-              label="Failure"
-              value={agent.installed.failure_reason}
-              tone="warning"
-            />
-          )}
+          {agent.binary && <BinaryRow binary={agent.binary} />}
           {agent.authors.length > 0 && (
             <DetailRow label="Authors" value={agent.authors.join(", ")} />
           )}
@@ -557,38 +546,108 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
           </div>
         )}
 
-        {/* Launch mode toggle — always visible for multi-mode agents,
-            independent of install state. Click writes through to the
-            global Config.agent_launch_modes map so subsequent chats
-            pick up the choice. */}
-        {showLaunchToggle && (
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)] mb-1.5">
-              Launch Mode
+        {/* Per-channel installation list. Each row shows a status badge,
+            an "Active" indicator that doubles as a "Use this" radio
+            (PATCHes selected_install_method), plus a per-channel
+            Uninstall button. */}
+        {installed && installed.installations.length > 0 && (
+          <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+              Installations
             </div>
-            <div className="inline-flex rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5">
-              {agent.supported_launch_modes.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => {
-                    if (m === launchMode) return;
-                    onPatch({ launch_mode: m });
-                  }}
-                  disabled={busy}
-                  className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
-                    launchMode === m
-                      ? "bg-[var(--color-highlight)] text-white"
-                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                  } disabled:opacity-60`}
-                >
-                  {m === "acp" ? "ACP" : "Terminal"}
-                </button>
-              ))}
+            <div className="space-y-1.5">
+              {installed.installations.map((inst) => {
+                const isActive = inst.method === installed.selected_install_method;
+                const isAuto = inst.method === "external";
+                // Surface what the launch ACTUALLY is, not the storage
+                // shorthand. External-channel agents that declare a terminal
+                // launch contract spawn under a PTY (e.g. claude); the rest
+                // spawn the PATH binary as a stdio ACP child.
+                const methodLabel = isAuto
+                  ? agent.supports_terminal_launch
+                    ? "Terminal"
+                    : "Local"
+                  : inst.method;
+                return (
+                  <div
+                    key={inst.method}
+                    className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1.5 text-xs"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isActive || inst.status !== "installed") return;
+                        onPatch({ selected_install_method: inst.method });
+                      }}
+                      disabled={busy || inst.status !== "installed"}
+                      title={isActive ? "Active channel" : "Use this channel"}
+                      className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
+                        isActive
+                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]"
+                          : "border-[var(--color-border)]"
+                      } disabled:opacity-50`}
+                    >
+                      {isActive && (
+                        <span className="block h-1.5 w-1.5 rounded-full bg-white" />
+                      )}
+                    </button>
+                    <span
+                      className="font-medium text-[var(--color-text)]"
+                      title={inst.install_path ?? undefined}
+                    >
+                      {methodLabel}
+                    </span>
+                    {inst.version && (
+                      <span className="text-[var(--color-text-muted)]">
+                        v{inst.version}
+                      </span>
+                    )}
+                    <InstallStatusBadge
+                      status={inst.status}
+                      labelOverride={
+                        isAuto && inst.status === "installed"
+                          ? "Auto Detected"
+                          : undefined
+                      }
+                    />
+                    {inst.failure_reason && (
+                      <span
+                        className="truncate text-[10px] text-[var(--color-warning)]"
+                        title={inst.failure_reason}
+                      >
+                        {inst.failure_reason}
+                      </span>
+                    )}
+                    {/* Auto-detected (External) channels: no Update /
+                        Uninstall — managed by PATH presence. Remove the
+                        binary from PATH to deregister; next scan drops it. */}
+                    {!isAuto && (
+                      <div className="ml-auto flex gap-1.5">
+                        {hasUpdate(agent) && isActive && (
+                          <button
+                            type="button"
+                            onClick={() => onInstall(inst.method)}
+                            disabled={busy}
+                            className="rounded-md border border-[var(--color-highlight)]/40 px-2 py-0.5 text-[10px] font-medium text-[var(--color-highlight)] hover:bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)] disabled:opacity-60"
+                            title={`Update v${inst.version} → v${agent.version}`}
+                          >
+                            Update
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onUninstall(inst.method)}
+                          disabled={busy}
+                          className="rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[10px] text-[var(--color-warning)] hover:bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] disabled:opacity-60"
+                        >
+                          Uninstall
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-              Applies to new chats only.
-            </p>
           </div>
         )}
 
@@ -629,76 +688,56 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
             )}
 
             <div className="flex flex-wrap gap-2">
-              {agent.install_state === "grove-installed" && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    onPatch({
-                      args_override: parsedArgs,
-                      env_override: parsedEnv,
-                    })
-                  }
-                  disabled={busy}
-                  className="rounded-md bg-[var(--color-highlight)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
-                >
-                  Apply
-                </button>
-              )}
-              {hasUpdate(agent) && (
-                <button
-                  type="button"
-                  onClick={() => onInstall(agent.installed?.install_method)}
-                  disabled={busy}
-                  className="rounded-md border border-[var(--color-highlight)]/40 bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)] px-3 py-1.5 text-xs font-medium text-[var(--color-highlight)] hover:bg-[color-mix(in_srgb,var(--color-highlight)_18%,transparent)] disabled:opacity-60"
-                  title={`Update v${agent.installed?.version} → v${agent.version}`}
-                >
-                  Update to v{agent.version}
-                </button>
-              )}
-              {agent.install_state === "grove-installed" && (
-                <button
-                  type="button"
-                  onClick={onUninstall}
-                  disabled={busy}
-                  className="rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-warning)] hover:bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] disabled:opacity-60"
-                >
-                  Uninstall
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() =>
+                  onPatch({
+                    args_override: parsedArgs,
+                    env_override: parsedEnv,
+                  })
+                }
+                disabled={busy}
+                className="rounded-md bg-[var(--color-highlight)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+              >
+                Apply
+              </button>
             </div>
           </div>
         )}
 
-        {/* Install actions (when not installed) */}
-        {!canApply && (
+        {/* Install actions — surfaced whenever there are channels the user
+            hasn't installed yet. Visible both for fully-uninstalled agents
+            and for already-installed agents that have additional channels
+            available (the same agent may be installed via npx AND binary). */}
+        {installableMethods.length > 0 && (
           <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-            {availableMethods.length === 0 ? (
-              <ManualInstallHint agent={agent} />
-            ) : (
-              <>
-                <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-                  Install via
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {availableMethods.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => onInstall(m)}
-                      disabled={busy}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-highlight)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
-                    >
-                      {busy ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="h-3 w-3" />
-                      )}
-                      Install ({m})
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
+            <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+              {installed ? "Add another channel" : "Install via"}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {installableMethods.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => onInstall(m)}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-highlight)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {busy ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3 w-3" />
+                  )}
+                  Install ({m})
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!installed && availableMethods.length === 0 && (
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+            <ManualInstallHint agent={agent} />
           </div>
         )}
       </div>
@@ -706,40 +745,57 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
   );
 }
 
-/** Renders concrete install guidance when the registry doesn't carry a
- *  distribution for the current platform (or the entry is supplement-only).
- *  We always know at least the PATH commands grove probes for — surfacing
- *  them gives the user a single piece of "what to install" info instead of
- *  the previous useless "follow upstream instructions". */
-function ManualInstallHint({ agent }: { agent: MarketplaceAgent }) {
-  const commands = Array.from(
-    new Set(
-      [agent.probe.terminal_check, agent.probe.acp_check, agent.probe.acp_fallback]
-        .filter((c): c is string => Boolean(c))
-        .map((c) => c.split(/\s+/)[0]) // probe is e.g. "hermes acp" — keep the head
-        .filter(Boolean),
-    ),
+function InstallStatusBadge({
+  status,
+  labelOverride,
+}: {
+  status: "installing" | "installed" | "failed";
+  /** Override the label without changing colors — e.g. External rows
+   *  display "Auto Detected" instead of "Installed" while keeping the
+   *  same green badge styling. */
+  labelOverride?: string;
+}) {
+  const cfg = (() => {
+    switch (status) {
+      case "installed":
+        return {
+          icon: <CheckCircle2 className="h-3 w-3" />,
+          label: "Installed",
+          cls: "text-[var(--color-success,#2e7d32)] border-[color-mix(in_srgb,var(--color-success,#2e7d32)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-success,#2e7d32)_10%,transparent)]",
+        };
+      case "installing":
+        return {
+          icon: <Loader2 className="h-3 w-3 animate-spin" />,
+          label: "Installing",
+          cls: "text-[var(--color-text-muted)] border-[var(--color-border)] bg-[var(--color-bg-secondary)]",
+        };
+      case "failed":
+        return {
+          icon: <AlertCircle className="h-3 w-3" />,
+          label: "Failed",
+          cls: "text-[var(--color-warning)] border-[color-mix(in_srgb,var(--color-warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)]",
+        };
+    }
+  })();
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${cfg.cls}`}
+    >
+      {cfg.icon}
+      {labelOverride ?? cfg.label}
+    </span>
   );
+}
+
+/** Renders manual install guidance for agents the registry doesn't ship a
+ *  distribution for. Grove can still auto-detect the binary on PATH after
+ *  the user installs it manually. */
+function ManualInstallHint({ agent }: { agent: MarketplaceAgent }) {
   const repo = agent.repository;
   const website = agent.website;
   return (
     <div className="space-y-1.5 text-xs text-[var(--color-text-muted)]">
-      {commands.length > 0 ? (
-        <p>
-          Grove looks for{" "}
-          {commands.map((c, i) => (
-            <span key={c}>
-              {i > 0 ? " or " : ""}
-              <code className="rounded bg-[var(--color-bg-secondary)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text)]">
-                {c}
-              </code>
-            </span>
-          ))}{" "}
-          on your PATH.
-        </p>
-      ) : (
-        <p>Install this agent's CLI on your PATH for grove to detect it.</p>
-      )}
+      <p>Install this agent's CLI on your PATH for grove to detect it.</p>
       {repo || website ? (
         <p>
           See{" "}
@@ -786,6 +842,25 @@ function DetailRow({ label, value, tone }: { label: string; value: string; tone?
         }
       >
         {value}
+      </div>
+    </div>
+  );
+}
+
+function BinaryRow({ binary }: { binary: { command: string; path: string | null; version: string | null } }) {
+  // Prefer the absolute path when we have one — its basename already conveys
+  // the command, and the directory disambiguates shim layers in $PATH. Fall
+  // back to the bare command when PATH lookup raced and lost the binary.
+  const head = binary.path ?? binary.command;
+  const display = binary.version ? `${head}  ${binary.version}` : head;
+  return (
+    <div className="grid grid-cols-[110px_1fr] gap-2 text-xs">
+      <div className="text-[var(--color-text-muted)]">Binary</div>
+      <div
+        className="truncate font-mono text-[var(--color-text)]"
+        title={display}
+      >
+        {display}
       </div>
     </div>
   );

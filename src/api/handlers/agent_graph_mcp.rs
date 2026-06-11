@@ -1048,6 +1048,30 @@ mod tests {
                 ],
             )
             .expect("seed persona");
+            // Post-v2.6, `can_spawn` requires the persona's base_agent to
+            // resolve in `installed_agents`. Seed traecli so the persona is
+            // surfaced AND so the assertion below ("any installed agent
+            // appears with kind=base") finds at least one row.
+            drop(conn);
+            let now = Utc::now();
+            let row = crate::storage::installed_agents::InstalledAgent {
+                id: "traecli".to_string(),
+                installations: vec![crate::storage::installed_agents::Installation {
+                    method: crate::storage::installed_agents::InstallMethod::External,
+                    version: String::new(),
+                    install_path: Some("/usr/local/bin/traecli".to_string()),
+                    status: crate::storage::installed_agents::InstallStatus::Installed,
+                    failure_reason: None,
+                    installed_at: now,
+                }],
+                selected_install_method: crate::storage::installed_agents::InstallMethod::External,
+                args_override: Vec::new(),
+                env_override: std::collections::HashMap::new(),
+                hidden: false,
+                created_at: now,
+                updated_at: now,
+            };
+            crate::storage::installed_agents::upsert(&row).expect("seed traecli");
         }
 
         // Spin up a local axum listener with the agent_graph router (independent
@@ -1164,10 +1188,13 @@ mod tests {
             !call_body.contains("do not expose this prompt"),
             "persona system prompt leaked in {call_body}"
         );
-        // can_spawn: available base agents must appear with kind=base.
-        if let Some(base) = crate::acp::available_base_acp_agents().first() {
+        // can_spawn: any installed agent must appear with kind=base.
+        if let Some(base) = crate::storage::installed_agents::list().ok().and_then(|v| {
+            v.into_iter()
+                .find(|a| !a.hidden && a.has_installed_channel())
+        }) {
             assert!(
-                call_body.contains(base.id),
+                call_body.contains(base.id.as_str()),
                 "can_spawn base agent {} missing from {call_body}",
                 base.id
             );

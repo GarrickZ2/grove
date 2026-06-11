@@ -1245,6 +1245,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
             <FileTree
               nodes={fileNodes}
               selectedFile={selectedFile}
+              contextMenuPath={contextMenuOpen ? contextMenuTarget?.path ?? null : null}
               onSelectFile={handleSelectFile}
               onContextMenu={handleContextMenu}
               creatingPath={creatingPath}

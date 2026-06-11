@@ -73,7 +73,10 @@ function makeDraftId(): string {
 }
 
 function defaultBase(options: AgentOption[]): string {
-  return options.find((o) => !o.disabled)?.id ?? options[0]?.id ?? "claude";
+  // First enabled option wins; falls back to the first option overall.
+  // Returns "" when the catalog is empty — caller's "base agent unset"
+  // validation surfaces a clearer error than a fake hardcoded default.
+  return options.find((o) => !o.disabled)?.id ?? options[0]?.id ?? "";
 }
 
 function makeDraft(options: AgentOption[]): DraftAgent {

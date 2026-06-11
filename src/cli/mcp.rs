@@ -1034,8 +1034,17 @@ struct ReplyReviewResult {
 // ============================================================================
 
 /// Normalize raw agent name from session.json to a display-friendly name.
-/// Matches on whitespace/hyphen/underscore/slash-separated tokens so e.g.
-/// "openai-proxy" or "@agentclientprotocol/claude-agent-acp" resolve correctly.
+///
+/// Tokenizes the raw input on whitespace + `- _ . / @` and looks up each
+/// token against the registry catalog (cached doc + synthetic Trae/TraeX).
+/// The longest matching agent id wins so multi-word ids like
+/// `github-copilot-cli` beat the shorter `copilot`. Returns the matched
+/// `RegistryAgent.name` on hit, or the raw input verbatim on miss.
+///
+/// Reads `agent_registry::get()` which loads the cached doc from disk
+/// — cheap, no network. Synthetic Trae/TraeX entries are always present
+/// so token=`trae` / `traex` resolve correctly even before the user has
+/// the binary on PATH.
 fn normalize_agent_name(raw: &str) -> String {
     let lower = raw.to_lowercase();
     let tokens: Vec<&str> = lower
@@ -1044,40 +1053,37 @@ fn normalize_agent_name(raw: &str) -> String {
         })
         .filter(|s| !s.is_empty())
         .collect();
+    if tokens.is_empty() {
+        return raw.to_string();
+    }
 
-    let has_token = |needle: &str| tokens.contains(&needle);
+    let registry = crate::storage::agent_registry::get();
 
-    if has_token("claude") {
-        return "Claude Code".to_string();
+    // Find the agent whose id has the most tokens fully contained in the
+    // input. Ties broken by longest id (so `github-copilot-cli` beats
+    // `copilot` when the input contains both). An agent id is considered
+    // a match if every hyphen-separated piece of its id appears in the
+    // input token list.
+    let mut best: Option<(&crate::storage::agent_registry::RegistryAgent, usize)> = None;
+    for agent in &registry.agents {
+        let id_lower = agent.id.to_lowercase();
+        let id_pieces: Vec<&str> = id_lower.split('-').filter(|s| !s.is_empty()).collect();
+        if id_pieces.is_empty() {
+            continue;
+        }
+        let all_present = id_pieces.iter().all(|p| tokens.contains(p));
+        if !all_present {
+            continue;
+        }
+        let score = id_pieces.len();
+        if best.map(|(_, s)| score > s).unwrap_or(true) {
+            best = Some((agent, score));
+        }
     }
-    if has_token("codex") {
-        return "Codex".to_string();
+    if let Some((agent, _)) = best {
+        return agent.name.clone();
     }
-    if has_token("gemini") {
-        return "Gemini".to_string();
-    }
-    if has_token("copilot") {
-        return "GitHub Copilot".to_string();
-    }
-    if has_token("cursor") {
-        return "Cursor".to_string();
-    }
-    if has_token("qwen") {
-        return "Qwen".to_string();
-    }
-    if has_token("kimi") {
-        return "Kimi".to_string();
-    }
-    if has_token("junie") {
-        return "Junie".to_string();
-    }
-    if has_token("trae") {
-        return "Trae".to_string();
-    }
-    if has_token("opencode") {
-        return "OpenCode".to_string();
-    }
-    // Unknown agent — return as-is
+
     raw.to_string()
 }
 
@@ -2658,33 +2664,32 @@ fn edit_note_json(params: &EditNoteParams) -> serde_json::Value {
 // ACP Chat Management Helpers (async — used by management MCP tools)
 // ============================================================================
 
-/// Built-in agent definitions (id, name)
-const BUILTIN_AGENTS: &[(&str, &str)] = &[
-    ("claude", "Claude Code"),
-    ("codex", "Codex"),
-    ("traecli", "Trae CLI"),
-    ("kimi", "Kimi"),
-    ("gemini", "Gemini CLI"),
-    ("qwen", "Qwen"),
-    ("opencode", "OpenCode"),
-    ("copilot", "GitHub Copilot"),
-    ("cursor", "Cursor Agent"),
-    ("junie", "Junie"),
-];
-
 fn list_agents_json() -> serde_json::Value {
     let cfg = config::load_config();
     let default_agent = cfg
         .acp
         .agent_command
         .clone()
-        .unwrap_or_else(|| "claude".to_string());
+        .or_else(crate::acp::pick_first_available_acp_agent)
+        .unwrap_or_default();
 
-    let mut agents: Vec<serde_json::Value> = BUILTIN_AGENTS
+    // "builtin" agents = whatever the user has in installed_agents
+    // (the new v2.6 source of truth). The orchestrator can pick any
+    // of these by id when spawning chats. Display name comes from the
+    // registry catalog if known; otherwise we render the id.
+    let installed = crate::storage::installed_agents::list().unwrap_or_default();
+    let registry = crate::storage::agent_registry::get();
+    let mut agents: Vec<serde_json::Value> = installed
         .iter()
-        .map(|(id, name)| {
+        .map(|a| {
+            let name = registry
+                .agents
+                .iter()
+                .find(|r| r.id == a.id)
+                .map(|r| r.name.clone())
+                .unwrap_or_else(|| a.id.clone());
             json!({
-                "id": id,
+                "id": a.id,
                 "name": name,
                 "type": "builtin",
                 "agent_type": "local",
@@ -2764,12 +2769,17 @@ async fn start_chat_impl(p: StartChatParams) -> Result<CallToolResult, McpError>
     let task = resolve_task_for_mcp(&project_key, &p.task_id)?;
 
     let cfg = config::load_config();
-    let agent_name = p.agent.unwrap_or_else(|| {
-        cfg.acp
-            .agent_command
-            .clone()
-            .unwrap_or_else(|| "claude".to_string())
-    });
+    let agent_name = p
+        .agent
+        .or_else(|| cfg.acp.agent_command.clone())
+        .or_else(acp::pick_first_available_acp_agent)
+        .ok_or_else(|| {
+            McpError::invalid_params(
+                "no agent configured and no installed agents found — install one via the Marketplace first"
+                    .to_string(),
+                None,
+            )
+        })?;
 
     // Resolve agent
     let resolved = acp::resolve_agent(&agent_name)

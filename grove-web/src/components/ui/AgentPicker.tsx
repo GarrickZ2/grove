@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, createElement } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Check, Bot, Globe, Terminal, Settings } from "lucide-react";
+import { agentIconComponent } from "../../utils/agentIcon";
 import type { CustomAgentServer } from "../../api/config";
 import type { CustomAgentPersona } from "../../api";
 import { agentOptions, type AgentOption } from "../../data/agents";
-import { resolveAgentId } from "../../data/agentAliases";
 
 // Re-export so existing call sites importing from "./ui/AgentPicker" or
 // "../ui" keep working without churn. New consumers should import from
@@ -13,6 +13,21 @@ import { resolveAgentId } from "../../data/agentAliases";
 // eslint-disable-next-line react-refresh/only-export-components
 export { agentOptions };
 export type { AgentOption };
+
+/** Renders an agent icon via the unified `agentIcon` util.
+ *  Wrapped in `createElement` (vs JSX) so `react-hooks/static-components`
+ *  doesn't flag the dynamically-resolved component — the util returns
+ *  stable references (module-level bundled icons, or per-url cached
+ *  image wrappers), so the lint is overly cautious here. */
+function AgentIconView({
+  agentId,
+  size,
+}: {
+  agentId: string;
+  size: number;
+}) {
+  return createElement(agentIconComponent(agentId), { size });
+}
 
 interface AgentPickerProps {
   value: string;
@@ -75,19 +90,10 @@ export function AgentPicker({
   const displayOptions = externalOptions ?? agentOptions;
   const [isOpen, setIsOpen] = useState(false);
 
-  // Check if current value matches any built-in option or custom agent.
-  // Match through the alias map: builtin agentOptions use legacy ids
-  // (`claude`), but registry-driven flows (Marketplace) may write canonical
-  // (`claude-acp`). Both must resolve to the same option so the picker
-  // shows the right selection regardless of which id form was stored.
-  const valueCanonical = value ? resolveAgentId(value) : value;
+  // Post-v2.6 migration, stored ids are canonical — direct match against
+  // the option's id/value is enough.
   const selectedOption = displayOptions.find(
-    (opt) =>
-      opt.value === value ||
-      opt.id === value ||
-      (valueCanonical &&
-        (resolveAgentId(opt.value) === valueCanonical ||
-          resolveAgentId(opt.id) === valueCanonical)),
+    (opt) => opt.value === value || opt.id === value,
   );
   const selectedCustomAgent = !selectedOption
     ? customAgents.find((a) => a.id === value)
@@ -465,6 +471,8 @@ export function AgentPicker({
             >
               {SelectedIcon ? (
                 <SelectedIcon size={triggerSize === "compact" ? 14 : 18} />
+              ) : selectedOption ? (
+                <AgentIconView agentId={selectedOption.value} size={triggerSize === "compact" ? 14 : 18} />
               ) : selectedPersona ? (
                 resolvePersonaIcon(selectedPersona)
               ) : selectedCustomAgent ? (
@@ -589,7 +597,7 @@ export function AgentPickerMenuItems({
             onClick={() => !isDisabled && onSelectBuiltin(option)}
             disabled={isDisabled}
             title={isDisabled ? option.disabledReason : undefined}
-            className={`w-full flex items-center transition-colors ${
+            className={`w-full flex items-center transition-colors focus:outline-none ${
               triggerSize === "compact"
                 ? "gap-2 px-2.5 py-1.5 text-[12.5px]"
                 : "gap-3 px-3 py-2.5 text-sm"
@@ -609,26 +617,29 @@ export function AgentPickerMenuItems({
               {Icon ? (
                 <Icon size={triggerSize === "compact" ? 14 : 20} />
               ) : (
-                <Bot
-                  className={
-                    triggerSize === "compact"
-                      ? "w-3.5 h-3.5 text-[var(--color-text-muted)]"
-                      : "w-5 h-5 text-[var(--color-text-muted)]"
-                  }
+                <AgentIconView
+                  agentId={option.value}
+                  size={triggerSize === "compact" ? 14 : 20}
                 />
               )}
             </div>
             <div className="flex-1 text-left">
               <div>{option.label}</div>
-              <div
-                className={
-                  triggerSize === "compact"
-                    ? "text-[10px] text-[var(--color-text-muted)]"
-                    : "text-xs text-[var(--color-text-muted)]"
-                }
-              >
-                {isDisabled ? option.disabledReason : option.value}
-              </div>
+              {/* Only render a subtitle when there's a real reason
+                  (i.e. the row is disabled). Otherwise the raw id (e.g.
+                  `claude-acp`) is noise — the brand name in the label
+                  above already identifies the row. */}
+              {isDisabled && option.disabledReason && (
+                <div
+                  className={
+                    triggerSize === "compact"
+                      ? "text-[10px] text-[var(--color-text-muted)]"
+                      : "text-xs text-[var(--color-text-muted)]"
+                  }
+                >
+                  {option.disabledReason}
+                </div>
+              )}
             </div>
             {!isDisabled && option.value === value && (
               <Check

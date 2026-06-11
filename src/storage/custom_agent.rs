@@ -134,11 +134,51 @@ pub fn try_get_persona(agent: &str) -> Result<Option<CustomAgent>> {
     get(agent)
 }
 
+/// Is this id a recognized base agent for persona creation? Three sources:
+///   - the live ACP registry (incl. synthetic Trae/TraeX entries),
+///   - the user's installed_agents table (anything they've installed),
+///   - the user's `config.acp.custom_agents` (any user-defined agent).
+///
+/// Canonicalizes legacy ids first so inbound HTTP requests carrying
+/// `claude` / `gh-copilot` / etc. resolve to their post-v2.6 canonical
+/// rows.
+fn is_known_base_agent(id: &str) -> bool {
+    let canonical = crate::storage::installed_agents::canonicalize_agent_id(id);
+    let registry = crate::storage::agent_registry::get();
+    if registry.agents.iter().any(|a| a.id == canonical) {
+        return true;
+    }
+    if crate::storage::installed_agents::get(&canonical)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return true;
+    }
+    let config = crate::storage::config::load_config();
+    if config.acp.custom_agents.iter().any(|a| a.id == canonical) {
+        return true;
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_id_rejected() {
+        assert!(!is_known_base_agent("definitely-not-a-real-agent-xyz"));
+    }
+}
+
 /// 创建。生成新的 id 并填充时间戳，返回创建后的完整记录。
 ///
-/// L7: 校验 base_agent 必须是已知 ACP agent，避免到 spawn 时才发现未知 base 失败。
+/// 校验 base_agent 必须是已知 ACP agent (registry / installed_agents /
+/// custom_agents 中存在)。`acp::resolve_agent` 不行 —— 它要求 agent 现在
+/// 是可启动的，但 persona 是逻辑引用，base 不必现在可用。
 pub fn create(input: CustomAgentInput) -> Result<CustomAgent> {
-    if crate::acp::resolve_agent(&input.base_agent).is_none() {
+    if !is_known_base_agent(&input.base_agent) {
         return Err(crate::error::GroveError::storage_tagged(
             "unknown_base_agent",
             format!("unknown base_agent: {}", input.base_agent),
@@ -184,9 +224,9 @@ pub fn create(input: CustomAgentInput) -> Result<CustomAgent> {
 /// 避免并发 delete 导致返回 stale 数据（旧实现先 SELECT 再 UPDATE，
 /// 命中 zero rows 时仍返回 Ok(Some(stale))）。
 pub fn update(id: &str, patch: CustomAgentPatch) -> Result<Option<CustomAgent>> {
-    // 与 create 一致：patch 改 base_agent 时校验合法，避免到 spawn 才炸。
+    // 与 create 一致：patch 改 base_agent 时校验合法。
     if let Some(ref new_base) = patch.base_agent {
-        if crate::acp::resolve_agent(new_base).is_none() {
+        if !is_known_base_agent(new_base) {
             return Err(crate::error::GroveError::storage_tagged(
                 "unknown_base_agent",
                 format!("unknown base_agent: {}", new_base),

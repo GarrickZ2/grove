@@ -1,13 +1,13 @@
 pub mod agent_graph;
 pub mod agent_install;
 pub mod agent_registry;
-pub mod agent_supplement;
 pub mod ai;
 pub mod automations;
 pub mod chat_attachments;
 pub mod chat_history;
 pub mod comments;
 pub mod config;
+pub mod curated_agents;
 pub mod custom_agent;
 pub mod database;
 pub mod installed_agents;

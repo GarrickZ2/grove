@@ -79,6 +79,7 @@ import type { AskFormDefinition } from "./formPillTypes";
 import {
   agentIconComponent,
   agentIconUrl,
+  resolveAgentIcon,
   usePersonaRegistry,
 } from "../../../utils/agentIcon";
 import type { MentionItem, FilteredMentionItem } from "../../../utils/fileMention";
@@ -2462,7 +2463,7 @@ export function TaskChat({
   // the chat-create flow isn't blank during the first fetch.
   const acpAgentOptions = useMemo(() => {
     if (!acpAvailabilityLoaded) {
-      return agentOptions.filter((opt) => opt.acpCheck);
+      return agentOptions;
     }
     return baseAgents
       .filter((base) => base.available)
@@ -2508,28 +2509,29 @@ export function TaskChat({
   // Resolve agent label and icon from active chat's agent
   useEffect(() => {
     const resolve = (cmd: string, customAgents?: CustomAgentServer[]) => {
-      const match = agentOptions.find((a) => a.value === cmd);
-      if (match) {
-        setAgentLabel(match.label);
-        if (match.icon) setAgentIcon(() => match.icon!);
-        return;
-      }
       // Check Custom Agents (personas) first — their id starts with "ca-"
+      // Persona has its own display name; icon falls through to the base.
       const persona = customAgentPersonas.find((p) => p.id === cmd);
       if (persona) {
         setAgentLabel(persona.name);
-        // Icon falls through to whatever the base agent's icon is. Look it up.
-        const base = agentOptions.find((a) => a.id === persona.base_agent);
-        if (base?.icon) setAgentIcon(() => base.icon!);
+        const baseInfo = resolveAgentIcon(persona.base_agent);
+        setAgentIcon(() => baseInfo.Component);
         return;
       }
       // Custom Agent Servers
       const custom = customAgents?.find((a) => a.id === cmd);
       if (custom) {
         setAgentLabel(custom.name);
-      } else {
-        setAgentLabel(cmd);
+        return;
       }
+      // Fall back to the unified icon util — handles every alias the
+      // bundled brand catalog knows (traex → Trae label/icon,
+      // claude-acp → Claude Code, etc.) AND the marketplace CDN map.
+      // resolveAgentIcon returns `cmd` itself as label only when truly
+      // unknown, matching the old "show raw id as fallback" behaviour.
+      const info = resolveAgentIcon(cmd);
+      setAgentLabel(info.label || cmd);
+      setAgentIcon(() => info.Component);
     };
 
     if (activeChat) {
@@ -2540,9 +2542,9 @@ export function TaskChat({
     } else {
       getConfig()
         .then((cfg) =>
-          resolve(cfg.layout.agent_command || "claude", cfg.acp?.custom_agents),
+          resolve(cfg.layout.agent_command || "", cfg.acp?.custom_agents),
         )
-        .catch(() => resolve("claude"));
+        .catch(() => resolve(""));
     }
   }, [activeChat, customAgentPersonas]);
 
@@ -4371,17 +4373,25 @@ export function TaskChat({
   );
 
   // Listen for the two agent-related catalog dispatches:
-  //   agent.new.default    → spawn a session with whatever agent the
-  //                          user has flagged as default. TODO: read
-  //                          from a user-preference store; for now we
-  //                          fall back to the last session's agent and
-  //                          ultimately "claude".
+  //   agent.new.default    → spawn a session with the agent used by the
+  //                          most recent chat. No prior chat → open the
+  //                          picker so the user chooses, rather than
+  //                          guessing a hardcoded fallback.
   //   agent.picker.show    → just open the picker, user chooses.
   useEffect(() => {
     const onDefault = () => {
-      const fallback =
-        chats[chats.length - 1]?.agent || "claude";
-      void handleNewChatWithAgent(fallback);
+      // Prefer the agent used by the most recent chat. If no chats exist,
+      // open the picker rather than guessing — agent identity is the
+      // user's choice, not a hardcoded fallback.
+      const fallback = chats[chats.length - 1]?.agent;
+      if (fallback) {
+        void handleNewChatWithAgent(fallback);
+      } else {
+        const anchor =
+          headerAgentPickerRef.current ?? sidebarAgentPickerRef.current;
+        if (anchor) toggleAgentPicker(anchor);
+        else setShowAgentPicker(true);
+      }
     };
     const onPicker = () => {
       // Prefer the header button as anchor; fall back to the sidebar

@@ -170,7 +170,7 @@ export function AutomationDialog({
   // picker can offer "Claude with my XYZ config" as a single click.
   const availableAgentOptions = useMemo(() => {
     if (!acpAvailabilityLoaded) {
-      return agentOptions.filter((opt) => opt.acpCheck);
+      return agentOptions;
     }
     return baseAgents
       .filter((b) => b.available)
@@ -193,7 +193,7 @@ export function AutomationDialog({
 
   const [sessionMode, setSessionMode] = useState<TargetMode>("new");
   const [chatId, setChatId] = useState<string>("");
-  const [newSessionAgent, setNewSessionAgent] = useState("claude");
+  const [newSessionAgent, setNewSessionAgent] = useState("");
 
   const [scheduleKind, setScheduleKind] = useState<ScheduleKind>("daily");
   const [hourlyN, setHourlyN] = useState(1);
@@ -238,7 +238,7 @@ export function AutomationDialog({
       setNewTaskTarget(initial.task_template?.target ?? "");
       setSessionMode(initial.session_mode);
       setChatId(initial.chat_id ?? "");
-      setNewSessionAgent(initial.session_template?.agent ?? "claude");
+      setNewSessionAgent(initial.session_template?.agent ?? "");
       const kind = detectScheduleKind(initial.schedule_cron);
       setScheduleKind(kind);
       const parts = initial.schedule_cron.trim().split(/\s+/);
@@ -274,7 +274,7 @@ export function AutomationDialog({
       setNewTaskTarget(selectedProject?.currentBranch || "main");
       setSessionMode("new");
       setChatId("");
-      setNewSessionAgent("claude");
+      setNewSessionAgent("");
       setScheduleKind("daily");
       setHourlyN(1);
       setHourlyMinute(0);

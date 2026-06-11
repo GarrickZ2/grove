@@ -1,16 +1,29 @@
 import { useEffect, useState } from "react";
 import {
-  listBaseAgents,
   getConfig,
   listCustomAgents,
 } from "../../../api";
-import { loadCustomAgentPersonas as loadCustomAgentPersonasIcon } from "../../../utils/agentIcon";
-import { agentOptions } from "../../../data/agents";
+import { listMarketplace, type MarketplaceAgent } from "../../../api/marketplace";
+import {
+  loadCustomAgentPersonas as loadCustomAgentPersonasIcon,
+  setMarketplaceIcons,
+} from "../../../utils/agentIcon";
 import type {
-  BaseAgent,
   CustomAgentServer,
   CustomAgentPersona,
 } from "../../../api";
+
+/** Minimal availability shape consumed downstream — kept compatible with
+ *  the old `BaseAgent` shape so call sites don't have to change. Derived
+ *  from the marketplace response (the new single source of truth for
+ *  "what's installed and launchable"). */
+export interface BaseAgent {
+  id: string;
+  display_name: string;
+  icon_id: string;
+  icon_url?: string | null;
+  available: boolean;
+}
 
 interface Result {
   baseAgents: BaseAgent[];
@@ -24,10 +37,28 @@ interface Result {
   acpAvailabilityLoaded: boolean;
 }
 
+function isLaunchable(a: MarketplaceAgent): boolean {
+  return (
+    (a.install_state === "grove-installed" ||
+      a.install_state === "auto-detected") &&
+    !(a.installed?.hidden ?? false)
+  );
+}
+
+function toBaseAgent(a: MarketplaceAgent): BaseAgent {
+  return {
+    id: a.id,
+    display_name: a.name,
+    icon_id: a.id,
+    icon_url: a.icon_url,
+    available: true,
+  };
+}
+
 /**
- * Loads ACP agent availability from the backend on mount and exposes the
- * results. Pulled out of TaskChat so its captured-mutable `cancelled` flag
- * lives in a small hook React Compiler analyzes independently.
+ * Loads launchable agents from the marketplace on mount, alongside Custom
+ * Agent servers and personas. Replaces the old `listBaseAgents()` probe —
+ * marketplace data is now the single source of truth for availability.
  */
 export function useACPAvailability(): Result {
   const [baseAgents, setBaseAgents] = useState<BaseAgent[]>([]);
@@ -40,13 +71,13 @@ export function useACPAvailability(): Result {
   useEffect(() => {
     let cancelled = false;
     const checkAvailability = async () => {
-      let agents: BaseAgent[] | null = null;
+      let marketplace: Awaited<ReturnType<typeof listMarketplace>> | null = null;
       let cfg: Awaited<ReturnType<typeof getConfig>> | null = null;
       let personas: CustomAgentPersona[] | null = null;
       let failed = false;
       try {
-        [agents, cfg, personas] = await Promise.all([
-          listBaseAgents(),
+        [marketplace, cfg, personas] = await Promise.all([
+          listMarketplace(),
           getConfig(),
           loadCustomAgentPersonasIcon(() =>
             listCustomAgents().catch(() => [] as CustomAgentPersona[]),
@@ -57,21 +88,21 @@ export function useACPAvailability(): Result {
         failed = true;
       }
       if (cancelled) return;
-      if (!failed && agents && cfg && personas) {
-        setBaseAgents(agents);
+      if (!failed && marketplace && cfg && personas) {
+        // Refresh the global icon CDN map so every icon consumer (chat
+        // list, Open Sessions popup, agent picker) gets the same priority:
+        // bundled brand > marketplace CDN > Bot.
+        setMarketplaceIcons(
+          marketplace.agents.map((a) => ({ id: a.id, icon_url: a.icon_url })),
+        );
+        setBaseAgents(marketplace.agents.filter(isLaunchable).map(toBaseAgent));
         const customServers = cfg.acp?.custom_agents ?? [];
         setCustomAgents(customServers);
         setCustomAgentPersonas(personas);
       } else {
-        const fallback = agentOptions
-          .filter((opt) => opt.acpCheck)
-          .map((opt) => ({
-            id: opt.id,
-            display_name: opt.label,
-            icon_id: opt.id,
-            available: true,
-          }));
-        setBaseAgents(fallback);
+        // No fallback list — a stale one would show agents the backend
+        // can't actually launch. Better to render empty until retry.
+        setBaseAgents([]);
       }
       setAcpAvailabilityLoaded(true);
     };

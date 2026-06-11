@@ -1057,26 +1057,54 @@ pub async fn create_chat(
         .ok_or(AcpError::NotFound("Task not found".to_string()))?;
 
     let cfg = config::load_config();
-    let agent = body.agent.unwrap_or_else(|| {
-        cfg.acp
-            .agent_command
-            .clone()
-            .unwrap_or_else(|| "claude".to_string())
-    });
-    // Snapshot launch_mode from the agent's installed_agents row at
-    // chat-creation time. Subsequent edits do not retroactively change
-    // existing chats — that contract is what makes ACP/terminal switching
-    // safe.
+    // Resolve to canonical id BEFORE any installed_agents / registry
+    // lookup. Legacy ids on disk (older chats / configs) and the
+    // hardcoded default below would otherwise miss post-v2.6 canonical
+    // rows (`claude` → `claude-acp` etc.). The chat row is also persisted
+    // with the canonical id so future reads stay consistent.
+    let agent =
+        crate::storage::installed_agents::canonicalize_agent_id(&body.agent.unwrap_or_else(|| {
+            cfg.acp
+                .agent_command
+                .clone()
+                .unwrap_or_else(|| "claude-acp".to_string())
+        }));
+    // Snapshot launch_mode from the agent's selected channel at chat-creation
+    // time. Subsequent edits do not retroactively change existing chats —
+    // that contract is what makes ACP/terminal switching safe.
     //
-    // Lookup is against the canonical id because the marketplace stores
-    // rows under canonical ids; `agent` here can still be a legacy id
-    // (claude) since the AgentPicker hasn't been migrated.
-    let canonical = crate::storage::agent_supplement::resolve_agent_id(&agent);
-    let launch_mode = crate::storage::installed_agents::get(canonical.as_ref())
-        .ok()
-        .flatten()
-        .map(|r| r.launch_mode)
-        .unwrap_or_else(|| "acp".to_string());
+    // Derivation (post-v2.6 launch-mode merge):
+    //   selected_install_method == External
+    //     AND registry entry has `terminal_launch` set
+    //     → "terminal" (PTY launch, agent_pty.rs handles it)
+    //   else
+    //     → "acp" (stdio JSON-RPC)
+    //
+    // Unknown agent id (no row) → default to ACP.
+    let launch_mode = {
+        let installed = crate::storage::installed_agents::get(&agent).ok().flatten();
+        let is_terminal = installed
+            .as_ref()
+            .filter(|r| {
+                matches!(
+                    r.selected_install_method,
+                    crate::storage::installed_agents::InstallMethod::External
+                )
+            })
+            .and_then(|_| {
+                crate::storage::agent_registry::get()
+                    .agents
+                    .iter()
+                    .find(|a| a.id == agent)
+                    .and_then(|a| a.terminal_launch.clone())
+            })
+            .is_some();
+        if is_terminal {
+            "terminal".to_string()
+        } else {
+            "acp".to_string()
+        }
+    };
     let now = chrono::Utc::now();
     let title = body
         .title
@@ -1450,15 +1478,61 @@ pub async fn chat_ws_handler(
     // on install_method (pins npx/uvx version, uses binary install_path,
     // gracefully falls back when the row is External or the binary has
     // been deleted off disk).
-    let canonical_id =
-        crate::storage::agent_supplement::resolve_agent_id(&effective_agent).into_owned();
+    // Post-v2.6, `effective_agent` is canonical. Direct lookup.
+    let canonical_id = effective_agent.clone();
     let installed_record = crate::storage::installed_agents::get(&canonical_id)
         .ok()
         .flatten();
-    let supplement = crate::storage::agent_supplement::find_supplement(&canonical_id);
+
+    // Pull registry env (npx.env / uvx.env / target.env) for the channel
+    // that's actually going to spawn (the selected installation). Merge
+    // order:
+    //   1. grove base env (already in env_vars via build_grove_env)
+    //   2. registry distribution env — default from the upstream agent
+    //   3. user env_override — overrides everything per-key
+    let registry_agent = crate::storage::agent_registry::get()
+        .agents
+        .into_iter()
+        .find(|a| a.id == canonical_id);
+    if let Some(ref reg) = registry_agent {
+        let selected_method = installed_record.as_ref().map(|r| r.selected_install_method);
+        let registry_env = match selected_method {
+            Some(crate::storage::installed_agents::InstallMethod::Npx) => reg
+                .distribution
+                .npx
+                .as_ref()
+                .map(|d| d.env.clone())
+                .unwrap_or_default(),
+            Some(crate::storage::installed_agents::InstallMethod::Uvx) => reg
+                .distribution
+                .uvx
+                .as_ref()
+                .map(|d| d.env.clone())
+                .unwrap_or_default(),
+            Some(crate::storage::installed_agents::InstallMethod::Binary) => reg
+                .distribution
+                .binary
+                .get(crate::storage::agent_install::current_platform_key())
+                .map(|t| t.env.clone())
+                .unwrap_or_default(),
+            // External (Trae/TraeX) or no row — pick binary-target env if
+            // present, else nothing.
+            _ => reg
+                .distribution
+                .binary
+                .get(crate::storage::agent_install::current_platform_key())
+                .map(|t| t.env.clone())
+                .unwrap_or_default(),
+        };
+        for (k, v) in registry_env {
+            env_vars.insert(k, v);
+        }
+    }
+
     let (final_command, final_args) = if let Some(ref rec) = installed_record {
-        let (cmd, base_args) = crate::storage::installed_agents::spawn_for(rec, supplement)
-            .unwrap_or_else(|| (resolved.command.clone(), resolved.args.clone()));
+        let (cmd, base_args) =
+            crate::storage::installed_agents::spawn_for(rec, registry_agent.as_ref())
+                .unwrap_or_else(|| (resolved.command.clone(), resolved.args.clone()));
         let mut args = base_args;
         args.extend(rec.args_override.iter().cloned());
         for (k, v) in &rec.env_override {

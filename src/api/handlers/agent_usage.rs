@@ -54,6 +54,9 @@ pub async fn get_agent_usage(
     Path(agent): Path<String>,
     Query(query): Query<UsageQuery>,
 ) -> impl IntoResponse {
+    // Canonicalize incoming id so a stale frontend cache carrying a legacy
+    // id (`claude` vs `claude-acp`) still resolves to the right provider.
+    let agent = crate::storage::installed_agents::canonicalize_agent_id(&agent);
     match agent_usage::fetch_usage(&agent, query.model.as_deref(), query.force).await {
         Ok(usage) => Json(usage).into_response(),
         Err(UsageError::UnsupportedAgent) => StatusCode::NO_CONTENT.into_response(),

@@ -126,6 +126,17 @@ fn ensure_storage_version() {
             // v2.4 → v2.5: Cost columns added
             let _ = storage::database::connection();
         }
+        Some("2.5") => {
+            // v2.5 → v2.6: TWO things land together —
+            //   1. one-time agent id remap (legacy → canonical, e.g. claude
+            //      → claude-acp); idempotent via the audit table.
+            //   2. installed_agents schema reshape into multi-installation
+            //      JSON form; idempotent via sqlite_master inspection.
+            // Order matters: remap rewrites the OLD-shape rows by id
+            // before the schema reshape reads them out.
+            let _ = storage::database::connection();
+            storage::database::migrate_installed_agents_id_remap();
+        }
         Some(v) => {
             eprintln!(
                 "Unknown storage version: {}. Expected {}.",
@@ -146,12 +157,45 @@ fn ensure_storage_version() {
         storage::database::migrate_tasks_toml_to_sqlite();
     }
 
+    // v2.6: One-time agent id remap (legacy → canonical). Idempotent
+    // (skip via installed_agents_id_remap). Runs on every upgrade so a
+    // user skipping from 1.0 directly to 2.6 also gets the work done.
+    if version != Some(CURRENT_STORAGE_VERSION) {
+        storage::database::migrate_installed_agents_id_remap();
+    }
+
+    // v2.6: installed_agents schema reshape (one row per agent,
+    // multi-installation JSON column). Idempotent (detected by
+    // sqlite_master inspection). Runs AFTER the id remap above so the
+    // reshape sees canonical ids.
+    if version != Some(CURRENT_STORAGE_VERSION) {
+        if let Err(e) = storage::database::migrate_installed_agents_to_v26() {
+            eprintln!("[migrate] installed_agents v2.6 failed: {}", e);
+        }
+    }
+
+    // v2.6: canonicalize agent ids in config.toml (acp.agent_command,
+    // layout.agent_command). Idempotent — once everything is canonical
+    // it's a silent no-op.
+    if version != Some(CURRENT_STORAGE_VERSION) {
+        storage::database::migrate_config_agent_command_ids();
+    }
+
     // Update version
     let mut config = storage::config::load_config();
     config.storage_version = Some(CURRENT_STORAGE_VERSION.to_string());
     let _ = storage::config::save_config(&config);
 
     storage::database::run_agent_graph_startup_maintenance();
+
+    // Curated agent list — idempotent first-launch copy. On every boot we
+    // make sure `~/.grove/builtin-agents/curated.json` exists; if it
+    // doesn't, we drop the embedded default there. The marketplace modal
+    // reads this file to render the default landing view + the onboarding
+    // "install recommended" prompt.
+    if let Err(e) = storage::curated_agents::ensure_curated_file() {
+        eprintln!("[startup] failed to bootstrap curated agents file: {}", e);
+    }
 }
 
 /// 启动 TUI 界面

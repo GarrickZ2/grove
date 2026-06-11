@@ -91,8 +91,13 @@ pub struct AcpSessionHandle {
     terminal_kill_tx: Mutex<Option<mpsc::Sender<()>>>,
     /// Agent 是否正在处理（busy=true 从 prompt 开始，到 complete 结束）
     pub is_busy: std::sync::atomic::AtomicBool,
-    /// 最近一轮 agent 回复的累积文本（用于 Complete 通知摘要）
+    /// 最近一轮 agent 回复的累积文本（用于 Complete 通知摘要 / 菜单栏 Tray 全文）
     last_assistant_text: Mutex<String>,
+    /// 当一段 agent 文本之后出现了 tool_call 时置位（前端 ACP Chat 会据此另起
+    /// 一个 assistant 气泡）。下一段 AgentMessageChunk 写入 last_assistant_text
+    /// 前补一个段落分隔，使累积文本的分段与聊天气泡边界一致，避免被工具调用
+    /// 切开的多段文本粘成一坨。
+    pending_text_separator: std::sync::atomic::AtomicBool,
     /// Latest user prompt text for this chat. Set when an `AcpCommand::Prompt`
     /// is dispatched; surfaced on the wire via `RadioEvent::ChatStatus.prompt`
     /// when the chat transitions to `busy` so passive listeners (menubar tray)
@@ -1242,6 +1247,17 @@ async fn handle_session_notification(
         acp::SessionUpdate::AgentMessageChunk(chunk) => {
             let text = content_block_to_text(&chunk.content);
             if let Ok(mut buf) = state.handle.last_assistant_text.lock() {
+                // 若上一段文本之后夹过 tool_call，则在续写新文本前补段落分隔，
+                // 与前端「tool 边界另起气泡」的行为对齐。连续文本块（无 tool
+                // 间隔）仍直接拼接。
+                if state
+                    .handle
+                    .pending_text_separator
+                    .swap(false, std::sync::atomic::Ordering::Relaxed)
+                    && !buf.is_empty()
+                {
+                    buf.push_str("\n\n");
+                }
                 buf.push_str(&text);
             }
             state.handle.emit(AcpUpdate::MessageChunk { text });
@@ -1256,6 +1272,11 @@ async fn handle_session_notification(
             }
         }
         acp::SessionUpdate::ToolCall(tool_call) => {
+            // 标记：此处出现了 tool_call，下一段 agent 文本应另起段落。
+            state
+                .handle
+                .pending_text_separator
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             let locations = tool_call
                 .locations
                 .iter()
@@ -1840,6 +1861,7 @@ pub async fn get_or_start_session(
                     terminal_kill_tx: Mutex::new(None),
                     is_busy: std::sync::atomic::AtomicBool::new(false),
                     last_assistant_text: Mutex::new(String::new()),
+                    pending_text_separator: std::sync::atomic::AtomicBool::new(false),
         last_user_prompt: Mutex::new(None),
         last_plan: Mutex::new(None),
                     last_permission_info: Mutex::new(None),
@@ -2310,7 +2332,12 @@ async fn drive_session(
         modes: &Option<acp::SessionModeState>,
         config_options: &[acp::SessionConfigOption],
     ) -> (Vec<(String, String)>, Option<String>) {
-        if let Some(state) = modes {
+        // If the agent declared a top-level `modes` field AND it has at least
+        // one available mode, trust it. An empty list (some agents advertise
+        // the field but populate it from configOptions instead — traex 0.200.8
+        // does this) is treated as "no info" so we fall through to the
+        // configOptions scan below.
+        if let Some(state) = modes.as_ref().filter(|s| !s.available_modes.is_empty()) {
             let available: Vec<(String, String)> = state
                 .available_modes
                 .iter()
@@ -2397,7 +2424,13 @@ async fn drive_session(
         models: &Option<acp::SessionModelState>,
         config_options: &[acp::SessionConfigOption],
     ) -> (Vec<(String, String)>, Option<String>, Option<String>) {
-        if let Some(state) = models {
+        // traex 0.200.8 advertises a top-level `models` field but leaves
+        // `availableModels` empty — the real list lives in
+        // `configOptions[id="model"]`. Only trust the top-level field when
+        // it actually carries entries; an empty list means "go look in
+        // configOptions" (same precedent as the modes extractor above and
+        // the claude-agent-acp ≥0.40 fallback below).
+        if let Some(state) = models.as_ref().filter(|s| !s.available_models.is_empty()) {
             let available: Vec<(String, String)> = state
                 .available_models
                 .iter()
@@ -2503,10 +2536,12 @@ async fn drive_session(
         .map(|i| i.version.clone())
         .unwrap_or_else(|| "0.0.0".to_string());
 
-    // 如果是 Trae 但其未返回 agent_info (导致被识别为 "unknown")，则修正为 "traecli"
-    let is_trae = config.agent_command.contains("trae");
-    if agent_name == "unknown" && is_trae {
-        agent_name = "traecli".to_string();
+    // 如果 agent 启动后未返回 agent_info（被识别为 "unknown"），就 fallback
+    // 到 `config.agent_command` — 用户配置的 agent id 字符串本身就是
+    // 一个合理的 canonical 名字。Pre-§8 这里 hard-coded `traecli` 字符串
+    // 探测（"如果是 trae 就写成 traecli"），§8 之后改用通用规则。
+    if agent_name == "unknown" {
+        agent_name = config.agent_command.clone();
     }
 
     // Trae 目前已在新版中正确声明支持 load_session，此处可直接使用其实际能力声明
@@ -2857,7 +2892,7 @@ async fn drive_session(
             }
         }
         // Load 路线:agent 不支持 resume 但支持 load_session。agent 会 replay 历史
-        // (Grove 统一从磁盘回放),所以抑制其回放 emit。关键:traecli 等 agent 的
+        // (Grove 统一从磁盘回放),所以抑制其回放 emit。关键:很多 agent 的
         // replay 在 LoadSessionResponse **之后**才异步流式发出,固定时间窗口抓不住
         // → suppress 保持 true,直到 cmd loop 收到首个用户 prompt 才解除(见 Prompt
         // arm)。恢复 session 后、用户发新消息前,agent 主动 emit 的只可能是 replay。
@@ -3127,6 +3162,9 @@ async fn drive_session(
                 if let Ok(mut buf) = handle.last_assistant_text.lock() {
                     buf.clear();
                 }
+                handle
+                    .pending_text_separator
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
 
                 let mut content_blocks: Vec<acp::ContentBlock> = Vec::new();
                 if !text.is_empty() {
@@ -4584,6 +4622,7 @@ pub fn new_handle_for_test(
         terminal_kill_tx: Mutex::new(None),
         is_busy: std::sync::atomic::AtomicBool::new(false),
         last_assistant_text: Mutex::new(String::new()),
+        pending_text_separator: std::sync::atomic::AtomicBool::new(false),
         last_user_prompt: Mutex::new(None),
         last_plan: Mutex::new(None),
         last_permission_info: Mutex::new(None),
@@ -4967,421 +5006,127 @@ pub struct ResolvedAgent {
     pub auth_header: Option<String>,
 }
 
-/// Built-in ACP agent metadata. This catalog is the source of truth for base
-/// agent discovery; runtime availability still comes from `resolve_agent`.
-#[derive(Debug, Clone, Copy)]
-pub struct BuiltinAcpAgent {
-    pub id: &'static str,
-    pub display_name: &'static str,
-    pub icon_id: &'static str,
-    pub aliases: &'static [&'static str],
-}
-
-#[derive(Debug, Clone)]
-pub struct BaseAcpAgentStatus {
-    pub agent: BuiltinAcpAgent,
-    pub available: bool,
-    pub unavailable_reason: Option<String>,
-}
-
-const BUILTIN_ACP_AGENTS: &[BuiltinAcpAgent] = &[
-    BuiltinAcpAgent {
-        id: "claude",
-        display_name: "Claude Code",
-        icon_id: "claude",
-        aliases: &[],
-    },
-    BuiltinAcpAgent {
-        id: "codex",
-        display_name: "Codex",
-        icon_id: "openai",
-        aliases: &[],
-    },
-    BuiltinAcpAgent {
-        id: "cursor",
-        display_name: "Cursor",
-        icon_id: "cursor",
-        aliases: &["cursor-agent"],
-    },
-    BuiltinAcpAgent {
-        id: "gemini",
-        display_name: "Gemini",
-        icon_id: "gemini",
-        aliases: &[],
-    },
-    BuiltinAcpAgent {
-        id: "copilot",
-        display_name: "GitHub Copilot",
-        icon_id: "copilot",
-        aliases: &["gh copilot", "gh-copilot"],
-    },
-    BuiltinAcpAgent {
-        id: "junie",
-        display_name: "Junie",
-        icon_id: "junie",
-        aliases: &[],
-    },
-    BuiltinAcpAgent {
-        id: "kimi",
-        display_name: "Kimi",
-        icon_id: "kimi",
-        aliases: &[],
-    },
-    BuiltinAcpAgent {
-        id: "opencode",
-        display_name: "OpenCode",
-        icon_id: "opencode",
-        aliases: &[],
-    },
-    BuiltinAcpAgent {
-        id: "qwen",
-        display_name: "Qwen",
-        icon_id: "qwen",
-        aliases: &[],
-    },
-    BuiltinAcpAgent {
-        id: "traecli",
-        display_name: "Trae",
-        icon_id: "trae",
-        aliases: &[],
-    },
-    BuiltinAcpAgent {
-        id: "hermes",
-        display_name: "Hermes",
-        icon_id: "hermes",
-        aliases: &[],
-    },
-];
-
-pub fn builtin_acp_agents() -> &'static [BuiltinAcpAgent] {
-    BUILTIN_ACP_AGENTS
-}
-
-pub fn available_base_acp_agents() -> Vec<BuiltinAcpAgent> {
-    base_acp_agent_statuses()
-        .into_iter()
-        .filter(|status| status.available)
-        .map(|status| status.agent)
-        .collect()
-}
-
-pub fn base_acp_agent_statuses() -> Vec<BaseAcpAgentStatus> {
-    builtin_acp_agents()
-        .iter()
-        .copied()
-        .map(|agent| {
-            let unavailable_reason = builtin_acp_unavailable_reason(agent.id);
-            BaseAcpAgentStatus {
-                agent,
-                available: unavailable_reason.is_none(),
-                unavailable_reason,
-            }
-        })
-        .collect()
-}
-
-fn canonical_builtin_acp_agent(agent_name: &str) -> Option<&'static str> {
-    let normalized = agent_name.to_lowercase();
-    builtin_acp_agents()
-        .iter()
-        .find(|agent| {
-            agent.id == normalized || agent.aliases.iter().any(|alias| *alias == normalized)
-        })
-        .map(|agent| agent.id)
-}
-
 /// Check if a command exists in PATH (cross-platform).
+#[allow(dead_code)]
 fn command_exists(cmd: &str) -> bool {
     crate::check::command_exists(cmd)
 }
 
-fn missing_command(cmd: &str) -> Option<String> {
-    if command_exists(cmd) {
-        None
-    } else {
-        Some(format!("{cmd} not found"))
-    }
-}
+// ============================================================================
+// Agent resolution
+//
+// `installed_agents` is the single source of truth. `resolve_agent` reads a
+// row, picks the active installation channel via `selected_install_method`,
+// and delegates to `installed_agents::spawn_for` for the spawn argv. Custom
+// agents (from `config.acp.custom_agents`) take precedence — they're
+// user-defined and may overlap with marketplace ids.
+//
+// No PATH probing here — `installed_agents` is the single source of truth.
+// Rows are kept in sync with PATH presence by
+// `installed_agents::auto_scan_path_binaries()`, which runs on every
+// marketplace render and uniformly handles every registry agent.
+// ============================================================================
 
-fn builtin_acp_unavailable_reason(agent_name: &str) -> Option<String> {
-    let canonical = canonical_builtin_acp_agent(agent_name)?;
-    match canonical {
-        "claude" => {
-            if !command_exists("claude") {
-                return Some("claude not found".to_string());
-            }
-            if command_exists("claude-agent-acp")
-                || command_exists("claude-code-acp")
-                || command_exists("npx")
-            {
-                None
-            } else {
-                Some("claude-agent-acp, claude-code-acp, or npx not found".to_string())
-            }
-        }
-        "codex" => {
-            if !command_exists("codex") {
-                return Some("codex not found".to_string());
-            }
-            if command_exists("codex-acp") || command_exists("npx") {
-                None
-            } else {
-                Some("codex-acp or npx not found".to_string())
-            }
-        }
-        "cursor" => {
-            if command_exists("cursor-agent") || command_exists("agent") {
-                None
-            } else {
-                Some("cursor-agent or agent not found".to_string())
-            }
-        }
-        "gemini" => missing_command("gemini"),
-        "copilot" => missing_command("copilot"),
-        "junie" => missing_command("junie"),
-        "kimi" => missing_command("kimi"),
-        "opencode" => missing_command("opencode"),
-        "qwen" => missing_command("qwen"),
-        "traecli" => missing_command("traecli"),
-        "hermes" => missing_command("hermes"),
-        _ => Some(format!("unsupported agent: {agent_name}")),
-    }
-}
-
-/// 解析 agent 名称到完整 agent 信息（支持 built-in + custom）
+/// Resolve an agent id into a runnable `ResolvedAgent`. Returns `None` when
+/// nothing matches — the caller surfaces "agent unavailable" in the UI.
+///
+/// Post-v2.6, every on-disk id (sessions, config, installed_agents) is
+/// canonical via the boot-time remap migration, so this function does
+/// exact-id matches only. Callers that might still carry a legacy id
+/// (e.g. inbound HTTP body) should call
+/// `installed_agents::canonicalize_agent_id` first.
+///
+/// Order:
+///   1. Custom agents (`config.acp.custom_agents`) — exact-id match.
+///   2. `installed_agents` row → `spawn_for` produces the (cmd, args)
+///      using the active installation channel + the registry document
+///      for args.
 pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
-    // 1. Built-in agents
-    match canonical_builtin_acp_agent(agent_name) {
-        Some("claude") => {
-            if !command_exists("claude") {
-                return None;
-            }
-            let (command, args): (&str, Vec<String>) = if command_exists("claude-agent-acp") {
-                ("claude-agent-acp", vec![])
-            } else if command_exists("claude-code-acp") {
-                ("claude-code-acp", vec![])
-            } else if command_exists("npx") {
-                (
-                    "npx",
-                    vec!["-y".into(), "@agentclientprotocol/claude-agent-acp".into()],
-                )
-            } else {
-                return None;
-            };
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "claude".into(),
-                command: command.into(),
-                args,
-                url: None,
-                auth_header: None,
-            });
-        }
-        Some("traecli") => {
-            if !command_exists("traecli") {
-                return None;
-            }
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "traecli".into(),
-                command: "traecli".into(),
-                args: vec!["acp".into(), "serve".into()],
-                url: None,
-                auth_header: None,
-            });
-        }
-        Some("codex") => {
-            if !command_exists("codex") {
-                return None;
-            }
-            let (command, args): (&str, Vec<String>) = if command_exists("codex-acp") {
-                ("codex-acp", vec![])
-            } else if command_exists("npx") {
-                ("npx", vec!["-y".into(), "@zed-industries/codex-acp".into()])
-            } else {
-                return None;
-            };
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "codex".into(),
-                command: command.into(),
-                args,
-                url: None,
-                auth_header: None,
-            });
-        }
-        Some("kimi") => {
-            if !command_exists("kimi") {
-                return None;
-            }
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "kimi".into(),
-                command: "kimi".into(),
-                args: vec!["acp".into()],
-                url: None,
-                auth_header: None,
-            });
-        }
-        Some("gemini") => {
-            if !command_exists("gemini") {
-                return None;
-            }
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "gemini".into(),
-                command: "gemini".into(),
-                args: vec!["--experimental-acp".into()],
-                url: None,
-                auth_header: None,
-            });
-        }
-        Some("qwen") => {
-            if !command_exists("qwen") {
-                return None;
-            }
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "qwen".into(),
-                command: "qwen".into(),
-                args: vec!["--experimental-acp".into()],
-                url: None,
-                auth_header: None,
-            });
-        }
-        Some("opencode") => {
-            if !command_exists("opencode") {
-                return None;
-            }
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "opencode".into(),
-                command: "opencode".into(),
-                args: vec!["acp".into()],
-                url: None,
-                auth_header: None,
-            });
-        }
-        Some("copilot") => {
-            if !command_exists("copilot") {
-                return None;
-            }
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "copilot".into(),
-                command: "copilot".into(),
-                args: vec!["--acp".into()],
-                url: None,
-                auth_header: None,
-            });
-        }
-        Some("junie") => {
-            if !command_exists("junie") {
-                return None;
-            }
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "junie".into(),
-                command: "junie".into(),
-                args: vec!["--acp".into(), "true".into()],
-                url: None,
-                auth_header: None,
-            });
-        }
-        Some("cursor") => {
-            let command = if command_exists("cursor-agent") {
-                "cursor-agent"
-            } else if command_exists("agent") {
-                "agent"
-            } else {
-                return None;
-            };
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "cursor".into(),
-                command: command.into(),
-                args: vec!["acp".into()],
-                url: None,
-                auth_header: None,
-            });
-        }
-        Some("hermes") => {
-            if !command_exists("hermes") {
-                return None;
-            }
-            return Some(ResolvedAgent {
-                agent_type: "local".into(),
-                agent_name: "hermes".into(),
-                command: "hermes".into(),
-                args: vec!["acp".into()],
-                url: None,
-                auth_header: None,
-            });
-        }
-        _ => {}
-    }
-    // 2. Custom agents from config
+    // 1. Custom agents from config.toml. Highest priority — user
+    // explicitly defined this id, so it overrides any same-id row in
+    // installed_agents.
     let config = crate::storage::config::load_config();
-    config
-        .acp
-        .custom_agents
-        .iter()
-        .find(|a| a.id == agent_name)
-        .map(|a| ResolvedAgent {
-            agent_type: a.agent_type.clone(),
-            agent_name: a.id.clone(),
-            command: a.command.clone().unwrap_or_default(),
-            args: a.args.clone(),
-            url: a.url.clone(),
-            auth_header: a.auth_header.clone(),
-        })
+    if let Some(custom) = config.acp.custom_agents.iter().find(|a| a.id == agent_name) {
+        return Some(ResolvedAgent {
+            agent_type: custom.agent_type.clone(),
+            agent_name: custom.id.clone(),
+            command: custom.command.clone().unwrap_or_default(),
+            args: custom.args.clone(),
+            url: custom.url.clone(),
+            auth_header: custom.auth_header.clone(),
+        });
+    }
+
+    // 2. installed_agents row → spawn_for produces the (cmd, args) using
+    // the active installation channel + registry distribution args. Post-
+    // v2.6, every on-disk id (sessions, config) is canonical, so we look
+    // up directly.
+    let installed = crate::storage::installed_agents::get(agent_name)
+        .ok()
+        .flatten()?;
+    let registry = crate::storage::agent_registry::get();
+    let reg_entry = registry.agents.iter().find(|a| a.id == installed.id);
+    let (command, args) = crate::storage::installed_agents::spawn_for(&installed, reg_entry)?;
+
+    Some(ResolvedAgent {
+        agent_type: "local".into(),
+        agent_name: installed.id.clone(),
+        command,
+        args,
+        url: None,
+        auth_header: None,
+    })
 }
 
-/// Priority order for auto-selecting a Terminal agent. Values are the `id`s
-/// used by `layout.agent_command`; the paired `&str` is the binary name to
-/// probe on PATH.
-const TERMINAL_AGENT_PRIORITY: &[(&str, &str)] = &[
-    ("claude", "claude"),
-    ("codex", "codex"),
-    ("cursor", "cursor-agent"),
-    ("gemini", "gemini"),
-    ("copilot", "copilot"),
-    ("junie", "junie"),
-    ("kimi", "kimi"),
-    ("opencode", "opencode"),
-    ("qwen", "qwen"),
-    ("traecli", "traecli"),
-];
-
-/// Pick the first ACP agent id whose binary is installed on PATH, preferring
-/// user-defined custom agents (which we trust to be runnable).
+/// Pick the first installed_agents row by `created_at` for default-agent
+/// selection. Custom agents (config.toml) take precedence — that's how
+/// users override the default. Hidden rows are skipped.
 pub fn pick_first_available_acp_agent() -> Option<String> {
     let config = crate::storage::config::load_config();
     if let Some(custom) = config.acp.custom_agents.first() {
         return Some(custom.id.clone());
     }
-    for agent in available_base_acp_agents() {
-        if resolve_agent(agent.id).is_some() {
-            return Some(agent.id.to_string());
-        }
-    }
-    None
+    crate::storage::installed_agents::list()
+        .ok()?
+        .into_iter()
+        .find(|a| !a.hidden && a.has_installed_channel())
+        .map(|a| a.id)
 }
 
-/// Pick the first Terminal agent id whose launcher binary is on PATH.
+/// Pick the first terminal-capable agent that's currently installed.
+///
+/// Terminal-capability is registry-data-driven: any agent whose
+/// `terminal_launch` field is set (via `inject_grove_supplements`) qualifies.
+/// Today that's just `claude-acp`, but the function doesn't know or care.
+///
+/// Ordering: registry document insertion order — upstream CDN order
+/// followed by `inject_trae_and_traex_entries` / `inject_grove_supplements`
+/// patches. Stable for the same registry document. TODO: once a second
+/// terminal-capable agent ships, switch to a deterministic
+/// alphabetic-by-id (or supplements-priority) order to avoid silent
+/// default flips when CDN order changes.
 pub fn pick_first_available_terminal_agent() -> Option<String> {
-    for (id, binary) in TERMINAL_AGENT_PRIORITY {
-        if command_exists(binary) {
-            return Some((*id).to_string());
+    let registry = crate::storage::agent_registry::get();
+    for reg in &registry.agents {
+        if reg.terminal_launch.is_none() {
+            continue;
+        }
+        if let Some(installed) = crate::storage::installed_agents::get(&reg.id)
+            .ok()
+            .flatten()
+        {
+            if !installed.hidden && installed.has_installed_channel() {
+                return Some(installed.id);
+            }
         }
     }
     None
 }
 
-/// Ensure `config.toml` has sensible `acp.agent_command` / `layout.agent_command`
-/// values given the currently-installed CLIs. Runs once at server startup so
-/// first-run users don't get "claude" as the default when Claude Code isn't
-/// installed. Silent no-op if the configured agents are already valid.
+/// Ensure `config.toml` has sensible `acp.agent_command` /
+/// `layout.agent_command` defaults given the currently-installed agents.
+/// Runs once at server startup. Silent no-op if the configured agents
+/// are already valid (resolve_agent returns Some for them).
 pub fn init_agent_defaults() {
     let mut config = crate::storage::config::load_config();
     let mut changed = false;
@@ -5399,12 +5144,23 @@ pub fn init_agent_defaults() {
         }
     }
 
+    // Terminal-mode validity: the configured id must match a registry
+    // entry that declares `terminal_launch`, AND have an installed,
+    // non-hidden row. Data-driven via the registry — no agent-specific
+    // code here.
     let terminal_valid = match &config.layout.agent_command {
-        Some(name) if !name.is_empty() => TERMINAL_AGENT_PRIORITY
-            .iter()
-            .find(|(id, _)| id == name)
-            .map(|(_, binary)| command_exists(binary))
-            .unwrap_or(true),
+        Some(name) if !name.is_empty() => {
+            let registry_supports = crate::storage::agent_registry::get()
+                .agents
+                .iter()
+                .any(|a| a.id == *name && a.terminal_launch.is_some());
+            registry_supports
+                && crate::storage::installed_agents::get(name)
+                    .ok()
+                    .flatten()
+                    .map(|a| !a.hidden && a.has_installed_channel())
+                    .unwrap_or(false)
+        }
         _ => false,
     };
     if !terminal_valid {

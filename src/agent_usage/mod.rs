@@ -205,10 +205,16 @@ pub trait AcpQuotaProvider: Send + Sync {
 /// Static registry of all known ACP quota providers, keyed by agent name.
 static PROVIDERS: Lazy<HashMap<&'static str, Box<dyn AcpQuotaProvider>>> = Lazy::new(|| {
     let mut m: HashMap<&'static str, Box<dyn AcpQuotaProvider>> = HashMap::new();
-    m.insert("claude", Box::new(agents::claude::ClaudeProvider));
-    m.insert("codex", Box::new(agents::codex::CodexProvider));
+    // Keys are CANONICAL agent ids (post-v2.6). Frontend's `useAgentQuota`
+    // gates the same set; if you add a new provider, mirror the id in both
+    // places.
+    m.insert("claude-acp", Box::new(agents::claude::ClaudeProvider));
+    m.insert("codex-acp", Box::new(agents::codex::CodexProvider));
     m.insert("gemini", Box::new(agents::gemini::GeminiProvider));
-    m.insert("copilot", Box::new(providers::copilot::CopilotProvider));
+    m.insert(
+        "github-copilot-cli",
+        Box::new(providers::copilot::CopilotProvider),
+    );
     m.insert("kimi", Box::new(providers::kimi::KimiProvider));
     m.insert("opencode", Box::new(agents::opencode::OpencodeProvider));
     m.insert("minimax", Box::new(providers::minimax::MiniMaxProvider));

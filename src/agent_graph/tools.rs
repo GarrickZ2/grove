@@ -470,16 +470,26 @@ pub async fn grove_agent_contacts(
         })
         .collect();
 
-    // can_spawn: base agents → custom servers → personas (user-scoped, cross-task by design)
+    // can_spawn: installed agents → custom servers → personas (user-scoped, cross-task by design)
     let mut can_spawn: Vec<ContactsCanSpawn> = Vec::new();
-    for base in acp::available_base_acp_agents() {
+    let registry = crate::storage::agent_registry::get();
+    for agent in crate::storage::installed_agents::list().unwrap_or_default() {
+        if agent.hidden || !agent.has_installed_channel() {
+            continue;
+        }
+        let display_name = registry
+            .agents
+            .iter()
+            .find(|r| r.id == agent.id)
+            .map(|r| r.name.clone())
+            .unwrap_or_else(|| agent.id.clone());
         can_spawn.push(ContactsCanSpawn {
-            id: base.id.to_string(),
+            id: agent.id.clone(),
             kind: CanSpawnKind::Base,
-            display_name: base.display_name.to_string(),
-            base_agent: base.id.to_string(),
+            display_name,
+            base_agent: agent.id.clone(),
             duty: None,
-            icon_id: Some(base.icon_id.to_string()),
+            icon_id: Some(agent.id.clone()),
         });
     }
     let config = crate::storage::config::load_config();

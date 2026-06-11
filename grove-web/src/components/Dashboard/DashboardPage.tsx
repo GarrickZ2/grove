@@ -41,13 +41,13 @@ import {
   recoverTask,
   rebaseToTask,
   deleteTask,
-  checkCommands,
   getConfig,
   initGitRepo,
   type RepoStatusResponse,
   type BranchDetailInfo,
   type RepoCommitEntry,
 } from "../../api";
+import { listMarketplace } from "../../api/marketplace";
 import {
   getProjectStatistics,
   type StatisticsResponse,
@@ -130,8 +130,11 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [isOperating, setIsOperating] = useState(false);
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
 
-  // Guidance state
-  const [agentAvailability, setAgentAvailability] = useState<Record<string, boolean>>({});
+  // Guidance state. `installedAgentCount`: how many marketplace agents
+  // are launchable (grove-installed or auto-detected). null = not loaded
+  // yet, so we don't flash the "no AI agents installed" tip before the
+  // marketplace fetch lands.
+  const [installedAgentCount, setInstalledAgentCount] = useState<number | null>(null);
   const [terminalAgentConfigured, setTerminalAgentConfigured] = useState(true);
   const [chatAgentConfigured, setChatAgentConfigured] = useState(true);
   // null = unknown until getConfig() resolves — avoids briefly rendering
@@ -257,11 +260,21 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   // doesn't leave serverPlatform unknown forever and hide the IDE/Terminal buttons.
   useEffect(() => {
     const check = async () => {
-      const [cmdRes, cfgRes] = await Promise.allSettled([
-        checkCommands(["claude", "codex", "gemini"]),
+      // Marketplace data is the source of truth for "is any agent
+      // launchable" — replaces the pre-v2.6 hardcoded PATH probe of
+      // claude/codex/gemini.
+      const [mktRes, cfgRes] = await Promise.allSettled([
+        listMarketplace(),
         getConfig(),
       ]);
-      if (cmdRes.status === "fulfilled") setAgentAvailability(cmdRes.value);
+      if (mktRes.status === "fulfilled") {
+        const count = mktRes.value.agents.filter(
+          (a) =>
+            a.install_state === "grove-installed" ||
+            a.install_state === "auto-detected",
+        ).length;
+        setInstalledAgentCount(count);
+      }
       if (cfgRes.status === "fulfilled") {
         setTerminalAgentConfigured(!!cfgRes.value.layout?.agent_command);
         setChatAgentConfigured(!!cfgRes.value.acp?.agent_command);
@@ -654,13 +667,12 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       tone: "warning",
     });
   }
-  const hasAnyAgent = Object.values(agentAvailability).some(v => v);
-  if (!hasAnyAgent && Object.keys(agentAvailability).length > 0) {
+  if (installedAgentCount !== null && installedAgentCount === 0) {
     allTips.push({
       id: "no-agents-installed",
       icon: TerminalSquare,
       title: "No AI agents installed",
-      description: "Install Claude Code, Codex, or Gemini CLI to enable AI-powered workflows.",
+      description: "Open the Marketplace from Settings to install a coding agent and unlock AI-powered workflows.",
       tone: "warning",
     });
   }

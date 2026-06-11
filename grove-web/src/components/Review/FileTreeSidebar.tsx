@@ -255,6 +255,7 @@ export function FileTreeSidebar({
             fileCommentCounts={fileCommentCounts}
             getFileViewedStatus={getFileViewedStatus}
             onContextMenu={handleContextMenu}
+            contextMenuPath={contextMenu?.targetPath ?? null}
             creatingVirtual={creatingVirtual}
             onSubmitVirtualPath={handleSubmitVirtualPath}
             onCancelVirtualPath={handleCancelVirtualPath}
@@ -366,6 +367,7 @@ function TreeNode({
   fileCommentCounts,
   getFileViewedStatus,
   onContextMenu,
+  contextMenuPath,
   creatingVirtual,
   onSubmitVirtualPath,
   onCancelVirtualPath,
@@ -381,6 +383,7 @@ function TreeNode({
   fileCommentCounts?: Map<string, FileCommentCount>;
   getFileViewedStatus?: (path: string) => 'none' | 'viewed' | 'updated';
   onContextMenu?: (e: React.MouseEvent, path: string, isDirectory: boolean) => void;
+  contextMenuPath?: string | null;
   creatingVirtual?: { type: 'file' | 'directory'; parentPath: string; depth: number } | null;
   onSubmitVirtualPath?: (name: string) => void;
   onCancelVirtualPath?: () => void;
@@ -423,7 +426,7 @@ function TreeNode({
     return (
       <>
         <button
-          className="diff-sidebar-item"
+          className={`diff-sidebar-item ${contextMenuPath === node.path ? 'context-target' : ''}`}
           style={{ paddingLeft: depth * 12 + 12 }}
           onClick={() => {
             if (!expanded && onExpandDir) {
@@ -472,6 +475,7 @@ function TreeNode({
                 fileCommentCounts={fileCommentCounts}
                 getFileViewedStatus={getFileViewedStatus}
                 onContextMenu={onContextMenu}
+                contextMenuPath={contextMenuPath}
                 creatingVirtual={creatingVirtual}
                 onSubmitVirtualPath={onSubmitVirtualPath}
                 onCancelVirtualPath={onCancelVirtualPath}
@@ -494,7 +498,7 @@ function TreeNode({
 
   return (
     <button
-      className={`diff-sidebar-item ${isActive ? 'active' : ''} ${file.is_virtual ? 'virtual' : ''}`}
+      className={`diff-sidebar-item ${isActive ? 'active' : ''} ${file.is_virtual ? 'virtual' : ''} ${contextMenuPath === file.new_path ? 'context-target' : ''}`}
       style={{ paddingLeft: depth * 12 + 12 }}
       onClick={() => onSelectFile(file.new_path)}
       onContextMenu={(e) => onContextMenu?.(e, file.new_path, false)}

@@ -41,15 +41,14 @@ import {
   patchConfig,
   previewHookSound,
   checkAllDependencies,
-  checkCommands,
-  listBaseAgents,
   listApplications,
   listCustomAgents,
   type AppInfo,
-  type BaseAgent,
   type CustomAgentServer,
   type CustomAgentPersona,
 } from "../../api";
+import { listMarketplace, type MarketplaceAgent } from "../../api/marketplace";
+import type { BaseAgent } from "../Tasks/TaskView/useACPAvailability";
 import { LayoutEditor, type CustomLayoutConfig, type PaneType, type LayoutNode, createDefaultLayout, countPanes } from "./LayoutEditor";
 import { CustomAgentsModal } from "./CustomAgentsModal";
 import { MarketplaceModal } from "./MarketplaceModal";
@@ -59,6 +58,7 @@ import { ShortcutSettingsPanel } from "./ShortcutSettingsPanel";
 import {
   setCustomAgentPersonas as setCustomAgentPersonasIconRegistry,
   loadCustomAgentPersonas as loadCustomAgentPersonasIcon,
+  setMarketplaceIcons,
 } from "../../utils/agentIcon";
 import { getExtensionStatus } from "../../api/extension";
 import { PluginsSection } from "./PluginsSection";
@@ -249,7 +249,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [serverPlatform, setServerPlatform] = useState<string | null>(null);
 
   // ACP / Custom agents state
-  const [acpAgent, setAcpAgent] = useState("claude"); // Chat mode agent
+  const [acpAgent, setAcpAgent] = useState(""); // Chat mode agent — populated from config.acp.agent_command after load
   const [customAgents, setCustomAgents] = useState<CustomAgentServer[]>([]);
   const [showCustomAgentModal, setShowCustomAgentModal] = useState(false);
   const [showCustomAgentsModal, setShowCustomAgentsModal] = useState(false);
@@ -576,38 +576,61 @@ export function SettingsPage({ config }: SettingsPageProps) {
     setIsChecking(false);
   }, []);
 
-  // Check agent command availability
-  const checkAgentCommands = useCallback(async () => {
-    const cmds = new Set<string>();
-    for (const opt of agentOptions) {
-      if (opt.terminalCheck) cmds.add(opt.terminalCheck);
-    }
-    try {
-      const results = await checkCommands([...cmds]);
-      setCommandAvailability(results);
-    } catch {
-      // API not available, assume all available
-    }
-  }, []);
+  // Terminal-capable installed agent ids (canonical form). Populated from
+  // marketplace data; replaces the old PATH-probe via `checkCommands`.
+  const [terminalLaunchableIds, setTerminalLaunchableIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   const loadBaseAgents = useCallback(async () => {
     setBaseAgentsLoading(true);
     try {
-      const agents = await listBaseAgents();
-      setBaseAgents(agents);
-    } catch {
-      // Fall back to static list so the UI stays functional when the backend is unavailable.
-      // Mark all as available (fail-open) — the user will get an error when they actually try to use one.
-      setBaseAgents(
-        agentOptions
-          .filter((opt) => opt.acpCheck)
-          .map((opt) => ({
-            id: opt.id,
-            display_name: opt.label,
-            icon_id: opt.id,
-            available: true,
-          })),
+      const resp = await listMarketplace();
+      setMarketplaceIcons(
+        resp.agents.map((a) => ({ id: a.id, icon_url: a.icon_url })),
       );
+      const launchable = resp.agents.filter(
+        (a: MarketplaceAgent) =>
+          (a.install_state === "grove-installed" ||
+            a.install_state === "auto-detected") &&
+          !(a.installed?.hidden ?? false),
+      );
+      setBaseAgents(
+        launchable.map((a) => ({
+          id: a.id,
+          display_name: a.name,
+          icon_id: a.id,
+          icon_url: a.icon_url,
+          available: true,
+        })),
+      );
+      setTerminalLaunchableIds(
+        new Set(
+          launchable
+            .filter((a) => a.supports_terminal_launch)
+            .map((a) => a.id),
+        ),
+      );
+      // Trigger downstream `hasAvailability` gating that watches a non-empty
+      // commandAvailability map. Marker entry stands in for the old probe map.
+      setCommandAvailability({ __marketplace_loaded__: true });
+    } catch {
+      // Fail-open: surface the static catalog so the picker isn't
+      // blank. User will get a runtime error if they pick an agent the
+      // backend can't actually launch. NOTE: terminal-launchability
+      // is intentionally LEFT EMPTY — surfacing every static id as
+      // terminal-capable would let the user pick e.g. codex-acp for
+      // the terminal slot and hit a 400 on launch.
+      setBaseAgents(
+        agentOptions.map((opt) => ({
+          id: opt.id,
+          display_name: opt.label,
+          icon_id: opt.id,
+          available: true,
+        })),
+      );
+      setTerminalLaunchableIds(new Set());
+      setCommandAvailability({ __marketplace_loaded__: true });
     }
     setBaseAgentsLoading(false);
   }, []);
@@ -912,12 +935,11 @@ export function SettingsPage({ config }: SettingsPageProps) {
         loadConfig(),
         checkDependencies(),
         loadApplications(),
-        checkAgentCommands(),
         loadBaseAgents(),
         loadCustomAgentPersonas(),
       ]);
     })();
-  }, [loadConfig, checkDependencies, loadApplications, checkAgentCommands, loadBaseAgents, loadCustomAgentPersonas]);
+  }, [loadConfig, checkDependencies, loadApplications, loadBaseAgents, loadCustomAgentPersonas]);
 
   // Terminal availability
   const tmuxInstalled = depStates["tmux"]?.status === "installed";
@@ -975,15 +997,19 @@ export function SettingsPage({ config }: SettingsPageProps) {
     return map;
   }, [baseAgents]);
 
-  // Terminal Agent 选项（检测 terminalCheck 命令）
+  // Terminal Agent options — derived from marketplace data. An agent is
+  // enabled iff the marketplace reports it installed (grove-installed or
+  // auto-detected) AND `supports_terminal_launch === true` (i.e. its
+  // registry entry declares a `terminal_launch` config).
   const terminalAgentOptions = useMemo(() => agentOptions.map(a => {
     if (!hasAvailability) return a;
-    const cmd = a.terminalCheck;
-    if (cmd && commandAvailability[cmd] === false) {
-      return { ...a, disabled: true, disabledReason: `${cmd} not found — install to enable` };
+    const available =
+      terminalLaunchableIds.has(a.id) || terminalLaunchableIds.has(a.value);
+    if (!available) {
+      return { ...a, disabled: true, disabledReason: `Not installed — install via Marketplace to enable` };
     }
     return a;
-  }), [commandAvailability, hasAvailability]);
+  }), [terminalLaunchableIds, hasAvailability]);
 
   // Chat Agent 选项：ACP base agent availability comes from backend.
   const chatAgentOptions = useMemo(() => {
@@ -1027,9 +1053,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
     // the setStates aren't synchronous within the effect body.
     let nextAgentCommand: string | undefined;
     if (hasTerminalAvailability && agentCommand) {
-      const currentAgent = agentOptions.find(a => a.id === agentCommand);
-      const cmd = currentAgent?.terminalCheck;
-      if (cmd && commandAvailability[cmd] === false) {
+      const currentOption = terminalAgentOptions.find(a => a.id === agentCommand);
+      if (currentOption?.disabled) {
         const firstAvailable = terminalAgentOptions.find(a => !a.disabled);
         nextAgentCommand = firstAvailable?.id ?? "";
       }
@@ -1363,9 +1388,21 @@ env_vars = [
         <Section
           id="chat"
           title="Agent"
-          description={isChatAvailable ? "Ready" : "Need Setup"}
+          description={
+            baseAgentsLoading
+              ? "Loading…"
+              : isChatAvailable
+                ? "Ready"
+                : "Need Setup"
+          }
           icon={Bot}
-          iconColor={isChatAvailable ? "#a855f7" : "var(--color-warning)"}
+          iconColor={
+            baseAgentsLoading
+              ? "var(--color-text-muted)"
+              : isChatAvailable
+                ? "#a855f7"
+                : "var(--color-warning)"
+          }
           isOpen={openSections.chat}
           onToggle={() => toggleSection("chat")}
         >
@@ -1499,12 +1536,19 @@ env_vars = [
           id="terminal"
           title="Terminal"
           description={
-            !isTerminalAvailable ? "Need Setup"
+            baseAgentsLoading ? "Loading…"
+              : !isTerminalAvailable ? "Need Setup"
               : webTerminalMode === "direct" ? "Direct"
               : `${dependencyInfo[terminalMultiplexer]?.name || terminalMultiplexer}`
           }
           icon={Terminal}
-          iconColor={isTerminalAvailable ? "#0ea5e9" : "var(--color-warning)"}
+          iconColor={
+            baseAgentsLoading
+              ? "var(--color-text-muted)"
+              : isTerminalAvailable
+                ? "#0ea5e9"
+                : "var(--color-warning)"
+          }
           isOpen={openSections.terminal}
           onToggle={() => toggleSection("terminal")}
         >
@@ -1516,7 +1560,7 @@ env_vars = [
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => { checkDependencies(); checkAgentCommands(); }}
+                  onClick={() => { checkDependencies(); loadBaseAgents(); }}
                   disabled={isChecking}
                   className="!p-1 !h-auto"
                 >

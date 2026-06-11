@@ -7,6 +7,8 @@ import { VSCodeIcon } from "../../ui";
 interface FileTreeProps {
   nodes: FileTreeNode[];
   selectedFile: string | null;
+  /** Path of the row currently targeted by the open context menu (highlighted). */
+  contextMenuPath?: string | null;
   onSelectFile: (path: string) => void;
   onContextMenu?: (e: React.MouseEvent, path: string, isDir: boolean) => void;
   creatingPath?: { type: 'file' | 'directory'; parentPath: string; depth: number } | null;
@@ -22,6 +24,7 @@ interface FileTreeProps {
 export function FileTree({
   nodes,
   selectedFile,
+  contextMenuPath,
   onSelectFile,
   onContextMenu,
   creatingPath,
@@ -105,6 +108,7 @@ export function FileTree({
           node={node}
           depth={0}
           selectedFile={selectedFile}
+          contextMenuPath={contextMenuPath}
           onSelectFile={onSelectFile}
           onContextMenu={onContextMenu}
           creatingPath={creatingPath}
@@ -176,6 +180,7 @@ interface FileTreeItemProps {
   node: FileTreeNode;
   depth: number;
   selectedFile: string | null;
+  contextMenuPath?: string | null;
   onSelectFile: (path: string) => void;
   onContextMenu?: (e: React.MouseEvent, path: string, isDir: boolean) => void;
   creatingPath?: { type: 'file' | 'directory'; parentPath: string; depth: number } | null;
@@ -192,6 +197,7 @@ function FileTreeItem({
   node,
   depth,
   selectedFile,
+  contextMenuPath,
   onSelectFile,
   onContextMenu,
   creatingPath,
@@ -211,6 +217,7 @@ function FileTreeItem({
   const [expandError, setExpandError] = useState<string | null>(null);
   const loadedRef = useRef(false);
   const isSelected = !node.isDir && selectedFile === node.path;
+  const isContextTarget = contextMenuPath === node.path;
   const [isDragOver, setIsDragOver] = useState(false);
 
 
@@ -371,6 +378,7 @@ function FileTreeItem({
           flex items-center gap-1 w-full text-left px-2 py-0.5 hover:bg-[var(--color-bg-tertiary)] transition-all duration-150 relative
           ${isSelected ? "bg-[var(--color-highlight)]/15 text-[var(--color-highlight)]" : "text-[var(--color-text)] opacity-80 hover:opacity-100"}
           ${isDragOver ? "bg-[var(--color-highlight)]/10 border-l-2 border-[var(--color-highlight)] text-[var(--color-highlight)] pl-3" : ""}
+          ${isContextTarget && !isSelected ? "bg-[var(--color-highlight)]/10 ring-1 ring-inset ring-[var(--color-highlight)]/40" : ""}
         `}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         draggable={true}
@@ -425,6 +433,7 @@ function FileTreeItem({
               node={child}
               depth={depth + 1}
               selectedFile={selectedFile}
+              contextMenuPath={contextMenuPath}
               onSelectFile={onSelectFile}
               onContextMenu={onContextMenu}
               creatingPath={creatingPath}

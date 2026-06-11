@@ -6,14 +6,15 @@
 //! The connection tracks its file path and re-opens if `grove_dir()` changes
 //! (happens when tests override `HOME`).
 
-use rusqlite::{params, Connection};
+use chrono::Utc;
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use super::grove_dir;
 use crate::error::Result;
 
-pub const CURRENT_STORAGE_VERSION: &str = "2.5";
+pub const CURRENT_STORAGE_VERSION: &str = "2.6";
 
 /// Database state: caches connection + its path so we can detect HOME changes.
 struct DbState {
@@ -407,23 +408,36 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             updated_at    TEXT NOT NULL
         );
 
-        -- Marketplace-managed agent installs. Auto-detected (user has the CLI
-        -- on PATH already) is NOT tracked here — that comes from runtime probe.
-        -- `hidden` lets a user suppress an auto-detected agent from the picker
-        -- without grove ever touching their system install.
+        -- The single source of truth for what agents grove can launch.
+        -- One row per agent. Multiple install channels (npx + binary + …) live
+        -- in the `installations` JSON column; `selected_install_method` picks
+        -- which channel is active AND implicitly which launch mode (PTY vs
+        -- stdio ACP) — registry-side `terminal_launch` config decides PTY
+        -- when External is selected.
+        -- See `src/storage/installed_agents.rs` for the canonical shape.
         CREATE TABLE IF NOT EXISTS installed_agents (
-            id              TEXT PRIMARY KEY,
-            version         TEXT NOT NULL,
-            install_method  TEXT NOT NULL,         -- 'npx' | 'binary' | 'uvx'
-            install_path    TEXT,                  -- binary only (extracted dir)
-            status          TEXT NOT NULL DEFAULT 'installed',  -- installing | installed | failed
-            failure_reason  TEXT,
-            args_override   TEXT,                  -- JSON array of strings
-            env_override    TEXT,                  -- JSON map
-            launch_mode     TEXT NOT NULL DEFAULT 'acp',
-            hidden          INTEGER NOT NULL DEFAULT 0,
-            installed_at    TEXT NOT NULL,
-            updated_at      TEXT NOT NULL
+            id                        TEXT PRIMARY KEY,
+            installations             TEXT NOT NULL,                       -- JSON array of {method, version, install_path?, status, ...}
+            selected_install_method   TEXT NOT NULL,                       -- 'npx' | 'binary' | 'uvx' | 'external'
+            args_override             TEXT NOT NULL DEFAULT '[]',          -- JSON array of strings
+            env_override              TEXT NOT NULL DEFAULT '{}',          -- JSON map
+            hidden                    INTEGER NOT NULL DEFAULT 0,
+            created_at                TEXT NOT NULL,
+            updated_at                TEXT NOT NULL
+        );
+
+        -- v2.6: One-time id remap audit. Rows that the 2.5→2.6 migration
+        -- *touched* (rewrote installed_agents.id / session.agent / custom_agent.base_agent
+        -- from a legacy id to its canonical successor) get a row here.
+        -- Subsequent launches skip the work — the row is the proof the value
+        -- was already remapped. We never delete rows; the table is append-only
+        -- and the unique index on (table_name, source_id) keeps it bounded.
+        CREATE TABLE IF NOT EXISTS installed_agents_id_remap (
+            table_name     TEXT NOT NULL,
+            source_id      TEXT NOT NULL,
+            canonical_id   TEXT NOT NULL,
+            migrated_at    TEXT NOT NULL,
+            PRIMARY KEY (table_name, source_id)
         );
 
         -- Review Comments
@@ -1284,7 +1298,397 @@ pub fn migrate_tasks_toml_to_sqlite() {
     }
 }
 
+/// Remap legacy agent ids to their canonical successors (v2.5 → v2.6).
+///
+/// Three places store agent ids that historic ChatSession.agent /
+/// config.acp.agent_command values may have used:
+///
+///   - `installed_agents.id`     — marketplace install records
+///   - `session.agent`           — agent graph session row
+///   - `custom_agent.base_agent` — persona's underlying base agent
+///
+/// Each id gets rewritten to its canonical successor, with a row in
+/// `installed_agents_id_remap` to mark the work done. Rows already remapped
+/// (canonical id present, no remap row needed) are skipped — the work is
+/// idempotent. The remap table is append-only and self-cleans via
+/// `clear_remap_audit` once a source id is fully resolved (currently a
+/// no-op, kept for future cleanup if the table grows).
+///
+/// Why this is a one-shot SQL pass instead of runtime alias lookup:
+/// keeping a 1:1 id space at rest means every downstream read (`resolve_agent`,
+/// `installed_agents::get`, the marketplace `agent_id` URL param) just does a
+/// direct row lookup. The cost is one migration per upgrade; the win is zero
+/// indirection forever after.
+///
+/// Returns `(installed_touched, sessions_touched, base_agents_touched)` for
+/// the boot log.
+pub fn migrate_installed_agents_id_remap() -> (u32, u32, u32) {
+    use std::collections::HashSet;
+
+    // Single shared alias table — same function the runtime used to reach
+    // for. After this migration runs once, every on-disk id is canonical;
+    // production code reads installed_agents / session.agent / config
+    // directly without any runtime alias resolution.
+    fn canonical_for(id: &str) -> Option<String> {
+        let canon = crate::storage::installed_agents::canonicalize_agent_id(id);
+        if canon == id {
+            None
+        } else {
+            Some(canon)
+        }
+    }
+
+    /// Local copies of `installed_agents::parse_args` / `parse_env` —
+    /// those fns are private. Returns empty defaults on parse failure
+    /// (the rows were written by a prior grove version, so we trust
+    /// the shape but defend against corruption).
+    fn parse_args_json(s: Option<&str>) -> Vec<String> {
+        s.and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .unwrap_or_default()
+    }
+    fn parse_env_json(s: Option<&str>) -> std::collections::HashMap<String, String> {
+        s.and_then(|json| {
+            serde_json::from_str::<std::collections::HashMap<String, String>>(json).ok()
+        })
+        .unwrap_or_default()
+    }
+
+    /// Distinct (source, target) pairs the caller should rewrite. Runs
+    /// the given `select_sql` (a `SELECT DISTINCT <col> FROM <table>`
+    /// statement), maps each value through `canonical_for`, and returns
+    /// the unique (source, target) pairs that need rewriting.
+    ///
+    /// `table_label` is used only for log lines on SQL failure. We
+    /// build a `HashSet<(String, String)>` so a value that maps to
+    /// itself under `canonical_for` is skipped, and the same
+    /// (source, target) pair from multiple rows is deduped.
+    fn collect_remap_pairs(
+        table_label: &str,
+        select_sql: &str,
+        conn: &rusqlite::Connection,
+    ) -> HashSet<(String, String)> {
+        let mut stmt = match conn.prepare(select_sql) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("  [migrate] {}: prepare failed: {}", table_label, e);
+                return HashSet::new();
+            }
+        };
+        let sources: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .ok()
+            .map(|it| it.filter_map(|x| x.ok()).collect())
+            .unwrap_or_default();
+        drop(stmt);
+
+        let mut out = HashSet::new();
+        for s in sources {
+            if let Some(t) = canonical_for(&s) {
+                out.insert((s, t));
+            }
+        }
+        out
+    }
+
+    let conn = connection();
+    let now = Utc::now().to_rfc3339();
+
+    // ── 1. installed_agents.id ──────────────────────────────────────────
+    //
+    // P1.4: collision path used to DELETE the legacy row outright —
+    // that silently dropped the user's overrides (launch_mode,
+    // args_override, env_override, hidden) if the canonical row was
+    // all-default. New behavior: read both rows, merge (legacy prefs
+    // win for prefs, canonical wins for install state), UPDATE the
+    // canonical row, DELETE the legacy row.
+    let mut installed_touched = 0u32;
+    let mut stmt = match conn.prepare("SELECT id FROM installed_agents") {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("  [migrate] installed_agents.id: prepare failed: {}", e);
+            return (0, 0, 0);
+        }
+    };
+    let rows: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .ok()
+        .map(|it| it.filter_map(|x| x.ok()).collect())
+        .unwrap_or_default();
+    drop(stmt);
+
+    for source_id in rows {
+        let Some(target) = canonical_for(&source_id) else {
+            continue;
+        };
+
+        // Skip if we already wrote the remap row for this source. Means
+        // a prior run partially completed.
+        let already: bool = conn
+            .query_row(
+                "SELECT 1 FROM installed_agents_id_remap
+                 WHERE table_name = 'installed_agents' AND source_id = ?1",
+                params![&source_id],
+                |_| Ok(true),
+            )
+            .optional()
+            .unwrap_or(None)
+            .unwrap_or(false);
+        if already {
+            continue;
+        }
+
+        // Collision check: does the canonical target already exist?
+        let target_exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM installed_agents WHERE id = ?1",
+                params![&target],
+                |_| Ok(true),
+            )
+            .optional()
+            .unwrap_or(None)
+            .unwrap_or(false);
+
+        let tx = conn.unchecked_transaction().ok();
+        let outcome: Result<()> = (|| {
+            if target_exists {
+                // Merge: read both, prefer legacy prefs over canonical
+                // defaults, prefer canonical install state. We log
+                // any non-default legacy fields we adopt so the user
+                // can audit the merge via the boot log.
+                let legacy = conn.query_row(
+                    "SELECT version, install_method, install_path, status,
+                            launch_mode, hidden, args_override, env_override
+                     FROM installed_agents WHERE id = ?1",
+                    params![&source_id],
+                    |r| {
+                        let method: String = r.get(1)?;
+                        let status: String = r.get(3)?;
+                        Ok((
+                            r.get::<_, String>(0)?,         // version
+                            method,                         // install_method
+                            r.get::<_, Option<String>>(2)?, // install_path
+                            status,                         // status
+                            r.get::<_, String>(4)?,         // launch_mode
+                            r.get::<_, i64>(5)?,            // hidden
+                            r.get::<_, Option<String>>(6)?, // args_override
+                            r.get::<_, Option<String>>(7)?, // env_override
+                        ))
+                    },
+                )?;
+                let legacy_args = parse_args_json(legacy.6.as_deref());
+                let legacy_env = parse_env_json(legacy.7.as_deref());
+
+                // Adopt legacy prefs IF they're non-default — i.e. the
+                // user actually customized them. `launch_mode` default
+                // is `"acp"` (see `InstalledAgent::launch_mode`); if
+                // the legacy row has anything else, the user picked it.
+                // `hidden` default is `0` (false).
+                let legacy_launch_mode: &str = &legacy.4;
+                let legacy_hidden: bool = legacy.5 != 0;
+                let legacy_customized = !legacy_args.is_empty()
+                    || !legacy_env.is_empty()
+                    || legacy_launch_mode != "acp"
+                    || legacy_hidden;
+
+                if legacy_customized {
+                    eprintln!(
+                        "  [migrate] installed_agents.id: merging legacy {source} prefs \
+                         (launch_mode={launch}, hidden={hidden}, args={nargs}, env={nenv}) into {target}",
+                        source = source_id,
+                        target = target,
+                        launch = legacy_launch_mode,
+                        hidden = legacy_hidden,
+                        nargs = legacy_args.len(),
+                        nenv = legacy_env.len(),
+                    );
+                    conn.execute(
+                        "UPDATE installed_agents
+                         SET launch_mode = ?1,
+                             hidden      = ?2,
+                             args_override = ?3,
+                             env_override  = ?4,
+                             updated_at  = ?5
+                         WHERE id = ?6",
+                        params![
+                            legacy_launch_mode,
+                            legacy.5,
+                            serde_json::to_string(&legacy_args).unwrap_or_else(|_| "[]".into()),
+                            serde_json::to_string(&legacy_env).unwrap_or_else(|_| "{}".into()),
+                            &now,
+                            &target,
+                        ],
+                    )?;
+                }
+                // Drop the legacy row; canonical row is now the
+                // authoritative install record (with legacy prefs
+                // merged in if non-default).
+                conn.execute(
+                    "DELETE FROM installed_agents WHERE id = ?1",
+                    params![&source_id],
+                )?;
+            } else {
+                // No collision — rename in place. The other columns stay
+                // (version, install_method, install_path, args/env override,
+                //  launch_mode, hidden) so the user's install state is
+                //  preserved across the rename.
+                conn.execute(
+                    "UPDATE installed_agents SET id = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![&target, &now, &source_id],
+                )?;
+            }
+            conn.execute(
+                "INSERT OR REPLACE INTO installed_agents_id_remap
+                    (table_name, source_id, canonical_id, migrated_at)
+                 VALUES ('installed_agents', ?1, ?2, ?3)",
+                params![&source_id, &target, &now],
+            )?;
+            Ok(())
+        })();
+
+        match (tx, outcome) {
+            (Some(tx), Ok(())) => {
+                let _ = tx.commit();
+                installed_touched += 1;
+            }
+            (Some(tx), Err(e)) => {
+                let _ = tx.rollback();
+                eprintln!(
+                    "  [migrate] installed_agents.id: {} → {} failed: {}",
+                    source_id, target, e
+                );
+            }
+            (None, Ok(())) => {
+                installed_touched += 1;
+            }
+            (None, Err(e)) => {
+                eprintln!(
+                    "  [migrate] installed_agents.id: {} → {} failed (no tx): {}",
+                    source_id, target, e
+                );
+            }
+        }
+    }
+
+    // ── 2. session.agent (Agent Graph chat sessions) ────────────────────
+    //
+    // No collision possible — there's no UNIQUE/PRIMARY KEY on
+    // session.agent, and multiple sessions can share the same agent
+    // id. Strategy: scan once to find the distinct (source_id →
+    // canonical) pairs, then for each pair run ONE bulk UPDATE
+    // (`UPDATE session SET agent = canonical WHERE agent = source`).
+    //
+    // The remap table records one audit row per (table, source_id)
+    // pair — not per session. P1.3 fixed the per-row skip bug the
+    // old loop had (which left all but the first row unmigrated).
+    let mut sessions_touched = 0u32;
+    {
+        // Distinct source→target pairs that need rewriting.
+        let pairs =
+            collect_remap_pairs("session.agent", "SELECT DISTINCT agent FROM session", &conn);
+        for (source, target) in pairs {
+            let n = conn
+                .execute(
+                    "UPDATE session SET agent = ?1 WHERE agent = ?2",
+                    params![&target, &source],
+                )
+                .unwrap_or_else(|e| {
+                    eprintln!(
+                        "  [migrate] session.agent: bulk UPDATE {} → {} failed: {}",
+                        source, target, e
+                    );
+                    0
+                });
+            if n > 0 {
+                let _ = conn.execute(
+                    "INSERT OR REPLACE INTO installed_agents_id_remap
+                        (table_name, source_id, canonical_id, migrated_at)
+                     VALUES ('session', ?1, ?2, ?3)",
+                    params![&source, &target, &now],
+                );
+                sessions_touched += n as u32;
+            }
+        }
+    }
+
+    // ── 3. custom_agent.base_agent (persona underlying agent) ───────────
+    let mut base_agents_touched = 0u32;
+    {
+        let pairs = collect_remap_pairs(
+            "custom_agent.base_agent",
+            "SELECT DISTINCT base_agent FROM custom_agent",
+            &conn,
+        );
+        for (source, target) in pairs {
+            let n = conn
+                .execute(
+                    "UPDATE custom_agent SET base_agent = ?1, updated_at = ?2
+                     WHERE base_agent = ?3",
+                    params![&target, &now, &source],
+                )
+                .unwrap_or_else(|e| {
+                    eprintln!(
+                        "  [migrate] custom_agent.base_agent: bulk UPDATE {} → {} failed: {}",
+                        source, target, e
+                    );
+                    0
+                });
+            if n > 0 {
+                let _ = conn.execute(
+                    "INSERT OR REPLACE INTO installed_agents_id_remap
+                        (table_name, source_id, canonical_id, migrated_at)
+                     VALUES ('custom_agent', ?1, ?2, ?3)",
+                    params![&source, &target, &now],
+                );
+                base_agents_touched += n as u32;
+            }
+        }
+    }
+
+    if installed_touched + sessions_touched + base_agents_touched > 0 {
+        eprintln!(
+            "  [migrate] agent id remap: installed_agents={} session.agent={} custom_agent.base_agent={}",
+            installed_touched, sessions_touched, base_agents_touched
+        );
+    }
+
+    (installed_touched, sessions_touched, base_agents_touched)
+}
+
 /// Migrate review comments from per-task `review.json` files to SQLite (v2.2 → v2.3).
+/// Canonicalize the two agent_command fields in `config.toml`
+/// (`acp.agent_command`, `layout.agent_command`). Runs alongside the
+/// SQLite id remap so all on-disk references — table rows, JSON columns,
+/// AND the TOML config — end up canonical. After this, no runtime code
+/// needs an alias lookup.
+///
+/// Idempotent: rewriting an already-canonical id to itself is a no-op.
+pub fn migrate_config_agent_command_ids() {
+    let mut config = crate::storage::config::load_config();
+    let mut changed = false;
+
+    if let Some(name) = config.acp.agent_command.as_deref() {
+        let canon = crate::storage::installed_agents::canonicalize_agent_id(name);
+        if canon != name {
+            config.acp.agent_command = Some(canon);
+            changed = true;
+        }
+    }
+    if let Some(name) = config.layout.agent_command.as_deref() {
+        let canon = crate::storage::installed_agents::canonicalize_agent_id(name);
+        if canon != name {
+            config.layout.agent_command = Some(canon);
+            changed = true;
+        }
+    }
+    if changed {
+        if let Err(e) = crate::storage::config::save_config(&config) {
+            eprintln!("[migrate] config agent_command canonicalize failed: {}", e);
+        } else {
+            eprintln!("  [migrate] config.toml: agent_command(s) canonicalized");
+        }
+    }
+}
+
 pub fn migrate_review_to_sqlite() {
     let projects_dir = grove_dir().join("projects");
     if !projects_dir.exists() {
@@ -1647,6 +2051,209 @@ fn task_group_slots_empty() -> bool {
         })
         .unwrap_or(0);
     count == 0
+}
+
+/// v2.5 → v2.6 schema migration for `installed_agents`.
+///
+/// Pre-2.6 schema: one row per (agent, install_method) with flat columns
+/// (`version`, `install_method`, `install_path`, `status`, `failure_reason`,
+/// `args_override`, `env_override`, `launch_mode`, `hidden`, `installed_at`,
+/// `updated_at`).
+///
+/// Post-2.6 schema: one row per agent (multi-installation via JSON column).
+///
+/// Detection: probe `sqlite_master` for the old `version` column. If found,
+/// do the rename-recreate-copy-drop dance inside one transaction so a crash
+/// can't leave half-migrated state.
+///
+/// Idempotent: if the table is already in the new shape (post-init, fresh
+/// install), this is a no-op.
+pub fn migrate_installed_agents_to_v26() -> Result<()> {
+    let conn = connection();
+
+    // Detect: does the table have the old-shape `version` column?
+    let table_sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='installed_agents'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .unwrap_or(None);
+    let Some(sql) = table_sql else {
+        // Table doesn't exist yet — init_schema will create it in the new
+        // shape. Nothing to migrate.
+        return Ok(());
+    };
+    // The new schema doesn't have a top-level `version` column; the old one
+    // did. Use that as the discriminator. (We could also check `installations`
+    // is present, but absence-of-old is the safer test since both have other
+    // columns in common.)
+    if !sql.contains("version") || sql.contains("installations") {
+        // Already migrated (or fresh new-shape table) — done.
+        return Ok(());
+    }
+
+    eprintln!("Migrating installed_agents v2.5 → v2.6 (multi-install per agent)…");
+
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(
+        "ALTER TABLE installed_agents RENAME TO installed_agents_v25;
+         CREATE TABLE installed_agents (
+             id                        TEXT PRIMARY KEY,
+             installations             TEXT NOT NULL,
+             selected_install_method   TEXT NOT NULL,
+             args_override             TEXT NOT NULL DEFAULT '[]',
+             env_override              TEXT NOT NULL DEFAULT '{}',
+             hidden                    INTEGER NOT NULL DEFAULT 0,
+             created_at                TEXT NOT NULL,
+             updated_at                TEXT NOT NULL
+         );",
+    )?;
+
+    let mut stmt = tx.prepare(
+        "SELECT id, version, install_method, install_path, status, failure_reason,
+                args_override, env_override, launch_mode, hidden, installed_at, updated_at
+         FROM installed_agents_v25",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,         // id
+                r.get::<_, String>(1)?,         // version
+                r.get::<_, String>(2)?,         // install_method
+                r.get::<_, Option<String>>(3)?, // install_path
+                r.get::<_, String>(4)?,         // status
+                r.get::<_, Option<String>>(5)?, // failure_reason
+                r.get::<_, Option<String>>(6)?, // args_override (JSON)
+                r.get::<_, Option<String>>(7)?, // env_override (JSON)
+                r.get::<_, String>(8)?,         // launch_mode
+                r.get::<_, i64>(9)?,            // hidden
+                r.get::<_, String>(10)?,        // installed_at
+                r.get::<_, String>(11)?,        // updated_at
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    let mut migrated = 0u32;
+    for (
+        id,
+        version,
+        install_method,
+        install_path,
+        status,
+        failure_reason,
+        args_override,
+        env_override,
+        launch_mode,
+        hidden,
+        installed_at,
+        updated_at,
+    ) in rows
+    {
+        // Map old (single install) → new (single-installation array).
+        let legacy_installation = serde_json::json!({
+            "method": install_method,
+            "version": version,
+            "install_path": install_path,
+            "status": status,
+            "failure_reason": failure_reason,
+            "installed_at": installed_at,
+        });
+
+        // v2.6 launch_mode merge: legacy `launch_mode = "terminal"` becomes
+        // `selected_install_method = "external"`. If the user actually
+        // ran terminal mode, also seed a placeholder External installation
+        // (install_path = null) so the post-migration row is internally
+        // consistent: `selected_install_method` always points at an
+        // entry in `installations`. The boot-time `auto_scan_path_binaries`
+        // then fills in `install_path` once the binary is detected on
+        // PATH. Without this skeleton, `selected_installation()` silently
+        // falls back to the legacy install record and spawn paths would
+        // disagree about what's "active" until the first successful scan.
+        let (selected_method, mut installations) = if launch_mode == "terminal" {
+            // Skeleton is marked `installing` (not `installed`) so:
+            //   - `has_installed_channel()` doesn't count this row as a
+            //     valid candidate for default-agent picks until the
+            //     boot-time `auto_scan_path_binaries` upgrades it.
+            //   - The Marketplace radio (which disables on `status !==
+            //     "installed"`) is grayed out, preventing the user from
+            //     activating an unresolved channel.
+            // First successful auto-scan calls `add_installation` which
+            // REPLACES the External row with the resolved path + status
+            // = Installed.
+            let external_skeleton = serde_json::json!({
+                "method": "external",
+                "version": "",
+                "install_path": serde_json::Value::Null,
+                "status": "installing",
+                "failure_reason": serde_json::Value::Null,
+                "installed_at": installed_at,
+            });
+            (
+                "external".to_string(),
+                vec![legacy_installation, external_skeleton],
+            )
+        } else {
+            (install_method.clone(), vec![legacy_installation])
+        };
+
+        // Auto-add an Npx channel for `claude-acp` and `codex-acp` if the
+        // user had a row for the legacy id at all. Reason: pre-refactor
+        // these were the two most common ACP agents; their Npx packages
+        // (`@agentclientprotocol/claude-agent-acp`, `@zed-industries/codex-acp`)
+        // are the official ones and work out of the box. Seeding them
+        // here means any user who had a working pre-v2.6 setup ends up
+        // with at least one launchable channel even if their old install
+        // method (e.g. terminal-only) doesn't auto-resolve. Version left
+        // empty so `pin_package_version` invokes `npx <pkg>` without a
+        // version pin — npx fetches the latest on first run.
+        let needs_npx_seed = (id == "claude-acp" || id == "codex-acp")
+            && installations
+                .iter()
+                .all(|inst| inst.get("method").and_then(|m| m.as_str()) != Some("npx"));
+        if needs_npx_seed {
+            installations.push(serde_json::json!({
+                "method": "npx",
+                "version": "",
+                "install_path": serde_json::Value::Null,
+                "status": "installed",
+                "failure_reason": serde_json::Value::Null,
+                "installed_at": installed_at,
+            }));
+        }
+        let installations_json =
+            serde_json::to_string(&installations).unwrap_or_else(|_| "[]".to_string());
+        let args_override = args_override.unwrap_or_else(|| "[]".to_string());
+        let env_override = env_override.unwrap_or_else(|| "{}".to_string());
+
+        tx.execute(
+            "INSERT INTO installed_agents
+                (id, installations, selected_install_method,
+                 args_override, env_override, hidden, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                installations_json,
+                selected_method,
+                args_override,
+                env_override,
+                hidden,
+                installed_at,
+                updated_at,
+            ],
+        )?;
+        migrated += 1;
+    }
+
+    tx.execute_batch("DROP TABLE installed_agents_v25;")?;
+    tx.commit()?;
+    eprintln!(
+        "  [migrate] installed_agents v2.5→v2.6: migrated {} row(s)",
+        migrated
+    );
+    Ok(())
 }
 
 pub fn migrate_v20_fix_empty_slots() -> bool {

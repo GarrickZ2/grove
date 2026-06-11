@@ -218,6 +218,36 @@ mod tests {
     }
 
     fn create_persona(name: &str, base: &str) -> custom_agent::CustomAgent {
+        // The validator (`is_known_base_agent`) requires the base id to
+        // exist somewhere — registry, installed_agents, or config custom
+        // agents. Sandbox tests have none of these wired up, so seed an
+        // installed_agents row for the requested base before creating.
+        let canonical = crate::storage::installed_agents::canonicalize_agent_id(base);
+        if crate::storage::installed_agents::get(&canonical)
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            let now = chrono::Utc::now();
+            let row = crate::storage::installed_agents::InstalledAgent {
+                id: canonical.clone(),
+                installations: vec![crate::storage::installed_agents::Installation {
+                    method: crate::storage::installed_agents::InstallMethod::Npx,
+                    version: String::new(),
+                    install_path: None,
+                    status: crate::storage::installed_agents::InstallStatus::Installed,
+                    failure_reason: None,
+                    installed_at: now,
+                }],
+                selected_install_method: crate::storage::installed_agents::InstallMethod::Npx,
+                args_override: Vec::new(),
+                env_override: std::collections::HashMap::new(),
+                hidden: false,
+                created_at: now,
+                updated_at: now,
+            };
+            crate::storage::installed_agents::upsert(&row).unwrap();
+        }
         custom_agent::create(custom_agent::CustomAgentInput {
             name: name.to_string(),
             base_agent: base.to_string(),
@@ -249,7 +279,7 @@ mod tests {
         let _lock = acquire_lock().await;
         let _dir = sandbox_grove_dir();
 
-        let persona = create_persona("inuse", "claude");
+        let persona = create_persona("inuse", "claude-acp");
         let chat_id = insert_chat_with_agent(&persona.id);
 
         let resp = delete(axum::extract::Path(persona.id.clone()))
@@ -270,7 +300,7 @@ mod tests {
         let _lock = acquire_lock().await;
         let _dir = sandbox_grove_dir();
 
-        let persona = create_persona("unused", "claude");
+        let persona = create_persona("unused", "claude-acp");
         let resp = delete(axum::extract::Path(persona.id.clone()))
             .await
             .into_response();
@@ -283,7 +313,7 @@ mod tests {
         let _lock = acquire_lock().await;
         let _dir = sandbox_grove_dir();
 
-        let persona = create_persona("p1", "claude");
+        let persona = create_persona("p1", "claude-acp");
         let chat_id = insert_chat_with_agent(&persona.id);
 
         let patch = custom_agent::CustomAgentPatch {
@@ -297,7 +327,7 @@ mod tests {
 
         // base_agent unchanged.
         let after = custom_agent::get(&persona.id).unwrap().unwrap();
-        assert_eq!(after.base_agent, "claude");
+        assert_eq!(after.base_agent, "claude-acp");
 
         let _ = crate::storage::tasks::delete_chat_session("p", "t", &chat_id);
         let _ = custom_agent::delete(&persona.id);
@@ -308,13 +338,13 @@ mod tests {
         let _lock = acquire_lock().await;
         let _dir = sandbox_grove_dir();
 
-        let persona = create_persona("p2", "claude");
+        let persona = create_persona("p2", "claude-acp");
         let chat_id = insert_chat_with_agent(&persona.id);
 
         // Same base_agent → allowed even when in-use.
         let patch = custom_agent::CustomAgentPatch {
             name: Some("renamed".to_string()),
-            base_agent: Some("claude".to_string()),
+            base_agent: Some("claude-acp".to_string()),
             ..Default::default()
         };
         let resp = update(axum::extract::Path(persona.id.clone()), Json(patch))
@@ -342,7 +372,7 @@ mod tests {
             return;
         }
 
-        let persona = create_persona("p3", "claude");
+        let persona = create_persona("p3", "claude-acp");
         let patch = custom_agent::CustomAgentPatch {
             base_agent: Some("codex".to_string()),
             ..Default::default()

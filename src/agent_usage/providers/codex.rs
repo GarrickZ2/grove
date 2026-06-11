@@ -66,7 +66,7 @@ pub(crate) fn fetch_with_token(token: &str) -> Result<AgentUsage, String> {
         .used_percent
         .ok_or("secondary used_percent missing")?;
 
-    let mut usage = AgentUsage::new("codex");
+    let mut usage = AgentUsage::new("codex-acp");
     usage.plan = match body.plan_type.as_deref() {
         Some(p) if !p.trim().is_empty() => Some(format!("ChatGPT {}", p.trim())),
         _ => Some("ChatGPT".to_string()),

@@ -15,6 +15,7 @@ export const Gemini = { Color: svgIcon("/agent-icon/gemini-color.svg") };
 export const Copilot = { Color: svgIcon("/agent-icon/githubcopilot.svg") };
 export const Cursor = svgIcon("/agent-icon/cursor.svg");
 export const Trae = { Color: svgIcon("/agent-icon/trae-color.svg") };
+export const TraeX = svgIcon("/agent-icon/traex.svg");
 export const Qwen = { Color: svgIcon("/agent-icon/qwen-color.svg") };
 export const Kimi = { Color: svgIcon("/agent-icon/kimi-color.svg") };
 export const OpenAI = svgIcon("/agent-icon/openai.svg");

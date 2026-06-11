@@ -21,12 +21,13 @@
  *   RECENT (done)          — single-line rows, sticky collapsible header
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, LayoutGroup, AnimatePresence } from "framer-motion";
 import { Settings, ExternalLink, ChevronDown, ChevronLeft, X, Zap, Pin, PinOff, GripVertical, Smartphone } from "lucide-react";
 import { useRadioEvents } from "../../hooks/useRadioEvents";
 import { TrayComposer } from "./TrayComposer";
 import { agentOptions } from "../../data/agents";
+import { agentIconComponent } from "../../utils/agentIcon";
 import type { RadioEvent } from "../../api/walkieTalkie";
 import { apiClient } from "../../api/client";
 import { MarkdownRenderer } from "../ui/MarkdownRenderer";
@@ -127,9 +128,7 @@ function resolveAgent(agent: string | null) {
     agentOptions.find((a) => {
       const id = a.id.toLowerCase();
       const value = a.value.toLowerCase();
-      const tc = a.terminalCheck?.toLowerCase();
-      const ac = a.acpCheck?.toLowerCase();
-      return id === lower || value === lower || tc === lower || ac === lower;
+      return id === lower || value === lower;
     }) ?? null
   );
 }
@@ -1165,6 +1164,13 @@ function AgentBadge({
     >
       {Icon ? (
         <Icon size={Math.round(size * 0.62)} />
+      ) : agent ? (
+        // Fall back to the unified util when the static catalog row is
+        // absent (e.g. traex, openclaw, synthetic marketplace agents).
+        // createElement avoids `react-hooks/static-components` flagging
+        // the dynamically-resolved component; agentIconComponent returns
+        // stable refs (bundled icons + per-url-cached image wrappers).
+        createElement(agentIconComponent(agent), { size: Math.round(size * 0.62) })
       ) : (
         <span className="text-[10px] text-[var(--color-text-muted)]">
           {(Array.from(agent || "?")[0] ?? "?").toUpperCase()}
