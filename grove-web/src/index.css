@@ -187,6 +187,29 @@ body.grove-scrolling .blitz-area ::-webkit-scrollbar-thumb {
   background: var(--color-text-muted);
 }
 
+/* Thought-chunk inner scroller: very thin scrollbar inset from the
+   rounded edge so it doesn't clip the corner, thumb tinted toward the
+   chunk background to feel like part of the same surface. */
+.thought-chunk-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-border) 90%, transparent)
+    transparent;
+}
+.thought-chunk-scroll::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.thought-chunk-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thought-chunk-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-border) 90%, transparent);
+  border-radius: 2px;
+}
+.thought-chunk-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
 /* Selection */
 ::selection {
   background: var(--color-highlight);

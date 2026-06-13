@@ -6585,11 +6585,33 @@ export function TaskChat({
   // `messages` array reference doesn't change, so Virtuoso's
   // followOutput never fires. We watch totalListHeightChanged
   // (which DOES fire when the streaming row grows) and re-anchor to
-  // bottom while auto-stick is on. Use behavior: "auto" to prevent
-  // blank viewport rendering glitches during rapid streaming.
+  // bottom. Use behavior: "auto" to prevent blank viewport rendering
+  // glitches during rapid streaming.
+  //
+  // Auto-stick behavior: once the user scrolls up to read history we
+  // leave them alone, BUT if a brand-new row is appended (a new tool
+  // section, a new thought chunk) and the user is still within a
+  // reasonable "tail" window of the list, we re-arm auto-stick. This
+  // matches the user's mental model — "I was watching the agent, a new
+  // tool ran, take me back to the bottom so I see what it did" — without
+  // yanking them away while they're actively reading earlier content.
   const handleTotalListHeightChanged = useCallback(() => {
-    if (!autoStickToBottomRef.current) return;
     if (isUserScrollingRef.current) return;
+    if (autoStickToBottomRef.current) {
+      virtuosoRef.current?.scrollToIndex({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      });
+      return;
+    }
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    // Within ~480px of the bottom counts as "still in the tail".
+    const distanceFromBottom =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    if (distanceFromBottom > 480) return;
+    autoStickToBottomRef.current = true;
     virtuosoRef.current?.scrollToIndex({
       index: "LAST",
       align: "end",
@@ -8325,6 +8347,56 @@ function UserMessageBody({ content }: { content: string }) {
   return <>{nodes}</>;
 }
 
+/**
+ * Renders the body of a "thinking" message.
+ *
+ * Layout decision: while the agent is still streaming, we let the chunk
+ * grow with the typewriter text instead of capping it at a fixed height.
+ * That way the surrounding Virtuoso row grows, `totalListHeightChanged`
+ * fires, and the outer chat viewport auto-anchors to the bottom — the
+ * user always sees the latest text being generated. (A 160px cap during
+ * streaming would push the latest text behind a tiny inner scrollbar
+ * the user has to chase by hand.)
+ *
+ * Once the message is complete, the cap kicks in so a long thought
+ * doesn't dominate the chat forever. We pin the inner scroll to the
+ * bottom on mount so the final sentence of the reasoning is visible
+ * (the most useful bit — the earlier paragraphs are reasoning history).
+ */
+function ThoughtChunkBody({
+  content,
+  complete,
+}: {
+  content: string;
+  collapsed: boolean;
+  complete: boolean;
+}) {
+  const innerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!complete) return;
+    const el = innerRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [complete, content]);
+  if (!complete) {
+    return (
+      <div className="ml-5 rounded-lg bg-[var(--color-bg-tertiary)] text-xs text-[var(--color-text-muted)] italic">
+        <div className="px-3 py-2 whitespace-pre-wrap">{content}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="ml-5 rounded-lg bg-[var(--color-bg-tertiary)] text-xs text-[var(--color-text-muted)] italic overflow-hidden">
+      <div
+        ref={innerRef}
+        className="thought-chunk-scroll px-3 py-2 whitespace-pre-wrap max-h-40 overflow-y-auto"
+      >
+        {content}
+      </div>
+    </div>
+  );
+}
+
 /** Individual message rendering */
 const MessageItem = memo(function MessageItem({
   message,
@@ -8528,7 +8600,7 @@ const MessageItem = memo(function MessageItem({
       if (!shown.trim()) return null;
       return (
         <div className="flex justify-start">
-          <div className="max-w-[82%] min-w-0 text-sm text-[var(--color-text)]">
+          <div className="w-full min-w-0 text-sm text-[var(--color-text)]">
             <MarkdownRenderer
               content={shown}
               onFileClick={onFileClick}
@@ -8558,7 +8630,7 @@ const MessageItem = memo(function MessageItem({
     case "thinking":
       return (
         <div className="flex justify-start" data-grove-search-skip="true">
-          <div className="max-w-[82%] w-full">
+          <div className="w-full min-w-0">
             <button
               onClick={() => onToggleThinkingCollapse(index)}
               className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors mb-1"
@@ -8574,9 +8646,12 @@ const MessageItem = memo(function MessageItem({
               </span>
             </button>
             {!message.collapsed && (
-              <div className="ml-5 rounded-lg px-3 py-2 bg-[var(--color-bg-tertiary)] text-xs text-[var(--color-text-muted)] italic whitespace-pre-wrap max-h-40 overflow-y-auto">
-                {message.complete ? message.content : streamDisplay}
-              </div>
+              <ThoughtChunkBody
+                key={`tc-${index}-${message.complete ? "done" : "stream"}`}
+                content={message.complete ? message.content : streamDisplay}
+                collapsed={false}
+                complete={message.complete}
+              />
             )}
           </div>
         </div>
