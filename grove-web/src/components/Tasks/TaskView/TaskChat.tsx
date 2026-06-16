@@ -6605,6 +6605,13 @@ export function TaskChat({
       });
       return;
     }
+    // Re-arm only makes sense when a running agent APPENDS a brand-new row.
+    // While idle no rows are appended, so a height change here is purely
+    // Virtuoso re-measuring existing rows — and re-arming + scrollToIndex
+    // would self-excite (scroll -> new rows enter viewport -> heights
+    // re-measured -> height changes -> scroll again ...), which the user
+    // sees as constant flicker when stopped near, but not at, the bottom.
+    if (!isBusy) return;
     const viewport = messagesViewportRef.current;
     if (!viewport) return;
     // Within ~480px of the bottom counts as "still in the tail".
@@ -6617,7 +6624,7 @@ export function TaskChat({
       align: "end",
       behavior: "auto",
     });
-  }, []);
+  }, [isBusy]);
 
   // Track the message index where the current busy turn started
   const turnStartIndexRef = useRef(0);

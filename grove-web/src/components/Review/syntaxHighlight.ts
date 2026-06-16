@@ -135,7 +135,7 @@ const EXT_MAP: Record<string, string> = {
   // Vim
   vim: 'vim',
   // Data / Config
-  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+  json: 'json', jsonl: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
   ini: 'toml', cfg: 'toml',
   // Markup / Style
   html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml', xsl: 'xml',

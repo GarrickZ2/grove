@@ -13,7 +13,7 @@ interface ProjectCommandPaletteProps {
 }
 
 export function ProjectCommandPalette({ isOpen, onClose, onProjectSelect }: ProjectCommandPaletteProps) {
-  const { selectedProject, projects, selectProject } = useProject();
+  const { selectedProject, projects, selectProject, refreshProjects } = useProject();
   const { theme } = useTheme();
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -34,8 +34,11 @@ export function ProjectCommandPalette({ isOpen, onClose, onProjectSelect }: Proj
        
       setHighlightedIndex(0);
       requestAnimationFrame(() => inputRef.current?.focus());
+      // Refresh project list so newly registered/renamed projects appear
+      // without requiring the sidebar ProjectSelector to be opened first.
+      void refreshProjects();
     }
-  }, [isOpen]);
+  }, [isOpen, refreshProjects]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect

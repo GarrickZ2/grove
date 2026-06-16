@@ -453,6 +453,7 @@ const LANG_META: Record<string, { label: string; Icon: typeof Code }> = {
   php: { label: "php", Icon: Code },
   sql: { label: "sql", Icon: Code },
   json: { label: "json", Icon: Code },
+  jsonl: { label: "jsonl", Icon: Code },
   yaml: { label: "yaml", Icon: Code },
   yml: { label: "yaml", Icon: Code },
   toml: { label: "toml", Icon: Code },

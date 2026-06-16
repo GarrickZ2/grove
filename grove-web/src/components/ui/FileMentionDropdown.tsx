@@ -63,7 +63,7 @@ function iconFor(
   const dot = item.path.lastIndexOf(".");
   const ext = dot >= 0 ? item.path.slice(dot + 1).toLowerCase() : "";
   if (["md", "txt", "rst", "adoc"].includes(ext)) return FileText;
-  if (["json", "yaml", "yml", "toml", "ini"].includes(ext)) return FileJson;
+  if (["json", "jsonl", "yaml", "yml", "toml", "ini"].includes(ext)) return FileJson;
   if (
     [
       "js", "jsx", "ts", "tsx", "py", "rs", "go", "java", "kt", "c", "cc",

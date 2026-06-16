@@ -67,6 +67,7 @@ function getLanguage(filePath: string): string {
     js: 'javascript',
     jsx: 'javascriptreact',
     json: 'json',
+    jsonl: 'json',
     toml: 'ini',
     yaml: 'yaml',
     yml: 'yaml',
