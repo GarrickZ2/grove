@@ -25,6 +25,28 @@ function makeJump(n: number): CommandDef {
   };
 }
 
-export const BLITZ_COMMANDS: CommandDef[] = Array.from({ length: 10 }, (_, i) =>
-  makeJump(i + 1),
-);
+export const BLITZ_COMMANDS: CommandDef[] = [
+  ...Array.from({ length: 10 }, (_, i) => makeJump(i + 1)),
+  {
+    id: "blitz.grid.toggle",
+    name: "Toggle Grid Workspace",
+    category: "Blitz",
+    description: "Switch Blitz between the task list and the grid workspace",
+    // Mod = ⌘ on macOS, Ctrl on Linux/Windows.
+    defaultBindings: [{ key: "Mod+g" }],
+    scope: "tasks",
+    defaultWhen: "inBlitzMode",
+    // Holding the chord shouldn't rapidly flip grid on/off.
+    ignoreRepeat: true,
+  },
+  {
+    id: "blitz.grid.exit",
+    name: "Exit Grid Workspace",
+    category: "Blitz",
+    description: "Leave the Blitz grid workspace and return to the task list",
+    defaultBindings: [{ key: "Escape" }],
+    scope: "tasks",
+    // Only while the grid is showing — keeps Escape free for the task list.
+    defaultWhen: "blitzGridActive",
+  },
+];

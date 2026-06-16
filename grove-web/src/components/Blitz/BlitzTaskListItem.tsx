@@ -1,6 +1,7 @@
 import { Archive, ChevronUp, ChevronDown, Laptop, Zap, Code } from "lucide-react";
 import type { BlitzTask } from "../../data/types";
 import { useIsMobile } from "../../hooks";
+import { GROVE_TASK_MIME } from "./blitzFlexModel";
 
 interface BlitzTaskListItemProps {
   blitzTask: BlitzTask;
@@ -78,6 +79,22 @@ export function BlitzTaskListItem({
       draggable={!isTouchDevice}
       onDragStart={isTouchDevice ? undefined : (e) => {
         e.dataTransfer.effectAllowed = 'move';
+        // Also advertise the task to the Blitz grid canvas (onExternalDrag) so
+        // it can be dropped in as a panel. Reorder-within-the-list still works
+        // off the parent's dragInfoRef, independent of this payload.
+        try {
+          e.dataTransfer.setData(
+            GROVE_TASK_MIME,
+            JSON.stringify({
+              projectId: blitzTask.projectId,
+              projectName: blitzTask.projectName,
+              taskId: task.id,
+              taskName: task.name,
+            }),
+          );
+        } catch {
+          /* setData can throw in odd DnD states — non-fatal */
+        }
         onDragStart?.();
       }}
       onDragOver={isTouchDevice ? undefined : (e) => {

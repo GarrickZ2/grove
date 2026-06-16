@@ -25,7 +25,13 @@ interface HandlerEntry {
 export class CommandRegistryImpl {
   private staticCatalog: Map<string, CommandDef> = new Map();
   private contributed: Map<string, CommandDef> = new Map();
-  private handlers: Map<string, HandlerEntry> = new Map();
+  // A command id can have MORE THAN ONE handler registered at once — e.g. the
+  // Blitz grid mounts several TaskChat instances, each registering `chat.send`.
+  // We keep them all (most-recent last) and, at invoke time, dispatch to the
+  // first whose `enabled()` gate passes. That lets a per-instance focus guard
+  // (does this panel contain document.activeElement?) route the key to the
+  // focused pane instead of an arbitrary last-write-wins winner.
+  private handlers: Map<string, HandlerEntry[]> = new Map();
   private listeners: Set<() => void> = new Set();
 
   setStaticCatalog(defs: ReadonlyArray<CommandDef>): void {
@@ -65,18 +71,21 @@ export class CommandRegistryImpl {
       console.warn(`[CommandRegistry] handler registered for unknown command "${id}" — declare it in catalog or use useDefineCommand`);
     }
     const entry: HandlerEntry = { handler, enabled };
-    const prev = this.handlers.get(id);
-    if (prev) {
-      console.warn(`[CommandRegistry] handler for "${id}" already registered — replacing`);
+    const list = this.handlers.get(id);
+    if (list) {
+      list.push(entry);
+    } else {
+      this.handlers.set(id, [entry]);
     }
-    this.handlers.set(id, entry);
     this.notify();
     return () => {
       const current = this.handlers.get(id);
-      if (current === entry) {
-        this.handlers.delete(id);
-        this.notify();
-      }
+      if (!current) return;
+      const idx = current.indexOf(entry);
+      if (idx === -1) return;
+      current.splice(idx, 1);
+      if (current.length === 0) this.handlers.delete(id);
+      this.notify();
     };
   }
 
@@ -85,18 +94,25 @@ export class CommandRegistryImpl {
    * handler was registered or the enabled gate said no.
    */
   invoke(id: string, args?: unknown): boolean {
-    const entry = this.handlers.get(id);
-    if (!entry) return false;
-    if (entry.enabled && !entry.enabled()) return false;
-    try {
-      const r = entry.handler(args);
-      if (r instanceof Promise) {
-        r.catch((e) => console.error(`[CommandRegistry] "${id}" async failed:`, e));
+    const list = this.handlers.get(id);
+    if (!list || list.length === 0) return false;
+    // Most-recently-registered first. Run the first handler whose enabled
+    // gate passes; a focus-guarded gate (see TaskChat chat.send) means the
+    // focused pane wins. With a single handler this is the old behaviour.
+    for (let i = list.length - 1; i >= 0; i--) {
+      const entry = list[i];
+      if (entry.enabled && !entry.enabled()) continue;
+      try {
+        const r = entry.handler(args);
+        if (r instanceof Promise) {
+          r.catch((e) => console.error(`[CommandRegistry] "${id}" async failed:`, e));
+        }
+      } catch (e) {
+        console.error(`[CommandRegistry] "${id}" threw:`, e);
       }
-    } catch (e) {
-      console.error(`[CommandRegistry] "${id}" threw:`, e);
+      return true;
     }
-    return true;
+    return false;
   }
 
   /** Look up a CommandDef. Contributed entries shadow static (last-write-wins). */
@@ -118,9 +134,16 @@ export class CommandRegistryImpl {
     return out;
   }
 
-  /** Get the enabled predicate for a command (if any). KeybindingResolver uses this. */
+  /**
+   * Gate predicate KeyboardManager checks before firing a binding: true if ANY
+   * registered handler is currently enabled. (invoke then picks that handler.)
+   * Returns undefined when no handler is registered so the manager treats the
+   * binding as unhandled and keeps walking the scope stack.
+   */
   getEnabled(id: string): (() => boolean) | undefined {
-    return this.handlers.get(id)?.enabled;
+    const list = this.handlers.get(id);
+    if (!list || list.length === 0) return undefined;
+    return () => list.some((e) => !e.enabled || e.enabled());
   }
 
   subscribe(listener: () => void): () => void {
