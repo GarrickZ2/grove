@@ -1718,6 +1718,54 @@ export function TaskChat({
     },
   );
 
+  const DEFAULT_SESSION_RAIL_WIDTH = 228;
+  const MIN_SESSION_RAIL_WIDTH = 180;
+  const MAX_SESSION_RAIL_WIDTH = 450;
+
+  const [sessionRailWidth, setSessionRailWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return DEFAULT_SESSION_RAIL_WIDTH;
+    try {
+      const saved = window.localStorage.getItem(`taskchat:session-rail-width:${projectId}`);
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= MIN_SESSION_RAIL_WIDTH && parsed <= MAX_SESSION_RAIL_WIDTH) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return DEFAULT_SESSION_RAIL_WIDTH;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(`taskchat:session-rail-width:${projectId}`, sessionRailWidth.toString());
+    } catch {
+      // ignore
+    }
+  }, [sessionRailWidth, projectId]);
+
+  const startSessionRailResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sessionRailWidth;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = startWidth + (moveEvent.clientX - startX);
+      setSessionRailWidth(Math.max(MIN_SESSION_RAIL_WIDTH, Math.min(MAX_SESSION_RAIL_WIDTH, nextWidth)));
+    };
+    const handlePointerUp = () => {
+      document.body.classList.remove("grove-resizing");
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", handlePointerUp);
+    };
+    document.body.classList.add("grove-resizing");
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", handlePointerUp);
+  }, [sessionRailWidth]);
+
   // Per-chat state cache (preserved across chat switches)
   const perChatStateRef = useRef<Map<string, PerChatState>>(new Map());
   // Per-chat WebSocket connections
@@ -6911,7 +6959,8 @@ export function TaskChat({
 
       <div className="flex min-h-0 flex-1">
         <div
-          className={`shrink-0 border-r border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_20%,transparent)] transition-all duration-200 ${sessionRailCollapsed ? "w-0 overflow-hidden border-r-transparent" : "w-[228px] overflow-hidden"}`}
+          className={`taskchat-session-rail shrink-0 border-r border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_20%,transparent)] transition-all duration-200 ${sessionRailCollapsed ? "w-0 overflow-hidden border-r-transparent" : "overflow-hidden"}`}
+          style={{ width: sessionRailCollapsed ? 0 : sessionRailWidth }}
         >
           <div className="flex h-full flex-col">
             <div className="border-b border-[color-mix(in_srgb,var(--color-border)_68%,transparent)] p-2 space-y-1.5">
@@ -7087,6 +7136,18 @@ export function TaskChat({
             </div>
           </div>
         </div>
+
+        {/* Drag handle */}
+        {!sessionRailCollapsed && (
+          <div
+            className="diff-resizer"
+            onPointerDown={startSessionRailResize}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize session sidebar"
+            title="Drag to resize"
+          />
+        )}
 
         <div className="relative min-h-0 min-w-0 flex-1">
           {/* Terminal launch mode: agent CLI runs in xterm.js (PTY).
@@ -9025,15 +9086,32 @@ function extractActionChipLabel(
   switch (kind) {
     case "bash":
     case "bash_output": {
-      // Content typically starts with the command or its output.
+      // 1. Try to extract command from rawInput first if available.
+      if (message.rawInput) {
+        if (typeof message.rawInput === "string") {
+          const firstCmd = firstNonEmptyLine(message.rawInput);
+          if (firstCmd) return firstCmd;
+        } else if (typeof message.rawInput === "object" && message.rawInput !== null) {
+          const obj = message.rawInput as Record<string, unknown>;
+          if (typeof obj.command === "string") {
+            const firstCmd = firstNonEmptyLine(obj.command);
+            if (firstCmd) return firstCmd;
+          }
+        }
+      }
+
+      // 2. Fallback to content typically starts with the command or its output.
       // If it looks like a shell command (starts with a letter and no obvious
       // error/usage prefix), surface its first line. Otherwise fall back to
       // the tool title so we at least say "bash".
       const first = firstNonEmptyLine(content);
       if (!first) return extractRawActionLabel(message);
-      // Heuristic: if first line starts with a known error/usage marker, it's
-      // output not the command — fall back to title so we don't mislabel.
-      if (/^(error|usage|traceback|panic|command not found)/i.test(first)) {
+      // Heuristic: if first line starts with a known error/usage marker, or doesn't look like a command
+      // (e.g., starts with JSON opening curly/bracket), fall back to title so we don't mislabel.
+      if (
+        /^(error|usage|traceback|panic|command not found)/i.test(first) ||
+        /^[{[]/.test(first)
+      ) {
         return extractRawActionLabel(message);
       }
       return first;

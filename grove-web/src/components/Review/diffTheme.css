@@ -180,21 +180,28 @@
   pointer-events: none;
 }
 
-/* Drag handle between a sidebar and the diff content.
-   Always present in the DOM (when sidebar is visible on desktop) so the
-   affordance is discoverable; visual cue only on hover/active. */
 .diff-resizer {
-  width: 6px;
-  min-width: 6px;
+  width: 0;
+  min-width: 0;
   height: 100%;
   cursor: col-resize;
   background: transparent;
   position: relative;
   flex-shrink: 0;
-  z-index: 2;
+  z-index: 10;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.diff-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+  background: transparent;
 }
 
 .diff-resizer::after {
@@ -202,7 +209,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 2px;
+  left: -1px;
   width: 2px;
   border-radius: 999px;
   background: transparent;
@@ -211,9 +218,15 @@
 
 .diff-resizer:hover::after,
 .diff-resizer:active::after {
-  left: 1px;
+  left: -2px;
   width: 4px;
   background: var(--color-highlight);
+}
+
+/* Disable transitions during drag resizing to prevent layout stutter/lag */
+body.grove-resizing .diff-sidebar,
+body.grove-resizing .conv-sidebar {
+  transition: none !important;
 }
 
 .diff-sidebar-list {
@@ -906,6 +919,7 @@ td.diff-code.diff-line-highlighted::before {
 
 .diff-sidebar-search-input {
   flex: 1;
+  min-width: 0;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: 4px;

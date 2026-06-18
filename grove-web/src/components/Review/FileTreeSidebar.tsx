@@ -193,7 +193,7 @@ export function FileTreeSidebar({
             onChange={(e) => onSearchChange(e.target.value)}
           />
           {getFileViewedStatus && (
-            <div style={{ display: 'flex', gap: 4 }}>
+            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
               <button
                 className={`diff-sidebar-hide-viewed-btn ${hideViewed ? 'active' : ''}`}
                 onClick={() => onToggleHideViewed?.()}

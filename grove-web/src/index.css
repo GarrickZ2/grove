@@ -654,6 +654,9 @@ mark[data-grove-search-mark][data-grove-search-mark-current="true"] {
 body.grove-resizing iframe {
   pointer-events: none !important;
 }
+body.grove-resizing .taskchat-session-rail {
+  transition: none !important;
+}
 body.grove-resizing {
   cursor: col-resize;
   user-select: none;
