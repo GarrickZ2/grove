@@ -8,9 +8,10 @@ interface TooltipProps {
   children: React.ReactNode;
   position?: "top" | "bottom" | "left" | "right";
   delay?: number;
+  className?: string;
 }
 
-export function Tooltip({ content, children, position = "top", delay = 200 }: TooltipProps) {
+export function Tooltip({ content, children, position = "top", delay = 200, className = "" }: TooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const timeoutRef = useRef<number | null>(null);
@@ -113,7 +114,7 @@ export function Tooltip({ content, children, position = "top", delay = 200 }: To
   return (
     <div
       ref={triggerRef}
-      className="relative inline-flex"
+      className={`relative inline-flex ${className}`.trim()}
       onMouseEnter={isTouchDevice ? undefined : showTooltip}
       onMouseLeave={isTouchDevice ? undefined : hideTooltip}
       onClick={isTouchDevice ? handleTouchToggle : undefined}

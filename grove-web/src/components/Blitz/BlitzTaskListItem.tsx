@@ -1,6 +1,7 @@
-import { Archive, ChevronUp, ChevronDown, Laptop, Zap, Code } from "lucide-react";
+import { Archive, ChevronUp, ChevronDown, Laptop, Zap, Code, GitBranch, Sparkles } from "lucide-react";
 import type { BlitzTask } from "../../data/types";
 import { useIsMobile } from "../../hooks";
+import { Tooltip } from "../ui/Tooltip";
 
 interface BlitzTaskListItemProps {
   blitzTask: BlitzTask;
@@ -65,8 +66,9 @@ export function BlitzTaskListItem({
   isFirst,
   isLast,
 }: BlitzTaskListItemProps) {
-  const { task, projectName } = blitzTask;
+  const { task, projectName, projectType } = blitzTask;
   const { isTouchDevice } = useIsMobile();
+  const isStudio = projectType === "studio";
 
   return (
     <div className="flex items-stretch gap-0">
@@ -158,9 +160,13 @@ export function BlitzTaskListItem({
                   {shortcutNumber}
                 </span>
               )}
-              <span className={`text-sm font-medium truncate ${isSelected ? "text-[var(--color-highlight)]" : "text-[var(--color-text)]"}`}>
-                {task.name}
-              </span>
+              <Tooltip content={task.name} position="right" className="flex-1 min-w-0">
+                <span
+                  className={`text-sm font-medium truncate block ${isSelected ? "text-[var(--color-highlight)]" : "text-[var(--color-text)]"}`}
+                >
+                  {task.name}
+                </span>
+              </Tooltip>
               {task.isLocal && (
                 <span className="flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)]">
                   Local
@@ -185,9 +191,31 @@ export function BlitzTaskListItem({
 
           <div className="flex items-center gap-2 mt-1">
             {/* Project name badge */}
-            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-highlight)]/10 text-[var(--color-highlight)] truncate max-w-[120px]">
+            <span
+              className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)]/60 text-[var(--color-text-muted)] border border-[var(--color-highlight)]/20 truncate max-w-[120px]"
+              title={projectName}
+            >
               {projectName}
             </span>
+
+            {/* Project type badge (Coding / Studio) */}
+            {isStudio ? (
+              <span
+                className="flex items-center gap-1 flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-warning)]/15 text-[var(--color-warning)]"
+                title="Studio project"
+              >
+                <Sparkles className="w-2.5 h-2.5" />
+                Studio
+              </span>
+            ) : (
+              <span
+                className="flex items-center gap-1 flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-highlight)]/15 text-[var(--color-highlight)]"
+                title="Coding project"
+              >
+                <GitBranch className="w-2.5 h-2.5" />
+                Coding
+              </span>
+            )}
 
             {/* Target branch label (non-local tasks only) */}
             {!task.isLocal && task.target && (
