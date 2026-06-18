@@ -24,6 +24,7 @@ include = [
     "/docs/favicon.png",
     "/docs/favicon.svg",
     "/docs/logo.png",
+    "/docs/plugin-development.md",
     "/gen/**",
     "/grove-web/dist/**",
     "!/grove-web/dist/.DS_Store",
