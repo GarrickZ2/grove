@@ -71,6 +71,14 @@ export function useInitialChatLoad({
         pending.projectId === projectId &&
         pending.taskId === taskId &&
         chatList.some((c) => c.id === pending.chatId);
+      console.log("[BlitzNav] useInitialChatLoad: pending check", {
+        projectId,
+        taskId,
+        taskIdIsLocal: taskId === "_local",
+        pending,
+        pendingMatches,
+        chatListIds: chatList.map((c) => c.id),
+      });
       if (pendingMatches && pending) {
         setActiveChatId(pending.chatId);
         writeLastActiveTab("chat", projectId, taskId, pending.chatId);

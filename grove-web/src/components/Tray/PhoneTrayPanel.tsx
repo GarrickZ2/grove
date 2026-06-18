@@ -3,11 +3,15 @@
  *
  * Served by the radio server at `/phone-tray`, authenticated with the one-time
  * token in the URL hash (stored to sessionStorage by `phone-tray-main.tsx`).
- * Reuses the shared `TrayPopover` presentation but routes its single action —
- * resolving a permission — through HTTP instead of Tauri, and seeds initial
+ * Reuses the shared `TrayPopover` presentation but routes its actions through
+ * HTTP instead of Tauri (phones have no Tauri bridge), and seeds initial
  * state from `GET /api/v1/tray/chats` since a phone connects fresh with no
- * event history. Desktop-only chrome (pin / drag / open task / settings) is
- * omitted by not supplying those platform callbacks.
+ * event history. Desktop-only chrome (pin / drag / settings / sync-to-phone)
+ * is omitted by not supplying those platform callbacks; `openTask` IS
+ * supplied so the existing-but-hidden "Open in app" icons in `TrayPopover`
+ * (DoneRow, ReplyView, PermissionCard no-options fallback) become visible
+ * and the whole-card click on RunningCard / PermissionCard jumps the
+ * desktop to the tapped task.
  */
 
 import { useEffect, useState } from "react";
@@ -54,6 +58,21 @@ export function PhoneTrayPanel() {
         },
       );
       if (res?.error) throw new Error(res.error);
+    },
+    openTask: (item) => {
+      // Fire-and-forget HTTP: the desktop's existing tray:navigate consumer
+      // (App.tsx applyNavigate) handles project selection + Zen/Blitz mode
+      // routing + chat deep-link in one go, so we don't need to surface a
+      // result back to the phone. The shared TrayPopover gates the "Open"
+      // icon visibility on this callback being defined, so without it the
+      // phone would have no way to ask the desktop to focus a task.
+      apiClient
+        .post("/api/v1/tray/open", {
+          projectId: item.project_id,
+          taskId: item.task_id,
+          chatId: item.chat_id,
+        })
+        .catch((e) => console.error("[phone-tray] open failed", e));
     },
     enableVoice: voiceEnabled,
     seedFromSnapshot: true,

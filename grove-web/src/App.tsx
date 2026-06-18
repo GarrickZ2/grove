@@ -130,6 +130,14 @@ function AppContent() {
 
   const [activeItem, setActiveItem] = useState("dashboard");
   const [tasksMode, setTasksMode] = useState<TasksMode>("zen");
+  // Ref mirror of tasksMode for use inside stable callbacks (e.g. the
+  // tray:navigate listener) that capture the initial closure and would
+  // otherwise see a stale mode. Sync via effect — refs cannot be
+  // mutated during render.
+  const tasksModeRef = useRef(tasksMode);
+  useEffect(() => {
+    tasksModeRef.current = tasksMode;
+  }, [tasksMode]);
   const [tasksExitSignal, setTasksExitSignal] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // Auto-collapse sidebar when the viewport is too narrow to host an expanded
@@ -607,6 +615,7 @@ function AppContent() {
       "projects",
     ]);
     const applyNavigate = (p: NavigatePayload) => {
+      console.log("[BlitzNav] applyNavigate (tray/Radio)", p, { tasksMode: tasksModeRef.current });
       const { route, project_id, task_id, chat_id } = p;
       const project = project_id
         ? projectsRef.current.find((pr) => pr.id === project_id)
@@ -618,14 +627,20 @@ function AppContent() {
       // Local tasks always have id "_local" (backend constant LOCAL_TASK_ID).
       // The projects list uses convertProjectListItem which sets localTask: null,
       // so we cannot rely on project.localTask here — check the id directly.
+      // Skip the redirect in Blitz mode: BlitzPage shows local tasks in the
+      // "Local" group and consumes the navigation data itself. Routing to
+      // "work" would set navigationData=null and leave the notification
+      // click with no visible effect.
       let effectiveRoute = route;
-      if (task_id && route === "tasks") {
+      if (task_id && route === "tasks" && tasksModeRef.current !== "blitz") {
         const task = project?.tasks?.find((t) => t.id === task_id);
         const isLocalTask =
           task?.isLocal || task_id === "_local";
         if (isLocalTask) {
           effectiveRoute = "work";
         }
+      } else if (task_id && route === "tasks" && task_id === "_local") {
+        console.log("[BlitzNav] applyNavigate: Blitz mode, skipping local-task→work redirect");
       }
 
       // Guard against typos / future nav-id renames so the tray can't
@@ -635,8 +650,16 @@ function AppContent() {
         // viewMode "terminal" makes TasksPage drop into Workspace mode
         // (chat / terminal panes) — what the user expects when clicking
         // Open from the tray.
+        // projectId is plumbed in for the Blitz consumer: the local task
+        // always has id "_local", so a project-less lookup would
+        // ambiguous-match the first local task in the project list and
+        // route the user to the wrong project. Same flow for
+        // handleNavigate (notification) — its data already carries
+        // projectId from NotificationPopover.
+        console.log("[BlitzNav] applyNavigate: setNavigationData", { taskId: task_id, projectId: project_id, chatId: chat_id, viewMode: "terminal" });
         setNavigationData({
           taskId: task_id,
+          projectId: project_id ?? undefined,
           chatId: chat_id ?? undefined,
           viewMode: "terminal",
         });
@@ -694,6 +717,7 @@ function AppContent() {
 
 
   const handleNavigate = (page: string, data?: Record<string, unknown>) => {
+    console.log("[BlitzNav] handleNavigate (notification)", { page, data, tasksMode });
     let targetProject = selectedProject;
     if (data?.projectId) {
       const found = projects.find((p) => p.id === data.projectId);
@@ -715,6 +739,7 @@ function AppContent() {
       if (isLocalTask) effectivePage = "work";
     }
     setActiveItem(effectivePage);
+    console.log("[BlitzNav] handleNavigate: setNavigationData", { effectivePage, data });
     setNavigationData(data ?? null);
   };
 
@@ -1295,10 +1320,10 @@ function AppContent() {
           >
             <TasksPage
               pageVisible={activeItem === "tasks" && tasksMode !== "blitz"}
-              initialTaskId={navigationData?.taskId as string | undefined}
-              initialChatId={navigationData?.chatId as string | undefined}
-              initialViewMode={navigationData?.viewMode as string | undefined}
-              initialOpenNewTask={navigationData?.openNewTask as boolean | undefined}
+              initialTaskId={tasksMode === "blitz" ? undefined : navigationData?.taskId as string | undefined}
+              initialChatId={tasksMode === "blitz" ? undefined : navigationData?.chatId as string | undefined}
+              initialViewMode={tasksMode === "blitz" ? undefined : navigationData?.viewMode as string | undefined}
+              initialOpenNewTask={tasksMode === "blitz" ? undefined : navigationData?.openNewTask as boolean | undefined}
               onNavigationConsumed={() => setNavigationData(null)}
               onNavByIndex={navigateSidebar}
               exitWorkspaceSignal={tasksExitSignal}
@@ -1316,7 +1341,15 @@ function AppContent() {
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <BlitzPage onSwitchToZen={handleSwitchToZen} onNavigate={setActiveItem} />
+                  <BlitzPage
+                    onSwitchToZen={handleSwitchToZen}
+                    onNavigate={setActiveItem}
+                    initialTaskId={navigationData?.taskId as string | undefined}
+                    initialProjectId={navigationData?.projectId as string | undefined}
+                    initialChatId={navigationData?.chatId as string | undefined}
+                    initialViewMode={navigationData?.viewMode as string | undefined}
+                    onNavigationConsumed={() => setNavigationData(null)}
+                  />
                 </motion.div>
               ) : (
                 <motion.div
@@ -1406,7 +1439,15 @@ function AppContent() {
             exit={{ opacity: 0, x: 40 }}
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
-            <BlitzPage onSwitchToZen={handleSwitchToZen} onNavigate={setActiveItem} />
+            <BlitzPage
+              onSwitchToZen={handleSwitchToZen}
+              onNavigate={setActiveItem}
+              initialTaskId={navigationData?.taskId as string | undefined}
+              initialProjectId={navigationData?.projectId as string | undefined}
+              initialChatId={navigationData?.chatId as string | undefined}
+              initialViewMode={navigationData?.viewMode as string | undefined}
+              onNavigationConsumed={() => setNavigationData(null)}
+            />
           </motion.div>
         ) : (
           <motion.div

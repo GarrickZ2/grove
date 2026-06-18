@@ -71,6 +71,7 @@ export function BlitzTaskListItem({
   return (
     <div className="flex items-stretch gap-0">
     <button
+      data-project-id={blitzTask.projectId}
       data-task-id={task.id}
       onClick={onClick}
       onDoubleClick={task.status !== "archived" ? onDoubleClick : undefined}

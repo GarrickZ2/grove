@@ -1361,6 +1361,59 @@ pub async fn tray_send_prompt(
     }
 }
 
+/// Body for `POST /api/v1/tray/open`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayOpenInAppBody {
+    pub project_id: String,
+    pub task_id: String,
+    pub chat_id: Option<String>,
+}
+
+/// POST /api/v1/tray/open — Open a task/chat in the desktop app, triggered
+/// from the phone tray page. Mirrors the GUI's `handle_gui_open_task` (in
+/// `hooks.rs`) so phones get the same "tap a card → desktop jumps to it"
+/// flow as the desktop tray popover, but over HTTP — phones have no Tauri
+/// bridge. The radio server (where this lives) is the only public surface
+/// the phone can reach, so this route is NOT `#[cfg(feature = "gui")]`-gated.
+///
+/// Two paths fan out, both idempotent:
+///   1. `broadcast_radio_event(FocusTask)` — picked up by the desktop's
+///      `useRadioEvents` → `BlitzPage.onFocusTask` (selects + enters
+///      workspace + ensures chat panel). Only fires if Blitz is mounted;
+///      in Zen mode the listener isn't registered.
+///   2. In GUI builds, `tray_open_task` — surfaces the main window +
+///      emits `tray:navigate` to the global `App.tsx` listener, which
+///      calls `applyNavigate` (selects project, sets `setActiveItem` +
+///      `setNavigationData`) and routes through the BlitzPage consumer.
+///
+/// Sending the `FocusTask` broadcast unconditionally (not feature-gated)
+/// matters for the web-only build: in `grove web` mode there's no Tauri
+/// AppHandle to surface a window, but the phone's tap should still
+/// navigate the open web client to the task.
+pub async fn tray_open_in_app(
+    axum::Json(body): axum::Json<TrayOpenInAppBody>,
+) -> axum::response::Json<serde_json::Value> {
+    let target = body
+        .chat_id
+        .clone()
+        .filter(|s| !s.is_empty())
+        .map(|chat_id| TargetMode::Chat { chat_id });
+    broadcast_radio_event(RadioEvent::FocusTask {
+        project_id: body.project_id.clone(),
+        task_id: body.task_id.clone(),
+        target,
+    });
+
+    #[cfg(feature = "gui")]
+    if let Some(app) = crate::cli::gui::TAURI_APP.get() {
+        let _ =
+            crate::tray::tray_open_task(app.clone(), body.project_id, body.task_id, body.chat_id);
+    }
+
+    axum::response::Json(serde_json::json!({ "status": "ok" }))
+}
+
 // ─── Desktop Radio Events WebSocket ────────────────────────────────────────
 
 /// GET /radio/events/ws — Desktop Blitz subscribes to radio control events.

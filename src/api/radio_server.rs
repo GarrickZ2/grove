@@ -169,6 +169,10 @@ fn create_radio_router(expected_token: Arc<String>) -> Router {
             "/api/v1/tray/send-prompt",
             post(super::handlers::walkie_talkie::tray_send_prompt),
         )
+        .route(
+            "/api/v1/tray/open",
+            post(super::handlers::walkie_talkie::tray_open_in_app),
+        )
         // Read-only config so the phone page's ThemeProvider picks up the user's
         // actual Grove theme instead of falling back to the system default.
         .route("/api/v1/config", get(super::handlers::config::get_config))

@@ -51,9 +51,31 @@ const shouldAvoidTrafficLights = isTauri && isMac;
 interface BlitzPageProps {
   onSwitchToZen: () => void;
   onNavigate?: (page: string) => void;
+  // Tray / notification deep-link. Mirrors the TasksPage contract so
+  // App.tsx can plumb the same `navigationData` to both surfaces
+  // without branching on tasksMode.
+  initialTaskId?: string;
+  // Required when the target task is a Local task (id "_local"): every
+  // project has one with the same id, so without projectId the
+  // blitzTasks.find lookup ambiguously matches the first local task in
+  // the project list and the user lands in the wrong project (and the
+  // chat list query returns the wrong project's chats, so the
+  // __grove_pending_chat match fails too).
+  initialProjectId?: string;
+  initialChatId?: string;
+  initialViewMode?: string;
+  onNavigationConsumed?: () => void;
 }
 
-export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
+export function BlitzPage({
+  onSwitchToZen,
+  onNavigate,
+  initialTaskId,
+  initialProjectId,
+  initialChatId,
+  initialViewMode,
+  onNavigationConsumed,
+}: BlitzPageProps) {
   const { blitzTasks, isLoading, refresh } = useBlitzTasks();
   const { getTaskNotification, dismissNotification } = useNotifications();
   const { isMobile } = useIsMobile();
@@ -325,6 +347,157 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
   }, [customGroups, expandedGroups, getGroupTasks]);
 
   const displayTasks = useMemo(() => [...mainListTasks, ...expandedGroupTasks, ...folderLocalTasks], [mainListTasks, expandedGroupTasks, folderLocalTasks]);
+
+  // Handle initial task selection from navigation (tray / notification).
+  // Mirrors TasksPage's contract (see TasksPage.tsx useEffect on
+  // initialTaskId). TasksPage's consumer is gated off in Blitz mode by
+  // App.tsx, so we own the consume path here. Without this, clicking a
+  // notification while in Blitz mode produced no visible effect:
+  // navigationData was set but BlitzPage never read it.
+  useEffect(() => {
+    console.log("[BlitzNav] consumer fired", {
+      initialTaskId,
+      initialProjectId,
+      initialChatId,
+      initialViewMode,
+      blitzTasksCount: blitzTasks.length,
+    });
+    if (!initialTaskId) return;
+    // Wait for tasks to load — blitzTasks is the single source of truth
+    // across all projects in Blitz (vs TasksPage's selectedProject.tasks).
+    if (blitzTasks.length === 0) return;
+
+    // Filter by both task id AND project id. The local task always has
+    // id "_local" (LOCAL_TASK_ID, one per project), so a project-less
+    // lookup would ambiguous-match the first local task in the project
+    // list — landing the user in the wrong project (wrong chat list,
+    // wrong row, wrong scroll target). initialProjectId is plumbed in
+    // by App.tsx from both applyNavigate (tray) and handleNavigate
+    // (notification); we tolerate a missing projectId for forward
+    // compatibility with older callers by falling back to id-only
+    // matching (worktree tasks have unique ids, so this is safe for
+    // non-local navigation).
+    const bt = blitzTasks.find(
+      (t) =>
+        t.task.id === initialTaskId &&
+        (initialProjectId === undefined || t.projectId === initialProjectId),
+    );
+    if (!bt) {
+      console.warn("[BlitzNav] task NOT FOUND in blitzTasks", {
+        initialTaskId,
+        initialProjectId,
+        availableTaskIds: blitzTasks.map((t) => t.task.id),
+        availableIsLocal: blitzTasks.map((t) => ({ id: t.task.id, isLocal: t.task.isLocal, projectId: t.projectId })),
+      });
+      return;
+    }
+    console.log("[BlitzNav] task found", {
+      taskId: bt.task.id,
+      projectId: bt.projectId,
+      isLocal: bt.task.isLocal,
+      status: bt.task.status,
+    });
+
+    // If the task lives inside a custom (collapsed) group folder, expand
+    // it first so the row is in the DOM and the scrollIntoView below can
+    // find it. Main / local groups are always rendered. setState is the
+    // right tool here — we need to coordinate with a user-driven
+    // expandedGroups set; computing the desired state outside the effect
+    // and pushing it in is the standard "derive from props, push to state"
+    // pattern, not the cascading-render anti-pattern the rule targets.
+    const customGroup = customGroups.find((g) =>
+      g.slots.some((s) => s.project_id === bt.projectId && s.task_id === initialTaskId),
+    );
+    if (customGroup && !expandedGroups.has(customGroup.id)) {
+      console.log("[BlitzNav] expanding custom group", { groupId: customGroup.id });
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setExpandedGroups((prev) => {
+        const next = new Set(prev);
+        next.add(customGroup.id);
+        return next;
+      });
+    }
+
+    // Local group is collapsed by default (`localTasksExpanded` starts
+    // false) and its row is only rendered when the user clicks the
+    // "Local" header. The tray / notification deep-link doesn't go
+    // through the header, so without this branch the local task row
+    // never enters the DOM and the scrollIntoView retry below times
+    // out. Worktree tasks are unaffected (they live in the always-open
+    // Main group). Same state-push pattern as the custom-group branch.
+    if (bt.task.isLocal) {
+      console.log("[BlitzNav] local task detected", {
+        wasLocalTasksExpanded: localTasksExpanded,
+      });
+      if (!localTasksExpanded) {
+        setLocalTasksExpanded(true);
+      }
+    }
+
+    // Highlight the row. setSelectedBlitzTask is the single source of
+    // truth for the right-pane TaskView and the list-item "isSelected"
+    // styling (BlitzTaskListItem.tsx reads it via prop).
+    setSelectedBlitzTask(bt);
+    console.log("[BlitzNav] setSelectedBlitzTask called", { taskId: bt.task.id, projectId: bt.projectId });
+
+    // viewMode "terminal" is the tray/notification "open this in detail"
+    // signal — mirror TasksPage's behavior by entering the workspace and
+    // ensuring the chat panel is open (notifications are chat-bound).
+    if (initialViewMode === "terminal") {
+      console.log("[BlitzNav] entering workspace + ensurePanel('chat')");
+      pageHandlers.setInWorkspace(true);
+      ensureRadioPanel("chat");
+    } else {
+      console.log("[BlitzNav] skipping workspace enter (viewMode !== terminal)", { initialViewMode });
+    }
+
+    // Switch to a specific chat session if the notification is tied to
+    // one (tray deep-link). Same pending-chat + custom-event pattern as
+    // TasksPage / Radio onFocusTask, so both the "workspace just mounted"
+    // and "already mounted" cases work.
+    if (initialChatId) {
+      const projectId = bt.projectId;
+      const taskId = initialTaskId;
+      const chatId = initialChatId;
+      console.log("[BlitzNav] setting __grove_pending_chat + dispatching grove:switch-chat", { projectId, taskId, chatId });
+      (window as unknown as Record<string, unknown>).__grove_pending_chat = {
+        projectId,
+        taskId,
+        chatId,
+      };
+      window.dispatchEvent(new CustomEvent("grove:switch-chat", {
+        detail: { projectId, taskId, chatId },
+      }));
+    } else {
+      console.log("[BlitzNav] no initialChatId, skipping chat switch dispatch");
+    }
+
+    // Scroll the row into view. Retry briefly because expanding a
+    // collapsed group + re-rendering the list + TaskView mounting all
+    // happen async after our setSelectedBlitzTask. The retry pattern
+    // mirrors ensureRadioPanel above.
+    const selector = `[data-project-id="${bt.projectId}"][data-task-id="${initialTaskId}"]`;
+    const tryScroll = (attempts: number) => {
+      const el = document.querySelector(selector);
+      if (el) {
+        console.log("[BlitzNav] scroll target FOUND, scrolling into view", { attempts, selector });
+        el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      } else if (attempts > 0) {
+        console.log("[BlitzNav] scroll target not found, retrying", { attempts, selector });
+        setTimeout(() => tryScroll(attempts - 1), 80);
+      } else {
+        console.warn("[BlitzNav] scroll target NOT FOUND after all retries — row not in DOM (likely in collapsed group?)", { selector });
+      }
+    };
+    tryScroll(5);
+
+    // Consume the data so it doesn't re-trigger on subsequent renders.
+    console.log("[BlitzNav] consuming navigation data");
+    onNavigationConsumed?.();
+    // onNavigationConsumed / pageHandlers intentionally omitted from
+    // deps: pageHandlers is recreated every render (re-firing would
+    // re-enter workspace); onNavigationConsumed is a stable setter.
+  }, [initialTaskId, initialProjectId, initialChatId, initialViewMode, blitzTasks, customGroups, expandedGroups, localTasksExpanded, ensureRadioPanel, onNavigationConsumed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Task selection handlers (Blitz-specific: handle BlitzTask)
   const handleSelectTask = useCallback((bt: BlitzTask) => {
