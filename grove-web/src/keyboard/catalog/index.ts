@@ -25,6 +25,7 @@ import { AUTOMATION_COMMANDS } from "./automation";
 import { BLITZ_COMMANDS } from "./blitz";
 import { RADIO_COMMANDS } from "./radio";
 import { WINDOW_COMMANDS } from "./window";
+import { VOICE_CONTROL_COMMANDS } from "./voiceControl";
 
 /**
  * Full static command catalog. Injected into commandRegistry at app
@@ -58,6 +59,7 @@ export const COMMAND_CATALOG: CommandDef[] = [
   ...BLITZ_COMMANDS,
   ...RADIO_COMMANDS,
   ...WINDOW_COMMANDS,
+  ...VOICE_CONTROL_COMMANDS,
 ];
 
 // Re-export individual arrays so tests / Settings UI can render section-by-section.
@@ -87,4 +89,5 @@ export {
   BLITZ_COMMANDS,
   RADIO_COMMANDS,
   WINDOW_COMMANDS,
+  VOICE_CONTROL_COMMANDS,
 };

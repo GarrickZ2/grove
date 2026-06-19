@@ -915,3 +915,333 @@ fn language_to_iso(lang: &str) -> String {
         other => other.to_string(), // Pass through if already ISO code
     }
 }
+
+// ─── Voice Control DTOs and Handlers ────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceControlSettingsResponse {
+    pub enabled: bool,
+    pub stt_provider_id: String,
+    pub stt_model: String,
+    pub llm_provider_id: String,
+    pub llm_model: String,
+    pub toggle_shortcut: String,
+    pub push_to_talk_key: String,
+    pub ptt_activation_delay_ms: u32,
+    pub max_duration: u32,
+    pub min_duration: u32,
+    pub preferred_languages: Vec<String>,
+    pub disabled_actions: Vec<String>,
+    pub has_initialized_actions: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VoiceControlToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceControlExecuteResponse {
+    pub raw_transcript: String,
+    pub text: Option<String>,
+    pub tool_calls: Vec<VoiceControlToolCall>,
+}
+
+/// GET /api/v1/ai/voice-control
+pub async fn get_voice_control() -> Json<VoiceControlSettingsResponse> {
+    let settings = ai::load_voice_control();
+    Json(VoiceControlSettingsResponse {
+        enabled: settings.enabled,
+        stt_provider_id: settings.stt_provider_id,
+        stt_model: settings.stt_model,
+        llm_provider_id: settings.llm_provider_id,
+        llm_model: settings.llm_model,
+        toggle_shortcut: settings.toggle_shortcut,
+        push_to_talk_key: settings.push_to_talk_key,
+        ptt_activation_delay_ms: settings.ptt_activation_delay_ms,
+        max_duration: settings.max_duration,
+        min_duration: settings.min_duration,
+        preferred_languages: settings.preferred_languages,
+        disabled_actions: settings.disabled_actions,
+        has_initialized_actions: settings.has_initialized_actions,
+    })
+}
+
+/// Request body for PUT /api/v1/ai/voice-control.
+/// Intentionally omits stt_model / llm_model — those are resolved
+/// server-side from provider config and are not user-editable via this endpoint.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveVoiceControlRequest {
+    pub enabled: bool,
+    pub stt_provider_id: String,
+    pub llm_provider_id: String,
+    pub toggle_shortcut: String,
+    pub push_to_talk_key: String,
+    pub ptt_activation_delay_ms: u32,
+    pub max_duration: u32,
+    pub min_duration: u32,
+    pub preferred_languages: Vec<String>,
+    pub disabled_actions: Vec<String>,
+    pub has_initialized_actions: bool,
+}
+
+/// PUT /api/v1/ai/voice-control
+pub async fn save_voice_control(
+    Json(req): Json<SaveVoiceControlRequest>,
+) -> Result<StatusCode, StatusCode> {
+    // Preserve existing stt_model / llm_model — the frontend doesn't manage them.
+    let existing = ai::load_voice_control();
+    let settings = crate::storage::config::VoiceControlConfig {
+        enabled: req.enabled,
+        stt_provider_id: req.stt_provider_id,
+        stt_model: existing.stt_model,
+        llm_provider_id: req.llm_provider_id,
+        llm_model: existing.llm_model,
+        toggle_shortcut: req.toggle_shortcut,
+        push_to_talk_key: req.push_to_talk_key,
+        ptt_activation_delay_ms: req.ptt_activation_delay_ms,
+        max_duration: req.max_duration,
+        min_duration: req.min_duration,
+        preferred_languages: req.preferred_languages,
+        disabled_actions: req.disabled_actions,
+        has_initialized_actions: req.has_initialized_actions,
+    };
+    ai::save_voice_control(&settings).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/v1/ai/voice-control/execute
+pub async fn execute_voice_control(
+    mut multipart: Multipart,
+) -> Result<Json<VoiceControlExecuteResponse>, StatusCode> {
+    let mut audio_data: Option<Vec<u8>> = None;
+    let mut audio_ext = "webm".to_string();
+    let mut tools_json: Option<String> = None;
+    let mut context_json: Option<String> = None;
+
+    // Parse multipart fields
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "audio" => {
+                if let Some(fname) = field.file_name() {
+                    if let Some(ext) = fname.rsplit('.').next() {
+                        let ext_clean: String =
+                            ext.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+                        if !ext_clean.is_empty() {
+                            audio_ext = ext_clean;
+                        }
+                    }
+                }
+                audio_data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|_| StatusCode::BAD_REQUEST)?
+                        .to_vec(),
+                );
+            }
+            "tools" => {
+                tools_json = Some(field.text().await.map_err(|_| StatusCode::BAD_REQUEST)?);
+            }
+            "context" => {
+                context_json = Some(field.text().await.map_err(|_| StatusCode::BAD_REQUEST)?);
+            }
+            _ => {}
+        }
+    }
+
+    let audio_data = audio_data.ok_or(StatusCode::BAD_REQUEST)?;
+    const MAX_AUDIO_SIZE: usize = 25 * 1024 * 1024;
+    if audio_data.len() > MAX_AUDIO_SIZE {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+    let tools: Vec<serde_json::Value> = if let Some(json_str) = tools_json {
+        serde_json::from_str(&json_str).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Load settings from config.toml
+    let config = crate::storage::config::load_config();
+    let vc_settings = config.voice_control;
+    if !vc_settings.enabled {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let providers = ai::load_providers();
+    let find_provider = |key: &str| -> Option<&ai::ProviderProfile> {
+        providers
+            .providers
+            .iter()
+            .find(|p| p.id == key)
+            .or_else(|| providers.providers.iter().find(|p| p.name == key))
+    };
+
+    // ── Step 1: Transcribe ──────────────────────────────────────────────────
+    let stt_provider = find_provider(&vc_settings.stt_provider_id).ok_or_else(|| {
+        eprintln!(
+            "[voice_control] STT Provider not found: {}",
+            vc_settings.stt_provider_id
+        );
+        StatusCode::BAD_REQUEST
+    })?;
+
+    let t_base_url = stt_provider.base_url.clone();
+    let t_api_key = stt_provider.api_key.clone();
+    let t_model = if vc_settings.stt_model.is_empty() {
+        stt_provider.model.clone()
+    } else {
+        vc_settings.stt_model.clone()
+    };
+    let t_language = vc_settings.preferred_languages.first().cloned();
+
+    let raw_transcript = tokio::task::spawn_blocking(move || {
+        call_transcription_api(
+            &t_base_url,
+            &t_api_key,
+            &t_model,
+            &audio_data,
+            &format!("recording.{}", audio_ext),
+            t_language.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|e| {
+        eprintln!("[voice_control] Transcription error: {}", e);
+        StatusCode::BAD_GATEWAY
+    })?;
+
+    // ── Step 2: Call LLM with Tools ─────────────────────────────────────────
+    let llm_provider = find_provider(&vc_settings.llm_provider_id).ok_or_else(|| {
+        eprintln!(
+            "[voice_control] LLM Provider not found: {}",
+            vc_settings.llm_provider_id
+        );
+        StatusCode::BAD_REQUEST
+    })?;
+
+    let l_base_url = llm_provider.base_url.clone();
+    let l_api_key = llm_provider.api_key.clone();
+    let l_model = if vc_settings.llm_model.is_empty() {
+        llm_provider.model.clone()
+    } else {
+        vc_settings.llm_model.clone()
+    };
+
+    let raw_transcript_clone = raw_transcript.clone();
+    let context_clone = context_json.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        call_voice_control_llm(
+            &l_base_url,
+            &l_api_key,
+            &l_model,
+            &raw_transcript_clone,
+            tools,
+            context_clone.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|e| {
+        eprintln!("[voice_control] LLM error: {}", e);
+        StatusCode::BAD_GATEWAY
+    })?;
+
+    Ok(Json(VoiceControlExecuteResponse {
+        raw_transcript,
+        text: result.text,
+        tool_calls: result.tool_calls,
+    }))
+}
+
+struct LlmResult {
+    text: Option<String>,
+    tool_calls: Vec<VoiceControlToolCall>,
+}
+
+fn call_voice_control_llm(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    transcript: &str,
+    tools: Vec<serde_json::Value>,
+    context: Option<&str>,
+) -> Result<LlmResult, String> {
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+
+    let mut system_prompt = "You are a voice controller for Grove. Based on the user's spoken command, generate a sequence of tool calls to perform the requested actions. Call the tools in the exact order they should be executed.\n".to_string();
+
+    if let Some(ctx_str) = context {
+        system_prompt.push_str("\n=== Current Page Context ===\n");
+        system_prompt.push_str(ctx_str);
+        system_prompt.push_str("\n============================\n\n");
+        system_prompt.push_str("If the user refers to items relatively (e.g., \"the second task\", \"the last session\", \"the chat about Rust\", or \"active task\") or specifies a project/task by name, resolve their target ID, name, or index using the Context above (e.g. resolving a project name to its actual ID from 'projects_list'). When invoking tools, always pass resolved actual entity IDs (e.g. project ID, task ID, session ID) in arguments rather than index numbers unless the tool arguments explicitly expect an index.");
+    }
+
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": system_prompt },
+            { "role": "user", "content": transcript }
+        ],
+        "temperature": 0.1
+    });
+
+    if !tools.is_empty() {
+        let openai_tools: Vec<serde_json::Value> = tools
+            .into_iter()
+            .map(|t| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": t
+                })
+            })
+            .collect();
+        body["tools"] = serde_json::Value::Array(openai_tools);
+    }
+
+    let response = ureq::post(&url)
+        .set("Authorization", &format!("Bearer {}", api_key))
+        .set("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(30))
+        .send_string(&body.to_string())
+        .map_err(|e| format!("HTTP error: {}", e))?;
+
+    let resp_body: serde_json::Value = response
+        .into_json()
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let choice = &resp_body["choices"][0]["message"];
+    let text = choice["content"].as_str().map(|s| s.trim().to_string());
+
+    let mut tool_calls = Vec::new();
+    if let Some(calls) = choice["tool_calls"].as_array() {
+        for call in calls {
+            let id = call["id"].as_str().unwrap_or_default().to_string();
+            let name = call["function"]["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let args_str = call["function"]["arguments"].as_str().unwrap_or("{}");
+            let arguments: serde_json::Value = serde_json::from_str(args_str).unwrap_or_default();
+            tool_calls.push(VoiceControlToolCall {
+                id,
+                name,
+                arguments,
+            });
+        }
+    }
+
+    Ok(LlmResult { text, tool_calls })
+}

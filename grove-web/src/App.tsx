@@ -22,7 +22,7 @@ import { WelcomePage } from "./components/Welcome";
 import { DiffReviewPage } from "./components/Review";
 import { HelpOverlay } from "./components/Tasks/HelpOverlay";
 import { SkillsPage } from "./components/Skills";
-import { AIPage, GlobalAudioRecorder } from "./components/AI";
+import { AIPage, GlobalAudioRecorder, GlobalVoiceControlRecorder } from "./components/AI";
 import { AutomationPage } from "./components/Automation/AutomationPage";
 import { ProjectStatsPage } from "./components/Stats/ProjectStatsPage";
 import { UpdateBanner } from "./components/ui/UpdateBanner";
@@ -43,7 +43,8 @@ import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
 import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
 import { readLastProjectView, writeLastProjectView } from "./utils/lastProjectView";
-import { useCommand, useContextKey, commandRegistry } from "./keyboard";
+import { fuzzyFindByName } from "./utils/fuzzySearch";
+import { useCommand, useContextKey, commandRegistry, useVoiceControlContext } from "./keyboard";
 import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette";
 
 export type TasksMode = "zen" | "blitz";
@@ -234,6 +235,21 @@ function AppContent() {
   }, []);
   const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject, createNewProject, cloneProject, refreshProjects, refreshSelectedProject } = useProject();
   useReportDebugId("projectId", selectedProject?.id ?? null);
+  useVoiceControlContext("projects_list", () => ({
+    selectedProjectId: selectedProject?.id ?? null,
+    projects: projects.map((p, index) => {
+      const nameParts = p.name.split(/[_-]+/);
+      const displayName = nameParts.map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+      return {
+        index: index + 1,
+        id: p.id,
+        name: p.name,
+        displayName,
+        aliases: [p.name, p.name.toLowerCase().replace(/_agent$/, ""), nameParts.join(" ")],
+        path: p.path,
+      };
+    }),
+  }));
   const [showAddProject, setShowAddProject] = useState(false);
   const [addProjectInitialMode, setAddProjectInitialMode] = useState<"coding" | "studio">("coding");
   const [isAddingProject, setIsAddingProject] = useState(false);
@@ -838,9 +854,27 @@ function AppContent() {
     setAddProjectInitialMode("coding");
     setShowAddProject(true);
   }, []);
-  // Cmd+P toggles the project palette (press again to close); other palettes
-  // close automatically via the context's mutual exclusion.
   useCommand("project.switch", () => toggleProjectPalette(), [toggleProjectPalette]);
+  useCommand(
+    "project.open",
+    (args?: unknown) => {
+      const typedArgs = args as { projectId?: string; projectName?: string } | undefined;
+      if (typedArgs?.projectId) {
+        const found = projects.find((p) => p.id === typedArgs.projectId);
+        if (found) {
+          selectProject(found);
+          handleProjectSwitch(found.id);
+        }
+      } else if (typedArgs?.projectName) {
+        const found = fuzzyFindByName(projects, (p) => p.name, typedArgs.projectName);
+        if (found) {
+          selectProject(found);
+          handleProjectSwitch(found.id);
+        }
+      }
+    },
+    [handleProjectSwitch, projects, selectProject],
+  );
   useCommand(
     "project.refresh",
     () => {
@@ -1401,6 +1435,7 @@ function AppContent() {
           onTaskSelect={handleTaskSelectFromPalette}
         />
         <GlobalAudioRecorder projectId={selectedProject?.id ?? null} />
+        <GlobalVoiceControlRecorder isLoading={isLoading} />
         {addLibraryDialog}
       </div>
     );
@@ -1531,6 +1566,7 @@ function AppContent() {
         onTaskSelect={handleTaskSelectFromPalette}
       />
       <GlobalAudioRecorder projectId={selectedProject?.id ?? null} />
+      <GlobalVoiceControlRecorder isLoading={isLoading} />
       <HelpOverlay isOpen={showHelp} onClose={() => setShowHelp(false)} />
       {addLibraryDialog}
     </div>

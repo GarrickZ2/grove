@@ -137,6 +137,11 @@ fn ensure_storage_version() {
             let _ = storage::database::connection();
             storage::database::migrate_installed_agents_id_remap();
         }
+        Some("2.6") => {
+            // v2.6 → v2.7: Migrate audio settings from SQLite to config.toml
+            let _ = storage::database::connection();
+            storage::database::migrate_audio_to_config_toml();
+        }
         Some(v) => {
             eprintln!(
                 "Unknown storage version: {}. Expected {}.",

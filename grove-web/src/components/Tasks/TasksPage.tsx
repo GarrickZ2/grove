@@ -18,7 +18,7 @@ import {
   useTaskOperations,
   buildCommands,
 } from "../../hooks";
-import { useCommand, useDefineCommand, useKeyboardScope, useHelpKeyDisplay, contextKeyService } from "../../keyboard";
+import { useCommand, useDefineCommand, useKeyboardScope, useHelpKeyDisplay, contextKeyService, useVoiceControlContext } from "../../keyboard";
 import {
   createTask as apiCreateTask,
   recoverTask as apiRecoverTask,
@@ -27,6 +27,7 @@ import {
 } from "../../api";
 import type { Task, TaskFilter } from "../../data/types";
 import { convertTaskResponse } from "../../utils/taskConvert";
+import { fuzzyFindByName } from "../../utils/fuzzySearch";
 import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
 import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
 import type { PanelType } from "./PanelSystem/types";
@@ -297,6 +298,20 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
     }
   }, [pageState.selectedTask, initialTaskId, filteredTasks, pageHandlers]);
 
+  // Voice control context contribution for tasks list
+  useVoiceControlContext("tasks_list", () => {
+    return {
+      selectedTaskId: pageState.selectedTask?.id ?? null,
+      visible_items: filteredTasks.map((task, idx) => ({
+        index: idx + 1,
+        id: task.id,
+        name: task.name,
+        status: task.status,
+        isSelected: pageState.selectedTask?.id === task.id,
+      })),
+    };
+  });
+
   // Wrap page handlers to handle auto-start state
   const handleSelectTask = useCallback((task: Task) => {
     pageHandlers.handleSelectTask(task);
@@ -469,21 +484,59 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   // Navigation / task-list commands (catalog: tasks scope)
   const enabledTask = useCallback(() => hasTask, [hasTask]);
   const enabledOpenWorkspace = useCallback(
-    () => !!pageState.selectedTask && pageState.selectedTask.status !== "archived",
-    [pageState.selectedTask],
+    () => !pageState.inWorkspace && !!pageState.selectedTask && pageState.selectedTask.status !== "archived",
+    [pageState.inWorkspace, pageState.selectedTask],
   );
 
   useCommand("task.selectNext", navHandlers.selectNextTask, [navHandlers]);
   useCommand("task.selectPrevious", navHandlers.selectPreviousTask, [navHandlers]);
   useCommand(
     "task.open",
-    () => {
-      if (!pageState.inWorkspace && pageState.selectedTask && pageState.selectedTask.status !== "archived") {
-        pageHandlers.handleEnterWorkspace();
+    (args?: unknown) => {
+      const typedArgs = args as { taskId?: string; taskName?: string; taskIndex?: number } | undefined;
+      if (typedArgs?.taskId) {
+        const found = tasks.find((t) => t.id === typedArgs.taskId);
+        if (found) {
+          handleSelectTask(found);
+          if (!pageState.inWorkspace && found.status !== "archived") {
+            pageHandlers.handleEnterWorkspace();
+          }
+        }
+      } else if (typedArgs?.taskIndex !== undefined) {
+        const idx = typedArgs.taskIndex - 1;
+        if (idx >= 0 && idx < tasks.length) {
+          const found = tasks[idx];
+          handleSelectTask(found);
+          if (!pageState.inWorkspace && found.status !== "archived") {
+            pageHandlers.handleEnterWorkspace();
+          }
+        }
+      } else if (typedArgs?.taskName) {
+        const found = fuzzyFindByName(tasks, (t) => t.name, typedArgs.taskName);
+        if (found) {
+          handleSelectTask(found);
+          if (!pageState.inWorkspace && found.status !== "archived") {
+            pageHandlers.handleEnterWorkspace();
+          }
+        }
+      } else {
+        if (!pageState.inWorkspace && pageState.selectedTask && pageState.selectedTask.status !== "archived") {
+          pageHandlers.handleEnterWorkspace();
+        }
       }
     },
-    { enabled: enabledOpenWorkspace },
-    [pageState.inWorkspace, pageState.selectedTask, pageHandlers.handleEnterWorkspace, enabledOpenWorkspace],
+    // Gate on pageVisible: TasksPage is always-mounted (display:none) in Blitz mode,
+    // so without this guard it would register alongside BlitzPage's handler for the same id.
+    { enabled: () => pageVisible && enabledOpenWorkspace() },
+    [
+      pageVisible,
+      pageState.inWorkspace,
+      pageState.selectedTask,
+      pageHandlers.handleEnterWorkspace,
+      tasks,
+      handleSelectTask,
+      enabledOpenWorkspace,
+    ],
   );
   useCommand("task.new", () => setShowNewTaskDialog(true), []);
 

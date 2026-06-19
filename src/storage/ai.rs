@@ -181,68 +181,7 @@ pub struct AudioSettingsProject {
 
 pub fn load_audio_global() -> AudioSettingsGlobal {
     let conn = crate::storage::database::connection();
-
-    // Load main config row
-    let config_result = conn.query_row(
-        "SELECT enabled, transcribe_provider, toggle_shortcut, push_to_talk_key, \
-         max_duration, min_duration, revise_enabled, revise_provider, revise_prompt, \
-         preferred_languages, transcribe_mode, global_mode_enabled, ptt_activation_delay_ms \
-         FROM audio_config WHERE id = 1",
-        [],
-        |row| {
-            let enabled: i32 = row.get(0)?;
-            let transcribe_provider: String = row.get(1)?;
-            let toggle_shortcut: String = row.get(2)?;
-            let push_to_talk_key: String = row.get(3)?;
-            let max_duration: u32 = row.get(4)?;
-            let min_duration: u32 = row.get(5)?;
-            let revise_enabled: i32 = row.get(6)?;
-            let revise_provider: String = row.get(7)?;
-            let revise_prompt: String = row.get(8)?;
-            let preferred_languages_json: String = row.get(9)?;
-            let transcribe_mode: String = row.get(10)?;
-            let global_mode_enabled: i32 = row.get(11)?;
-            let ptt_activation_delay_ms: u32 = row.get(12)?;
-            Ok((
-                enabled != 0,
-                transcribe_provider,
-                toggle_shortcut,
-                push_to_talk_key,
-                max_duration,
-                min_duration,
-                revise_enabled != 0,
-                revise_provider,
-                revise_prompt,
-                preferred_languages_json,
-                transcribe_mode,
-                global_mode_enabled != 0,
-                ptt_activation_delay_ms,
-            ))
-        },
-    );
-
-    let (
-        enabled,
-        transcribe_provider,
-        toggle_shortcut,
-        push_to_talk_key,
-        max_duration,
-        min_duration,
-        revise_enabled,
-        revise_provider,
-        revise_prompt,
-        preferred_languages_json,
-        transcribe_mode,
-        global_mode_enabled,
-        ptt_activation_delay_ms,
-    ) = match config_result {
-        Ok(row) => row,
-        Err(rusqlite::Error::QueryReturnedNoRows) => return AudioSettingsGlobal::default(),
-        Err(_) => return AudioSettingsGlobal::default(),
-    };
-
-    let preferred_languages: Vec<String> =
-        serde_json::from_str(&preferred_languages_json).unwrap_or_default();
+    let config = crate::storage::config::load_config();
 
     // Load global terms (project_hash IS NULL)
     let mut preferred_terms = Vec::new();
@@ -273,55 +212,47 @@ pub fn load_audio_global() -> AudioSettingsGlobal {
     }
 
     AudioSettingsGlobal {
-        enabled,
-        transcribe_provider,
-        preferred_languages,
-        toggle_shortcut,
-        push_to_talk_key,
-        ptt_activation_delay_ms,
-        max_duration,
-        min_duration,
-        revise_enabled,
-        revise_provider,
-        revise_prompt,
+        enabled: config.audio.enabled,
+        transcribe_provider: config.audio.transcribe_provider.clone(),
+        preferred_languages: config.audio.preferred_languages.clone(),
+        toggle_shortcut: config.audio.toggle_shortcut.clone(),
+        push_to_talk_key: config.audio.push_to_talk_key.clone(),
+        ptt_activation_delay_ms: config.audio.ptt_activation_delay_ms,
+        max_duration: config.audio.max_duration,
+        min_duration: config.audio.min_duration,
+        revise_enabled: config.audio.revise_enabled,
+        revise_provider: config.audio.revise_provider.clone(),
+        revise_prompt: config.audio.revise_prompt_global.clone(),
         preferred_terms,
         forbidden_terms,
         replacements,
-        transcribe_mode,
-        global_mode_enabled,
+        transcribe_mode: config.audio.transcribe_mode.clone(),
+        global_mode_enabled: config.audio.global_mode_enabled,
     }
 }
 
 pub fn save_audio_global(data: &AudioSettingsGlobal) -> Result<()> {
     let conn = crate::storage::database::connection();
+
+    // 1. Save settings to config.toml
+    let mut config = crate::storage::config::load_config();
+    config.audio.enabled = data.enabled;
+    config.audio.transcribe_provider = data.transcribe_provider.clone();
+    config.audio.toggle_shortcut = data.toggle_shortcut.clone();
+    config.audio.push_to_talk_key = data.push_to_talk_key.clone();
+    config.audio.max_duration = data.max_duration;
+    config.audio.min_duration = data.min_duration;
+    config.audio.revise_enabled = data.revise_enabled;
+    config.audio.revise_provider = data.revise_provider.clone();
+    config.audio.revise_prompt_global = data.revise_prompt.clone();
+    config.audio.preferred_languages = data.preferred_languages.clone();
+    config.audio.transcribe_mode = data.transcribe_mode.clone();
+    config.audio.global_mode_enabled = data.global_mode_enabled;
+    config.audio.ptt_activation_delay_ms = data.ptt_activation_delay_ms;
+    crate::storage::config::save_config(&config)?;
+
+    // 2. Save terms to SQLite
     let tx = conn.unchecked_transaction()?;
-
-    let preferred_languages_json = serde_json::to_string(&data.preferred_languages)?;
-
-    tx.execute(
-        "INSERT OR REPLACE INTO audio_config \
-         (id, enabled, transcribe_provider, toggle_shortcut, push_to_talk_key, \
-          max_duration, min_duration, revise_enabled, revise_provider, revise_prompt, \
-          preferred_languages, transcribe_mode, global_mode_enabled, ptt_activation_delay_ms) \
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        params![
-            data.enabled as i32,
-            data.transcribe_provider,
-            data.toggle_shortcut,
-            data.push_to_talk_key,
-            data.max_duration,
-            data.min_duration,
-            data.revise_enabled as i32,
-            data.revise_provider,
-            data.revise_prompt,
-            preferred_languages_json,
-            data.transcribe_mode,
-            data.global_mode_enabled as i32,
-            data.ptt_activation_delay_ms,
-        ],
-    )?;
-
-    // Replace global terms
     tx.execute("DELETE FROM audio_terms WHERE project_hash IS NULL", [])?;
 
     for term in &data.preferred_terms {
@@ -346,6 +277,128 @@ pub fn save_audio_global(data: &AudioSettingsGlobal) -> Result<()> {
     }
 
     tx.commit()?;
+    Ok(())
+}
+
+// ─── Voice Control Config ───────────────────────────────────────────────────
+
+pub fn load_voice_control() -> crate::storage::config::VoiceControlConfig {
+    let conn = crate::storage::database::connection();
+
+    let row = conn.query_row(
+        "SELECT enabled, stt_provider_id, stt_model, llm_provider_id, llm_model,
+                toggle_shortcut, push_to_talk_key, ptt_activation_delay_ms,
+                max_duration, min_duration, preferred_languages, disabled_actions,
+                has_initialized_actions
+         FROM voice_control_config WHERE id = 1",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, bool>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, u32>(7)?,
+                row.get::<_, u32>(8)?,
+                row.get::<_, u32>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, bool>(12)?,
+            ))
+        },
+    );
+
+    match row {
+        Ok((
+            enabled,
+            stt_provider_id,
+            stt_model,
+            llm_provider_id,
+            llm_model,
+            toggle_shortcut,
+            push_to_talk_key,
+            ptt_activation_delay_ms,
+            max_duration,
+            min_duration,
+            preferred_languages_json,
+            disabled_actions_json,
+            has_initialized_actions,
+        )) => {
+            let preferred_languages =
+                serde_json::from_str(&preferred_languages_json).unwrap_or_default();
+            let disabled_actions = serde_json::from_str(&disabled_actions_json).unwrap_or_default();
+            crate::storage::config::VoiceControlConfig {
+                enabled,
+                stt_provider_id,
+                stt_model,
+                llm_provider_id,
+                llm_model,
+                toggle_shortcut,
+                push_to_talk_key,
+                ptt_activation_delay_ms,
+                max_duration,
+                min_duration,
+                preferred_languages,
+                disabled_actions,
+                has_initialized_actions,
+            }
+        }
+        Err(_) => {
+            // No row yet: release the connection lock BEFORE calling save_voice_control,
+            // which also needs the same mutex. std::sync::Mutex is not reentrant.
+            drop(conn);
+            let legacy = crate::storage::config::load_config().voice_control.clone();
+            let _ = save_voice_control(&legacy);
+            legacy
+        }
+    }
+}
+
+pub fn save_voice_control(data: &crate::storage::config::VoiceControlConfig) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    let preferred_languages_json =
+        serde_json::to_string(&data.preferred_languages).unwrap_or_else(|_| "[]".to_string());
+    let disabled_actions_json =
+        serde_json::to_string(&data.disabled_actions).unwrap_or_else(|_| "[]".to_string());
+    conn.execute(
+        "INSERT INTO voice_control_config (id, enabled, stt_provider_id, stt_model,
+            llm_provider_id, llm_model, toggle_shortcut, push_to_talk_key,
+            ptt_activation_delay_ms, max_duration, min_duration,
+            preferred_languages, disabled_actions, has_initialized_actions)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         ON CONFLICT(id) DO UPDATE SET
+            enabled = excluded.enabled,
+            stt_provider_id = excluded.stt_provider_id,
+            stt_model = excluded.stt_model,
+            llm_provider_id = excluded.llm_provider_id,
+            llm_model = excluded.llm_model,
+            toggle_shortcut = excluded.toggle_shortcut,
+            push_to_talk_key = excluded.push_to_talk_key,
+            ptt_activation_delay_ms = excluded.ptt_activation_delay_ms,
+            max_duration = excluded.max_duration,
+            min_duration = excluded.min_duration,
+            preferred_languages = excluded.preferred_languages,
+            disabled_actions = excluded.disabled_actions,
+            has_initialized_actions = excluded.has_initialized_actions",
+        params![
+            data.enabled,
+            data.stt_provider_id,
+            data.stt_model,
+            data.llm_provider_id,
+            data.llm_model,
+            data.toggle_shortcut,
+            data.push_to_talk_key,
+            data.ptt_activation_delay_ms,
+            data.max_duration,
+            data.min_duration,
+            preferred_languages_json,
+            disabled_actions_json,
+            data.has_initialized_actions,
+        ],
+    )?;
     Ok(())
 }
 

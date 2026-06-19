@@ -1,7 +1,7 @@
 // AI Settings API (providers + audio)
 
 import { apiClient, getApiHost } from './client';
-import type { AudioSettings, ProviderProfile } from '../components/AI/types';
+import type { AudioSettings, ProviderProfile, VoiceControlSettings } from '../components/AI/types';
 
 // ─── Provider Types ─────────────────────────────────────────────────────────
 
@@ -235,4 +235,47 @@ export function transcribeStreamWsUrl(projectId?: string, tuning?: StreamTuning)
   }
   const q = qs.toString();
   return `${proto}//${host}/api/v1/ai/transcribe-stream${q ? `?${q}` : ''}`;
+}
+
+// ─── Voice Control API ──────────────────────────────────────────────────────
+
+export async function getVoiceControlSettings(): Promise<VoiceControlSettings> {
+  return apiClient.get<VoiceControlSettings>('/api/v1/ai/voice-control');
+}
+
+// Note: `sttModel` and `llmModel` inside `settings` are server-managed (resolved
+// from the chosen provider profile) and are silently ignored by the backend.
+export async function saveVoiceControlSettings(settings: VoiceControlSettings): Promise<void> {
+  await apiClient.put('/api/v1/ai/voice-control', settings);
+}
+
+export interface VoiceControlToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface VoiceControlExecuteResult {
+  rawTranscript: string;
+  text: string | null;
+  toolCalls: VoiceControlToolCall[];
+}
+
+export async function executeVoiceControl(
+  audioBlob: Blob,
+  tools: unknown[],
+  context?: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<VoiceControlExecuteResult> {
+  const formData = new FormData();
+  formData.append('audio', audioBlob, 'recording.webm');
+  formData.append('tools', JSON.stringify(tools));
+  if (context) {
+    formData.append('context', JSON.stringify(context));
+  }
+  return apiClient.postFormData<VoiceControlExecuteResult>(
+    '/api/v1/ai/voice-control/execute',
+    formData,
+    signal,
+  );
 }

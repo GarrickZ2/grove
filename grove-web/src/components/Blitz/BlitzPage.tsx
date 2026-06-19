@@ -27,6 +27,7 @@ import { MAIN_GROUP_ID, LOCAL_GROUP_ID } from "../../data/types";
 import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
 import type { PanelType } from "../Tasks/PanelSystem/types";
 import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
+import { fuzzyFindByName } from "../../utils/fuzzySearch";
 
 
 interface DragInfo {
@@ -355,13 +356,6 @@ export function BlitzPage({
   // notification while in Blitz mode produced no visible effect:
   // navigationData was set but BlitzPage never read it.
   useEffect(() => {
-    console.log("[BlitzNav] consumer fired", {
-      initialTaskId,
-      initialProjectId,
-      initialChatId,
-      initialViewMode,
-      blitzTasksCount: blitzTasks.length,
-    });
     if (!initialTaskId) return;
     // Wait for tasks to load — blitzTasks is the single source of truth
     // across all projects in Blitz (vs TasksPage's selectedProject.tasks).
@@ -386,17 +380,9 @@ export function BlitzPage({
       console.warn("[BlitzNav] task NOT FOUND in blitzTasks", {
         initialTaskId,
         initialProjectId,
-        availableTaskIds: blitzTasks.map((t) => t.task.id),
-        availableIsLocal: blitzTasks.map((t) => ({ id: t.task.id, isLocal: t.task.isLocal, projectId: t.projectId })),
       });
       return;
     }
-    console.log("[BlitzNav] task found", {
-      taskId: bt.task.id,
-      projectId: bt.projectId,
-      isLocal: bt.task.isLocal,
-      status: bt.task.status,
-    });
 
     // If the task lives inside a custom (collapsed) group folder, expand
     // it first so the row is in the DOM and the scrollIntoView below can
@@ -409,7 +395,6 @@ export function BlitzPage({
       g.slots.some((s) => s.project_id === bt.projectId && s.task_id === initialTaskId),
     );
     if (customGroup && !expandedGroups.has(customGroup.id)) {
-      console.log("[BlitzNav] expanding custom group", { groupId: customGroup.id });
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setExpandedGroups((prev) => {
         const next = new Set(prev);
@@ -426,9 +411,6 @@ export function BlitzPage({
     // out. Worktree tasks are unaffected (they live in the always-open
     // Main group). Same state-push pattern as the custom-group branch.
     if (bt.task.isLocal) {
-      console.log("[BlitzNav] local task detected", {
-        wasLocalTasksExpanded: localTasksExpanded,
-      });
       if (!localTasksExpanded) {
         setLocalTasksExpanded(true);
       }
@@ -438,17 +420,13 @@ export function BlitzPage({
     // truth for the right-pane TaskView and the list-item "isSelected"
     // styling (BlitzTaskListItem.tsx reads it via prop).
     setSelectedBlitzTask(bt);
-    console.log("[BlitzNav] setSelectedBlitzTask called", { taskId: bt.task.id, projectId: bt.projectId });
 
     // viewMode "terminal" is the tray/notification "open this in detail"
     // signal — mirror TasksPage's behavior by entering the workspace and
     // ensuring the chat panel is open (notifications are chat-bound).
     if (initialViewMode === "terminal") {
-      console.log("[BlitzNav] entering workspace + ensurePanel('chat')");
       pageHandlers.setInWorkspace(true);
       ensureRadioPanel("chat");
-    } else {
-      console.log("[BlitzNav] skipping workspace enter (viewMode !== terminal)", { initialViewMode });
     }
 
     // Switch to a specific chat session if the notification is tied to
@@ -459,7 +437,6 @@ export function BlitzPage({
       const projectId = bt.projectId;
       const taskId = initialTaskId;
       const chatId = initialChatId;
-      console.log("[BlitzNav] setting __grove_pending_chat + dispatching grove:switch-chat", { projectId, taskId, chatId });
       (window as unknown as Record<string, unknown>).__grove_pending_chat = {
         projectId,
         taskId,
@@ -468,8 +445,6 @@ export function BlitzPage({
       window.dispatchEvent(new CustomEvent("grove:switch-chat", {
         detail: { projectId, taskId, chatId },
       }));
-    } else {
-      console.log("[BlitzNav] no initialChatId, skipping chat switch dispatch");
     }
 
     // Scroll the row into view. Retry briefly because expanding a
@@ -480,19 +455,15 @@ export function BlitzPage({
     const tryScroll = (attempts: number) => {
       const el = document.querySelector(selector);
       if (el) {
-        console.log("[BlitzNav] scroll target FOUND, scrolling into view", { attempts, selector });
         el.scrollIntoView({ block: "nearest", behavior: "smooth" });
       } else if (attempts > 0) {
-        console.log("[BlitzNav] scroll target not found, retrying", { attempts, selector });
         setTimeout(() => tryScroll(attempts - 1), 80);
       } else {
-        console.warn("[BlitzNav] scroll target NOT FOUND after all retries — row not in DOM (likely in collapsed group?)", { selector });
+        console.warn("[BlitzNav] scroll target NOT FOUND after all retries", { selector });
       }
     };
     tryScroll(5);
 
-    // Consume the data so it doesn't re-trigger on subsequent renders.
-    console.log("[BlitzNav] consuming navigation data");
     onNavigationConsumed?.();
     // onNavigationConsumed / pageHandlers intentionally omitted from
     // deps: pageHandlers is recreated every render (re-firing would
@@ -796,21 +767,66 @@ export function BlitzPage({
 
   const enabledTask = useCallback(() => hasTask, [hasTask]);
   const enabledOpenWorkspace = useCallback(
-    () => !!selectedTask && selectedTask.status !== "archived",
-    [selectedTask],
+    () => !pageState.inWorkspace && !!selectedTask && selectedTask.status !== "archived",
+    [pageState.inWorkspace, selectedTask],
   );
 
   useCommand("task.selectNext", navHandlers.selectNextTask, [navHandlers]);
   useCommand("task.selectPrevious", navHandlers.selectPreviousTask, [navHandlers]);
   useCommand(
     "task.open",
-    () => {
-      if (!pageState.inWorkspace && selectedTask && selectedTask.status !== "archived") {
-        pageHandlers.handleEnterWorkspace();
+    (args?: unknown) => {
+      const typedArgs = args as { taskId?: string; taskName?: string; taskIndex?: number } | undefined;
+
+      const openFound = (found: BlitzTask) => {
+        // Expand the containing group if it is currently collapsed
+        const customGroup = customGroups.find((g) =>
+          g.slots.some((s) => s.project_id === found.projectId && s.task_id === found.task.id),
+        );
+        if (customGroup && !expandedGroups.has(customGroup.id)) {
+          setExpandedGroups((prev) => { const next = new Set(prev); next.add(customGroup.id); return next; });
+        }
+        if (found.task.isLocal && !localTasksExpanded) {
+          setLocalTasksExpanded(true);
+        }
+        handleSelectTask(found);
+        if (!pageState.inWorkspace && found.task.status !== "archived") {
+          pageHandlers.handleEnterWorkspace();
+        }
+      };
+
+      const allTasks = [...mainListTasks, ...expandedGroupTasks, ...folderLocalTasks];
+
+      if (typedArgs?.taskId) {
+        const found = allTasks.find((t) => t.task.id === typedArgs.taskId);
+        if (found) openFound(found);
+      } else if (typedArgs?.taskIndex !== undefined) {
+        const idx = typedArgs.taskIndex - 1;
+        const found = allTasks[idx];
+        if (found) openFound(found);
+      } else if (typedArgs?.taskName) {
+        const found = fuzzyFindByName(allTasks, (t) => t.task.name, typedArgs.taskName);
+        if (found) openFound(found);
+      } else {
+        if (!pageState.inWorkspace && selectedTask && selectedTask.status !== "archived") {
+          pageHandlers.handleEnterWorkspace();
+        }
       }
     },
     { enabled: enabledOpenWorkspace },
-    [pageState.inWorkspace, selectedTask, pageHandlers, enabledOpenWorkspace],
+    [
+      pageState.inWorkspace,
+      selectedTask,
+      pageHandlers,
+      mainListTasks,
+      expandedGroupTasks,
+      folderLocalTasks,
+      customGroups,
+      expandedGroups,
+      localTasksExpanded,
+      handleSelectTask,
+      enabledOpenWorkspace,
+    ],
   );
   useCommand(
     "task.contextMenu",

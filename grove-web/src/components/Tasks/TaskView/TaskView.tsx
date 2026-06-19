@@ -23,7 +23,7 @@ import { sendInputToTerminal, pasteToTerminal } from "../TaskDetail/terminalCach
 import { activateTask } from "../../../api";
 import { patchConfig } from "../../../api/config";
 import { useConfig } from "../../../context";
-import { useCommand, useKeyboardScope, useContextKey } from "../../../keyboard";
+import { useCommand, useKeyboardScope, useContextKey, useVoiceControlContext } from "../../../keyboard";
 import { usePluginPanelCommands } from "../../Plugins/pluginPanelCommands";
 
 // --- Workspace Bar Dropdown (for overflow actions) ---
@@ -280,6 +280,20 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   const isArchived = task.status === "archived";
   const isLocal = task.isLocal === true;
   const canOperate = !isArchived && !isLocal;
+
+  // Voice control context contribution for active workspace
+  useVoiceControlContext("active_workspace", () => {
+    if (!isActive) return {};
+    return {
+      taskId: task.id,
+      taskName: task.name,
+      gitStatus: {
+        isArchived: isArchived,
+        isLocal: isLocal,
+        canOperate: canOperate,
+      },
+    };
+  });
 
   // Panel + git op shortcuts — registered once per active TaskView so every
   // page that hosts one (TasksPage, BlitzPage, WorkPage) gets consistent

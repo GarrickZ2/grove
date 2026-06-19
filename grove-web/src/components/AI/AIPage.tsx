@@ -11,11 +11,14 @@ import {
   getAudioSettings,
   saveAudioGlobal,
   saveAudioProject,
+  getVoiceControlSettings,
+  saveVoiceControlSettings,
 } from "../../api";
 import { AudioPanel } from "./AudioPanel";
 import { ProvidersPanel } from "./ProvidersPanel";
+import { VoiceControlPanel } from "./VoiceControlPanel";
 import { tabs } from "./mock";
-import type { AudioSettings, ProviderProfile, TabId } from "./types";
+import type { AudioSettings, ProviderProfile, TabId, VoiceControlSettings } from "./types";
 
 const defaultAudio: AudioSettings = {
   enabled: false,
@@ -40,11 +43,28 @@ const defaultAudio: AudioSettings = {
   replacementsProject: [],
 };
 
+const defaultVoiceControl: VoiceControlSettings = {
+  enabled: false,
+  sttProviderId: "",
+  sttModel: "",
+  llmProviderId: "",
+  llmModel: "",
+  toggleShortcut: "",
+  pushToTalkKey: "",
+  pttActivationDelayMs: 500,
+  maxDuration: 10,
+  minDuration: 1,
+  preferredLanguages: [],
+  disabledActions: [],
+  hasInitializedActions: false,
+};
+
 export function AIPage() {
   const { selectedProject } = useProject();
   const [activeTab, setActiveTab] = useState<TabId>("audio");
   const [providers, setProviders] = useState<ProviderProfile[]>([]);
   const [audioSettings, setAudioSettings] = useState<AudioSettings>(defaultAudio);
+  const [voiceControlSettings, setVoiceControlSettings] = useState<VoiceControlSettings>(defaultVoiceControl);
   const [loading, setLoading] = useState(true);
 
   const projectId = selectedProject?.id ?? null;
@@ -57,10 +77,12 @@ export function AIPage() {
     Promise.all([
       listProviders().catch(() => [] as ProviderProfile[]),
       getAudioSettings(projectId ?? undefined).catch(() => defaultAudio),
-    ]).then(([provs, audio]) => {
+      getVoiceControlSettings().catch(() => defaultVoiceControl),
+    ]).then(([provs, audio, voice]) => {
       if (cancelled) return;
       setProviders(provs);
       setAudioSettings(audio);
+      setVoiceControlSettings(voice);
       setLoading(false);
     });
 
@@ -109,6 +131,18 @@ export function AIPage() {
       window.dispatchEvent(new Event("grove:audio-settings-changed"));
     },
     [projectId],
+  );
+
+  // ─── Voice Control operations ─────────────────────────────────────────
+
+  const handleVoiceControlSaved = useCallback(
+    async (next: VoiceControlSettings) => {
+      setVoiceControlSettings(next);
+      await saveVoiceControlSettings(next).catch(console.error);
+      // Notify GlobalVoiceControlRecorder to reload settings
+      window.dispatchEvent(new Event("grove:voice-control-settings-changed"));
+    },
+    [],
   );
 
   const audioStateLabel = !audioSettings.enabled
@@ -196,6 +230,13 @@ export function AIPage() {
                 settings={audioSettings}
                 providers={providers}
                 onSettingsSaved={handleAudioSaved}
+              />
+            )}
+            {activeTab === "voice_control" && (
+              <VoiceControlPanel
+                settings={voiceControlSettings}
+                providers={providers}
+                onSettingsSaved={handleVoiceControlSaved}
               />
             )}
           </>

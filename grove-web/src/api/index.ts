@@ -149,8 +149,11 @@ export {
   saveAudioGlobal,
   saveAudioProject,
   transcribeAudio,
+  getVoiceControlSettings,
+  saveVoiceControlSettings,
+  executeVoiceControl,
 } from './ai';
-export type { ProviderResponse, TranscribeResult } from './ai';
+export type { ProviderResponse, TranscribeResult, VoiceControlExecuteResult, VoiceControlToolCall } from './ai';
 
 export {
   getAgentDefs,

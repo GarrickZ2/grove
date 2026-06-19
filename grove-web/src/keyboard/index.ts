@@ -47,3 +47,6 @@ export type {
   KeymapOverride,
   ContextSnapshot,
 } from "./types";
+
+// Voice Control Context
+export { voiceControlContextRegistry, useVoiceControlContext } from "./VoiceControlContext";

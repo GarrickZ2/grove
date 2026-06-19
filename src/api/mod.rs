@@ -746,6 +746,15 @@ pub fn create_api_router() -> Router {
             get(handlers::ai::get_audio).put(handlers::ai::save_audio_global),
         )
         .route(
+            "/ai/voice-control",
+            get(handlers::ai::get_voice_control).put(handlers::ai::save_voice_control),
+        )
+        .route(
+            "/ai/voice-control/execute",
+            post(handlers::ai::execute_voice_control)
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
+        .route(
             "/projects/{id}/ai/audio",
             put(handlers::ai::save_audio_project),
         )

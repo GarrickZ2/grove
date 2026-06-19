@@ -118,4 +118,11 @@ export const CHAT_COMMANDS: CommandDef[] = [
     scope: "workspace",
     defaultWhen: "chatFocus",
   },
+  {
+    id: "chat.switchSession",
+    name: "Switch Session",
+    category: "Session",
+    description: "Switch to a specific chat session by its ID or title",
+    scope: "workspace",
+  },
 ];

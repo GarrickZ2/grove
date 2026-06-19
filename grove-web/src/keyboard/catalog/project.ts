@@ -11,6 +11,12 @@ export const PROJECT_COMMANDS: CommandDef[] = [
     category: "Project",
   },
   {
+    id: "project.open",
+    name: "Open Project",
+    category: "Project",
+    description: "Open/switch to a specific project by name or ID",
+  },
+  {
     id: "project.switch",
     name: "Switch Project",
     category: "Project",

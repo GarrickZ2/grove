@@ -1,8 +1,9 @@
-import { AudioLines, Bot, type LucideIcon } from "lucide-react";
+import { AudioLines, Bot, Mic, type LucideIcon } from "lucide-react";
 import type { TabId } from "./types";
 
 export const tabs: { id: TabId; label: string; icon: LucideIcon; subtitle: string }[] = [
   { id: "audio", label: "Audio", icon: AudioLines, subtitle: "Transcription, revision, and vocabulary shaping" },
+  { id: "voice_control", label: "Voice Control", icon: Mic, subtitle: "Speech-to-action execution via AI tool calls" },
   { id: "providers", label: "Providers", icon: Bot, subtitle: "Global AI provider profiles and model defaults" },
 ];
 

@@ -131,7 +131,8 @@ import type { ChatSessionResponse, CustomAgentServer } from "../../../api";
 import { listProjects, getProject, listResources, type ProjectListItem } from "../../../api/projects";
 import { openExternalUrl } from "../../../utils/openExternal";
 import { ansiToHtml, stripAnsi } from "../../../utils/ansi";
-import { useCommand, useContextKey } from "../../../keyboard";
+import { fuzzyFindByName } from "../../../utils/fuzzySearch";
+import { useCommand, useContextKey, useVoiceControlContext } from "../../../keyboard";
 import "./task-chat.css";
 
 // ─── Chat draft persistence (localStorage) ────────────────────────────────
@@ -1689,6 +1690,21 @@ export function TaskChat({
     setActiveChatId,
   } = useActiveChatId(null);
   useReportDebugId("chatId", activeChatId);
+
+  // Voice control context contribution for active chat sessions
+  useVoiceControlContext("active_chat", () => {
+    return {
+      selectedSessionId: activeChatId,
+      sessions: chats.map((c, idx) => ({
+        index: idx + 1,
+        id: c.id,
+        title: c.title,
+        agent: c.agent,
+        createdAt: c.created_at,
+        isSelected: activeChatId === c.id,
+      })),
+    };
+  });
   const [showChatMenu, setShowChatMenu] = useState(false);
   const [editingTitle, setEditingTitle] = useState<{
     chatId: string;
@@ -5434,6 +5450,30 @@ export function TaskChat({
   }, [activeChatId, switchChat]);
   useCommand("agent.switch.next", () => cycleChat(1), [cycleChat]);
   useCommand("agent.switch.previous", () => cycleChat(-1), [cycleChat]);
+  useCommand(
+    "chat.switchSession",
+    (args?: unknown) => {
+      const typedArgs = args as { sessionId?: string; sessionTitle?: string; sessionIndex?: number } | undefined;
+      if (typedArgs?.sessionId) {
+        void switchChat(typedArgs.sessionId);
+      } else if (typedArgs?.sessionIndex !== undefined) {
+        const idx = typedArgs.sessionIndex - 1;
+        if (idx >= 0 && idx < chatsRef.current.length) {
+          void switchChat(chatsRef.current[idx].id);
+        }
+      } else if (typedArgs?.sessionTitle) {
+        const found = fuzzyFindByName(
+          chatsRef.current.filter((c) => !!c.title),
+          (c) => c.title!,
+          typedArgs.sessionTitle
+        );
+        if (found) {
+          void switchChat(found.id);
+        }
+      }
+    },
+    [switchChat],
+  );
 
   /** Submit an ask_form response as a regular user prompt. Mirrors the queue /
    *  prompt branch in onSendPrompt — busy session gets queued, idle session

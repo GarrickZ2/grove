@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use super::grove_dir;
 use crate::error::Result;
 
-pub const CURRENT_STORAGE_VERSION: &str = "2.6";
+pub const CURRENT_STORAGE_VERSION: &str = "2.7";
 
 /// Database state: caches connection + its path so we can detect HOME changes.
 struct DbState {
@@ -244,6 +244,24 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         -- Unique index using COALESCE so NULL columns are properly deduplicated
         CREATE UNIQUE INDEX IF NOT EXISTS ux_audio_terms_effective
             ON audio_terms (COALESCE(project_hash, ''), type, COALESCE(from_term, ''), target_term);
+
+        -- Voice Control Config (global, single row)
+        CREATE TABLE IF NOT EXISTS voice_control_config (
+            id                     INTEGER PRIMARY KEY CHECK (id = 1),
+            enabled                INTEGER NOT NULL DEFAULT 0,
+            stt_provider_id        TEXT NOT NULL DEFAULT '',
+            stt_model              TEXT NOT NULL DEFAULT '',
+            llm_provider_id        TEXT NOT NULL DEFAULT '',
+            llm_model              TEXT NOT NULL DEFAULT '',
+            toggle_shortcut        TEXT NOT NULL DEFAULT '',
+            push_to_talk_key       TEXT NOT NULL DEFAULT '',
+            ptt_activation_delay_ms INTEGER NOT NULL DEFAULT 500,
+            max_duration           INTEGER NOT NULL DEFAULT 10,
+            min_duration           INTEGER NOT NULL DEFAULT 1,
+            preferred_languages    TEXT NOT NULL DEFAULT '[]',
+            disabled_actions       TEXT NOT NULL DEFAULT '[]',
+            has_initialized_actions INTEGER NOT NULL DEFAULT 0
+        );
 
         -- User keymap overrides (Command System)
         -- One row per (command, binding): a command may hold multiple bindings
@@ -2575,4 +2593,107 @@ mod tests {
             }
         }
     }
+}
+
+pub fn migrate_audio_to_config_toml() {
+    let conn = connection();
+    // Check if audio_config table exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='audio_config'",
+            [],
+            |r| r.get::<_, i32>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !table_exists {
+        return;
+    }
+
+    // Read audio_config values if row exists
+    let db_audio = conn.query_row(
+        "SELECT enabled, transcribe_provider, toggle_shortcut, push_to_talk_key, \
+         max_duration, min_duration, revise_enabled, revise_provider, revise_prompt, \
+         preferred_languages, transcribe_mode, global_mode_enabled, ptt_activation_delay_ms \
+         FROM audio_config WHERE id = 1",
+        [],
+        |row| {
+            let enabled: i32 = row.get(0)?;
+            let transcribe_provider: String = row.get(1)?;
+            let toggle_shortcut: String = row.get(2)?;
+            let push_to_talk_key: String = row.get(3)?;
+            let max_duration: u32 = row.get(4)?;
+            let min_duration: u32 = row.get(5)?;
+            let revise_enabled: i32 = row.get(6)?;
+            let revise_provider: String = row.get(7)?;
+            let revise_prompt: String = row.get(8)?;
+            let preferred_languages_json: String = row.get(9)?;
+            let transcribe_mode: String = row.get(10)?;
+            let global_mode_enabled: i32 = row.get(11)?;
+            let ptt_activation_delay_ms: u32 = row.get(12)?;
+
+            let preferred_languages: Vec<String> =
+                serde_json::from_str(&preferred_languages_json).unwrap_or_default();
+
+            Ok((
+                enabled != 0,
+                transcribe_provider,
+                toggle_shortcut,
+                push_to_talk_key,
+                max_duration,
+                min_duration,
+                revise_enabled != 0,
+                revise_provider,
+                revise_prompt,
+                preferred_languages,
+                transcribe_mode,
+                global_mode_enabled != 0,
+                ptt_activation_delay_ms,
+            ))
+        },
+    );
+
+    if let Ok((
+        enabled,
+        transcribe_provider,
+        toggle_shortcut,
+        push_to_talk_key,
+        max_duration,
+        min_duration,
+        revise_enabled,
+        revise_provider,
+        revise_prompt_global,
+        preferred_languages,
+        transcribe_mode,
+        global_mode_enabled,
+        ptt_activation_delay_ms,
+    )) = db_audio
+    {
+        let mut config = super::config::load_config();
+        config.audio.enabled = enabled;
+        config.audio.transcribe_provider = transcribe_provider;
+        config.audio.toggle_shortcut = toggle_shortcut;
+        config.audio.push_to_talk_key = push_to_talk_key;
+        config.audio.max_duration = max_duration;
+        config.audio.min_duration = min_duration;
+        config.audio.revise_enabled = revise_enabled;
+        config.audio.revise_provider = revise_provider;
+        config.audio.revise_prompt_global = revise_prompt_global;
+        config.audio.preferred_languages = preferred_languages;
+        config.audio.transcribe_mode = transcribe_mode;
+        config.audio.global_mode_enabled = global_mode_enabled;
+        config.audio.ptt_activation_delay_ms = ptt_activation_delay_ms;
+
+        if let Err(e) = super::config::save_config(&config) {
+            eprintln!(
+                "[migrate] failed to save migrated audio settings to config.toml: {}",
+                e
+            );
+        } else {
+            eprintln!("[migrate] audio settings migrated to config.toml successfully");
+        }
+    }
+
+    // Drop the table to prevent running it again
+    let _ = conn.execute("DROP TABLE IF EXISTS audio_config", []);
 }
