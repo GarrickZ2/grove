@@ -839,6 +839,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
                 />
               ) : (
                 <FileCard key={entry.path} file={entry} projectId={projectId} taskId={task.id}
+                  viewPath={currentOutputPath}
                   onPreview={handlePreview} onDownload={handleDownload}
                   onSyncToResource={handleSyncToResource} onOpenLink={handleOpenLink} onEditLink={handleEditLink} onOpenInApp={handleOpenInApp} />
               )
@@ -1151,9 +1152,10 @@ function FolderEntryRow({
 /* ─── FileCard ─── */
 
 function FileCard({
-  file, projectId, taskId, onPreview, onDownload, onDelete, allowDelete, onSyncToResource, onOpenLink, onEditLink, onOpenInApp,
+  file, projectId, taskId, viewPath = "", onPreview, onDownload, onDelete, allowDelete, onSyncToResource, onOpenLink, onEditLink, onOpenInApp,
 }: {
   file: ArtifactFile; projectId?: string; taskId: string;
+  viewPath?: string;
   onPreview: (f: ArtifactFile) => void; onDownload: (f: ArtifactFile) => void;
   onDelete?: (f: ArtifactFile) => void; allowDelete?: boolean;
   onSyncToResource?: (f: ArtifactFile) => void;
@@ -1165,7 +1167,11 @@ function FileCard({
   const canPreview = !isLink && canPreviewFile(file.name);
   const ext = getExtBadge(file.name);
   const isImage = !isLink && getPreviewType(file.name) === "image";
-  const displayName = isLink ? linkDisplayName(file.name) : (file.path.includes("/") ? file.path : file.name);
+  const displayName = isLink
+    ? linkDisplayName(file.name)
+    : viewPath && file.path.startsWith(viewPath + "/")
+      ? file.path.slice(viewPath.length + 1)
+      : file.name;
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
