@@ -188,8 +188,8 @@ function CsvTable({ content }: { content: string }) {
   if (rows.length === 0) return <p className="p-5 text-sm" style={{ color: "var(--color-text-muted)" }}>Empty file</p>;
   const [header, ...body] = rows;
   return (
-    <div className="overflow-auto h-full">
-      <table className="w-full text-xs border-collapse" style={{ borderColor: "var(--color-border)" }}>
+    <div style={{ position: "absolute", inset: 0, overflow: "auto" }}>
+      <table className="text-xs border-collapse" style={{ borderColor: "var(--color-border)" }}>
         <thead style={{ background: "var(--color-bg-secondary)", position: "sticky", top: 0 }}>
           <tr>
             {header.map((cell, i) => (

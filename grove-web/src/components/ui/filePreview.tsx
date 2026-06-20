@@ -680,7 +680,7 @@ export function FilePreviewDrawer({
               />
             </PreviewCommentHost>
           ) : renderer ? (
-            <div className={renderer.id === 'image' || renderer.id === 'jsx' || renderer.id === 'html' ? 'h-full' : 'p-5'}>
+            <div className={renderer.id === 'image' || renderer.id === 'jsx' || renderer.id === 'html' || renderer.id === 'csv' ? 'h-full relative' : 'p-5'}>
               {renderer.renderFull({
                 content,
                 fileName,
