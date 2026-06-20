@@ -34,7 +34,7 @@ export const TASK_COMMANDS: CommandDef[] = [
     description: "Leave the current task and return to the task list",
     defaultBindings: [{ key: "Escape" }],
     scope: "workspace",
-    defaultWhen: "inWorkspace",
+    defaultWhen: "inWorkspace && !terminalFocus",
   },
   {
     id: "task.selectNext",

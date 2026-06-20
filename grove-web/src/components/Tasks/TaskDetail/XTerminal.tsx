@@ -257,7 +257,7 @@ export function XTerminal({
       // Apply current theme
       cached.terminal.options.theme = terminalThemeRef.current.colors;
 
-      // Intercept key events for search and Escape bubbling
+      // Intercept Cmd/Ctrl+F for terminal search; let everything else (including Escape) reach the PTY.
       cached.terminal.attachCustomKeyEventHandler((e) => {
         if (e.type === "keydown") {
           const isMac = navigator.platform.toLowerCase().includes("mac");
@@ -267,9 +267,6 @@ export function XTerminal({
             e.stopPropagation();
             setSearchOpen(true);
             return false;
-          }
-          if (e.key === "Escape") {
-            e.stopPropagation();
           }
         }
         return true;
@@ -387,21 +384,16 @@ export function XTerminal({
     terminalRef.current = terminal;
     fitAddon.fit();
 
-    // Intercept keyboard shortcuts like Ctrl+F or Cmd+F for search and Escape bubbling
+    // Intercept Cmd/Ctrl+F for terminal search; let everything else (including Escape) reach the PTY.
     terminal.attachCustomKeyEventHandler((e) => {
       if (e.type === "keydown") {
         const isMac = navigator.platform.toLowerCase().includes("mac");
         const isModF = isMac ? (e.metaKey && e.key === "f") : (e.ctrlKey && e.key === "f");
-        
         if (isModF) {
           e.preventDefault();
           e.stopPropagation();
           setSearchOpen(true);
           return false;
-        }
-        
-        if (e.key === "Escape") {
-          e.stopPropagation();
         }
       }
       return true;
