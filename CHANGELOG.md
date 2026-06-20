@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-06-19
+
+### Added
+
+- **Voice control** — Push-to-talk voice input with a settings panel and a command catalog for hands-free task navigation.
+- **Resizable session rail in chat** — The session list sidebar can now be drag-resized; the resizer hit-area and bash chip label are corrected alongside it.
+- **JSONL file rendering** — Chat and Studio now syntax-highlight `.jsonl` files as newline-delimited JSON.
+
+### Fixed
+
+- **Artifact display names** — File display names in the artifacts panel no longer include the current subdirectory prefix.
+- **Blitz task tooltips** — Truncated task names in Blitz mode show a tooltip; project-type tag is now visible.
+- **Blitz / tray navigation** — Notification navigation in Blitz mode and "Open in app" from phone tray now route correctly.
+- **Plugin-development docs bundled** — `docs/plugin-development.md` is now included in the published crate.
+- **Terminal ESC no longer exits workspace** — Pressing Escape inside the terminal now reaches the PTY (vim, shell readline, etc.) instead of closing the workspace. The `task.close` command is suppressed while the terminal panel has focus.
+- **Chat scroll auto-stick** — Auto-stick re-arms correctly when new rows arrive; streamed thought chunks grow in place rather than emitting separate entries.
+- **Chat scroll flicker and project palette refresh** — Eliminated a scroll flicker during streaming; project palette now refreshes after a project rename.
+
 ## [0.11.4] - 2026-06-11
 
 ### Added
