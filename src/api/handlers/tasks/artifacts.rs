@@ -574,10 +574,9 @@ pub async fn open_folder(
     let (project, project_key) = find_project_by_id(&id)?;
     let task_dir =
         resolve_task_dir(&project, &project_key, &task_id).ok_or(StatusCode::NOT_FOUND)?;
-    let folder = task_dir.join(&query.dir);
-    if !folder.exists() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+    let folder_path = task_dir.join(&query.dir).join(&query.path);
+    let folder = studio_common::validate_path_containment(&task_dir, &folder_path)
+        .map_err(|(status, _)| status)?;
     studio_common::open_in_file_manager(&folder);
     Ok(StatusCode::NO_CONTENT)
 }

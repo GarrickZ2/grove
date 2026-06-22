@@ -543,9 +543,10 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     setError(err instanceof Error ? err.message : "Sync failed");
   }, [projectId, task.id]);
 
-  const handleOpenFolder = (dir: string) => {
+  const handleOpenFolder = (dir: string, subpath?: string) => {
     if (!projectId) return;
-    apiClient.post(`/api/v1/projects/${projectId}/tasks/${task.id}/open-folder?dir=${encodeURIComponent(dir)}&path=.`).catch(() => {});
+    const pathQuery = subpath ? encodeURIComponent(subpath) : ".";
+    apiClient.post(`/api/v1/projects/${projectId}/tasks/${task.id}/open-folder?dir=${encodeURIComponent(dir)}&path=${pathQuery}`).catch(() => {});
   };
 
   useEffect(() => {
@@ -792,7 +793,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
             count={outputFileCount}
             isOpen={downloadsOpen}
             onToggle={() => setDownloadsOpen(!downloadsOpen)}
-            onOpenFolder={() => handleOpenFolder("output")}
+            onOpenFolder={() => handleOpenFolder("output", currentOutputPath)}
           />
           <div className="overflow-y-auto px-3 pb-3" style={{
             flex: downloadsOpen ? "1 1 0%" : "0 0 0px",
