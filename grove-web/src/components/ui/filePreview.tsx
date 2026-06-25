@@ -107,10 +107,14 @@ function inferNameFromUrl(url: string): string {
   }
 }
 
-export function getPreviewType(fileName: string): "image" | "text" | null {
+export function getPreviewType(fileName: string): "image" | "text" | "binary" | null {
   const renderer = getPreviewRenderer(fileName);
   if (!renderer) return null;
-  return renderer.contentType === 'url' ? "image" : "text";
+  // Map contentType to the "preview kind" the parent uses to decide how to
+  // fetch. 'url' renderers hand the URL to <img>/<iframe> (no fetch needed),
+  // so we surface that as 'image' for the parent; text/binary pass through.
+  if (renderer.contentType === 'url') return 'image';
+  return renderer.contentType;
 }
 
 /** Use this in Resource/Artifacts contexts where plain text files should also be previewable. */
@@ -121,6 +125,10 @@ export function canPreviewFile(fileName: string): boolean {
 interface FilePreviewDrawerProps {
   fileName: string;
   content: string;
+  /** Download URL for the source file. Required for binary previews (xlsx);
+   *  for text/image previews the renderer either doesn't need it (text) or
+   *  uses `content` directly (image/pdf iframes). */
+  downloadUrl?: string;
   loading?: boolean;
   error?: string | null;
   isLive?: boolean;
@@ -143,6 +151,7 @@ interface FilePreviewDrawerProps {
 export function FilePreviewDrawer({
   fileName,
   content,
+  downloadUrl,
   loading = false,
   error,
   isLive,
@@ -212,11 +221,19 @@ export function FilePreviewDrawer({
   // Iframe (HTML/JSX) renderers route search through the bridge; for those
   // we rely on bridge-reported counts instead of running TreeWalker locally.
   const isIframeRenderer = renderer?.id === "html" || renderer?.id === "jsx";
+  // AG Grid virtualizes rows — only ~30 rows live in the DOM at a time, so
+  // a TreeWalker-based search sees only the visible window. AG Grid exposes
+  // quickFilterText but routing it would mean a second search backend; the
+  // simplest correct fix is to disable Cmd+F for tabular previews and let
+  // users use the in-table column filter instead.
+  const isTableRenderer =
+    renderer?.id === "csv" || renderer?.id === "tsv" ||
+    renderer?.id === "jsonl" || renderer?.id === "xlsx";
   // Three mutually-exclusive search backends. Virtualized markdown runs
   // search over its pre-parsed plaintext index (DOM-free), iframe renderers
   // forward via postMessage, and everything else uses the TreeWalker-based
   // useDomSearch hook.
-  const searchEnabled = searchOpen && !isIframeRenderer && !isLargeMarkdown;
+  const searchEnabled = searchOpen && !isIframeRenderer && !isLargeMarkdown && !isTableRenderer;
   const dom = useDomSearch(searchRootRef, searchEnabled ? searchQuery : "", searchEnabled);
   const [iframeTotal, setIframeTotal] = useState(0);
   const [iframeCurrent, setIframeCurrent] = useState(0);
@@ -680,10 +697,11 @@ export function FilePreviewDrawer({
               />
             </PreviewCommentHost>
           ) : renderer ? (
-            <div className={renderer.id === 'image' || renderer.id === 'jsx' || renderer.id === 'html' || renderer.id === 'csv' ? 'h-full relative' : 'p-5'}>
+            <div className={renderer.id === 'image' || renderer.id === 'jsx' || renderer.id === 'html' || renderer.id === 'csv' || renderer.id === 'tsv' || renderer.id === 'jsonl' || renderer.id === 'xlsx' ? 'h-full relative' : 'p-5'}>
               {renderer.renderFull({
                 content,
                 fileName,
+                downloadUrl,
                 onImageClick: setLightboxUrl,
                 onSvgClick: setLightboxSvg,
                 previewComment: commentable ? { enabled: commentMode && !pendingLocator, previewId, markers: stableMarkers } : undefined,

@@ -131,7 +131,7 @@ export function ResourcePage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isEditingInstructions, setIsEditingInstructions] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [previewFile, setPreviewFile] = useState<{ file: ResourceFile; content: string } | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ file: ResourceFile; content: string; downloadUrl?: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
   const hasUnsaved = instructions !== savedInstructions;
@@ -594,8 +594,14 @@ export function ResourcePage() {
 
   const handlePreview = async (file: ResourceFile) => {
     if (!projectId || file.is_dir) return;
-    if (getPreviewType(file.name) === "image") {
+    const previewType = getPreviewType(file.name);
+    if (previewType === "image") {
       setPreviewFile({ file, content: resourceDownloadUrl(projectId, file.path) });
+      return;
+    }
+    if (previewType === "binary") {
+      // Renderer (e.g. xlsx) fetches the URL itself.
+      setPreviewFile({ file, content: "", downloadUrl: resourceDownloadUrl(projectId, file.path) });
       return;
     }
     setPreviewLoading(true);
@@ -1323,6 +1329,7 @@ export function ResourcePage() {
           <FilePreviewDrawer
             fileName={previewFile.file.name}
             content={previewFile.content}
+            downloadUrl={previewFile.downloadUrl}
             loading={previewLoading}
             onClose={() => setPreviewFile(null)}
             onDownload={() => handleDownload(previewFile.file)}

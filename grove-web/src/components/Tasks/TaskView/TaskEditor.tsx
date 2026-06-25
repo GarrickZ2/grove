@@ -450,6 +450,15 @@ const registerMermaidLanguage = (monaco: any) => {
 };
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+// 'image' and 'binary' previews must never write through Monaco — they're
+// either raster data or non-text formats (xlsx, etc.) that getFileContent()
+// would return as garbled text. Saving that text via writeFileContent
+// would corrupt the original file.
+const isReadOnlyPreview = (path: string) => {
+  const t = getPreviewType(path);
+  return t === 'image' || t === 'binary';
+};
+
 export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onToggleFullscreen, hideHeader = false }: TaskEditorProps) {
   const { isMobile } = useIsMobile();
   const { theme } = useTheme();
@@ -714,7 +723,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     // Save any dirty content on the previously selected file BEFORE switching,
     // otherwise the ref-sync effect would capture {modified:false, content:newFile}
     // and the unmount auto-save would never save the old file's edits.
-    if (modified && selectedFile && getPreviewType(selectedFile) !== 'image') {
+    if (modified && selectedFile && !isReadOnlyPreview(selectedFile)) {
       try {
         await writeFileContent(projectId, taskId, selectedFile, editorContentRef.current);
       } catch (err) {
@@ -734,7 +743,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     // On mobile, close file tree after selecting
     if (isMobile) setFileTreeVisible(false);
 
-    if (getPreviewType(path) === 'image') {
+    if (isReadOnlyPreview(path)) {
       setFileContent('');
       editorContentRef.current = '';
       setLoading(false);
@@ -801,7 +810,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   // Save file
   const handleSave = useCallback(async () => {
     if (!selectedFile || saving || refreshing) return;
-    if (getPreviewType(selectedFile) === 'image') return;
+    if (isReadOnlyPreview(selectedFile)) return;
 
     setSaving(true);
     try {
@@ -863,7 +872,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     return () => {
       const snap = unmountSaveRef.current;
       if (!snap.modified || !snap.selectedFile) return;
-      if (getPreviewType(snap.selectedFile) === 'image') return;
+      if (isReadOnlyPreview(snap.selectedFile)) return;
       writeFileContent(snap.projectId, snap.taskId, snap.selectedFile, snap.content).catch((err) => {
         console.warn('TaskEditor: failed to auto-save on unmount', snap.selectedFile, err);
       });
@@ -894,7 +903,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       setImageNonce(n => n + 1);
 
       if (selectedFile) {
-        if (getPreviewType(selectedFile) === 'image') {
+        if (isReadOnlyPreview(selectedFile)) {
           setFileContent('');
           editorContentRef.current = '';
           setModified(false);
@@ -1358,7 +1367,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               </div>
             </div>
           ) : selectedFile ? (
-            getPreviewType(selectedFile) === 'image' ? (
+            isReadOnlyPreview(selectedFile) ? (
               <div 
                 className="flex-1 flex flex-col items-center justify-center overflow-auto p-8 relative"
                 style={{

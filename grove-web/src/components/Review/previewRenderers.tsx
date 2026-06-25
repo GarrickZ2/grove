@@ -1,9 +1,30 @@
 /* eslint-disable react-refresh/only-export-components */
-import { useEffect, useRef, useMemo, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useMemo, useState, type ReactNode } from 'react';
 import { MarkdownRenderer, MermaidBlock, D2Block } from '../ui/MarkdownRenderer';
 import { PreviewCommentHost } from './PreviewCommentHost';
 import { highlightCode as highlightLocal, detectLanguage as detectLanguageLocal } from './syntaxHighlight';
 import type { DiffFile } from '../../api/review';
+import type { DataTable } from './dataTableParsers';
+
+// AG Grid Community + papaparse together weigh ~300 kB gzipped. The data-table
+// preview only renders when the user opens a .csv / .tsv / .jsonl artifact, so
+// lazy-load both the component and the parsers to keep them out of main.
+const DataTablePreview = lazy(() =>
+  import('./DataTablePreview').then((m) => ({ default: m.DataTablePreview })),
+);
+
+// SheetJS (xlsx) + the tab-switcher component — only loaded when an .xlsx /
+// .xlsm / .xls / .xlsb / .ods file is opened.
+const XlsxWorkbook = lazy(() =>
+  import('./XlsxWorkbook').then((m) => ({ default: m.XlsxWorkbook })),
+);
+
+type TableKind = 'csv' | 'tsv' | 'jsonl';
+
+async function parseTable(content: string, kind: TableKind): Promise<DataTable> {
+  const m = await import('./dataTableParsers');
+  return kind === 'csv' ? m.parseCSV(content) : kind === 'tsv' ? m.parseTSV(content) : m.parseJSONL(content);
+}
 
 function withCommentHost(
   node: ReactNode,
@@ -28,6 +49,10 @@ export interface PreviewCommentMarker {
 export interface RenderFullProps {
   content: string;
   fileName?: string;
+  /** Download URL for the source file. Set when `contentType` is `'url'` or
+   *  `'binary'`; the renderer can fetch it for anything that needs the raw
+   *  bytes (currently only the xlsx renderer does this). */
+  downloadUrl?: string;
   onImageClick?: (url: string) => void;
   onSvgClick?: (svg: string) => void;
   previewComment?: {
@@ -50,13 +75,17 @@ export interface PreviewRenderer {
   /** Test whether this renderer handles the given file path */
   match: (path: string) => boolean;
   /**
-   * 'url'  — content passed to renderFull is a download URL (images, PDFs, etc.)
-   * 'text' — content passed to renderFull is the fetched file text
+   * 'url'    — `content` is a URL the renderer hands to <img>/<iframe>; the
+   *            browser fetches it.
+   * 'text'   — `content` is the fetched file text and is safe to render.
+   * 'binary' — `downloadUrl` is the raw file URL; the renderer fetches +
+   *            parses it itself (e.g. .xlsx via SheetJS).
    */
-  contentType: 'url' | 'text';
+  contentType: 'url' | 'text' | 'binary';
   /**
    * Render full-file preview content.
    * `content` is either a URL or file text depending on `contentType`.
+   * For `binary`, the renderer fetches `downloadUrl` itself.
    * Optional `onImageClick` / `onSvgClick` callbacks enable lightbox support.
    */
   renderFull: (props: RenderFullProps) => React.ReactNode;
@@ -159,64 +188,8 @@ const imageRenderer: PreviewRenderer = {
 };
 
 // ============================================================================
-// CSV Renderer
+// Tabular Renderers (CSV / TSV / JSONL) — share DataTablePreview (AG Grid)
 // ============================================================================
-
-function parseCSV(text: string): string[][] {
-  return text.split('\n').filter(line => line.trim()).map(line => {
-    const cells: string[] = [];
-    let cur = '';
-    let inQuote = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
-        else { inQuote = !inQuote; }
-      } else if (ch === ',' && !inQuote) {
-        cells.push(cur); cur = '';
-      } else {
-        cur += ch;
-      }
-    }
-    cells.push(cur);
-    return cells;
-  });
-}
-
-function CsvTable({ content }: { content: string }) {
-  const rows = parseCSV(content);
-  if (rows.length === 0) return <p className="p-5 text-sm" style={{ color: "var(--color-text-muted)" }}>Empty file</p>;
-  const [header, ...body] = rows;
-  return (
-    <div style={{ position: "absolute", inset: 0, overflow: "auto" }}>
-      <table className="text-xs border-collapse" style={{ borderColor: "var(--color-border)" }}>
-        <thead style={{ background: "var(--color-bg-secondary)", position: "sticky", top: 0 }}>
-          <tr>
-            {header.map((cell, i) => (
-              <th key={i} className="px-3 py-2 text-left font-semibold whitespace-nowrap"
-                style={{ border: "1px solid var(--color-border)", color: "var(--color-text)" }}>
-                {cell}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {body.map((row, ri) => (
-            <tr key={ri} style={{ background: ri % 2 === 0 ? "transparent" : "color-mix(in srgb, var(--color-bg-secondary) 50%, transparent)" }}>
-              {row.map((cell, ci) => (
-                <td key={ci} className="px-3 py-1.5 whitespace-nowrap max-w-[240px] overflow-hidden text-ellipsis"
-                  style={{ border: "1px solid var(--color-border)", color: "var(--color-text)" }}
-                  title={cell}>
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 const htmlRenderer: PreviewRenderer = {
   id: 'html',
@@ -229,16 +202,112 @@ const htmlRenderer: PreviewRenderer = {
   supportsDiffSegments: false,
 };
 
+function LazyDataTable({ data, kind }: { data: DataTable | null; kind: TableKind }) {
+  if (!data) {
+    return (
+      <div className="flex items-center justify-center h-full text-sm" style={{ color: 'var(--color-text-muted)' }}>
+        Parsing {kind.toUpperCase()}…
+      </div>
+    );
+  }
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-full text-sm" style={{ color: 'var(--color-text-muted)' }}>
+        Loading table renderer…
+      </div>
+    }>
+      <DataTablePreview {...data} />
+    </Suspense>
+  );
+}
+
+function LazyTable({ content, kind }: { content: string; kind: TableKind }) {
+  const [data, setData] = useState<DataTable | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    parseTable(content, kind).then((d) => {
+      if (!cancelled) setData(d);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [content, kind]);
+  return <LazyDataTable data={data} kind={kind} />;
+}
+
+// Block-level comments on a virtualized AG Grid aren't meaningful — the
+// user can't anchor a comment to a row that isn't currently rendered, and
+// the comment-mode crosshair ends up over the loading spinner for xlsx.
+// Disable the comment toolbar for all four tabular renderers; column-level
+// filtering + the existing text renderer's comment mode cover the same
+// use case more reliably.
+const TABLE_RENDERER_FLAGS = { supportsDiffSegments: false, supportsComments: false } as const;
+
 const csvRenderer: PreviewRenderer = {
   id: 'csv',
   label: 'Preview CSV',
   match: (path) => /\.csv$/i.test(path),
   contentType: 'text',
   renderFull: ({ content, previewComment }) => withCommentHost(
-    <CsvTable content={content} />,
+    <LazyTable content={content} kind="csv" />,
     previewComment,
   ),
+  ...TABLE_RENDERER_FLAGS,
+};
+
+const tsvRenderer: PreviewRenderer = {
+  id: 'tsv',
+  label: 'Preview TSV',
+  match: (path) => /\.tsv$/i.test(path),
+  contentType: 'text',
+  renderFull: ({ content, previewComment }) => withCommentHost(
+    <LazyTable content={content} kind="tsv" />,
+    previewComment,
+  ),
+  ...TABLE_RENDERER_FLAGS,
+};
+
+const jsonlRenderer: PreviewRenderer = {
+  id: 'jsonl',
+  label: 'Preview JSONL',
+  match: (path) => /\.jsonl$/i.test(path),
+  contentType: 'text',
+  renderFull: ({ content, previewComment }) => withCommentHost(
+    <LazyTable content={content} kind="jsonl" />,
+    previewComment,
+  ),
+  ...TABLE_RENDERER_FLAGS,
+};
+
+// ============================================================================
+// XLSX Renderer (binary; fetches + parses with SheetJS, multi-sheet tab UI)
+// ============================================================================
+
+const xlsxRenderer: PreviewRenderer = {
+  id: 'xlsx',
+  label: 'Preview Excel',
+  match: (path) => /\.(xlsx|xlsm|xlsb|xls|ods)$/i.test(path),
+  contentType: 'binary',
+  renderFull: ({ downloadUrl, previewComment }) => {
+    const node = downloadUrl ? (
+      <Suspense fallback={
+        <div className="h-full w-full flex items-center justify-center text-sm"
+          style={{ color: 'var(--color-text-muted)' }}>
+          Loading workbook…
+        </div>
+      }>
+        <XlsxWorkbook downloadUrl={downloadUrl} />
+      </Suspense>
+    ) : (
+      <div className="h-full w-full flex items-center justify-center text-sm"
+        style={{ color: 'var(--color-text-muted)' }}>
+        No download URL available
+      </div>
+    );
+    return withCommentHost(node, previewComment);
+  },
   supportsDiffSegments: false,
+  supportsComments: false,
 };
 
 // ============================================================================
@@ -699,6 +768,9 @@ const renderers: PreviewRenderer[] = [
   svgRenderer,
   imageRenderer,
   csvRenderer,
+  tsvRenderer,
+  jsonlRenderer,
+  xlsxRenderer,
   pdfRenderer,
   sourceCodeRenderer,
 ];

@@ -73,7 +73,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     existingNames: Set<string>;
   } | null>(null);
 
-  const [previewFile, setPreviewFile] = useState<{ file: ArtifactFile; content: string } | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ file: ArtifactFile; content: string; downloadUrl?: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
   const [isUploading, setIsUploading] = useState(false);
@@ -106,7 +106,11 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   const refreshPreviewContent = useCallback((file: ArtifactFile, seq: number) => {
-    if (!projectId || getPreviewType(file.name) === "image") return;
+    if (!projectId) return;
+    const t = getPreviewType(file.name);
+    // Image previews use the URL as <img src>; binary previews fetch their
+    // own bytes — neither can be re-polled via the text endpoint.
+    if (t === "image" || t === "binary") return;
     previewArtifact(projectId, task.id, file.directory, file.path)
       .then((content) => {
         if (seq !== liveRefreshSeqRef.current) return;
@@ -255,10 +259,20 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
 
   const handlePreview = useCallback(async (file: ArtifactFile, force?: boolean) => {
     if (!projectId || file.is_dir) return;
-    if (getPreviewType(file.name) === "image") {
+    const previewType = getPreviewType(file.name);
+    if (previewType === "image") {
       const url = artifactDownloadUrl(projectId, task.id, file.directory, file.path);
       setPreviewFile({ file, content: url });
       lastGoodContentRef.current = url;
+      setPreviewError(null);
+      return;
+    }
+    if (previewType === "binary") {
+      // Renderer fetches the URL itself (e.g. xlsx via SheetJS). We just
+      // hand it the download URL; content is unused.
+      const url = artifactDownloadUrl(projectId, task.id, file.directory, file.path);
+      setPreviewFile({ file, content: "", downloadUrl: url });
+      lastGoodContentRef.current = "";
       setPreviewError(null);
       return;
     }
@@ -641,6 +655,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
           <FilePreviewDrawer
             fileName={previewFile.file.name}
             content={previewFile.content}
+            downloadUrl={previewFile.downloadUrl}
             loading={previewLoading}
             error={previewError}
             isLive={!!isChatBusy}

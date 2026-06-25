@@ -1,0 +1,87 @@
+/* AG Grid community overrides — re-skin default light-grey panels so they
+ * match Grove's surface tones (--color-* tokens). Each section targets
+ * a specific popup/element AG Grid renders; the rest of the table picks
+ * up colours via themeQuartz.withParams() in DataTablePreview.tsx.
+ */
+
+/* ── Column-menu icon (≡ hamburger) — keep visible, not hover-only ── */
+.ag-theme-quartz .ag-header-cell .ag-header-cell-menu-button {
+  opacity: 1 !important;
+}
+.ag-theme-quartz .ag-header-cell .ag-header-cell-menu-button .ag-icon {
+  color: var(--color-text-muted);
+}
+.ag-theme-quartz .ag-header-cell .ag-header-cell-menu-button:hover .ag-icon,
+.ag-theme-quartz .ag-header-cell .ag-header-cell-menu-button-active .ag-icon {
+  color: var(--color-highlight);
+}
+
+/* Active-filter funnel icon next to column label. */
+.ag-theme-quartz .ag-header-cell .ag-header-cell-filtered-indicator {
+  color: var(--color-highlight);
+}
+
+/* ── Column-menu popup (Sort Asc/Desc/Clear + Filter) ─────────────────── */
+.ag-theme-quartz .ag-menu {
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  padding: 6px;
+}
+.ag-theme-quartz .ag-menu .ag-menu-option {
+  border-radius: 4px;
+  padding: 6px 12px;
+  color: var(--color-text);
+  font-size: 12px;
+}
+.ag-theme-quartz .ag-menu .ag-menu-option:hover {
+  background-color: var(--color-bg-tertiary);
+}
+/* The currently-applied sort item (checked) — paint with the highlight. */
+.ag-theme-quartz .ag-menu .ag-menu-option.ag-menu-option-active,
+.ag-theme-quartz .ag-menu .ag-menu-option.ag-menu-option-active .ag-menu-option-icon {
+  background-color: color-mix(in srgb, var(--color-highlight) 18%, transparent);
+  color: var(--color-highlight);
+}
+.ag-theme-quartz .ag-menu .ag-menu-separator {
+  background-color: var(--color-border);
+  margin: 4px 8px;
+}
+
+/* ── Filter popup (operator dropdown + value input + Apply) ──────────── */
+.ag-theme-quartz .ag-filter {
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.ag-theme-quartz .ag-filter input,
+.ag-theme-quartz .ag-filter select {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  border-color: var(--color-border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.ag-theme-quartz .ag-filter input:focus,
+.ag-theme-quartz .ag-filter select:focus {
+  outline: none;
+  border-color: var(--color-highlight);
+  box-shadow: 0 0 0 1px var(--color-highlight);
+}
+.ag-theme-quartz .ag-filter-apply-panel-button {
+  background-color: var(--color-highlight);
+  color: var(--color-bg);
+  border: none;
+  font-weight: 600;
+  border-radius: 4px;
+}
+.ag-theme-quartz .ag-filter-apply-panel-button:hover {
+  background-color: color-mix(in srgb, var(--color-highlight) 88%, var(--color-text));
+}
+.ag-theme-quartz .ag-filter-apply-panel-button:disabled {
+  background-color: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
