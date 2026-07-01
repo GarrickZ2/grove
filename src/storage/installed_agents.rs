@@ -911,8 +911,8 @@ fn external_args_for(
 // ─── Curated agent seed ─────────────────────────────────────────────────────
 
 /// Boot-time safety net: ensure every curated agent has at least an Npx
-/// installation row, even on upgrade. Idempotent — only writes when the
-/// row doesn't already exist.
+/// installation CHANNEL, even on upgrade. Idempotent — only writes when the
+/// Npx channel doesn't already exist.
 ///
 /// Why this exists: pre-refactor grove allowed users to launch builtin
 /// agents (claude / codex / gemini / opencode / copilot / qwen) without
@@ -922,10 +922,23 @@ fn external_args_for(
 /// referenced those ids would hit "Unknown agent" — a "previously-used
 /// agent suddenly gone" regression.
 ///
+/// Gate is per-CHANNEL, not per-ROW: this runs concurrently with the
+/// boot-time `auto_scan_path_binaries` (see `api::mod` startup), with no
+/// ordering between the two `spawn_blocking` tasks. On a machine where the
+/// user already has a curated agent's CLI on PATH (e.g. `claude` installed
+/// globally), the PATH scan can win the race and write an `External`
+/// channel first. Gating on "does a row exist for this id" then skipped
+/// the Npx seed entirely — the user was left with only the auto-detected
+/// External/terminal channel and had to click Install in Marketplace by
+/// hand to get npx. Gating on "does an Npx channel exist" fixes that: the
+/// Npx channel gets added alongside whatever External/Binary channels are
+/// already there, and `add_installation` leaves `selected_install_method`
+/// untouched when the row pre-exists (no clobbering user customizations).
+///
 /// Behaviour:
 ///   - No gate on row count / remap audit; safe to call on every boot.
-///   - Adds rows ONE-BY-ONE only when missing; never overwrites or
-///     touches existing rows (no clobbering user customizations).
+///   - Adds the Npx channel ONE-BY-ONE only when missing; never overwrites
+///     or touches existing channels/selection.
 ///   - Tolerates registry being partially-loaded: an id that has no
 ///     registry entry is skipped silently, not errored.
 pub fn ensure_curated_agents_seeded(
@@ -935,7 +948,13 @@ pub fn ensure_curated_agents_seeded(
     let now = Utc::now();
     let mut seeded = 0usize;
     for id in &curated.agents {
-        if get(id)?.is_some() {
+        let existing = get(id)?;
+        let has_npx = existing.as_ref().is_some_and(|a| {
+            a.installations
+                .iter()
+                .any(|i| i.method == InstallMethod::Npx)
+        });
+        if has_npx {
             continue;
         }
         let Some(reg) = registry_doc.agents.iter().find(|a| &a.id == id) else {
@@ -952,17 +971,7 @@ pub fn ensure_curated_agents_seeded(
             failure_reason: None,
             installed_at: now,
         };
-        let agent = InstalledAgent {
-            id: id.clone(),
-            installations: vec![install],
-            selected_install_method: InstallMethod::Npx,
-            args_override: Vec::new(),
-            env_override: HashMap::new(),
-            hidden: false,
-            created_at: now,
-            updated_at: now,
-        };
-        upsert(&agent)?;
+        add_installation(id, install)?;
         seeded += 1;
     }
     Ok(seeded)
@@ -1102,6 +1111,87 @@ mod tests {
         let updated =
             patch_or_create("codex-acp", None, Some(vec!["--bar".into()]), None, None).unwrap();
         assert_eq!(updated.args_override, vec!["--bar".to_string()]);
+
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    fn registry_with_npx(id: &str) -> crate::storage::agent_registry::RegistryDocument {
+        use crate::storage::agent_registry::{Distribution, NpxDistribution, RegistryAgent};
+        crate::storage::agent_registry::RegistryDocument {
+            version: "1".into(),
+            agents: vec![RegistryAgent {
+                id: id.to_string(),
+                name: id.to_string(),
+                version: "1.0.0".into(),
+                description: String::new(),
+                repository: None,
+                website: None,
+                authors: Vec::new(),
+                license: None,
+                icon: None,
+                distribution: Distribution {
+                    npx: Some(NpxDistribution {
+                        package: format!("@example/{}", id),
+                        args: Vec::new(),
+                        env: HashMap::new(),
+                    }),
+                    ..Default::default()
+                },
+                terminal_launch: None,
+            }],
+        }
+    }
+
+    /// Regression test: boot-time `auto_scan_path_binaries` and
+    /// `ensure_curated_agents_seeded` run as two independent, unordered
+    /// `spawn_blocking` tasks. If the PATH scan wins the race and writes an
+    /// `External` channel first, the seed must still add the Npx channel —
+    /// gating on "row exists" (instead of "Npx channel exists") used to skip
+    /// the seed entirely, leaving upgraded users stuck with only the
+    /// auto-detected terminal channel and no npx (had to click Install by
+    /// hand in Marketplace).
+    #[tokio::test]
+    async fn seed_adds_npx_even_when_external_row_already_exists() {
+        let _l = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        // Simulate the PATH scan having already run and written an
+        // External-only row for a curated agent id.
+        let now = Utc::now();
+        add_installation(
+            "claude-acp",
+            Installation {
+                method: InstallMethod::External,
+                version: String::new(),
+                install_path: Some("/usr/local/bin/claude".into()),
+                status: InstallStatus::Installed,
+                failure_reason: None,
+                installed_at: now,
+            },
+        )
+        .unwrap();
+
+        let registry = registry_with_npx("claude-acp");
+        let seeded = ensure_curated_agents_seeded(&registry).unwrap();
+        assert_eq!(seeded, 1);
+
+        let agent = get("claude-acp").unwrap().unwrap();
+        assert!(agent
+            .installations
+            .iter()
+            .any(|i| i.method == InstallMethod::Npx));
+        assert!(agent
+            .installations
+            .iter()
+            .any(|i| i.method == InstallMethod::External));
+        // Pre-existing selection (External, from the PATH scan) must not be
+        // clobbered by the seed.
+        assert_eq!(agent.selected_install_method, InstallMethod::External);
+
+        // Idempotent: running again seeds nothing further.
+        let seeded_again = ensure_curated_agents_seeded(&registry).unwrap();
+        assert_eq!(seeded_again, 0);
 
         crate::storage::set_grove_dir_override(None);
     }

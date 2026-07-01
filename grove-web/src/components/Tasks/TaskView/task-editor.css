@@ -51,3 +51,28 @@
     display: none;
   }
 }
+
+/* Custom scrollbar for Editor containers */
+.editor-scroll-container::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.editor-scroll-container::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+
+.editor-scroll-container::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+.editor-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* Firefox support */
+.editor-scroll-container {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) var(--color-bg);
+}

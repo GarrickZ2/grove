@@ -6702,10 +6702,10 @@ export function TaskChat({
     if (!isBusy) return;
     const viewport = messagesViewportRef.current;
     if (!viewport) return;
-    // Within ~480px of the bottom counts as "still in the tail".
+    // Within ~30px of the bottom counts as "still in the tail".
     const distanceFromBottom =
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    if (distanceFromBottom > 480) return;
+    if (distanceFromBottom > 30) return;
     autoStickToBottomRef.current = true;
     virtuosoRef.current?.scrollToIndex({
       index: "LAST",

@@ -88,7 +88,7 @@ export function FileTree({
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      className={`flex flex-col text-sm overflow-y-auto h-full py-1 transition-all duration-200 relative
+      className={`flex flex-col text-sm overflow-y-auto h-full py-1 transition-all duration-200 relative editor-scroll-container
         ${isTreeDragOver ? "bg-[var(--color-highlight)]/5 border-2 border-dashed border-[var(--color-highlight)]/30 rounded-lg m-1" : ""}
       `}
     >

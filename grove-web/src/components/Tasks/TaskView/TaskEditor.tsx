@@ -44,6 +44,7 @@ import { FileContextMenu, type ContextMenuPosition, type ContextMenuTarget } fro
 import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
 import { useCommand, useDefineCommand, useContextKey } from "../../../keyboard";
 import "./task-editor.css";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface TaskEditorProps {
   projectId: string;
@@ -1192,82 +1193,90 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
         )}
 
         {/* Collapsed sidebar strip — shown when file tree is hidden */}
-        {!fileTreeVisible && (
-          <div
-            className="flex-shrink-0 flex flex-col items-center pt-2 gap-1 bg-[var(--color-bg)] border-r border-[var(--color-border)]"
-            style={{ width: 36 }}
-          >
-            <button
-              onClick={() => setFileTreeVisible(true)}
-              className="flex items-center justify-center w-7 h-7 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-              title="Show file tree"
+        <AnimatePresence initial={false}>
+          {!fileTreeVisible && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 36, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="flex-shrink-0 flex flex-col items-center pt-2 gap-1 bg-[var(--color-bg)] border-r border-[var(--color-border)] overflow-hidden"
             >
-              <PanelLeftOpen className="w-4 h-4" />
-            </button>
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="flex items-center justify-center w-7 h-7 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Refresh files"
-            >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-        )}
+              <button
+                onClick={() => setFileTreeVisible(true)}
+                className="flex items-center justify-center w-7 h-7 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+                title="Show file tree"
+              >
+                <PanelLeftOpen className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="flex items-center justify-center w-7 h-7 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh files"
+              >
+                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* File tree sidebar */}
-        {fileTreeVisible && (
-          <div
-            className="flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden flex flex-col"
-            style={isMobile ? {
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              height: '100%',
-              width: 280,
-              zIndex: 20,
-              boxShadow: '4px 0 16px rgba(0,0,0,0.25)',
-            } : {
-              width: fileTreeWidth,
-            }}
-          >
-            {/* Collapse button inside sidebar header */}
-            <div className="flex items-center justify-between px-2 h-[38px] bg-[var(--color-bg)] border-b border-[var(--color-border)] select-none">
-              <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider pl-1">Files</span>
-              <div className="flex items-center gap-0.5">
-                <button
-                  onClick={handleRefresh}
-                  disabled={refreshing}
-                  className="flex items-center justify-center w-6 h-6 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Refresh files"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-                </button>
-                <button
-                  onClick={() => setFileTreeVisible(false)}
-                  className="flex items-center justify-center w-6 h-6 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-                  title="Hide file tree"
-                >
-                  <PanelLeftClose className="w-3.5 h-3.5" />
-                </button>
+        <AnimatePresence initial={false}>
+          {fileTreeVisible && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: isMobile ? 280 : fileTreeWidth, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden flex flex-col"
+              style={isMobile ? {
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                height: '100%',
+                zIndex: 20,
+                boxShadow: '4px 0 16px rgba(0,0,0,0.25)',
+              } : undefined}
+            >
+              {/* Collapse button inside sidebar header */}
+              <div className="flex items-center justify-between px-2 h-[38px] bg-[var(--color-bg)] border-b border-[var(--color-border)] select-none">
+                <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider pl-1">Files</span>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="flex items-center justify-center w-6 h-6 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Refresh files"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                  </button>
+                  <button
+                    onClick={() => setFileTreeVisible(false)}
+                    className="flex items-center justify-center w-6 h-6 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+                    title="Hide file tree"
+                  >
+                    <PanelLeftClose className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
-            </div>
-            <FileTree
-              nodes={fileNodes}
-              selectedFile={selectedFile}
-              contextMenuPath={contextMenuOpen ? contextMenuTarget?.path ?? null : null}
-              onSelectFile={handleSelectFile}
-              onContextMenu={handleContextMenu}
-              creatingPath={creatingPath}
-              onSubmitPath={handleSubmitPath}
-              onCancelPath={handleCancelPath}
-              onExpandDir={handleExpandDir}
-              onMoveFile={handleMoveFile}
-              onUploadFile={handleUploadFile}
-              refreshSignal={refreshSignal}
-            />
-          </div>
-        )}
+              <FileTree
+                nodes={fileNodes}
+                selectedFile={selectedFile}
+                contextMenuPath={contextMenuOpen ? contextMenuTarget?.path ?? null : null}
+                onSelectFile={handleSelectFile}
+                onContextMenu={handleContextMenu}
+                creatingPath={creatingPath}
+                onSubmitPath={handleSubmitPath}
+                onCancelPath={handleCancelPath}
+                onExpandDir={handleExpandDir}
+                onMoveFile={handleMoveFile}
+                onUploadFile={handleUploadFile}
+                refreshSignal={refreshSignal}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Resizer between file tree sidebar and editor area (desktop only) */}
         {!isMobile && fileTreeVisible && (
@@ -1404,7 +1413,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                 </div>
               </div>
             ) : viewMode === 'preview' && isPreviewable ? (
-              <div className="flex-1 overflow-auto bg-[var(--color-bg)] p-6">
+              <div className="flex-1 overflow-auto bg-[var(--color-bg)] p-6 editor-scroll-container">
                 {renderer?.renderFull({
                   content: renderer.contentType === 'url'
                     ? rawFileUrl(selectedFile)
@@ -1470,10 +1479,17 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                       automaticLayout: true,
                       padding: { top: 8 },
                       renderWhitespace: 'selection',
+                      scrollbar: {
+                        verticalScrollbarSize: 6,
+                        horizontalScrollbarSize: 6,
+                        vertical: 'visible',
+                        horizontal: 'visible',
+                        useShadows: false,
+                      },
                     }}
                   />
                 </div>
-                <div className="flex-1 min-w-0 h-full overflow-auto bg-[var(--color-bg)] p-6">
+                <div className="flex-1 min-w-0 h-full overflow-auto bg-[var(--color-bg)] p-6 editor-scroll-container">
                   {renderer?.renderFull({
                     content: renderer.contentType === 'url'
                       ? rawFileUrl(selectedFile)
@@ -1543,6 +1559,13 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                   automaticLayout: true,
                   padding: { top: 8 },
                   renderWhitespace: 'selection',
+                  scrollbar: {
+                    verticalScrollbarSize: 6,
+                    horizontalScrollbarSize: 6,
+                    vertical: 'visible',
+                    horizontal: 'visible',
+                    useShadows: false,
+                  },
                 }}
               />
             )

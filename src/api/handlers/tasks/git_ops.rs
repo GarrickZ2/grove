@@ -309,7 +309,8 @@ pub async fn get_commits(
     };
     repo.object_cache_size_if_unset(64 * 1024 * 1024);
 
-    let log_entries = git::gix_log_target_to_head(&repo, &task.target, 50).unwrap_or_default();
+    let log_entries =
+        git::gix_log_target_to_head(&repo, &task.target, usize::MAX).unwrap_or_default();
     let total = log_entries.len() as u32;
 
     // skip_versions: 顶部连续多少条 commit 的 tree 与 HEAD 的 tree 相同。
