@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.6] - 2026-07-01
+
+### Added
+
+- **Interactive table preview** — CSV/TSV/JSONL/XLSX artifacts opened from task Artifacts or Studio resource pages now render as a sortable, filterable data grid instead of raw text.
+
+### Improved
+
+- **Downloads view folder navigation** — The open-folder icon now respects the current subpath instead of always jumping to the root.
+- **Chat and editor polish** — Removed an arbitrary version limit, smoothed chat scrolling, and refined the task editor layout.
+
 ## [0.11.5] - 2026-06-19
 
 ### Added
