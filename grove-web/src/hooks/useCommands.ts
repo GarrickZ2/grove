@@ -19,6 +19,7 @@ import {
   RotateCcw,
   Trash2,
   Terminal,
+  Code,
   Code2,
   FileSearch,
   MessageSquare,
@@ -79,6 +80,11 @@ export interface UseCommandsOptions {
     onOpenProjectPalette: () => void;
     onOpenTaskPalette: () => void;
   };
+  // Task switching (optional — surfaces current project's tasks as
+  // synthesised commands so Cmd+K can pick them directly).
+  taskSwitch?: {
+    onSelectTask: (task: Task) => void;
+  };
   // Project actions (optional)
   projectActions?: {
     onOpenIDE: () => void;
@@ -87,7 +93,7 @@ export interface UseCommandsOptions {
 }
 
 export function buildCommands(options: UseCommandsOptions): Command[] {
-  const { navigation, project, mode, palettes, taskActions, projectActions } = options;
+  const { navigation, project, mode, palettes, taskActions, projectActions, taskSwitch } = options;
   const isStudio = project?.selectedProject?.projectType === "studio";
 
     const commands: Command[] = [];
@@ -168,6 +174,24 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
         handler: onAddProject,
         keywords: ["new", "register"],
       }, { contexts: { default: 16, tasks: -6, workspace: 8 } }));
+    }
+
+    // --- Task switching (current project's active tasks as commands) ---
+    if (taskSwitch && project?.selectedProject) {
+      const { onSelectTask } = taskSwitch;
+      const tasks = project.selectedProject.tasks ?? [];
+      for (const t of tasks) {
+        if (t.status === "archived") continue;
+        const Icon = t.isLocal ? Laptop : t.createdBy === "agent" ? Zap : Code;
+        commands.push(withRanking({
+          id: `task-switch-${t.id}`,
+          name: `Switch to: ${t.name}`,
+          category: "Tasks",
+          icon: Icon,
+          handler: () => onSelectTask(t),
+          keywords: [t.name, t.branch, "task", "switch"],
+        }, { contexts: { default: 16, tasks: 36, workspace: 4 } }));
+      }
     }
 
     // --- Mode ---
