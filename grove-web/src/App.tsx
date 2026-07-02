@@ -49,6 +49,23 @@ import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette"
 
 export type TasksMode = "zen" | "blitz";
 
+const isTauriShellForTrafficLights = typeof window !== "undefined" && (
+  "__TAURI__" in window ||
+  "__TAURI_INTERNALS__" in window
+);
+
+const isMacForTrafficLights = typeof navigator !== "undefined" && (
+  /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent || "") ||
+  /Mac|iPhone|iPad/i.test(navigator.platform || "")
+);
+
+// Island mode floats the sidebar away from the top-left corner, so the IDE
+// toolbar becomes the top-left-most thing on screen and shares the traffic
+// lights' row instead of sitting below them like every other page does.
+// Matches the pattern used elsewhere (e.g. Tasks page): give main extra top
+// clearance in island mode instead of squeezing the toolbar sideways.
+const shouldAvoidTrafficLightsInIsland = isTauriShellForTrafficLights && isMacForTrafficLights;
+
 // Register a process-global hotkey that survives a webview reload (Cmd+R).
 // The native registration lives on the Rust side and lingers after a reload
 // while its JS callback dies, so the next mount's register() throws "already
@@ -140,7 +157,36 @@ function AppContent() {
     tasksModeRef.current = tasksMode;
   }, [tasksMode]);
   const [tasksExitSignal, setTasksExitSignal] = useState(0);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem("grove:sidebar.mode") === "collapsed";
+    } catch {
+      return false;
+    }
+  });
+  // Three-state sidebar mode: full → collapsed → island (Dynamic Island).
+  // Kept in addition to `sidebarCollapsed` for the legacy Mod+B toggle path —
+  // `effectiveSidebarMode` derives a single SSoT below.
+  const [sidebarIsland, setSidebarIsland] = useState(() => {
+    try {
+      return window.localStorage.getItem("grove:sidebar.mode") === "island";
+    } catch {
+      return false;
+    }
+  });
+  // Persist the user's last explicit choice (not the viewport-forced
+  // override below — that only affects `effectiveSidebarMode`, never these
+  // two raw booleans) so the sidebar mode survives an app restart.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "grove:sidebar.mode",
+        sidebarIsland ? "island" : (sidebarCollapsed ? "collapsed" : "expanded")
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarIsland, sidebarCollapsed]);
   // Auto-collapse sidebar when the viewport is too narrow to host an expanded
   // sidebar (256px) plus the workspace's minimum content width. Keeps the
   // chat composer / panel system from being squeezed below their min-widths.
@@ -212,7 +258,18 @@ function AppContent() {
     };
   }, []);
 
-  const effectiveSidebarCollapsed = sidebarCollapsed || viewportTooNarrowForSidebar;
+  // Single SSoT for the sidebar's three visual modes. Viewport-too-narrow
+  // forces collapsed (not island), since the pill + main-content flex don't
+  // compose well under ~1000px wide.
+  const effectiveSidebarMode: "expanded" | "collapsed" | "island" = viewportTooNarrowForSidebar
+    ? "collapsed"
+    : sidebarIsland
+      ? "island"
+      : (sidebarCollapsed ? "collapsed" : "expanded");
+  const setSidebarMode = useCallback((next: "expanded" | "collapsed" | "island") => {
+    setSidebarIsland(next === "island");
+    setSidebarCollapsed(next === "collapsed");
+  }, []);
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
 
@@ -789,8 +846,25 @@ function AppContent() {
     setTasksMode((prev) => (prev === "zen" ? "blitz" : "zen"));
   }, []);
   const toggleSidebar = useCallback(() => {
+    // Mod+B: binary expanded ⇄ collapsed. If currently in island mode,
+    // first leave the island — Mod+B shouldn't drop you into collapsed
+    // when you were already in a "hidden" state.
+    if (sidebarIsland) {
+      setSidebarIsland(false);
+      setSidebarCollapsed(false);
+      return;
+    }
     setSidebarCollapsed((prev) => !prev);
-  }, []);
+  }, [sidebarIsland]);
+  const archiveSidebar = useCallback(() => {
+    // Mod+. : three-state cycle.
+    //   expanded → collapsed → island → expanded
+    // Anchored on the current mode, so repeated presses always walk the same
+    // loop in the same order — easier to remember than forward/backward.
+    setSidebarMode(
+      sidebarIsland ? "expanded" : (sidebarCollapsed ? "island" : "collapsed")
+    );
+  }, [sidebarIsland, sidebarCollapsed, setSidebarMode]);
   const handleOpenIDE = useCallback(() => {
     if (selectedProject) openIDE(selectedProject.id);
   }, [selectedProject]);
@@ -900,8 +974,9 @@ function AppContent() {
     [selectedProject],
   );
 
-  // View — sidebar toggle, zoom, density
-  useCommand("view.sidebar.toggle", () => setSidebarCollapsed((v) => !v), []);
+  // View — sidebar toggle, archive (Dynamic Island), zoom, density
+  useCommand("view.sidebar.toggle", toggleSidebar, [toggleSidebar]);
+  useCommand("view.sidebar.archive", archiveSidebar, [archiveSidebar]);
 
   const setZoom = useCallback((z: number) => {
     if (typeof document === "undefined") return;
@@ -1221,8 +1296,8 @@ function AppContent() {
   const sidebarProps = {
     activeItem,
     onItemClick: handleItemClick,
-    collapsed: effectiveSidebarCollapsed,
-    onToggleCollapse: () => setSidebarCollapsed(!sidebarCollapsed),
+    mode: effectiveSidebarMode,
+    onSetMode: setSidebarMode,
     onManageProjects: (tab?: "coding" | "studio") => handleNavigate("projects", { tab }),
     onAddProject: (studioMode?: "studio") => {
       setAddProjectInitialMode(studioMode === "studio" ? "studio" : "coding");
@@ -1502,14 +1577,24 @@ function AppContent() {
             <main
               className={`fixed top-3 right-3 bottom-3 rounded-2xl bg-[var(--color-bg)] transition-[left] duration-200 ease-in-out ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}
               style={{
-                left: effectiveSidebarCollapsed ? "96px" : "280px",
+                // Three-tier left: island → 12px (pill is at top-center, sidebar is
+                // effectively absent on the left edge so main uses full width);
+                // collapsed → 96px; expanded → 280px. Matches the visual gap of the
+                // sidebar's left:12 in both expanded/collapsed modes, so the
+                // floating-panel language stays consistent.
+                left: effectiveSidebarMode === "island"
+                  ? "12px"
+                  : (effectiveSidebarMode === "collapsed" ? "96px" : "280px"),
                 boxShadow:
                   "0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06), 0 0 0 1px color-mix(in oklab, var(--color-border) 35%, transparent)",
               }}
             >
-              {/* TasksPage always mounted to preserve workspace state across tab switches */}
+              {/* TasksPage always mounted to preserve workspace state across tab switches.
+                  No padding when in a workspace: the IDE toolbar's own rounded card
+                  (.ide-workbench) now matches main's rounded-2xl corners exactly, so
+                  an extra p-2 here would just reintroduce a redundant border gap. */}
               <div
-                className={`h-full transition-[padding] duration-300 ease-out ${inWorkspace ? 'p-2' : 'p-6'}`}
+                className={`h-full transition-[padding] duration-300 ease-out ${inWorkspace ? '' : 'p-6'} ${inWorkspace && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? 'ide-traffic-light-clearance' : ''}`}
                 style={{ display: activeItem === "tasks" ? "block" : "none" }}
               >
                 <TasksPage
@@ -1524,7 +1609,7 @@ function AppContent() {
                 />
               </div>
               {activeItem !== "tasks" && (
-                <div className={isFullWidthPage ? `h-full transition-[padding] duration-300 ease-out ${activeItem === "work" ? 'p-2' : 'p-6'}` : "max-w-5xl mx-auto p-6"}>
+                <div className={isFullWidthPage ? `h-full transition-[padding] duration-300 ease-out ${activeItem === "work" ? '' : 'p-6'} ${activeItem === "work" && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? 'ide-traffic-light-clearance' : ''}` : "max-w-5xl mx-auto p-6"}>
                   {renderContent()}
                 </div>
               )}

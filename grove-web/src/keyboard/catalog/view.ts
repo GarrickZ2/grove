@@ -11,6 +11,15 @@ export const VIEW_COMMANDS: CommandDef[] = [
     defaultBindings: [{ key: "Mod+b" }],
   },
   {
+    // Three-state cycle: expanded → collapsed → island (Dynamic Island) → expanded.
+    // Distinct from `view.sidebar.toggle` (binary expanded ↔ collapsed) so users
+    // can pin expanded ⇄ collapsed with Mod+B without ever dropping into the pill.
+    id: "view.sidebar.archive",
+    name: "Archive Sidebar (Dynamic Island)",
+    category: "View",
+    defaultBindings: [{ key: "Mod+." }],
+  },
+  {
     id: "view.zoom.increase",
     name: "Zoom In",
     category: "View",

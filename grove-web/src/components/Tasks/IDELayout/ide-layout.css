@@ -7,7 +7,11 @@
   gap: 0;
   padding: 6px;
   border: 1px solid color-mix(in srgb, var(--color-border) 92%, var(--color-text) 8%);
-  border-radius: 8px;
+  /* Matches the parent `<main>` panel's own rounded-2xl (16px) corner radius.
+     App.tsx no longer pads this container away from main's edge, so the two
+     boxes are flush — a smaller radius here would poke a corner past main's
+     clip path and get sliced off by its overflow-hidden. */
+  border-radius: 16px;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--color-highlight) 7%, transparent), transparent 140px),
     color-mix(in srgb, var(--color-bg-secondary) 84%, var(--color-bg));
@@ -373,6 +377,16 @@
   user-select: none;
   overflow: hidden;
 }
+
+/* Island mode: sidebar is off the top-left corner, so the toolbar is the
+   top-left-most thing on screen and shares that corner with the macOS
+   traffic lights. Push the toolbar down below them instead of shifting its
+   content sideways — no left padding. FIRST-PASS value, needs visual check
+   against gui.rs's traffic_light_position(21, 29). */
+.ide-traffic-light-clearance .ide-toolbar {
+  margin-top: 16px;
+}
+
 
 .ide-toolbar__leading {
   display: flex;
