@@ -180,11 +180,6 @@ export function TaskCommandPalette({ isOpen, onClose, tasks, selectedTask, onTas
                           <div className="text-sm font-medium text-[var(--color-text)] truncate">
                             {task.name}
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-                            <span>{task.branch}</span>
-                            <span>&rarr;</span>
-                            <span>{task.target}</span>
-                          </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
                           {isCurrent && (
