@@ -679,10 +679,10 @@ body.grove-resizing {
    Mimics macOS / iPhone Dynamic Island: no transparency, soft outer glow,
    inner top highlight + 1px border to read as a solid metallic plate.
 
-   Tried making this follow the light/dark theme via color-mix() over
-   --color-bg — in light mode it came out as a washed-out grey slab, which
-   reads worse than the real Dynamic Island reference. Stays solid black
-   regardless of theme; content pairs with `color: #f5f5f5`.
+   Base class is the dark preset (content pairs with `color: #f5f5f5`).
+   `.glass-island-light` (below) overrides it for light themes with fixed
+   near-white colors — NOT color-mix() over --color-bg, which reads as a
+   washed-out grey slab in light mode rather than a crisp white plate.
    ────────────────────────────────────────────────────────────────────────── */
 .glass-island {
   background: linear-gradient(
@@ -705,6 +705,33 @@ body.grove-resizing {
   color: inherit;
 }
 
+/* Light-theme variant — same "solid metallic plate" construction as the
+   dark default, but a near-white plate blended into a light page background
+   (see the "washed-out slab" note above — plain white has the *opposite*
+   problem: it disappears entirely against a near-white page, invisible
+   instead of dull). Tinted off `--color-highlight` instead: reads like a
+   soft accent-colored badge/pill (the same construction as e.g. the Studio
+   Resource Hub header chip), stays visible on any light background, and
+   still follows whichever theme is active since it derives from the
+   existing highlight token rather than a hardcoded hue. Applied alongside
+   `.glass-island` when the active theme's `isLight` is true. */
+.glass-island.glass-island-light {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--color-highlight) 16%, white) 0%,
+    color-mix(in oklab, var(--color-highlight) 11%, white) 55%,
+    color-mix(in oklab, var(--color-highlight) 9%, #f2f2f2) 100%
+  );
+  color: color-mix(in oklab, var(--color-highlight) 55%, #16171a);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.03),
+    inset 0 0 0 1px color-mix(in oklab, var(--color-highlight) 25%, transparent),
+    0 4px 16px rgba(0, 0, 0, 0.08),
+    0 16px 48px rgba(0, 0, 0, 0.06),
+    0 32px 80px rgba(0, 0, 0, 0.04);
+}
+
 /* Inner pill content — three columns separated by faint dividers.
    Keeps clicks localized so the right-column bell never triggers the
    nav item on its left, etc. */
@@ -714,9 +741,18 @@ body.grove-resizing {
 }
 
 /* Subtle breathing animation for the resting pill — signals
-   interactivity without being noisy. ~6s loop, 2% opacity delta. */
+   interactivity without being noisy. ~6s loop, 2% opacity delta.
+
+   A flat `--color-highlight` fill was tried for contrast here and looked
+   cheap — a saturated sticker sitting on the glass material instead of
+   part of it. A thin `--color-highlight` ring/glow (the first two shadow
+   layers below, keyed off the theme's accent instead of black/white)
+   keeps the metallic-plate material intact while still popping via
+   hue-contrast against whatever's behind it — dark panel or light. */
 @keyframes island-breathe {
   0%, 100% { box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--color-highlight) 45%, transparent),
+    0 0 14px 1px color-mix(in oklab, var(--color-highlight) 22%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.10),
     inset 0 -1px 0 rgba(255, 255, 255, 0.04),
     inset 0 0 0 1px rgba(255, 255, 255, 0.06),
@@ -724,6 +760,8 @@ body.grove-resizing {
     0 16px 48px rgba(0, 0, 0, 0.30),
     0 32px 80px rgba(0, 0, 0, 0.18); }
   50%      { box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--color-highlight) 60%, transparent),
+    0 0 18px 2px color-mix(in oklab, var(--color-highlight) 34%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
     inset 0 -1px 0 rgba(255, 255, 255, 0.06),
     inset 0 0 0 1px rgba(255, 255, 255, 0.09),
@@ -736,8 +774,43 @@ body.grove-resizing {
   animation: island-breathe 6s ease-in-out infinite;
 }
 
+/* Light-theme breathing uses its own keyframes — the dark ones hardcode
+   rgba(255,255,255,...) inset highlights + heavy black drop shadows tuned
+   for the black gradient, which would flash back to a dark-looking shadow
+   every cycle if reused here. Same highlight-tinted ring/glow as above. */
+@keyframes island-breathe-light {
+  0%, 100% { box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--color-highlight) 45%, transparent),
+    0 0 14px 1px color-mix(in oklab, var(--color-highlight) 22%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.03),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 4px 16px rgba(0, 0, 0, 0.10),
+    0 16px 48px rgba(0, 0, 0, 0.08),
+    0 32px 80px rgba(0, 0, 0, 0.05); }
+  50%      { box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--color-highlight) 60%, transparent),
+    0 0 18px 2px color-mix(in oklab, var(--color-highlight) 34%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.05),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.11),
+    0 4px 18px rgba(0, 0, 0, 0.13),
+    0 18px 54px rgba(0, 0, 0, 0.11),
+    0 36px 90px rgba(0, 0, 0, 0.07); }
+}
+
+.glass-island-light.glass-island-resting {
+  animation-name: island-breathe-light;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .glass-island-resting {
     animation: none;
+    /* Static ring — the breathing keyframes carry the ring/glow, so
+       turning the animation off would otherwise silently drop the resting
+       pill's contrast treatment for reduced-motion users. */
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--color-highlight) 45%, transparent),
+      0 0 14px 1px color-mix(in oklab, var(--color-highlight) 22%, transparent);
   }
 }

@@ -32,15 +32,11 @@ import type { RadioEvent } from "../../api/walkieTalkie";
 import { apiClient } from "../../api/client";
 import { MarkdownRenderer } from "../ui/MarkdownRenderer";
 import type { RetentionPolicyWire } from "../../api/config";
+import { labelFor, orderOptions } from "../../utils/permissionOptions";
+import type { PermissionOption } from "../../utils/permissionOptions";
+export type { PermissionOption } from "../../utils/permissionOptions";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-
-export interface PermissionOption {
-  option_id: string;
-  name: string;
-  /** "allow_once" | "allow_always" | "reject_once" | "reject_always" */
-  kind: string;
-}
 
 type ChatStatusKind = "running" | "permission" | "done";
 
@@ -137,32 +133,6 @@ function resolveAgent(agent: string | null) {
  *  function-call dumps (e.g. `Always Allow all mcp__grove__grove_reply_review`)
  *  which look terrible as button labels. Falls back to `name` for unknown
  *  kinds. */
-function labelFor(opt: PermissionOption): string {
-  switch (opt.kind) {
-    case "allow_once":
-      return "Allow";
-    case "allow_always":
-      return "Always allow";
-    case "reject_once":
-      return "Reject";
-    case "reject_always":
-      return "Always reject";
-    default:
-      return opt.name.replace(/\s+/g, " ").trim();
-  }
-}
-
-function orderOptions(opts: PermissionOption[]): PermissionOption[] {
-  const rank = (k: string): number => {
-    if (k === "allow_once") return 0;
-    if (k.startsWith("allow")) return 1;
-    if (k === "reject_once") return 2;
-    if (k.startsWith("reject")) return 3;
-    return 4;
-  };
-  return [...opts].sort((a, b) => rank(a.kind) - rank(b.kind));
-}
-
 /** Build the provenance line shown under the title.
  *  - When the task name equals the project name (the project's own
  *    "local task"), `project · project` is just visual noise — replace

@@ -1162,6 +1162,9 @@ function AppContent() {
       onOpenProjectPalette: openProjectPalette,
       onOpenTaskPalette: openTaskPalette,
     },
+    taskSwitch: {
+      onSelectTask: handleTaskSelectFromPalette,
+    },
     projectActions: selectedProject ? {
       onOpenIDE: handleOpenIDE,
       onOpenTerminal: handleOpenTerminal,
@@ -1208,7 +1211,13 @@ function AppContent() {
       case "projects":
         return <ProjectsPage onNavigate={setActiveItem} key={"projects-" + (navigationData?.tab ?? "coding")} initialTab={navigationData?.tab as "coding" | "studio" | undefined} />;
       case "work":
-        return <WorkPage key="work" />;
+        return (
+          <WorkPage
+            key="work"
+            initialChatId={navigationData?.chatId as string | undefined}
+            onNavigationConsumed={() => setNavigationData(null)}
+          />
+        );
       case "resource":
         return <ResourcePage />;
       case "automation":

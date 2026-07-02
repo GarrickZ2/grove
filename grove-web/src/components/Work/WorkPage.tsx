@@ -3,10 +3,22 @@ import { motion, AnimatePresence } from "framer-motion";
 import { TaskView, type TaskViewHandle } from "../Tasks/TaskView";
 import { TaskOperationDialogs } from "../Tasks/TaskOperationDialogs";
 import { useProject, useCommandPalette } from "../../context";
-import { useTaskOperations, usePostMergeArchive, buildCommands } from "../../hooks";
+import { useTaskOperations, usePostMergeArchive, buildCommands, useChatDeepLink } from "../../hooks";
 import type { PanelType } from "../Tasks/PanelSystem/types";
 import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
 import { resolveLocalTask } from "../../utils/localTask";
+
+interface WorkPageProps {
+  /** Deep-link to a specific chat session under the Local Task — e.g. from
+   *  a notification, tray, or the Dynamic Island live-activity alert.
+   *  TasksPage/BlitzPage have had this for worktree tasks for a while;
+   *  Work never did, so clicking a Local Task notification silently did
+   *  nothing beyond landing on the page. */
+  initialChatId?: string;
+  /** Called once `initialChatId` has been consumed, so the caller can
+   *  clear navigationData and this effect doesn't refire. */
+  onNavigationConsumed?: () => void;
+}
 
 /**
  * Work — dedicated page for a project's Local Task (the always-present
@@ -17,7 +29,7 @@ import { resolveLocalTask } from "../../utils/localTask";
  * synthesized from project metadata), so the page mounts straight into the
  * workspace with zero flash or loading intermediate.
  */
-export function WorkPage() {
+export function WorkPage({ initialChatId, onNavigationConsumed }: WorkPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
 
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
@@ -39,6 +51,14 @@ export function WorkPage() {
   });
 
   const localTask = selectedProject ? resolveLocalTask(selectedProject) : null;
+
+  // Switch to a specific chat session if a deep-link asked for one.
+  useChatDeepLink({
+    chatId: initialChatId,
+    projectId: selectedProject?.id,
+    taskId: localTask?.id,
+    onConsumed: onNavigationConsumed,
+  });
 
   const [opsState, opsHandlers] = useTaskOperations({
     projectId: selectedProject?.id ?? null,

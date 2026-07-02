@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback, createElement } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -31,13 +31,48 @@ import { useNotifications, useProject, useTheme } from "../../context";
 import { getProjectStyle } from "../../utils/projectStyle";
 import { filterProjectsByType } from "../../utils/projectFilter";
 import { useCommand } from "../../keyboard";
-import { useFirstTimeHint } from "../../hooks";
+import { useFirstTimeHint, useRadioEvents } from "../../hooks";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "../../data/nav";
 import type { TasksMode } from "../../App";
 import { Zap, Code, Check } from "lucide-react";
 import type { Task, Project } from "../../data/types";
+import type { RadioEvent, NodeStatus } from "../../api/walkieTalkie";
+import { apiClient } from "../../api/client";
+import { labelFor, orderOptions } from "../../utils/permissionOptions";
+import type { PermissionOption } from "../../utils/permissionOptions";
+import { agentIconComponent } from "../../utils/agentIcon";
 
 type SidebarMode = "expanded" | "collapsed" | "island";
+
+// ── Dynamic Island live activity queue ──────────────────────────────────
+//
+// Driven by the same `chat_status` radio event the menubar tray uses
+// (see TrayPopover.tsx), not the hook_added/NotificationLevel system.
+// Only two transitions are "an alert": busy/permission → idle (a finished
+// turn, with the agent's final `message`) and → permission_required (the
+// agent is blocked waiting on a response). Everything else (busy itself,
+// connecting) is just ambient status, not a queueable alert.
+type LiveAlert =
+  | {
+      kind: "message";
+      chatId: string;
+      projectId: string;
+      taskId: string;
+      taskName: string;
+      text: string;
+      agent: string | null;
+    }
+  | {
+      kind: "permission";
+      chatId: string;
+      projectId: string;
+      taskId: string;
+      taskName: string;
+      description: string | null;
+      options: PermissionOption[];
+    };
+
+type ChatStatusEvent = Extract<RadioEvent, { type: "chat_status" }>;
 
 interface NavItem {
   id: string;
@@ -151,6 +186,23 @@ export function Sidebar({
   // pill closes so it always reopens on the default view.
   const [islandView, setIslandView] = useState<"nav" | "notifications" | "projects">("nav");
 
+  // Live-activity queue — see the `LiveAlert` type above. Only drains while
+  // the island is resting (not hovered): hovering always shows the
+  // user-driven nav/notifications/projects view instead, so incoming
+  // events just pile up here silently and resume displaying the moment
+  // the user's mouse leaves the pill.
+  const [liveAlertQueue, setLiveAlertQueue] = useState<LiveAlert[]>([]);
+  const liveAlert = liveAlertQueue[0] ?? null;
+  // Separate from `islandHovered` — the pill's own onMouseEnter is a no-op
+  // while an alert is showing (see `onIslandEnter`), so this is the only
+  // signal that the user's cursor is over a message alert, used to pause
+  // its auto-advance timer without swapping the pill over to nav view.
+  const [alertHovered, setAlertHovered] = useState(false);
+  // Tracks each chat's last-seen status so a `busy`/`permission_required`
+  // → `idle` transition can be told apart from an `idle` that was already
+  // idle (which isn't a new "finished" event).
+  const chatStatusRef = useRef<Map<string, NodeStatus>>(new Map());
+
   useEffect(() => {
     return () => {
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -172,11 +224,84 @@ export function Sidebar({
   const isCollapsed = drawerMode ? false : mode === "collapsed";
   const isIsland = !drawerMode && mode === "island";
 
+  useRadioEvents({
+    onChatStatus: (projectId: string, taskId: string, chatId: string, status: NodeStatus, payload?: ChatStatusEvent) => {
+      const prevStatus = chatStatusRef.current.get(chatId);
+      chatStatusRef.current.set(chatId, status);
+
+      // Live activity is an island-only affordance — expanded/collapsed
+      // modes keep the existing bell unread-count behavior untouched.
+      if (!isIsland) return;
+
+      if (status === "disconnected") {
+        setLiveAlertQueue((q) => q.filter((a) => a.chatId !== chatId));
+        return;
+      }
+
+      // Permission got resolved through some other surface — the in-chat
+      // panel, the desktop tray popover, a phone. Drop any queued/shown
+      // permission card for this chat so the island doesn't keep asking
+      // the user to respond to something already handled elsewhere.
+      if (prevStatus === "permission_required" && status !== "permission_required") {
+        setLiveAlertQueue((q) => q.filter((a) => !(a.chatId === chatId && a.kind === "permission")));
+      }
+
+      const taskName = payload?.task_name ?? taskId;
+
+      if (status === "idle" && (prevStatus === "busy" || prevStatus === "permission_required")) {
+        const next: LiveAlert = {
+          kind: "message",
+          chatId,
+          projectId,
+          taskId,
+          taskName,
+          text: payload?.message ?? `${taskName} finished`,
+          agent: payload?.agent ?? null,
+        };
+        setLiveAlertQueue((q) => {
+          // Same chat superseding its own not-yet-shown message — replace
+          // in place rather than double-queueing a stale one behind it.
+          const idx = q.findIndex((a) => a.chatId === chatId && a.kind === "message");
+          if (idx === -1) return [...q, next];
+          const copy = [...q];
+          copy[idx] = next;
+          return copy;
+        });
+        return;
+      }
+
+      if (status === "permission_required") {
+        const next: LiveAlert = {
+          kind: "permission",
+          chatId,
+          projectId,
+          taskId,
+          taskName,
+          description: payload?.permission?.description ?? null,
+          options: payload?.permission?.options ?? [],
+        };
+        setLiveAlertQueue((q) => {
+          // Agent can re-emit permission_required mid-turn (plan_update) —
+          // update the queued/shown card in place instead of duplicating.
+          const idx = q.findIndex((a) => a.chatId === chatId && a.kind === "permission");
+          if (idx === -1) return [...q, next];
+          const copy = [...q];
+          copy[idx] = next;
+          return copy;
+        });
+      }
+    },
+  });
+
   useEffect(() => {
     if (!isIsland) {
       hoverEnabledRef.current = false;
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIslandHovered(false);
+      // Drop any queued live-activity alerts — they'd otherwise resurface
+      // stale (possibly minutes/hours old) if the user leaves and later
+      // re-enters island mode.
+      setLiveAlertQueue([]);
       return;
     }
     // Wait for the spring settle before accepting hover events.
@@ -213,10 +338,14 @@ export function Sidebar({
 
   const onIslandEnter = useCallback(() => {
     if (!hoverEnabledRef.current) return;
+    // A live-activity alert owns hover while it's showing (buttons need to
+    // be reachable without the whole pill snapping over to the nav view
+    // out from under the cursor) — see `alertHovered` / `IslandLiveAlert`.
+    if (liveAlert) return;
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     setIslandHovered(true);
     islandHint.show();
-  }, [islandHint]);
+  }, [islandHint, liveAlert]);
 
   const onIslandLeave = useCallback(() => {
     if (!hoverEnabledRef.current) return;
@@ -226,6 +355,48 @@ export function Sidebar({
     const delay = islandHovered ? 500 : 300;
     hideTimerRef.current = setTimeout(() => setIslandHovered(false), delay);
   }, [islandHovered]);
+
+  // Pop the front of the queue — called once a message alert's timer
+  // expires, or a permission alert is resolved/ignored.
+  const advanceLiveAlertQueue = useCallback(() => {
+    setLiveAlertQueue((q) => q.slice(1));
+  }, []);
+
+  // Message alerts auto-advance after 5s; permission alerts block until
+  // resolved/ignored (no timer). Only runs while resting — hovering shows
+  // the user-driven nav/notifications/projects view instead, which pauses
+  // draining until the mouse leaves (see the cleanup/deps below).
+  useEffect(() => {
+    if (islandHovered || alertHovered) return;
+    if (!liveAlert || liveAlert.kind !== "message") return;
+    const t = setTimeout(advanceLiveAlertQueue, 5000);
+    return () => clearTimeout(t);
+  }, [liveAlert, islandHovered, alertHovered, advanceLiveAlertQueue]);
+
+  const handleLiveAlertMessageClick = () => {
+    if (!liveAlert || liveAlert.kind !== "message") return;
+    onNavigate?.("tasks", {
+      taskId: liveAlert.taskId,
+      projectId: liveAlert.projectId,
+      viewMode: "terminal",
+      chatId: liveAlert.chatId,
+    });
+    advanceLiveAlertQueue();
+  };
+
+  const handleLiveAlertResolvePermission = (option: PermissionOption) => {
+    if (!liveAlert || liveAlert.kind !== "permission") return;
+    const { projectId, taskId, chatId } = liveAlert;
+    apiClient
+      .post("/api/v1/tray/resolve-permission", {
+        projectId,
+        taskId,
+        chatId,
+        optionId: option.option_id,
+      })
+      .catch((e) => console.error("[island] resolve permission failed", e));
+    advanceLiveAlertQueue();
+  };
 
   // ── Render: existing sidebar content (expanded / collapsed) ───────────
   const content = (
@@ -460,8 +631,25 @@ export function Sidebar({
   const isNotificationsView = islandHovered && islandView === "notifications";
   const isProjectsView = islandHovered && islandView === "projects";
   const isWideExpandedView = isNotificationsView || isProjectsView;
-  const islandW = islandHovered ? (isWideExpandedView ? 400 : 720) : 120;
-  const islandH = islandHovered ? (isWideExpandedView ? 420 : 64) : 16;
+  // Live-activity alerts only ever show while resting (not hovered) — see
+  // the `liveAlertQueue` drain effect above. "message" is a single-line
+  // toast; "permission" needs room for a description + two rows of buttons.
+  const isMessageAlert = !islandHovered && liveAlert?.kind === "message";
+  const isPermissionAlert = !islandHovered && liveAlert?.kind === "permission";
+  const islandW = islandHovered
+    ? (isWideExpandedView ? 400 : 720)
+    : isMessageAlert
+      ? 380
+      : isPermissionAlert
+        ? 480
+        : 120;
+  const islandH = islandHovered
+    ? (isWideExpandedView ? 420 : 64)
+    : isMessageAlert
+      ? 60
+      : isPermissionAlert
+        ? 190
+        : 16;
 
   return (
     <>
@@ -470,13 +658,13 @@ export function Sidebar({
       animate={{
         width: isIsland ? islandW : (mode === "collapsed" ? 72 : 256),
         height: isIsland ? islandH : "auto",
-        top: 12,
+        top: isIsland ? 20 : 12,
         left: isIsland ? "50%" : 12,
         right: isIsland ? "auto" : "auto",
         bottom: isIsland ? "auto" : 12,
         x: isIsland ? "-50%" : "0%",
         y: 0,
-        borderRadius: isIsland ? (islandHovered ? 24 : 18) : 16,
+        borderRadius: isIsland ? (islandHovered || isMessageAlert || isPermissionAlert ? 24 : 18) : 16,
       }}
       transition={{
         type: "spring",
@@ -488,7 +676,7 @@ export function Sidebar({
       onMouseLeave={isIsland ? onIslandLeave : undefined}
       className={`fixed ${isIsland ? "z-50" : "z-40"} flex select-none ${
         isIsland
-          ? `glass-island overflow-visible ${islandHovered ? "" : "glass-island-resting"}`
+          ? `glass-island overflow-visible ${theme.isLight ? "glass-island-light" : ""} ${islandHovered || liveAlert ? "" : "glass-island-resting"}`
           : "glass-panel rounded-2xl flex-col overflow-hidden"
       }`}
       style={{
@@ -529,6 +717,16 @@ export function Sidebar({
               onDismissHint={islandHint.dismiss}
             />
           )
+        ) : liveAlert ? (
+          <IslandLiveAlert
+            alert={liveAlert}
+            onMessageClick={handleLiveAlertMessageClick}
+            onDismissMessage={advanceLiveAlertQueue}
+            onResolvePermission={handleLiveAlertResolvePermission}
+            onIgnorePermission={advanceLiveAlertQueue}
+            onMouseEnter={() => setAlertHovered(true)}
+            onMouseLeave={() => setAlertHovered(false)}
+          />
         ) : (
           // Invisible hover pad — extends the resting pill's hit area.
           // The visual pill is 120×16 (very small target). Adding a 240×32
@@ -1010,6 +1208,133 @@ function IslandProjectSwitcher({ onBack, onProjectSwitch, accentPalette }: Islan
               </button>
             );
           })
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Island live-activity alert ──────────────────────────────────────────
+//
+// Compact pill content shown while resting when the `liveAlertQueue` (see
+// Sidebar's `LiveAlert` state) has something to show — mirrors iOS Dynamic
+// Island's "Live Activity" for a chat_status transition. Two shapes:
+//   - "message": single line, click-through navigates to the chat.
+//   - "permission": description + up to 4 response buttons, laid out the
+//     same way as the menubar tray's `PermissionCard` (primary CTA full
+//     width, remaining options wrap below) — same visual language, just
+//     re-themed for the dark pill via currentColor mixes.
+
+interface IslandLiveAlertProps {
+  alert: LiveAlert;
+  onMessageClick: () => void;
+  onDismissMessage: () => void;
+  onResolvePermission: (option: PermissionOption) => void;
+  onIgnorePermission: () => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}
+
+function IslandLiveAlert({
+  alert,
+  onMessageClick,
+  onDismissMessage,
+  onResolvePermission,
+  onIgnorePermission,
+  onMouseEnter,
+  onMouseLeave,
+}: IslandLiveAlertProps) {
+  if (alert.kind === "message") {
+    return (
+      <div
+        onClick={onMessageClick}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+        role="button"
+        tabIndex={0}
+        className="relative w-full h-full flex items-center gap-2.5 px-3 cursor-pointer"
+      >
+        {/* createElement avoids `react-hooks/static-components` flagging the
+            dynamically-resolved component; agentIconComponent returns a
+            stable reference per agent key, not a fresh one each render. */}
+        {createElement(agentIconComponent(alert.agent), {
+          className: "w-4 h-4 flex-shrink-0 text-[color-mix(in_oklab,currentColor_70%,transparent)]",
+        })}
+        <div className="flex-1 min-w-0">
+          <div className="text-[11px] font-medium text-[color-mix(in_oklab,currentColor_60%,transparent)] truncate">
+            {alert.taskName}
+          </div>
+          <div className="text-[12.5px] truncate">{alert.text}</div>
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismissMessage();
+          }}
+          title="Dismiss"
+          aria-label="Dismiss"
+          className="flex-shrink-0 p-1 rounded text-[color-mix(in_oklab,currentColor_50%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)] transition-colors"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    );
+  }
+
+  const opts = orderOptions(alert.options);
+  const primary = opts[0];
+  const secondary = opts.slice(1);
+
+  return (
+    <div className="relative w-full h-full flex flex-col px-4 py-3 gap-2">
+      <div className="flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] flex-shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[13.5px] font-semibold truncate">{alert.taskName}</div>
+        </div>
+        <button
+          onClick={onIgnorePermission}
+          title="Ignore"
+          aria-label="Ignore"
+          className="flex-shrink-0 text-[11px] px-2 py-1 rounded text-[color-mix(in_oklab,currentColor_50%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)] transition-colors"
+        >
+          Ignore
+        </button>
+      </div>
+      {alert.description && (
+        <div className="text-[12.5px] text-[color-mix(in_oklab,currentColor_75%,transparent)] line-clamp-3">
+          {alert.description}
+        </div>
+      )}
+      <div className="flex flex-col gap-1.5 mt-auto">
+        {primary && (
+          <button
+            onClick={() => onResolvePermission(primary)}
+            className="min-h-8 w-full rounded-lg px-3 py-1.5 text-[12.5px] font-medium leading-tight bg-[var(--color-highlight)] text-white hover:opacity-90 transition-opacity"
+          >
+            {labelFor(primary)}
+          </button>
+        )}
+        {secondary.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {secondary.map((opt) => {
+              const isAllow = opt.kind.startsWith("allow");
+              return (
+                <button
+                  key={opt.option_id}
+                  onClick={() => onResolvePermission(opt)}
+                  style={{ flex: "1 1 130px" }}
+                  className={`min-h-8 min-w-0 max-w-full rounded-lg px-2.5 py-1.5 text-[11.5px] leading-tight text-center border transition-colors ${
+                    isAllow
+                      ? "border-[color-mix(in_oklab,currentColor_20%,transparent)] hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)]"
+                      : "text-[var(--color-error)] border-[color-mix(in_srgb,var(--color-error)_35%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]"
+                  }`}
+                >
+                  {labelFor(opt)}
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

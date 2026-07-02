@@ -878,6 +878,15 @@ pub fn create_api_router() -> Router {
             "/tray/send-prompt",
             post(handlers::walkie_talkie::tray_send_prompt),
         )
+        // Approve/deny a pending permission over HTTP — used by the phone
+        // tray page (no Tauri bridge) and the main app's Dynamic Island
+        // live-activity alert. The desktop tray popover itself goes through
+        // the `tray_resolve_permission` Tauri command instead, so this was
+        // never wired up until now.
+        .route(
+            "/tray/resolve-permission",
+            post(handlers::walkie_talkie::tray_resolve_permission),
+        )
         // Desktop tray mirrors its accumulated panel state here so a phone that
         // connects later seeds the full Running / NEEDS YOU / Done view.
         .route(

@@ -17,6 +17,7 @@ import {
   usePostMergeArchive,
   useTaskOperations,
   buildCommands,
+  useChatDeepLink,
 } from "../../hooks";
 import { useCommand, useDefineCommand, useKeyboardScope, useHelpKeyDisplay, contextKeyService, useVoiceControlContext } from "../../keyboard";
 import {
@@ -36,9 +37,8 @@ interface TasksPageProps {
   /** Initial task ID to select (from navigation) */
   initialTaskId?: string;
   /** Initial chat ID to focus inside the selected task (from navigation —
-   *  e.g. tray popover Open with a specific chat). TaskView consumption
-   *  is a TODO: chat selection lives several layers below in the
-   *  flex/IDE layout, not yet wired through this prop. */
+   *  e.g. tray popover Open with a specific chat). Dispatched via
+   *  `useChatDeepLink`, consumed by TaskChat's `useInitialChatLoad`. */
   initialChatId?: string;
   /** Initial view mode to use (from navigation, e.g. "terminal") */
   initialViewMode?: string;
@@ -184,29 +184,19 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
       pageHandlers.setInWorkspace(true);
     }
 
-    // Navigate to the specific chat session if provided (tray deep-link).
-    // Uses the same __grove_pending_chat + grove:switch-chat pattern as
-    // BlitzPage so both the "workspace just mounted" and "already mounted"
-    // cases are handled.
-    if (initialChatId && selectedProject) {
-      const projectId = selectedProject.id;
-      const taskId = initialTaskId;
-      const chatId = initialChatId;
-      (window as unknown as Record<string, unknown>).__grove_pending_chat = {
-        projectId,
-        taskId,
-        chatId,
-      };
-      window.dispatchEvent(
-        new CustomEvent("grove:switch-chat", {
-          detail: { projectId, taskId, chatId },
-        }),
-      );
-    }
-
     // Consume the navigation data so it doesn't re-trigger
     onNavigationConsumed?.();
-  }, [initialTaskId, initialChatId, initialViewMode, activeTasks, pageState.selectedTask?.id, onNavigationConsumed, pageHandlers, selectedProject]);
+  }, [initialTaskId, initialViewMode, activeTasks, pageState.selectedTask?.id, onNavigationConsumed, pageHandlers]);
+
+  // Navigate to the specific chat session if provided (deep-link — tray,
+  // notifications, the Dynamic Island live-activity alert, ...). Separate
+  // from the task-selection effect above since it only needs to re-fire
+  // when the chat id itself changes, not on every task-selection dep.
+  useChatDeepLink({
+    chatId: initialChatId,
+    projectId: selectedProject?.id,
+    taskId: initialTaskId,
+  });
 
   // Exit workspace when Tasks tab is re-clicked (signal from App.tsx).
   // Use a ref for inWorkspace so the effect only fires on signal changes but

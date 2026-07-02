@@ -17,6 +17,7 @@ import {
   useTaskGroups,
   useRadioEvents,
   buildCommands,
+  useChatDeepLink,
 } from "../../hooks";
 import { useCommand, useDefineCommand, useKeyboardScope, useContextKey, useHelpKeyDisplay } from "../../keyboard";
 import { RadioConnectDialog } from "./RadioConnectDialog";
@@ -429,24 +430,6 @@ export function BlitzPage({
       ensureRadioPanel("chat");
     }
 
-    // Switch to a specific chat session if the notification is tied to
-    // one (tray deep-link). Same pending-chat + custom-event pattern as
-    // TasksPage / Radio onFocusTask, so both the "workspace just mounted"
-    // and "already mounted" cases work.
-    if (initialChatId) {
-      const projectId = bt.projectId;
-      const taskId = initialTaskId;
-      const chatId = initialChatId;
-      (window as unknown as Record<string, unknown>).__grove_pending_chat = {
-        projectId,
-        taskId,
-        chatId,
-      };
-      window.dispatchEvent(new CustomEvent("grove:switch-chat", {
-        detail: { projectId, taskId, chatId },
-      }));
-    }
-
     // Scroll the row into view. Retry briefly because expanding a
     // collapsed group + re-rendering the list + TaskView mounting all
     // happen async after our setSelectedBlitzTask. The retry pattern
@@ -469,6 +452,17 @@ export function BlitzPage({
     // deps: pageHandlers is recreated every render (re-firing would
     // re-enter workspace); onNavigationConsumed is a stable setter.
   }, [initialTaskId, initialProjectId, initialChatId, initialViewMode, blitzTasks, customGroups, expandedGroups, localTasksExpanded, ensureRadioPanel, onNavigationConsumed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Navigate to the specific chat session if provided (deep-link — tray,
+  // notifications, the Dynamic Island live-activity alert, ...). Separate
+  // from the task-selection effect above; fires once `selectedBlitzTask`
+  // catches up to the target task set by that effect (dep change re-runs
+  // this), so ordering between the two doesn't matter.
+  useChatDeepLink({
+    chatId: initialChatId,
+    projectId: selectedBlitzTask?.projectId,
+    taskId: selectedBlitzTask?.task.id,
+  });
 
   // Task selection handlers (Blitz-specific: handle BlitzTask)
   const handleSelectTask = useCallback((bt: BlitzTask) => {
