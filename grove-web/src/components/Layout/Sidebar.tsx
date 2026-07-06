@@ -677,7 +677,7 @@ export function Sidebar({
       className={`fixed ${isIsland ? "z-50" : "z-40"} flex select-none ${
         isIsland
           ? `glass-island overflow-visible ${theme.isLight ? "glass-island-light" : ""} ${islandHovered || liveAlert ? "" : "glass-island-resting"}`
-          : "glass-panel rounded-2xl flex-col overflow-hidden"
+          : "glass-panel rounded-2xl flex-col overflow-visible"
       }`}
       style={{
         // When in island mode, keep the existing `flex-col` semantics from

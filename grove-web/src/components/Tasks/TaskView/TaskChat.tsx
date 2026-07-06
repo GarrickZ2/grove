@@ -6154,7 +6154,7 @@ export function TaskChat({
       // Large text: convert to .txt attachment to avoid freezing contentEditable
       if (text.length > 10 * 1024) {
         const blob = new Blob([text], { type: "text/plain" });
-        const file = new File([blob], "pasted-text.txt", { type: "text/plain" });
+        const file = new File([blob], `pasted-text-${Date.now()}.txt`, { type: "text/plain" });
         void addFileAsAttachment(file);
         return;
       }
