@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.7] - 2026-07-07
+
+### Added
+
+- **Dynamic Island sidebar** — A new macOS-style "island" sidebar mode bundles live-activity alerts, permission handling, and theme polish into a compact floating surface.
+- **Current-project tasks in the command palette** — `Cmd+K` now lists the active project's tasks as commands, so you can jump between them without leaving the palette.
+
+### Fixed
+
+- **Pasted file collisions in chat** — Simultaneous file pastes no longer collide; each gets a unique timestamp in the working tree. Sidebar dropdown clipping in the chat layout is also corrected.
+
 ## [0.11.6] - 2026-07-01
 
 ### Added
