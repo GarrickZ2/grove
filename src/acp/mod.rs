@@ -1974,11 +1974,25 @@ pub async fn get_or_start_session(
                 let session_project_key = config.project_key.clone();
                 let session_task_id = config.task_id.clone();
                 let session_chat_id = config.chat_id.clone();
+                let session_agent_name = config.agent_name.clone();
 
-                if let Err(e) = run_acp_session(handle, config, cmd_rx).await {
-                    let _ = update_tx.send(AcpUpdate::Error {
-                        message: format!("ACP session error: {}", e),
-                    });
+                let session_result = run_acp_session(handle, config, cmd_rx).await;
+                match &session_result {
+                    Ok(()) => {
+                        eprintln!(
+                            "[ACP] session ended normally (key={} agent={} task={} chat={:?})",
+                            key_clone, session_agent_name, session_task_id, session_chat_id
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[ACP] session ended with error (key={} agent={} task={} chat={:?}): {}",
+                            key_clone, session_agent_name, session_task_id, session_chat_id, e
+                        );
+                        let _ = update_tx.send(AcpUpdate::Error {
+                            message: format!("ACP session error: {}", e),
+                        });
+                    }
                 }
                 let _ = update_tx.send(AcpUpdate::SessionEnded);
 
@@ -2035,6 +2049,10 @@ async fn run_acp_session(
     mut config: AcpStartConfig,
     cmd_rx: mpsc::Receiver<AcpCommand>,
 ) -> crate::error::Result<()> {
+    // Cloned up front since `config` is moved into the `connect_with` closure
+    // below; used only for the post-mortem exit-status log at the end.
+    let agent_name_for_log = config.agent_name.clone();
+
     // 提前生成 agent_graph MCP token —— 在 spawn 子进程之前注册并塞进 env。
     // 这样 `grove mcp-bridge`（agent 自己孩子的孩子，比如 Trae 不接受 ACP 注入
     // 的 MCP 时由用户在 Trae mcp 配置里指向我们）只要从 env 读 GROVE_MCP_TOKEN
@@ -2067,7 +2085,7 @@ async fn run_acp_session(
     let _early_token_guard = EarlyTokenGuard(agent_graph_token.clone());
 
     // 根据 agent_type 分支获取 reader/writer（使用 trait object 统一类型）
-    let child: Option<tokio::process::Child>;
+    let mut child: Option<tokio::process::Child>;
     // 0.11 ByteStreams 要求 Send + 'static;grove 的子进程 pipe 和 DuplexStream 都满足。
     let mut writer: Box<dyn futures::AsyncWrite + Send + Unpin>;
     let mut reader: Box<dyn futures::AsyncRead + Send + Unpin>;
@@ -2312,6 +2330,29 @@ async fn run_acp_session(
             drive_session(handle, config, cmd_rx, conn)
         })
         .await;
+
+    // Diagnostics: if the agent subprocess had already exited by the time
+    // the ACP I/O loop ended, that's very likely *why* it ended (crash /
+    // OOM-kill / unexpected quit) rather than a clean session close. Check
+    // with try_wait (non-blocking — returns None if still running) before
+    // `drop(child)` triggers kill_on_drop, which would otherwise mask this.
+    if let Some(ref mut c) = child {
+        match c.try_wait() {
+            Ok(Some(status)) => {
+                eprintln!(
+                    "[ACP] agent process had already exited when session I/O ended: {} (agent={})",
+                    status, agent_name_for_log
+                );
+            }
+            Ok(None) => { /* still running — we're the ones tearing it down below */ }
+            Err(e) => {
+                eprintln!(
+                    "[ACP] failed to check agent process status (agent={}): {}",
+                    agent_name_for_log, e
+                );
+            }
+        }
+    }
 
     // kill_on_drop 会清理子进程
     drop(child);
