@@ -508,6 +508,89 @@ type RenderItem =
   | { kind: "single"; message: ChatMessage; index: number }
   | { kind: "tool-section"; sectionId: string; tools: ToolSectionItem[] };
 
+/** A user prompt and the assistant material that follows it.  This is a
+ * presentation-only projection of `messages`: the full message history
+ * remains the source of truth and no extra history is persisted. */
+type ConversationTurn = {
+  messageIndex: number;
+  renderIndex: number;
+  user: string;
+  assistant: string;
+  isStreaming: boolean;
+  tools: { label: string; count: number }[];
+};
+
+function conversationToolLabel(tool: ToolMessage): string {
+  switch (normalizeToolVerb(tool.title)) {
+    case "read":
+    case "search":
+    case "list":
+    case "run":
+      return "Exploration";
+    case "edit":
+      return "Edit";
+    case "plan":
+    case "permission":
+    default:
+      return "Action";
+  }
+}
+
+function compactConversationText(value: string, limit = 220): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) return "";
+  return compact.length > limit ? `${compact.slice(0, limit - 1)}…` : compact;
+}
+
+/**
+ * Builds the data for the chat's left-hand conversation minimap. Tool and
+ * thinking events remain part of their surrounding user → assistant turn;
+ * they do not create noisy standalone markers in the navigator.
+ */
+function buildConversationTurns(
+  messages: ChatMessage[],
+  renderItems: RenderItem[],
+): ConversationTurn[] {
+  const renderIndexByMessageIndex = new Map<number, number>();
+  renderItems.forEach((item, renderIndex) => {
+    if (item.kind === "single") renderIndexByMessageIndex.set(item.index, renderIndex);
+  });
+
+  const turns: ConversationTurn[] = [];
+  let current: ConversationTurn | null = null;
+  messages.forEach((message, messageIndex) => {
+    if (message.type === "user") {
+      const renderIndex = renderIndexByMessageIndex.get(messageIndex);
+      if (renderIndex === undefined) return;
+      current = {
+        messageIndex,
+        renderIndex,
+        user: compactConversationText(message.content) || "Attachment",
+        assistant: "",
+        isStreaming: false,
+        tools: [],
+      };
+      turns.push(current);
+      return;
+    }
+    if (!current) return;
+    if (message.type === "tool") {
+      const label = conversationToolLabel(message);
+      const existing = current.tools.find((tool) => tool.label === label);
+      if (existing) existing.count += 1;
+      else current.tools.push({ label, count: 1 });
+      return;
+    }
+    if (message.type !== "assistant") return;
+    const text = compactConversationText(message.content);
+    if (text) current.assistant = compactConversationText(
+      `${current.assistant}${current.assistant ? " " : ""}${text}`,
+    );
+    if (!message.complete) current.isStreaming = true;
+  });
+  return turns;
+}
+
 /** Group consecutive tool messages into sections; everything else is a single item */
 function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
   const items: RenderItem[] = [];
@@ -1945,6 +2028,9 @@ export function TaskChat({
   // Bumped whenever Virtuoso renders a different range of items. Drives
   // useChatSearch's "re-apply highlights to freshly mounted DOM" effect.
   const [renderToken, setRenderToken] = useState(0);
+  // First rendered chat row, reported by Virtuoso. Used by the conversation
+  // minimap to mark the turn the reader is currently reviewing.
+  const [visibleRenderStart, setVisibleRenderStart] = useState(0);
   // Footer height = current input area height + slack. Stored in state so
   // Virtuoso can pad the bottom of the scroll area, ensuring the last
   // message is never obscured by the input composer. Initial value is
@@ -2856,9 +2942,31 @@ export function TaskChat({
   // i.e. there's a live user-driven scroll in progress. Re-enabling
   // happens unconditionally when atBottom becomes true.
   const isUserScrollingRef = useRef(false);
+  // `isScrolling` alone cannot identify the source: Virtuoso sets it for
+  // both a wheel/drag from the user and our own scrollToIndex calls. Record
+  // a short-lived user gesture before the scroll begins so an upward scroll
+  // reliably opts out of follow-output before any height re-measure arrives.
+  const userScrollGestureUntilRef = useRef(0);
+  const disengageAutoStick = useCallback(() => {
+    autoStickToBottomRef.current = false;
+  }, []);
+  const handleChatWheelCapture = useCallback((event: React.WheelEvent) => {
+    // Negative delta means the user is heading into history. Detach
+    // immediately instead of waiting for Virtuoso's atBottom callback,
+    // whose ordering can be behind a height-change notification.
+    if (event.deltaY < 0) disengageAutoStick();
+  }, [disengageAutoStick]);
+  const handleChatPointerDownCapture = useCallback((event: React.PointerEvent) => {
+    if (event.button !== 0) return;
+    // Covers scrollbar/thumb drags, which do not emit a wheel event.
+    userScrollGestureUntilRef.current = Date.now() + 1_000;
+  }, []);
   const handleIsScrolling = useCallback((scrolling: boolean) => {
     isUserScrollingRef.current = scrolling;
-  }, []);
+    if (scrolling && Date.now() < userScrollGestureUntilRef.current) {
+      disengageAutoStick();
+    }
+  }, [disengageAutoStick]);
 
   // The tail-signature autoscroll path used to fire scrollMessagesToBottom
   // on every streaming token. With Virtuoso, `followOutput` already
@@ -6565,6 +6673,36 @@ export function TaskChat({
   }, []);
 
   const renderItems = useMemo(() => buildRenderItems(messages), [messages]);
+  // The minimap is deliberately derived from the same `messages` state that
+  // renders the chat. It is therefore immediately available for loaded
+  // history and updates as an assistant streams, with no second history API.
+  const conversationTurns = useMemo(
+    () => buildConversationTurns(messages, renderItems),
+    [messages, renderItems],
+  );
+  const activeConversationTurnMessageIndex = useMemo(() => {
+    let active = conversationTurns[0];
+    for (const turn of conversationTurns) {
+      if (turn.renderIndex > visibleRenderStart) break;
+      active = turn;
+    }
+    return active?.messageIndex ?? null;
+  }, [conversationTurns, visibleRenderStart]);
+  const handleConversationRangeChanged = useCallback((range: { startIndex: number }) => {
+    setVisibleRenderStart((previous) =>
+      previous === range.startIndex ? previous : range.startIndex,
+    );
+  }, []);
+  const navigateToConversationTurn = useCallback((turn: ConversationTurn) => {
+    // User navigation should detach follow-output, otherwise a running agent
+    // would immediately pull the viewport back to the newest response.
+    autoStickToBottomRef.current = false;
+    virtuosoRef.current?.scrollToIndex({
+      index: turn.renderIndex,
+      align: "start",
+      behavior: "smooth",
+    });
+  }, []);
   const lastMessageType = messages[messages.length - 1]?.type;
 
   // Data-layer chat search — works across the full conversation, not just
@@ -6671,48 +6809,24 @@ export function TaskChat({
 
   // Typewriter reveals text via setState INSIDE MessageItem — the
   // `messages` array reference doesn't change, so Virtuoso's
-  // followOutput never fires. We watch totalListHeightChanged
-  // (which DOES fire when the streaming row grows) and re-anchor to
-  // bottom. Use behavior: "auto" to prevent blank viewport rendering
-  // glitches during rapid streaming.
-  //
-  // Auto-stick behavior: once the user scrolls up to read history we
-  // leave them alone, BUT if a brand-new row is appended (a new tool
-  // section, a new thought chunk) and the user is still within a
-  // reasonable "tail" window of the list, we re-arm auto-stick. This
-  // matches the user's mental model — "I was watching the agent, a new
-  // tool ran, take me back to the bottom so I see what it did" — without
-  // yanking them away while they're actively reading earlier content.
+  // followOutput never fires. While the agent is actively streaming and
+  // the reader is still following the tail, a height change needs one
+  // re-anchor to keep the newest token visible.
   const handleTotalListHeightChanged = useCallback(() => {
-    if (isUserScrollingRef.current) return;
-    if (autoStickToBottomRef.current) {
-      virtuosoRef.current?.scrollToIndex({
-        index: "LAST",
-        align: "end",
-        behavior: "auto",
-      });
-      return;
-    }
-    // Re-arm only makes sense when a running agent APPENDS a brand-new row.
-    // While idle no rows are appended, so a height change here is purely
-    // Virtuoso re-measuring existing rows — and re-arming + scrollToIndex
-    // would self-excite (scroll -> new rows enter viewport -> heights
-    // re-measured -> height changes -> scroll again ...), which the user
-    // sees as constant flicker when stopped near, but not at, the bottom.
-    if (!isBusy) return;
+    // Never issue scroll commands for idle re-measurements. In particular,
+    // upward scrolling mounts older variable-height rows; scrolling to LAST
+    // from this callback made Virtuoso oscillate between its anchor and tail.
+    if (!isBusy || isUserScrollingRef.current || !autoStickToBottomRef.current) return;
     const viewport = messagesViewportRef.current;
     if (!viewport) return;
-    // Within ~30px of the bottom counts as "still in the tail".
+    // If already at the tail, another scrollToIndex only creates another
+    // measurement cycle. Streaming growth makes this positive, so a tiny
+    // threshold still keeps the latest token visible.
     const distanceFromBottom =
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    if (distanceFromBottom > 30) return;
-    autoStickToBottomRef.current = true;
-    virtuosoRef.current?.scrollToIndex({
-      index: "LAST",
-      align: "end",
-      behavior: "auto",
-    });
-  }, [isBusy]);
+    if (distanceFromBottom <= 2) return;
+    scrollMessagesToBottom("auto");
+  }, [isBusy, scrollMessagesToBottom]);
 
   // Track the message index where the current busy turn started
   const turnStartIndexRef = useRef(0);
@@ -7189,7 +7303,16 @@ export function TaskChat({
           />
         )}
 
-        <div className="relative min-h-0 min-w-0 flex-1">
+        <div
+          className="relative min-h-0 min-w-0 flex-1"
+          onWheelCapture={handleChatWheelCapture}
+          onPointerDownCapture={handleChatPointerDownCapture}
+        >
+          <ConversationMinimap
+            turns={conversationTurns}
+            activeMessageIndex={activeConversationTurnMessageIndex}
+            onNavigate={navigateToConversationTurn}
+          />
           {/* Terminal launch mode: agent CLI runs in xterm.js (PTY).
               Chatbox input still writes lines to PTY stdin via handleSend. */}
           {isTerminalLaunchMode && agentPtyWsUrl ? (
@@ -7245,7 +7368,7 @@ export function TaskChat({
             totalListHeightChanged={handleTotalListHeightChanged}
             itemContent={(idx, item) =>
               item.kind === "single" ? (
-                <div className="px-4 pt-3">
+                <div className="pl-8 pr-4 pt-3">
                   <MessageItem
                     message={item.message}
                     index={item.index}
@@ -7265,7 +7388,7 @@ export function TaskChat({
                   />
                 </div>
               ) : (
-                <div className="px-4 pt-3">
+                <div className="pl-8 pr-4 pt-3">
                   <ToolSectionView
                     sectionId={item.sectionId}
                     tools={item.tools}
@@ -7284,6 +7407,7 @@ export function TaskChat({
                 : `ts-${item.sectionId}`
             }
             itemsRendered={handleItemsRendered}
+            rangeChanged={handleConversationRangeChanged}
             components={virtuosoComponents}
           />
           )}
@@ -8471,6 +8595,126 @@ function UserMessageBody({ content }: { content: string }) {
  * bottom on mount so the final sentence of the reasoning is visible
  * (the most useful bit — the earlier paragraphs are reasoning history).
  */
+/**
+ * A compact, session-local table of contents for the conversation. It mirrors
+ * the affordance in document editors: hover a tick to preview the user prompt
+ * and response, click to jump to that turn in the virtualized chat list.
+ */
+function ConversationMinimap({
+  turns,
+  activeMessageIndex,
+  onNavigate,
+}: {
+  turns: ConversationTurn[];
+  activeMessageIndex: number | null;
+  onNavigate: (turn: ConversationTurn) => void;
+}) {
+  const [preview, setPreview] = useState<{
+    turn: ConversationTurn;
+    rect: DOMRect;
+  } | null>(null);
+  const hideTimerRef = useRef<number | null>(null);
+
+  const clearScheduledHide = useCallback(() => {
+    if (hideTimerRef.current !== null) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+  const showPreview = useCallback((turn: ConversationTurn, anchor: HTMLElement) => {
+    clearScheduledHide();
+    setPreview({ turn, rect: anchor.getBoundingClientRect() });
+  }, [clearScheduledHide]);
+  const schedulePreviewHide = useCallback(() => {
+    clearScheduledHide();
+    hideTimerRef.current = window.setTimeout(() => {
+      setPreview(null);
+      hideTimerRef.current = null;
+    }, 220);
+  }, [clearScheduledHide]);
+  useEffect(() => () => clearScheduledHide(), [clearScheduledHide]);
+
+  // A single prompt does not need a navigation aid, and hiding it also keeps
+  // a newly-created chat visually quiet until there is actual history.
+  if (turns.length < 2) return null;
+
+  const previewTop = preview
+    ? Math.max(12, Math.min(preview.rect.top - 18, window.innerHeight - 188))
+    : 0;
+
+  return (
+    <>
+      <nav
+        aria-label="Conversation history"
+        className="absolute left-0.5 top-1/2 z-20 flex -translate-y-1/2 flex-col items-start gap-2 opacity-40 transition-opacity hover:opacity-85 focus-within:opacity-85"
+      >
+        {turns.map((turn, index) => {
+          const hasReply = Boolean(turn.assistant);
+          const isActive = turn.messageIndex === activeMessageIndex;
+          return (
+            <button
+              key={turn.messageIndex}
+              type="button"
+              aria-label={`Conversation turn ${index + 1}: ${turn.user}`}
+              title={`Turn ${index + 1}`}
+              onMouseEnter={(event) => showPreview(turn, event.currentTarget)}
+              onFocus={(event) => showPreview(turn, event.currentTarget)}
+              onMouseLeave={schedulePreviewHide}
+              onBlur={schedulePreviewHide}
+              onClick={() => {
+                clearScheduledHide();
+                setPreview(null);
+                onNavigate(turn);
+              }}
+              className={`relative h-[2px] rounded-full transition-[background-color,width,opacity] before:absolute before:-inset-x-2 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-highlight)] ${
+                turn.isStreaming
+                  ? "w-2.5 animate-pulse bg-[var(--color-warning)] hover:w-4 focus-visible:w-4"
+                  : isActive
+                    ? "w-4 bg-[var(--color-highlight)] opacity-100"
+                  : hasReply
+                    ? "w-2.5 bg-[color-mix(in_srgb,var(--color-text-muted)_48%,transparent)] hover:w-4 hover:bg-[var(--color-highlight)] focus-visible:w-4"
+                    : "w-2.5 bg-[color-mix(in_srgb,var(--color-warning)_48%,transparent)] hover:w-4 focus-visible:w-4"
+              }`}
+            />
+          );
+        })}
+      </nav>
+      {preview && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            role="tooltip"
+            className="pointer-events-none fixed z-[120] w-[min(360px,calc(100vw-32px))] rounded-2xl border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_94%,transparent)] p-3 shadow-[0_18px_48px_rgba(0,0,0,0.18)] backdrop-blur-md"
+            style={{
+              left: Math.min(preview.rect.right + 10, window.innerWidth - 372),
+              top: previewTop,
+            }}
+          >
+            <p className="line-clamp-2 text-sm font-medium leading-5 text-[var(--color-text)]">
+              {preview.turn.user}
+            </p>
+            <p className="mt-2 line-clamp-3 text-[13px] leading-5 text-[var(--color-text-muted)]">
+              {preview.turn.assistant || (preview.turn.isStreaming ? "Responding…" : "No response yet")}
+            </p>
+            {preview.turn.tools.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[color-mix(in_srgb,var(--color-border)_56%,transparent)] pt-2.5">
+                {preview.turn.tools.map((tool) => (
+                  <span
+                    key={tool.label}
+                    className="inline-flex items-center gap-1 rounded-md bg-[var(--color-bg-tertiary)] px-1.5 py-1 text-[10px] font-medium text-[var(--color-text-muted)]"
+                  >
+                    <Wrench className="h-2.5 w-2.5 text-[var(--color-highlight)]" />
+                    {tool.count} {tool.label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}
+
 function ThoughtChunkBody({
   content,
   complete,
