@@ -1519,53 +1519,38 @@ pub async fn start_server(
         );
     }
 
-    // Long-running ACP registry refresher. First tick happens immediately
-    // so the cache gets populated on startup (Marketplace then opens fast
-    // with full data). Subsequent ticks run every hour and call
-    // refresh_if_stale, which respects the 24h freshness window — so we
-    // hit the CDN at most once per stale-window in steady state, but stay
-    // responsive when grove runs for days/weeks.
+    // Long-running ACP registry refresher + boot-time initialization.
+    // The first tick performs an immediate refresh check. Once the initial registry
+    // cache is guaranteed to be populated (or offline fallback completed), we run
+    // the curated agent seeding and PATH binary scan on the blocking pool.
+    // This resolves a race condition where seeding/scanning ran concurrently with
+    // the registry cache load, resulting in 0 agents seeded on a fresh install.
     tokio::spawn(async {
+        // Run initial refresh immediately so we have the registry loaded before seeding/scanning
+        crate::storage::agent_registry::refresh_if_stale().await;
+
+        tokio::task::spawn_blocking(|| {
+            let registry = crate::storage::agent_registry::get();
+            // Seed curated agents first so they default to NPX (preferred stdio ACP channel)
+            if let Err(e) =
+                crate::storage::installed_agents::ensure_curated_agents_seeded(&registry)
+            {
+                eprintln!("[startup] curated agent seed failed: {}", e);
+            }
+            // Scan PATH next to append any global command line overrides
+            if let Err(e) = crate::storage::installed_agents::auto_scan_path_binaries(&registry) {
+                eprintln!("[startup] PATH binary scan failed: {}", e);
+            }
+        });
+
+        // Subsequent ticks run every hour
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Skip the first tick of the loop since we just refreshed
+        ticker.tick().await;
         loop {
             ticker.tick().await;
             crate::storage::agent_registry::refresh_if_stale().await;
-        }
-    });
-
-    // Boot-time PATH scan: register/deregister External installations for
-    // any registry agent whose binary is (or isn't) on the user's PATH.
-    // Without this, the first chat the user opens would resolve against a
-    // stale installed_agents row (e.g. claude-acp's External installation
-    // missing because no Marketplace render has triggered the scan yet),
-    // which manifests as "Waiting for connection…" stuck states.
-    //
-    // Runs once at startup on the blocking pool — the scan is just PATH
-    // stats + sqlite writes, fast but synchronous. We don't await it from
-    // the boot path; the chat WS / launch handlers tolerate missing rows
-    // (resolve_agent falls back to defaults), this just makes the steady
-    // state arrive sooner.
-    tokio::task::spawn_blocking(|| {
-        let registry = crate::storage::agent_registry::get();
-        if let Err(e) = crate::storage::installed_agents::auto_scan_path_binaries(&registry) {
-            eprintln!("[startup] PATH binary scan failed: {}", e);
-        }
-    });
-
-    // Curated agent seed: guarantees every chat / config referencing a
-    // curated id (`claude-acp`, `codex-acp`, `gemini`, `opencode`,
-    // `github-copilot-cli`, `qwen-code`) has a resolvable row before the
-    // user opens any UI. Idempotent — only inserts rows that don't
-    // already exist; never touches user customizations. This covers BOTH:
-    //   - fresh installs (no prior rows) — same effect as the old
-    //     `seed_curated_if_fresh` Marketplace-handler call
-    //   - v2.5→v2.6 upgrades whose chats referenced builtin agents that
-    //     previously needed no `installed_agents` row
-    tokio::task::spawn_blocking(|| {
-        let registry = crate::storage::agent_registry::get();
-        if let Err(e) = crate::storage::installed_agents::ensure_curated_agents_seeded(&registry) {
-            eprintln!("[startup] curated agent seed failed: {}", e);
         }
     });
 

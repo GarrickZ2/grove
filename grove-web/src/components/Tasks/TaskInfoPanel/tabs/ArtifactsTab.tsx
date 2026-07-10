@@ -203,7 +203,29 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     setIsUploading(false);
   }, [projectId, task.id, loadFiles]);
 
+  /** True if the current drag carries a grove file path — i.e. it's an internal
+   *  drag from another FileCard or from FileTree, not an OS file upload. We use
+   *  this to suppress the "Drop files to upload" overlay (misleading when the
+   *  user is moving a chip to the chat composer) and to no-op the drop handler. */
+  const dragCarriesGrovePath = (dt: DataTransfer): boolean => {
+    const types = dt.types;
+    if (!types) return false;
+    for (let i = 0; i < types.length; i++) {
+      if (types[i] === "application/x-grove-file-path") return true;
+    }
+    return false;
+  };
+
   const handleDrop = useCallback((e: React.DragEvent) => {
+    // Internal file drag (from FileCard / FileTree) — let it propagate to other
+    // drop targets (e.g. the chat composer). Don't show the upload overlay or
+    // try to upload, since these aren't OS files.
+    if (dragCarriesGrovePath(e.dataTransfer)) {
+      e.preventDefault();
+      dragCountRef.current = 0;
+      setIsDragOver(false);
+      return;
+    }
     e.preventDefault();
     dragCountRef.current = 0;
     setIsDragOver(false);
@@ -693,9 +715,25 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
         ref={containerRef}
         className="flex-1 flex flex-col min-h-0"
         onDrop={handleDrop}
-        onDragEnter={(e) => { e.preventDefault(); dragCountRef.current++; setIsDragOver(true); }}
-        onDragOver={(e) => { e.preventDefault(); }}
-        onDragLeave={(e) => { e.preventDefault(); dragCountRef.current--; if (dragCountRef.current === 0) setIsDragOver(false); }}
+        onDragEnter={(e) => {
+          // Internal file drags (FileCard / FileTree) should pass through to
+          // other drop targets like the chat composer — don't show the upload
+          // overlay or claim the drop.
+          if (dragCarriesGrovePath(e.dataTransfer)) return;
+          e.preventDefault();
+          dragCountRef.current++;
+          setIsDragOver(true);
+        }}
+        onDragOver={(e) => {
+          if (dragCarriesGrovePath(e.dataTransfer)) return;
+          e.preventDefault();
+        }}
+        onDragLeave={(e) => {
+          if (dragCarriesGrovePath(e.dataTransfer)) return;
+          e.preventDefault();
+          dragCountRef.current--;
+          if (dragCountRef.current === 0) setIsDragOver(false);
+        }}
       >
         {error && (
           <div className="text-xs px-4 py-2 shrink-0" style={{ color: "var(--color-error)" }}>{error}</div>
@@ -1179,6 +1217,14 @@ function FileCard({
   onEditLink?: (f: ArtifactFile) => void;
   onOpenInApp?: (f: ArtifactFile) => void;
 }) {
+  // Mirror FileTree.tsx's drag protocol (`application/x-grove-file-path`) so the
+  // chat composer can pick this up via its existing handleDrop and convert it
+  // into an inline file chip. The path format `${directory}/${path}` matches
+  // what `buildStudioMentionItems` produces for `input/*` / `output/*` entries,
+  // so `insertFileChipAtPoint`'s `filteredFiles.find` lookup resolves and the
+  // chip gets the right displayName (e.g. link-stripped name), category and
+  // favicon without extra plumbing.
+  const draggablePath = `${file.directory}/${file.path}`;
   const isLink = isLinkFile(file.name);
   const canPreview = !isLink && canPreviewFile(file.name);
   const ext = getExtBadge(file.name);
@@ -1216,7 +1262,15 @@ function FileCard({
       className="group flex items-center gap-3 px-3 py-2 rounded-lg transition-all cursor-pointer"
       onClick={() => isLink ? onOpenLink?.(file) : canPreview ? onPreview(file) : onDownload(file)}
       onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
-      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+      onMouseLeave={e => e.currentTarget.style.background = "var(--color-bg)"}
+      draggable={!file.is_dir}
+      onDragStart={(e) => {
+        if (file.is_dir) return;
+        e.dataTransfer.effectAllowed = "copy";
+        e.dataTransfer.setData("application/x-grove-file-path", draggablePath);
+        e.dataTransfer.setData("application/x-grove-file-is-dir", "false");
+        e.dataTransfer.setData("text/plain", draggablePath);
+      }}
     >
       {isLink ? (
         <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
