@@ -68,6 +68,38 @@ function fuzzyMatch(
 ): { match: boolean; score: number; indices: number[] } {
   const q = query.toLowerCase();
   const t = target.toLowerCase();
+
+  // 1. If target contains query contiguously, prioritize it with highest score
+  const lastSlash = t.lastIndexOf("/");
+  let exactIdx = -1;
+  if (lastSlash !== -1) {
+    const filenamePart = t.slice(lastSlash + 1);
+    const fnIdx = filenamePart.indexOf(q);
+    if (fnIdx !== -1) {
+      exactIdx = lastSlash + 1 + fnIdx;
+    }
+  }
+  if (exactIdx === -1) {
+    exactIdx = t.indexOf(q);
+  }
+
+  if (exactIdx !== -1) {
+    const indices = Array.from({ length: q.length }, (_, i) => exactIdx + i);
+    let score = 10000;
+    // Prefer matches starting earlier
+    score -= exactIdx;
+    // Prefer matches in the filename
+    if (exactIdx > lastSlash) {
+      score += 1000;
+    }
+    // Prefer matches starting at a path segment boundary
+    if (exactIdx === 0 || t[exactIdx - 1] === "/") {
+      score += 500;
+    } else if (t[exactIdx - 1] === "_" || t[exactIdx - 1] === "-") {
+      score += 250;
+    }
+    return { match: true, score, indices };
+  }
   
   // Fast pre-filter: check if all query chars exist in target in order
   let qi = 0;
@@ -81,7 +113,6 @@ function fuzzyMatch(
   }
 
   const memo = new Map<string, { score: number; indices: number[] }>();
-  const lastSlash = t.lastIndexOf("/");
 
   function matchFrom(
     qIdx: number,
@@ -168,7 +199,7 @@ export function buildMentionItems(files: string[]): MentionItem[] {
 export function filterMentionItems(
   items: MentionItem[],
   query: string,
-  limit = 15,
+  limit = 20,
 ): FilteredMentionItem[] {
   if (!query) {
     return items.slice(0, limit).map((item) => ({
@@ -362,6 +393,24 @@ export function buildStudioMentionItems(
     items.push(item);
   };
 
+  const pushParentDirs = (file: string, prefix: string, category: string) => {
+    const name = stripPrefix(file, prefix);
+    const parts = name.split("/");
+    const isDirQuery = name.endsWith("/");
+    const limit = isDirQuery ? parts.length - 2 : parts.length - 1;
+    for (let i = 1; i <= limit; i++) {
+      const dirName = parts.slice(0, i).join("/");
+      if (dirName) {
+        push({
+          path: `${prefix}${dirName}`,
+          isDir: true,
+          displayName: dirName,
+          category,
+        });
+      }
+    }
+  };
+
   for (const file of files) {
     const meta = metaMap.get(file);
     if (file === "instructions.md") {
@@ -381,6 +430,7 @@ export function buildStudioMentionItems(
       continue;
     }
     if (file.startsWith("input/")) {
+      pushParentDirs(file, "input/", "Input · Folder");
       const name = stripPrefix(file, "input/");
       if (name.endsWith("/")) {
         // Directory symlink (working directory) — show as directory entry, don't expand.
@@ -401,6 +451,7 @@ export function buildStudioMentionItems(
       continue;
     }
     if (file.startsWith("output/")) {
+      pushParentDirs(file, "output/", "Output · Folder");
       const name = stripPrefix(file, "output/");
       if (name) {
         const linky = isLink(name);
@@ -415,6 +466,7 @@ export function buildStudioMentionItems(
       continue;
     }
     if (file.startsWith("resource/")) {
+      pushParentDirs(file, "resource/", "Shared Resource · Folder");
       const name = stripPrefix(file, "resource/");
       if (name.endsWith("/")) {
         const dirName = name.slice(0, -1);

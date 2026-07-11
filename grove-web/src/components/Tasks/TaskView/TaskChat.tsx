@@ -2566,7 +2566,7 @@ export function TaskChat({
         sessionId: p.id,
       }));
       
-      return filterMentionItems(projectItems, deferredFileFilter, 15);
+      return filterMentionItems(projectItems, deferredFileFilter, 20);
     }
 
     // 3. Aggregated Search (activeCategory is null)
@@ -2587,9 +2587,9 @@ export function TaskChat({
 
     // Non-empty query: search across all categories (with limited files to avoid noise)
     const matchedSelectors = filterMentionItems(CATEGORY_SELECTORS, deferredFileFilter, 4);
-    const matchedConvs = filterMentionItems(conversationItems, deferredFileFilter, 10);
-    const matchedAgents = filterMentionItems(agentItems, deferredFileFilter, 10);
-    const matchedFiles = filterMentionItems(fileItems, deferredFileFilter, 5); // Limit files to 5 in aggregated search to avoid clutter!
+    const matchedConvs = filterMentionItems(conversationItems, deferredFileFilter, 20);
+    const matchedAgents = filterMentionItems(agentItems, deferredFileFilter, 20);
+    const matchedFiles = filterMentionItems(fileItems, deferredFileFilter, 20); // Limit files to 20 in aggregated search!
 
     // Combine them, sort by score descending
     const combined = [...matchedConvs, ...matchedAgents, ...matchedFiles];
