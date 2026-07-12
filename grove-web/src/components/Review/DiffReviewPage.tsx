@@ -356,6 +356,14 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     fileDiffCacheRef.current = fileDiffCache;
   }, [fileDiffCache]);
   const loadingDiffsRef = useRef<Set<string>>(new Set());
+  // Bumped every time fileDiffCache is wiped (refresh / mode switch / initial load).
+  // The auto-load effect below keys off this so it re-fires even when
+  // activeFilePath resolves to the same string as before the cache was cleared.
+  const [diffCacheGen, setDiffCacheGen] = useState(0);
+  const clearFileDiffCache = useCallback(() => {
+    setFileDiffCache(new Map());
+    setDiffCacheGen((g) => g + 1);
+  }, []);
   const failedFullFilesRef = useRef<Set<string>>(new Set());
   const [displayMode, setDisplayMode] = useState<'code' | 'split' | 'preview'>(() => {
     if (initialCachedOptions && (initialCachedOptions.displayMode === 'code' || initialCachedOptions.displayMode === 'split' || initialCachedOptions.displayMode === 'preview')) {
@@ -943,11 +951,15 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   // nor the navigation effect (which doesn't load) ever triggers the fetch.
   // loadFileDiff sets fetch state internally; this is a legitimate fetch-on-prop-change
   // sync, not the cascading-render pattern the rule targets.
+  // Also depends on diffCacheGen: a refresh/mode-switch clears fileDiffCache but often
+  // resolves activeFilePath to the same string as before, so without this the effect's
+  // deps would look unchanged and the now-uncached file would never be refetched —
+  // leaving the diff view stuck on "Loading diff..." until the user manually clicks a file.
   useEffect(() => {
     if (!activeFilePath || viewMode !== 'diff') return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadFileDiff(activeFilePath, currentDiffRefs.fromRef, currentDiffRefs.toRef);
-  }, [activeFilePath, viewMode, currentDiffRefs.fromRef, currentDiffRefs.toRef, loadFileDiff]);
+  }, [activeFilePath, viewMode, currentDiffRefs.fromRef, currentDiffRefs.toRef, loadFileDiff, diffCacheGen]);
 
   // Version options for FROM / TO selectors
   const versionList = versions;
@@ -972,7 +984,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
     if (!silent) {
       setLoading(true);
-      setFileDiffCache(new Map());
+      clearFileDiffCache();
       loadingDiffsRef.current = new Set();
     }
 
@@ -1004,7 +1016,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       }
     }
     if (fetchGenRef.current === gen && !silent) setLoading(false);
-  }, [projectId, taskId, loadFileDiff]);
+  }, [projectId, taskId, loadFileDiff, clearFileDiffCache]);
 
   useEffect(() => {
     if (!modeSwitchReadyRef.current) return;
@@ -1107,7 +1119,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       activeRequests.current.clear();
       setLoadingFiles(new Set());
       setFullFileContents(new Map());
-      setFileDiffCache(new Map());
+      clearFileDiffCache();
       loadingDiffsRef.current = new Set();
       lazyRootDirEntriesRef.current = [];
     }
@@ -1188,7 +1200,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     if (caught !== null) {
       throw caught;
     }
-  }, [refetchDiff, projectId, taskId, viewMode, focusMode, appendLazyFiles, loadFullFileContent]);
+  }, [refetchDiff, projectId, taskId, viewMode, focusMode, appendLazyFiles, loadFullFileContent, clearFileDiffCache]);
 
   // Two callers: the manual refresh button / hotkey-r path (loud, shows
   // spinner) and the agent-turn-finished auto-refresh path (silent). Splitting
@@ -1229,7 +1241,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     const load = async () => {
       setLoading(true);
       setError(null);
-      setFileDiffCache(new Map());
+      clearFileDiffCache();
       loadingDiffsRef.current = new Set();
       // Build per-mode promises BEFORE the try so the conditional
       // expressions don't sit inside a try/catch (React Compiler bails on
