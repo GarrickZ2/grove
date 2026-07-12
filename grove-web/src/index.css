@@ -220,6 +220,37 @@ body.grove-scrolling .blitz-area ::-webkit-scrollbar-thumb {
   background: var(--color-text-muted);
 }
 
+/* Conversation minimap: no visible scrollbar (it's a thin floating rail,
+   not a content pane). */
+.conversation-minimap-scroll {
+  scrollbar-width: none;
+}
+.conversation-minimap-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Fade at the top/bottom edges — only applied once the list actually
+   overflows (see `isScrollable` in ConversationMinimap). Percentage-based
+   stops invert and blank out the whole rail when the box is shorter than
+   2 * 16px, which is why this is a separate, conditionally-applied class
+   rather than baked into `.conversation-minimap-scroll` above. */
+.conversation-minimap-fade {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black 16px,
+    black calc(100% - 16px),
+    transparent
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black 16px,
+    black calc(100% - 16px),
+    transparent
+  );
+}
+
 /* Selection */
 ::selection {
   background: var(--color-highlight);
