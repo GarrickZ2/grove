@@ -921,6 +921,7 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
 /// Error type for ACP handler
 pub enum AcpError {
     NotFound(String),
+    BadRequest(String),
     Internal(String),
 }
 
@@ -928,6 +929,7 @@ impl IntoResponse for AcpError {
     fn into_response(self) -> Response {
         match self {
             AcpError::NotFound(msg) => (StatusCode::NOT_FOUND, msg).into_response(),
+            AcpError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
             AcpError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
         }
     }
