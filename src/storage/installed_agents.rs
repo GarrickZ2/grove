@@ -519,7 +519,9 @@ pub fn spawn_for_launch_mode(
 ) -> Option<(String, Vec<String>)> {
     let external_is_terminal = launch_mode == "acp"
         && rec.selected_install_method == InstallMethod::External
-        && registry_agent.and_then(|agent| agent.terminal_launch.as_ref()).is_some();
+        && registry_agent
+            .and_then(|agent| agent.terminal_launch.as_ref())
+            .is_some();
 
     if !external_is_terminal {
         return spawn_for(rec, registry_agent);
