@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::acp::{
-    self, AcpStartConfig, AcpUpdate, ContentBlockData, PromptCapabilitiesData, QueuedConfig,
-    QueuedMessage,
+    self, AcpStartConfig, AcpUpdate, ContentBlockData, PromptCapabilitiesData, QueueMode,
+    QueuedConfig, QueuedMessage,
 };
 use crate::storage::{chat_attachments, chat_history, config, tasks, workspace};
 
@@ -76,6 +76,14 @@ enum ClientMessage {
     },
     /// Clear all pending messages
     ClearQueue,
+    /// 暂停队列 auto-send（用户正在编辑某条排队消息）
+    PauseQueue,
+    /// 恢复队列 auto-send（用户结束/取消编辑排队消息）
+    ResumeQueue,
+    /// 设置队列合并发送模式（Separate / Compact）
+    SetQueueMode {
+        mode: QueueMode,
+    },
     /// Execute a terminal command directly (Shell mode, bypasses AI)
     TerminalExecute {
         command: String,
@@ -904,6 +912,15 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                                 ClientMessage::ClearQueue => {
                                     let messages = handle_for_input.clear_queue();
                                     handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                                }
+                                ClientMessage::PauseQueue => {
+                                    handle_for_input.pause_queue();
+                                }
+                                ClientMessage::ResumeQueue => {
+                                    handle_for_input.resume_queue();
+                                }
+                                ClientMessage::SetQueueMode { mode } => {
+                                    handle_for_input.set_queue_mode(mode);
                                 }
                                 ClientMessage::TerminalExecute { command } => {
                                     handle_for_input.execute_terminal(command);

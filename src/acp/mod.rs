@@ -62,6 +62,8 @@ pub struct AcpSessionHandle {
     pending_queue: Mutex<Vec<QueuedMessage>>,
     /// 队列暂停标志（用户正在编辑队列消息时暂停 auto-send）
     queue_paused: std::sync::atomic::AtomicBool,
+    /// 队列合并发送模式（Separate = 逐条发送；Compact = 合并成一条）
+    queue_mode: Mutex<QueueMode>,
     /// 当前 agent mode id（用于 PlanFileUpdate 检测和 QueuedConfig 快照）。
     /// 语义：last "intent" — 即上一次成功通过 SetSessionMode 推给 agent 的值。
     /// **不**保证 agent 真的拿这个 mode 处理了任何 prompt（partial apply 失败的
@@ -493,6 +495,16 @@ pub enum ContentBlockData {
         mime_type: Option<String>,
         text: Option<String>,
     },
+}
+
+/// 队列合并发送模式：Separate = 逐条按原队列顺序发送（默认）；
+/// Compact = 自动弹出时把队列中所有消息合并成一条发送。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueMode {
+    #[default]
+    Separate,
+    Compact,
 }
 
 /// Model / mode / thought-level 快照，随 QueuedMessage 一起存储，
@@ -1851,6 +1863,7 @@ pub async fn get_or_start_session(
                     suppress_emit: std::sync::atomic::AtomicBool::new(false),
                     pending_queue: Mutex::new(Vec::new()),
                     queue_paused: std::sync::atomic::AtomicBool::new(false),
+                    queue_mode: Mutex::new(QueueMode::default()),
                     current_mode_id: Mutex::new(None),
                     current_model_id: Mutex::new(None),
                     current_usage: Mutex::new(None),
@@ -3428,21 +3441,24 @@ async fn drive_session(
                     .queue_paused
                     .load(std::sync::atomic::Ordering::Relaxed)
                 {
-                    if let Some(next_msg) = handle.pop_queue_front() {
+                    if let Some((send_msg, original_msgs)) = handle.pop_queue_for_auto_send() {
                         // M5: emit QueueUpdate only after successful enqueue.
-                        // On failure, re-insert at front so the message isn't lost.
-                        let text = next_msg.text.clone();
-                        let attachments = next_msg.attachments.clone();
-                        let sender = next_msg.sender.clone();
-                        let terminal = next_msg.terminal;
-                        let config = next_msg.config.clone();
+                        // On failure, re-insert the original (pre-merge) messages at
+                        // front, preserving their order, so nothing is lost.
+                        let text = send_msg.text.clone();
+                        let attachments = send_msg.attachments.clone();
+                        let sender = send_msg.sender.clone();
+                        let terminal = send_msg.terminal;
+                        let config = send_msg.config.clone();
                         if handle.try_enqueue_prompt(text, attachments, sender, terminal, config) {
                             handle.emit(AcpUpdate::QueueUpdate {
                                 messages: handle.get_queue(),
                             });
                         } else {
                             let mut q = handle.pending_queue.lock().unwrap();
-                            q.insert(0, next_msg);
+                            for (i, msg) in original_msgs.into_iter().enumerate() {
+                                q.insert(i, msg);
+                            }
                         }
                     }
                 }
@@ -4299,6 +4315,54 @@ impl AcpSessionHandle {
         }
     }
 
+    /// 结束当前一轮任务后，按 `queue_mode` 取出待发送内容（auto-send 专用）。
+    ///
+    /// - `Separate`（默认）：取队首一条，行为与之前完全一致。
+    /// - `Compact`：把整条队列 drain 出来合并成一条消息 —— sender/config/terminal
+    ///   取队首那条的，text 用换行 join，attachments 依次 extend。队列为空或只有
+    ///   一条时退化为跟 `Separate` 相同的单条逻辑，不做特殊合并。
+    ///
+    /// 返回 `(合并/单条消息, 若发送失败需要原样放回队列的原始消息列表)`。
+    /// 调用方发送失败时，把第二个元素里的消息按原顺序插回队首。
+    fn pop_queue_for_auto_send(&self) -> Option<(QueuedMessage, Vec<QueuedMessage>)> {
+        let mode = *self.queue_mode.lock().unwrap();
+        match mode {
+            QueueMode::Separate => self.pop_queue_front().map(|m| (m.clone(), vec![m])),
+            QueueMode::Compact => {
+                let drained: Vec<QueuedMessage> = {
+                    let mut q = self.pending_queue.lock().unwrap();
+                    std::mem::take(&mut *q)
+                };
+                if drained.is_empty() {
+                    return None;
+                }
+                if drained.len() == 1 {
+                    let only = drained[0].clone();
+                    return Some((only, drained));
+                }
+                let first = &drained[0];
+                let merged_text = drained
+                    .iter()
+                    .map(|m| m.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let mut merged_attachments = Vec::new();
+                for m in &drained {
+                    merged_attachments.extend(m.attachments.clone());
+                }
+                let merged = QueuedMessage {
+                    id: default_queued_message_id(),
+                    text: merged_text,
+                    attachments: merged_attachments,
+                    sender: first.sender.clone(),
+                    config: first.config.clone(),
+                    terminal: first.terminal,
+                };
+                Some((merged, drained))
+            }
+        }
+    }
+
     /// 非阻塞发送 prompt 命令(队列 auto-send 使用)。
     /// config 直接 bundle 在 Prompt 内,cmd_loop 在发 prompt 前按需先发
     /// SetSessionMode/Model/ThoughtLevel ACP 请求。
@@ -4344,6 +4408,11 @@ impl AcpSessionHandle {
             thought_level: self.current_thought_level_id.lock().unwrap().clone(),
             thought_level_config_id: self.thought_level_config_id.lock().unwrap().clone(),
         }
+    }
+
+    /// 设置队列合并发送模式（Separate / Compact）
+    pub fn set_queue_mode(&self, mode: QueueMode) {
+        *self.queue_mode.lock().unwrap() = mode;
     }
 
     /// 暂停队列 auto-send（用户正在编辑队列消息）
@@ -4653,6 +4722,7 @@ pub fn new_handle_for_test(
         suppress_emit: std::sync::atomic::AtomicBool::new(false),
         pending_queue: Mutex::new(Vec::new()),
         queue_paused: std::sync::atomic::AtomicBool::new(false),
+        queue_mode: Mutex::new(QueueMode::default()),
         current_mode_id: Mutex::new(None),
         current_model_id: Mutex::new(None),
         current_usage: Mutex::new(None),

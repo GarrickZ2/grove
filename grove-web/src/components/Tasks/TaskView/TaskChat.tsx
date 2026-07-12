@@ -135,6 +135,31 @@ import { fuzzyFindByName } from "../../../utils/fuzzySearch";
 import { useCommand, useContextKey, useVoiceControlContext } from "../../../keyboard";
 import "./task-chat.css";
 
+// ─── Queue send mode persistence (localStorage) ───────────────────────────
+// Flat, global key (not per-project/per-chat) — the user picks one mode and
+// expects it to stick everywhere, matching the product decision.
+
+type QueueSendMode = "separate" | "compact";
+const QUEUE_MODE_STORAGE_KEY = "grove:queue-mode";
+
+function loadQueueMode(): QueueSendMode {
+  try {
+    return window.localStorage.getItem(QUEUE_MODE_STORAGE_KEY) === "compact"
+      ? "compact"
+      : "separate";
+  } catch {
+    return "separate";
+  }
+}
+
+function saveQueueMode(mode: QueueSendMode): void {
+  try {
+    window.localStorage.setItem(QUEUE_MODE_STORAGE_KEY, mode);
+  } catch {
+    // quota/denied — silently skip
+  }
+}
+
 // ─── Chat draft persistence (localStorage) ────────────────────────────────
 
 const CHAT_DRAFT_PREFIX = "grove:chat-draft:";
@@ -2013,6 +2038,9 @@ export function TaskChat({
     editingPendingIdRef.current = editingPendingId;
   }, [editingPendingId]);
   const [editingPendingValue, setEditingPendingValue] = useState("");
+  // Compact/Separate queue send mode — global flat localStorage key, not
+  // scoped per-project/per-chat (product decision: one choice sticks everywhere).
+  const [queueMode, setQueueMode] = useState<QueueSendMode>(() => loadQueueMode());
   // Subscribe to persona registry — re-renders this tree (and the picker /
   // chip / icon descendants that read `agentIconComponent` / `resolveAgentIcon`)
   // whenever a persona is created / edited / deleted from any page.
@@ -3704,6 +3732,11 @@ export function TaskChat({
                 });
               }
               setForkCapable(!!evt.fork_capable);
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(
+                  JSON.stringify({ type: "set_queue_mode", mode: loadQueueMode() }),
+                );
+              }
               break;
             case "thought_levels_update":
               setThoughtLevelOptions(
@@ -3981,6 +4014,11 @@ export function TaskChat({
             });
           }
           setForkCapable(!!msg.fork_capable);
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(
+              JSON.stringify({ type: "set_queue_mode", mode: loadQueueMode() }),
+            );
+          }
           break;
         case "message_chunk":
           // Auto-close the current tool section (one-time)
@@ -4334,6 +4372,14 @@ export function TaskChat({
             };
           }
           state.forkCapable = !!msg.fork_capable;
+          {
+            const bgWs = wsMapRef.current.get(chatId);
+            if (bgWs && bgWs.readyState === WebSocket.OPEN) {
+              bgWs.send(
+                JSON.stringify({ type: "set_queue_mode", mode: loadQueueMode() }),
+              );
+            }
+          }
           break;
         case "thought_levels_update":
           state.thoughtLevelOptions = (msg.available ?? []).map(
@@ -5404,12 +5450,15 @@ export function TaskChat({
     wsRef.current.send(JSON.stringify({ type: "cancel" }));
   }, [isCancelling]);
 
-  // 不再发 pause_queue:后端不暂停队列,而是在 save/delete 时按 id 定位 —
-  // 找不到(已被 drain 走)就回一个 queue_message_gone 让前端关编辑态。
+  // 编辑排队消息期间暂停队列 auto-send,避免 agent 变 idle 时把队列里的旧文本
+  // 弹出发送,覆盖用户正在进行的编辑。save/cancel 都要 resume。
   const handleEditPending = useCallback(
     (msg: { id: string; text: string }) => {
       setEditingPendingId(msg.id);
       setEditingPendingValue(msg.text);
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "pause_queue" }));
+      }
     },
     [],
   );
@@ -5435,11 +5484,15 @@ export function TaskChat({
         }),
       );
     }
+    wsRef.current.send(JSON.stringify({ type: "resume_queue" }));
     setEditingPendingId(null);
     setEditingPendingValue("");
   }, [editingPendingId, editingPendingValue]);
 
   const handleCancelPendingEdit = useCallback(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "resume_queue" }));
+    }
     setEditingPendingId(null);
     setEditingPendingValue("");
   }, []);
@@ -5461,6 +5514,14 @@ export function TaskChat({
     wsRef.current.send(JSON.stringify({ type: "clear_queue" }));
     setEditingPendingId(null);
     setEditingPendingValue("");
+  }, []);
+
+  const handleSetQueueMode = useCallback((mode: QueueSendMode) => {
+    setQueueMode(mode);
+    saveQueueMode(mode);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "set_queue_mode", mode }));
+    }
   }, []);
 
   // ── Chat command registrations (catalog: workspace scope) ─────────────
@@ -7514,6 +7575,40 @@ export function TaskChat({
 
                       {activeComposerPanel === "pending" && (
                         <div className="space-y-1">
+                          <div className="flex items-center justify-between pb-1">
+                            <div className="text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                              Send Mode
+                            </div>
+                            <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5">
+                              {(
+                                [
+                                  {
+                                    id: "separate" as const,
+                                    label: "Separate",
+                                    title: "Send queued messages one at a time",
+                                  },
+                                  {
+                                    id: "compact" as const,
+                                    label: "Compact",
+                                    title: "Merge all queued messages into one when auto-sent",
+                                  },
+                                ]
+                              ).map((opt) => (
+                                <button
+                                  key={opt.id}
+                                  onClick={() => handleSetQueueMode(opt.id)}
+                                  title={opt.title}
+                                  className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                                    queueMode === opt.id
+                                      ? "bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm"
+                                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                                  }`}
+                                >
+                                  {opt.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                           {pendingMessages.map((msg, i) => (
                             <div
                               key={pendingMessageKeys[i] ?? `idx-${i}`}
@@ -8613,7 +8708,10 @@ function ConversationMinimap({
     turn: ConversationTurn;
     rect: DOMRect;
   } | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
+  const navRef = useRef<HTMLElement | null>(null);
+  const [isScrollable, setIsScrollable] = useState(false);
 
   const clearScheduledHide = useCallback(() => {
     if (hideTimerRef.current !== null) {
@@ -8634,6 +8732,27 @@ function ConversationMinimap({
   }, [clearScheduledHide]);
   useEffect(() => () => clearScheduledHide(), [clearScheduledHide]);
 
+  // The top/bottom fade only makes sense once the rail is actually clipped
+  // by max-height — applying it unconditionally blanks out short lists,
+  // since the fade's percentage-based stops invert when the box is shorter
+  // than the fade itself.
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    setIsScrollable(el.scrollHeight > el.clientHeight + 1);
+  }, [turns.length]);
+
+  // Keep the rail's scroll position following the turn the reader is
+  // currently on — without this it stays pinned wherever it was first
+  // rendered (usually the top) instead of tracking the active tick as
+  // the user scrolls through a long conversation.
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el || activeMessageIndex === null) return;
+    const active = el.querySelector('[data-active="true"]');
+    active?.scrollIntoView({ block: "nearest" });
+  }, [activeMessageIndex]);
+
   // A single prompt does not need a navigation aid, and hiding it also keeps
   // a newly-created chat visually quiet until there is actual history.
   if (turns.length < 2) return null;
@@ -8645,35 +8764,57 @@ function ConversationMinimap({
   return (
     <>
       <nav
+        ref={navRef}
         aria-label="Conversation history"
-        className="absolute left-0.5 top-1/2 z-20 flex -translate-y-1/2 flex-col items-start gap-2 opacity-40 transition-opacity hover:opacity-85 focus-within:opacity-85"
+        className={`conversation-minimap-scroll absolute left-0.5 top-1/2 z-20 flex max-h-[min(60vh,420px)] -translate-y-1/2 flex-col items-start gap-2 overflow-y-auto py-4 opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 ${
+          isScrollable ? "conversation-minimap-fade" : ""
+        }`}
+        onMouseLeave={() => setHoveredIndex(null)}
       >
         {turns.map((turn, index) => {
           const hasReply = Boolean(turn.assistant);
           const isActive = turn.messageIndex === activeMessageIndex;
+          // Dock-style magnification: neighbors within 3 turns of the
+          // hovered tick swell too, tapering off with distance, so hovering
+          // reads as a small "hill" rather than a single bar snapping wide.
+          const baseWidth = isActive ? 16 : 10;
+          const distance = hoveredIndex === null ? Infinity : Math.abs(index - hoveredIndex);
+          const falloff = Math.max(0, 1 - distance / 3);
+          const width = baseWidth + 12 * Math.pow(falloff, 1.5);
           return (
             <button
               key={turn.messageIndex}
               type="button"
+              data-active={isActive || undefined}
               aria-label={`Conversation turn ${index + 1}: ${turn.user}`}
               title={`Turn ${index + 1}`}
-              onMouseEnter={(event) => showPreview(turn, event.currentTarget)}
-              onFocus={(event) => showPreview(turn, event.currentTarget)}
+              onMouseEnter={(event) => {
+                showPreview(turn, event.currentTarget);
+                setHoveredIndex(index);
+              }}
+              onFocus={(event) => {
+                showPreview(turn, event.currentTarget);
+                setHoveredIndex(index);
+              }}
               onMouseLeave={schedulePreviewHide}
-              onBlur={schedulePreviewHide}
+              onBlur={() => {
+                schedulePreviewHide();
+                setHoveredIndex(null);
+              }}
               onClick={() => {
                 clearScheduledHide();
                 setPreview(null);
                 onNavigate(turn);
               }}
-              className={`relative h-[2px] rounded-full transition-[background-color,width,opacity] before:absolute before:-inset-x-2 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-highlight)] ${
+              style={{ width }}
+              className={`relative h-[2px] shrink-0 rounded-full transition-[width,background-color,opacity] duration-150 ease-out before:absolute before:-inset-x-2 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-highlight)] ${
                 turn.isStreaming
-                  ? "w-2.5 animate-pulse bg-[var(--color-warning)] hover:w-4 focus-visible:w-4"
+                  ? "animate-pulse bg-[var(--color-warning)]"
                   : isActive
-                    ? "w-4 bg-[var(--color-highlight)] opacity-100"
+                    ? "bg-[var(--color-highlight)] opacity-100"
                   : hasReply
-                    ? "w-2.5 bg-[color-mix(in_srgb,var(--color-text-muted)_48%,transparent)] hover:w-4 hover:bg-[var(--color-highlight)] focus-visible:w-4"
-                    : "w-2.5 bg-[color-mix(in_srgb,var(--color-warning)_48%,transparent)] hover:w-4 focus-visible:w-4"
+                    ? "bg-[color-mix(in_srgb,var(--color-text-muted)_75%,transparent)] hover:bg-[var(--color-highlight)]"
+                    : "bg-[color-mix(in_srgb,var(--color-warning)_75%,transparent)]"
               }`}
             />
           );
