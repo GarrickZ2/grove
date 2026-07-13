@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.8] - 2026-07-13
+
+### Added
+
+- **Conversation minimap** — A navigable minimap for long chats, with height capped and previously-invisible ticks now rendered.
+- **Compact queue send mode** — The message queue now pauses while editing a queued message, plus a new compact send mode for queuing.
+- **Drag file cards into chat from Artifacts** — File cards in the Artifacts tab can now be dragged into the chat composer as file chips, matching the existing behavior from the file tree.
+
+### Improved
+
+- **Folder mentions in chat search** — `@` mentions now match folders, search scoring is tuned, and the result limit is raised to 20.
+- **Island project switcher** — "Add Project" and "Manage Projects" are now reachable from the island sidebar's project switcher.
+
+### Fixed
+
+- **Code Review diff refresh** — The diff view now retriggers correctly after the cache is cleared.
+- **ACP WebSocket cleanup** — The chat WebSocket is now properly closed when an ACP session ends.
+- **Agent seeding race on fresh installs** — Boot-time registry refresh, curated-agent seeding, and the PATH-binary scan are now serialized, fixing a race where seeding could finish before the registry cache loaded and leave 0 agents seeded.
+
 ## [0.11.7] - 2026-07-07
 
 ### Added
