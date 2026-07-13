@@ -19,6 +19,8 @@ import {
   PictureInPicture2,
   ChevronDown,
   X,
+  Plus,
+  Settings2,
 } from "lucide-react";
 import type { Plugin } from "../../api/plugins";
 import { PluginIcon } from "../Plugins/PluginIcon";
@@ -697,6 +699,8 @@ export function Sidebar({
             <IslandProjectSwitcher
               onBack={() => setIslandView("nav")}
               onProjectSwitch={onProjectSwitch}
+              onManageProjects={onManageProjects}
+              onAddProject={onAddProject}
               accentPalette={theme.accentPalette}
             />
           ) : (
@@ -1104,10 +1108,18 @@ function IslandNotifications({ onBack, onNavigate }: IslandNotificationsProps) {
 interface IslandProjectSwitcherProps {
   onBack: () => void;
   onProjectSwitch?: (projectId?: string) => void;
+  onManageProjects?: (tab?: "coding" | "studio") => void;
+  onAddProject?: (studioMode?: "studio") => void;
   accentPalette: string[];
 }
 
-function IslandProjectSwitcher({ onBack, onProjectSwitch, accentPalette }: IslandProjectSwitcherProps) {
+function IslandProjectSwitcher({
+  onBack,
+  onProjectSwitch,
+  onManageProjects,
+  onAddProject,
+  accentPalette,
+}: IslandProjectSwitcherProps) {
   const { selectedProject, projects, selectProject } = useProject();
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<"coding" | "studio">("coding");
@@ -1209,6 +1221,29 @@ function IslandProjectSwitcher({ onBack, onProjectSwitch, accentPalette }: Islan
             );
           })
         )}
+      </div>
+
+      <div className="flex-shrink-0 border-t border-[color-mix(in_oklab,currentColor_10%,transparent)] p-1">
+        <button
+          onClick={() => {
+            onAddProject?.(typeFilter === "studio" ? "studio" : undefined);
+            onBack();
+          }}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] text-[color-mix(in_oklab,currentColor_70%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)] transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          <span>Add Project</span>
+        </button>
+        <button
+          onClick={() => {
+            onManageProjects?.(typeFilter);
+            onBack();
+          }}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] text-[color-mix(in_oklab,currentColor_70%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)] transition-colors"
+        >
+          <Settings2 className="w-3.5 h-3.5" />
+          <span>Manage Projects</span>
+        </button>
       </div>
     </div>
   );
