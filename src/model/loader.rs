@@ -237,11 +237,11 @@ fn task_to_worktree(
         } else if matches!(resolved_session_type, SessionType::Acp) {
             let chats = tasks::load_chat_sessions(project, &task.id).unwrap_or_default();
             let has_live = if chats.is_empty() {
-                let key = format!("{}:{}", project, &task.id);
+                let key = format!("{}:{}", project, task.id);
                 session::session_exists(&resolved_session_type, &key)
             } else {
                 chats.iter().any(|chat| {
-                    let key = format!("{}:{}:{}", project, &task.id, &chat.id);
+                    let key = format!("{}:{}:{}", project, task.id, chat.id);
                     session::session_exists(&resolved_session_type, &key)
                 })
             };
@@ -312,11 +312,11 @@ fn task_to_worktree(
             let session_status = if matches!(resolved_session_type, SessionType::Acp) {
                 let chats = tasks::load_chat_sessions(project, &task.id).unwrap_or_default();
                 let has_live = if chats.is_empty() {
-                    let key = format!("{}:{}", project, &task.id);
+                    let key = format!("{}:{}", project, task.id);
                     session::session_exists(&resolved_session_type, &key)
                 } else {
                     chats.iter().any(|chat| {
-                        let key = format!("{}:{}:{}", project, &task.id, &chat.id);
+                        let key = format!("{}:{}:{}", project, task.id, chat.id);
                         session::session_exists(&resolved_session_type, &key)
                     })
                 };
