@@ -4,7 +4,7 @@ import { getFileContent } from '../../api/review';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import type { CommentAnchor } from './DiffReviewPage';
 import { CommentCard, CommentForm, ReplyForm } from './InlineComment';
-import { ChevronRight, ChevronDown, ChevronUp, Copy, Check, List, MessageSquare, MessageSquarePlus, ChevronsUpDown, Eye, Maximize2, Minimize2, Trash2, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, ChevronUp, Copy, Check, List, MessageSquare, MessageSquarePlus, ChevronsUpDown, ChevronsDownUp, Eye, Maximize2, Minimize2, Trash2, X } from 'lucide-react';
 import { detectLanguage, highlightLines } from './syntaxHighlight';
 import { GutterAvatar } from './AgentAvatar';
 import { useFileMention } from '../../hooks';
@@ -344,15 +344,21 @@ export function DiffFileView({
     centerX: number;
   } | null>(null);
 
-  // Split mode: constrain selection to one panel by disabling user-select on the other
+  // Split mode: constrain selection to one panel by disabling user-select on the other.
+  // Remembers the mousedown point so mouseup can re-hit-test the exact pixel the drag
+  // started at, instead of trusting native Range boundaries (see handleMouseUp).
+  const mouseDownPosRef = useRef<{ x: number; y: number } | null>(null);
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    mouseDownPosRef.current = { x: e.clientX, y: e.clientY };
+
     const splitTable = ref.current?.querySelector('.diff-split');
     if (!splitTable) return;
 
     // Clear previous containment
     splitTable.classList.remove('selecting-left', 'selecting-right');
 
-    // Walk up from click target to find a data-side cell
+    // Walk up from click target to find a data-side cell (now present on gutters too,
+    // so starting a drag on the narrow line-number column still locks the right panel)
     let el = e.target as HTMLElement | null;
     while (el && el !== ref.current) {
       if (el.hasAttribute('data-side')) {
@@ -363,31 +369,57 @@ export function DiffFileView({
     }
   }, []);
 
-  const handleMouseUp = useCallback(() => {
+  // Hit-test the actual pixel under a point, rather than walking a DOM Range's
+  // start/endContainer. Range boundaries snap to the nearest text node, which skips
+  // right over empty/blank diff-code cells (no text to anchor to) and lands the
+  // boundary on whatever row happens to have text next — pixel hit-testing always
+  // finds the real cell under the cursor, blank or not.
+  const findLineCellAtPoint = useCallback((x: number, y: number): HTMLElement | null => {
+    if (!ref.current) return null;
+    let el = document.elementFromPoint(x, y) as HTMLElement | null;
+    while (el && ref.current.contains(el)) {
+      if (el.hasAttribute('data-line')) {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }, []);
+
+  // A collapsed/undexpanded hunk boundary renders a `.diff-hunk-header` divider
+  // row (the "@@ ... @@" line, or a "N lines hidden" fold marker). If one of those
+  // sits physically between the drag's two endpoints, the line numbers on either
+  // side aren't actually adjacent — treat the selection as invalid rather than
+  // reporting a range that silently jumps over the gap.
+  const hasHunkBoundaryBetween = useCallback((a: HTMLElement, b: HTMLElement): boolean => {
+    if (!ref.current) return false;
+    const aBeforeB = !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const [first, second] = aBeforeB ? [a, b] : [b, a];
+    const headers = ref.current.querySelectorAll('.diff-hunk-header');
+    for (const header of Array.from(headers)) {
+      const afterFirst = !!(first.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const beforeSecond = !!(second.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_PRECEDING);
+      if (afterFirst && beforeSecond) return true;
+    }
+    return false;
+  }, []);
+
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
     const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || !ref.current) {
+    if (!selection || selection.isCollapsed || !ref.current || !mouseDownPosRef.current) {
       setSelectionAnchor(null);
       return;
     }
 
-    const range = selection.getRangeAt(0);
-
-    // Find nearest element (TR or TD) with data-line within this file section
-    const findLineCell = (node: Node): HTMLElement | null => {
-      let el = node instanceof HTMLElement ? node : node.parentElement;
-      while (el && el !== ref.current) {
-        if (el.hasAttribute('data-line')) {
-          return el;
-        }
-        el = el.parentElement;
-      }
-      return null;
-    };
-
-    const startCell = findLineCell(range.startContainer);
-    const endCell = findLineCell(range.endContainer);
+    const startCell = findLineCellAtPoint(mouseDownPosRef.current.x, mouseDownPosRef.current.y);
+    const endCell = findLineCellAtPoint(e.clientX, e.clientY);
 
     if (!startCell || !endCell) {
+      setSelectionAnchor(null);
+      return;
+    }
+
+    if (startCell !== endCell && hasHunkBoundaryBetween(startCell, endCell)) {
       setSelectionAnchor(null);
       return;
     }
@@ -426,7 +458,21 @@ export function DiffFileView({
       top: endRect.bottom - sectionRect.top + 4,
       centerX,
     });
-  }, [viewType]);
+  }, [viewType, findLineCellAtPoint, hasHunkBoundaryBetween]);
+
+  // Selections inside the diff table serialize as a full <table> HTML fragment by
+  // default (Range boundaries land inside <td>s, so the browser wraps the clipboard
+  // payload in ancestor table markup to stay valid HTML) — pasting into anything
+  // that honors text/html then shows a literal table instead of just the code text.
+  // Force a plain-text-only clipboard payload so paste matches what's visually selected.
+  const handleCopy = useCallback((e: React.ClipboardEvent) => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) return;
+    const text = selection.toString();
+    if (!text) return;
+    e.preventDefault();
+    e.clipboardData.setData('text/plain', text);
+  }, []);
 
   // Clear selection anchor when selection changes elsewhere
   useEffect(() => {
@@ -489,7 +535,7 @@ export function DiffFileView({
   const searchRootRef = useRef<HTMLDivElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const isIframePreview = previewRenderer?.id === 'html' || previewRenderer?.id === 'jsx';
+  const isIframePreview = previewRenderer?.id === 'html';
   const dom = useDomSearch(searchRootRef, searchOpen && !isIframePreview ? searchQuery : '', searchOpen && !isIframePreview);
   const [iframeTotal, setIframeTotal] = useState(0);
   const [iframeCurrent, setIframeCurrent] = useState(0);
@@ -1092,6 +1138,37 @@ export function DiffFileView({
     });
   }, [ensureFileLines]);
 
+  // Expand every collapsed region in this file at once. Marks all *potential* gap
+  // indices (0..hunks.length, the trailing gap being the last) rather than iterating
+  // `gaps` — the trailing gap only materializes once fileLines resolves, and this
+  // click is what kicks that fetch off. Marking a non-existent index is inert.
+  const handleExpandAllGaps = useCallback(() => {
+    ensureFileLines();
+    setExpansions(() => {
+      const next = new Map<number, GapExpansion>();
+      for (let i = 0; i <= file.hunks.length; i++) {
+        next.set(i, { fromTop: 0, fromBottom: 0, full: true });
+      }
+      return next;
+    });
+  }, [ensureFileLines, file.hunks.length]);
+
+  // Collapse every expanded region back to the default folded diff. An empty map is
+  // the pristine state, so this also drops any partial 20-line expansions.
+  const handleCollapseAllGaps = useCallback(() => {
+    setExpansions(new Map());
+  }, []);
+
+  const hasCollapsedGaps = useMemo(
+    () => gaps.some((g) => !isGapFullyExpanded(g, expansions.get(g.gapIndex))),
+    [gaps, expansions],
+  );
+
+  const handleExpandAllClick = useCallback(() => {
+    if (hasCollapsedGaps) handleExpandAllGaps();
+    else handleCollapseAllGaps();
+  }, [hasCollapsedGaps, handleExpandAllGaps, handleCollapseAllGaps]);
+
   const expandProps: ExpandProps = {
     gapsByHunkIndex,
     expansions,
@@ -1178,7 +1255,7 @@ export function DiffFileView({
   };
 
   return (
-    <div ref={ref} className="diff-file-section" id={`diff-file-${encodeURIComponent(file.new_path)}`} onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}>
+    <div ref={ref} className="diff-file-section" id={`diff-file-${encodeURIComponent(file.new_path)}`} onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onCopy={handleCopy}>
       <div className={`diff-file-header ${isActive ? 'ring-1 ring-[var(--color-highlight)]' : ''}`}>
         <div className="diff-file-header-top">
           {onToggleCollapse && (
@@ -1214,6 +1291,19 @@ export function DiffFileView({
               <Copy style={{ width: 12, height: 12 }} />
             )}
           </button>
+          {viewMode === 'diff' && !isCollapsed && gaps.length > 0 && (
+            <button
+              className="diff-file-expand-all-btn"
+              onClick={handleExpandAllClick}
+              title={`${hasCollapsedGaps ? 'Expand' : 'Collapse'} all lines: ${file.new_path}`}
+            >
+              {hasCollapsedGaps ? (
+                <ChevronsUpDown style={{ width: 12, height: 12 }} />
+              ) : (
+                <ChevronsDownUp style={{ width: 12, height: 12 }} />
+              )}
+            </button>
+          )}
           <span className="diff-file-header-right">
             {onAddFileComment && (
               <button
@@ -2048,6 +2138,7 @@ function ExpandedContextRows({
               <tr className="diff-line-expanded" data-line={newLine}>
                 <td
                   className={`diff-gutter ${leftHighlighted ? 'diff-line-highlighted' : ''} ${collapsedLeftCount > 0 ? 'has-collapsed-comment' : ''}`}
+                  data-side="DELETE"
                   onClick={(e) => {
                     if (collapsedLeftCount > 0 && onExpandComment) {
                       leftComments.filter((c) => collapsedCommentIds?.has(c.id)).forEach((c) => onExpandComment(c.id));
@@ -2069,6 +2160,7 @@ function ExpandedContextRows({
                 <td className={`diff-code ${leftHighlighted ? 'diff-line-highlighted' : ''}`} data-line={oldLine} data-side="DELETE">{content}</td>
                 <td
                   className={`diff-gutter diff-gutter-split-middle ${rightHighlighted ? 'diff-line-highlighted' : ''} ${collapsedRightCount > 0 ? 'has-collapsed-comment' : ''}`}
+                  data-side="ADD"
                   onClick={(e) => {
                     if (collapsedRightCount > 0 && onExpandComment) {
                       rightComments.filter((c) => collapsedCommentIds?.has(c.id)).forEach((c) => onExpandComment(c.id));
@@ -2963,6 +3055,7 @@ function SplitHunkRows({
             <tr>
               <td
                 className={`diff-gutter ${pair.left?.line_type === 'delete' ? 'diff-line-delete' : ''} ${leftHighlighted ? 'diff-line-highlighted' : ''} ${collapsedLeftCount > 0 ? 'has-collapsed-comment' : ''}`}
+                data-side="DELETE"
                 onClick={(e) => {
                   if (collapsedLeftCount > 0 && onExpandComment) {
                     leftComments.filter((c) => collapsedCommentIds?.has(c.id)).forEach((c) => onExpandComment(c.id));
@@ -3004,6 +3097,7 @@ function SplitHunkRows({
               </td>
               <td
                 className={`diff-gutter diff-gutter-split-middle ${pair.right?.line_type === 'insert' ? 'diff-line-insert' : ''} ${rightHighlighted ? 'diff-line-highlighted' : ''} ${collapsedRightCount > 0 ? 'has-collapsed-comment' : ''}`}
+                data-side="ADD"
                 onClick={(e) => {
                   if (collapsedRightCount > 0 && onExpandComment) {
                     rightComments.filter((c) => collapsedCommentIds?.has(c.id)).forEach((c) => onExpandComment(c.id));

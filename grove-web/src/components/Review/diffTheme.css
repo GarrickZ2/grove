@@ -652,13 +652,20 @@ td.diff-code.diff-line-highlighted::before {
   overflow: hidden;
 }
 
-/* Split mode: constrain text selection to one panel */
-.diff-split.selecting-left td[data-side="ADD"] {
+/* Split mode: constrain text selection to one panel.
+   The descendant `*` is load-bearing: syntax highlighting wraps every line's text
+   in <span>s, and the baseline `.diff-code *` rule above sets user-select:text on
+   them. An element's own declaration always beats a value inherited from its
+   parent (!important doesn't cross inheritance), so locking only the cell leaves
+   its spans — i.e. all the actual text — selectable. Lock the subtree. */
+.diff-split.selecting-left td[data-side="ADD"],
+.diff-split.selecting-left td[data-side="ADD"] * {
   user-select: none !important;
   -webkit-user-select: none !important;
 }
 
-.diff-split.selecting-right td[data-side="DELETE"] {
+.diff-split.selecting-right td[data-side="DELETE"],
+.diff-split.selecting-right td[data-side="DELETE"] * {
   user-select: none !important;
   -webkit-user-select: none !important;
 }
@@ -1050,7 +1057,15 @@ td.diff-code.diff-line-highlighted::before {
   color: var(--color-text);
 }
 
-.diff-file-copy-btn {
+/* Hidden with visibility, not opacity alone. The header is position:sticky, so it gets
+   its own compositing layer, and an opacity *transition* promotes the button to one too
+   — under the constant reflow of the diff below, WebKit leaves those stale pixels on
+   screen after the button computes back to opacity:0, and it stays painted until some
+   unrelated repaint (a mouse move, seconds later) clears it. visibility:hidden takes the
+   element out of painting outright, which no stale layer survives; dropping the
+   transition keeps it from being promoted in the first place. */
+.diff-file-copy-btn,
+.diff-file-expand-all-btn {
   width: 20px;
   height: 20px;
   display: flex;
@@ -1062,16 +1077,19 @@ td.diff-code.diff-line-highlighted::before {
   cursor: pointer;
   border-radius: 4px;
   opacity: 0;
-  transition: opacity 0.15s;
+  visibility: hidden;
   flex-shrink: 0;
 }
 
-.diff-file-header:hover .diff-file-copy-btn {
+.diff-file-header:hover .diff-file-copy-btn,
+.diff-file-header:hover .diff-file-expand-all-btn {
   opacity: 0.6;
+  visibility: visible;
 }
 
-.diff-file-copy-btn:hover {
-  opacity: 1 !important;
+.diff-file-copy-btn:hover,
+.diff-file-expand-all-btn:hover {
+  opacity: 1;
   background: var(--color-bg-tertiary);
 }
 
