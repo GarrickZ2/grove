@@ -324,7 +324,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
         setPreviewFile({ file, content: safeContent });
       }
     } else {
-      const renderer = getPreviewRenderer(file.name);
+      const renderer = getPreviewRenderer(file.name, 'full');
       if (renderer && renderer.id === 'source') {
         downloadViaIframe(
           artifactDownloadUrl(projectId, task.id, file.directory, file.path),

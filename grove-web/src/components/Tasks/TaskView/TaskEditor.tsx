@@ -1123,7 +1123,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   // Breadcrumb from file path
   const breadcrumb = selectedFile ? selectedFile.split('/') : [];
 
-  const renderer = selectedFile ? getPreviewRenderer(selectedFile) : undefined;
+  const renderer = selectedFile ? getPreviewRenderer(selectedFile, 'full') : undefined;
   const isPreviewable = renderer && renderer.id !== 'source' && renderer.id !== 'image';
 
   // Calculate relative base path for HTML preview

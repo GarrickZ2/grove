@@ -108,7 +108,7 @@ function inferNameFromUrl(url: string): string {
 }
 
 export function getPreviewType(fileName: string): "image" | "text" | "binary" | null {
-  const renderer = getPreviewRenderer(fileName);
+  const renderer = getPreviewRenderer(fileName, 'full');
   if (!renderer) return null;
   // Map contentType to the "preview kind" the parent uses to decide how to
   // fetch. 'url' renderers hand the URL to <img>/<iframe> (no fetch needed),
@@ -166,8 +166,8 @@ export function FilePreviewDrawer({
   previewCommentDrafts,
   sketchContext,
 }: FilePreviewDrawerProps) {
-  const renderer = getPreviewRenderer(fileName);
-  const wide = renderer?.id === 'jsx' || renderer?.id === 'html';
+  const renderer = getPreviewRenderer(fileName, 'full');
+  const wide = renderer?.id === 'html';
   const canToggleSource = renderer?.contentType === 'text';
   const commentable = !!onCreatePreviewComment && !!renderer && renderer.supportsComments !== false;
   const previewId = useId().replace(/:/g, "");
@@ -220,7 +220,7 @@ export function FilePreviewDrawer({
   const [searchQuery, setSearchQuery] = useState("");
   // Iframe (HTML/JSX) renderers route search through the bridge; for those
   // we rely on bridge-reported counts instead of running TreeWalker locally.
-  const isIframeRenderer = renderer?.id === "html" || renderer?.id === "jsx";
+  const isIframeRenderer = renderer?.id === "html";
   // AG Grid virtualizes rows — only ~30 rows live in the DOM at a time, so
   // a TreeWalker-based search sees only the visible window. AG Grid exposes
   // quickFilterText but routing it would mean a second search backend; the
@@ -697,7 +697,7 @@ export function FilePreviewDrawer({
               />
             </PreviewCommentHost>
           ) : renderer ? (
-            <div className={renderer.id === 'image' || renderer.id === 'jsx' || renderer.id === 'html' || renderer.id === 'csv' || renderer.id === 'tsv' || renderer.id === 'jsonl' || renderer.id === 'xlsx' ? 'h-full relative' : 'p-5'}>
+            <div className={renderer.id === 'image' || renderer.id === 'html' || renderer.id === 'csv' || renderer.id === 'tsv' || renderer.id === 'jsonl' || renderer.id === 'xlsx' ? 'h-full relative' : 'p-5'}>
               {renderer.renderFull({
                 content,
                 fileName,

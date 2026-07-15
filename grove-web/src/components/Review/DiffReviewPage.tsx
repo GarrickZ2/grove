@@ -1577,7 +1577,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const handleTogglePreview = useCallback((path: string) => {
     setPreviewOverrides((prev) => {
       const next = new Map(prev);
-      const renderer = getPreviewRenderer(path);
+      const renderer = getPreviewRenderer(path, viewMode);
       const defaultOpen = displayMode !== 'code' && !!renderer;
       const currentlyOpen = prev.has(path) ? prev.get(path)! : defaultOpen;
       if (!currentlyOpen === defaultOpen) {
@@ -1588,12 +1588,12 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       }
       return next;
     });
-  }, [displayMode]);
+  }, [displayMode, viewMode]);
 
   const handleToggleActivePreview = useCallback(() => {
-    if (!activeFilePath || !getPreviewRenderer(activeFilePath)) return;
+    if (!activeFilePath || !getPreviewRenderer(activeFilePath, viewMode)) return;
     handleTogglePreview(activeFilePath);
-  }, [activeFilePath, handleTogglePreview]);
+  }, [activeFilePath, handleTogglePreview, viewMode]);
 
   // (hotkeys registered below, after goToNextFile/goToPrevFile/handleToggleViewed are defined)
 
@@ -1748,7 +1748,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   useCommand('diffReview.toggleViewed', handleToggleActiveViewed, { enabled: () => !!activeFilePath }, [handleToggleActiveViewed, activeFilePath]);
   useCommand('diffReview.refresh', handleRefresh, [handleRefresh]);
   useCommand('diffReview.toggleViewMode', handleToggleViewMode, [handleToggleViewMode]);
-  useCommand('diffReview.togglePreview', handleToggleActivePreview, { enabled: () => !!activeFilePath && !!getPreviewRenderer(activeFilePath ?? '') }, [handleToggleActivePreview, activeFilePath]);
+  useCommand('diffReview.togglePreview', handleToggleActivePreview, { enabled: () => !!activeFilePath && !!getPreviewRenderer(activeFilePath ?? '', viewMode) }, [handleToggleActivePreview, activeFilePath, viewMode]);
   useCommand('diffReview.markViewed', handleMarkActiveViewed, { enabled: () => !!activeFilePath }, [handleMarkActiveViewed, activeFilePath]);
   useCommand('diffReview.toggleSidebar', () => setSidebarVisible((v) => !v), [setSidebarVisible]);
 
@@ -2298,7 +2298,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                   ? displayFiles.filter((f) => f.new_path === validSelectedFile)
                   : displayFiles
                 ).map((file) => {
-                  const renderer = getPreviewRenderer(file.new_path);
+                  const renderer = getPreviewRenderer(file.new_path, viewMode);
                   const defaultOpen = displayMode !== 'code' && !!renderer;
                   const isPreviewOpen = previewOverrides.has(file.new_path)
                     ? previewOverrides.get(file.new_path)!

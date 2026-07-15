@@ -330,36 +330,6 @@ const pdfRenderer: PreviewRenderer = {
   supportsComments: false,
 };
 
-// ============================================================================
-// JSX / TSX Renderer — Live preview via sandboxed iframe + Babel standalone
-// ============================================================================
-
-function autoWrapJsx(code: string): string {
-  if (/createRoot|ReactDOM\.render/.test(code)) {
-    return code.replace(/export\s+default\s+/g, '').replace(/\nexport\s+(?!default)/g, '\n');
-  }
-
-  const clean = code
-    .replace(/export\s+default\s+/g, '')
-    .replace(/\nexport\s+(?!default)/g, '\n');
-
-  const patterns: RegExp[] = [
-    /function\s+([A-Z]\w*)\s*[<(]/,
-    /const\s+([A-Z]\w*)\s*=\s*(?:\(\)|\([^)]*\))\s*=>/,
-    /const\s+([A-Z]\w*)\s*=\s*function/,
-    /class\s+([A-Z]\w*)\s+extends\s+\w*Component/,
-  ];
-
-  for (const pat of patterns) {
-    const m = clean.match(pat);
-    if (m) {
-      return `${clean}\n\nReactDOM.createRoot(document.getElementById('root')).render(<${m[1]} />);`;
-    }
-  }
-
-  return `${clean}\ntry { ReactDOM.createRoot(document.getElementById('root')).render(<App />); } catch(e) { document.getElementById('jsx-error').textContent = 'Could not detect component. Ensure it starts with a capital letter (e.g. function App).\\n\\n' + e.message; document.getElementById('jsx-error').style.display = 'block'; }`;
-}
-
 function resolveThemeHighlight(): string {
   if (typeof window === 'undefined') return '#f59e0b';
   const v = getComputedStyle(document.documentElement).getPropertyValue('--color-highlight').trim();
@@ -443,37 +413,6 @@ function HtmlPreviewFrame({
       sandbox={PREVIEW_IFRAME_SANDBOX}
       className="w-full h-full border-0 min-h-[200px]"
       title="HTML Preview"
-      onLoad={() => syncPreviewCommentState(frameRef.current, previewComment)}
-    />
-  );
-}
-
-function JsxPreviewFrame({
-  content,
-  previewComment,
-}: {
-  content: string;
-  previewComment?: RenderFullProps["previewComment"];
-}) {
-  const frameRef = useRef<HTMLIFrameElement>(null);
-  const srcDoc = buildJsxIframeSrcdoc(content, previewComment?.previewId);
-
-  useEffect(() => {
-    postPreviewCommentTheme(frameRef.current, previewComment?.previewId);
-    postPreviewCommentMode(frameRef.current, previewComment?.previewId, previewComment?.enabled);
-  }, [previewComment?.enabled, previewComment?.previewId]);
-
-  useEffect(() => {
-    postPreviewCommentMarkers(frameRef.current, previewComment?.previewId, previewComment?.markers);
-  }, [previewComment?.markers, previewComment?.previewId]);
-
-  return (
-    <iframe
-      ref={frameRef}
-      srcDoc={srcDoc}
-      sandbox={PREVIEW_IFRAME_SANDBOX}
-      className="w-full h-full border-0 min-h-[200px]"
-      title="JSX Preview"
       onLoad={() => syncPreviewCommentState(frameRef.current, previewComment)}
     />
   );
@@ -614,61 +553,6 @@ function buildHtmlPreviewSrcdoc(html: string, previewId: string): string {
   return `${html}${bridge}`;
 }
 
-function buildJsxIframeSrcdoc(code: string, previewId?: string): string {
-  const wrapped = autoWrapJsx(code);
-  const codeJson = JSON.stringify(wrapped).replace(/<\//g, '<\\/');
-  const commentBridge = previewId ? buildPreviewCommentBridge(previewId) : '';
-
-  return [
-    '<!DOCTYPE html><html><head><meta charset="utf-8">',
-    PREVIEW_BASE_TAG,
-    SANDBOX_STORAGE_SHIM,
-    '<script crossorigin src="https://unpkg.com/react@19/umd/react.development.js"><\\/script>',
-    '<script crossorigin src="https://unpkg.com/react-dom@19/umd/react-dom.development.js"><\\/script>',
-    '<script crossorigin src="https://unpkg.com/@babel/standalone@7/babel.min.js"><\\/script>',
-    '<style>',
-    '*{box-sizing:border-box;margin:0;padding:0}',
-    'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:20px;background:#fff;color:#1a1a1a;-webkit-font-smoothing:antialiased}',
-    '#root{min-height:100%}',
-    '#jsx-error{display:none;color:#dc2626;padding:12px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-family:"SF Mono",Monaco,monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;margin-top:8px}',
-    '</style></head><body>',
-    '<div id="root"></div>',
-    '<div id="jsx-error"></div>',
-    '<script>',
-    '(function(){',
-    'var errEl=document.getElementById("jsx-error");',
-    'window.onerror=function(msg,url,line,col,err){',
-    'errEl.textContent=(err&&err.message)||msg+(line?"\\nLine: "+line:"");',
-    'errEl.style.display="block";',
-    'return true;',
-    '};',
-    'try{',
-    'var result=Babel.transform(' + codeJson + ',{presets:["react","typescript"]});',
-    'var s=document.createElement("script");',
-    's.textContent=result.code;',
-    'document.head.appendChild(s);',
-    '}catch(e){',
-    'errEl.textContent="Syntax Error: "+e.message;',
-    'errEl.style.display="block";',
-    '}',
-    '})();',
-    '</script>',
-    commentBridge,
-    '</body></html>',
-  ].join('\n');
-}
-
-const jsxRenderer: PreviewRenderer = {
-  id: 'jsx',
-  label: 'Preview JSX',
-  match: (path) => /\.(jsx|tsx)$/i.test(path),
-  contentType: 'text',
-  renderFull: ({ content, previewComment }) => (
-    <JsxPreviewFrame content={content} previewComment={previewComment} />
-  ),
-  supportsDiffSegments: false,
-};
-
 // ============================================================================
 // Source Code Renderer (fallback — any text file, line-level comments)
 // ============================================================================
@@ -760,7 +644,6 @@ const sourceCodeRenderer: PreviewRenderer = {
 };
 
 const renderers: PreviewRenderer[] = [
-  jsxRenderer,
   htmlRenderer,
   markdownRenderer,
   mermaidRenderer,
@@ -776,11 +659,34 @@ const renderers: PreviewRenderer[] = [
 ];
 
 /**
- * Find the matching preview renderer for a file path.
- * Returns undefined if no renderer matches.
+ * Whether a renderer still means anything in Changes (diff) mode.
+ *
+ * Changes mode has no whole file to hand a renderer — a `text` renderer gets fed
+ * content stitched back together from the diff hunks, which is partial by
+ * construction and renders to garbage for anything with real syntax. Markdown is
+ * the sole renderer that handles that itself (`supportsDiffSegments`). Non-text
+ * renderers never look at the diff at all — `url` / `binary` fetch the file
+ * itself — so an image or a PDF previews just fine.
+ *
+ * Keeping the rule here, derived from fields every renderer already declares,
+ * means a new renderer lands on the right side of it by filling those in
+ * honestly, with no separate list to remember to update.
  */
-export function getPreviewRenderer(path: string): PreviewRenderer | undefined {
-  return renderers.find((r) => r.match(path));
+function previewableInDiffMode(r: PreviewRenderer): boolean {
+  return r.supportsDiffSegments || r.contentType !== 'text';
+}
+
+/**
+ * Find the matching preview renderer for a file path, for the given view mode.
+ * Returns undefined if no renderer matches, or if the match isn't trustworthy in
+ * Changes mode (see previewableInDiffMode) — callers use undefined to mean "no
+ * preview available", which also hides the preview toggle.
+ */
+export function getPreviewRenderer(path: string, viewMode: 'diff' | 'full'): PreviewRenderer | undefined {
+  const renderer = renderers.find((r) => r.match(path));
+  if (!renderer) return undefined;
+  if (viewMode === 'diff' && !previewableInDiffMode(renderer)) return undefined;
+  return renderer;
 }
 
 // ============================================================================
