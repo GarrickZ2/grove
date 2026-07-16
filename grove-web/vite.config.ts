@@ -41,6 +41,8 @@ export default defineConfig(({ mode }) => ({
     },
   } : undefined,
   build: {
+    // Keep production crash reports resolvable back to their TypeScript sources.
+    sourcemap: true,
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
