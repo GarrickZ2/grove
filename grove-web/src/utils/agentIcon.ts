@@ -185,6 +185,40 @@ const TABLE_BY_KEY: Record<string, AgentRow> = (() => {
   return map;
 })();
 
+// Brand words to scan for when an exact key lookup misses. ACP agents self-report
+// a display name over the `initialize` handshake (`agent_info.name`, e.g. "Claude
+// Agent", "Gemini CLI") that flows through to review-comment author fields and other
+// UI — those names are their own naming space and rarely equal our canonical keys,
+// so exact lookup Bot-fallbacks on perfectly recognizable agents. The name almost
+// always still *contains* the brand word, so a contained-substring pass recovers it.
+// Longest-first so "opencode"/"openclaw" win before a bare "open"-style prefix, and
+// the words are distinctive enough that false positives aren't a real concern.
+const BRAND_MATCHERS: Array<{ needle: string; key: string }> = [
+  { needle: "opencode", key: "opencode" },
+  { needle: "openclaw", key: "openclaw" },
+  { needle: "copilot", key: "copilot" },
+  { needle: "windsurf", key: "windsurf" },
+  { needle: "claude", key: "claude" },
+  { needle: "gemini", key: "gemini" },
+  { needle: "cursor", key: "cursor" },
+  { needle: "codex", key: "codex" },
+  { needle: "hermes", key: "hermes" },
+  { needle: "junie", key: "junie" },
+  { needle: "qwen", key: "qwen" },
+  { needle: "kimi", key: "kimi" },
+  { needle: "kiro", key: "kiro" },
+  { needle: "traex", key: "traex" },
+  { needle: "trae", key: "traecli" },
+];
+
+function fuzzyBrandRow(key: string): AgentRow | undefined {
+  const lower = key.toLowerCase();
+  for (const { needle, key: rowKey } of BRAND_MATCHERS) {
+    if (lower.includes(needle)) return TABLE_BY_KEY[rowKey];
+  }
+  return undefined;
+}
+
 const FALLBACK: AgentIconInfo = {
   Component: Bot,
   url: null,
@@ -370,6 +404,19 @@ export function resolveAgentIcon(key: string | null | undefined): AgentIconInfo 
     return {
       Component: getImageComponent(cdnUrl),
       url: cdnUrl,
+      label: key,
+      canonicalKey: key,
+    };
+  }
+  // Last resort before Bot: recover a brand icon from a self-reported ACP display
+  // name (e.g. "Claude Agent" → claude). Runs only here, so it strictly upgrades the
+  // Bot fallback and can never override an exact-key or marketplace match above.
+  // Keep the caller's `key` as label/canonicalKey — only the icon is borrowed.
+  const brandRow = fuzzyBrandRow(key);
+  if (brandRow) {
+    return {
+      Component: brandRow.Component ?? Bot,
+      url: brandRow.staticFile ? `/agent-icon/${brandRow.staticFile}` : null,
       label: key,
       canonicalKey: key,
     };
