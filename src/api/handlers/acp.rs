@@ -985,6 +985,7 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
 /// Error type for ACP handler
 pub enum AcpError {
     NotFound(String),
+    BadRequest(String),
     Internal(String),
 }
 
@@ -992,6 +993,7 @@ impl IntoResponse for AcpError {
     fn into_response(self) -> Response {
         match self {
             AcpError::NotFound(msg) => (StatusCode::NOT_FOUND, msg).into_response(),
+            AcpError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
             AcpError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
         }
     }
@@ -1497,6 +1499,16 @@ pub async fn chat_ws_handler(
         .map_err(|e| AcpError::Internal(e.to_string()))?
         .ok_or(AcpError::NotFound("Chat not found".to_string()))?;
 
+    // The raw PTY endpoint owns terminal-mode chats. Accepting one here would
+    // feed a terminal-only binary into the ACP stdio driver and leave the UI
+    // waiting forever for `session_ready`.
+    if chat.launch_mode != "acp" {
+        return Err(AcpError::BadRequest(format!(
+            "chat launch_mode is {:?}, expected 'acp'",
+            chat.launch_mode
+        )));
+    }
+
     // Resolve agent command from the chat's stored agent.
     //
     // Custom Agent (persona) ids resolve to their underlying base_agent here;
@@ -1594,9 +1606,27 @@ pub async fn chat_ws_handler(
     }
 
     let (final_command, final_args) = if let Some(ref rec) = installed_record {
-        let (cmd, base_args) =
-            crate::storage::installed_agents::spawn_for(rec, registry_agent.as_ref())
-                .unwrap_or_else(|| (resolved.command.clone(), resolved.args.clone()));
+        let launch = crate::storage::installed_agents::spawn_for_launch_mode(
+            rec,
+            registry_agent.as_ref(),
+            &chat.launch_mode,
+        );
+        let terminal_channel_selected = rec.selected_install_method
+            == crate::storage::installed_agents::InstallMethod::External
+            && registry_agent
+                .as_ref()
+                .and_then(|agent| agent.terminal_launch.as_ref())
+                .is_some();
+        let (cmd, base_args) = match launch {
+            Some(spawn) => spawn,
+            None if terminal_channel_selected => {
+                return Err(AcpError::Internal(format!(
+                    "agent {:?} has terminal mode selected but no installed ACP channel",
+                    canonical_id
+                )));
+            }
+            None => (resolved.command.clone(), resolved.args.clone()),
+        };
         let mut args = base_args;
         args.extend(rec.args_override.iter().cloned());
         for (k, v) in &rec.env_override {

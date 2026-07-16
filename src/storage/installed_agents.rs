@@ -499,6 +499,50 @@ pub fn spawn_for(
     }
 }
 
+/// Resolve a runnable channel for a specific chat launch mode.
+///
+/// Most agents use the selected installation channel for ACP directly. The
+/// exception is an External channel paired with `terminal_launch`: that
+/// channel is the bare interactive CLI (Claude today), not an ACP server. An
+/// ACP chat must therefore use one of the record's installed ACP distribution
+/// channels instead of blindly spawning the selected terminal binary.
+///
+/// Installation order is preserved so migrated users retain their previous
+/// ACP channel preference. Invalid/unlaunchable channels are skipped and the
+/// next installed channel is tried. `None` means the requested mode has no
+/// usable channel; callers should surface that rather than falling back to the
+/// terminal CLI and waiting forever for `session_ready`.
+pub fn spawn_for_launch_mode(
+    rec: &InstalledAgent,
+    registry_agent: Option<&crate::storage::agent_registry::RegistryAgent>,
+    launch_mode: &str,
+) -> Option<(String, Vec<String>)> {
+    let external_is_terminal = launch_mode == "acp"
+        && rec.selected_install_method == InstallMethod::External
+        && registry_agent
+            .and_then(|agent| agent.terminal_launch.as_ref())
+            .is_some();
+
+    if !external_is_terminal {
+        return spawn_for(rec, registry_agent);
+    }
+
+    for installation in &rec.installations {
+        if installation.method == InstallMethod::External
+            || installation.status != InstallStatus::Installed
+        {
+            continue;
+        }
+        let mut candidate = rec.clone();
+        candidate.selected_install_method = installation.method;
+        if let Some(spawn) = spawn_for(&candidate, registry_agent) {
+            return Some(spawn);
+        }
+    }
+
+    None
+}
+
 /// Boot-time recovery: any installation stuck in `installing` is a crashed
 /// install attempt. Mark it failed so the user can retry from Marketplace.
 /// Walks every row, updates the JSON-stored installations array in place.
@@ -1041,6 +1085,69 @@ mod tests {
         let picked = agent.selected_installation().unwrap();
         // Falls back to the first installation we DO have.
         assert_eq!(picked.method, InstallMethod::Npx);
+    }
+
+    #[test]
+    fn acp_launch_avoids_external_terminal_channel() {
+        use crate::storage::agent_registry::TerminalLaunch;
+
+        let mut registry = registry_with_npx("claude-acp");
+        registry.agents[0].terminal_launch = Some(TerminalLaunch {
+            cmd: "claude".into(),
+            session_id_arg: "--session-id".into(),
+            resume_arg: "--resume".into(),
+            mcp_config_arg: "--mcp-config".into(),
+        });
+
+        let mut agent = fresh_npx("claude-acp");
+        agent.installations.insert(
+            0,
+            Installation {
+                method: InstallMethod::External,
+                version: String::new(),
+                install_path: Some("/usr/bin/claude".into()),
+                status: InstallStatus::Installed,
+                failure_reason: None,
+                installed_at: Utc::now(),
+            },
+        );
+        agent.selected_install_method = InstallMethod::External;
+
+        let (command, args) =
+            spawn_for_launch_mode(&agent, Some(&registry.agents[0]), "acp").unwrap();
+
+        assert_eq!(command, "npx");
+        assert_eq!(args, vec!["-y", "@example/claude-acp@1.0.0"]);
+    }
+
+    #[test]
+    fn terminal_launch_keeps_selected_external_channel() {
+        use crate::storage::agent_registry::TerminalLaunch;
+
+        let mut registry = registry_with_npx("claude-acp");
+        registry.agents[0].terminal_launch = Some(TerminalLaunch {
+            cmd: "claude".into(),
+            session_id_arg: "--session-id".into(),
+            resume_arg: "--resume".into(),
+            mcp_config_arg: "--mcp-config".into(),
+        });
+
+        let mut agent = fresh_npx("claude-acp");
+        agent.installations.push(Installation {
+            method: InstallMethod::External,
+            version: String::new(),
+            install_path: Some("/usr/bin/claude".into()),
+            status: InstallStatus::Installed,
+            failure_reason: None,
+            installed_at: Utc::now(),
+        });
+        agent.selected_install_method = InstallMethod::External;
+
+        let (command, args) =
+            spawn_for_launch_mode(&agent, Some(&registry.agents[0]), "terminal").unwrap();
+
+        assert_eq!(command, "/usr/bin/claude");
+        assert!(args.is_empty());
     }
 
     #[tokio::test]
