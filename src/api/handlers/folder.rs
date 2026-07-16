@@ -65,6 +65,12 @@ fn response_for(outcome: PickerOutcome) -> Json<BrowseFolderResponse> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn linux_display_available(display: Option<&str>, wayland_display: Option<&str>) -> bool {
+    display.is_some_and(|value| !value.trim().is_empty())
+        || wayland_display.is_some_and(|value| !value.trim().is_empty())
+}
+
 pub async fn browse_folder() -> Json<BrowseFolderResponse> {
     #[cfg(target_os = "macos")]
     {
@@ -78,6 +84,17 @@ pub async fn browse_folder() -> Json<BrowseFolderResponse> {
 
     #[cfg(target_os = "linux")]
     {
+        // A user service or SSH-hosted Grove instance can have zenity installed
+        // without access to a graphical session. In that case zenity exits 1
+        // with "cannot open display", which is indistinguishable from Cancel
+        // if we only inspect its exit status. Report the native picker as
+        // unavailable so the frontend opens its in-app server folder browser.
+        let display = std::env::var("DISPLAY").ok();
+        let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+        if !linux_display_available(display.as_deref(), wayland_display.as_deref()) {
+            return response_for(PickerOutcome::Unavailable);
+        }
+
         // Try zenity first; if it's installed and the user either picked or
         // cancelled via zenity, honour that result. If zenity is missing,
         // fall through to kdialog. kdialog's outcome is final.
@@ -406,5 +423,14 @@ mod tests {
     fn classify_picker_zero_exit_empty_stdout_is_cancelled() {
         let r = classify_picker(Ok(fake_output(true, "   \n")));
         assert_eq!(r, PickerOutcome::Cancelled);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_picker_requires_graphical_display() {
+        assert!(!linux_display_available(None, None));
+        assert!(!linux_display_available(Some(""), Some("  ")));
+        assert!(linux_display_available(Some(":0"), None));
+        assert!(linux_display_available(None, Some("wayland-0")));
     }
 }
