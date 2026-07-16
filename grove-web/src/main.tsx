@@ -5,6 +5,18 @@ import App from './App.tsx'
 import { installExternalLinkInterceptor, installGlobalDragDropInterceptor } from './utils/openExternal'
 import { commandRegistry, initUserKeymap } from './keyboard'
 import { COMMAND_CATALOG } from './keyboard/catalog'
+import { getVersion } from './api/version'
+import { GlobalErrorBoundary } from './errors/GlobalErrorBoundary'
+import {
+  installGlobalErrorHandlers,
+  reportClientError,
+  setClientAppVersion,
+} from './errors/clientErrorReport'
+
+installGlobalErrorHandlers()
+void getVersion()
+  .then(({ version }) => setClientAppVersion(version))
+  .catch(() => {})
 
 // Inject the static command catalog into the registry before any
 // component mounts. Subsequent useDefineCommand / contribute calls add
@@ -33,8 +45,29 @@ if (import.meta.env.MODE === "perf") {
   void import("./perf").then(({ startPerfMonitor }) => startPerfMonitor())
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+createRoot(document.getElementById('root')!, {
+  onCaughtError: (error, errorInfo) => {
+    reportClientError(error, {
+      source: 'react-caught',
+      componentStack: errorInfo.componentStack,
+    })
+  },
+  onUncaughtError: (error, errorInfo) => {
+    reportClientError(error, {
+      source: 'react-uncaught',
+      componentStack: errorInfo.componentStack,
+    })
+  },
+  onRecoverableError: (error, errorInfo) => {
+    reportClientError(error, {
+      source: 'react-recoverable',
+      componentStack: errorInfo.componentStack,
+    })
+  },
+}).render(
+  <GlobalErrorBoundary>
+    <StrictMode>
+      <App />
+    </StrictMode>
+  </GlobalErrorBoundary>,
 )

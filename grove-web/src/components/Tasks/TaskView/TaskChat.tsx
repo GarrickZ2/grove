@@ -92,6 +92,7 @@ import { PreviewSearchBar } from "../../Review/PreviewSearchBar";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useChatSearch } from "./useChatSearch";
 import { useChatPositioning } from "./useChatPositioning";
+import { ChatListErrorBoundary } from "./ChatListErrorBoundary";
 import { useACPAvailability } from "./useACPAvailability";
 import { useInitialChatLoad } from "./useInitialChatLoad";
 import { useActiveChatId } from "./useActiveChatId";
@@ -6873,20 +6874,42 @@ export function TaskChat({
   // followOutput never fires. While the agent is actively streaming and
   // the reader is still following the tail, a height change needs one
   // re-anchor to keep the newest token visible.
+  // Virtuoso reports height changes while it is flushing its own scroll and
+  // measurement state. Calling scrollToIndex synchronously from that callback
+  // can feed another scroll event into the same React commit and eventually
+  // hit React #185 (maximum update depth). Coalesce re-anchors and defer them
+  // until the current Virtuoso update has completed.
+  const heightChangeReanchorRafRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (heightChangeReanchorRafRef.current !== null) {
+        cancelAnimationFrame(heightChangeReanchorRafRef.current);
+        heightChangeReanchorRafRef.current = null;
+      }
+    };
+  }, [activeChatId]);
+
   const handleTotalListHeightChanged = useCallback(() => {
     // Never issue scroll commands for idle re-measurements. In particular,
     // upward scrolling mounts older variable-height rows; scrolling to LAST
     // from this callback made Virtuoso oscillate between its anchor and tail.
     if (!isBusy || isUserScrollingRef.current || !autoStickToBottomRef.current) return;
-    const viewport = messagesViewportRef.current;
-    if (!viewport) return;
-    // If already at the tail, another scrollToIndex only creates another
-    // measurement cycle. Streaming growth makes this positive, so a tiny
-    // threshold still keeps the latest token visible.
-    const distanceFromBottom =
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    if (distanceFromBottom <= 2) return;
-    scrollMessagesToBottom("auto");
+    if (heightChangeReanchorRafRef.current !== null) return;
+
+    heightChangeReanchorRafRef.current = requestAnimationFrame(() => {
+      heightChangeReanchorRafRef.current = null;
+      // State may have changed while this callback waited for the next frame.
+      if (isUserScrollingRef.current || !autoStickToBottomRef.current) return;
+      const viewport = messagesViewportRef.current;
+      if (!viewport) return;
+      // If already at the tail, another scrollToIndex only creates another
+      // measurement cycle. Streaming growth makes this positive, so a tiny
+      // threshold still keeps the latest token visible.
+      const distanceFromBottom =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+      if (distanceFromBottom <= 2) return;
+      scrollMessagesToBottom("auto");
+    });
   }, [isBusy, scrollMessagesToBottom]);
 
   // Track the message index where the current busy turn started
@@ -7400,6 +7423,11 @@ export function TaskChat({
               message conversations stay snappy. Virtuoso owns the scroll
               container; we hand it the renderItems array and let it
               mount/unmount rows as the viewport moves. */
+          <ChatListErrorBoundary
+            resetKey={activeChatId}
+            projectId={projectId}
+            taskId={task.id}
+          >
           <Virtuoso
             // Force-remount per chat so each chat starts with a clean
             // scroll position (no carry-over from the previous chat).
@@ -7471,6 +7499,7 @@ export function TaskChat({
             rangeChanged={handleConversationRangeChanged}
             components={virtuosoComponents}
           />
+          </ChatListErrorBoundary>
           )}
 
           {/* Input */}
