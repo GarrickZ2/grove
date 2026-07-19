@@ -705,7 +705,7 @@ export function ImagePreview({ projectId, taskId, file, onImageClick }: ImagePre
     return <div className="preview-loading">Missing project context</div>;
   }
 
-  const imgUrl = `/api/v1/projects/${projectId}/tasks/${taskId}/file?path=${encodeURIComponent(file.new_path)}`;
+  const imgUrl = `/api/v1/projects/${projectId}/tasks/${taskId}/file/raw?path=${encodeURIComponent(file.new_path)}`;
 
   return (
     <div className="flex flex-col items-center justify-center gap-3 p-4">

@@ -63,6 +63,15 @@ export function resetGlobalMatchIndex() {
   _matchCounter.current = 0;
 }
 
+// Fallback for files where the backend's `is_binary` flag wasn't propagated
+// (e.g. all-files view defaults it to false). Keeps us from showing a scary
+// red "Failed to load" message for things like .DS_Store when the real story
+// is just "this is a binary asset, no meaningful diff".
+const BINARY_PATH_RE = /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|zip|tar|gz|7z|rar|exe|dll|so|dylib|bin|class|jar|wasm|psd|ai|sketch|fig|DS_Store|lnk)$/i;
+function looksLikeBinaryPath(path: string): boolean {
+  return BINARY_PATH_RE.test(path);
+}
+
 function highlightSearchMatches(
   text: string,
   searchQuery: string,
@@ -1491,6 +1500,8 @@ export function DiffFileView({
                     <p>This file is planned to be created but doesn't exist yet in the current branch.</p>
                   </div>
                 </div>
+              ) : previewRenderer?.id === 'image' && projectId && taskId ? (
+                <ImagePreview projectId={projectId} taskId={taskId} file={file} onImageClick={setLightboxUrl} />
               ) : file.is_binary ? (
                 <div className="diff-binary">
                   {viewMode === 'full'
@@ -1508,13 +1519,24 @@ export function DiffFileView({
                     viewType={viewType}
                     {...commonCommentProps}
                   />
+                ) : looksLikeBinaryPath(file.new_path) ? (
+                  <div className="diff-binary">Binary file — cannot display in Full Files mode</div>
                 ) : (
                   <div className="diff-error">Failed to load file content</div>
                 )
               ) : file.is_unsupported ? (
                 <div className="diff-binary">Diff not supported for this file type</div>
               ) : file.load_error ? (
-                <div className="diff-error">Failed to load file content</div>
+                // If the diff API errored out but the path looks like a binary
+                // asset (image, archive, native lib, common macOS/Windows
+                // metadata), don't surface the error in red — the diff just
+                // isn't meaningful for these. Real text-file fetch failures
+                // still render as the diff-error style below.
+                looksLikeBinaryPath(file.new_path) ? (
+                  <div className="diff-binary">Binary file changed</div>
+                ) : (
+                  <div className="diff-error">Failed to load file content</div>
+                )
               ) : file.hunks.length === 0 && (file.additions > 0 || file.deletions > 0) ? (
                 <div className="diff-binary" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div className="spinner" style={{ width: 14, height: 14 }} />

@@ -2300,9 +2300,16 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                 ).map((file) => {
                   const renderer = getPreviewRenderer(file.new_path, viewMode);
                   const defaultOpen = displayMode !== 'code' && !!renderer;
-                  const isPreviewOpen = previewOverrides.has(file.new_path)
-                    ? previewOverrides.get(file.new_path)!
-                    : defaultOpen;
+                  // Image files render the picture directly inside the code
+                  // view (see DiffFileView), so the preview pane is redundant —
+                  // force it closed and hide the toggle. Other renderers keep
+                  // the override behavior.
+                  const isImage = renderer?.id === 'image';
+                  const isPreviewOpen = isImage
+                    ? false
+                    : previewOverrides.has(file.new_path)
+                      ? previewOverrides.get(file.new_path)!
+                      : defaultOpen;
                   return (
                     <DiffFileView
                       key={file.new_path}
@@ -2310,7 +2317,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                       viewType={viewType}
                       isActive={validSelectedFile === file.new_path}
                       isPreviewOpen={isPreviewOpen}
-                      onTogglePreview={renderer ? handleTogglePreview : undefined}
+                      onTogglePreview={renderer && !isImage ? handleTogglePreview : undefined}
                       previewRenderer={renderer}
                       defaultExpanded={displayMode === 'preview'}
                       projectId={projectId}
