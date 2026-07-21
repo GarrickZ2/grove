@@ -219,6 +219,11 @@ pub fn remove_task_hook(project_key: &str, task_id: &str) {
     );
 }
 
+pub fn remove_all_hooks() {
+    let conn = database::connection();
+    let _ = conn.execute("DELETE FROM hook_notifications", []);
+}
+
 /// 写入一条新通知并通过 radio 广播 `HookAdded`。所有 hook 写入路径
 /// （ACP notify、`grove hooks` CLI、未来的 MCP server）都应走这里，
 /// 确保前端能够纯 push 刷新，无需轮询。
@@ -866,6 +871,15 @@ mod tests {
 
         remove_task_hook("project-a", "test-task");
         assert!(load_hooks("project-a").tasks.is_empty());
+
+        let mut other_hooks = HooksFile::default();
+        other_hooks.update("other-task", NotificationLevel::Notice, None, None);
+        save_hooks("project-a", &hooks).unwrap();
+        save_hooks("project-b", &other_hooks).unwrap();
+
+        remove_all_hooks();
+        assert!(load_hooks("project-a").tasks.is_empty());
+        assert!(load_hooks("project-b").tasks.is_empty());
 
         let _ = std::fs::remove_dir_all(temp_home);
     }

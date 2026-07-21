@@ -61,7 +61,7 @@ function NotificationItem({
 }
 
 export function NotificationPopover({ isOpen, onClose, onNavigate, anchorStyle }: NotificationPopoverProps) {
-  const { notifications, dismissNotification } = useNotifications();
+  const { notifications, dismissNotification, clearAllNotifications } = useNotifications();
   const popoverRef = useRef<HTMLDivElement>(null);
   const { isMobile } = useIsMobile();
 
@@ -123,9 +123,21 @@ export function NotificationPopover({ isOpen, onClose, onNavigate, anchorStyle }
             <span className="text-sm font-semibold text-[var(--color-text)]">
               Notifications
             </span>
-            <span className="text-xs text-[var(--color-text-muted)]">
-              {notifications.length > 0 ? `${notifications.length} active` : ""}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-[var(--color-text-muted)]">
+                {notifications.length > 0 ? `${notifications.length} active` : ""}
+              </span>
+              {notifications.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void clearAllNotifications()}
+                  className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+                  aria-label="Clear all notifications"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
           </div>
 
           {/* List */}

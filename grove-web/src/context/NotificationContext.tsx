@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback } from "react";
 import type { ReactNode } from "react";
-import { listAllHooks, dismissHook } from "../api/hooks";
+import { listAllHooks, dismissHook, clearAllHooks } from "../api/hooks";
 import type { HookEntryResponse } from "../api/hooks";
 import { useRadioEvents } from "../hooks/useRadioEvents";
 
@@ -8,6 +8,7 @@ interface NotificationContextType {
   notifications: HookEntryResponse[];
   unreadCount: number;
   dismissNotification: (projectId: string, taskId: string) => Promise<void>;
+  clearAllNotifications: () => Promise<void>;
   refreshNotifications: () => Promise<void>;
   getTaskNotification: (taskId: string) => HookEntryResponse | undefined;
 }
@@ -32,6 +33,15 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       setNotifications((prev) => prev.filter((n) => !(n.project_id === projectId && n.task_id === taskId)));
     } catch {
       // Silently ignore errors
+    }
+  }, []);
+
+  const handleClearAll = useCallback(async () => {
+    try {
+      await clearAllHooks();
+      setNotifications([]);
+    } catch {
+      return;
     }
   }, []);
 
@@ -63,6 +73,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         notifications,
         unreadCount: notifications.length,
         dismissNotification: handleDismiss,
+        clearAllNotifications: handleClearAll,
         refreshNotifications: fetchNotifications,
         getTaskNotification,
       }}

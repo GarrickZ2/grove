@@ -1020,7 +1020,7 @@ interface IslandNotificationsProps {
 }
 
 function IslandNotifications({ onBack, onNavigate }: IslandNotificationsProps) {
-  const { notifications, dismissNotification } = useNotifications();
+  const { notifications, dismissNotification, clearAllNotifications } = useNotifications();
 
   return (
     <div className="relative w-full h-full flex flex-col">
@@ -1034,9 +1034,21 @@ function IslandNotifications({ onBack, onNavigate }: IslandNotificationsProps) {
           <ChevronLeft className="w-4 h-4" />
         </button>
         <span className="text-[13px] font-medium flex-1">Notifications</span>
-        <span className="text-[11px] text-[color-mix(in_oklab,currentColor_50%,transparent)] flex-shrink-0 pr-1">
-          {notifications.length > 0 ? `${notifications.length} active` : ""}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-[color-mix(in_oklab,currentColor_50%,transparent)] flex-shrink-0">
+            {notifications.length > 0 ? `${notifications.length} active` : ""}
+          </span>
+          {notifications.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void clearAllNotifications()}
+              className="text-[10px] font-medium text-[color-mix(in_oklab,currentColor_50%,transparent)] hover:text-current transition-colors"
+              aria-label="Clear all notifications"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto island-notifications-scroll">

@@ -34,3 +34,7 @@ export async function listAllHooks(): Promise<HooksListResponse> {
 export async function dismissHook(projectId: string, taskId: string): Promise<void> {
   await apiClient.delete(`/api/v1/projects/${projectId}/hooks/${taskId}`);
 }
+
+export async function clearAllHooks(): Promise<void> {
+  await apiClient.delete('/api/v1/hooks');
+}

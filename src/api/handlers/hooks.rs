@@ -137,6 +137,11 @@ pub async fn dismiss_hook(Path((project_id, task_id)): Path<(String, String)>) -
     StatusCode::NO_CONTENT
 }
 
+pub async fn clear_all_hooks() -> StatusCode {
+    hooks::remove_all_hooks();
+    StatusCode::NO_CONTENT
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PreviewSoundRequest {
     pub sound: String,
