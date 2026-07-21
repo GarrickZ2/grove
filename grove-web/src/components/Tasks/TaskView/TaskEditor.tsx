@@ -1420,6 +1420,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                     : (renderer.id === 'html' ? rewriteHtmlUrls(fileContent, projectId, taskId, parentDirPath) : fileContent),
                   fileName: selectedFile,
                   sketchContext: { projectId, taskId },
+                  projectContext: { projectId, taskId },
                   onImageClick: (url) => setLightboxUrl(url),
                   onSvgClick: (svg) => setLightboxSvg(svg),
                 })}
@@ -1496,6 +1497,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                       : (renderer.id === 'html' ? rewriteHtmlUrls(fileContent, projectId, taskId, parentDirPath) : fileContent),
                     fileName: selectedFile,
                     sketchContext: { projectId, taskId },
+                    projectContext: { projectId, taskId },
                     onImageClick: (url) => setLightboxUrl(url),
                     onSvgClick: (svg) => setLightboxSvg(svg),
                   })}

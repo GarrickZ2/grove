@@ -4,6 +4,45 @@ import { renderD2 } from "../../api";
 import type { RenderD2Error } from "../../api";
 import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+
+// Default sandbox applied to `<iframe>` elements rendered from markdown when
+// the author didn't specify one. Mirrors PREVIEW_IFRAME_SANDBOX in
+// previewRenderers.tsx so markdown-embedded HTML and standalone HTML files
+// behave the same way: scripts + popups allowed, but no same-origin access.
+const IFRAME_DEFAULT_SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox";
+
+// Sanitize schema used by rehype-sanitize when rendering markdown. Extends the
+// default schema (which already strips unknown tags, event handlers, and
+// dangerous protocols on `href`) with the `<iframe>` tag and the `style`
+// attribute on all elements. `src` is restricted to http(s) by the inherited
+// default protocols list; relative URLs (no scheme) are preserved as-is.
+const markdownSanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), "iframe"],
+  attributes: {
+    ...(defaultSchema.attributes ?? {}),
+    "*": [...(defaultSchema.attributes?.["*"] ?? []), "style"],
+    iframe: [
+      "src",
+      "width",
+      "height",
+      "title",
+      "style",
+      "sandbox",
+      "allow",
+      "allowfullscreen",
+      "frameborder",
+      "loading",
+      "name",
+      "id",
+      "class",
+      "referrerpolicy",
+      "scrolling",
+    ],
+  },
+};
 import mermaid from "mermaid";
 import { VSCodeIcon } from "./VSCodeIcon";
 import { SketchChip } from "./SketchChip";
@@ -14,6 +53,31 @@ import { useTheme } from "../../context/ThemeContext";
 
 /** Languages whose code blocks may be executed in the terminal. */
 const RUNNABLE_SHELL_LANGS = new Set(["bash", "sh", "shell", "zsh"]);
+
+// URL prefix set that we treat as absolute / protocol-relative / fragment and
+// therefore pass through unchanged when resolving iframe src.
+const ABSOLUTE_URL_RE = /^(https?:\/\/|data:|blob:|mailto:|tel:|#|javascript:)/i;
+
+/** Build an iframe src resolver from a project context. Worktree-relative
+ *  paths are joined with the parent directory of `fileName` and rewritten
+ *  into the backend's raw-file endpoint. Absolute / protocol-relative /
+ *  fragment URLs are passed through unchanged. */
+function buildIframeSrcResolver(
+  projectContext: { projectId: string; taskId: string; fileName?: string } | undefined,
+): ((src: string) => string) | undefined {
+  if (!projectContext) return undefined;
+  const parentDir =
+    projectContext.fileName && projectContext.fileName.includes("/")
+      ? projectContext.fileName.substring(0, projectContext.fileName.lastIndexOf("/")) + "/"
+      : "";
+  return (src: string) => {
+    const trimmed = src.trim();
+    if (!trimmed) return src;
+    if (ABSOLUTE_URL_RE.test(trimmed) || trimmed.startsWith("/")) return src;
+    const resolvedPath = parentDir + trimmed;
+    return `/api/v1/projects/${projectContext.projectId}/tasks/${projectContext.taskId}/file/raw?path=${encodeURIComponent(resolvedPath)}`;
+  };
+}
 
 /** Event name for command injection into an active XTerminal. */
 export const TERMINAL_INJECT_EVENT = "grove:terminal-inject";
@@ -714,6 +778,19 @@ interface MarkdownRendererProps {
   onFileClick?: (filePath: string, line?: number) => Promise<boolean>;
   /** When provided, relative image src values are resolved via this function */
   resolveImageUrl?: (src: string) => string;
+  /** Project + task identity and the worktree-relative path of the markdown
+   *  file being rendered. When provided, MarkdownRenderer resolves relative
+   *  iframe `src` values (e.g. `<iframe src="../internal/foo.html">`) against
+   *  `fileName`'s parent directory and rewrites them into the backend's raw
+   *  file endpoint. Absolute / protocol-relative / fragment URLs are passed
+   *  through unchanged. Without this prop, iframe src is left untouched. */
+  projectContext?: {
+    projectId: string;
+    taskId: string;
+    /** Worktree-relative path of the markdown file. Optional — when missing,
+     *  relative iframe src values are joined with the worktree root. */
+    fileName?: string;
+  };
   /** When provided, clicking a rendered mermaid diagram triggers this callback with the SVG */
   onMermaidClick?: (svg: string) => void;
   /** When provided, clicking a rendered D2 diagram triggers this callback with the SVG */
@@ -886,12 +963,21 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
   };
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode = "chip", enableHeadingIds }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, projectContext, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode = "chip", enableHeadingIds }: MarkdownRendererProps) {
   const processedContent = useMemo(() => {
     let out = preprocessInlineCodeUrls(content);
     if (sketchContext) out = preprocessSketchUrls(out);
     return out;
   }, [content, sketchContext]);
+  // Resolve worktree-relative iframe src values when a project context is
+  // available. The resolver is pure given (projectContext.fileName) so
+  // memoizing it on the context avoids re-creating the closure on every
+  // render. Without projectContext, iframe src is left untouched (the
+  // iframe component checks for the resolver's presence).
+  const iframeSrcResolver = useMemo(
+    () => buildIframeSrcResolver(projectContext),
+    [projectContext],
+  );
   // Slugger must reset every render: react-markdown calls heading components
   // in document order, so a per-render slugger sees each heading once and
   // produces GitHub-style `-1`, `-2` suffixes for repeats. We hold it in a
@@ -1097,6 +1183,23 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
             />
           );
         },
+        iframe: ({ src, sandbox, referrerPolicy, ...props }) => {
+          // rehype-sanitize has already stripped non-allowlisted attributes and
+          // rejected non-http(s) src schemes. We only need to apply safe
+          // defaults for sandbox / referrer policy when the author omitted
+          // them, and resolve worktree-relative src values when a project
+          // context is available.
+          const resolvedSrc = iframeSrcResolver ? iframeSrcResolver(src ?? "") : src;
+          return (
+            <iframe
+              src={resolvedSrc}
+              sandbox={sandbox ?? IFRAME_DEFAULT_SANDBOX}
+              referrerPolicy={referrerPolicy ?? "no-referrer"}
+              {...props}
+              className={`w-full my-2 border-0${props.className ? ` ${props.className}` : ""}`}
+            />
+          );
+        },
         hr: () => (
           <hr className="border-[var(--color-border)] my-3" />
         ),
@@ -1131,11 +1234,12 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           return <input {...props} />;
         },
     });
-  }, [onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode, enableHeadingIds]);
+  }, [onFileClick, resolveImageUrl, iframeSrcResolver, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode, enableHeadingIds]);
 
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
       components={components}
       urlTransform={(url) => {
         if (url.startsWith("sketch://")) return url;

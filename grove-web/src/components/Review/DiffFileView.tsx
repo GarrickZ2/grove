@@ -1653,6 +1653,7 @@ export function DiffFileView({
                         const content = viewMode === 'full' && fullFileContent != null
                           ? fullFileContent
                           : file.hunks.flatMap(h => h.lines.filter(l => l.line_type !== 'delete').map(l => l.content)).join('\n');
+                        const projectContext = projectId && taskId ? { projectId, taskId } : undefined;
                         return content.trim()
                           ? previewRenderer.renderFull({
                               content,
@@ -1662,6 +1663,7 @@ export function DiffFileView({
                               previewComment: previewRenderer.supportsComments !== false && projectId && taskId
                                 ? { enabled: previewCommentMode, previewId: previewCommentId, markers: previewCommentMarkers }
                                 : undefined,
+                              projectContext,
                             })
                           : <div className="preview-loading">No content to render</div>;
                       })()
@@ -1678,6 +1680,7 @@ export function DiffFileView({
                               previewComment: previewRenderer.supportsComments !== false && projectId && taskId
                                 ? { enabled: previewCommentMode, previewId: previewCommentId, markers: previewCommentMarkers }
                                 : undefined,
+                              projectContext: projectId && taskId ? { projectId, taskId } : undefined,
                             })
                           : <MarkdownRenderer content={fullFileContent} onImageClick={setLightboxUrl} onMermaidClick={setLightboxSvg} />
                       ) : (

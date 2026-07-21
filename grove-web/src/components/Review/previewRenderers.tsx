@@ -65,6 +65,11 @@ export interface RenderFullProps {
    *  inline image of the sketch's PNG render (lightbox on click; falls back
    *  to plain text if the render is missing). */
   sketchContext?: { projectId: string; taskId: string };
+  /** Project + task identity for the worktree currently being previewed. Used
+   *  by renderers (currently only markdown) to rewrite worktree-relative
+   *  resource URLs (e.g. `<iframe src="../internal/foo.html">`) into backend
+   *  endpoints that serve the file. */
+  projectContext?: { projectId: string; taskId: string };
 }
 
 export interface PreviewRenderer {
@@ -111,7 +116,7 @@ const markdownRenderer: PreviewRenderer = {
   label: 'Preview markdown',
   match: (path) => /\.(md|markdown)$/i.test(path),
   contentType: 'text',
-  renderFull: ({ content, onImageClick, onSvgClick, previewComment, sketchContext }) => withCommentHost(
+  renderFull: ({ content, onImageClick, onSvgClick, previewComment, sketchContext, projectContext, fileName }) => withCommentHost(
     <MarkdownRenderer
       content={content}
       onImageClick={onImageClick}
@@ -120,6 +125,7 @@ const markdownRenderer: PreviewRenderer = {
       enableHeadingIds
       sketchContext={sketchContext}
       sketchRenderMode="image"
+      projectContext={projectContext ? { ...projectContext, fileName } : undefined}
     />,
     previewComment,
   ),
