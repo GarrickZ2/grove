@@ -1548,47 +1548,15 @@ pub async fn chat_ws_handler(
         .ok()
         .flatten();
 
-    // Pull registry env (npx.env / uvx.env / target.env) for the channel
-    // that's actually going to spawn (the selected installation). Merge
-    // order:
-    //   1. grove base env (already in env_vars via build_grove_env)
-    //   2. registry distribution env — default from the upstream agent
-    //   3. user env_override — overrides everything per-key
+    // Pull the effective registry + user override env for the channel that's
+    // actually going to spawn. `launch_env_for` also identifies which
+    // distribution produced an auto-detected External path.
     let registry_agent = crate::storage::agent_registry::get()
         .agents
         .into_iter()
         .find(|a| a.id == canonical_id);
-    if let Some(ref reg) = registry_agent {
-        let selected_method = installed_record.as_ref().map(|r| r.selected_install_method);
-        let registry_env = match selected_method {
-            Some(crate::storage::installed_agents::InstallMethod::Npx) => reg
-                .distribution
-                .npx
-                .as_ref()
-                .map(|d| d.env.clone())
-                .unwrap_or_default(),
-            Some(crate::storage::installed_agents::InstallMethod::Uvx) => reg
-                .distribution
-                .uvx
-                .as_ref()
-                .map(|d| d.env.clone())
-                .unwrap_or_default(),
-            Some(crate::storage::installed_agents::InstallMethod::Binary) => reg
-                .distribution
-                .binary
-                .get(crate::storage::agent_install::current_platform_key())
-                .map(|t| t.env.clone())
-                .unwrap_or_default(),
-            // External (Trae/TraeX) or no row — pick binary-target env if
-            // present, else nothing.
-            _ => reg
-                .distribution
-                .binary
-                .get(crate::storage::agent_install::current_platform_key())
-                .map(|t| t.env.clone())
-                .unwrap_or_default(),
-        };
-        for (k, v) in registry_env {
+    if let (Some(reg), Some(rec)) = (registry_agent.as_ref(), installed_record.as_ref()) {
+        for (k, v) in crate::storage::installed_agents::launch_env_for(rec, reg) {
             env_vars.insert(k, v);
         }
     }
@@ -1599,9 +1567,6 @@ pub async fn chat_ws_handler(
                 .unwrap_or_else(|| (resolved.command.clone(), resolved.args.clone()));
         let mut args = base_args;
         args.extend(rec.args_override.iter().cloned());
-        for (k, v) in &rec.env_override {
-            env_vars.insert(k.clone(), v.clone());
-        }
         (cmd, args)
     } else {
         (resolved.command, resolved.args)

@@ -263,6 +263,53 @@ pub fn get() -> RegistryDocument {
     doc
 }
 
+fn has_onboarding_contract(doc: &RegistryDocument) -> bool {
+    crate::storage::curated_agents::onboarding_agent_ids()
+        .iter()
+        .all(|id| {
+            doc.agents
+                .iter()
+                .find(|agent| agent.id == *id)
+                .is_some_and(|agent| agent.distribution.npx.is_some())
+        })
+}
+
+/// Resolve the registry snapshot used by startup auto install.
+///
+/// Cache-first: a complete cached contract is immediately usable. If the
+/// cache is absent, corrupt, or predates one of the onboarding agents, perform
+/// one blocking network refresh before startup proceeds. This keeps the
+/// registry as the source of package/version metadata while making auto
+/// install a checked prerequisite instead of a best-effort background task.
+pub async fn get_for_auto_install() -> Result<RegistryDocument> {
+    let cached = get();
+    if has_onboarding_contract(&cached) {
+        return Ok(cached);
+    }
+
+    let mut fresh = refresh().await?;
+    inject_trae_and_traex_after_refresh(&mut fresh);
+    if !has_onboarding_contract(&fresh) {
+        let missing = crate::storage::curated_agents::onboarding_agent_ids()
+            .iter()
+            .filter(|id| {
+                fresh
+                    .agents
+                    .iter()
+                    .find(|agent| agent.id.as_str() == **id)
+                    .is_none_or(|agent| agent.distribution.npx.is_none())
+            })
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(crate::error::GroveError::storage(format!(
+            "ACP registry is missing onboarding npx distributions: {}",
+            missing
+        )));
+    }
+    Ok(fresh)
+}
+
 /// Add Trae + TraeX synthetics and grove-only supplements after a fresh
 /// refresh has replaced the document. `get()` does this automatically.
 pub fn inject_trae_and_traex_after_refresh(doc: &mut RegistryDocument) {

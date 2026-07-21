@@ -1504,11 +1504,6 @@ pub async fn start_server(
     // subscribes; safe to start unconditionally.
     crate::plugins::radio_bridge::spawn();
 
-    // Auto-correct agent defaults based on what's actually installed on PATH.
-    // Runs every server start because the user's environment can change between
-    // sessions (e.g. they install a new CLI).
-    crate::acp::init_agent_defaults();
-
     // Recover any installed_agents row stuck in `installing` — happens when
     // grove was killed mid-download. Marking them failed lets the user
     // retry from Marketplace instead of staring at a perpetual spinner.
@@ -1519,34 +1514,37 @@ pub async fn start_server(
         );
     }
 
-    // Long-running ACP registry refresher + boot-time initialization.
-    // The first tick performs an immediate refresh check. Once the initial registry
-    // cache is guaranteed to be populated (or offline fallback completed), we run
-    // the curated agent seeding and PATH binary scan on the blocking pool.
-    // This resolves a race condition where seeding/scanning ran concurrently with
-    // the registry cache load, resulting in 0 agents seeded on a fresh install.
+    // Agent onboarding is a startup prerequisite, not a fire-and-forget task:
+    //   1. resolve a complete registry snapshot (cache first, network fallback)
+    //   2. reconcile the four product-owned Npx channels
+    //   3. scan every registry agent for local PATH installations
+    //   4. only then choose valid defaults and expose the server
+    let startup_registry = crate::storage::agent_registry::get_for_auto_install()
+        .await
+        .map_err(|e| {
+            std::io::Error::other(format!("agent registry initialization failed: {}", e))
+        })?;
+    let seeded = tokio::task::spawn_blocking(move || -> crate::error::Result<usize> {
+        crate::storage::installed_agents::reconcile_registry_state(&startup_registry)
+    })
+    .await
+    .map_err(|e| std::io::Error::other(format!("agent onboarding task failed: {}", e)))?
+    .map_err(|e| std::io::Error::other(format!("agent onboarding reconciliation failed: {}", e)))?;
+    eprintln!(
+        "[startup] onboarding agents reconciled ({} Npx channel(s) added)",
+        seeded
+    );
+
+    // Defaults are derived only after both managed and PATH channels have
+    // converged, so first-run config cannot observe an empty database.
+    crate::acp::init_agent_defaults();
+
+    // Keep the registry fresh for long-running servers. Startup already has a
+    // usable cache-backed snapshot, so these refreshes are non-blocking.
     tokio::spawn(async {
-        // Run initial refresh immediately so we have the registry loaded before seeding/scanning
         crate::storage::agent_registry::refresh_if_stale().await;
-
-        tokio::task::spawn_blocking(|| {
-            let registry = crate::storage::agent_registry::get();
-            // Seed curated agents first so they default to NPX (preferred stdio ACP channel)
-            if let Err(e) =
-                crate::storage::installed_agents::ensure_curated_agents_seeded(&registry)
-            {
-                eprintln!("[startup] curated agent seed failed: {}", e);
-            }
-            // Scan PATH next to append any global command line overrides
-            if let Err(e) = crate::storage::installed_agents::auto_scan_path_binaries(&registry) {
-                eprintln!("[startup] PATH binary scan failed: {}", e);
-            }
-        });
-
-        // Subsequent ticks run every hour
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        // Skip the first tick of the loop since we just refreshed
         ticker.tick().await;
         loop {
             ticker.tick().await;

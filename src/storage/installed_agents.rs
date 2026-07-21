@@ -628,7 +628,17 @@ pub fn auto_scan_path_binaries(
         });
         if let Some(cached) = cached_external {
             if let Some(path) = cached.install_path.as_deref() {
-                if std::path::Path::new(path).exists() {
+                // The file existing is insufficient: PATH may have changed
+                // since the previous scan (shell profile, GUI environment,
+                // version manager, etc.). Trust the cache only when resolving
+                // the same binary name in the current environment still lands
+                // on the persisted path.
+                let still_on_path = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(crate::check::resolve_program)
+                    .is_some_and(|resolved| resolved == std::path::Path::new(path));
+                if still_on_path {
                     detected_agent_ids.insert(reg.id.clone());
                     continue;
                 }
@@ -754,6 +764,27 @@ pub fn reset_auto_scan_cache() {
     if let Ok(mut guard) = LAST_SCAN.lock() {
         *guard = None;
     }
+}
+
+/// Apply the complete startup agent state transition against one registry
+/// snapshot. Keeping this orchestration outside the HTTP/server layer lets
+/// startup and integration tests exercise the exact same DB-writing path.
+pub fn reconcile_registry_state(
+    registry: &crate::storage::agent_registry::RegistryDocument,
+) -> Result<usize> {
+    let added = reconcile_onboarding_agents(registry)?;
+    refresh_path_installations(registry)?;
+    Ok(added)
+}
+
+/// Force a fresh local-environment scan for an already-resolved registry.
+/// Marketplace Refresh and startup both use this entry point so TTL behavior
+/// cannot make their persisted state differ.
+pub fn refresh_path_installations(
+    registry: &crate::storage::agent_registry::RegistryDocument,
+) -> Result<()> {
+    reset_auto_scan_cache();
+    auto_scan_path_binaries(registry)
 }
 
 /// One-warning-per-(id, methods) cache for `selected_installation`'s drift
@@ -908,11 +939,74 @@ fn external_args_for(
     Vec::new()
 }
 
-// ─── Curated agent seed ─────────────────────────────────────────────────────
+fn external_env_for(
+    reg: &crate::storage::agent_registry::RegistryAgent,
+    install_path: &str,
+) -> HashMap<String, String> {
+    let bin_name = std::path::Path::new(install_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(install_path);
+    let platform = crate::storage::agent_install::current_platform_key();
+    if let Some(target) = reg.distribution.binary.get(platform) {
+        if target.cmd.trim_start_matches("./") == bin_name {
+            return target.env.clone();
+        }
+    }
+    if let Some(npx) = reg.distribution.npx.as_ref() {
+        if package_to_binary_name(&npx.package) == bin_name {
+            return npx.env.clone();
+        }
+    }
+    if let Some(uvx) = reg.distribution.uvx.as_ref() {
+        if package_to_binary_name(&uvx.package) == bin_name {
+            return uvx.env.clone();
+        }
+    }
+    HashMap::new()
+}
 
-/// Boot-time safety net: ensure every curated agent has at least an Npx
-/// installation CHANNEL, even on upgrade. Idempotent — only writes when the
-/// Npx channel doesn't already exist.
+/// Resolve the registry-provided environment for the selected channel and
+/// merge the user's persisted overrides. This is the canonical launch-env
+/// path used by ACP startup and by integration tests.
+pub fn launch_env_for(
+    rec: &InstalledAgent,
+    reg: &crate::storage::agent_registry::RegistryAgent,
+) -> HashMap<String, String> {
+    let mut env = match rec.selected_install_method {
+        InstallMethod::Npx => reg
+            .distribution
+            .npx
+            .as_ref()
+            .map(|distribution| distribution.env.clone())
+            .unwrap_or_default(),
+        InstallMethod::Uvx => reg
+            .distribution
+            .uvx
+            .as_ref()
+            .map(|distribution| distribution.env.clone())
+            .unwrap_or_default(),
+        InstallMethod::Binary => reg
+            .distribution
+            .binary
+            .get(crate::storage::agent_install::current_platform_key())
+            .map(|target| target.env.clone())
+            .unwrap_or_default(),
+        InstallMethod::External => rec
+            .selected_installation()
+            .and_then(|installation| installation.install_path.as_deref())
+            .map(|path| external_env_for(reg, path))
+            .unwrap_or_default(),
+    };
+    env.extend(rec.env_override.clone());
+    env
+}
+
+// ─── Onboarding agent reconciliation ────────────────────────────────────────
+
+/// Boot-time onboarding reconciliation: ensure every product-owned onboarding
+/// agent has an Npx installation channel. Package metadata is resolved from
+/// the registry; only the four canonical ids are owned by grove.
 ///
 /// Why this exists: pre-refactor grove allowed users to launch builtin
 /// agents (claude / codex / gemini / opencode / copilot / qwen) without
@@ -922,32 +1016,46 @@ fn external_args_for(
 /// referenced those ids would hit "Unknown agent" — a "previously-used
 /// agent suddenly gone" regression.
 ///
-/// Gate is per-CHANNEL, not per-ROW: this runs concurrently with the
-/// boot-time `auto_scan_path_binaries` (see `api::mod` startup), with no
-/// ordering between the two `spawn_blocking` tasks. On a machine where the
-/// user already has a curated agent's CLI on PATH (e.g. `claude` installed
-/// globally), the PATH scan can win the race and write an `External`
-/// channel first. Gating on "does a row exist for this id" then skipped
-/// the Npx seed entirely — the user was left with only the auto-detected
-/// External/terminal channel and had to click Install in Marketplace by
-/// hand to get npx. Gating on "does an Npx channel exist" fixes that: the
-/// Npx channel gets added alongside whatever External/Binary channels are
-/// already there, and `add_installation` leaves `selected_install_method`
-/// untouched when the row pre-exists (no clobbering user customizations).
+/// Gate is per-CHANNEL, not per-ROW. On a machine where a local binary has
+/// already produced an External channel, reconciliation still adds Npx. The
+/// startup caller now awaits this function before exposing the server.
 ///
 /// Behaviour:
 ///   - No gate on row count / remap audit; safe to call on every boot.
-///   - Adds the Npx channel ONE-BY-ONE only when missing; never overwrites
-///     or touches existing channels/selection.
-///   - Tolerates registry being partially-loaded: an id that has no
-///     registry entry is skipped silently, not errored.
-pub fn ensure_curated_agents_seeded(
+///   - Adds the Npx channel ONE-BY-ONE only when missing.
+///   - Moves Claude from the historical External selection to Npx while
+///     retaining External data for old terminal chats.
+///   - Rejects a partial registry before writing any channels.
+pub fn reconcile_onboarding_agents(
     registry_doc: &crate::storage::agent_registry::RegistryDocument,
 ) -> Result<usize> {
-    let curated = crate::storage::curated_agents::load();
+    // Validate the complete registry contract before writing anything. A
+    // partial registry must not produce a partially initialized onboarding
+    // state that the rest of startup mistakes for success.
+    let mut registry_agents = Vec::new();
+    for id in crate::storage::curated_agents::onboarding_agent_ids() {
+        let reg = registry_doc
+            .agents
+            .iter()
+            .find(|agent| agent.id == *id)
+            .ok_or_else(|| {
+                crate::error::GroveError::storage(format!(
+                    "onboarding agent '{}' missing from ACP registry",
+                    id
+                ))
+            })?;
+        if reg.distribution.npx.is_none() {
+            return Err(crate::error::GroveError::storage(format!(
+                "onboarding agent '{}' has no npx distribution in ACP registry",
+                id
+            )));
+        }
+        registry_agents.push((*id, reg));
+    }
+
     let now = Utc::now();
     let mut seeded = 0usize;
-    for id in &curated.agents {
+    for (id, reg) in registry_agents {
         let existing = get(id)?;
         let has_npx = existing.as_ref().is_some_and(|a| {
             a.installations
@@ -955,12 +1063,16 @@ pub fn ensure_curated_agents_seeded(
                 .any(|i| i.method == InstallMethod::Npx)
         });
         if has_npx {
-            continue;
-        }
-        let Some(reg) = registry_doc.agents.iter().find(|a| &a.id == id) else {
-            continue;
-        };
-        if reg.distribution.npx.is_none() {
+            // Claude Terminal remains implemented for historical chats, but
+            // it is no longer a selectable product mode. Converge upgraded
+            // users onto the existing Npx channel without deleting External.
+            if id == "claude-acp"
+                && existing
+                    .as_ref()
+                    .is_some_and(|a| a.selected_install_method == InstallMethod::External)
+            {
+                patch_or_create(id, Some(InstallMethod::Npx), None, None, None)?;
+            }
             continue;
         }
         let install = Installation {
@@ -972,6 +1084,9 @@ pub fn ensure_curated_agents_seeded(
             installed_at: now,
         };
         add_installation(id, install)?;
+        if id == "claude-acp" {
+            patch_or_create(id, Some(InstallMethod::Npx), None, None, None)?;
+        }
         seeded += 1;
     }
     Ok(seeded)
@@ -980,6 +1095,39 @@ pub fn ensure_curated_agents_seeded(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct PathGuard(Option<std::ffi::OsString>);
+
+    impl PathGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("PATH");
+            // SAFETY: DB/environment integration tests are serialized by the
+            // process-wide test lock and restore PATH in Drop.
+            unsafe { std::env::set_var("PATH", path) };
+            Self(previous)
+        }
+    }
+
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            // SAFETY: see PathGuard::set.
+            unsafe {
+                match self.0.take() {
+                    Some(path) => std::env::set_var("PATH", path),
+                    None => std::env::remove_var("PATH"),
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn make_executable(path: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
 
     fn fresh_npx(id: &str) -> InstalledAgent {
         let now = Utc::now();
@@ -1115,41 +1263,38 @@ mod tests {
         crate::storage::set_grove_dir_override(None);
     }
 
-    fn registry_with_npx(id: &str) -> crate::storage::agent_registry::RegistryDocument {
+    fn onboarding_registry() -> crate::storage::agent_registry::RegistryDocument {
         use crate::storage::agent_registry::{Distribution, NpxDistribution, RegistryAgent};
         crate::storage::agent_registry::RegistryDocument {
             version: "1".into(),
-            agents: vec![RegistryAgent {
-                id: id.to_string(),
-                name: id.to_string(),
-                version: "1.0.0".into(),
-                description: String::new(),
-                repository: None,
-                website: None,
-                authors: Vec::new(),
-                license: None,
-                icon: None,
-                distribution: Distribution {
-                    npx: Some(NpxDistribution {
-                        package: format!("@example/{}", id),
-                        args: Vec::new(),
-                        env: HashMap::new(),
-                    }),
-                    ..Default::default()
-                },
-                terminal_launch: None,
-            }],
+            agents: crate::storage::curated_agents::onboarding_agent_ids()
+                .iter()
+                .map(|id| RegistryAgent {
+                    id: (*id).to_string(),
+                    name: (*id).to_string(),
+                    version: "1.0.0".into(),
+                    description: String::new(),
+                    repository: None,
+                    website: None,
+                    authors: Vec::new(),
+                    license: None,
+                    icon: None,
+                    distribution: Distribution {
+                        npx: Some(NpxDistribution {
+                            package: format!("@example/{}", id),
+                            args: Vec::new(),
+                            env: HashMap::new(),
+                        }),
+                        ..Default::default()
+                    },
+                    terminal_launch: None,
+                })
+                .collect(),
         }
     }
 
-    /// Regression test: boot-time `auto_scan_path_binaries` and
-    /// `ensure_curated_agents_seeded` run as two independent, unordered
-    /// `spawn_blocking` tasks. If the PATH scan wins the race and writes an
-    /// `External` channel first, the seed must still add the Npx channel —
-    /// gating on "row exists" (instead of "Npx channel exists") used to skip
-    /// the seed entirely, leaving upgraded users stuck with only the
-    /// auto-detected terminal channel and no npx (had to click Install by
-    /// hand in Marketplace).
+    /// Regression test: an upgraded Claude user may have only the historical
+    /// External/Terminal channel. Startup must add Npx and make it active.
     #[tokio::test]
     async fn seed_adds_npx_even_when_external_row_already_exists() {
         let _l = crate::storage::database::test_lock().lock().await;
@@ -1172,9 +1317,9 @@ mod tests {
         )
         .unwrap();
 
-        let registry = registry_with_npx("claude-acp");
-        let seeded = ensure_curated_agents_seeded(&registry).unwrap();
-        assert_eq!(seeded, 1);
+        let registry = onboarding_registry();
+        let seeded = reconcile_onboarding_agents(&registry).unwrap();
+        assert_eq!(seeded, 4);
 
         let agent = get("claude-acp").unwrap().unwrap();
         assert!(agent
@@ -1185,13 +1330,212 @@ mod tests {
             .installations
             .iter()
             .any(|i| i.method == InstallMethod::External));
-        // Pre-existing selection (External, from the PATH scan) must not be
-        // clobbered by the seed.
-        assert_eq!(agent.selected_install_method, InstallMethod::External);
+        assert_eq!(agent.selected_install_method, InstallMethod::Npx);
+
+        for id in crate::storage::curated_agents::onboarding_agent_ids() {
+            let installed = get(id).unwrap().unwrap();
+            assert!(installed
+                .installations
+                .iter()
+                .any(|i| i.method == InstallMethod::Npx));
+        }
+        assert!(get("gemini").unwrap().is_none());
 
         // Idempotent: running again seeds nothing further.
-        let seeded_again = ensure_curated_agents_seeded(&registry).unwrap();
+        let seeded_again = reconcile_onboarding_agents(&registry).unwrap();
         assert_eq!(seeded_again, 0);
+
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    #[tokio::test]
+    async fn onboarding_rejects_partial_registry_before_writing() {
+        let _l = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        let mut registry = onboarding_registry();
+        registry.agents.retain(|agent| agent.id != "qwen-code");
+        let err = reconcile_onboarding_agents(&registry).unwrap_err();
+        assert!(err.to_string().contains("qwen-code"));
+        assert!(list().unwrap().is_empty());
+
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    /// Full startup data path: cached Registry -> startup reconciliation ->
+    /// raw SQLite rows. No Marketplace handler or install endpoint is called.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn startup_registry_cache_reconciles_four_agents_into_sqlite() {
+        let _l = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let empty_path = tempfile::tempdir().unwrap();
+        let _path = PathGuard::set(empty_path.path());
+
+        let registry = onboarding_registry();
+        let registry_dir = temp.path().join("registry");
+        std::fs::create_dir_all(&registry_dir).unwrap();
+        std::fs::write(
+            registry_dir.join("registry.json"),
+            serde_json::to_vec_pretty(&registry).unwrap(),
+        )
+        .unwrap();
+
+        let cached = crate::storage::agent_registry::get_for_auto_install()
+            .await
+            .unwrap();
+        assert_eq!(reconcile_registry_state(&cached).unwrap(), 4);
+
+        let conn = crate::storage::database::connection();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, installations, selected_install_method \
+                 FROM installed_agents ORDER BY id",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 4);
+        for (id, installations_json, selected) in rows {
+            assert!(crate::storage::curated_agents::onboarding_agent_ids().contains(&id.as_str()));
+            assert_eq!(selected, "npx");
+            let installations: Vec<Installation> =
+                serde_json::from_str(&installations_json).unwrap();
+            assert_eq!(installations.len(), 1);
+            assert_eq!(installations[0].method, InstallMethod::Npx);
+            assert_eq!(installations[0].version, "1.0.0");
+        }
+
+        drop(stmt);
+        drop(conn);
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    /// Full refresh data path: different PATH environments must be reflected
+    /// in persisted External channels, including removal and path replacement.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn refresh_path_environment_updates_external_channels_in_sqlite() {
+        use crate::storage::agent_registry::{Distribution, NpxDistribution, RegistryAgent};
+
+        let _l = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        let mut registry = onboarding_registry();
+        registry.agents.push(RegistryAgent {
+            id: "local-fixture-agent".into(),
+            name: "Local fixture agent".into(),
+            version: "9.9.9".into(),
+            description: String::new(),
+            repository: None,
+            website: None,
+            authors: Vec::new(),
+            license: None,
+            icon: None,
+            distribution: Distribution {
+                npx: Some(NpxDistribution {
+                    package: "local-fixture-agent".into(),
+                    args: vec!["--acp".into()],
+                    env: HashMap::from([("REGISTRY_TOKEN".into(), "registry-value".into())]),
+                }),
+                ..Default::default()
+            },
+            terminal_launch: None,
+        });
+
+        let path_a = tempfile::tempdir().unwrap();
+        let binary_a = path_a.path().join("local-fixture-agent");
+        make_executable(&binary_a);
+        {
+            let _path = PathGuard::set(path_a.path());
+            reconcile_registry_state(&registry).unwrap();
+        }
+
+        let raw_installations = {
+            let conn = crate::storage::database::connection();
+            conn.query_row(
+                "SELECT installations FROM installed_agents WHERE id = 'local-fixture-agent'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap()
+        };
+        let installations: Vec<Installation> = serde_json::from_str(&raw_installations).unwrap();
+        assert_eq!(installations.len(), 1);
+        assert_eq!(installations[0].method, InstallMethod::External);
+        assert_eq!(installations[0].install_path.as_deref(), binary_a.to_str());
+
+        // Registry env is resolved from the distribution that produced the
+        // External binary; user overrides are persisted in SQLite and win.
+        patch_or_create(
+            "local-fixture-agent",
+            None,
+            None,
+            Some(HashMap::from([
+                ("REGISTRY_TOKEN".into(), "user-value".into()),
+                ("USER_ONLY".into(), "present".into()),
+            ])),
+            None,
+        )
+        .unwrap();
+        let rec = get("local-fixture-agent").unwrap().unwrap();
+        let effective_env = launch_env_for(&rec, registry.agents.last().unwrap());
+        assert_eq!(effective_env.get("REGISTRY_TOKEN").unwrap(), "user-value");
+        assert_eq!(effective_env.get("USER_ONLY").unwrap(), "present");
+        let raw_env_override: String = crate::storage::database::connection()
+            .query_row(
+                "SELECT env_override FROM installed_agents WHERE id = 'local-fixture-agent'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<HashMap<String, String>>(&raw_env_override)
+                .unwrap()
+                .get("REGISTRY_TOKEN")
+                .unwrap(),
+            "user-value"
+        );
+
+        // A new process environment points at a different copy. Refresh must
+        // update SQLite even though the old executable still exists on disk.
+        let path_b = tempfile::tempdir().unwrap();
+        let binary_b = path_b.path().join("local-fixture-agent");
+        make_executable(&binary_b);
+        {
+            let _path = PathGuard::set(path_b.path());
+            refresh_path_installations(&registry).unwrap();
+        }
+        assert_eq!(
+            get("local-fixture-agent").unwrap().unwrap().installations[0]
+                .install_path
+                .as_deref(),
+            binary_b.to_str()
+        );
+
+        // Removing the binary from PATH removes the auto-managed DB row.
+        let empty_path = tempfile::tempdir().unwrap();
+        {
+            let _path = PathGuard::set(empty_path.path());
+            refresh_path_installations(&registry).unwrap();
+        }
+        assert!(get("local-fixture-agent").unwrap().is_none());
+        // User-managed onboarding channels survive local-environment refresh.
+        for id in crate::storage::curated_agents::onboarding_agent_ids() {
+            assert!(get(id).unwrap().is_some());
+        }
 
         crate::storage::set_grove_dir_override(None);
     }

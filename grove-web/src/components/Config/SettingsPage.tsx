@@ -1001,15 +1001,14 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // enabled iff the marketplace reports it installed (grove-installed or
   // auto-detected) AND `supports_terminal_launch === true` (i.e. its
   // registry entry declares a `terminal_launch` config).
-  const terminalAgentOptions = useMemo(() => agentOptions.map(a => {
-    if (!hasAvailability) return a;
-    const available =
-      terminalLaunchableIds.has(a.id) || terminalLaunchableIds.has(a.value);
-    if (!available) {
-      return { ...a, disabled: true, disabledReason: `Not installed — install via Marketplace to enable` };
-    }
-    return a;
-  }), [terminalLaunchableIds, hasAvailability]);
+  const terminalAgentOptions = useMemo(() => {
+    if (!hasAvailability) return [];
+    return agentOptions.filter(
+      (agent) =>
+        terminalLaunchableIds.has(agent.id) ||
+        terminalLaunchableIds.has(agent.value),
+    );
+  }, [terminalLaunchableIds, hasAvailability]);
 
   // Chat Agent 选项：ACP base agent availability comes from backend.
   const chatAgentOptions = useMemo(() => {
@@ -1702,7 +1701,7 @@ env_vars = [
             </div>
 
             {/* Terminal Coding Agent (only for multiplexer mode) */}
-            {webTerminalMode === "multiplexer" && (
+            {webTerminalMode === "multiplexer" && terminalAgentOptions.length > 0 && (
               <div>
                 <div className="text-xs font-medium text-[var(--color-text-muted)] mb-2 uppercase tracking-wider select-none">Terminal Coding Agent</div>
                 <AgentPicker

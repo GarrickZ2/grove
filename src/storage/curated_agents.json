@@ -1,10 +1,9 @@
 {
-  "_comment": "Curated agent set shipped with grove. The marketplace uses this list to seed the picker on first launch — agents here are guaranteed to be supported (well-known wrappers, public release channels, no manual PATH dance required) and cover the three commercial ACP providers + one open-source option. New users get a one-click 'Install recommended' flow; experienced users can ignore it and pick from the full 37-agent registry. Adding a new entry is gated on the agent being stable in the upstream ACP registry for at least one release cycle.",
-  "version": 1,
+  "_comment": "Product-owned onboarding agent ids shipped with Grove. Package, version, args, and environment are resolved from the ACP registry; this file controls only which agents are reconciled automatically and recommended in Marketplace.",
+  "version": 2,
   "agents": [
     "claude-acp",
     "codex-acp",
-    "gemini",
     "github-copilot-cli",
     "qwen-code"
   ]

@@ -2,25 +2,17 @@
 //!
 //! On first launch grove copies an embedded `curated_agents.json` into
 //! `~/.grove/builtin-agents/curated.json`. The marketplace modal uses this
-//! list to render the default landing view (4 cards) and to power the
-//! "Install recommended agents" onboarding card new users see when the
-//! marketplace opens for the first time with no installed agents.
+//! list to render the default landing view (4 cards).
 //!
 //! Why ship a curated list at all? The full registry has 37 agents — showing
 //! all of them to a new user is overwhelming, and most users only need 2-3.
 //! The curated list is the "default sensible choices" answer; users can
 //! switch to the full registry view from the marketplace toolbar.
 //!
-//! Why a file on disk instead of a `const`? The list is small (4 ids) but
-//! having it as a real file means:
-//!   - Operators can add/remove entries without recompiling grove
-//!   - Tests can swap the file at runtime to verify the onboarding flow
-//!   - The marketplace modal can link to a human-readable "why these 4?"
-//!     explanation served as a static asset in a future iteration
-//!
-//! The on-disk file is **not** a list of pre-installed agents — it lists
-//! the agents grove recommends installing. The user still has to opt in
-//! (one click "Install all" or per-card install).
+//! The on-disk file mirrors the product-owned onboarding set for inspection
+//! and compatibility. Runtime auto-install policy uses
+//! [`ONBOARDING_AGENT_IDS`], so a stale or locally edited file cannot silently
+//! change startup behavior.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -28,6 +20,25 @@ use std::path::PathBuf;
 use crate::error::Result;
 
 const CURATED_JSON: &str = include_str!("curated_agents.json");
+
+/// Product-owned onboarding policy. Only the ids live in grove; package,
+/// version, args, and env are always resolved from the ACP registry.
+///
+/// Keep this separate from the operator-editable on-disk curated file: a stale
+/// or customized recommendation list must never disable first-run auto install.
+pub const ONBOARDING_AGENT_IDS: &[&str] =
+    &["claude-acp", "codex-acp", "github-copilot-cli", "qwen-code"];
+
+pub fn onboarding_agent_ids() -> &'static [&'static str] {
+    ONBOARDING_AGENT_IDS
+}
+
+pub fn onboarding_agent_ids_owned() -> Vec<String> {
+    ONBOARDING_AGENT_IDS
+        .iter()
+        .map(|id| (*id).to_string())
+        .collect()
+}
 
 /// On-disk shape of the curated list. `version` lets us rev the schema
 /// without invalidating the boot copy logic; `agents` is the ordered list
@@ -60,15 +71,20 @@ fn curated_path() -> PathBuf {
 /// Idempotent first-launch bootstrap.
 ///
 /// On every server start, ensure `~/.grove/builtin-agents/curated.json`
-/// exists. If it does not (first launch, or a user who wiped the dir), copy
-/// the embedded default. If it already exists, leave it alone — the user
-/// (or a future grove version) may have customized it.
+/// exists. A newer embedded schema replaces an older on-disk copy so product
+/// sunsets (for example Gemini) are reflected after upgrade. Same-version
+/// operator customizations remain untouched.
 ///
 /// Returns the path of the on-disk file so the caller can log it on
 /// first-touch (so the user knows where to look if they want to tune it).
 pub fn ensure_curated_file() -> Result<PathBuf> {
     let path = curated_path();
-    if !path.exists() {
+    let embedded = CuratedList::embedded();
+    let disk_version = std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<CuratedList>(&bytes).ok())
+        .map(|list| list.version);
+    if disk_version.is_none_or(|version| version < embedded.version) {
         let dir = curated_dir();
         std::fs::create_dir_all(&dir)?;
         std::fs::write(&path, CURATED_JSON)?;
@@ -87,6 +103,7 @@ pub fn ensure_curated_file() -> Result<PathBuf> {
 /// file is missing or malformed (the on-disk file is an operator override
 /// — if the override is broken we fall back to the embedded list rather
 /// than crashing the marketplace modal).
+#[allow(dead_code)]
 pub fn load() -> CuratedList {
     match std::fs::read(curated_path()) {
         Ok(bytes) => serde_json::from_slice::<CuratedList>(&bytes).unwrap_or_else(|e| {
@@ -133,23 +150,7 @@ mod tests {
     fn embedded_parses() {
         let list = CuratedList::embedded();
         assert!(list.version >= 1);
-        assert!(!list.agents.is_empty());
-        // Sanity: the 5 npx-installable curated ids. (opencode was dropped
-        // because its registry distribution is binary-only; auto_scan
-        // picks it up from PATH if installed.)
-        for expected in [
-            "claude-acp",
-            "codex-acp",
-            "gemini",
-            "github-copilot-cli",
-            "qwen-code",
-        ] {
-            assert!(
-                list.agents.contains(&expected.to_string()),
-                "curated list missing {}",
-                expected
-            );
-        }
+        assert_eq!(list.agents, onboarding_agent_ids_owned());
     }
 
     #[test]

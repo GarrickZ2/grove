@@ -72,6 +72,9 @@ fn ensure_storage_version() {
         // Up to date — just ensure DB is initialized
         let _ = storage::database::connection();
         storage::database::run_agent_graph_startup_maintenance();
+        if let Err(e) = storage::curated_agents::ensure_curated_file() {
+            eprintln!("[startup] failed to update curated agents file: {}", e);
+        }
         return;
     }
 
@@ -196,8 +199,7 @@ fn ensure_storage_version() {
     // Curated agent list — idempotent first-launch copy. On every boot we
     // make sure `~/.grove/builtin-agents/curated.json` exists; if it
     // doesn't, we drop the embedded default there. The marketplace modal
-    // reads this file to render the default landing view + the onboarding
-    // "install recommended" prompt.
+    // reads this file to render its default landing view.
     if let Err(e) = storage::curated_agents::ensure_curated_file() {
         eprintln!("[startup] failed to bootstrap curated agents file: {}", e);
     }

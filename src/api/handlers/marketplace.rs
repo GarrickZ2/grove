@@ -82,6 +82,30 @@ impl From<&InstalledAgent> for InstalledAgentView {
     }
 }
 
+fn terminal_channel_exposed(reg: &RegistryAgent) -> bool {
+    // Claude Terminal remains available to the backend for historical chats,
+    // but is no longer a selectable product surface. Future terminal-capable
+    // agents can still opt into the existing UI contract.
+    reg.terminal_launch.is_some() && reg.id != "claude-acp"
+}
+
+fn installed_view_for(reg: &RegistryAgent, agent: &InstalledAgent) -> InstalledAgentView {
+    let mut view = InstalledAgentView::from(agent);
+    if reg.terminal_launch.is_some() && !terminal_channel_exposed(reg) {
+        view.installations
+            .retain(|install| install.method != InstallMethod::External);
+        if view.selected_install_method == InstallMethod::External
+            && view
+                .installations
+                .iter()
+                .any(|install| install.method == InstallMethod::Npx)
+        {
+            view.selected_install_method = InstallMethod::Npx;
+        }
+    }
+    view
+}
+
 /// Concrete executable grove would invoke. Only populated when there's a
 /// resolvable binary path (auto-detected External installs primarily).
 #[derive(Debug, Serialize)]
@@ -192,7 +216,7 @@ pub async fn list_marketplace() -> Result<Json<MarketplaceResponse>, Marketplace
         agents,
         registry_fetched_at: fetched_at,
         registry_stale: stale,
-        curated: crate::storage::curated_agents::load().agents,
+        curated: crate::storage::curated_agents::onboarding_agent_ids_owned(),
     }))
 }
 
@@ -203,11 +227,11 @@ pub async fn refresh_registry() -> Result<Json<MarketplaceResponse>, Marketplace
         .map_err(|e| MarketplaceError::internal(format!("registry refresh failed: {}", e)))?;
     // User asked for fresh data — invalidate the auto-scan TTL AND run
     // the scan synchronously so the response reflects current PATH state.
-    installed_agents::reset_auto_scan_cache();
     let registry = agent_registry::get();
-    let _ =
-        tokio::task::spawn_blocking(move || installed_agents::auto_scan_path_binaries(&registry))
-            .await;
+    let _ = tokio::task::spawn_blocking(move || {
+        installed_agents::refresh_path_installations(&registry)
+    })
+    .await;
     list_marketplace().await
 }
 
@@ -217,7 +241,12 @@ fn build_marketplace_agent(
 ) -> MarketplaceAgent {
     let install_state = compute_install_state(installed);
     let available_install_methods = available_methods_for(reg);
-    let binary = resolve_binary_view(reg, installed);
+    let expose_terminal = terminal_channel_exposed(reg);
+    let binary = if reg.terminal_launch.is_some() && !expose_terminal {
+        None
+    } else {
+        resolve_binary_view(reg, installed)
+    };
     MarketplaceAgent {
         id: reg.id.clone(),
         name: reg.name.clone(),
@@ -233,9 +262,9 @@ fn build_marketplace_agent(
         license: reg.license.clone(),
         icon_url: reg.icon.clone(),
         available_install_methods,
-        supports_terminal_launch: reg.terminal_launch.is_some(),
+        supports_terminal_launch: expose_terminal,
         install_state,
-        installed: installed.map(InstalledAgentView::from),
+        installed: installed.map(|agent| installed_view_for(reg, agent)),
         binary,
     }
 }
@@ -714,6 +743,34 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
+    fn claude_registry_agent() -> RegistryAgent {
+        RegistryAgent {
+            id: "claude-acp".into(),
+            name: "Claude".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            repository: None,
+            website: None,
+            authors: vec![],
+            license: None,
+            icon: None,
+            distribution: crate::storage::agent_registry::Distribution {
+                npx: Some(NpxDistribution {
+                    package: "@example/claude-acp@1.0.0".into(),
+                    args: vec![],
+                    env: HashMap::new(),
+                }),
+                ..Default::default()
+            },
+            terminal_launch: Some(crate::storage::agent_registry::TerminalLaunch {
+                cmd: "claude".into(),
+                session_id_arg: "--session-id".into(),
+                resume_arg: "--resume".into(),
+                mcp_config_arg: "--mcp-config".into(),
+            }),
+        }
+    }
+
     fn npx_install(version: &str) -> Installation {
         Installation {
             method: InstallMethod::Npx,
@@ -765,5 +822,24 @@ mod tests {
 
         // No row → not-installed.
         assert_eq!(compute_install_state(None), "not-installed");
+    }
+
+    #[test]
+    fn claude_terminal_channel_is_hidden_from_marketplace_view() {
+        let agent = agent_with(
+            vec![
+                npx_install("1.0.0"),
+                external_install("/usr/local/bin/claude"),
+            ],
+            InstallMethod::Npx,
+        );
+        let view = build_marketplace_agent(&claude_registry_agent(), Some(&agent));
+
+        assert!(!view.supports_terminal_launch);
+        assert!(view.binary.is_none());
+        let installed = view.installed.unwrap();
+        assert_eq!(installed.selected_install_method, InstallMethod::Npx);
+        assert_eq!(installed.installations.len(), 1);
+        assert_eq!(installed.installations[0].method, InstallMethod::Npx);
     }
 }
