@@ -194,5 +194,30 @@ pub(crate) fn fetch_with_token(token: &str) -> Result<AgentUsage, String> {
         }
     }
 
-    usage.finalize().ok_or_else(|| "no usage windows".into())
+    // For the badge, prefer the shortest (rolling-interval) windows — those
+    // are what throttle you "now". Weekly windows are kept in `usage.windows`
+    // for the popover detail but excluded from the aggregate so a heavy week
+    // doesn't make the chat badge look critical when the next few hours are
+    // actually fine. Falls back to the global min when no interval windows
+    // are present (e.g. upstream returned only weekly).
+    let interval_min = |windows: &[UsageWindow]| -> f32 {
+        windows
+            .iter()
+            .filter(|w| w.label.ends_with("(interval)"))
+            .map(|w| w.percentage_remaining)
+            .fold(f32::INFINITY, f32::min)
+    };
+    usage
+        .finalize_with(|windows| {
+            let short = interval_min(windows);
+            if short.is_finite() {
+                short
+            } else {
+                windows
+                    .iter()
+                    .map(|w| w.percentage_remaining)
+                    .fold(f32::INFINITY, f32::min)
+            }
+        })
+        .ok_or_else(|| "no usage windows".into())
 }

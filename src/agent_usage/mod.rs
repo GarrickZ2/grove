@@ -82,9 +82,14 @@ pub struct AgentUsage {
     pub agent: String,
     /// Plan or tier name, e.g. "Claude Max", "ChatGPT Pro", "Gemini Paid".
     pub plan: Option<String>,
-    /// The smallest `percentage_remaining` across all windows (the most
-    /// constrained quota). Frontend display policy can choose a different
-    /// window, but the backend keeps this field as a pure aggregate.
+    /// The aggregated `percentage_remaining` for the badge. Each provider picks
+    /// its own aggregator via [`AgentUsage::finalize_with`] — the default is
+    /// the smallest across all windows (the most constrained quota), but a
+    /// provider with distinct short- and long-term windows (e.g. MiniMax's
+    /// rolling interval vs weekly) may prefer the short-term one so the badge
+    /// surfaces what throttles you "now" rather than what throttles you "by
+    /// end of week". All windows are still exposed via `windows` for detail
+    /// views — the frontend reads this field as-is.
     pub percentage_remaining: f32,
     /// All windows — shown as rows in the badge's hover tooltip.
     pub windows: Vec<UsageWindow>,
@@ -148,23 +153,36 @@ impl AgentUsage {
         }
     }
 
-    /// Finalize: round each window's percentage, then compute the minimum.
-    /// Rounding happens on the backend so the frontend's displayed number
-    /// and its color-threshold check stay in sync — e.g. 49.6 becomes 50
-    /// (green), not "50% in amber". Returns `None` if there are zero windows.
-    pub fn finalize(mut self) -> Option<Self> {
+    /// Finalize: round each window's percentage, then compute the minimum
+    /// across all windows. Rounding happens on the backend so the frontend's
+    /// displayed number and its color-threshold check stay in sync — e.g.
+    /// 49.6 becomes 50 (green), not "50% in amber". Returns `None` if there
+    /// are zero windows.
+    ///
+    /// Use [`AgentUsage::finalize_with`] when a provider needs a different
+    /// aggregate (e.g. "min across short-term windows only").
+    pub fn finalize(self) -> Option<Self> {
+        self.finalize_with(|windows| {
+            windows
+                .iter()
+                .map(|w| w.percentage_remaining)
+                .fold(f32::INFINITY, f32::min)
+        })
+    }
+
+    /// Finalize using a provider-specified aggregator over the windows.
+    /// Each window's percentage is rounded first (same contract as
+    /// [`AgentUsage::finalize`]); the closure then picks the final
+    /// `percentage_remaining` value, which is clamped to `0.0..=100.0`.
+    /// Returns `None` if there are zero windows.
+    pub fn finalize_with<F: FnOnce(&[UsageWindow]) -> f32>(mut self, aggregate: F) -> Option<Self> {
         if self.windows.is_empty() {
             return None;
         }
         for w in &mut self.windows {
             w.percentage_remaining = w.percentage_remaining.clamp(0.0, 100.0).round();
         }
-        let min = self
-            .windows
-            .iter()
-            .map(|w| w.percentage_remaining)
-            .fold(f32::INFINITY, f32::min);
-        self.percentage_remaining = min.clamp(0.0, 100.0);
+        self.percentage_remaining = aggregate(&self.windows).clamp(0.0, 100.0);
         Some(self)
     }
 }
@@ -408,4 +426,88 @@ pub(crate) fn clamp_percent(v: f32) -> f32 {
         return 0.0;
     }
     v.clamp(0.0, 100.0).round()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn win(label: &str, pct: f32) -> UsageWindow {
+        UsageWindow {
+            label: label.to_string(),
+            percentage_remaining: pct,
+            resets_at: None,
+            resets_in_seconds: None,
+            total_window_seconds: None,
+        }
+    }
+
+    #[test]
+    fn finalize_default_picks_global_min() {
+        let mut usage = AgentUsage::new("test");
+        usage.windows.push(win("a", 80.0));
+        usage.windows.push(win("b", 40.0));
+        usage.windows.push(win("c", 60.0));
+        let u = usage.finalize().unwrap();
+        assert_eq!(u.percentage_remaining, 40.0);
+        assert_eq!(u.windows[0].percentage_remaining, 80.0);
+    }
+
+    #[test]
+    fn finalize_with_filters_to_short_term_windows() {
+        let mut usage = AgentUsage::new("minimax");
+        usage.windows.push(win("general (interval)", 98.0));
+        usage.windows.push(win("general (weekly)", 92.0));
+        usage.windows.push(win("video (interval)", 100.0));
+        usage.windows.push(win("video (weekly)", 100.0));
+        let u = usage
+            .finalize_with(|windows| {
+                windows
+                    .iter()
+                    .filter(|w| w.label.ends_with("(interval)"))
+                    .map(|w| w.percentage_remaining)
+                    .fold(f32::INFINITY, f32::min)
+            })
+            .unwrap();
+        assert_eq!(u.percentage_remaining, 98.0);
+        assert_eq!(u.windows.len(), 4);
+    }
+
+    #[test]
+    fn finalize_with_falls_back_to_global_min_when_no_match() {
+        let mut usage = AgentUsage::new("minimax");
+        usage.windows.push(win("general (weekly)", 42.0));
+        let u = usage
+            .finalize_with(|windows| {
+                let short = windows
+                    .iter()
+                    .filter(|w| w.label.ends_with("(interval)"))
+                    .map(|w| w.percentage_remaining)
+                    .fold(f32::INFINITY, f32::min);
+                if short.is_finite() {
+                    short
+                } else {
+                    windows
+                        .iter()
+                        .map(|w| w.percentage_remaining)
+                        .fold(f32::INFINITY, f32::min)
+                }
+            })
+            .unwrap();
+        assert_eq!(u.percentage_remaining, 42.0);
+    }
+
+    #[test]
+    fn finalize_returns_none_for_empty_windows() {
+        assert!(AgentUsage::new("test").finalize().is_none());
+    }
+
+    #[test]
+    fn finalize_clamps_and_rounds() {
+        let mut usage = AgentUsage::new("test");
+        usage.windows.push(win("a", 49.6));
+        let u = usage.finalize().unwrap();
+        assert_eq!(u.percentage_remaining, 50.0);
+        assert_eq!(u.windows[0].percentage_remaining, 50.0);
+    }
 }
