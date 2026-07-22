@@ -1111,6 +1111,56 @@ pub async fn list_chats(
 }
 
 /// Create a new chat for a task
+/// Resolve an agent id to a human-friendly display name, for use as a default
+/// chat title. Personas (`ca-…`) → their configured name; custom ACP servers →
+/// their name; built-in agents → the supplement display name ("Claude Code",
+/// "Gemini", …); anything else falls back to the raw id.
+pub(crate) fn agent_display_name(agent: &str, cfg: &config::Config) -> String {
+    // Persona (SQLite) — try_get_persona only touches the DB for `ca-` ids.
+    if let Ok(Some(persona)) = crate::storage::custom_agent::try_get_persona(agent) {
+        return persona.name;
+    }
+    // Custom ACP server (config TOML).
+    if let Some(server) = cfg.acp.custom_agents.iter().find(|s| s.id == agent) {
+        return server.name.clone();
+    }
+    // Built-in agent — supplement display name (matches canonical or legacy id).
+    if let Some(name) = crate::storage::agent_supplement::find_supplement(agent)
+        .and_then(|entry| entry.display_name)
+    {
+        return name.to_string();
+    }
+    agent.to_string()
+}
+
+/// Build a default chat title from the agent's display name, disambiguated
+/// against the task's existing chats with a numeric suffix ("Claude Code",
+/// "Claude Code 2", …). This replaces the old "New Session <date>" titles so a
+/// task with several sessions is legible at a glance (e.g. in the Blitz grid /
+/// chat picker) without opening each one.
+pub(crate) fn default_chat_title(
+    agent: &str,
+    cfg: &config::Config,
+    project: &str,
+    task_id: &str,
+) -> String {
+    let base = agent_display_name(agent, cfg);
+    let existing: std::collections::HashSet<String> = tasks::load_chat_sessions(project, task_id)
+        .map(|chats| chats.into_iter().map(|c| c.title).collect())
+        .unwrap_or_default();
+    if !existing.contains(&base) {
+        return base;
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{base} {n}");
+        if !existing.contains(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 pub async fn create_chat(
     Path((project_id, task_id)): Path<(String, String)>,
     Json(body): Json<CreateChatRequest>,
@@ -1172,7 +1222,8 @@ pub async fn create_chat(
     let now = chrono::Utc::now();
     let title = body
         .title
-        .unwrap_or_else(|| format!("New Chat {}", now.format("%Y-%m-%d %H:%M")));
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| default_chat_title(&agent, &cfg, &project_key, &task_id));
 
     let chat = tasks::ChatSession {
         id: tasks::generate_chat_id(),

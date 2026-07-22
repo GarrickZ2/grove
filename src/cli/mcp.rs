@@ -2785,11 +2785,13 @@ async fn start_chat_impl(p: StartChatParams) -> Result<CallToolResult, McpError>
     let resolved = acp::resolve_agent(&agent_name)
         .ok_or_else(|| McpError::invalid_params(format!("Unknown agent: {}", agent_name), None))?;
 
-    // Create chat session in storage
+    // Create chat session in storage. Default the title to the agent's display
+    // name (disambiguated with a numeric suffix) so spawned sessions are
+    // legible at a glance, matching the web create-chat path.
     let now = chrono::Utc::now();
-    let title = p
-        .name
-        .unwrap_or_else(|| format!("New Chat {}", now.format("%Y-%m-%d %H:%M")));
+    let title = p.name.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| {
+        crate::api::handlers::acp::default_chat_title(&agent_name, &cfg, &project_key, &p.task_id)
+    });
     let chat_id = tasks::generate_chat_id();
 
     let chat = tasks::ChatSession {
