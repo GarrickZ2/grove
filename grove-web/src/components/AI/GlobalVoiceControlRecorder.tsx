@@ -316,7 +316,7 @@ export function GlobalVoiceControlRecorder({
   // programmatically (e.g. from a future macro system).
   useDefineCommand(
     {
-      id: "voice_control.ptt.start",
+      id: "voiceControl.ptt.start",
       name: "Voice Control Push-to-Talk Start",
       category: "Voice Control",
       scope: "workspace",
@@ -328,7 +328,7 @@ export function GlobalVoiceControlRecorder({
   );
   useDefineCommand(
     {
-      id: "voice_control.ptt.stop",
+      id: "voiceControl.ptt.stop",
       name: "Voice Control Push-to-Talk Stop",
       category: "Voice Control",
       scope: "workspace",
@@ -340,7 +340,7 @@ export function GlobalVoiceControlRecorder({
   );
   useDefineCommand(
     {
-      id: "voice_control.toggle",
+      id: "voiceControl.toggle",
       name: "Voice Control Toggle Recording",
       category: "Voice Control",
       scope: "workspace",

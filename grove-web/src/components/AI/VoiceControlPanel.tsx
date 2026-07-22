@@ -50,7 +50,7 @@ export function VoiceControlPanel({
   onSettingsSaved,
 }: VoiceControlPanelProps) {
   // Track registry version so dynamically registered commands (e.g.
-  // voice_control.* from GlobalVoiceControlRecorder) appear in the list even
+  // voiceControl.* from GlobalVoiceControlRecorder) appear in the list even
   // when this panel mounts before those components complete their first render.
   const [registryVersion, setRegistryVersion] = useState(0);
   useEffect(() => commandRegistry.subscribe(() => setRegistryVersion((v) => v + 1)), []);
@@ -134,13 +134,13 @@ export function VoiceControlPanel({
     try {
       if (key) {
         await persistOverride({
-          command_id: "voice_control.ptt.start",
+          command_id: "voiceControl.ptt.start",
           key,
           when_ctx: undefined,
           scope: undefined,
         });
       } else {
-        await persistRemoveOverride("voice_control.ptt.start");
+        await persistRemoveOverride("voiceControl.ptt.start");
       }
     } catch (err) {
       console.error("[VoiceControlPanel] mirror PTT → keymap failed:", err);
