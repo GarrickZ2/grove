@@ -18,6 +18,7 @@ import {
 import { PreviewCommentHost } from "../Review/PreviewCommentHost";
 import type { PreviewCommentLocator, PreviewCommentDraft } from "../../context";
 import { useKeyboardScope, useCommand, useContextKey } from "../../keyboard";
+import type { FileLocation } from "./fileLocation";
 
 
 export function getExtBadge(name: string): string {
@@ -146,6 +147,8 @@ interface FilePreviewDrawerProps {
    *  surfaces that aren't task-scoped (e.g. project-level shared resources)
    *  — those refs then stay as plain text. */
   sketchContext?: { projectId: string; taskId: string };
+  /** Storage namespace and path of the previewed file. */
+  location?: FileLocation;
 }
 
 export function FilePreviewDrawer({
@@ -165,6 +168,7 @@ export function FilePreviewDrawer({
   previewCommentMarkers,
   previewCommentDrafts,
   sketchContext,
+  location,
 }: FilePreviewDrawerProps) {
   const renderer = getPreviewRenderer(fileName, 'full');
   const wide = renderer?.id === 'html';
@@ -669,7 +673,7 @@ export function FilePreviewDrawer({
                 {content}
               </pre>
             );
-          })() : isLargeMarkdown ? (
+          })(          ) : isLargeMarkdown ? (
             <PreviewCommentHost
               previewComment={
                 commentable
@@ -685,6 +689,7 @@ export function FilePreviewDrawer({
                 onD2Click={setLightboxSvg}
                 sketchContext={sketchContext}
                 sketchRenderMode="image"
+                location={location}
                 onHeadingsChange={setVirtHeadings}
                 onSearchStateChange={(t, c) => {
                   setVirtTotal(t);
@@ -706,6 +711,7 @@ export function FilePreviewDrawer({
                 onSvgClick: setLightboxSvg,
                 previewComment: commentable ? { enabled: commentMode && !pendingLocator, previewId, markers: stableMarkers } : undefined,
                 sketchContext,
+                location,
               })}
             </div>
           ) : (() => {

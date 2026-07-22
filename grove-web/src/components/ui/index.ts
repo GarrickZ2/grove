@@ -8,6 +8,8 @@ export { AppPicker, ideAppOptions, terminalAppOptions } from "./AppPicker";
 export { AgentPicker, AgentPickerMenuItems, agentOptions } from "./AgentPicker";
 export { CustomAgentModal } from "./CustomAgentModal";
 export { MarkdownRenderer } from "./MarkdownRenderer";
+export { resolveFileReference, resolveRelativeFilePath } from "./fileLocation";
+export type { FileLocation, FileRoot } from "./fileLocation";
 export { TocPanel, type TocEntry } from "./MarkdownToc";
 export { extractToc } from "./extractToc";
 export { SketchChip } from "./SketchChip";

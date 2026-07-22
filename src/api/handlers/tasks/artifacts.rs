@@ -284,16 +284,18 @@ pub async fn preview_artifact(
 pub async fn download_artifact(
     Path((id, task_id)): Path<(String, String)>,
     Query(query): Query<ArtifactQuery>,
-) -> Result<impl IntoResponse, StatusCode> {
-    let (project, project_key) = find_project_by_id(&id)?;
-    let task_dir =
-        resolve_task_dir(&project, &project_key, &task_id).ok_or(StatusCode::NOT_FOUND)?;
-    let file_path = task_dir.join(&query.dir).join(&query.path);
-    let canonical_file = studio_common::validate_path_containment(&task_dir, &file_path)
-        .map_err(|(status, _)| status)?;
-    let (headers, content) =
-        studio_common::download_file(&canonical_file).map_err(|(status, _)| status)?;
-    Ok((headers, content))
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, ApiErr> {
+    crate::api::handlers::files::serve(
+        id,
+        crate::api::handlers::files::FileRoot::Task(task_id),
+        crate::api::handlers::files::RawFileQuery {
+            path: format!("{}/{}", query.dir, query.path),
+            disposition: crate::api::handlers::files::Disposition::Attachment,
+        },
+        headers,
+    )
+    .await
 }
 
 /// DELETE /api/v1/projects/{id}/tasks/{taskId}/artifacts

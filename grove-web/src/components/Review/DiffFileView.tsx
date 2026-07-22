@@ -1653,7 +1653,11 @@ export function DiffFileView({
                         const content = viewMode === 'full' && fullFileContent != null
                           ? fullFileContent
                           : file.hunks.flatMap(h => h.lines.filter(l => l.line_type !== 'delete').map(l => l.content)).join('\n');
-                        const projectContext = projectId && taskId ? { projectId, taskId } : undefined;
+                        const location = projectId && taskId ? {
+                          projectId,
+                          root: { kind: "task" as const, taskId },
+                          path: file.new_path,
+                        } : undefined;
                         return content.trim()
                           ? previewRenderer.renderFull({
                               content,
@@ -1663,7 +1667,7 @@ export function DiffFileView({
                               previewComment: previewRenderer.supportsComments !== false && projectId && taskId
                                 ? { enabled: previewCommentMode, previewId: previewCommentId, markers: previewCommentMarkers }
                                 : undefined,
-                              projectContext,
+                              location,
                             })
                           : <div className="preview-loading">No content to render</div>;
                       })()
@@ -1680,9 +1684,22 @@ export function DiffFileView({
                               previewComment: previewRenderer.supportsComments !== false && projectId && taskId
                                 ? { enabled: previewCommentMode, previewId: previewCommentId, markers: previewCommentMarkers }
                                 : undefined,
-                              projectContext: projectId && taskId ? { projectId, taskId } : undefined,
+                              location: projectId && taskId ? {
+                                projectId,
+                                root: { kind: "task", taskId },
+                                path: file.new_path,
+                              } : undefined,
                             })
-                          : <MarkdownRenderer content={fullFileContent} onImageClick={setLightboxUrl} onMermaidClick={setLightboxSvg} />
+                          : <MarkdownRenderer
+                              content={fullFileContent}
+                              onImageClick={setLightboxUrl}
+                              onMermaidClick={setLightboxSvg}
+                              location={projectId && taskId ? {
+                                projectId,
+                                root: { kind: "task", taskId },
+                                path: file.new_path,
+                              } : undefined}
+                            />
                       ) : (
                         <div className="preview-loading">Failed to load file content</div>
                       )
@@ -1691,7 +1708,16 @@ export function DiffFileView({
                         const segmentsContent = previewSegments.map((seg) =>
                           seg.type === 'markdown' ? (
                             <div key={seg.id} className={`preview-block-${seg.kind}`}>
-                              <MarkdownRenderer content={seg.content} onImageClick={setLightboxUrl} onMermaidClick={setLightboxSvg} />
+                              <MarkdownRenderer
+                                content={seg.content}
+                                onImageClick={setLightboxUrl}
+                                onMermaidClick={setLightboxSvg}
+                                location={projectId && taskId ? {
+                                  projectId,
+                                  root: { kind: "task", taskId },
+                                  path: file.new_path,
+                                } : undefined}
+                              />
                             </div>
                           ) : seg.language === 'mermaid' ? (
                             <MermaidBlock key={seg.id} code={seg.lines.map(l => l.content).join('\n')} onPreviewClick={setLightboxSvg} />

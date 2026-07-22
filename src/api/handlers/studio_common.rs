@@ -174,23 +174,6 @@ pub fn decode_text_bytes(content: &[u8]) -> String {
     }
 }
 
-/// Guess the MIME `Content-Type` from a file extension.
-/// Returns `"application/octet-stream"` for unknown extensions.
-pub fn guess_content_type(extension: Option<&str>) -> &'static str {
-    match extension {
-        Some("pdf") => "application/pdf",
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("svg") => "image/svg+xml",
-        Some("webp") => "image/webp",
-        Some("json") => "application/json",
-        Some("csv") => "text/csv",
-        Some("md" | "txt" | "log") => "text/plain; charset=utf-8",
-        _ => "application/octet-stream",
-    }
-}
-
 // ── Flow-level operations (shared between artifacts & resources) ─────────────
 
 use crate::api::error::ApiError;
@@ -253,39 +236,6 @@ pub fn preview_file(canonical_path: &Path) -> Result<(&'static str, String), Api
     })?;
 
     Ok(("text/plain; charset=utf-8", decode_text_bytes(&content)))
-}
-
-/// Read a file and build a download response (content-type + disposition header).
-/// Returns `((content_type, content_disposition), bytes)`.
-#[allow(clippy::type_complexity)]
-pub fn download_file(canonical_path: &Path) -> Result<([(String, String); 2], Vec<u8>), ApiErr> {
-    let content = std::fs::read(canonical_path).map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiError {
-                error: "Failed to read file".to_string(),
-            }),
-        )
-    })?;
-    let filename = sanitize_filename_for_header(
-        &canonical_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "download".to_string()),
-    );
-    let ext = canonical_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_string());
-    let content_type = guess_content_type(ext.as_deref());
-    let headers = [
-        ("content-type".to_string(), content_type.to_string()),
-        (
-            "content-disposition".to_string(),
-            format!("attachment; filename=\"{}\"", filename),
-        ),
-    ];
-    Ok((headers, content))
 }
 
 /// Process a multipart upload into `dest_dir`.

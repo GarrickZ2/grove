@@ -340,6 +340,20 @@ pub fn create_api_router() -> Router {
         .route("/projects/{id}", patch(handlers::projects::rename_project))
         .route("/projects/{id}", delete(handlers::projects::delete_project))
         .route("/projects/{id}/stats", get(handlers::projects::get_stats))
+        // Unified read-only file API. Project, Resource and Task routes share
+        // the same resolver, access policy and streaming response builder.
+        .route(
+            "/projects/{id}/files/raw",
+            get(handlers::files::project_file),
+        )
+        .route(
+            "/projects/{id}/resource/files/raw",
+            get(handlers::files::resource_file),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/files/raw",
+            get(handlers::files::task_file),
+        )
         // Studio Resource API
         .route(
             "/projects/{id}/resource",

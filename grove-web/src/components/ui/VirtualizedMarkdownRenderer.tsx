@@ -76,6 +76,8 @@ export interface VirtualizedMarkdownRendererProps {
   enableRunCommand?: boolean;
   sketchContext?: React.ComponentProps<typeof MarkdownRenderer>["sketchContext"];
   sketchRenderMode?: React.ComponentProps<typeof MarkdownRenderer>["sketchRenderMode"];
+  /** Storage namespace and path of the markdown file. */
+  location?: React.ComponentProps<typeof MarkdownRenderer>["location"];
 }
 
 /** Recursively pull text out of an mdast node. Must match exactly what the
@@ -297,6 +299,7 @@ export const VirtualizedMarkdownRenderer = forwardRef<
     enableRunCommand,
     sketchContext,
     sketchRenderMode,
+    location,
   } = props;
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -603,6 +606,7 @@ export const VirtualizedMarkdownRenderer = forwardRef<
             enableRunCommand={enableRunCommand}
             sketchContext={sketchContext}
             sketchRenderMode={sketchRenderMode}
+            location={location}
             // Heading IDs are owned by the virtualized wrapper above (via
             // `id={headingId}` derived from a single global slugger), not by
             // per-block render. Leaving this off avoids the per-block
@@ -624,6 +628,7 @@ export const VirtualizedMarkdownRenderer = forwardRef<
       enableRunCommand,
       sketchContext,
       sketchRenderMode,
+      location,
     ],
   );
 

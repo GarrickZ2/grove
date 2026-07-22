@@ -3,7 +3,6 @@
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
-    response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -447,73 +446,24 @@ pub async fn get_file(
 /// file extension. Unlike `get_file`, this serves binary assets (images,
 /// PDFs, etc.) for embedding via `<img src>` and similar.
 ///
-/// Path resolution: relative paths resolve against the task's worktree
-/// directory; absolute paths are used as-is. No containment check is
-/// performed — Grove is a local desktop tool and the user explicitly
-/// opted in to unrestricted local file access for embedded media.
+/// Compatibility route backed by the unified file service. Relative paths
+/// resolve against the task root; canonical paths must remain within the
+/// task/project/registered-workdir roots selected by that service.
 pub async fn get_file_raw(
     Path((id, task_id)): Path<(String, String)>,
     Query(params): Query<FilePathQuery>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
-    let (_project, project_key) = find_project_by_id(&id).map_err(|s| {
-        (
-            s,
-            Json(ApiError {
-                error: "Project not found".to_string(),
-            }),
-        )
-    })?;
-
-    let task = tasks::get_task(&project_key, &task_id)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: format!("Failed to load task: {}", e),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError {
-                    error: "Task not found".to_string(),
-                }),
-            )
-        })?;
-
-    let requested = PathBuf::from(&params.path);
-    let abs_path = if requested.is_absolute() {
-        requested
-    } else {
-        PathBuf::from(&task.worktree_path).join(&requested)
-    };
-
-    let bytes = std::fs::read(&abs_path).map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiError {
-                error: format!("Failed to read {}: {}", abs_path.display(), e),
-            }),
-        )
-    })?;
-
-    let mime = mime_guess::from_path(&abs_path)
-        .first_or_octet_stream()
-        .essence_str()
-        .to_string();
-
-    // `no-cache` forces the browser to revalidate before reusing a cached copy.
-    // Without it, image/media previews keep serving stale bytes after the file
-    // changes on disk until a hard refresh or server restart. Combined with the
-    // `_t=` cache-buster the editor appends on Refresh, previews stay fresh.
-    Ok((
-        [
-            ("content-type", mime),
-            ("cache-control", "no-cache".to_string()),
-        ],
-        bytes,
-    ))
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, (StatusCode, Json<ApiError>)> {
+    crate::api::handlers::files::serve(
+        id,
+        crate::api::handlers::files::FileRoot::Task(task_id),
+        crate::api::handlers::files::RawFileQuery {
+            path: params.path,
+            disposition: crate::api::handlers::files::Disposition::Inline,
+        },
+        headers,
+    )
+    .await
 }
 
 /// PUT /api/v1/projects/{id}/tasks/{taskId}/file?path=src/main.rs

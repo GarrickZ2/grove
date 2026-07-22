@@ -1333,6 +1333,11 @@ export function ResourcePage() {
             loading={previewLoading}
             onClose={() => setPreviewFile(null)}
             onDownload={() => handleDownload(previewFile.file)}
+            location={projectId ? {
+              projectId,
+              root: { kind: "resource" },
+              path: previewFile.file.path,
+            } : undefined}
           />
         )}
       </AnimatePresence>

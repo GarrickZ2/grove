@@ -50,34 +50,11 @@ import { sketchThumbnailUrl } from "../../api/sketches";
 import { highlightLines, normalizeLanguage } from "../Review/syntaxHighlight";
 import { createSlugger } from "./headingSlug";
 import { useTheme } from "../../context/ThemeContext";
+import { isAbsoluteFileReference, resolveFileReference, type FileLocation } from "./fileLocation";
+import { normalizeStrongEmphasis } from "./markdownPreprocess";
 
 /** Languages whose code blocks may be executed in the terminal. */
 const RUNNABLE_SHELL_LANGS = new Set(["bash", "sh", "shell", "zsh"]);
-
-// URL prefix set that we treat as absolute / protocol-relative / fragment and
-// therefore pass through unchanged when resolving iframe src.
-const ABSOLUTE_URL_RE = /^(https?:\/\/|data:|blob:|mailto:|tel:|#|javascript:)/i;
-
-/** Build an iframe src resolver from a project context. Worktree-relative
- *  paths are joined with the parent directory of `fileName` and rewritten
- *  into the backend's raw-file endpoint. Absolute / protocol-relative /
- *  fragment URLs are passed through unchanged. */
-function buildIframeSrcResolver(
-  projectContext: { projectId: string; taskId: string; fileName?: string } | undefined,
-): ((src: string) => string) | undefined {
-  if (!projectContext) return undefined;
-  const parentDir =
-    projectContext.fileName && projectContext.fileName.includes("/")
-      ? projectContext.fileName.substring(0, projectContext.fileName.lastIndexOf("/")) + "/"
-      : "";
-  return (src: string) => {
-    const trimmed = src.trim();
-    if (!trimmed) return src;
-    if (ABSOLUTE_URL_RE.test(trimmed) || trimmed.startsWith("/")) return src;
-    const resolvedPath = parentDir + trimmed;
-    return `/api/v1/projects/${projectContext.projectId}/tasks/${projectContext.taskId}/file/raw?path=${encodeURIComponent(resolvedPath)}`;
-  };
-}
 
 /** Event name for command injection into an active XTerminal. */
 export const TERMINAL_INJECT_EVENT = "grove:terminal-inject";
@@ -769,7 +746,7 @@ function CodeBlock({
   );
 }
 
-interface MarkdownRendererProps {
+export interface MarkdownRendererProps {
   content: string;
   /** When provided, inline code matching file path patterns become clickable.
    *  Must return whether the navigation succeeded — `false` triggers the
@@ -778,19 +755,9 @@ interface MarkdownRendererProps {
   onFileClick?: (filePath: string, line?: number) => Promise<boolean>;
   /** When provided, relative image src values are resolved via this function */
   resolveImageUrl?: (src: string) => string;
-  /** Project + task identity and the worktree-relative path of the markdown
-   *  file being rendered. When provided, MarkdownRenderer resolves relative
-   *  iframe `src` values (e.g. `<iframe src="../internal/foo.html">`) against
-   *  `fileName`'s parent directory and rewrites them into the backend's raw
-   *  file endpoint. Absolute / protocol-relative / fragment URLs are passed
-   *  through unchanged. Without this prop, iframe src is left untouched. */
-  projectContext?: {
-    projectId: string;
-    taskId: string;
-    /** Worktree-relative path of the markdown file. Optional — when missing,
-     *  relative iframe src values are joined with the worktree root. */
-    fileName?: string;
-  };
+  /** Storage namespace and path of the markdown file. Relative embedded
+   *  resources are resolved through the matching backend adapter. */
+  location?: FileLocation;
   /** When provided, clicking a rendered mermaid diagram triggers this callback with the SVG */
   onMermaidClick?: (svg: string) => void;
   /** When provided, clicking a rendered D2 diagram triggers this callback with the SVG */
@@ -963,20 +930,18 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
   };
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, projectContext, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode = "chip", enableHeadingIds }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, location, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode = "chip", enableHeadingIds }: MarkdownRendererProps) {
   const processedContent = useMemo(() => {
-    let out = preprocessInlineCodeUrls(content);
+    let out = normalizeStrongEmphasis(content);
+    out = preprocessInlineCodeUrls(out);
     if (sketchContext) out = preprocessSketchUrls(out);
     return out;
   }, [content, sketchContext]);
-  // Resolve worktree-relative iframe src values when a project context is
-  // available. The resolver is pure given (projectContext.fileName) so
-  // memoizing it on the context avoids re-creating the closure on every
-  // render. Without projectContext, iframe src is left untouched (the
-  // iframe component checks for the resolver's presence).
-  const iframeSrcResolver = useMemo(
-    () => buildIframeSrcResolver(projectContext),
-    [projectContext],
+  // Resolve file-relative resources through the adapter selected by location.
+  // Without a location, references retain the browser's default behavior.
+  const resourceSrcResolver = useMemo(
+    () => (src: string) => resolveFileReference(location, src),
+    [location],
   );
   // Slugger must reset every render: react-markdown calls heading components
   // in document order, so a per-render slugger sees each heading once and
@@ -995,13 +960,13 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
     };
     return ({
         h1: ({ children, ...props }) => (
-          <h1 id={slug(children, props.id)} className="text-lg font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0 scroll-mt-4">{children}</h1>
+          <h1 id={slug(children, props.id)} className="text-xl font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0 scroll-mt-4">{children}</h1>
         ),
         h2: ({ children, ...props }) => (
-          <h2 id={slug(children, props.id)} className="text-base font-semibold text-[var(--color-text)] mt-3 mb-2 scroll-mt-4">{children}</h2>
+          <h2 id={slug(children, props.id)} className="text-lg font-semibold text-[var(--color-text)] mt-3 mb-2 scroll-mt-4">{children}</h2>
         ),
         h3: ({ children, ...props }) => (
-          <h3 id={slug(children, props.id)} className="text-sm font-semibold text-[var(--color-text)] mt-3 mb-1 scroll-mt-4">{children}</h3>
+          <h3 id={slug(children, props.id)} className="text-base font-semibold text-[var(--color-text)] mt-3 mb-1 scroll-mt-4">{children}</h3>
         ),
         h4: ({ children, ...props }) => (
           <h4 id={slug(children, props.id)} className="text-sm font-medium text-[var(--color-text)] mt-2 mb-1 scroll-mt-4">{children}</h4>
@@ -1061,7 +1026,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
               const finalLine = line ?? (textMatch?.[2] ? parseInt(textMatch[2], 10) : undefined);
               const fallback = (
                 <a
-                  href={href}
+                  href={location ? resourceSrcResolver(href) : href}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[var(--color-highlight)] hover:underline break-words"
@@ -1084,7 +1049,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           // the Tauri-vs-browser split centrally.
           return (
             <a
-              href={href}
+              href={href && location ? resourceSrcResolver(href) : href}
               target="_blank"
               rel="noopener noreferrer"
               className="text-[var(--color-highlight)] hover:underline break-words"
@@ -1167,7 +1132,14 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
         },
         img: ({ src, alt }) => {
           if (!src) return null;
-          const resolved = resolveImageUrl ? resolveImageUrl(src) : src;
+          // Caller-supplied resolver wins (e.g. TaskChat uses this to keep
+          // image rendering behavior stable across task scopes). When the
+          // caller doesn't provide one, resolve through the file's source.
+          const resolved = resolveImageUrl
+            ? resolveImageUrl(src)
+            : location
+            ? resourceSrcResolver(src)
+            : src;
           return (
             <img
               src={resolved}
@@ -1187,9 +1159,23 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           // rehype-sanitize has already stripped non-allowlisted attributes and
           // rejected non-http(s) src schemes. We only need to apply safe
           // defaults for sandbox / referrer policy when the author omitted
-          // them, and resolve worktree-relative src values when a project
-          // context is available.
-          const resolvedSrc = iframeSrcResolver ? iframeSrcResolver(src ?? "") : src;
+          // them, and resolve file-relative src values when a location is
+          // available.
+          const rawSrc = src?.trim() ?? "";
+          const resolvedSrc = location ? resourceSrcResolver(rawSrc) : rawSrc;
+          const unresolvedRelativeSrc =
+            !isAbsoluteFileReference(rawSrc) &&
+            (!location || resolvedSrc === rawSrc);
+          if (!rawSrc || unresolvedRelativeSrc) {
+            return (
+              <div
+                role="alert"
+                className="my-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs text-[var(--color-text-muted)]"
+              >
+                Embedded resource unavailable
+              </div>
+            );
+          }
           return (
             <iframe
               src={resolvedSrc}
@@ -1234,7 +1220,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           return <input {...props} />;
         },
     });
-  }, [onFileClick, resolveImageUrl, iframeSrcResolver, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode, enableHeadingIds]);
+  }, [onFileClick, resolveImageUrl, location, resourceSrcResolver, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode, enableHeadingIds]);
 
   return (
     <ReactMarkdown

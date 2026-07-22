@@ -693,6 +693,11 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
             previewCommentDrafts={currentFilePreviewDrafts}
             previewCommentMarkers={currentFilePreviewMarkers}
             sketchContext={projectId ? { projectId, taskId: task.id } : undefined}
+            location={projectId ? {
+              projectId,
+              root: { kind: "task", taskId: task.id },
+              path: `${previewFile.file.directory}/${previewFile.file.path}`,
+            } : undefined}
           />
         )}
       </AnimatePresence>

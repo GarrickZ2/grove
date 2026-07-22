@@ -265,12 +265,18 @@ pub async fn preview_resource(
 pub async fn download_resource(
     Path(id): Path<String>,
     Query(query): Query<ResourceFileQuery>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
-    let (_project, studio_dir) = resolve_studio_dir(&id)?;
-    let resource_dir = studio_dir.join("resource");
-    let canonical_file = resolve_resource_file(&resource_dir, &query.path)?;
-    let (headers, content) = studio_common::download_file(&canonical_file)?;
-    Ok((headers, content))
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, (StatusCode, Json<ApiError>)> {
+    crate::api::handlers::files::serve(
+        id,
+        crate::api::handlers::files::FileRoot::Resource,
+        crate::api::handlers::files::RawFileQuery {
+            path: query.path,
+            disposition: crate::api::handlers::files::Disposition::Attachment,
+        },
+        headers,
+    )
+    .await
 }
 
 /// POST /api/v1/projects/{id}/resource/open?path=<rel>

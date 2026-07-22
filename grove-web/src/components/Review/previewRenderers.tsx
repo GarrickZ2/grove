@@ -5,6 +5,7 @@ import { PreviewCommentHost } from './PreviewCommentHost';
 import { highlightCode as highlightLocal, detectLanguage as detectLanguageLocal } from './syntaxHighlight';
 import type { DiffFile } from '../../api/review';
 import type { DataTable } from './dataTableParsers';
+import type { FileLocation } from '../ui/fileLocation';
 
 // AG Grid Community + papaparse together weigh ~300 kB gzipped. The data-table
 // preview only renders when the user opens a .csv / .tsv / .jsonl artifact, so
@@ -65,11 +66,8 @@ export interface RenderFullProps {
    *  inline image of the sketch's PNG render (lightbox on click; falls back
    *  to plain text if the render is missing). */
   sketchContext?: { projectId: string; taskId: string };
-  /** Project + task identity for the worktree currently being previewed. Used
-   *  by renderers (currently only markdown) to rewrite worktree-relative
-   *  resource URLs (e.g. `<iframe src="../internal/foo.html">`) into backend
-   *  endpoints that serve the file. */
-  projectContext?: { projectId: string; taskId: string };
+  /** Storage namespace and path of the file currently being previewed. */
+  location?: FileLocation;
 }
 
 export interface PreviewRenderer {
@@ -116,7 +114,7 @@ const markdownRenderer: PreviewRenderer = {
   label: 'Preview markdown',
   match: (path) => /\.(md|markdown)$/i.test(path),
   contentType: 'text',
-  renderFull: ({ content, onImageClick, onSvgClick, previewComment, sketchContext, projectContext, fileName }) => withCommentHost(
+  renderFull: ({ content, onImageClick, onSvgClick, previewComment, sketchContext, location }) => withCommentHost(
     <MarkdownRenderer
       content={content}
       onImageClick={onImageClick}
@@ -125,7 +123,7 @@ const markdownRenderer: PreviewRenderer = {
       enableHeadingIds
       sketchContext={sketchContext}
       sketchRenderMode="image"
-      projectContext={projectContext ? { ...projectContext, fileName } : undefined}
+      location={location}
     />,
     previewComment,
   ),
