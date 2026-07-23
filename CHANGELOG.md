@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.9] - 2026-07-23
+
+### Added
+
+- **Richer completed-turn presentation** — Completed chat turns now have a clearer, more polished presentation, and notifications can be cleared all at once.
+- **Markdown worktree resources and HTML previews** — Markdown now resolves local file resources consistently, including raw HTML rendered with worktree-relative iframe sources.
+
+### Improved
+
+- **Reliable diagnostics and quota badges** — Web sourcemaps are emitted for crash diagnostics, while providers can customize their aggregate quota badge.
+
+### Fixed
+
+- **Chat and agent reliability** — Billion-token counts and voice-command IDs are formatted correctly, agent icons resolve from display names, onboarding installs automatically, and the app recovers from white-screen crashes.
+- **Code Review file and diff interactions** — Binary and image files render directly; preview availability is capability-aware; and split-diff selection, copying, hovering, and expand/collapse controls work correctly.
+
 ## [0.11.8] - 2026-07-13
 
 ### Added
