@@ -530,9 +530,20 @@ function fileUrlToPath(uri: string | undefined): string | null {
 // ─── Render grouping types ───────────────────────────────────────────────────
 
 type ToolSectionItem = { message: ToolMessage; index: number };
+type WorkSummaryItem = {
+  message: Extract<ChatMessage, { type: "assistant" | "thinking" | "tool" }>;
+  index: number;
+};
 type RenderItem =
   | { kind: "single"; message: ChatMessage; index: number }
-  | { kind: "tool-section"; sectionId: string; tools: ToolSectionItem[] };
+  | { kind: "tool-section"; sectionId: string; tools: ToolSectionItem[] }
+  | {
+      kind: "work-summary";
+      sectionId: string;
+      items: WorkSummaryItem[];
+      durationSeconds?: number;
+    }
+  | { kind: "file-change-summary"; sectionId: string; tools: ToolSectionItem[] };
 
 /** A user prompt and the assistant material that follows it.  This is a
  * presentation-only projection of `messages`: the full message history
@@ -618,7 +629,10 @@ function buildConversationTurns(
 }
 
 /** Group consecutive tool messages into sections; everything else is a single item */
-function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
+function buildSequentialRenderItems(
+  messages: ChatMessage[],
+  startIndex = 0,
+): RenderItem[] {
   const items: RenderItem[] = [];
   let toolBuf: ToolSectionItem[] = [];
 
@@ -633,7 +647,8 @@ function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
     }
   };
 
-  messages.forEach((msg, i) => {
+  messages.forEach((msg, offset) => {
+    const i = startIndex + offset;
     if (msg.type === "tool") {
       toolBuf.push({ message: msg, index: i });
     } else if (msg.type === "auth_required") {
@@ -646,6 +661,136 @@ function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
     }
   });
   flush();
+  return items;
+}
+
+/**
+ * Keep the live turn chronological, then compact completed turns in the same
+ * way command-oriented agents do: everything through the final tool call is
+ * one expandable work record, while the answer emitted after that boundary
+ * remains fully visible.
+ */
+function buildRenderItems(messages: ChatMessage[], isBusy = false): RenderItem[] {
+  const items: RenderItem[] = [];
+  let cursor = 0;
+
+  while (cursor < messages.length) {
+    let userIndex = cursor;
+    while (userIndex < messages.length && messages[userIndex].type !== "user") {
+      userIndex += 1;
+    }
+    if (userIndex >= messages.length) {
+      items.push(...buildSequentialRenderItems(messages.slice(cursor), cursor));
+      break;
+    }
+
+    items.push(...buildSequentialRenderItems(messages.slice(cursor, userIndex), cursor));
+    items.push({ kind: "single", message: messages[userIndex], index: userIndex });
+
+    let nextUserIndex = userIndex + 1;
+    while (
+      nextUserIndex < messages.length &&
+      messages[nextUserIndex].type !== "user"
+    ) {
+      nextUserIndex += 1;
+    }
+    const isLatestTurn = nextUserIndex === messages.length;
+    const turnEntries = messages.slice(userIndex + 1, nextUserIndex);
+    const hasStreamingEntry = turnEntries.some(
+      (message) =>
+        (message.type === "assistant" || message.type === "thinking") &&
+        !message.complete,
+    );
+
+    if ((isLatestTurn && isBusy) || hasStreamingEntry) {
+      items.push(
+        ...buildSequentialRenderItems(turnEntries, userIndex + 1),
+      );
+      cursor = nextUserIndex;
+      continue;
+    }
+
+    let processEndOffset = -1;
+    for (let i = turnEntries.length - 1; i >= 0; i -= 1) {
+      if (turnEntries[i].type === "tool") {
+        processEndOffset = i;
+        break;
+      }
+    }
+    if (processEndOffset >= 0) {
+      const processItems: WorkSummaryItem[] = [];
+      for (let i = 0; i < turnEntries.length; i += 1) {
+        const message = turnEntries[i];
+        if (
+          (message.type === "assistant" && i <= processEndOffset) ||
+          message.type === "thinking" ||
+          message.type === "tool"
+        ) {
+          processItems.push({ message, index: userIndex + 1 + i });
+        }
+      }
+      if (processItems.length > 0) {
+        const timedAssistants = turnEntries.filter(
+          (message): message is Extract<ChatMessage, { type: "assistant" }> =>
+            message.type === "assistant",
+        );
+        const starts = timedAssistants
+          .map((message) => message.startTs)
+          .filter((value): value is number => typeof value === "number");
+        const ends = timedAssistants
+          .map((message) => message.endTs)
+          .filter((value): value is number => typeof value === "number");
+        items.push({
+          kind: "work-summary",
+          sectionId: `work-${userIndex}-${processItems.at(-1)!.index}`,
+          items: processItems,
+          durationSeconds:
+            starts.length > 0 && ends.length > 0
+              ? Math.max(0, Math.max(...ends) - Math.min(...starts))
+              : undefined,
+        });
+      }
+      // Preserve uncommon inline messages (permission/system/etc.) that are
+      // not part of the compactable agent process.
+      const passthrough = turnEntries
+        .slice(0, processEndOffset + 1)
+        .map((message, offset) => ({ message, index: userIndex + 1 + offset }))
+        .filter(
+          ({ message }) =>
+            message.type !== "assistant" &&
+            message.type !== "thinking" &&
+            message.type !== "tool",
+        );
+      passthrough.forEach(({ message, index }) =>
+        items.push({ kind: "single", message, index }),
+      );
+      const trailingStart = userIndex + processEndOffset + 2;
+      items.push(
+        ...buildSequentialRenderItems(
+          turnEntries.slice(processEndOffset + 1),
+          trailingStart,
+        ).filter(
+          (item) =>
+            item.kind !== "single" || item.message.type !== "thinking",
+        ),
+      );
+      const editedTools = processItems.flatMap(({ message, index }) =>
+        message.type === "tool" && isEditTool(message)
+          ? [{ message, index }]
+          : [],
+      );
+      if (editedTools.length > 0) {
+        items.push({
+          kind: "file-change-summary",
+          sectionId: `files-${userIndex}`,
+          tools: editedTools,
+        });
+      }
+    } else {
+      items.push(...buildSequentialRenderItems(turnEntries, userIndex + 1));
+    }
+    cursor = nextUserIndex;
+  }
   return items;
 }
 
@@ -683,11 +828,21 @@ function extractRenderItemText(item: RenderItem): string {
           .filter(Boolean)
           .join("\n");
     }
-  } else {
+  } else if (
+    item.kind === "tool-section" ||
+    item.kind === "file-change-summary"
+  ) {
     return item.tools
       .map((t) => [t.message.title, t.message.content ?? ""].filter(Boolean).join("\n"))
       .join("\n");
   }
+  return item.items
+    .map(({ message }) =>
+      message.type === "tool"
+        ? [message.title, message.content ?? ""].filter(Boolean).join("\n")
+        : message.content,
+    )
+    .join("\n");
 }
 
 function getAutoScrollTailSignature(messages: ChatMessage[]): string {
@@ -6306,11 +6461,29 @@ export function TaskChat({
     [checkContent],
   );
 
-  /** Strip HTML on paste — insert plain text or handle image paste */
+  /** Strip HTML on paste — upload copied files/images or insert plain text. */
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
-      // Check for image paste
       const items = Array.from(e.clipboardData.items);
+      // Finder/Explorer file copy commonly includes both a real File and a
+      // text/plain filename. Handle the file payload first so the browser's
+      // default paste does not leave only that filename in the composer.
+      const clipboardFiles = Array.from(e.clipboardData.files);
+      if (clipboardFiles.length === 0) {
+        for (const item of items) {
+          if (item.kind !== "file") continue;
+          const file = item.getAsFile();
+          if (file) clipboardFiles.push(file);
+        }
+      }
+      if (clipboardFiles.length > 0) {
+        e.preventDefault();
+        clipboardFiles.forEach((file) => void addFileAsAttachment(file));
+        return;
+      }
+
+      // Some screenshot clipboard payloads expose only a DataTransferItem,
+      // not clipboardData.files.
       const imageItem = items.find((i) => i.type.startsWith("image/"));
       if (imageItem && promptCaps.image) {
         e.preventDefault();
@@ -6734,7 +6907,10 @@ export function TaskChat({
     );
   }, []);
 
-  const renderItems = useMemo(() => buildRenderItems(messages), [messages]);
+  const renderItems = useMemo(
+    () => buildRenderItems(messages, isBusy),
+    [messages, isBusy],
+  );
   // The minimap is deliberately derived from the same `messages` state that
   // renders the chat. It is therefore immediately available for loaded
   // history and updates as an assistant streams, with no second history API.
@@ -6812,7 +6988,7 @@ export function TaskChat({
     const Footer = () => (
       <div>
         {showThinking && (
-          <div className="flex items-center gap-2 px-4 py-2 text-sm text-[var(--color-text-muted)]">
+          <div className="mx-auto flex w-full max-w-[920px] items-center gap-2 px-4 py-2 text-sm text-[var(--color-text-muted)] sm:px-6">
             <Loader2 className="w-4 h-4 animate-spin" />
             <span>Thinking...</span>
           </div>
@@ -7457,7 +7633,7 @@ export function TaskChat({
             totalListHeightChanged={handleTotalListHeightChanged}
             itemContent={(idx, item) =>
               item.kind === "single" ? (
-                <div className="pl-8 pr-4 pt-3">
+                <div className="mx-auto w-full max-w-[920px] px-4 pt-3 sm:px-6">
                   <MessageItem
                     message={item.message}
                     index={item.index}
@@ -7476,8 +7652,8 @@ export function TaskChat({
                     onInsertReference={insertAttachmentReference}
                   />
                 </div>
-              ) : (
-                <div className="pl-8 pr-4 pt-3">
+              ) : item.kind === "tool-section" ? (
+                <div className="mx-auto w-full max-w-[920px] px-4 pt-3 sm:px-6">
                   <ToolSectionView
                     sectionId={item.sectionId}
                     tools={item.tools}
@@ -7488,12 +7664,34 @@ export function TaskChat({
                     onFileClick={onNavigateToFile}
                   />
                 </div>
+              ) : item.kind === "work-summary" ? (
+                <div className="mx-auto w-full max-w-[920px] px-4 pt-3 sm:px-6">
+                  <WorkSummaryView
+                    sectionId={item.sectionId}
+                    items={item.items}
+                    durationSeconds={item.durationSeconds}
+                    expanded={expandedSections.has(item.sectionId)}
+                    onToggleSection={toggleSection}
+                    onFileClick={onNavigateToFile}
+                  />
+                </div>
+              ) : (
+                <div className="mx-auto w-full max-w-[920px] px-4 pt-3 sm:px-6">
+                  <FileChangeSummaryView
+                    tools={item.tools}
+                    onFileClick={onNavigateToFile}
+                  />
+                </div>
               )
             }
             computeItemKey={(_idx, item) =>
               item.kind === "single"
                 ? `m-${item.index}`
-                : `ts-${item.sectionId}`
+                : item.kind === "tool-section"
+                  ? `ts-${item.sectionId}`
+                  : item.kind === "work-summary"
+                    ? `ws-${item.sectionId}`
+                    : `fs-${item.sectionId}`
             }
             itemsRendered={handleItemsRendered}
             rangeChanged={handleConversationRangeChanged}
@@ -7862,24 +8060,22 @@ export function TaskChat({
               <AnimatePresence>
                 {showScrollToBottom && (
                   <motion.div
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={{ opacity: 0, y: 8, scale: 0.98 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 8 }}
-                    transition={{ duration: 0.18, ease: "easeOut" }}
-                    className="absolute inset-x-0 top-0 z-20 -translate-y-[118%]"
+                    exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                    transition={{ duration: 0.16, ease: "easeOut" }}
+                    className="pointer-events-none absolute inset-x-0 top-0 z-20 -translate-y-[132%] flex justify-center"
                   >
                     <button
+                      type="button"
                       onClick={() => {
                         enableAutoStickToBottom("smooth");
                         setShowScrollToBottom(false);
                       }}
-                      className="group relative mx-auto flex items-center gap-2 rounded-full px-3 py-2 text-[15px] font-medium tracking-[0.01em] text-[color-mix(in_srgb,var(--color-highlight)_80%,white_4%)] transition-all duration-200 hover:text-[color-mix(in_srgb,var(--color-highlight)_96%,white_8%)] select-none"
+                      className="pointer-events-auto group inline-flex h-8 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_86%,transparent)] px-3 text-xs font-medium text-[var(--color-text-muted)] shadow-[0_1px_2px_rgba(0,0,0,0.08),0_6px_20px_rgba(0,0,0,0.10)] backdrop-blur-xl transition-[color,background-color,border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-[color-mix(in_srgb,var(--color-highlight)_24%,var(--color-border))] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] hover:shadow-[0_2px_4px_rgba(0,0,0,0.10),0_8px_24px_rgba(0,0,0,0.14)] active:translate-y-0 select-none"
                     >
-                      <span className="pointer-events-none absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--color-highlight)_8%,transparent)] opacity-0 blur-md transition-all duration-200 group-hover:opacity-100" />
-                      <span className="relative flex items-center gap-2">
-                        <ArrowDown className="h-4 w-4" />
-                        <span>Scroll to bottom</span>
-                      </span>
+                      <ArrowDown className="h-3.5 w-3.5 text-[var(--color-highlight)] transition-transform duration-150 group-hover:translate-y-0.5" />
+                      <span>Scroll to bottom</span>
                     </button>
                   </motion.div>
                 )}
@@ -10728,5 +10924,270 @@ const ToolSectionView = memo(function ToolSectionView({
         )}
       </AnimatePresence>
     </motion.div>
+  );
+});
+
+function formatWorkDuration(durationSeconds?: number): string | null {
+  if (durationSeconds === undefined) return null;
+  const seconds = Math.max(0, Math.round(durationSeconds));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
+}
+
+/** A completed turn's compact process row. The original messages remain in
+ * state and are available here on demand; only their default presentation is
+ * collapsed. */
+const WorkSummaryView = memo(function WorkSummaryView({
+  sectionId,
+  items,
+  durationSeconds,
+  expanded,
+  onToggleSection,
+  onFileClick,
+}: {
+  sectionId: string;
+  items: WorkSummaryItem[];
+  durationSeconds?: number;
+  expanded: boolean;
+  onToggleSection: (sectionId: string) => void;
+  onFileClick?: (
+    filePath: string,
+    line?: number,
+    mode?: "diff" | "full",
+  ) => Promise<boolean>;
+}) {
+  const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [expandedThoughtIndexes, setExpandedThoughtIndexes] = useState<
+    Set<number>
+  >(() => new Set());
+  const tools = useMemo<ToolSectionItem[]>(
+    () =>
+      items.flatMap(({ message, index }) =>
+        message.type === "tool" ? [{ message, index }] : [],
+      ),
+    [items],
+  );
+  const toolSummary = useMemo(
+    () => (tools.length > 0 ? summarizeToolSection(tools, true) : null),
+    [tools],
+  );
+  const detailItems = useMemo(() => {
+    const result: Array<
+      | { kind: "text"; item: WorkSummaryItem }
+      | { kind: "tools"; tools: ToolSectionItem[] }
+    > = [];
+    for (const item of items) {
+      if (item.message.type !== "tool") {
+        result.push({ kind: "text", item });
+        continue;
+      }
+      const previous = result.at(-1);
+      if (previous?.kind === "tools") {
+        previous.tools.push({ message: item.message, index: item.index });
+      } else {
+        result.push({
+          kind: "tools",
+          tools: [{ message: item.message, index: item.index }],
+        });
+      }
+    }
+    return result;
+  }, [items]);
+  const duration = formatWorkDuration(durationSeconds);
+  const thoughtCount = items.filter(
+    ({ message }) => message.type === "thinking",
+  ).length;
+  const hasEdits = toolSummary?.editItems.length;
+  const onlyExploration =
+    tools.length > 0 && tools.every(({ message }) => isBackgroundAction(message));
+  const verb = hasEdits
+    ? "Worked"
+    : onlyExploration
+      ? "Explored"
+      : tools.length === 0 && thoughtCount > 0
+        ? "Thought"
+        : "Worked";
+  const title = duration ? `${verb} for ${duration}` : verb;
+
+  return (
+    <motion.div layout className="text-[var(--color-text)]">
+      <button
+        type="button"
+        onClick={() => onToggleSection(sectionId)}
+        className="group flex w-fit items-center gap-1.5 rounded-md py-1 text-left text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
+        aria-expanded={expanded}
+      >
+        {onlyExploration ? (
+          <Eye className="h-3 w-3 shrink-0" />
+        ) : tools.length === 0 ? (
+          <Brain className="h-3 w-3 shrink-0" />
+        ) : (
+          <CheckCircle2 className="h-3 w-3 shrink-0 text-[var(--color-success)]" />
+        )}
+        <span className="text-xs font-medium text-[var(--color-text-muted)]">{title}</span>
+        <ChevronRight
+          className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+        />
+      </button>
+
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="ml-1 mt-1 space-y-2 border-l border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] pl-4">
+              {detailItems.map((detailItem) => {
+                if (detailItem.kind === "tools") {
+                  const toolSectionId = detailItem.tools[0].message.id;
+                  return (
+                  <ToolSectionView
+                    key={`work-tool-${toolSectionId}`}
+                    sectionId={`${sectionId}-${toolSectionId}`}
+                    tools={detailItem.tools}
+                    expanded={expandedToolIds.has(toolSectionId)}
+                    forceExpanded={false}
+                    sectionFinished
+                    onToggleSection={() =>
+                      setExpandedToolIds((previous) => {
+                        const next = new Set(previous);
+                        if (next.has(toolSectionId)) next.delete(toolSectionId);
+                        else next.add(toolSectionId);
+                        return next;
+                      })
+                    }
+                    onFileClick={onFileClick}
+                  />
+                  );
+                }
+                const { message, index } = detailItem.item;
+                if (message.type === "thinking") {
+                  const thoughtExpanded = expandedThoughtIndexes.has(index);
+                  return (
+                    <div key={`work-thought-${index}`}>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedThoughtIndexes((previous) => {
+                            const next = new Set(previous);
+                            if (next.has(index)) next.delete(index);
+                            else next.add(index);
+                            return next;
+                          })
+                        }
+                        className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
+                      >
+                        <Brain className="h-3 w-3" />
+                        {thoughtExpanded ? (
+                          <ChevronDown className="h-3 w-3" />
+                        ) : (
+                          <ChevronRight className="h-3 w-3" />
+                        )}
+                        <span className="italic">Thought</span>
+                      </button>
+                      {thoughtExpanded && (
+                        <ThoughtChunkBody
+                          content={message.content}
+                          collapsed={false}
+                          complete
+                        />
+                      )}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={`work-commentary-${index}`} className="text-sm">
+                    <MarkdownRenderer
+                      content={message.content ?? ""}
+                      onFileClick={onFileClick}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+});
+
+const FileChangeSummaryView = memo(function FileChangeSummaryView({
+  tools,
+  onFileClick,
+}: {
+  tools: ToolSectionItem[];
+  onFileClick?: (
+    filePath: string,
+    line?: number,
+    mode?: "diff" | "full",
+  ) => Promise<boolean>;
+}) {
+  const summary = useMemo(() => summarizeToolSection(tools, true), [tools]);
+  const additions = summary.editItems.reduce(
+    (total, item) => total + item.additions,
+    0,
+  );
+  const deletions = summary.editItems.reduce(
+    (total, item) => total + item.deletions,
+    0,
+  );
+  if (summary.editItems.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_62%,transparent)] px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Pencil className="h-3.5 w-3.5 shrink-0 text-[var(--color-success)]" />
+        <span className="text-xs font-medium text-[var(--color-text)]">
+          {summary.editItems.length} file
+          {summary.editItems.length === 1 ? "" : "s"} changed
+        </span>
+        {(additions > 0 || deletions > 0) && (
+          <span className="text-[11px] tabular-nums">
+            <span className="text-[var(--color-success)]">+{additions}</span>
+            <span className="mx-1 text-[var(--color-text-muted)]">/</span>
+            <span className="text-[var(--color-error)]">−{deletions}</span>
+          </span>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {summary.editItems.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            disabled={!item.fullPath}
+            onClick={() =>
+              item.fullPath && onFileClick?.(item.fullPath, undefined, "diff")
+            }
+            title={item.fullPath || item.label}
+            className={`inline-flex max-w-[320px] items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] ${
+              item.fullPath
+                ? `${getStatusChipClasses(item.status)} cursor-pointer hover:brightness-110`
+                : `${getStatusChipClasses(item.status)} cursor-default`
+            }`}
+          >
+            <VSCodeIcon filename={item.label} size={13} />
+            <span className="truncate">{item.label}</span>
+            {(item.additions > 0 || item.deletions > 0) && (
+              <span className="shrink-0 text-[10px] tabular-nums">
+                <span className="text-[var(--color-success)]">
+                  +{item.additions}
+                </span>
+                <span className="mx-0.5 text-[var(--color-text-muted)]">/</span>
+                <span className="text-[var(--color-error)]">
+                  −{item.deletions}
+                </span>
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 });
