@@ -58,6 +58,7 @@ const KNOWN_CONTEXT_KEYS: { name: string; description: string }[] = [
   { name: "messageNotEmpty", description: "Chat message has content" },
   { name: "taskNameValid", description: "New-task name passes validation" },
   { name: "inBlitzMode", description: "Blitz mode is active" },
+  { name: "blitzGridActive", description: "Blitz grid workspace is showing" },
   { name: "inZenMode", description: "Zen mode is active" },
 ];
 

@@ -27,6 +27,7 @@ interface ResolvedBinding {
   preventDefault: boolean;
   passThroughTextInput: boolean;
   trigger: "keydown" | "keyup";
+  ignoreRepeat: boolean;
 }
 
 function detectSuppression(): Suppression {
@@ -192,6 +193,7 @@ export class KeyboardManagerImpl {
           preventDefault: def.preventDefault !== false,
           passThroughTextInput: def.passThroughTextInput === true,
           trigger: def.trigger ?? "keydown",
+          ignoreRepeat: def.ignoreRepeat === true,
         });
       }
     }
@@ -298,6 +300,9 @@ export class KeyboardManagerImpl {
       if (r.scope !== scope) continue;
       if (r.trigger !== trigger) continue;
       if (!matchesHotkey(e, r.parsed, this.modifierSides)) continue;
+
+      // Auto-repeat (key held) is ignored for toggles and the like.
+      if (r.ignoreRepeat && e.repeat) continue;
 
       if (!r.passThroughTextInput) {
         if (suppression === "all") {
