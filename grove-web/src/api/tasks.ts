@@ -535,6 +535,10 @@ interface ChatListResponse {
 interface CreateChatRequest {
   title?: string;
   agent?: string;
+  /** Optional per-chat launch-mode override ("acp" | "terminal"). Omit to use
+   *  the mode derived from the agent's selected install channel. Validated
+   *  server-side: "terminal" requires a registry `terminal_launch` contract. */
+  launch_mode?: string;
 }
 
 interface UpdateChatTitleRequest {
@@ -576,10 +580,11 @@ export async function createChat(
   taskId: string,
   title?: string,
   agent?: string,
+  launchMode?: string,
 ): Promise<ChatSessionResponse> {
   return apiClient.post<CreateChatRequest, ChatSessionResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/chats`,
-    { title, agent }
+    { title, agent, launch_mode: launchMode }
   );
 }
 

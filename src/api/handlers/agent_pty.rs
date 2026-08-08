@@ -105,163 +105,238 @@ pub async fn agent_pty_handler(
             ))
         })?;
 
-    // First-launch vs resume:
-    //   acp_session_id is None  → generate UUID, run `claude --session-id <uuid>`
-    //   acp_session_id is Some  → run `claude --resume <uuid>` (claude replays
-    //                              its own persisted conversation history)
-    let (uuid, is_resume) = match chat.acp_session_id.clone() {
-        Some(existing) => (existing, true),
-        None => {
-            let new_uuid = uuid::Uuid::new_v4().to_string();
-            tasks::update_chat_acp_session_id(&project_key, &task_id, &chat_id, &new_uuid)
-                .map_err(|e| {
-                    AgentPtyError::Internal(format!("update_chat_acp_session_id: {}", e))
-                })?;
-            (new_uuid, false)
-        }
-    };
+    // tmux-backed terminal session. The agent CLI runs *inside* a detached
+    // tmux session owned by the tmux server, not as a child of this PTY. So
+    // when the WebSocket drops (relay reaped an idle socket, phone locked,
+    // laptop slept) the agent keeps running and re-attaches cleanly on the
+    // next connect — which is the whole point of routing through tmux.
+    let session_name = crate::tmux::agent_session_name(&chat_id);
 
-    // GROVE_* env vars give the agent everything ACP mode sees: task / chat
-    // / project identity. Used by `grove mcp` (orchestrator tools) and any
-    // user-side hooks that key off those vars.
-    let mut grove_env = crate::api::handlers::acp::build_grove_env(
-        &project_key,
-        &project.path,
-        &project.name,
-        &task,
-        Some(&chat_id),
-    );
+    // Serialise the create-vs-attach decision per chat. Two near-simultaneous
+    // first connects (e.g. the same chat pinned into two Blitz slots) could
+    // otherwise both observe `session_exists() == false` and both run the
+    // one-time setup — generating two acp_session_ids (last write wins, leaving
+    // the DB id out of sync with the agent the tmux winner actually launched)
+    // and registering two tokens (one orphaned until delete_chat). Holding the
+    // chat's lock across the existence check + create closes that window; the
+    // loser re-reads `session_exists()` inside the lock and falls through to
+    // attach. Released before the WS upgrade — concurrent attaches are safe.
+    let create_lock = session_create_lock(&session_name);
+    let create_guard = create_lock.lock().await;
+    let session_existed = crate::tmux::session_exists(&session_name);
 
-    // Terminal mode launches the bare CLI under a PTY using the contract
-    // declared in registry.terminal_launch:
-    //   - cmd: which binary to spawn (resolved via External installation's
-    //     install_path; falls back to bare cmd for PATH lookup).
-    //   - session_id_arg / resume_arg: how to pass the session UUID.
-    //   - mcp_config_arg: how to point the agent at grove's MCP config.
-    let installed_record = crate::storage::installed_agents::get(&canonical_agent)
-        .ok()
-        .flatten();
-    let extra_args: Vec<String> = installed_record
-        .as_ref()
-        .map(|r| r.args_override.clone())
-        .unwrap_or_default();
-    if let Some(ref rec) = installed_record {
-        for (k, v) in &rec.env_override {
-            grove_env.insert(k.clone(), v.clone());
-        }
-    }
-    // Prefer the resolved absolute path from the External installation
-    // (`auto_scan_path_binaries` records it on PATH detection). Falls back
-    // to the bare cmd name for PATH lookup at spawn time if no record.
-    let claude_cmd = installed_record
-        .as_ref()
-        .and_then(|r| {
-            r.installations
-                .iter()
-                .find(|i| {
-                    matches!(
-                        i.method,
-                        crate::storage::installed_agents::InstallMethod::External
-                    )
-                })
-                .and_then(|i| i.install_path.clone())
-        })
-        .unwrap_or_else(|| terminal_launch.cmd.clone());
+    // Build + launch the agent only when no live tmux session exists. On a
+    // reconnect the agent process is still running with its original session
+    // id, mcp-config and agent_graph token, so we skip straight to attach and
+    // must NOT touch acp_session_id, re-register a token, or rewrite argv.
+    if !session_existed {
+        // First-launch vs resume:
+        //   acp_session_id is None  → generate UUID, pass terminal_launch.session_id_arg
+        //   acp_session_id is Some  → pass terminal_launch.resume_arg (the agent
+        //                              replays its own persisted conversation history)
+        // The resume branch also covers grove having restarted while the tmux
+        // session was gone: we recreate the agent and let it replay history.
+        let (uuid, is_resume) = match chat.acp_session_id.clone() {
+            Some(existing) => (existing, true),
+            None => {
+                let new_uuid = uuid::Uuid::new_v4().to_string();
+                tasks::update_chat_acp_session_id(&project_key, &task_id, &chat_id, &new_uuid)
+                    .map_err(|e| {
+                        AgentPtyError::Internal(format!("update_chat_acp_session_id: {}", e))
+                    })?;
+                (new_uuid, false)
+            }
+        };
 
-    // Pre-flight check: refuse the WebSocket upgrade with a clear 400
-    // when the binary isn't actually launchable. Without this, the WS
-    // upgrades, claude is spawned, fails immediately because the binary
-    // isn't on PATH, and the user sees a silent "Disconnected" with no
-    // hint of why. This is the most common upgrade-day failure mode:
-    // user had a terminal-mode chat in v2.5 but the `claude` CLI isn't
-    // on this machine's PATH right now.
-    let bin_ok = if std::path::Path::new(&claude_cmd).is_absolute() {
-        std::path::Path::new(&claude_cmd).exists()
-    } else {
-        crate::check::command_exists(&claude_cmd)
-    };
-    if !bin_ok {
-        return Err(AgentPtyError::BadRequest(format!(
-            "Terminal-mode chats require the `{}` binary on PATH. \
-             Install it (e.g. `npm install -g @anthropic-ai/claude-code` for Claude) \
-             or switch this chat to ACP mode in the agent selector.",
-            terminal_launch.cmd,
-        )));
-    }
-    let prefix_args: Vec<String> = Vec::new();
+        // GROVE_* env vars give the agent everything ACP mode sees: task / chat
+        // / project identity. Used by `grove mcp` (orchestrator tools) and any
+        // user-side hooks that key off those vars.
+        let mut grove_env = crate::api::handlers::acp::build_grove_env(
+            &project_key,
+            &project.path,
+            &project.name,
+            &task,
+            Some(&chat_id),
+        );
 
-    // agent_graph MCP token: register one for this chat so claude (via
-    // `grove mcp-bridge` spawned out of the mcp-config below) can reach
-    // the loopback HTTP agent_graph listener. Mirrors what acp::mod.rs
-    // does for ACP-mode sessions, including the unregister-on-drop guard
-    // hooked up via TokenGuard further down. Listener may be absent
-    // (`grove acp` standalone, tests) — in that case we skip both the
-    // token registration and the env vars, and mcp-bridge will surface
-    // a clear error to the agent.
-    let agent_graph_token = if crate::api::handlers::agent_graph_mcp::listener_port().is_some() {
-        let token = uuid::Uuid::new_v4().to_string();
-        crate::api::handlers::agent_graph_mcp::register_token(&token, &chat_id);
-        grove_env.insert("GROVE_MCP_TOKEN".to_string(), token.clone());
-        if let Some(port) = crate::api::handlers::agent_graph_mcp::listener_port() {
-            grove_env.insert("GROVE_MCP_PORT".to_string(), port.to_string());
-        }
-        Some(token)
-    } else {
-        None
-    };
-
-    // Write a per-launch mcp-config JSON so claude picks up grove's own MCP
-    // server. Claude accepts `--mcp-config <file>` (and `<json-string>`); we
-    // use a temp file because:
-    //   (a) JSON strings on argv leak in `ps` output (env vars don't),
-    //   (b) the env block can get large enough to brush against ARG_MAX.
-    // File lives under ~/.grove/agents-tmp/<chat-id>/ — same lifetime as
-    // the chat, cleaned up on chat delete (see acp.rs delete_chat).
-    let include_agent_graph = agent_graph_token.is_some();
-    let mcp_config_path = build_mcp_config_file(&chat_id, &grove_env, include_agent_graph)
-        .map_err(|e| AgentPtyError::Internal(format!("write mcp-config: {}", e)))?;
-
-    let mut cmd = CommandBuilder::new(&claude_cmd);
-    // Args ordering: prefix (e.g. `-y <pkg>@<version>` for npx-launched
-    // agents) → session args → mcp config → user extras. This mirrors how
-    // claude itself parses flags, with grove-mandatory ones in front.
-    for arg in &prefix_args {
-        cmd.arg(arg);
-    }
-    if is_resume {
-        cmd.arg(&terminal_launch.resume_arg);
-        cmd.arg(&uuid);
-    } else {
-        cmd.arg(&terminal_launch.session_id_arg);
-        cmd.arg(&uuid);
-    }
-    cmd.arg(&terminal_launch.mcp_config_arg);
-    cmd.arg(mcp_config_path.to_string_lossy().into_owned());
-    for arg in &extra_args {
-        cmd.arg(arg);
-    }
-    cmd.cwd(&task.worktree_path);
-    apply_terminal_env_defaults(&mut cmd);
-    for (k, v) in &grove_env {
-        cmd.env(k, v);
-    }
-
-    Ok(ws.on_upgrade(move |socket: WebSocket| async move {
-        // RAII guard: release the agent_graph MCP token when the PTY
-        // session ends (WS close / agent exit / panic). Without this the
-        // in-memory token map grows on every chat launch.
-        struct TokenGuard(Option<String>);
-        impl Drop for TokenGuard {
-            fn drop(&mut self) {
-                if let Some(t) = self.0.take() {
-                    let _ = crate::api::handlers::agent_graph_mcp::unregister_token(&t);
-                }
+        // Terminal mode launches the bare CLI inside tmux using the contract
+        // declared in registry.terminal_launch:
+        //   - cmd: which binary to spawn (resolved via the External
+        //     installation's install_path; falls back to bare cmd for PATH
+        //     lookup).
+        //   - session_id_arg / resume_arg: how to pass the session UUID.
+        //   - mcp_config_arg: how to point the agent at grove's MCP config.
+        let installed_record = crate::storage::installed_agents::get(&canonical_agent)
+            .ok()
+            .flatten();
+        let extra_args: Vec<String> = installed_record
+            .as_ref()
+            .map(|r| r.args_override.clone())
+            .unwrap_or_default();
+        if let Some(ref rec) = installed_record {
+            for (k, v) in &rec.env_override {
+                grove_env.insert(k.clone(), v.clone());
             }
         }
-        let _token_guard = TokenGuard(agent_graph_token);
+        // Prefer the resolved absolute path from the External installation
+        // (`auto_scan_path_binaries` records it on PATH detection). Falls back
+        // to the bare cmd name for PATH lookup at spawn time if no record.
+        let claude_cmd = installed_record
+            .as_ref()
+            .and_then(|r| {
+                r.installations
+                    .iter()
+                    .find(|i| {
+                        matches!(
+                            i.method,
+                            crate::storage::installed_agents::InstallMethod::External
+                        )
+                    })
+                    .and_then(|i| i.install_path.clone())
+            })
+            .unwrap_or_else(|| terminal_launch.cmd.clone());
 
+        // Pre-flight check: refuse the WebSocket upgrade with a clear 400 when
+        // the binary isn't actually launchable. This matters more under tmux
+        // than it did for a direct PTY spawn: `create_command_session` would
+        // succeed and the session would die immediately, so the user would see
+        // a terminal that blinks out with no error rather than a useful message.
+        let bin_ok = if std::path::Path::new(&claude_cmd).is_absolute() {
+            std::path::Path::new(&claude_cmd).exists()
+        } else {
+            crate::check::command_exists(&claude_cmd)
+        };
+        if !bin_ok {
+            return Err(AgentPtyError::BadRequest(format!(
+                "Terminal-mode chats require the `{}` binary on PATH. \
+                 Install it (e.g. `npm install -g @anthropic-ai/claude-code` for Claude) \
+                 or switch this chat to ACP mode in the agent selector.",
+                terminal_launch.cmd,
+            )));
+        }
+        let prefix_args: Vec<String> = Vec::new();
+
+        // agent_graph MCP token: register one for this chat so the agent (via
+        // `grove mcp-bridge` spawned out of the mcp-config below) can reach
+        // the loopback HTTP agent_graph listener. Mirrors what acp::mod.rs
+        // does for ACP-mode sessions. The token is session-scoped (its
+        // lifetime tracks the tmux session, not this WebSocket): we register
+        // once at create and release it in `delete_chat` when the session is
+        // killed. That is deliberately *not* the unregister-on-WS-drop guard
+        // ACP mode uses — under tmux the agent outlives the socket, so
+        // releasing on WS close would revoke the token of a still-running
+        // agent on the first reconnect. Listener may be absent (`grove acp`
+        // standalone, tests) — then we skip both registration and env vars,
+        // and mcp-bridge surfaces a clear error to the agent.
+        //
+        // Known limitation: if grove restarts while this tmux session lives
+        // on, the in-memory token map is cleared and the agent's grove_agent
+        // MCP calls start failing until the chat's agent is restarted. The
+        // terminal itself keeps working. Persisting tokens across restart is
+        // future work.
+        let include_agent_graph =
+            if crate::api::handlers::agent_graph_mcp::listener_port().is_some() {
+                let token = uuid::Uuid::new_v4().to_string();
+                crate::api::handlers::agent_graph_mcp::register_token(&token, &chat_id);
+                grove_env.insert("GROVE_MCP_TOKEN".to_string(), token);
+                if let Some(port) = crate::api::handlers::agent_graph_mcp::listener_port() {
+                    grove_env.insert("GROVE_MCP_PORT".to_string(), port.to_string());
+                }
+                true
+            } else {
+                false
+            };
+
+        // Write a per-launch mcp-config JSON so the agent picks up grove's own
+        // MCP server. We use a temp file rather than a JSON string on argv
+        // because:
+        //   (a) JSON strings on argv leak in `ps` output (env vars don't),
+        //   (b) the env block can get large enough to brush against ARG_MAX.
+        // File lives under ~/.grove/agents-tmp/<chat-id>/ — same lifetime as
+        // the chat, cleaned up on chat delete (see acp.rs delete_chat).
+        let mcp_config_path = build_mcp_config_file(&chat_id, &grove_env, include_agent_graph)
+            .map_err(|e| AgentPtyError::Internal(format!("write mcp-config: {}", e)))?;
+
+        // Argv ordering: prefix (e.g. `-y <pkg>@<version>` for npx-launched
+        // agents) → session args → mcp config → user extras. Mirrors how the
+        // CLI itself parses flags, with grove-mandatory ones in front. tmux
+        // runs this argv directly (no shell), so no quoting is needed.
+        let mut argv: Vec<String> = Vec::with_capacity(prefix_args.len() + extra_args.len() + 5);
+        argv.push(claude_cmd);
+        argv.extend(prefix_args);
+        if is_resume {
+            argv.push(terminal_launch.resume_arg.clone());
+            argv.push(uuid);
+        } else {
+            argv.push(terminal_launch.session_id_arg.clone());
+            argv.push(uuid);
+        }
+        argv.push(terminal_launch.mcp_config_arg.clone());
+        argv.push(mcp_config_path.to_string_lossy().into_owned());
+        argv.extend(extra_args);
+
+        // claude runs as a child of the tmux server, so the terminal env we'd
+        // normally set on the PTY child must be injected into the session
+        // instead. tmux supplies TERM/COLORTERM to in-session processes itself;
+        // we add the locale + PATH defaults so the agent has a UTF-8 locale and
+        // can resolve `grove`/`node` for the mcp-config servers.
+        inject_session_env_defaults(&mut grove_env);
+
+        crate::tmux::create_command_session(&session_name, &task.worktree_path, &grove_env, &argv)
+            .map_err(|e| AgentPtyError::Internal(format!("create agent tmux session: {}", e)))?;
+    }
+
+    // Session now exists (we created it or it was already live). Concurrent
+    // attaches don't race, so release the per-chat lock before upgrading.
+    drop(create_guard);
+
+    // Attach the WebSocket PTY to the (now guaranteed-live) tmux session.
+    // Detaching this client on WS close leaves the session — and the agent
+    // running inside it — alive for the next connect.
+    let mut cmd = CommandBuilder::new("tmux");
+    cmd.arg("attach-session");
+    cmd.arg("-t");
+    cmd.arg(&session_name);
+    apply_terminal_env_defaults(&mut cmd);
+
+    Ok(ws.on_upgrade(move |socket: WebSocket| async move {
         handle_pty_terminal(socket, cmd, cols, rows).await;
     }))
+}
+
+/// Per-chat async locks serialising the create-vs-attach decision in
+/// `agent_pty_handler`. The map grows by one `Arc<Mutex<()>>` per chat ever
+/// opened in terminal mode — bounded by chat count and negligible in size, so
+/// entries are intentionally not reaped.
+fn session_create_lock(session_name: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    use tokio::sync::Mutex as AsyncMutex;
+
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().expect("agent_pty session lock map poisoned");
+    guard
+        .entry(session_name.to_string())
+        .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+        .clone()
+}
+
+/// Inject locale + PATH defaults into the env handed to a tmux-backed agent
+/// session. tmux processes inherit TERM/COLORTERM from tmux's own terminal
+/// layer, but not a UTF-8 locale or grove's PATH — without the latter the
+/// agent can't find `grove` for the mcp-config servers. Only fills keys that
+/// aren't already set (per-agent `env_override` wins).
+fn inject_session_env_defaults(env: &mut std::collections::HashMap<String, String>) {
+    for key in ["LANG", "LC_ALL", "LC_CTYPE"] {
+        env.entry(key.to_string())
+            .or_insert_with(|| std::env::var(key).unwrap_or_else(|_| "en_US.UTF-8".to_string()));
+    }
+    if !env.contains_key("PATH") {
+        if let Ok(path) = std::env::var("PATH") {
+            env.insert("PATH".to_string(), path);
+        }
+    }
 }
 
 /// Write the per-chat MCP config that gets passed to `claude --mcp-config`.

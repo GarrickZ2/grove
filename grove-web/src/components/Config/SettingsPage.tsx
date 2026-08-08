@@ -604,6 +604,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
           icon_id: a.id,
           icon_url: a.icon_url,
           available: true,
+          supports_terminal_launch: a.supports_terminal_launch,
         })),
       );
       setTerminalLaunchableIds(
@@ -629,6 +630,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
           display_name: opt.label,
           icon_id: opt.id,
           available: true,
+          // Same reasoning as `terminalLaunchableIds` below: the static
+          // catalog carries no registry data, so nothing here may claim
+          // terminal capability.
+          supports_terminal_launch: false,
         })),
       );
       setTerminalLaunchableIds(new Set());

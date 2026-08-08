@@ -1,8 +1,92 @@
 pub mod layout;
 
+use std::collections::HashMap;
 use std::process::Command;
 
 use crate::error::{GroveError, Result};
+
+/// Deterministic, tmux-safe session name for a chat's agent terminal.
+///
+/// tmux uses `.` and `:` as target separators (`session:window.pane`), so a
+/// name containing either becomes unaddressable. Chat ids today are
+/// `chat-<hex>` (already safe), but we sanitise defensively so a future id
+/// scheme can never produce a session we can't `attach`/`has-session`/`kill`.
+pub fn agent_session_name(chat_id: &str) -> String {
+    let sanitized: String = chat_id
+        .chars()
+        .map(|c| {
+            if c == '.' || c == ':' || c.is_whitespace() {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    format!("grove-agent-{}", sanitized)
+}
+
+/// Create a detached tmux session that runs a specific command, injecting the
+/// given environment and working directory. Idempotent: if the session already
+/// exists this is a no-op success (the caller should attach to it).
+///
+/// Executes: `tmux new-session -d -s {name} -c {cwd} -e K=V ... -- cmd args...`
+///
+/// `-e` (per-session environment) requires tmux 3.2+, matching the requirement
+/// `create_session` already imposes. The `--` terminates tmux option parsing so
+/// dash-prefixed command args (e.g. `--resume <uuid>`, `npx -y`) reach the
+/// command instead of being read as tmux flags. The command is executed
+/// directly (no intermediate shell), so no quoting of `command` entries is
+/// needed. Env values are emitted in sorted-key order for a stable command line
+/// (deterministic tests, predictable `ps` output).
+pub fn create_command_session(
+    name: &str,
+    working_dir: &str,
+    env: &HashMap<String, String>,
+    command: &[String],
+) -> Result<()> {
+    if command.is_empty() {
+        return Err(GroveError::session("create_command_session: empty command"));
+    }
+
+    let mut args: Vec<String> = vec![
+        "new-session".to_string(),
+        "-d".to_string(),
+        "-s".to_string(),
+        name.to_string(),
+        "-c".to_string(),
+        working_dir.to_string(),
+    ];
+
+    let mut keys: Vec<&String> = env.keys().collect();
+    keys.sort();
+    for k in keys {
+        args.push("-e".to_string());
+        args.push(format!("{}={}", k, env[k]));
+    }
+
+    args.push("--".to_string());
+    args.extend(command.iter().cloned());
+
+    let output = Command::new("tmux")
+        .args(&args)
+        .output()
+        .map_err(|e| GroveError::session(format!("Agent session create failed: {}", e)))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // A concurrent attach may have created it first — not an error.
+        if stderr.contains("duplicate session") {
+            Ok(())
+        } else {
+            Err(GroveError::session(format!(
+                "Agent session create failed: {}",
+                stderr.trim()
+            )))
+        }
+    }
+}
 
 /// Session 环境变量
 #[derive(Debug, Clone, Default)]
@@ -153,5 +237,32 @@ pub fn kill_session(name: &str) -> Result<()> {
                 stderr.trim()
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_session_name_is_stable_for_normal_chat_ids() {
+        assert_eq!(
+            agent_session_name("chat-5f065266e8cb432c857901a4ce84ee25"),
+            "grove-agent-chat-5f065266e8cb432c857901a4ce84ee25"
+        );
+    }
+
+    #[test]
+    fn agent_session_name_neutralises_tmux_separators() {
+        // '.' and ':' would break `attach -t name`; whitespace breaks argv.
+        let n = agent_session_name("a.b:c d");
+        assert_eq!(n, "grove-agent-a-b-c-d");
+        assert!(!n.contains('.') && !n.contains(':') && !n.contains(' '));
+    }
+
+    #[test]
+    fn create_command_session_rejects_empty_command() {
+        let env = HashMap::new();
+        assert!(create_command_session("grove-agent-x", "/tmp", &env, &[]).is_err());
     }
 }

@@ -3401,6 +3401,20 @@ export function TaskChat({
       });
   }, [baseAgents, acpAvailabilityLoaded]);
 
+  // Agents that can launch as a raw tmux-backed terminal (the agent CLI under
+  // a PTY, surviving disconnects) in addition to ACP. Drives the "Terminal"
+  // section of the new-chat picker. Today only Claude qualifies; the backend
+  // gates this on the registry entry declaring a `terminal_launch` contract,
+  // which the marketplace surfaces as `supports_terminal_launch`.
+  const terminalAgentOptions = useMemo(() => {
+    const terminalIds = new Set(
+      baseAgents.filter((b) => b.supports_terminal_launch).map((b) => b.id),
+    );
+    return acpAgentOptions.filter(
+      (opt) => !opt.disabled && terminalIds.has(opt.value),
+    );
+  }, [baseAgents, acpAgentOptions]);
+
   const getChatIcon = (agentId: string) => {
     // Custom Agent Server (user-configured remote / local) takes precedence
     // over the static brand table — servers aren't registered with
@@ -5569,7 +5583,7 @@ export function TaskChat({
   // ─── New chat creation ─────────────────────────────────────────────────
 
   const handleNewChatWithAgent = useCallback(
-    async (agent: string) => {
+    async (agent: string, launchMode?: string) => {
       setShowAgentPicker(false);
       try {
         const newChat = await createChat(
@@ -5577,6 +5591,7 @@ export function TaskChat({
           task.id,
           buildDefaultSessionTitle(),
           agent,
+          launchMode,
         );
         setChats((prev) => [...prev, newChat]);
         switchChat(newChat.id);
@@ -10464,14 +10479,36 @@ export function TaskChat({
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking...
               </div>
             ) : (
-              <AgentPickerMenuItems
-                displayOptions={acpAgentOptions.filter((opt) => !opt.disabled)}
-                customAgents={customAgents}
-                customAgentPersonas={customAgentPersonas}
-                triggerSize="compact"
-                onSelectBuiltin={(opt) => handleNewChatWithAgent(opt.value)}
-                onSelectId={(id) => handleNewChatWithAgent(id)}
-              />
+              <>
+                <AgentPickerMenuItems
+                  displayOptions={acpAgentOptions.filter((opt) => !opt.disabled)}
+                  customAgents={customAgents}
+                  customAgentPersonas={customAgentPersonas}
+                  triggerSize="compact"
+                  onSelectBuiltin={(opt) => handleNewChatWithAgent(opt.value)}
+                  onSelectId={(id) => handleNewChatWithAgent(id)}
+                />
+                {terminalAgentOptions.length > 0 && (
+                  <>
+                    <div className="my-1 border-t border-[var(--color-border)]" />
+                    <div className="flex items-center gap-1.5 px-3 py-1 text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                      <Terminal className="h-3 w-3" /> Terminal
+                    </div>
+                    {terminalAgentOptions.map((opt) => (
+                      <button
+                        key={`terminal-${opt.value}`}
+                        type="button"
+                        onClick={() => handleNewChatWithAgent(opt.value, "terminal")}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                        title={`Open ${opt.label} in a tmux-backed terminal (survives disconnects)`}
+                      >
+                        <Terminal className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
+                        <span className="truncate">{opt.label}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </>
             )}
           </div>,
           document.body,

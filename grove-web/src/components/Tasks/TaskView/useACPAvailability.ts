@@ -23,6 +23,10 @@ export interface BaseAgent {
   icon_id: string;
   icon_url?: string | null;
   available: boolean;
+  /** True when the agent's registry entry declares a `terminal_launch`
+   *  contract, i.e. it can run as a tmux-backed terminal chat as well as over
+   *  ACP. Drives the "Terminal" section of the new-chat picker. */
+  supports_terminal_launch: boolean;
 }
 
 interface Result {
@@ -52,6 +56,7 @@ function toBaseAgent(a: MarketplaceAgent): BaseAgent {
     icon_id: a.id,
     icon_url: a.icon_url,
     available: true,
+    supports_terminal_launch: a.supports_terminal_launch,
   };
 }
 
