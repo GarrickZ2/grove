@@ -1058,6 +1058,69 @@ pub async fn deliver_user_remind(
     }
 }
 
+/// Deliver a user-authored kickoff prompt to a chat, spawning the agent
+/// subprocess first if it isn't running. Used by task auto-start
+/// (`tasks/crud.rs`): the task's notes become the chat's first prompt so the
+/// agent begins working without anyone opening the chat. Mirrors the
+/// automations executor's injection (idle → `send_prompt`, busy →
+/// `queue_message`); no `sender` tag — the prompt renders as a normal user
+/// message, which is what it semantically is.
+pub(crate) async fn deliver_user_kickoff(
+    project_key: &str,
+    task_id: &str,
+    target_chat_id: &str,
+    prompt: String,
+) -> std::result::Result<(), String> {
+    let target_handle = ensure_target_handle(project_key, task_id, target_chat_id)
+        .await
+        .map_err(|e| format!("ensure session: {}", e))?;
+
+    let snapshot = target_handle.snapshot_config();
+    // Atomically claim the busy slot (same race note as `deliver_to_session`):
+    // idle → send directly, busy → visible queue entry drained at end of turn.
+    let claimed = target_handle
+        .is_busy
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_ok();
+    if !claimed {
+        let messages = target_handle.queue_message(QueuedMessage::new(
+            prompt,
+            Vec::new(),
+            None,
+            false,
+            Some(snapshot),
+        ));
+        target_handle.emit(AcpUpdate::QueueUpdate { messages });
+        return Ok(());
+    }
+
+    let send_res = tokio::time::timeout(
+        Duration::from_secs(10),
+        target_handle.send_prompt(prompt, Vec::new(), None, false, Some(snapshot)),
+    )
+    .await;
+    match send_res {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            target_handle
+                .is_busy
+                .store(false, std::sync::atomic::Ordering::Release);
+            Err(format!("send_prompt: {}", e))
+        }
+        Err(_) => {
+            target_handle
+                .is_busy
+                .store(false, std::sync::atomic::Ordering::Release);
+            Err("send_prompt timeout (10s)".to_string())
+        }
+    }
+}
+
 /// Ensure an ACP session handle exists for `target_chat_id` — returning the
 /// running handle if it's already up, otherwise synchronously spawning the
 /// agent subprocess for that chat record and waiting for `SessionReady` (with

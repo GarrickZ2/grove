@@ -1503,16 +1503,16 @@ pub async fn list_chats(
     }))
 }
 
-/// Create a new chat for a task
-pub async fn create_chat(
-    Path((project_id, task_id)): Path<(String, String)>,
-    Json(body): Json<CreateChatRequest>,
-) -> Result<Json<ChatSessionResponse>, AcpError> {
-    let (project_key, _, _) = resolve_project_key(&project_id)?;
-    let _ = tasks::get_task(&project_key, &task_id)
-        .map_err(|e| AcpError::Internal(e.to_string()))?
-        .ok_or(AcpError::NotFound("Task not found".to_string()))?;
-
+/// Build and persist a chat session on a task, applying the same agent
+/// defaulting, canonicalization, and launch-mode snapshotting as the
+/// `create_chat` HTTP handler. Shared with task auto-start
+/// (`tasks/crud.rs`) so both entry points produce identical chat rows.
+pub(crate) fn create_chat_session_row(
+    project_key: &str,
+    task_id: &str,
+    agent: Option<String>,
+    title: Option<String>,
+) -> Result<tasks::ChatSession, String> {
     let cfg = config::load_config();
     // Resolve to canonical id BEFORE any installed_agents / registry
     // lookup. Legacy ids on disk (older chats / configs) and the
@@ -1520,7 +1520,7 @@ pub async fn create_chat(
     // rows (`claude` → `claude-acp` etc.). The chat row is also persisted
     // with the canonical id so future reads stay consistent.
     let agent =
-        crate::storage::installed_agents::canonicalize_agent_id(&body.agent.unwrap_or_else(|| {
+        crate::storage::installed_agents::canonicalize_agent_id(&agent.unwrap_or_else(|| {
             cfg.acp
                 .agent_command
                 .clone()
@@ -1563,9 +1563,7 @@ pub async fn create_chat(
         }
     };
     let now = chrono::Utc::now();
-    let title = body
-        .title
-        .unwrap_or_else(|| format!("New Chat {}", now.format("%Y-%m-%d %H:%M")));
+    let title = title.unwrap_or_else(|| format!("New Chat {}", now.format("%Y-%m-%d %H:%M")));
 
     let chat = tasks::ChatSession {
         id: tasks::generate_chat_id(),
@@ -1577,8 +1575,22 @@ pub async fn create_chat(
         launch_mode,
     };
 
-    tasks::add_chat_session(&project_key, &task_id, chat.clone())
-        .map_err(|e| AcpError::Internal(e.to_string()))?;
+    tasks::add_chat_session(project_key, task_id, chat.clone()).map_err(|e| e.to_string())?;
+    Ok(chat)
+}
+
+/// Create a new chat for a task
+pub async fn create_chat(
+    Path((project_id, task_id)): Path<(String, String)>,
+    Json(body): Json<CreateChatRequest>,
+) -> Result<Json<ChatSessionResponse>, AcpError> {
+    let (project_key, _, _) = resolve_project_key(&project_id)?;
+    let _ = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
+        .ok_or(AcpError::NotFound("Task not found".to_string()))?;
+
+    let chat = create_chat_session_row(&project_key, &task_id, body.agent, body.title)
+        .map_err(AcpError::Internal)?;
 
     crate::api::handlers::walkie_talkie::broadcast_radio_event(
         crate::api::handlers::walkie_talkie::RadioEvent::ChatListChanged {

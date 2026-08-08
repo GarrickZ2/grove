@@ -42,6 +42,7 @@ interface CreateTaskRequest {
   name: string;
   target?: string;
   notes?: string;
+  start_agent?: boolean;
 }
 
 type TaskFilter = 'active' | 'archived';
@@ -224,11 +225,12 @@ export async function createTask(
   projectId: string,
   name: string,
   target?: string,
-  notes?: string
+  notes?: string,
+  startAgent?: boolean
 ): Promise<TaskResponse> {
   return apiClient.post<CreateTaskRequest, TaskResponse>(
     `/api/v1/projects/${projectId}/tasks`,
-    { name, target, notes }
+    { name, target, notes, start_agent: startAgent }
   );
 }
 

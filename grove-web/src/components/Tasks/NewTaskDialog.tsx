@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { X, GitBranch, Plus, FileText, ChevronDown, Loader2 } from "lucide-react";
+import { X, GitBranch, Plus, FileText, ChevronDown, Loader2, Zap } from "lucide-react";
 import { Button, Input } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import { useProject } from "../../context";
@@ -10,7 +10,7 @@ import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
 interface NewTaskDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (name: string, targetBranch: string, notes: string) => void | Promise<void>;
+  onCreate: (name: string, targetBranch: string, notes: string, startAgent: boolean) => void | Promise<void>;
   isLoading?: boolean;
   externalError?: string | null;
 }
@@ -21,6 +21,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
   const [taskName, setTaskName] = useState("");
   const [targetBranch, setTargetBranch] = useState(selectedProject?.currentBranch || "main");
   const [notes, setNotes] = useState("");
+  const [startAgent, setStartAgent] = useState(false);
   const [error, setError] = useState("");
   const [branches, setBranches] = useState<string[]>([]);
   const [showBranchDropdown, setShowBranchDropdown] = useState(false);
@@ -141,13 +142,15 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
     }
 
     setError("");
-    await onCreate(taskName.trim(), isStudio ? "" : targetBranch, notes.trim());
+    // startAgent only means something with a description to hand the agent.
+    await onCreate(taskName.trim(), isStudio ? "" : targetBranch, notes.trim(), startAgent && notes.trim().length > 0);
   };
 
   const handleClose = () => {
     setTaskName("");
     setTargetBranch(selectedProject?.currentBranch || "main");
     setNotes("");
+    setStartAgent(false);
     setError("");
     setShowBranchDropdown(false);
     setIsDragging(false);
@@ -287,6 +290,32 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                       </div>
                     )}
                   </div>
+
+                  {/* Auto-start: hand the notes to an agent as its first
+                      prompt so work begins immediately on task creation.
+                      Only meaningful with a non-empty description. */}
+                  <label
+                    className={`mt-2 flex items-center gap-2 select-none ${
+                      notes.trim()
+                        ? "cursor-pointer text-[var(--color-text)]"
+                        : "cursor-not-allowed text-[var(--color-text-muted)] opacity-60"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={startAgent && notes.trim().length > 0}
+                      disabled={!notes.trim()}
+                      onChange={(e) => setStartAgent(e.target.checked)}
+                      className="w-3.5 h-3.5 accent-[var(--color-highlight)]"
+                    />
+                    <span className="inline-flex items-center gap-1.5 text-sm">
+                      <Zap className="w-3.5 h-3.5 text-[var(--color-info)]" />
+                      Start agent on these notes
+                    </span>
+                    <span className="text-xs text-[var(--color-text-muted)]">
+                      — injects the description as the first prompt
+                    </span>
+                  </label>
                 </div>
 
                 {/* Target Branch (selectable) — hidden for Studio */}

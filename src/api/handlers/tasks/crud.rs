@@ -229,6 +229,57 @@ pub async fn create_task(
     use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
     broadcast_radio_event(RadioEvent::GroupChanged);
 
+    // Auto-start: create a chat on the new task and inject the notes as its
+    // first prompt, so the agent begins working on the description without
+    // anyone opening the chat. The chat row is created synchronously (the UI
+    // navigating into the task sees it immediately); the spawn + prompt
+    // delivery runs in the background because `ensure_target_handle` blocks
+    // on the agent subprocess reaching SessionReady — several seconds we
+    // don't want on the create-task request. A delivery failure logs and
+    // leaves an ordinary empty chat behind; task creation itself already
+    // succeeded and must not be rolled back over a spawn problem.
+    if req.start_agent {
+        let prompt = req.notes.as_ref().filter(|n| !n.trim().is_empty()).cloned();
+        if let Some(prompt) = prompt {
+            match crate::api::handlers::acp::create_chat_session_row(
+                &project_key,
+                &result.task.id,
+                req.agent.clone(),
+                None,
+            ) {
+                Ok(chat) => {
+                    broadcast_radio_event(RadioEvent::ChatListChanged {
+                        project_id: id.clone(),
+                        task_id: result.task.id.clone(),
+                    });
+                    let project_key = project_key.clone();
+                    let task_id = result.task.id.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::agent_graph::tools::deliver_user_kickoff(
+                            &project_key,
+                            &task_id,
+                            &chat.id,
+                            prompt,
+                        )
+                        .await
+                        {
+                            eprintln!(
+                                "[tasks] auto-start kickoff failed for task {} chat {}: {}",
+                                task_id, chat.id, e
+                            );
+                        }
+                    });
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[tasks] auto-start chat creation failed for task {}: {}",
+                        result.task.id, e
+                    );
+                }
+            }
+        }
+    }
+
     Ok(Json(TaskResponse {
         id: result.task.id.clone(),
         name: result.task.name.clone(),

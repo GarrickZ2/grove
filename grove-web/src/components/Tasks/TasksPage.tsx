@@ -379,7 +379,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
 
   // Handle new task creation (Zen-only)
   const handleCreateTask = useCallback(
-    async (name: string, targetBranch: string, notes: string) => {
+    async (name: string, targetBranch: string, notes: string, startAgent: boolean) => {
       if (!selectedProject) return;
       setIsCreating(true);
       setCreateError(null);
@@ -388,7 +388,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
       let createErr: unknown = null;
       try {
         // Create task and get the response
-        taskResponse = await apiCreateTask(selectedProject.id, name, targetBranch, notesArg);
+        taskResponse = await apiCreateTask(selectedProject.id, name, targetBranch, notesArg, startAgent);
       } catch (err: unknown) {
         createErr = err;
       }

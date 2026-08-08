@@ -86,6 +86,16 @@ pub struct CreateTaskRequest {
     pub target: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    /// When true (and `notes` is non-empty), auto-create a chat session on
+    /// the new task and inject the notes as its first prompt — the agent
+    /// starts working on the description immediately instead of sitting
+    /// idle until someone opens the chat.
+    #[serde(default)]
+    pub start_agent: bool,
+    /// Agent for the auto-started chat. Defaults exactly like chat
+    /// creation: `acp.agent_command` from config, else `claude-acp`.
+    #[serde(default)]
+    pub agent: Option<String>,
 }
 
 /// Rename task request
@@ -528,4 +538,30 @@ pub struct MentionCandidatesResponse {
     pub agents: Vec<MentionAgent>,
     pub outgoing: Vec<MentionOutgoing>,
     pub pending_replies: Vec<MentionPendingReply>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The auto-start fields are opt-in extras on a stable public request —
+    // existing clients that send only {name, target, notes} must keep
+    // deserializing with start_agent=false / agent=None.
+    #[test]
+    fn create_task_request_defaults_without_auto_start_fields() {
+        let req: CreateTaskRequest =
+            serde_json::from_str(r#"{"name":"t1","target":"main","notes":"do it"}"#).unwrap();
+        assert!(!req.start_agent);
+        assert!(req.agent.is_none());
+    }
+
+    #[test]
+    fn create_task_request_parses_auto_start_fields() {
+        let req: CreateTaskRequest = serde_json::from_str(
+            r#"{"name":"t1","notes":"fix the bug","start_agent":true,"agent":"claude-acp"}"#,
+        )
+        .unwrap();
+        assert!(req.start_agent);
+        assert_eq!(req.agent.as_deref(), Some("claude-acp"));
+    }
 }
