@@ -466,7 +466,9 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
 
     // Start HTTP server in a background task
     let handle = tokio::spawn(async move {
-        let auth = std::sync::Arc::new(api::auth::ServerAuth::no_auth());
+        // The Tauri desktop window is always local — the webview and the
+        // server it talks to run in the same process on the same machine.
+        let auth = std::sync::Arc::new(api::auth::ServerAuth::no_auth(false));
         let app = api::create_router(None, auth, remote_url_clone);
 
         // Signal that server is ready

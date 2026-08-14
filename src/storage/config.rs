@@ -181,6 +181,9 @@ pub enum LastLaunch {
         /// API server is started; the frontend connects to this URL instead.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         remote_url: Option<String>,
+        /// See `Commands::Web::remote` (the `--remote` flag).
+        #[serde(default)]
+        remote: bool,
     },
     Mobile {
         #[serde(default = "default_web_port")]

@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-/// Create a ServerAuth with no auth (grove web mode — no auth required)
-fn no_auth() -> Arc<ServerAuth> {
-    Arc::new(ServerAuth::no_auth())
+/// Create a ServerAuth with no auth (grove web mode — no auth required).
+/// `remote` is the operator's `--remote` flag; see [`ServerAuth::remote`].
+fn no_auth(remote: bool) -> Arc<ServerAuth> {
+    Arc::new(ServerAuth::no_auth(remote))
 }
 
 /// Default port for the web server
@@ -98,15 +99,21 @@ fn find_project_dir() -> Option<PathBuf> {
 /// `window.__GROVE_API_BASE__` injected into `index.html`, so that
 /// `AuthGate` and `apiClient` direct every API call to the remote Grove
 /// server (typically `grove mobile`). The form appears as usual for password input.
-pub async fn execute(port: u16, no_open: bool, dev: bool, remote_url: Option<String>) {
+pub async fn execute(
+    port: u16,
+    no_open: bool,
+    dev: bool,
+    remote_url: Option<String>,
+    remote: bool,
+) {
     if let Some(base_url) = remote_url {
         execute_remote_mode(port, no_open, base_url).await;
     } else if dev {
         // Development mode: run vite dev server + API server
-        execute_dev_mode(port, no_open).await;
+        execute_dev_mode(port, no_open, remote).await;
     } else {
         // Production mode: serve static files
-        execute_prod_mode(port, no_open).await;
+        execute_prod_mode(port, no_open, remote).await;
     }
 }
 
@@ -280,7 +287,7 @@ pub async fn execute_mobile(
 }
 
 /// Run in development mode (Vite dev server + API)
-async fn execute_dev_mode(api_port: u16, no_open: bool) {
+async fn execute_dev_mode(api_port: u16, no_open: bool, remote: bool) {
     let project_dir = find_project_dir();
 
     if project_dir.is_none() {
@@ -338,8 +345,15 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
     println!("\nPress Ctrl+C to stop");
 
     // Start API server (blocking) - don't open browser (Vite handles frontend)
-    if let Err(e) =
-        api::start_server("127.0.0.1", api_port, None, false, no_auth(), TlsMode::Off).await
+    if let Err(e) = api::start_server(
+        "127.0.0.1",
+        api_port,
+        None,
+        false,
+        no_auth(remote),
+        TlsMode::Off,
+    )
+    .await
     {
         eprintln!("API server error: {}", e);
     }
@@ -350,7 +364,7 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
 }
 
 /// Run in production mode (static files + API)
-async fn execute_prod_mode(port: u16, no_open: bool) {
+async fn execute_prod_mode(port: u16, no_open: bool, remote: bool) {
     // Check for embedded assets first
     let has_embedded = api::has_embedded_assets();
 
@@ -369,7 +383,7 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
                     port,
                     Some(built_dir),
                     open_browser,
-                    no_auth(),
+                    no_auth(remote),
                     TlsMode::Off,
                 )
                 .await
@@ -394,7 +408,7 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
         port,
         static_dir,
         open_browser,
-        no_auth(),
+        no_auth(remote),
         TlsMode::Off,
     )
     .await
@@ -432,7 +446,9 @@ async fn execute_remote_mode(port: u16, no_open: bool, base_url: String) {
     println!("Grove web (remote mode): API target  -> {}", api_base);
 
     // Create the same proxy router used by the GUI mode!
-    let auth = Arc::new(ServerAuth::no_auth());
+    // The frontend served here is a local proxy to a remote Grove server —
+    // the browser reaching THIS instance is presumed local either way.
+    let auth = Arc::new(ServerAuth::no_auth(false));
 
     // Check for embedded or external static assets
     let static_dir = api::find_static_dir();

@@ -434,11 +434,12 @@ fn main() -> io::Result<()> {
             no_open,
             dev,
             remote_url,
+            remote,
         } => {
             tokio::runtime::Runtime::new()
                 .expect("Failed to create tokio runtime")
                 .block_on(async {
-                    cli::web::execute(port, no_open, dev, remote_url).await;
+                    cli::web::execute(port, no_open, dev, remote_url, remote).await;
                 });
         }
         Commands::Mobile {

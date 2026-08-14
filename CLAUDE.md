@@ -242,7 +242,7 @@ Reset the histogram before measuring an isolated operation; otherwise the cold-s
 
 - `grove` — Smart start: resumes your last mode
 - `grove tui` — Keyboard-first terminal UI
-- `grove web` — Browser IDE on `http://localhost:3001`
+- `grove web` — Browser IDE on `http://localhost:3001`; `--remote` when published through a reverse proxy/tunnel with no auth of its own, so the frontend knows not to trust server-side native OS dialogs
 - `grove gui` — Native desktop window (requires `--features gui` build)
 - `grove mobile` — LAN access for phone / tablet (HMAC-signed requests); `--private` for localhost-only, `--passkey <key>` for custom secret
 - `grove mcp` — MCP server (stdio) for orchestrator agents

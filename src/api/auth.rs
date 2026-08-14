@@ -38,29 +38,47 @@ pub struct ServerAuth {
     /// Used by the startup banner to warn that the key is ephemeral and
     /// won't survive restarts.
     pub key_is_generated: bool,
+    /// True when the operator has declared this instance is reached from a
+    /// different machine than the one Grove runs on — e.g. `grove web`
+    /// published through a reverse proxy or tunnel (Cloudflare Access,
+    /// Tailscale Funnel, ngrok…) with no HMAC auth of its own. `required`
+    /// alone can't capture this: a no-auth `grove web` always reports
+    /// `required: false` regardless of how it's actually reached. The
+    /// frontend uses `remote || required` to decide whether a server-side
+    /// native OS dialog (folder picker, "reveal in file manager", launching
+    /// the default browser) would even be visible to the person making the
+    /// request. Set via `grove web --remote`.
+    pub remote: bool,
     /// Nonce replay-prevention map: nonce → timestamp (epoch secs).
     used_nonces: Mutex<HashMap<String, i64>>,
 }
 
 impl ServerAuth {
-    /// No authentication (localhost / `grove web`).
-    pub fn no_auth() -> Self {
+    /// No authentication (localhost / `grove web`). `remote` should be true
+    /// when the operator has declared this instance is published for
+    /// access from a different machine (see [`ServerAuth::remote`]).
+    pub fn no_auth(remote: bool) -> Self {
         Self {
             mode: AuthMode::None,
             secret_key: None,
             key_is_generated: false,
+            remote,
             used_nonces: Mutex::new(HashMap::new()),
         }
     }
 
     /// HMAC-SHA256 authentication (`grove mobile`). `is_generated` should be
     /// true when the key came from `generate_secret_key()`, false when the
-    /// user typed it at the interactive prompt.
+    /// user typed it at the interactive prompt. Always network-accessed by
+    /// design, so `remote` is implicitly true — callers don't need to pass
+    /// it (the frontend's `required` check already covers HMAC mode, but
+    /// setting it here keeps `ServerAuth::remote` meaningful on its own).
     pub fn hmac(secret_key: String, is_generated: bool) -> Self {
         Self {
             mode: AuthMode::Hmac,
             secret_key: Some(secret_key),
             key_is_generated: is_generated,
+            remote: true,
             used_nonces: Mutex::new(HashMap::new()),
         }
     }
@@ -258,6 +276,10 @@ pub async fn auth_middleware(
 pub struct AuthInfoResponse {
     pub required: bool,
     pub mode: AuthMode,
+    /// See [`ServerAuth::remote`]. The frontend treats `remote || required`
+    /// as "don't trust server-side native OS dialogs" — this field is what
+    /// actually makes that true for a no-auth `grove web --remote` instance.
+    pub remote: bool,
 }
 
 /// `GET /api/v1/auth/info` — tells the SPA whether auth is required and which mode.
@@ -267,6 +289,7 @@ pub async fn auth_info(
     Json(AuthInfoResponse {
         required: auth.secret_key.is_some(),
         mode: auth.mode,
+        remote: auth.remote,
     })
 }
 
