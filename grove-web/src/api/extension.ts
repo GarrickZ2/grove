@@ -88,8 +88,22 @@ export async function revealCompanionPath(
 
 /**
  * Pop a native OS folder picker so the user can choose where to install
- * the companion. Resolves with `path: null` when the user cancels.
+ * the companion.
+ *
+ * Three outcomes, matching `/api/v1/browse-folder`:
+ *   - `{ path: "/abs/path" }`            user picked a folder
+ *   - `{ path: null, cancelled: true }`  user dismissed the dialog
+ *   - `{ path: null, cancelled: false }` no native picker could be shown
+ *
+ * The last case means the server is headless or its DISPLAY is stale, so the
+ * caller should open the in-app folder browser rather than treat it as a
+ * cancel.
  */
-export async function browseInstallFolder(): Promise<{ path: string | null }> {
-  return apiClient.get<{ path: string | null }>('/api/v1/extension/browse-install-folder');
+export async function browseInstallFolder(): Promise<{
+  path: string | null;
+  cancelled?: boolean;
+}> {
+  return apiClient.get<{ path: string | null; cancelled?: boolean }>(
+    '/api/v1/extension/browse-install-folder',
+  );
 }

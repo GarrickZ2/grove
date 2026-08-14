@@ -77,7 +77,7 @@ pub(crate) fn classify_picker(spawn: io::Result<Output>) -> PickerOutcome {
     }
 }
 
-fn response_for(outcome: PickerOutcome) -> Json<BrowseFolderResponse> {
+pub(crate) fn response_for(outcome: PickerOutcome) -> Json<BrowseFolderResponse> {
     match outcome {
         PickerOutcome::Picked(path) => Json(BrowseFolderResponse {
             path: Some(path),
@@ -100,15 +100,36 @@ fn linux_display_available(display: Option<&str>, wayland_display: Option<&str>)
         || wayland_display.is_some_and(|value| !value.trim().is_empty())
 }
 
-pub async fn browse_folder() -> Json<BrowseFolderResponse> {
+/// Dialog titles are interpolated into an AppleScript string literal and a
+/// PowerShell single-quoted string, both of which break on their own quote
+/// character. Drop quotes and backslashes instead of escaping them per
+/// platform: titles are short internal labels, so removing the character is
+/// simpler than three escaping rules and cannot produce a malformed script.
+fn sanitize_prompt(prompt: &str) -> String {
+    prompt
+        .chars()
+        .filter(|c| !matches!(c, '"' | '\'' | '\\'))
+        .collect()
+}
+
+/// Invoke the platform's native folder picker with `prompt` as the dialog
+/// title, returning the raw outcome. Shared by the repo picker and the
+/// companion installer so both classify "cancelled" against "unavailable"
+/// identically; callers wrap it with `response_for`.
+pub(crate) fn pick_folder(prompt: &str) -> PickerOutcome {
+    let prompt = sanitize_prompt(prompt);
+
     #[cfg(target_os = "macos")]
     {
-        response_for(classify_picker(
+        classify_picker(
             Command::new("osascript")
                 .arg("-e")
-                .arg("POSIX path of (choose folder with prompt \"Select Git Repository Folder\")")
+                .arg(format!(
+                    "POSIX path of (choose folder with prompt \"{}\")",
+                    prompt
+                ))
                 .output(),
-        ))
+        )
     }
 
     #[cfg(target_os = "linux")]
@@ -121,7 +142,7 @@ pub async fn browse_folder() -> Json<BrowseFolderResponse> {
         let display = std::env::var("DISPLAY").ok();
         let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
         if !linux_display_available(display.as_deref(), wayland_display.as_deref()) {
-            return response_for(PickerOutcome::Unavailable);
+            return PickerOutcome::Unavailable;
         }
 
         // Try zenity first; if it's installed and the user either picked or
@@ -132,25 +153,19 @@ pub async fn browse_folder() -> Json<BrowseFolderResponse> {
                 .args([
                     "--file-selection",
                     "--directory",
-                    "--title=Select Git Repository Folder",
+                    &format!("--title={}", prompt),
                 ])
                 .output(),
         );
-        let outcome = if matches!(zenity, PickerOutcome::Unavailable) {
+        if matches!(zenity, PickerOutcome::Unavailable) {
             classify_picker(
                 Command::new("kdialog")
-                    .args([
-                        "--getexistingdirectory",
-                        ".",
-                        "--title",
-                        "Select Git Repository Folder",
-                    ])
+                    .args(["--getexistingdirectory", ".", "--title", &prompt])
                     .output(),
             )
         } else {
             zenity
-        };
-        response_for(outcome)
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -158,16 +173,23 @@ pub async fn browse_folder() -> Json<BrowseFolderResponse> {
         // Exit non-zero on cancel so classify_picker reports `Cancelled`
         // (a zero-exit / empty-stdout case would also report Cancelled, but
         // making it explicit keeps intent clear and the script future-proof).
-        let script = "Add-Type -AssemblyName System.Windows.Forms; \
-                      $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
-                      $f.Description = 'Select Git Repository Folder'; \
-                      if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath } else { exit 1 }";
-        return response_for(classify_picker(
+        let script = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
+             $f.Description = '{}'; \
+             if ($f.ShowDialog() -eq 'OK') {{ Write-Output $f.SelectedPath }} else {{ exit 1 }}",
+            prompt
+        );
+        return classify_picker(
             Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-Command", script])
+                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
                 .output(),
-        ));
+        );
     }
+}
+
+pub async fn browse_folder() -> Json<BrowseFolderResponse> {
+    response_for(pick_folder("Select Git Repository Folder"))
 }
 
 // ─── Read File Handler ───────────────────────────────────────────────────────
@@ -501,6 +523,24 @@ mod tests {
             "Gtk-Message: Failed to load module \"canberra-gtk-module\"\n",
         )));
         assert_eq!(r, PickerOutcome::Cancelled);
+    }
+
+    #[test]
+    fn sanitize_prompt_strips_script_breaking_characters() {
+        // A quote in the title would terminate the AppleScript / PowerShell
+        // string literal early and leave a malformed script behind.
+        assert_eq!(
+            sanitize_prompt("Where to install \"Grove\" Companion?"),
+            "Where to install Grove Companion?"
+        );
+        assert_eq!(
+            sanitize_prompt(r"back\slash and 'quote'"),
+            "backslash and quote"
+        );
+        assert_eq!(
+            sanitize_prompt("Select Git Repository Folder"),
+            "Select Git Repository Folder"
+        );
     }
 
     #[cfg(target_os = "linux")]

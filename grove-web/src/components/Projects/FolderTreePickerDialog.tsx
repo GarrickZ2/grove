@@ -12,6 +12,11 @@ interface Props {
   title?: string;
   /** Starting dir. Default: server's $HOME (probed via root). */
   initialPath?: string;
+  /**
+   * Stacking level, forwarded to DialogShell. Raise it when opening this
+   * picker from inside another modal so it sits above that modal's backdrop.
+   */
+  zIndex?: number;
 }
 
 /**
@@ -34,6 +39,7 @@ export function FolderTreePickerDialog({
   onSelect,
   title = "Select Folder",
   initialPath,
+  zIndex,
 }: Props) {
   const [data, setData] = useState<ListFolderResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -115,7 +121,7 @@ export function FolderTreePickerDialog({
   const currentName = crumbs.length ? crumbs[crumbs.length - 1].label : "";
 
   return (
-    <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-2xl">
+    <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-2xl" zIndex={zIndex}>
       <div className="glass-overlay rounded-2xl overflow-hidden w-full max-w-[95vw]">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">

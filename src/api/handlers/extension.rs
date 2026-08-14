@@ -19,6 +19,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::api::error::ApiError;
+use crate::api::handlers::folder::{pick_folder, response_for, BrowseFolderResponse};
 use crate::api::state::{ExtensionSession, EXTENSION_SESSION};
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -702,87 +703,19 @@ pub async fn reveal_install_path(
 }
 
 /// GET /api/v1/extension/browse-install-folder — pop a native folder picker
-/// so the user can choose where the companion gets installed. Returns
-/// `{ path: <abs path> }` on selection or `{ path: null }` if cancelled.
+/// so the user can choose where the companion gets installed.
 ///
-/// Mirrors `folder::browse_folder` (osascript / zenity / kdialog) but with a
-/// companion-specific prompt — copy-pasting the helper rather than adding
-/// a prompt argument keeps the existing endpoint's signature stable.
-pub async fn browse_install_folder() -> Json<serde_json::Value> {
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg("POSIX path of (choose folder with prompt \"Where to install Grove Companion?\")")
-            .output();
-        if let Ok(output) = output {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let zenity = std::process::Command::new("zenity")
-            .args([
-                "--file-selection",
-                "--directory",
-                "--title=Where to install Grove Companion?",
-            ])
-            .output();
-        if let Ok(output) = zenity {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-        let kdialog = std::process::Command::new("kdialog")
-            .args([
-                "--getexistingdirectory",
-                ".",
-                "--title",
-                "Where to install Grove Companion?",
-            ])
-            .output();
-        if let Ok(output) = kdialog {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        // PowerShell FolderBrowserDialog. The trailing trim removes the
-        // PowerShell-injected newline / CR pair so the path matches what
-        // Chrome's file picker would see.
-        let ps = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Where to install Grove Companion?'; if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath }",
-            ])
-            .output();
-        if let Ok(output) = ps {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-    }
-
-    Json(json!({ "path": serde_json::Value::Null }))
+/// Shares `folder::pick_folder` with the repo picker, so the response
+/// distinguishes the three outcomes the same way: `{ path }` on selection,
+/// `{ path: null, cancelled: true }` when the user dismissed the dialog, and
+/// `{ path: null, cancelled: false }` when no native picker could be shown
+/// (headless host, or `DISPLAY` set but pointing at a dead session). The
+/// frontend falls back to the in-app folder browser on that last case.
+/// Previously all three outcomes returned a bare `{ path: null }`, so an
+/// unavailable picker was indistinguishable from a cancel and clicking the
+/// button on a remote or headless Grove did nothing at all.
+pub async fn browse_install_folder() -> Json<BrowseFolderResponse> {
+    response_for(pick_folder("Where to install Grove Companion?"))
 }
 
 /// POST /api/v1/extension/open-chrome — launch the user's default browser
