@@ -1178,10 +1178,33 @@ function buildRenderItems(messages: ChatMessage[], isBusy = false): RenderItem[]
         break;
       }
     }
+    // The turn's closing reply is normally the assistant text that trails the
+    // last tool, and the block below renders everything after processEndOffset
+    // sequentially. But when the agent's *last* recorded event is a tool call
+    // (e.g. a bookkeeping TodoWrite fired after the summary, or the final text
+    // chunk landed at/before that tool), the real reply sits at or before
+    // processEndOffset and would be swallowed into the collapsed WorkSummary —
+    // leaving only a "Worked" chip with no visible answer. Find that trailing
+    // reply and lift it out so the conclusion is always shown as a bubble.
+    let conclusionOffset = -1;
+    let conclusionText = "";
+    for (let i = turnEntries.length - 1; i >= 0; i -= 1) {
+      const message = turnEntries[i];
+      if (message.type === "assistant") {
+        conclusionOffset = i;
+        conclusionText = message.content ?? "";
+        break;
+      }
+    }
+    const liftConclusion =
+      conclusionOffset >= 0 &&
+      conclusionOffset <= processEndOffset &&
+      conclusionText.trim().length > 0;
     if (processEndOffset >= 0) {
       const processItems: WorkSummaryItem[] = [];
       for (let i = 0; i < turnEntries.length; i += 1) {
         const message = turnEntries[i];
+        if (liftConclusion && i === conclusionOffset) continue;
         if (
           (message.type === "assistant" && i <= processEndOffset) ||
           message.type === "thinking" ||
@@ -1235,6 +1258,13 @@ function buildRenderItems(messages: ChatMessage[], isBusy = false): RenderItem[]
             item.kind !== "single" || item.message.type !== "thinking",
         ),
       );
+      if (liftConclusion) {
+        items.push({
+          kind: "single",
+          message: turnEntries[conclusionOffset],
+          index: userIndex + 1 + conclusionOffset,
+        });
+      }
       const editedTools = processItems.flatMap(({ message, index }) =>
         message.type === "tool" && isEditTool(message)
           ? [{ message, index }]
