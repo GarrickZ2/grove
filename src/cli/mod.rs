@@ -65,6 +65,17 @@ pub enum Commands {
         /// will be proxied/directed to this URL (e.g. http://192.168.1.5:3001).
         #[arg(long, value_name = "URL")]
         remote_url: Option<String>,
+        /// Declare that this instance is reached from a different machine
+        /// than the one Grove runs on — e.g. published through a reverse
+        /// proxy or tunnel (Cloudflare Access, Tailscale Funnel, ngrok…)
+        /// with no HMAC auth of its own. Without this, a no-auth `grove
+        /// web` has no way to know it's not being accessed locally, so
+        /// server-side native OS dialogs (folder picker, "reveal in file
+        /// manager", launching the default browser) silently act on the
+        /// SERVER's desktop/filesystem instead of falling back to an
+        /// in-app equivalent.
+        #[arg(long)]
+        remote: bool,
     },
     /// Open diff review for a task in the browser
     Diff {
@@ -149,11 +160,13 @@ impl Commands {
                 no_open,
                 dev,
                 remote_url,
+                remote,
             } => Some(LastLaunch::Web {
                 port: *port,
                 no_open: *no_open,
                 dev: *dev,
                 remote_url: remote_url.clone(),
+                remote: *remote,
             }),
             Commands::Mobile {
                 port,
@@ -193,11 +206,13 @@ impl LastLaunch {
                 no_open,
                 dev,
                 remote_url,
+                remote,
             } => Commands::Web {
                 port: *port,
                 no_open: *no_open,
                 dev: *dev,
                 remote_url: remote_url.clone(),
+                remote: *remote,
             },
             LastLaunch::Mobile {
                 port,
