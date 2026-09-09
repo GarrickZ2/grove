@@ -2,7 +2,7 @@ import { Loader2 } from "lucide-react";
 import { TaskSearch } from "./TaskSearch";
 import { TaskFilters } from "./TaskFilters";
 import { TaskListItem } from "./TaskListItem";
-import { useNotifications } from "../../../context";
+import { useNotifications, useProject } from "../../../context";
 import type { Task, TaskFilter } from "../../../data/types";
 
 interface TaskSidebarProps {
@@ -36,6 +36,9 @@ export function TaskSidebar({
   fullWidth,
 }: TaskSidebarProps) {
   const { getTaskNotification, dismissNotification } = useNotifications();
+  // Zen mode shows one project's tasks; match hooks by (project, task) since
+  // task ids are only unique per project ("_local" is shared by all projects).
+  const projectId = useProject().selectedProject?.id ?? "";
 
   return (
     <div className={`h-full flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden ${fullWidth ? "w-full" : ""}`}>
@@ -62,7 +65,7 @@ export function TaskSidebar({
         ) : (
           <div className="divide-y divide-[var(--color-border)]">
             {tasks.map((task) => {
-              const notif = getTaskNotification(task.id);
+              const notif = getTaskNotification(projectId, task.id);
               return (
                 <TaskListItem
                   key={task.id}

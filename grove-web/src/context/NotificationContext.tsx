@@ -10,7 +10,7 @@ interface NotificationContextType {
   dismissNotification: (projectId: string, taskId: string) => Promise<void>;
   clearAllNotifications: () => Promise<void>;
   refreshNotifications: () => Promise<void>;
-  getTaskNotification: (taskId: string) => HookEntryResponse | undefined;
+  getTaskNotification: (projectId: string, taskId: string) => HookEntryResponse | undefined;
 }
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
@@ -45,8 +45,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Match on BOTH project_id and task_id: task ids are only unique within a
+  // project (every project's Local Task shares the id "_local"), so keying by
+  // task_id alone lit up the Local card of every project in cross-project
+  // sidebars whenever any one of them completed.
   const getTaskNotification = useCallback(
-    (taskId: string) => notifications.find((n) => n.task_id === taskId),
+    (projectId: string, taskId: string) =>
+      notifications.find((n) => n.project_id === projectId && n.task_id === taskId),
     [notifications]
   );
 

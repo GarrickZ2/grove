@@ -915,7 +915,7 @@ export function BlitzPage({
   const jumpToTaskAt = useCallback((index: number) => {
     if (index >= mainListTasks.length) return;
     const target = mainListTasks[index];
-    const notif = getTaskNotification(target.task.id);
+    const notif = getTaskNotification(target.projectId, target.task.id);
     if (notif) dismissNotification(notif.project_id, notif.task_id);
     handleSelectTask(target);
   }, [mainListTasks, getTaskNotification, dismissNotification, handleSelectTask]);
@@ -1299,7 +1299,7 @@ export function BlitzPage({
                 </button>
                 {(mainTasksExpanded || isFilteringTasks) && <div ref={mainListRef} className="flex flex-col gap-1.5 pt-1.5">
                   {mainListTasks.map((bt, index) => {
-                  const notif = getTaskNotification(bt.task.id);
+                  const notif = getTaskNotification(bt.projectId, bt.task.id);
                   const taskKey = `${bt.projectId}:${bt.task.id}`;
                   const isThisSelected =
                     currentSelected?.task.id === bt.task.id &&
@@ -1419,7 +1419,7 @@ export function BlitzPage({
                               </div>
                             ) : (
                               groupTasks.map((bt, gIdx) => {
-                                const notif = getTaskNotification(bt.task.id);
+                                const notif = getTaskNotification(bt.projectId, bt.task.id);
                                 const isThisSelected =
                                   currentSelected?.task.id === bt.task.id &&
                                   currentSelected?.projectId === bt.projectId;
@@ -1533,7 +1533,7 @@ export function BlitzPage({
                       <div>
                         <div className="flex flex-col gap-1.5 pt-1.5">
                           {folderLocalTasks.map((bt, index) => {
-                            const notif = getTaskNotification(bt.task.id);
+                            const notif = getTaskNotification(bt.projectId, bt.task.id);
                             const taskKey = `${bt.projectId}:${bt.task.id}`;
                             const isThisSelected =
                               currentSelected?.task.id === bt.task.id &&

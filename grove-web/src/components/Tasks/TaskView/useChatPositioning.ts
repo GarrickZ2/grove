@@ -23,6 +23,10 @@ export function useChatPositioning({
   useEffect(() => {
     if (!hasMessages) {
       initialPinChatIdRef.current = null;
+      // An empty transcript has nothing to scroll, so Virtuoso never emits
+      // the bottom callbacks that would clear a stale pill left over from
+      // the previous chat — clear it here instead.
+      setShowScrollToBottom(false);
       return;
     }
     if (initialPinChatIdRef.current === activeChatId) return;

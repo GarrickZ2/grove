@@ -4447,6 +4447,14 @@ export function TaskChat({
   /** Restore chat state from cache */
   const restoreChatState = useCallback((chatId: string) => {
     setShowMemoryPanel(false);
+    // Chat-switch scroll reset: the follow state and the "Scroll to bottom"
+    // pill belong to the chat we are leaving. Without this, a detached state
+    // (or a visible pill) leaks into the freshly opened chat — and an empty
+    // chat never scrolls, so no Virtuoso bottom callback ever clears it
+    // until the first message arrives.
+    followStateRef.current = "following";
+    explicitBottomPendingRef.current = false;
+    setShowScrollToBottom(false);
     const cached = perChatStateRef.current.get(chatId);
     const restoredMessages = resolveMessages(chatId, cached?.messages);
     if (cached) {
@@ -10635,7 +10643,11 @@ export function TaskChat({
                     <button
                       type="button"
                       onClick={() => {
-                        requestBottom("auto", true);
+                        // Hide immediately and reattach. requestBottom with
+                        // waitForConfirmation=true waits for a Virtuoso
+                        // bottom confirmation that never arrives on an empty
+                        // (unscrollable) transcript, so the pill would stick.
+                        beginBottomReattachment("auto");
                       }}
                       className="pointer-events-auto group inline-flex h-8 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_86%,transparent)] px-3 text-xs font-medium text-[var(--color-text-muted)] shadow-[0_1px_2px_rgba(0,0,0,0.08),0_6px_20px_rgba(0,0,0,0.10)] backdrop-blur-xl transition-[color,background-color,border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-[color-mix(in_srgb,var(--color-highlight)_24%,var(--color-border))] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] hover:shadow-[0_2px_4px_rgba(0,0,0,0.10),0_8px_24px_rgba(0,0,0,0.14)] active:translate-y-0 select-none"
                     >
