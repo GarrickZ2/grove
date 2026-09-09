@@ -62,7 +62,35 @@ fn run_npm(dir: &Path, command: &str) -> bool {
 
 fn build_tauri() {
     #[cfg(feature = "gui")]
-    tauri_build::build();
+    {
+        // GUI windows load the frontend from `http://localhost:<dynamic port>`
+        // (WebviewUrl::External), which Tauri treats as a REMOTE origin. Remote
+        // origins always go through the IPC ACL, and app-defined commands only
+        // become ACL-visible if the app declares an AppManifest that
+        // autogenerates `allow-<command>` permissions. Without this, every
+        // `invoke()` of a custom command from the webview is rejected with
+        // "<command> not allowed. Plugin not found".
+        tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+            tauri_build::AppManifest::new().commands(&[
+                "open_external_url",
+                "download_file_dialog",
+                "save_bytes_dialog",
+                "resolve_external_drag_path",
+                "toggle_devtools",
+                "toggle_main_window_visibility",
+                "tray_resolve_permission",
+                "tray_open_main",
+                "tray_open_settings",
+                "tray_open_task",
+                "tray_take_pending_navigate",
+                "toggle_tray_popover_visibility",
+                "tray_set_pinned",
+                "tray_is_pinned",
+                "tray_update_theme_icons",
+            ]),
+        ))
+        .expect("failed to run tauri-build");
+    }
 
     // macOS dev convenience: `make gui` runs the bare `cargo run` binary, not a
     // packaged .app, so it has no embedded Info.plist. Without an embedded

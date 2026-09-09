@@ -17,6 +17,14 @@
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "shell:allow-open",
-    "updater:default"
+    "updater:default",
+    "allow-open-external-url",
+    "allow-download-file-dialog",
+    "allow-save-bytes-dialog",
+    "allow-resolve-external-drag-path",
+    "allow-toggle-devtools",
+    "allow-toggle-main-window-visibility",
+    "allow-toggle-tray-popover-visibility",
+    "allow-tray-update-theme-icons"
   ]
 }

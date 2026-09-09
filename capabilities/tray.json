@@ -10,6 +10,15 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
-    "core:window:allow-start-resize-dragging"
+    "core:window:allow-start-resize-dragging",
+    "allow-tray-resolve-permission",
+    "allow-tray-open-main",
+    "allow-tray-open-settings",
+    "allow-tray-open-task",
+    "allow-tray-take-pending-navigate",
+    "allow-tray-set-pinned",
+    "allow-tray-is-pinned",
+    "allow-tray-update-theme-icons",
+    "allow-toggle-tray-popover-visibility"
   ]
 }
