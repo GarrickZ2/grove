@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Grove Companion",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "minimum_chrome_version": "116",
   "description": "Companion extension for Grove desktop app to sync browser tabs and titles.",
   "permissions": [

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3] - 2026-09-09
+
+### Added
+
+- **Agent voice** — Agents can speak their responses aloud through a speak tool with dedicated session runtime.
+- **Companion extension protocol v2** — Companion extensions now negotiate a v2 handshake.
+- **Smarter memory automation** — Scheduled memory organization runs are skipped when there is nothing to organize.
+
+### Improved
+
+- **Turn-based task chat scrolling** — Chat conversations virtualize turn by turn, keeping long sessions smooth and scroll positions stable.
+
+### Fixed
+
+- **Cross-project notifications and chat scroll** — Notifications route to the correct project, and stale scroll state no longer lingers when switching chats.
+- **GUI IPC from remote origins** — App commands originating from remote origins are no longer rejected by the IPC ACL.
+- **Review and tray reliability** — Review base resolution falls back correctly, tray restart detection works, Zai credit reporting is accurate, and work sessions keep alive.
+- **Memory automation resilience** — Run status stays accurate after failed attempts, and a failed run no longer wedges the single-flight guard.
+- **Task and chat input handling** — The new task dialog no longer leaks Enter into the `task.open` shortcut, queued message edits keep their ordering, and agent identity renders correctly in chat.
+- **Content rendering** — Media embedded through MCP tools displays in tool results, and Markdown ordered lists number correctly.
+- **History compaction** — Compaction no longer truncates old events.
+- **Plugins and companions** — Plugin catalog lifecycle behaves reliably, and TUI-only mode no longer enforces a multiplexer requirement.
+
 ## [0.12.2] - 2026-08-13
 
 ### Added

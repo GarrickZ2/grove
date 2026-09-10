@@ -17,13 +17,16 @@ pub struct ArchiveQuery {
     pub force: Option<bool>,
 }
 
+// `Box<str>` keeps the struct small: handlers return `(StatusCode, Json<Self>)`
+// as the `Err` variant, and clippy's `result_large_err` fails CI once the
+// variant exceeds 128 bytes. Serialized JSON is identical to `String`.
 #[derive(Debug, Serialize)]
 pub struct ArchiveConfirmResponse {
-    pub error: String,
-    pub code: String,
-    pub task_name: String,
-    pub branch: String,
-    pub target: String,
+    pub error: Box<str>,
+    pub code: Box<str>,
+    pub task_name: Box<str>,
+    pub branch: Box<str>,
+    pub target: Box<str>,
     pub worktree_dirty: bool,
     pub branch_merged: bool,
     pub dirty_check_failed: bool,
@@ -34,11 +37,11 @@ impl ArchiveConfirmResponse {
     /// Create an error response with default/safe values for status fields
     pub fn error(code: &str, error: &str, task_name: String) -> Self {
         Self {
-            error: error.to_string(),
-            code: code.to_string(),
-            task_name,
-            branch: String::new(),
-            target: String::new(),
+            error: error.into(),
+            code: code.into(),
+            task_name: task_name.into(),
+            branch: String::new().into(),
+            target: String::new().into(),
             worktree_dirty: false,
             // Default to merged to avoid false "not merged" warnings
             branch_merged: true,
@@ -59,11 +62,11 @@ impl ArchiveConfirmResponse {
         merge_check_failed: bool,
     ) -> Self {
         Self {
-            error: "Archive requires confirmation".to_string(),
-            code: "ARCHIVE_CONFIRM_REQUIRED".to_string(),
-            task_name,
-            branch,
-            target,
+            error: "Archive requires confirmation".into(),
+            code: "ARCHIVE_CONFIRM_REQUIRED".into(),
+            task_name: task_name.into(),
+            branch: branch.into(),
+            target: target.into(),
             worktree_dirty,
             branch_merged,
             dirty_check_failed,
