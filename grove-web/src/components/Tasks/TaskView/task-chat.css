@@ -207,6 +207,281 @@
   }
 }
 
+/* Phone composer: reading is the default state. The idle control is a single
+   command pill; tapping it morphs into the existing, behavior-rich composer. */
+.mobile-composer-pill {
+  width: min(70%, 320px);
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--color-bg-secondary) 92%, var(--color-highlight) 8%),
+      color-mix(in srgb, var(--color-bg) 94%, transparent));
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-composer-pill-running {
+  background:
+    linear-gradient(120deg,
+      color-mix(in srgb, var(--color-bg-secondary) 94%, var(--color-highlight) 6%),
+      color-mix(in srgb, var(--color-highlight) 16%, var(--color-bg)) 48%,
+      color-mix(in srgb, var(--color-bg-secondary) 94%, var(--color-highlight) 6%));
+  background-size: 220% 100%;
+  animation: mobile-composer-aurora 4s ease-in-out infinite;
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.16),
+    0 0 0 1px color-mix(in srgb, var(--color-highlight) 20%, transparent),
+    0 0 24px color-mix(in srgb, var(--color-highlight) 10%, transparent);
+}
+
+.mobile-composer-pill-running .mobile-composer-spark {
+  animation: mobile-composer-icon-breathe 2.2s ease-in-out infinite;
+}
+
+.mobile-composer-label-running {
+  color: color-mix(in srgb, var(--color-highlight) 76%, var(--color-text) 24%);
+}
+
+.mobile-composer-activity {
+  display: inline-flex;
+  height: 16px;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.mobile-composer-activity i {
+  display: block;
+  width: 2px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-highlight);
+  animation: mobile-composer-level 1s ease-in-out infinite;
+}
+
+.mobile-composer-activity i:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.mobile-composer-activity i:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+.mobile-composer-pill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(110deg, transparent 20%, color-mix(in srgb, white 10%, transparent) 48%, transparent 72%);
+  transform: translateX(-120%);
+}
+
+.mobile-composer-pill-running::before {
+  animation: mobile-composer-sheen 3.2s ease-in-out infinite;
+}
+
+.mobile-composer-running-dot {
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-highlight) 45%, transparent);
+  animation: mobile-composer-pulse 1.8s ease-out infinite;
+}
+
+@keyframes mobile-composer-sheen {
+  0%, 36% { transform: translateX(-120%); }
+  76%, 100% { transform: translateX(120%); }
+}
+
+@keyframes mobile-composer-aurora {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes mobile-composer-icon-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
+  50% { transform: scale(1.06); box-shadow: 0 0 16px color-mix(in srgb, var(--color-highlight) 24%, transparent); }
+}
+
+@keyframes mobile-composer-level {
+  0%, 100% { height: 5px; opacity: 0.48; }
+  50% { height: 13px; opacity: 1; }
+}
+
+@keyframes mobile-composer-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-highlight) 45%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 7px transparent; }
+}
+
+@media (max-width: 767px) {
+  /* Keep the collapsed editor focusable so one trusted iOS tap can summon the
+     keyboard, but disable the expensive glass layer that Safari otherwise
+     composites even through an opacity:0 ancestor. */
+  .mobile-composer-expanded-hidden .chatbox-bubble {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  html.grove-standalone .task-chat-input-area:has(.mobile-composer-pill) {
+    bottom: env(safe-area-inset-bottom, 0px) !important;
+  }
+
+  .task-chat-mobile-composer .chatbox-bubble {
+    border-radius: 22px;
+    padding: 8px 10px;
+    transform: none !important;
+  }
+
+  .task-chat-mobile-composer .chatbox-header {
+    display: none;
+  }
+
+  .task-chat-mobile-composer .chatbox-collapse-button,
+  .task-chat-mobile-composer .chatbox-footer-left {
+    display: none;
+  }
+
+  .task-chat-mobile-composer .chatbox-header-actions > *:not(.chatbox-session-settings) {
+    display: none;
+  }
+
+  .task-chat-mobile-composer [contenteditable="true"] {
+    min-height: 40px;
+    max-height: min(22dvh, 120px);
+    padding-block: 4px;
+  }
+
+  .task-chat-mobile-composer .chatbox-footer {
+    margin-top: 0;
+    min-height: 40px;
+    justify-content: flex-end;
+  }
+
+  .task-chat-mobile-composer .chatbox-session-settings > div > button,
+  .task-chat-mobile-composer .chatbox-footer-right > button {
+    width: 40px;
+    height: 40px;
+    border-radius: 14px;
+    padding: 0 !important;
+  }
+
+  .task-chat-mobile-composer .chatbox-session-settings > div > button svg,
+  .task-chat-mobile-composer .chatbox-footer-right > button svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* iOS may clip absolutely positioned children to the keyboard-shortened
+     chat viewport even when the outer app frame is frozen. While editing,
+     promote the composer to the viewport layer and anchor it directly above
+     the measured keyboard instead of relying on its chat-container geometry. */
+  html.grove-keyboard-open .task-chat-input-area {
+    position: fixed !important;
+    inset-inline-start: var(--grove-chat-inline-start, 0px) !important;
+    inset-inline-end: var(--grove-chat-inline-end, 0px) !important;
+    bottom: max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom)) !important;
+    z-index: 80;
+    padding: 0 12px 8px;
+  }
+
+  html.grove-keyboard-open .task-chat-input-scrim {
+    display: none;
+  }
+
+  [data-session-settings-menu] {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: max(12px, var(--grove-kb-inset, 0px), env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    max-height: min(70dvh, 520px) !important;
+    border-radius: 22px !important;
+    padding: 4px;
+  }
+
+  [data-agent-voice-menu] {
+    position: fixed !important;
+    left: 12px !important;
+    right: 12px !important;
+    bottom: max(12px, var(--grove-kb-inset, 0px), env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    max-height: min(62dvh, 440px);
+    margin: 0 !important;
+    z-index: 1000 !important;
+    border-radius: 22px !important;
+    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.24) !important;
+  }
+
+  [data-agent-voice-menu] > :first-child {
+    padding: 14px 16px 12px;
+  }
+
+  [data-agent-voice-menu] button {
+    min-height: 44px;
+  }
+
+  .mobile-action-sheet {
+    position: relative;
+    margin-bottom: 0;
+    border-radius: 24px;
+    box-shadow: 0 22px 64px rgba(0, 0, 0, 0.24);
+  }
+
+  .mobile-action-sheet-permission {
+    border-color: color-mix(in srgb, var(--color-warning) 24%, var(--color-border));
+    background: color-mix(in srgb, var(--color-bg-secondary) 96%, var(--color-warning) 4%);
+  }
+
+  .mobile-action-sheet-auth {
+    border-color: color-mix(in srgb, var(--color-info) 22%, var(--color-border));
+    background: color-mix(in srgb, var(--color-bg-secondary) 96%, var(--color-info) 4%);
+  }
+
+  .mobile-action-sheet-ask_form {
+    border-color: color-mix(in srgb, var(--color-highlight) 22%, var(--color-border));
+    background: color-mix(in srgb, var(--color-bg-secondary) 96%, var(--color-highlight) 4%);
+  }
+
+  .mobile-action-sheet::before {
+    content: "";
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    z-index: 2;
+    width: 34px;
+    height: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-text-muted) 32%, transparent);
+    transform: translateX(-50%);
+  }
+
+  .mobile-action-sheet > div {
+    max-height: min(70dvh, 520px);
+    padding: 22px 14px 14px;
+  }
+
+  .mobile-permission-content button {
+    min-height: 48px;
+  }
+
+  .mobile-permission-details summary::marker {
+    color: var(--color-warning);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-composer-pill-running::before,
+  .mobile-composer-running-dot,
+  .mobile-composer-pill-running,
+  .mobile-composer-pill-running .mobile-composer-spark,
+  .mobile-composer-label-running,
+  .mobile-composer-activity i {
+    animation: none;
+  }
+
+  .mobile-composer-label-running {
+    color: color-mix(in srgb, var(--color-highlight) 76%, var(--color-text) 24%);
+  }
+}
+
 /* ============================================================================
    Drop overlay — shown when dragging a Review file path over the chatbox
    ============================================================================ */

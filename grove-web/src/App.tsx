@@ -389,9 +389,28 @@ function AppContent() {
   // when the keyboard is genuinely up at resize time, while still
   // letting orientation changes update the value.
   useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) return;
+    if (!isMobile || typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
     const root = document.documentElement;
+    let focusOutFrame: number | null = null;
+    const virtualKeyboard = (
+      window.navigator as Navigator & {
+        virtualKeyboard?: {
+          overlaysContent: boolean;
+          boundingRect: DOMRectReadOnly;
+          addEventListener: (type: "geometrychange", listener: () => void) => void;
+          removeEventListener: (type: "geometrychange", listener: () => void) => void;
+        };
+      }
+    ).virtualKeyboard;
+    const previousKeyboardOverlay = virtualKeyboard?.overlaysContent;
+    if (virtualKeyboard) virtualKeyboard.overlaysContent = true;
+
+    // Keep the application frame stable while the software keyboard is open.
+    // Browser chrome and orientation changes may update this value only after
+    // the keyboard has fully left the visual viewport.
+    let stableAppHeight = window.innerHeight;
+    root.style.setProperty("--grove-app-height", `${stableAppHeight}px`);
     const recompute = () => {
       // The keyboard can only be up if a text field is focused. In a
       // standalone PWA (viewport-fit=cover) `innerHeight - vv.height` is a
@@ -402,26 +421,59 @@ function AppContent() {
       const ae = document.activeElement as HTMLElement | null;
       const editing =
         !!ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
-      const offset = window.innerHeight - vv.height - vv.offsetTop;
-      root.style.setProperty("--grove-kb-inset", `${editing && offset > 50 ? offset : 0}px`);
+      // iOS Safari may shrink both innerHeight and visualViewport.height to
+      // the same value, making their difference zero while the keyboard is
+      // visibly open. Compare against the pre-keyboard application height
+      // instead; that remains stable for the whole editing session.
+      const viewportKeyboardHeight = stableAppHeight - vv.height - vv.offsetTop;
+      const overlayKeyboardHeight = virtualKeyboard?.boundingRect.height ?? 0;
+      const keyboardHeight = Math.max(viewportKeyboardHeight, overlayKeyboardHeight);
+      const keyboardOpen = editing && keyboardHeight > 50;
+
+      root.classList.toggle("grove-keyboard-open", keyboardOpen);
+      root.style.setProperty("--grove-kb-inset", `${keyboardOpen ? keyboardHeight : 0}px`);
+
+      // focusout precedes the keyboard closing animation on iOS. Do not adopt
+      // that transient short viewport as the new application height.
+      if (!editing && keyboardHeight <= 50) {
+        stableAppHeight = window.innerHeight;
+        root.style.setProperty("--grove-app-height", `${stableAppHeight}px`);
+      }
     };
     vv.addEventListener("resize", recompute);
     vv.addEventListener("scroll", recompute);
+    virtualKeyboard?.addEventListener("geometrychange", recompute);
     window.addEventListener("resize", recompute);
     // Recompute on focus changes so the inset drops to 0 the moment the
     // composer blurs (keyboard dismissed), even if no viewport event fires.
+    // focusout fires before activeElement settles in Safari, so defer that
+    // read by one frame instead of preserving the stale editing inset.
+    const recomputeAfterFocusOut = () => {
+      if (focusOutFrame !== null) cancelAnimationFrame(focusOutFrame);
+      focusOutFrame = requestAnimationFrame(() => {
+        focusOutFrame = null;
+        recompute();
+      });
+    };
     window.addEventListener("focusin", recompute);
-    window.addEventListener("focusout", recompute);
+    window.addEventListener("focusout", recomputeAfterFocusOut);
     recompute();
     return () => {
       vv.removeEventListener("resize", recompute);
       vv.removeEventListener("scroll", recompute);
+      virtualKeyboard?.removeEventListener("geometrychange", recompute);
       window.removeEventListener("resize", recompute);
       window.removeEventListener("focusin", recompute);
-      window.removeEventListener("focusout", recompute);
+      window.removeEventListener("focusout", recomputeAfterFocusOut);
+      if (focusOutFrame !== null) cancelAnimationFrame(focusOutFrame);
+      if (virtualKeyboard && previousKeyboardOverlay !== undefined) {
+        virtualKeyboard.overlaysContent = previousKeyboardOverlay;
+      }
+      root.classList.remove("grove-keyboard-open");
       root.style.removeProperty("--grove-kb-inset");
+      root.style.removeProperty("--grove-app-height");
     };
-  }, []);
+  }, [isMobile]);
 
   // Tag the document when running as an installed/standalone PWA so the app
   // shell can use `100vh` instead of `100dvh`. On iOS standalone (viewport-fit

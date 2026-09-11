@@ -10,7 +10,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -177,6 +177,7 @@ import { useInitialChatLoad } from "./useInitialChatLoad";
 import { useActiveChatId } from "./useActiveChatId";
 import { useLiveSessionMessages } from "./useLiveSessionMessages";
 import { useTypewriter } from "./useTypewriter";
+import { useIsMobile } from "../../../hooks/useIsMobile";
 import {
   markSessionRead,
   removeSessionActivity,
@@ -932,7 +933,11 @@ function TaskChatVirtuosoFooter({
           <ThinkingStatus label="Thinking" active />
         </div>
       )}
-      <div style={{ height: context.inputAreaHeight + 16 }} />
+      <div
+        style={{
+          height: `calc(${context.inputAreaHeight + 16}px + var(--grove-kb-inset, 0px))`,
+        }}
+      />
     </div>
   );
 }
@@ -2462,6 +2467,8 @@ export function TaskChat({
   onBusyStateChange,
 }: TaskChatProps) {
   const canManageSessions = sessionManagement;
+  const { isMobile, isTablet } = useIsMobile();
+  const isPhoneLayout = isMobile && !isTablet;
   // Three sub-concerns have been extracted into their own hooks
   // (useChatPositioning, useACPAvailability, useInitialChatLoad) — those
   // hooks ARE Compiler-optimized. The remaining TaskChat body still has
@@ -3065,6 +3072,7 @@ export function TaskChat({
   const [isDragging, setIsDragging] = useState(false);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
+  const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showPreviewComments, setShowPreviewComments] = useState(false);
   const [editingPreviewCommentId, setEditingPreviewCommentId] = useState<string | null>(null);
@@ -3381,6 +3389,19 @@ export function TaskChat({
                     ? "previewComments"
                     : null;
   const composerPanelOpen = activeComposerPanel !== null;
+  const mobileActionPanelOpen =
+    isPhoneLayout &&
+    (activeComposerPanel === "permission" ||
+      activeComposerPanel === "auth" ||
+      activeComposerPanel === "ask_form");
+  const showMobileComposerPill =
+    isPhoneLayout &&
+    !mobileComposerOpen &&
+    !composerPanelOpen &&
+    !activePermissionMessage &&
+    !activeSurveyMessage &&
+    !activeAuthMessage &&
+    !isRemoteSession;
 
   // When a permission message appears, force the permission panel open and
   // close any rival panels. When it goes away, close the panel. Done via
@@ -3948,6 +3969,36 @@ export function TaskChat({
     return () => ro.disconnect();
   }, [activeChatId]);
 
+  // A keyboard-open composer is promoted to `position: fixed`, whose
+  // containing block is the browser viewport. Preserve the TaskChat panel's
+  // horizontal bounds explicitly so the composer does not grow to screen
+  // width on mobile.
+  useEffect(() => {
+    const chatRoot = taskChatRootRef.current;
+    const inputArea = inputAreaRef.current;
+    if (!chatRoot || !inputArea || typeof ResizeObserver === "undefined") return;
+    const apply = () => {
+      const rect = chatRoot.getBoundingClientRect();
+      inputArea.style.setProperty("--grove-chat-inline-start", `${Math.max(0, rect.left)}px`);
+      inputArea.style.setProperty(
+        "--grove-chat-inline-end",
+        `${Math.max(0, window.innerWidth - rect.right)}px`,
+      );
+    };
+    const observer = new ResizeObserver(apply);
+    observer.observe(chatRoot);
+    window.addEventListener("resize", apply);
+    window.visualViewport?.addEventListener("resize", apply);
+    apply();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", apply);
+      window.visualViewport?.removeEventListener("resize", apply);
+      inputArea.style.removeProperty("--grove-chat-inline-start");
+      inputArea.style.removeProperty("--grove-chat-inline-end");
+    };
+  }, [activeChatId]);
+
   // Watch the chatbox container width — flip to narrow mode when the
   // composer can't comfortably fit the Model / Mode / Thinking dropdowns
   // alongside the input + Send button.
@@ -4138,6 +4189,11 @@ export function TaskChat({
   }, [disengageAutoStick]);
   const handleChatPointerDownCapture = useCallback((event: React.PointerEvent) => {
     if (event.button !== 0) return;
+    // The floating composer lives inside the message pane. On touch devices,
+    // tapping it is an interaction with the overlay, not an attempt to drag
+    // transcript history; treating that tap as a scroll gesture detaches the
+    // bottom follower before the expanded composer can reserve its space.
+    if (inputAreaRef.current?.contains(event.target as Node)) return;
     const viewport = messagesViewportRef.current;
     if (!viewport) return;
     const rect = viewport.getBoundingClientRect();
@@ -4196,15 +4252,22 @@ export function TaskChat({
   // Footer height is outside the measured transcript rows. Commit its new
   // geometry only while following; detached readers keep the old extent so a
   // queued send cannot shift their history position by shrinking the composer.
+  // A phone permission sheet is different: it appears without a reader gesture
+  // and must reserve its full overlay height so the request and latest message
+  // cannot cover each other.
   useEffect(() => {
-    if (followStateRef.current === "detached") return;
+    const mobileActionActive = mobileActionPanelOpen;
+    if (followStateRef.current === "detached") {
+      if (!mobileActionActive) return;
+      followStateRef.current = "reattaching";
+    }
     setTranscriptFooterState((current) =>
       current.inputAreaHeight === inputAreaHeight
         ? current
         : { ...current, inputAreaHeight },
     );
     scheduleBottomScroll("auto");
-  }, [inputAreaHeight, scheduleBottomScroll]);
+  }, [inputAreaHeight, mobileActionPanelOpen, scheduleBottomScroll]);
 
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
     const bottomConfirmed = shouldConfirmTaskChatBottom({
@@ -10105,9 +10168,98 @@ export function TaskChat({
               </div>
             </div>
           ) : (
-          <div ref={inputAreaRef} className="pointer-events-none absolute inset-x-0 z-10 px-3 pb-4 pt-2" style={{ bottom: "max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom))" }}>
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
-            <div className="chatbox-cq-root pointer-events-auto relative mx-auto w-full max-w-[920px]">
+          <div
+            ref={inputAreaRef}
+            className={`task-chat-input-area pointer-events-none absolute inset-x-0 z-10 px-3 pt-2 ${showMobileComposerPill ? "pb-2" : "pb-4"}`}
+            style={{
+              bottom: showMobileComposerPill
+                ? "0px"
+                : "max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom))",
+            }}
+          >
+            {!showMobileComposerPill && (
+              <div className="task-chat-input-scrim pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
+            )}
+            <AnimatePresence initial={false}>
+            {showMobileComposerPill && (
+              <motion.button
+                type="button"
+                initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.96 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                onPointerDown={(event) => {
+                  if (event.pointerType !== "touch") return;
+                  // Keep the editor rendered (though visually transparent)
+                  // and focus it before changing layout. iOS refuses focus on
+                  // visibility:hidden/display:none contenteditables, even if
+                  // they become visible later in the same event.
+                  event.preventDefault();
+                  requestBottom("auto");
+                  const editable = editableRef.current;
+                  editable?.focus({ preventScroll: true });
+                  flushSync(() => setMobileComposerOpen(true));
+                }}
+                onClick={() => {
+                  requestBottom("auto");
+                  // iOS only opens its software keyboard when focus happens
+                  // synchronously inside the trusted tap event. Commit the
+                  // expanded composer first, then focus it before returning
+                  // from this handler; an rAF/setTimeout focus is ignored.
+                  editableRef.current?.focus({ preventScroll: true });
+                  flushSync(() => setMobileComposerOpen(true));
+                }}
+                className={`mobile-composer-pill pointer-events-auto relative mx-auto flex h-11 items-center gap-2 overflow-hidden rounded-full border px-2.5 text-left shadow-[0_10px_30px_rgba(0,0,0,0.16)] backdrop-blur-xl ${
+                  isBusy
+                    ? "mobile-composer-pill-running border-transparent"
+                    : "border-[color-mix(in_srgb,var(--color-border)_70%,transparent)]"
+                }`}
+                aria-label={`Message ${agentLabel}`}
+              >
+                <span className="mobile-composer-spark relative flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--color-highlight)_13%,var(--color-bg))] text-[var(--color-highlight)]">
+                  {AgentIcon ? <AgentIcon size={13} /> : <Sparkles className="h-3 w-3" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={`mobile-composer-label block truncate text-xs font-medium text-[var(--color-text-secondary)] ${isBusy ? "mobile-composer-label-running" : ""}`}>
+                    {hasContent ? "Draft ready" : isBusy ? `${agentLabel} working…` : `Ask ${agentLabel}…`}
+                  </span>
+                </span>
+                {isBusy && (
+                  <span className="mobile-composer-activity" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                )}
+                <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-[var(--color-highlight)] text-white">
+                  <ChevronUp className="h-3 w-3" />
+                </span>
+              </motion.button>
+            )}
+            </AnimatePresence>
+            <motion.div
+              initial={false}
+              animate={isPhoneLayout
+                ? showMobileComposerPill
+                  ? {
+                      opacity: 0,
+                      y: 12,
+                      scale: 0.92,
+                      clipPath: "inset(82% 9% 0% 9% round 999px)",
+                    }
+                  : {
+                      opacity: 1,
+                      y: 0,
+                      scale: 1,
+                      clipPath: "inset(0% 0% 0% 0% round 24px)",
+                    }
+                : { opacity: 1, y: 0, scale: 1 }}
+              transition={isPhoneLayout
+                ? { type: "spring", stiffness: 390, damping: 34, mass: 0.82 }
+                : { duration: 0 }}
+              aria-hidden={showMobileComposerPill || undefined}
+              className={`chatbox-cq-root mx-auto w-full max-w-[920px] ${isPhoneLayout ? "task-chat-mobile-composer" : ""} ${showMobileComposerPill ? "mobile-composer-expanded-hidden pointer-events-none absolute inset-x-0 bottom-0" : "pointer-events-auto relative"}`}
+            >
               {isRemoteSession && (
                 <div className="absolute inset-x-0 bottom-full z-20 mb-3">
                   <div className="flex items-center justify-between gap-3 rounded-[22px] border border-[color-mix(in_srgb,var(--color-warning)_28%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_8%,transparent)] px-4 py-2.5 shadow-[0_10px_28px_rgba(0,0,0,0.12)] backdrop-blur-md">
@@ -10140,7 +10292,7 @@ export function TaskChat({
                     animate={{ opacity: 1, y: 0, height: "auto" }}
                     exit={{ opacity: 0, y: 8, height: 0 }}
                     transition={{ duration: 0.2, ease: "easeOut" }}
-                    className="mb-3 overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_92%,transparent)] shadow-[0_12px_32px_rgba(0,0,0,0.14)] backdrop-blur-md"
+                    className={`mb-3 overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_92%,transparent)] shadow-[0_12px_32px_rgba(0,0,0,0.14)] backdrop-blur-md ${mobileActionPanelOpen ? `mobile-action-sheet mobile-action-sheet-${activeComposerPanel}` : ""}`}
                   >
                     <div className={`max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain ${activeComposerPanel === "previewComments" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
                       {activeComposerPanel === "todo" && (
@@ -10537,13 +10689,33 @@ export function TaskChat({
 
                       {activeComposerPanel === "permission" &&
                         activePermissionMessage && (
-                          <div className="space-y-3">
-                            <div className="flex items-start gap-2">
-                              <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--color-warning)] mt-0.5" />
-                              <span className="text-sm font-medium text-[var(--color-text)] break-all whitespace-pre-wrap min-w-0">
-                                {activePermissionMessage.description}
-                              </span>
-                            </div>
+                          <div className={`space-y-3 ${isPhoneLayout ? "mobile-permission-content" : ""}`}>
+                            {isPhoneLayout ? (
+                              <>
+                                <div className="flex items-center gap-2">
+                                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--color-warning)_14%,transparent)] text-[var(--color-warning)]">
+                                    <ShieldCheck className="h-4 w-4" />
+                                  </span>
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-semibold text-[var(--color-text)]">Permission required</div>
+                                    <div className="text-xs text-[var(--color-text-muted)]">Review this Agent action to continue</div>
+                                  </div>
+                                </div>
+                                <details className="mobile-permission-details rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
+                                  <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-text-secondary)]">Request details</summary>
+                                  <div className="mt-2 max-h-36 overflow-y-auto whitespace-pre-wrap break-all border-t border-[var(--color-border)] pt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                                    {activePermissionMessage.description}
+                                  </div>
+                                </details>
+                              </>
+                            ) : (
+                              <div className="flex items-start gap-2">
+                                <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--color-warning)] mt-0.5" />
+                                <span className="text-sm font-medium text-[var(--color-text)] break-all whitespace-pre-wrap min-w-0">
+                                  {activePermissionMessage.description}
+                                </span>
+                              </div>
+                            )}
                             <div className="space-y-2">
                               {activePermissionMessage.options.map((opt) => (
                                 <button
@@ -10554,7 +10726,7 @@ export function TaskChat({
                                       activePermissionMessage.id,
                                     )
                                   }
-                                  className="flex w-full items-center justify-between rounded-xl border border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)] px-3 py-2.5 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)]"
+                                  className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left transition-colors ${opt.kind.startsWith("reject") ? "border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-bg-tertiary)]" : "border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)]"}`}
                                 >
                                   <span className="text-sm font-medium text-[var(--color-text)]">
                                     {opt.name}
@@ -10730,7 +10902,7 @@ export function TaskChat({
                     : isTerminalMode
                       ? "focus-within:border-[var(--color-warning)] border-[color-mix(in_srgb,var(--color-border)_62%,transparent)]"
                       : "focus-within:border-[color-mix(in_srgb,var(--color-highlight)_82%,white_8%)] border-[color-mix(in_srgb,var(--color-border)_62%,transparent)]"
-                } ${isDragging ? "chatbox-drop-active" : ""} select-none`}
+                } ${isDragging ? "chatbox-drop-active" : ""} ${mobileActionPanelOpen ? "hidden" : ""} select-none`}
                 style={{ transform: "translateY(-6px)" }}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -10813,7 +10985,7 @@ export function TaskChat({
                       )}
                     </div>
                     {!isTerminalLaunchMode && !isViewingArchived && (
-                      <div className="relative shrink-0" ref={agentVoiceMenuRef}>
+                      <div className="agent-voice-menu-root relative shrink-0" ref={agentVoiceMenuRef}>
                         <div className={`inline-flex h-7 items-center overflow-hidden rounded-full border border-transparent bg-[var(--color-bg)] transition-colors ${agentVoiceState.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                           <button
                             type="button"
@@ -10859,7 +11031,7 @@ export function TaskChat({
                           )}
                         </div>
                         {showAgentVoiceMenu && (
-                          <div className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-xl">
+                          <div data-agent-voice-menu className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-xl">
                             <div className="border-b border-[var(--color-border)] px-3 py-2.5">
                               <div className="text-xs font-semibold text-[var(--color-text)]">Agent Voice</div>
                               <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">Session-specific voice output</div>
@@ -11166,6 +11338,12 @@ export function TaskChat({
 
                 <button
                   onClick={() => {
+                    if (isPhoneLayout) {
+                      editableRef.current?.blur();
+                      setMobileComposerOpen(false);
+                      setShowSessionSettings(false);
+                      return;
+                    }
                     setIsInputExpanded((v) => {
                       if (!v) {
                         setShowPlan(false);
@@ -11175,12 +11353,14 @@ export function TaskChat({
                     });
                     setTimeout(() => editableRef.current?.focus(), 0);
                   }}
-                  className="absolute right-3 top-2.5 p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-lg transition-colors z-10"
+                  className="chatbox-collapse-button absolute right-3 top-2.5 p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-lg transition-colors z-10"
                   title={
-                    isInputExpanded ? "Collapse input (Esc)" : "Expand input"
+                    isPhoneLayout
+                      ? "Collapse composer"
+                      : isInputExpanded ? "Collapse input (Esc)" : "Expand input"
                   }
                 >
-                  {isInputExpanded ? (
+                  {isPhoneLayout || isInputExpanded ? (
                     <Minimize2 className="w-3.5 h-3.5" />
                   ) : (
                     <Maximize2 className="w-3.5 h-3.5" />
@@ -11202,15 +11382,17 @@ export function TaskChat({
                           isTerminalMode ? "left-0 right-4" : "left-4 right-4"
                         }`}
                       >
-                        {activePermissionMessage
-                          ? "Handle permission above to continue"
-                          : !isConnected
-                            ? "Waiting for connection..."
-                            : isTerminalMode
-                              ? "Enter shell command\u2026"
-                              : isBusy
-                                ? "Queue a message\u2026"
-                                : "Ask anything… use @ for mentions, / for commands"}
+                        {isPhoneLayout
+                          ? `Message ${agentLabel}…`
+                          : activePermissionMessage
+                            ? "Handle permission above to continue"
+                            : !isConnected
+                              ? "Waiting for connection..."
+                              : isTerminalMode
+                                ? "Enter shell command\u2026"
+                                : isBusy
+                                  ? "Queue a message\u2026"
+                                  : "Ask anything… use @ for mentions, / for commands"}
                       </div>
                     )}
                     <div
@@ -11223,7 +11405,21 @@ export function TaskChat({
                       onKeyDown={handleKeyDown}
                       onMouseDown={handleEditableMouseDown}
                       onFocus={() => setIsInputFocused(true)}
-                      onBlur={() => setIsInputFocused(false)}
+                      onBlur={() => {
+                        setIsInputFocused(false);
+                        if (isPhoneLayout) {
+                          requestAnimationFrame(() => {
+                            const focused = document.activeElement as HTMLElement | null;
+                            const focusStayedInComposer =
+                              !!focused && chatboxContainerRef.current?.contains(focused);
+                            const focusMovedToSettings =
+                              !!focused?.closest("[data-session-settings-menu]");
+                            if (!focusStayedInComposer && !focusMovedToSettings) {
+                              setMobileComposerOpen(false);
+                            }
+                          });
+                        }
+                      }}
                       onPaste={handlePaste}
                       onCompositionStart={() => {
                         composingRef.current = true;
@@ -11364,6 +11560,7 @@ export function TaskChat({
                       />
                     )}
                     {!isTerminalLaunchMode && settingsSessionConfigOptions.length > 0 && (
+                      <span className="chatbox-session-settings">
                       <SessionSettingsMenu
                         ref={sessionSettingsRef}
                         options={settingsSessionConfigOptions}
@@ -11378,6 +11575,7 @@ export function TaskChat({
                         }}
                         onSelect={requestConfigOptionChange}
                       />
+                      </span>
                     )}
                     {activePermissionMessage && isBusy ? (
                       <Button
@@ -11443,7 +11641,7 @@ export function TaskChat({
                   </div>
                 </div>
               </div>
-            </div>
+            </motion.div>
           </div>
           )}
         </div>
