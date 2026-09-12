@@ -95,23 +95,23 @@ export function SkillsPage() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-w-0 flex-col overflow-y-auto overflow-x-hidden md:overflow-hidden">
       <header className="shrink-0 border-b border-[var(--color-border)]">
-      <div className="flex items-start justify-between gap-4 pb-5">
+      <div className="flex items-start justify-between gap-3 pb-4 sm:gap-4 sm:pb-5">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-highlight)]/12 text-[var(--color-highlight)]"><Boxes className="h-5 w-5" /></div>
-          <div className="min-w-0"><h1 className="text-2xl font-semibold tracking-tight text-[var(--color-text)]">Extensions</h1><p className="mt-1 truncate text-sm text-[var(--color-text-muted)]">Discover capabilities, manage installations, and keep their sources connected.</p></div>
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--color-highlight)]/12 text-[var(--color-highlight)] sm:h-12 sm:w-12 sm:rounded-2xl"><Boxes className="h-5 w-5" /></div>
+          <div className="min-w-0"><h1 className="text-xl font-semibold tracking-tight text-[var(--color-text)] sm:text-2xl">Extensions</h1><p className="mt-1 truncate text-sm text-[var(--color-text-muted)]"><span className="sm:hidden">Manage Grove capabilities.</span><span className="hidden sm:inline">Discover capabilities, manage installations, and keep their sources connected.</span></p></div>
         </div>
         <div className="flex items-center gap-2">
           <DropdownMenu align="right" items={[
             { id: "source", label: "Source…", description: "Scan a Git repository or local folder", icon: FolderGit2, onClick: () => setSourceDialog("git") },
             { id: "plugin", label: "Plugin…", description: "Install or register a development plugin", icon: PackagePlus, onClick: () => setShowAddPlugin(true) },
             { id: "mcp", label: "MCP Server…", description: "Create a managed server definition", icon: Server, onClick: () => setShowAddMcp(true) },
-          ]} trigger={<span className="flex items-center gap-1.5"><Plus className="h-4 w-4" />Add</span>} triggerClassName="inline-flex h-9 items-center rounded-lg bg-[var(--color-highlight)] px-3.5 text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-90" />
+          ]} trigger={<span className="flex items-center gap-1.5"><Plus className="h-4 w-4" /><span className="hidden sm:inline">Add</span></span>} triggerClassName="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-highlight)] text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-90 sm:h-9 sm:w-auto sm:px-3.5" />
         </div>
       </div>
       {/* Tab Bar */}
-      <nav className="flex items-center gap-1 overflow-x-auto">
+      <nav className="flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -142,7 +142,7 @@ export function SkillsPage() {
       </header>
 
       {/* Tab Content */}
-      <div className="flex-1 min-h-0 pt-5 overflow-hidden">
+      <div className="min-h-0 flex-none overflow-visible pt-4 md:flex-1 md:overflow-hidden md:pt-5">
         {activeTab === "catalog" && (
           <ExtensionsExplore
             sources={sources}

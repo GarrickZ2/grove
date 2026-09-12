@@ -83,6 +83,8 @@ import {
   type ToolCallMessage,
 } from "../Tasks/TaskView/toolCallReducer";
 import { TaskChat } from "../Tasks/TaskView/TaskChat";
+import { useIsMobile } from "../../hooks/useIsMobile";
+import "./memory-page.css";
 
 type Tab = "overview" | "memories" | "logs" | "runs";
 
@@ -239,24 +241,28 @@ export function MemoryPage() {
   return (
     <div className="h-full min-h-0 flex flex-col">
       <header className="flex-shrink-0 border-b border-[var(--color-border)]">
-        <div className="flex items-start justify-between gap-4 pb-5">
+        <div className="relative flex flex-col gap-2 pb-4 pr-12 sm:flex-row sm:items-start sm:justify-between sm:gap-4 sm:pb-5 sm:pr-0">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-xl bg-[var(--color-highlight)]/12 text-[var(--color-highlight)] flex items-center justify-center">
               <Brain className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-semibold text-[var(--color-text)]">Memory</h1>
                 <span className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wide bg-[var(--color-highlight)]/12 text-[var(--color-highlight)]">Beta</span>
               </div>
-              <p className="mt-1 text-sm text-[var(--color-text-muted)]">What Grove has learned while working in this project.</p>
+              <p className="mt-1 max-w-xl truncate text-sm leading-5 text-[var(--color-text-muted)]">
+                <span className="sm:hidden">Project knowledge organized by Grove.</span>
+                <span className="hidden sm:inline">What Grove has learned while working in this project.</span>
+              </p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => { setRefreshTick((value) => value + 1); void loadAgents(); }} disabled={loading}>
-            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+          <Button className="absolute right-0 top-0 h-10 w-10 self-start !p-0 sm:static sm:h-auto sm:w-auto sm:self-auto sm:!px-3" variant="ghost" size="sm" onClick={() => { setRefreshTick((value) => value + 1); void loadAgents(); }} disabled={loading} title="Refresh Memory" aria-label="Refresh Memory">
+            <RefreshCw className={`h-4 w-4 sm:mr-1.5 sm:h-3.5 sm:w-3.5 ${loading ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Refresh</span>
           </Button>
         </div>
-        <nav className="flex gap-1 overflow-x-auto">
+        <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {TABS.map((item) => (
             <button
               key={item.id}
@@ -271,7 +277,7 @@ export function MemoryPage() {
       </header>
 
       {error && <InlineNotice tone="error" message={error} onClose={() => setError(null)} />}
-      <main className="flex-1 min-h-0 overflow-hidden pt-5">
+      <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pt-3 sm:overflow-hidden sm:pt-5">
         {loading && !config && overview === EMPTY_OVERVIEW ? (
           <CenteredLoading />
         ) : tab === "overview" ? (
@@ -499,10 +505,10 @@ function OverviewTab({
 
   return (
     <OverviewFitFrame>
-    <div className="min-h-0 pr-1">
+    <div className="memory-overview min-h-0 min-w-0 overflow-x-hidden pr-1">
       <section className="relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-3 shadow-sm">
         <div className="pointer-events-none absolute -right-8 -top-20 h-52 w-52 rounded-full bg-[var(--color-highlight)]/10 blur-3xl" />
-        <div className="relative flex items-center justify-between gap-5">
+        <div className="relative flex flex-col items-stretch gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
           <div className="flex min-w-0 items-center gap-3.5">
             <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-[var(--color-highlight)]/15 bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]">
               <Activity className="h-5 w-5" />
@@ -536,7 +542,7 @@ function OverviewTab({
               </div>
               <span className="text-[10px] text-[var(--color-text-muted)]">Snapshot · now</span>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <div className="mt-3 grid grid-cols-[repeat(2,minmax(0,1fr))] gap-2 lg:grid-cols-4">
               <OverviewStat value={formatNumber(overview.entity_count)} label="Durable memories" icon={<Brain className="h-3.5 w-3.5" />} />
               <OverviewStat value={formatNumber(overview.relation_count)} label="Relations" icon={<Orbit className="h-3.5 w-3.5" />} />
               <OverviewStat value={formatNumber(overview.log_count)} label="Pending logs" icon={<Activity className="h-3.5 w-3.5" />} tone={overview.log_count > 0 ? "warning" : "default"} />
@@ -564,9 +570,9 @@ function OverviewTab({
                 </div>
                 <span className="text-[10px] text-[var(--color-text-muted)]">By score</span>
               </div>
-              <div className="mt-3 grid flex-1 gap-2" style={{ gridTemplateRows: `repeat(${Math.max(strongestMemories.length, 1)}, minmax(0, 1fr))` }}>
+              <div className="mt-3 grid min-w-0 flex-1 gap-2" style={{ gridTemplateRows: `repeat(${Math.max(strongestMemories.length, 1)}, minmax(0, 1fr))` }}>
                 {strongestMemories.length > 0 ? strongestMemories.map((entity, index) => (
-                  <div key={entity.entity_id} className="flex min-h-0 flex-col justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/55 px-3 py-2.5">
+                  <div key={entity.entity_id} className="flex min-h-0 min-w-0 flex-col justify-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/55 px-3 py-2.5">
                     <div className="flex items-center gap-2.5">
                       <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-[var(--color-bg)] text-[10px] font-semibold text-[var(--color-text-muted)]">{index + 1}</span>
                       <p className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--color-text)]">{entity.title}</p>
@@ -591,7 +597,7 @@ function OverviewTab({
                 </div>
               </div>
             </div>
-            <div className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-border)] lg:grid-cols-6">
+            <div className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-border)] sm:grid-cols-3 lg:grid-cols-6">
               <OverviewActivityMetric value={formatNumber(overview.successful_run_count)} label="Completed" />
               <OverviewActivityMetric value={formatNumber(overview.failed_run_count)} label="Errors" tone={overview.failed_run_count > 0 ? "danger" : "default"} />
               <OverviewActivityMetric value={formatMetricCost(overview.usage.cost_by_currency)} label="Cost" />
@@ -700,11 +706,13 @@ function OverviewTab({
 }
 
 function OverviewFitFrame({ children }: { children: ReactNode }) {
+  const { isMobile } = useIsMobile();
   const frameRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
 
   useLayoutEffect(() => {
+    if (isMobile) return;
     const frame = frameRef.current;
     const content = contentRef.current;
     if (!frame || !content) return;
@@ -732,16 +740,16 @@ function OverviewFitFrame({ children }: { children: ReactNode }) {
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, []);
+  }, [isMobile]);
 
   return (
-    <div ref={frameRef} className="h-full min-h-0 overflow-hidden" data-overview-fit-scale={scale.toFixed(3)}>
+    <div ref={frameRef} className="min-h-0 sm:h-full sm:overflow-hidden" data-overview-fit-scale={scale.toFixed(3)}>
       <div
         ref={contentRef}
-        className="origin-top-left"
+        className="memory-overview-fit-content origin-top-left"
         style={{
-          width: scale < 0.999 ? `${100 / scale}%` : "100%",
-          transform: scale < 0.999 ? `scale(${scale})` : undefined,
+          width: !isMobile && scale < 0.999 ? `${100 / scale}%` : "100%",
+          transform: !isMobile && scale < 0.999 ? `scale(${scale})` : undefined,
         }}
       >
         {children}
@@ -913,12 +921,13 @@ function OrganizationNumberRow({
 }
 
 function MemoriesTab({ projectId, refreshTick, onChanged }: { projectId: string; refreshTick: number; onChanged: () => void }) {
+  const { isMobile } = useIsMobile();
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [items, setItems] = useState<MemoryEntity[]>([]);
   const [allRelations, setAllRelations] = useState<MemoryRelation[]>([]);
   const [hasMore, setHasMore] = useState(false);
-  const [view, setView] = useState<"graph" | "list">("graph");
+  const [view, setView] = useState<"graph" | "list">(() => isMobile ? "list" : "graph");
   const [category, setCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1022,10 +1031,12 @@ function MemoriesTab({ projectId, refreshTick, onChanged }: { projectId: string;
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col">
-      <div className="grid grid-cols-[minmax(320px,680px)_auto_1fr] items-center gap-3 pb-4">
-        <SearchBar value={query} onChange={setQuery} onSubmit={() => setSubmitted(query.trim())} placeholder="Search memories, descriptions, or tags" />
-        <div className="inline-flex items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-1">
+    <div className="flex min-h-0 flex-col sm:h-full">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 pb-3 sm:grid-cols-[minmax(320px,680px)_auto_1fr] sm:gap-3 sm:pb-4">
+        <div className="col-span-2 min-w-0 sm:col-span-1">
+          <SearchBar value={query} onChange={setQuery} onSubmit={() => setSubmitted(query.trim())} placeholder="Search memories, descriptions, or tags" />
+        </div>
+        <div className="inline-flex justify-self-start items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-1">
           <button
             type="button"
             title="Relation graph"
@@ -1043,31 +1054,31 @@ function MemoriesTab({ projectId, refreshTick, onChanged }: { projectId: string;
             List
           </button>
         </div>
-        <p className="justify-self-end text-xs text-[var(--color-text-muted)]">{resultSummary}</p>
+        <p className="min-w-0 truncate justify-self-end text-xs text-[var(--color-text-muted)]">{resultSummary}</p>
       </div>
 
       {error && <InlineNotice tone="error" message={error} onClose={() => setError(null)} />}
       {!loading && items.length === 0 ? (
         <EmptyPage title="No memories yet" description={submitted ? "No memories match this search." : "Run Memory organization to turn short-term logs into durable Markdown memories."} />
       ) : (
-        <div className="flex-1 min-h-0 flex rounded-2xl border border-[var(--color-border)] overflow-hidden">
-          <aside className="w-60 flex-shrink-0 border-r border-[var(--color-border)] p-4 overflow-y-auto bg-[var(--color-bg-secondary)]/20">
-            <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-muted)]">Tag category</p>
+        <div className="flex min-h-[440px] flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] sm:flex-1 sm:flex-row">
+          <aside className="flex w-full flex-shrink-0 gap-2 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/20 p-3 [scrollbar-width:none] sm:block sm:w-60 sm:overflow-y-auto sm:border-b-0 sm:border-r sm:p-4 [&::-webkit-scrollbar]:hidden">
+            <p className="hidden px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-muted)] sm:block">Tag category</p>
             <button
               type="button"
               onClick={() => setCategory(null)}
-              className={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors ${category === null ? "bg-[var(--color-bg-secondary)] text-[var(--color-text)] font-medium" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)]/70 hover:text-[var(--color-text)]"}`}
+              className={`flex flex-shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm transition-colors sm:w-full ${category === null ? "bg-[var(--color-bg-secondary)] text-[var(--color-text)] font-medium" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)]/70 hover:text-[var(--color-text)]"}`}
             >
               <span>All memories</span>
               <span className="text-[10px] tabular-nums">{items.length}</span>
             </button>
-            <div className="mt-1 space-y-0.5">
+            <div className="flex gap-2 sm:mt-1 sm:block sm:space-y-0.5">
               {categories.map(([name, count]) => (
                 <button
                   key={name}
                   type="button"
                   onClick={() => setCategory(name)}
-                  className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${category === name ? "bg-[var(--color-bg-secondary)] text-[var(--color-text)] font-medium" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)]/70 hover:text-[var(--color-text)]"}`}
+                  className={`flex flex-shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors sm:w-full ${category === name ? "bg-[var(--color-bg-secondary)] text-[var(--color-text)] font-medium" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)]/70 hover:text-[var(--color-text)]"}`}
                 >
                   <span className="w-2 h-2 rounded-full" style={{ background: categoryColors.get(name) }} />
                   <span className="truncate flex-1 text-left">{humanize(name)}</span>
@@ -1122,7 +1133,7 @@ function MemoriesTab({ projectId, refreshTick, onChanged }: { projectId: string;
 function MemoryEntityList({ entities, onOpen }: { entities: MemoryEntity[]; onOpen: (entityId: string) => void }) {
   return (
     <div className="h-full min-h-0 overflow-y-auto">
-      <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)_80px_120px] gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+      <div className="sticky top-0 z-10 hidden grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)_80px_120px] gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)] md:grid">
         <span>Memory</span>
         <span>Tags</span>
         <span>Score</span>
@@ -1134,21 +1145,21 @@ function MemoryEntityList({ entities, onOpen }: { entities: MemoryEntity[]; onOp
             key={entity.entity_id}
             type="button"
             onClick={() => onOpen(entity.entity_id)}
-            className="grid w-full grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)_80px_120px] items-center gap-4 px-5 py-3.5 text-left transition-colors hover:bg-[var(--color-bg-secondary)]/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-highlight)]"
+            className="block w-full px-4 py-3.5 text-left transition-colors hover:bg-[var(--color-bg-secondary)]/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-highlight)] md:grid md:grid-cols-[minmax(0,1fr)_minmax(180px,0.42fr)_80px_120px] md:items-center md:gap-4 md:px-5"
           >
             <span className="min-w-0">
               <span className="block truncate text-sm font-medium text-[var(--color-text)]">{entity.title}</span>
               <span className="mt-1 block truncate text-xs text-[var(--color-text-muted)]">{entity.description}</span>
             </span>
-            <span className="flex min-w-0 flex-wrap gap-1.5">
+            <span className="mt-2 flex min-w-0 flex-wrap gap-1.5 md:mt-0">
               {entity.tags.slice(0, 3).map((tag) => (
                 <span key={`${tag.key}:${tag.value}`} className="max-w-full truncate rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-0.5 text-[10px] text-[var(--color-text-muted)]">
                   {tag.icon ? `${tag.icon} ` : ""}{humanize(tag.key)} · {tag.value}
                 </span>
               ))}
             </span>
-            <span className="text-xs font-medium tabular-nums text-[var(--color-text)]">{entity.score}</span>
-            <span className="text-xs text-[var(--color-text-muted)]">{relativeDate(entity.updated_at)}</span>
+            <span className="mt-2 inline-flex text-xs font-medium tabular-nums text-[var(--color-text)] md:mt-0">Score {entity.score}</span>
+            <span className="ml-3 mt-2 inline-flex text-xs text-[var(--color-text-muted)] md:ml-0 md:mt-0">{relativeDate(entity.updated_at)}</span>
           </button>
         ))}
       </div>
@@ -1344,7 +1355,7 @@ function OrganizeMemoryButton({
       onClick={onClick}
       disabled={runStarting || !config?.enabled || runOpen || blockedByUnsavedChanges}
       title={blockedByUnsavedChanges ? "Save configuration changes before organizing Memory" : undefined}
-      className="flex-shrink-0 self-start sm:self-auto"
+      className="w-full flex-shrink-0 justify-center self-start sm:w-auto sm:self-auto"
     >
       {runStarting || agentRunning
         ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />

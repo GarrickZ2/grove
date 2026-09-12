@@ -289,9 +289,9 @@ export function AutomationPage({
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="flex h-full min-w-0 flex-col overflow-y-auto overflow-x-hidden md:overflow-hidden">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-6">
+      <div className="mb-5 flex items-start justify-between gap-3 sm:mb-6 sm:gap-4">
         <div className="flex items-start gap-3 min-w-0">
           <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-[var(--color-highlight)]/10 flex-shrink-0">
             <Repeat className="w-5 h-5 text-[var(--color-highlight)]" />
@@ -300,8 +300,9 @@ export function AutomationPage({
             <h1 className="text-xl font-semibold text-[var(--color-text)] leading-tight">
               Automation
             </h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">
-              Create your own Automations and monitor schedules managed by Grove.
+            <p className="mt-1 line-clamp-2 text-sm text-[var(--color-text-muted)] sm:line-clamp-none">
+              <span className="sm:hidden">Run prompts on a schedule.</span>
+              <span className="hidden sm:inline">Create your own Automations and monitor schedules managed by Grove.</span>
             </p>
           </div>
         </div>
@@ -312,11 +313,12 @@ export function AutomationPage({
             setEditing(null);
             setDialogOpen(true);
           }}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium
+          aria-label="New Automation"
+          className="inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-lg text-sm font-medium sm:h-auto sm:w-auto sm:px-3.5 sm:py-2
             bg-[var(--color-highlight)] hover:opacity-90 text-white shadow-sm flex-shrink-0 transition-opacity"
         >
           <Plus className="w-4 h-4" />
-          New Automation
+          <span className="hidden sm:inline">New Automation</span>
         </motion.button>
       </div>
 
@@ -349,7 +351,7 @@ export function AutomationPage({
         // `pt-1.5` carves out the 1-2px lift `whileHover { y: -1 }` does on
         // each card so the top row doesn't clip into the page header on
         // hover. Without this the first card visually loses its top border.
-        <div className="space-y-6 overflow-y-auto flex-1 pr-1 pt-1.5">
+        <div className="flex-none space-y-6 overflow-visible pb-4 pt-1.5 md:flex-1 md:overflow-y-auto md:pr-1">
           {userAutomations.length > 0 && (
             <section aria-labelledby="user-automations-heading">
               <SectionHeader
@@ -574,7 +576,7 @@ function AutomationCard({
           : "border-[var(--color-border)] opacity-70"
       }`}
     >
-      <div className="flex items-start gap-3 px-4 py-3.5">
+      <div className="grid grid-cols-[36px_minmax(0,1fr)_36px] items-start gap-x-3 gap-y-2 px-3 py-3.5 sm:flex sm:flex-nowrap sm:gap-3 sm:px-4">
         {readOnly ? (
           <div
             className="mt-0.5 w-9 h-9 rounded-lg flex items-center justify-center bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-muted)] flex-shrink-0"
@@ -590,10 +592,10 @@ function AutomationCard({
           />
         )}
 
-        <div className="flex-1 min-w-0">
+        <div className="col-start-2 min-w-0 sm:flex-1">
           {/* Title row */}
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">
+            <h3 className="max-w-full truncate text-sm font-semibold text-[var(--color-text)]">
               {automation.name}
             </h3>
             {readOnly && (
@@ -618,16 +620,16 @@ function AutomationCard({
           </div>
 
           {/* Schedule */}
-          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-[var(--color-text-muted)]">
+          <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
             <Calendar className="w-3.5 h-3.5 text-[var(--color-highlight)]" />
-            <span>{scheduleDescription}</span>
-            <code className="ml-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
+            <span className="min-w-0 break-words leading-5">{scheduleDescription}</span>
+            <code className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-muted)] sm:ml-1">
               {automation.schedule_cron}
             </code>
           </div>
 
           {/* Last / Next pills */}
-          <div className="flex items-center gap-3 mt-2 text-[11px] text-[var(--color-text-muted)]">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
             {nextRun && (
               <span className="inline-flex items-center gap-1">
                 <Clock4 className="w-3 h-3" />
@@ -665,7 +667,7 @@ function AutomationCard({
             <button
               type="button"
               onClick={onOpenOwner}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[var(--color-highlight)] hover:bg-[var(--color-highlight)]/10 transition-colors flex-shrink-0"
+              className="col-start-2 row-start-2 inline-flex w-fit max-w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-highlight)]/10 sm:ml-0 sm:flex-shrink-0"
             >
               <Settings2 className="w-3.5 h-3.5" />
               Configure in {ownerLabel ?? "owner"}
@@ -673,8 +675,8 @@ function AutomationCard({
           )
         ) : (
           <div
-            className={`flex items-center gap-0.5 flex-shrink-0 transition-opacity ${
-              expanded ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+            className={`col-start-2 row-start-2 flex w-fit items-center gap-0.5 transition-opacity sm:ml-0 sm:flex-shrink-0 ${
+              expanded ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
             }`}
           >
             <IconButton title="Run now" onClick={onTrigger} disabled={triggering}>
@@ -694,7 +696,7 @@ function AutomationCard({
           type="button"
           onClick={onToggleExpand}
           title={expanded ? "Hide run history" : "Show run history"}
-          className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors flex-shrink-0"
+          className="col-start-3 row-start-1 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)] sm:h-auto sm:w-auto sm:p-1.5"
         >
           {expanded ? (
             <ChevronUp className="w-4 h-4" />
@@ -862,10 +864,10 @@ function RunsPanel({
   }
 
   return (
-    <div className="px-4 py-3 space-y-2 bg-[var(--color-bg)]/40">
-      <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+    <div className="space-y-2 bg-[var(--color-bg)]/40 px-3 py-3 sm:px-4">
+      <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
         <span>Recent runs ({runs.length})</span>
-        <span>Latest 10 · history capped at 100</span>
+        <span className="hidden sm:inline">Latest 10 · history capped at 100</span>
       </div>
       <div className="space-y-1.5">
         {runs.map((r) => (
@@ -934,7 +936,7 @@ function RunRow({
         canJump ? "cursor-pointer hover:border-[var(--color-highlight)]/50" : ""
       }`}
     >
-      <div className="flex items-center gap-2 flex-wrap text-[11px]">
+      <div className="flex flex-wrap items-center gap-2 text-[11px]">
         <RunStatusBadge status={run.status} />
         <TriggerKindBadge kind={run.trigger_kind} />
         <span className="text-[var(--color-text-muted)]">
@@ -945,7 +947,7 @@ function RunRow({
             · {formatDuration(durationMs)}
           </span>
         )}
-        <div className="ml-auto inline-flex items-center gap-2">
+        <div className="basis-full inline-flex flex-wrap items-center justify-end gap-2 sm:ml-auto sm:basis-auto">
           {!readOnly && cancellable && (
             <RowAction
               variant="danger"

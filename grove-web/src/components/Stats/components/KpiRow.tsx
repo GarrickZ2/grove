@@ -114,7 +114,7 @@ export function KpiRow({
   const avgLabel = unit === "cost" ? `Avg Cost / Turn` : `Avg Tokens / Turn`;
 
   return (
-    <div className="grid grid-cols-5 gap-3 shrink-0">
+    <div className="grid shrink-0 grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-5 [&>*:last-child:nth-child(odd)]:col-span-2 lg:[&>*:last-child:nth-child(odd)]:col-span-1">
       <KpiCard
         icon={<RefreshCcw className="w-3.5 h-3.5" />}
         label="Prompt Turns"
@@ -178,12 +178,12 @@ function KpiCard({
   extra?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+    <div className="flex min-w-0 flex-col gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
+      <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
         <span className="w-5 h-5 rounded-md bg-[color-mix(in_srgb,var(--color-highlight)_15%,transparent)] inline-flex items-center justify-center text-[var(--color-highlight)]">
           {icon}
         </span>
-        {label}
+        <span className="truncate">{label}</span>
       </div>
       <div className="text-2xl font-bold text-[var(--color-text)] tabular-nums leading-tight">
         {value}

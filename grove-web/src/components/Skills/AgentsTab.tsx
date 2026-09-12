@@ -60,13 +60,13 @@ export function AgentsTab({ agents, installed, onRefresh }: AgentsTabProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="mb-4 flex items-center gap-3">
-        <div className="relative min-w-[280px] max-w-2xl flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search agents or skill folders" className="h-9 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-3 text-sm outline-none focus:border-[var(--color-highlight)]" /></div>
+        <div className="relative min-w-0 max-w-2xl flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search agents or skill folders" className="h-9 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-3 text-sm outline-none focus:border-[var(--color-highlight)]" /></div>
         <span className="ml-auto text-xs tabular-nums text-[var(--color-text-muted)]">{visible.length} agent{visible.length === 1 ? "" : "s"}</span>
-        <Button variant="primary" size="sm" onClick={() => setShowAdd(true)}><Plus className="mr-1.5 h-4 w-4" />Add agent</Button>
+        <Button variant="primary" size="sm" onClick={() => setShowAdd(true)}><Plus className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">Add agent</span></Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-        {visible.length === 0 ? <TableEmpty title="No agents found" description="Try another search." /> : <div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-3 pb-1">
+        {visible.length === 0 ? <TableEmpty title="No agents found" description="Try another search." /> : <div className="grid grid-cols-1 gap-3 pb-1 sm:grid-cols-[repeat(auto-fill,minmax(340px,1fr))]">
           {visible.map((agent) => (
             <article key={agent.id} className={`group rounded-xl border bg-[var(--color-bg)] p-4 transition-colors ${agent.enabled ? "border-[var(--color-highlight)]/20 hover:border-[var(--color-highlight)]/40" : "border-[var(--color-border)] hover:border-[var(--color-text-muted)]/40"}`}>
               <div className="flex items-start gap-3">

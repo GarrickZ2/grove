@@ -198,8 +198,8 @@ export function ProvidersPanel({ providers, loadError, onRetryLoad, onCreate, on
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <div><h2 className="text-sm font-semibold text-[var(--color-text)]">Provider Profiles</h2><p className="mt-0.5 text-xs text-[var(--color-text-muted)]">Shared credentials and model defaults used by AI features.</p></div>
-        <Button variant="primary" size="sm" className="gap-2" onClick={handleCreateProfile} disabled={Boolean(editingId)}><BadgePlus className="h-4 w-4" />New Provider</Button>
+        <div className="min-w-0"><h2 className="text-sm font-semibold text-[var(--color-text)]">Provider Profiles</h2><p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">Shared credentials and model defaults used by AI features.</p></div>
+        <Button variant="primary" size="sm" className="shrink-0 gap-2" onClick={handleCreateProfile} disabled={Boolean(editingId)}><BadgePlus className="h-4 w-4" /><span className="hidden sm:inline">New Provider</span></Button>
       </div>
       <div className="flex min-h-0 max-h-full flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-sm">
         {loadError && (
@@ -229,7 +229,7 @@ export function ProvidersPanel({ providers, loadError, onRetryLoad, onCreate, on
           </div>
         ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="grid shrink-0 grid-cols-[minmax(220px,1fr)_160px_minmax(140px,0.7fr)_110px_120px] gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/35 px-5 py-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+          <div className="hidden shrink-0 grid-cols-[minmax(220px,1fr)_160px_minmax(140px,0.7fr)_110px_120px] gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/35 px-5 py-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)] md:grid">
             <span>Provider</span><span>Type</span><span>Model</span><span>Status</span><span />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -238,8 +238,8 @@ export function ProvidersPanel({ providers, loadError, onRetryLoad, onCreate, on
             const currentProvider = isEditing && editingDraft ? editingDraft : provider;
             return (
               <div key={provider.id} className="border-b border-[var(--color-border)] last:border-b-0">
-                <div className="grid min-h-16 grid-cols-[minmax(220px,1fr)_160px_minmax(140px,0.7fr)_110px_120px] items-center gap-4 px-5 py-2.5">
-                  <div className="flex min-w-0 items-center gap-3">
+                <div className="grid min-h-16 grid-cols-2 items-center gap-3 px-4 py-4 md:grid-cols-[minmax(220px,1fr)_160px_minmax(140px,0.7fr)_110px_120px] md:gap-4 md:px-5 md:py-2.5">
+                  <div className="col-span-2 flex min-w-0 items-center gap-3 md:col-span-1">
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]"><KeyRound className="h-4 w-4" /></span>
                     <div className="min-w-0">
                       {isEditing ? (
@@ -261,16 +261,23 @@ export function ProvidersPanel({ providers, loadError, onRetryLoad, onCreate, on
                       <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">{currentProvider.baseUrl}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-[var(--color-text)]">{currentProvider.type}{currentProvider.supportsSpeaking && <span className="rounded bg-[var(--color-highlight)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-highlight)]">Speaking</span>}</div>
-                  <span className="truncate text-sm text-[var(--color-text-muted)]">
+                  <div className="col-span-2 flex min-w-0 items-center gap-2 text-xs text-[var(--color-text-muted)] md:hidden">
+                    <span className="shrink-0 text-[var(--color-text)]">{currentProvider.type}</span>
+                    {currentProvider.supportsSpeaking && <span className="shrink-0 rounded bg-[var(--color-highlight)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-highlight)]">Speaking</span>}
+                    <span className="truncate before:mr-2 before:content-['·']">{modelBelongsToFeatureProfile(currentProvider.type) ? "Per Speaking Profile" : currentProvider.model || "Default"}</span>
+                  </div>
+                  <div className="hidden items-center gap-2 text-sm text-[var(--color-text)] md:flex">{currentProvider.type}{currentProvider.supportsSpeaking && <span className="rounded bg-[var(--color-highlight)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-highlight)]">Speaking</span>}</div>
+                  <span className="hidden truncate text-sm text-[var(--color-text-muted)] md:block">
                     {modelBelongsToFeatureProfile(currentProvider.type)
                       ? "Per Speaking Profile"
                       : currentProvider.model || "Default"}
                   </span>
+                  <div className="col-span-2 flex items-center justify-between md:contents">
                   <span className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClassName(currentProvider.status)}`}>{statusLabel(currentProvider.status)}</span>
-                  <div className="flex justify-end gap-1">
+                  <div className="flex justify-end gap-1 md:col-auto">
                     {!isEditing && currentProvider.status !== "verified" && <button type="button" onClick={() => handleVerify(provider.id)} disabled={verifyingId === provider.id} className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]" title="Test connection"><RefreshCw className={`h-3.5 w-3.5 ${verifyingId === provider.id ? "animate-spin" : ""}`} /></button>}
                     {!isEditing && <button type="button" onClick={() => handleStartEdit(provider)} disabled={Boolean(editingId)} className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]" title="Edit Provider"><Edit3 className="h-3.5 w-3.5" /></button>}
+                  </div>
                   </div>
                 </div>
                 {verificationError?.providerId === provider.id && (

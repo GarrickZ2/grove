@@ -340,24 +340,24 @@ export function AudioPanel({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-sm">
-      <header className="relative shrink-0 overflow-hidden border-b border-[var(--color-border)] px-5 py-4 [@media(max-height:760px)]:py-3">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-visible rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-sm md:overflow-hidden">
+      <header className="relative shrink-0 overflow-hidden border-b border-[var(--color-border)] px-4 py-4 sm:px-5 [@media(max-height:760px)]:py-3">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_12%,color-mix(in_srgb,var(--color-highlight)_14%,transparent),transparent_34%)]" />
-        <div className="relative flex items-center justify-between gap-5">
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
           <div className="flex min-w-0 items-center gap-3.5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--color-highlight)]/12 text-[var(--color-highlight)]">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-highlight)]/12 text-[var(--color-highlight)] sm:h-11 sm:w-11">
               {activeSection === "transcribe" ? <AudioLines className="h-5 w-5" /> : <Wand2 className="h-5 w-5" />}
             </div>
             <div className="min-w-0">
-              <h2 className="text-lg font-semibold tracking-tight text-[var(--color-text)]">
+              <h2 className="text-base font-semibold tracking-tight text-[var(--color-text)] sm:text-lg">
                 {activeSection === "transcribe" ? "Turn speech into working text" : "Polish transcripts before they land"}
               </h2>
-              <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+              <p className="mt-0.5 line-clamp-2 text-xs text-[var(--color-text-muted)]">
                 {activeSection === "transcribe" ? "Choose how Grove listens, when text appears, and what starts a recording." : "Use a language model and project vocabulary to clean spoken input."}
               </p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex w-full shrink-0 items-center gap-3 sm:w-auto">
           <SettingsModeSwitch
             activeId={activeSection}
             onChange={(id) => setActiveSection(id as "transcribe" | "revise")}
@@ -375,10 +375,10 @@ export function AudioPanel({
           </div>
         </div>
       </header>
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-visible md:overflow-hidden">
       <div className={activeSection === "transcribe" ? "h-full min-h-0" : "hidden"}>
         <div className="h-full min-h-0 overflow-y-auto">
-          <div className={`flex min-h-full flex-col px-6 ${audio.enabled ? "" : "pointer-events-none opacity-55"}`}>
+          <div className={`flex min-h-full flex-col px-4 sm:px-6 ${audio.enabled ? "" : "pointer-events-none opacity-55"}`}>
             <section className="grid min-h-28 flex-1 content-center gap-5 border-b border-[var(--color-border)] py-4 md:grid-cols-[170px_minmax(0,1fr)] [@media(max-height:760px)]:min-h-0 [@media(max-height:760px)]:py-2.5">
               <div>
                 <h2 className="text-sm font-semibold text-[var(--color-text)]">Recognition</h2>

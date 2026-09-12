@@ -1,6 +1,8 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useIsMobile } from "../../../hooks/useIsMobile";
 
 export function SettingsFitFrame({ children }: { children: ReactNode }) {
+  const { isMobile } = useIsMobile();
   const frameRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -8,7 +10,10 @@ export function SettingsFitFrame({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     const frame = frameRef.current;
     const content = contentRef.current;
-    if (!frame || !content) return;
+    if (!frame || !content || isMobile) {
+      setScale(1);
+      return;
+    }
 
     let animationFrame = 0;
     const measure = () => {
@@ -33,11 +38,11 @@ export function SettingsFitFrame({ children }: { children: ReactNode }) {
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, []);
+  }, [isMobile]);
 
   return (
-    <div ref={frameRef} className="h-full min-h-0 overflow-hidden" data-settings-fit-scale={scale.toFixed(3)}>
-      <div ref={contentRef} className="origin-top-left" style={{ width: scale < 0.999 ? `${100 / scale}%` : "100%", transform: scale < 0.999 ? `scale(${scale})` : undefined }}>
+    <div ref={frameRef} className="h-full min-h-0 overflow-visible md:overflow-hidden" data-settings-fit-scale={scale.toFixed(3)}>
+      <div ref={contentRef} className="min-w-0 origin-top-left" style={{ width: !isMobile && scale < 0.999 ? `${100 / scale}%` : "100%", transform: !isMobile && scale < 0.999 ? `scale(${scale})` : undefined }}>
         {children}
       </div>
     </div>

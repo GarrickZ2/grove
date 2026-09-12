@@ -1,0 +1,17 @@
+/* Memory's desktop Overview uses JS-measured scale-to-fit geometry. Mobile is
+   a normal document flow: never retain a desktop measurement or allow a card's
+   intrinsic content width to widen the page. */
+@media (max-width: 767px) {
+  .memory-overview-fit-content {
+    width: 100% !important;
+    transform: none !important;
+  }
+
+  .memory-overview,
+  .memory-overview > *,
+  .memory-overview section,
+  .memory-overview aside {
+    min-width: 0;
+    max-width: 100%;
+  }
+}

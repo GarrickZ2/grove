@@ -52,7 +52,7 @@ export function MultiSelectFilter({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className={`flex h-9 min-w-[132px] items-center justify-between gap-3 rounded-lg border px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-highlight)]/30 ${
+        className={`flex h-9 min-w-0 items-center justify-between gap-3 rounded-lg border px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-highlight)]/30 sm:min-w-[132px] ${
           selected.length > 0
             ? "border-[var(--color-highlight)]/45 bg-[var(--color-highlight)]/8 text-[var(--color-text)]"
             : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] hover:border-[var(--color-text-muted)]/45"
@@ -66,7 +66,7 @@ export function MultiSelectFilter({
       </button>
 
       {open && (
-        <div role="listbox" aria-multiselectable="true" className="absolute right-0 z-50 mt-1.5 w-64 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-1.5 shadow-xl">
+        <div role="listbox" aria-multiselectable="true" className="fixed inset-x-3 bottom-3 z-50 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-1.5 shadow-xl sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:mt-1.5 sm:w-64 sm:rounded-xl">
           <div className="flex items-center justify-between px-2 py-1.5">
             <span className="text-xs font-semibold text-[var(--color-text)]">{label}</span>
             {selected.length > 0 && <button type="button" onClick={() => onChange([])} className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-3 w-3" />Clear</button>}

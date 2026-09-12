@@ -28,7 +28,7 @@ export function SettingsModeSwitch({
             type="button"
             onClick={() => onChange(item.id)}
             aria-pressed={active}
-            className={`inline-flex min-w-28 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            className={`inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:min-w-28 sm:flex-none ${
               active
                 ? "bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -98,7 +98,7 @@ export function PipelineSection({
   children: ReactNode;
 }) {
   return (
-    <section className={`flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] ${className}`}>
+    <section className={`flex min-w-0 flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] ${className}`}>
       {!hideHeader && <div className="border-b border-[var(--color-border)] px-5 py-4 sm:px-6">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -133,7 +133,7 @@ export function PipelineSection({
           ) : null}
         </div>
       </div>}
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-visible md:overflow-hidden">
         {fitContent ? (
           <SettingsFitFrame>
             <div className={`space-y-6 px-5 py-5 sm:px-6 ${contentClassName}`}>{children}</div>

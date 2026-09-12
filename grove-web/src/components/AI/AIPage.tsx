@@ -211,20 +211,20 @@ export function AIPage() {
   }, []);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden md:overflow-hidden">
       <header className="shrink-0 border-b border-[var(--color-border)]">
-        <div className="flex items-start justify-between gap-4 pb-4">
+        <div className="flex items-start justify-between gap-3 pb-4 sm:gap-4">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--color-highlight)]/12 text-[var(--color-highlight)]">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-highlight)]/12 text-[var(--color-highlight)] sm:h-11 sm:w-11">
               <SlidersHorizontal className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-text)]">AI Settings</h1>
-              <p className="mt-1 truncate text-sm text-[var(--color-text-muted)]">Configure AI input, control, providers, and Agent Voice{selectedProject ? ` for ${selectedProject.name}` : ""}.</p>
+              <h1 className="text-xl font-semibold tracking-tight text-[var(--color-text)] sm:text-2xl">AI Settings</h1>
+              <p className="mt-1 truncate text-sm text-[var(--color-text-muted)]"><span className="sm:hidden">Configure AI and voice.</span><span className="hidden sm:inline">Configure AI input, control, providers, and Agent Voice{selectedProject ? ` for ${selectedProject.name}` : ""}.</span></p>
             </div>
           </div>
         </div>
-        <nav className="flex items-center gap-1 overflow-x-auto">
+        <nav className="flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -232,7 +232,7 @@ export function AIPage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`relative flex items-center gap-2 px-3 py-2.5 text-sm font-medium transition-colors ${
+              className={`relative flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-2.5 text-sm font-medium transition-colors ${
                 isActive
                   ? "text-[var(--color-text)]"
                   : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -253,7 +253,7 @@ export function AIPage() {
         </nav>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-hidden pt-5">
+      <div className="min-h-0 flex-none overflow-visible pt-4 md:flex-1 md:overflow-hidden md:pt-5">
         {loading ? (
           <div className="flex items-center justify-center py-12 text-sm text-[var(--color-text-muted)]">
             Loading AI settings...

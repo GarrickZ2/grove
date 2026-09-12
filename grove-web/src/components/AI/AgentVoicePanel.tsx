@@ -347,22 +347,22 @@ export function AgentVoicePanel({ profiles, providers, loadError, onRetryLoad, o
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-sm">
       <header className="relative shrink-0 overflow-hidden border-b border-[var(--color-border)] px-5 py-4 [@media(max-height:760px)]:py-3">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_10%,color-mix(in_srgb,var(--color-highlight)_14%,transparent),transparent_34%)]" />
-        <div className="relative flex items-center justify-between gap-5">
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
           <div className="flex min-w-0 items-center gap-3.5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--color-highlight)]/12 text-[var(--color-highlight)]"><Volume2 className="h-5 w-5" /></div>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-highlight)]/12 text-[var(--color-highlight)] sm:h-11 sm:w-11"><Volume2 className="h-5 w-5" /></div>
             <div className="min-w-0">
-              <h2 className="text-lg font-semibold tracking-tight text-[var(--color-text)]">Give every Session a distinct voice</h2>
-              <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">Choose, tune, and preview the voice used for spoken Agent updates.</p>
+              <h2 className="text-base font-semibold tracking-tight text-[var(--color-text)] sm:text-lg">Give every Session a distinct voice</h2>
+              <p className="mt-0.5 line-clamp-2 text-xs text-[var(--color-text-muted)]">Choose, tune, and preview the voice used for spoken Agent updates.</p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto">
             <div className="w-56 max-[900px]:hidden"><Combobox options={profileOptions} value={selectedId ?? ""} onChange={selectProfile} placeholder={profiles.length === 0 ? "No saved profiles" : "Select profile"} allowCustom={false} disabled={profiles.length === 0} triggerClassName={toolbarComboboxClass} /></div>
             <div className="flex h-10 items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-sm">
               <button type="button" onClick={startCreate} className="flex h-full items-center px-3 text-xs font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-bg-secondary)]"><Plus className="mr-1.5 h-3.5 w-3.5" />New</button>
               <span className="h-5 w-px bg-[var(--color-border)]" />
               <button type="button" onClick={deleteProfile} disabled={!draft.id} title="Delete Speaking Profile" className="flex h-full w-10 items-center justify-center text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-35"><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
-            <Button className="h-10 min-w-[7.5rem] rounded-xl px-4 py-0" variant="primary" size="sm" onClick={saveProfile} disabled={saveDisabled}>{showSaved ? <Check className="mr-1.5 h-3.5 w-3.5" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}{saving ? "Saving..." : showSaved ? "Saved" : "Save profile"}</Button>
+            <Button className="h-10 flex-1 rounded-xl px-4 py-0 sm:min-w-[7.5rem] sm:flex-none" variant="primary" size="sm" onClick={saveProfile} disabled={saveDisabled}>{showSaved ? <Check className="mr-1.5 h-3.5 w-3.5" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}{saving ? "Saving..." : showSaved ? "Saved" : "Save profile"}</Button>
           </div>
         </div>
       </header>
@@ -403,14 +403,14 @@ export function AgentVoicePanel({ profiles, providers, loadError, onRetryLoad, o
               <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_12rem] gap-4 max-[760px]:grid-cols-1">
                 <div className="flex min-h-0 flex-col">
                   <SectionHeading title="Voice character" description="Tune how the selected voice is delivered." />
-                  <div className="mt-3 grid min-h-0 flex-1 grid-cols-3 grid-rows-2 gap-2.5 [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:gap-2">{visibleTuningFields.map((field) => <div key={field.key} className={`min-h-0 ${field.type === "boolean" ? "col-span-2" : ""}`}><ProviderControl field={field} value={draft.config[field.key]} onChange={(value) => patchConfig(field.key, value)} /></div>)}</div>
+                  <div className="mt-3 grid min-h-0 flex-1 grid-cols-1 gap-2.5 sm:grid-cols-2 md:grid-cols-3 md:grid-rows-2 [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:gap-2">{visibleTuningFields.map((field) => <div key={field.key} className={`min-h-0 ${field.type === "boolean" ? "sm:col-span-2" : ""}`}><ProviderControl field={field} value={draft.config[field.key]} onChange={(value) => patchConfig(field.key, value)} /></div>)}</div>
                 </div>
                 <div className="flex min-h-0 flex-col border-l border-[var(--color-border)] pl-4 max-[760px]:border-l-0 max-[760px]:border-t max-[760px]:pl-0 max-[760px]:pt-3">
                   <div>
                     <h3 className="text-sm font-semibold text-[var(--color-text)]">Spoken limits</h3>
                     <p className="mt-0.5 text-xs text-[var(--color-text-muted)] [@media(max-height:760px)]:hidden">Full reply in Chat.</p>
                   </div>
-                  <div className="mt-3 grid min-h-0 flex-1 grid-rows-2 gap-2.5 [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:grid-cols-2 [@media(max-height:760px)]:grid-rows-1"><NumberField label="Characters" value={draft.maxCharacters} min={40} max={2000} step={10} onChange={(value) => setDraft((current) => ({ ...current, maxCharacters: value }))} /><NumberField label="Duration" value={draft.maxDurationSeconds} min={5} max={300} suffix="sec" onChange={(value) => setDraft((current) => ({ ...current, maxDurationSeconds: value }))} /></div>
+                  <div className="mt-3 grid min-h-0 flex-1 grid-cols-2 gap-2.5 md:grid-cols-1 md:grid-rows-2 [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:grid-cols-2 [@media(max-height:760px)]:grid-rows-1"><NumberField label="Characters" value={draft.maxCharacters} min={40} max={2000} step={10} onChange={(value) => setDraft((current) => ({ ...current, maxCharacters: value }))} /><NumberField label="Duration" value={draft.maxDurationSeconds} min={5} max={300} suffix="sec" onChange={(value) => setDraft((current) => ({ ...current, maxDurationSeconds: value }))} /></div>
                 </div>
               </div>
             </section>}
@@ -515,7 +515,7 @@ function VoicePreview({ voice, playing, previewing, onPreview }: { voice: Speaki
 
 function ProviderControl({ field, value, onChange }: { field: SpeakingProviderField; value: SpeakingProfileConfig[string] | undefined; onChange: (value: string | number | boolean) => void }) {
   const current = value ?? field.defaultValue;
-  if (field.type === "boolean") return <div className="flex h-full items-center justify-between gap-4 rounded-xl border border-[var(--color-border)] px-3.5"><span><span className="block text-xs font-semibold text-[var(--color-text)]">{field.label}</span>{field.description && <span className="mt-0.5 block truncate text-[10px] text-[var(--color-text-muted)]">{field.description}</span>}</span><Switch checked={Boolean(current)} onChange={onChange} label={`Toggle ${field.label}`} /></div>;
+  if (field.type === "boolean") return <div className="flex h-full min-w-0 items-center justify-between gap-4 overflow-hidden rounded-xl border border-[var(--color-border)] px-3.5 py-2.5"><span className="min-w-0"><span className="block text-xs font-semibold text-[var(--color-text)]">{field.label}</span>{field.description && <span className="mt-0.5 block truncate text-[10px] text-[var(--color-text-muted)]">{field.description}</span>}</span><Switch checked={Boolean(current)} onChange={onChange} label={`Toggle ${field.label}`} /></div>;
   if (field.type === "range") {
     const number = Number(current);
     const decimals = field.step && field.step < 0.1 ? 2 : 1;

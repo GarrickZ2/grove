@@ -93,7 +93,7 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
       {isOpen && (
         <AddAgentDialogBindings onClose={onClose} onSubmit={handleSubmit} />
       )}
-      <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
+      <div className="flex max-h-[calc(100dvh-1rem)] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] shadow-xl">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
                 <h2 className="text-lg font-semibold text-[var(--color-text)]">
@@ -108,7 +108,7 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
               </div>
 
               {/* Form */}
-              <div className="px-5 py-4 space-y-4">
+              <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
                 {/* Name */}
                 <div>
                   <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">

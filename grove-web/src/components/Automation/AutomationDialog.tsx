@@ -601,9 +601,9 @@ export function AutomationDialog({
           onSubmit={handleSubmit}
         />
       )}
-      <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="flex max-h-[calc(100dvh-1rem)] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] shadow-xl sm:max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
+        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3.5 sm:px-5 sm:py-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-[var(--color-highlight)]/10">
               <Repeat className="w-5 h-5 text-[var(--color-highlight)]" />
@@ -612,7 +612,7 @@ export function AutomationDialog({
               <h2 className="text-lg font-semibold text-[var(--color-text)] leading-tight">
                 {initial ? "Edit Automation" : "New Automation"}
               </h2>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+              <p className="mt-0.5 hidden text-xs text-[var(--color-text-muted)] sm:block">
                 Scheduled prompts sent into a chat session.
               </p>
             </div>
@@ -626,9 +626,9 @@ export function AutomationDialog({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
           {/* Name + toggle row */}
-          <div className="flex items-end gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <div className="flex-1 min-w-0">
               <Input
                 label="Name"
@@ -651,13 +651,13 @@ export function AutomationDialog({
 
           {/* Task — single horizontal row */}
           <Section icon={<ListTodo className="w-3.5 h-3.5" />} title="Task">
-            <div className="flex items-end gap-3 flex-wrap">
-              <div className="flex-shrink-0">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+              <div className="w-full sm:w-auto sm:flex-shrink-0">
                 <LabelRow>Mode</LabelRow>
                 <ModePill value={taskMode} onChange={setTaskMode} />
               </div>
               {taskMode === "existing" ? (
-                <div className="flex-1 min-w-[220px]">
+                <div className="min-w-0 flex-1">
                   <LabelRow>Existing task</LabelRow>
                   <Combobox
                     options={taskOptions}
@@ -673,7 +673,7 @@ export function AutomationDialog({
                 </div>
               ) : (
                 <>
-                  <div className="flex-1 min-w-[140px]">
+                  <div className="min-w-0 flex-1">
                     <LabelRow>Name</LabelRow>
                     <input
                       value={newTaskName}
@@ -683,7 +683,7 @@ export function AutomationDialog({
                     />
                   </div>
                   {!isStudio && (
-                    <div className="flex-1 min-w-[160px]">
+                    <div className="min-w-0 flex-1">
                       <LabelRow>Target branch</LabelRow>
                       <button
                         ref={branchTriggerRef}
@@ -775,12 +775,12 @@ export function AutomationDialog({
             icon={<MessageSquare className="w-3.5 h-3.5" />}
             title="Chat session"
           >
-            <div className="flex items-end gap-3 flex-wrap">
-              <div className="flex-shrink-0">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+              <div className="w-full sm:w-auto sm:flex-shrink-0">
                 <LabelRow>Mode</LabelRow>
                 <ModePill value={sessionMode} onChange={handleSessionModeChange} />
               </div>
-              <div className="flex-1 min-w-[220px]">
+              <div className="min-w-0 flex-1">
                 <LabelRow>
                   {sessionMode === "existing" ? "Existing session" : "Agent"}
                 </LabelRow>
@@ -820,8 +820,8 @@ export function AutomationDialog({
             </div>
             {configAgentId && (agentConfigsLoading || agentConfigsError || configOptions.length > 0 || legacyModes.length > 0) && (
               <div className="mt-1.5">
-                <div className="flex min-h-7 items-center gap-3">
-                  <span className="w-32 flex-shrink-0 text-xs text-[var(--color-text-muted)]">
+                <div className="flex min-h-7 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                  <span className="text-xs text-[var(--color-text-muted)] sm:w-32 sm:flex-shrink-0">
                     Agent configuration
                   </span>
                   <div className="min-w-0 flex-1">
@@ -908,8 +908,8 @@ export function AutomationDialog({
             }
           >
             {/* Frequency picker + mode-specific controls share one row. */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="w-28 flex-shrink-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="w-full sm:w-28 sm:flex-shrink-0">
                 <SimpleSelect
                   options={FREQUENCY_OPTIONS}
                   value={scheduleKind}
@@ -954,7 +954,7 @@ export function AutomationDialog({
 
               {scheduleKind === "weekly" && (
                 <>
-                  <div className="flex-1 min-w-[160px] max-w-[260px]">
+                  <div className="w-full min-w-0 sm:max-w-[260px] sm:flex-1">
                     <WeekdayPicker
                       value={weeklyDays}
                       onChange={setWeeklyDays}
@@ -975,7 +975,7 @@ export function AutomationDialog({
                   value={customCron}
                   onChange={(e) => setCustomCron(e.target.value)}
                   placeholder="0 9 * * *"
-                  className="flex-1 min-w-[200px] px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg text-sm font-mono text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)] transition-all duration-200"
+                  className="w-full min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] transition-all duration-200 focus:border-[var(--color-highlight)] focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)]"
                 />
               )}
             </div>
@@ -990,8 +990,8 @@ export function AutomationDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-5 py-3 bg-[var(--color-bg)] border-t border-[var(--color-border)]">
-          <p className="text-xs text-[var(--color-text-muted)]">
+        <div className="flex items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 sm:justify-between sm:px-5">
+          <p className="hidden text-xs text-[var(--color-text-muted)] sm:block">
             <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">
               ⌘
             </kbd>
@@ -1050,13 +1050,13 @@ function Section({
 }) {
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-3 min-w-0">
+      <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
         <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] flex-shrink-0">
           {icon}
           <span>{title}</span>
         </div>
         {trailing && (
-          <div className="flex-1 min-w-0 flex items-center justify-end">
+          <div className="flex min-w-0 max-w-full items-center sm:flex-1 sm:justify-end">
             {trailing}
           </div>
         )}
@@ -1082,14 +1082,14 @@ function ModePill({
   onChange: (m: TargetMode) => void;
 }) {
   return (
-    <div className="inline-flex items-stretch gap-1 p-1 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg w-fit h-[38px]">
+    <div className="inline-flex h-[38px] w-full items-stretch gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-1 sm:w-fit">
       {(["new", "existing"] as TargetMode[]).map((m) => (
         <motion.button
           key={m}
           type="button"
           whileTap={{ scale: 0.96 }}
           onClick={() => onChange(m)}
-          className={`inline-flex items-center px-3 text-sm font-medium rounded-md capitalize transition-colors ${
+          className={`inline-flex flex-1 items-center justify-center rounded-md px-3 text-sm font-medium capitalize transition-colors sm:flex-none ${
             value === m
               ? "bg-[var(--color-highlight)] text-white shadow-sm"
               : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"

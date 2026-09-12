@@ -136,7 +136,7 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
   };
 
   return (
-    <DrawerShell isOpen={!!selectedSkill} onClose={onClose} width="w-[720px]">
+    <DrawerShell isOpen={!!selectedSkill} onClose={onClose} width="w-full sm:w-[720px]">
       {selectedSkill && <>
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)] select-none">

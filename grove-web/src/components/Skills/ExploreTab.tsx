@@ -234,11 +234,11 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
   const activeStatusLabel = STATUS_OPTIONS.find((o) => o.value === statusFilter);
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <div className="min-w-0 flex-1 flex flex-col min-h-0">
         {/* Search + Filters */}
-        <div className="flex items-center gap-2 mb-4">
-          <div className="flex-1 relative select-none">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="relative basis-full select-none sm:flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)] pointer-events-none" />
             <input
               type="text"
@@ -472,7 +472,7 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
           <div className="flex-1 flex flex-col min-h-0">
             <div
               ref={gridContainerRef}
-              className="flex-1 min-h-0 grid gap-3 content-start overflow-hidden pt-1"
+              className="grid min-h-0 flex-1 content-start gap-3 overflow-visible pt-1 md:overflow-hidden"
               style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${MIN_CARD_WIDTH}px, 1fr))` }}
             >
               {pagedSkills.map((skill) => (

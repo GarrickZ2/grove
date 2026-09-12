@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, Download, FolderOpen, GitBranch, Plus, Search, Trash2, X } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Download, FolderOpen, GitBranch, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { Button, Combobox, DialogShell, DrawerShell } from "../ui";
 import { SkillDetailPanel } from "./SkillDetailPanel";
 import { PluginDetailDialog } from "../Config/PluginDetailDialog";
@@ -17,6 +17,7 @@ import { MultiSelectFilter } from "./MultiSelectFilter";
 import { AgentIcon } from "./AgentIcon";
 import { ExtensionIdentityIcon } from "./ExtensionIdentityIcon";
 import { resolveInstalledPlugin } from "./installedPlugin";
+import { useIsMobile } from "../../hooks/useIsMobile";
 
 type InstallationFilter = "installed" | "partial" | "not_installed";
 type CatalogView = "all" | "installed" | "available" | "development" | "attention";
@@ -36,6 +37,7 @@ interface Props {
 }
 
 export function ExtensionsExplore({ agents, sources, installed, projectPath, refreshToken, onInstalled }: Props) {
+  const { isMobile } = useIsMobile();
   const [items, setItems] = useState<ExtensionArtifact[]>([]);
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [agentOptions, setAgentOptions] = useState<InstalledAgentConfig[]>([]);
@@ -55,6 +57,7 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
   const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null);
   const [selectedPluginArtifact, setSelectedPluginArtifact] = useState<ExtensionArtifact | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -118,12 +121,12 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
   useEffect(() => {
     const node = tableBodyRef.current;
     if (!node) return;
-    const updatePageSize = () => setPageSize(Math.max(1, Math.floor(node.clientHeight / 64)));
+    const updatePageSize = () => setPageSize(isMobile ? 10 : Math.max(1, Math.floor(node.clientHeight / 64)));
     updatePageSize();
     const observer = new ResizeObserver(updatePageSize);
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [isMobile]);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   const safePage = Math.min(page, pageCount);
@@ -156,12 +159,14 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[280px] flex-1">
+      <div className="mb-3 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:flex sm:flex-wrap">
+        <div className="relative min-w-0 flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
           <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search by name or description"
             className="h-10 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-3 text-sm text-[var(--color-text)] outline-none transition-colors focus:border-[var(--color-highlight)]" />
         </div>
+        <button type="button" onClick={() => setShowMobileFilters((current) => !current)} className={`inline-flex h-10 items-center gap-1.5 rounded-xl border px-3 text-sm sm:hidden ${activeFilterCount > 0 ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}><SlidersHorizontal className="h-4 w-4" />Filters{activeFilterCount > 0 && <span className="rounded-full bg-[var(--color-highlight)] px-1.5 py-0.5 text-[10px] text-white">{activeFilterCount}</span>}</button>
+        <div className={`${showMobileFilters ? "col-span-2 grid" : "hidden"} grid-cols-2 gap-2 sm:flex sm:items-center`}>
         <MultiSelectFilter label="Type" selected={kinds} onChange={updateFilter(setKinds)} options={[
           { value: "skill", label: "Skills", icon: <ExtensionTypeIcon kind="skill" compact />, count: records.filter(({ item }) => item.kind === "skill").length },
           { value: "plugin", label: "Plugins", icon: <ExtensionTypeIcon kind="plugin" compact />, count: records.filter(({ item }) => item.kind === "plugin").length },
@@ -174,7 +179,8 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
           { value: "not_installed", label: "Not installed" },
         ] satisfies Array<{ value: InstallationFilter; label: string }>} />
         <MultiSelectFilter label="Agent" selected={agentIds} onChange={updateFilter(setAgentIds)} options={agents.map((agent) => ({ value: agent.id, label: agent.display_name, description: agent.id, icon: <AgentIcon iconId={agent.icon_id} size={18} /> }))} />
-        <span className="ml-auto whitespace-nowrap text-xs tabular-nums text-[var(--color-text-muted)]">{visible.length.toLocaleString()} results</span>
+        </div>
+        <span className="ml-auto hidden whitespace-nowrap text-xs tabular-nums text-[var(--color-text-muted)] sm:inline">{visible.length.toLocaleString()} results</span>
       </div>
 
       {activeFilterCount > 0 && <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs"><span className="mr-1 text-[var(--color-text-muted)]">Filtered by</span>{[
@@ -186,11 +192,11 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
 
       {error && <div className="mb-3 flex items-center gap-2 rounded-xl border border-[var(--color-error)]/30 bg-[var(--color-error)]/8 px-3 py-2 text-sm text-[var(--color-error)]"><AlertTriangle className="h-4 w-4" /><span className="flex-1">{error}</span><Button variant="ghost" size="sm" onClick={() => void reload()}>Retry</Button></div>}
 
-      <div className="mb-3 flex gap-1 overflow-x-auto lg:hidden">{views.map((item) => <button key={item.id} type="button" onClick={() => { setView(item.id); setPage(1); }} className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium ${view === item.id ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)]"}`}>{item.label} <span className="ml-1 tabular-nums opacity-70">{item.count}</span></button>)}</div>
+      <div className="mb-3 flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:hidden">{views.map((item) => <button key={item.id} type="button" onClick={() => { setView(item.id); setPage(1); }} className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium ${view === item.id ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)]"}`}>{item.label} <span className="ml-1 tabular-nums opacity-70">{item.count}</span></button>)}</div>
 
       <TableFrame facets={<CatalogViewRail views={views} active={view} onChange={(next) => { setView(next); setPage(1); }} />}>
         <CatalogHeader />
-        <div ref={tableBodyRef} className="min-h-0 flex-1 overflow-hidden">
+        <div ref={tableBodyRef} className="min-h-0 flex-1 overflow-visible md:overflow-hidden">
           {loading ? <CatalogSkeleton /> : pageItems.length === 0 ? <TableEmpty title="No extensions found" description="Try another search or clear a filter." /> : pageItems.map((record) => {
             const key = `${record.item.kind}/${record.item.repo_key}/${record.item.repo_path}`;
             return <CatalogRow key={key} record={record} onOpen={() => openRecord(record)} />;
@@ -227,7 +233,7 @@ function deployment(item: ExtensionArtifact, plugin?: Plugin): { label: string; 
 }
 
 function CatalogHeader() {
-  return <div className="grid shrink-0 grid-cols-[minmax(360px,1fr)_150px_28px] items-center gap-5 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/35 px-5 py-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)] lg:grid-cols-[minmax(420px,1fr)_minmax(220px,320px)_150px_28px]">
+  return <div className="hidden shrink-0 grid-cols-[minmax(360px,1fr)_150px_28px] items-center gap-5 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/35 px-5 py-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)] md:grid lg:grid-cols-[minmax(420px,1fr)_minmax(220px,320px)_150px_28px]">
     <span>Extension</span><span className="hidden lg:block">Source</span><span>Installation</span><span />
   </div>;
 }
@@ -235,11 +241,11 @@ function CatalogHeader() {
 function CatalogRow({ record, onOpen }: { record: CatalogRecord; onOpen: () => void }) {
   const { item, plugin } = record;
   const deployed = deployment(item, plugin);
-  return <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }} className="group grid h-16 cursor-pointer grid-cols-[minmax(360px,1fr)_150px_28px] items-center gap-5 border-b border-[var(--color-border)] px-5 py-2 text-left transition-colors last:border-b-0 hover:bg-[var(--color-bg-secondary)]/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-highlight)] lg:grid-cols-[minmax(420px,1fr)_minmax(220px,320px)_150px_28px]">
-    <div className="flex min-w-0 items-center gap-3"><ExtensionIdentityIcon kind={item.kind} name={item.name} manifest={item.manifest} plugin={plugin} /><div className="min-w-0"><div className="flex items-center gap-2"><span className="truncate text-sm font-semibold text-[var(--color-text)]">{item.name}</span><TypeLabel kind={item.kind} />{item.version && <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">v{item.version}</span>}</div><p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">{item.description || "No description provided"}</p><p className="mt-0.5 truncate font-mono text-[10px] text-[var(--color-text-muted)] lg:hidden">{item.source} · {item.relative_path}</p></div></div>
+  return <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }} className="group relative grid min-h-28 cursor-pointer grid-cols-1 gap-3 border-b border-[var(--color-border)] px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-[var(--color-bg-secondary)]/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-highlight)] md:h-16 md:min-h-0 md:grid-cols-[minmax(360px,1fr)_150px_28px] md:items-center md:gap-5 md:px-5 md:py-2 lg:grid-cols-[minmax(420px,1fr)_minmax(220px,320px)_150px_28px]">
+    <div className="flex min-w-0 items-start gap-3 md:items-center"><ExtensionIdentityIcon kind={item.kind} name={item.name} manifest={item.manifest} plugin={plugin} /><div className="min-w-0 flex-1 pr-6 md:pr-0"><div className="flex min-w-0 flex-wrap items-center gap-2"><span className="max-w-full truncate text-sm font-semibold text-[var(--color-text)]">{item.name}</span><TypeLabel kind={item.kind} />{item.version && <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">v{item.version}</span>}</div><p className="mt-1 line-clamp-2 break-words text-xs leading-5 text-[var(--color-text-muted)] md:mt-0.5 md:truncate">{item.description || "No description provided"}</p><p className="mt-1 max-w-full truncate font-mono text-[10px] text-[var(--color-text-muted)] lg:hidden">{item.source}{item.relative_path ? ` · ${item.relative_path}` : ""}</p></div></div>
     <div className="hidden min-w-0 lg:block"><div className="truncate text-sm font-medium text-[var(--color-text)]">{sourceDisplayLabel(item.source, plugin)}</div><div className="mt-0.5 truncate font-mono text-[10px] text-[var(--color-text-muted)]">{item.relative_path || item.repo_path || plugin?.local_path}</div></div>
-    <StatusBadge label={deployed.label} tone={deployed.tone} />
-    <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)] opacity-60 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
+    <div className="ml-12 md:ml-0"><StatusBadge label={deployed.label} tone={deployed.tone} /></div>
+    <ChevronRight className="absolute right-4 top-5 h-4 w-4 text-[var(--color-text-muted)] opacity-60 transition-all group-hover:translate-x-0.5 group-hover:opacity-100 md:static" />
   </div>;
 }
 
@@ -248,7 +254,7 @@ function CatalogViewRail({ views, active, onChange }: { views: Array<{ id: Catal
 }
 
 function CatalogSkeleton() {
-  return <div>{Array.from({ length: 7 }).map((_, index) => <div key={index} className="grid h-16 animate-pulse grid-cols-[minmax(360px,1fr)_150px_28px] items-center gap-5 border-b border-[var(--color-border)] px-5 py-2 lg:grid-cols-[minmax(420px,1fr)_minmax(220px,320px)_150px_28px]"><div className="flex items-center gap-3"><div className="h-9 w-9 rounded-lg bg-[var(--color-bg-secondary)]" /><div className="space-y-2"><div className="h-3 w-36 rounded bg-[var(--color-bg-secondary)]" /><div className="h-2.5 w-56 rounded bg-[var(--color-bg-secondary)]" /></div></div><div className="hidden h-3 w-28 rounded bg-[var(--color-bg-secondary)] lg:block" /><div className="h-6 w-24 rounded-full bg-[var(--color-bg-secondary)]" /></div>)}</div>;
+  return <div>{Array.from({ length: 7 }).map((_, index) => <div key={index} className="grid min-h-28 animate-pulse grid-cols-1 gap-3 border-b border-[var(--color-border)] px-4 py-4 md:h-16 md:min-h-0 md:grid-cols-[minmax(360px,1fr)_150px_28px] md:items-center md:gap-5 md:px-5 md:py-2 lg:grid-cols-[minmax(420px,1fr)_minmax(220px,320px)_150px_28px]"><div className="flex items-start gap-3"><div className="h-9 w-9 shrink-0 rounded-lg bg-[var(--color-bg-secondary)]" /><div className="min-w-0 flex-1 space-y-2"><div className="h-3 w-36 max-w-full rounded bg-[var(--color-bg-secondary)]" /><div className="h-2.5 w-full rounded bg-[var(--color-bg-secondary)]" /><div className="h-2.5 w-2/3 rounded bg-[var(--color-bg-secondary)]" /></div></div><div className="hidden h-3 w-28 rounded bg-[var(--color-bg-secondary)] lg:block" /><div className="ml-12 h-6 w-24 rounded-full bg-[var(--color-bg-secondary)] md:ml-0" /></div>)}</div>;
 }
 
 function TypeLabel({ kind }: { kind: ExtensionArtifact["kind"] }) {
@@ -282,12 +288,12 @@ function McpInstallDialog({ artifact, agents, projectPath, onClose, onSaved }: {
   const definitions = variant?.kind === "remote"
     ? (Array.isArray(variant.value.headers) ? variant.value.headers : [])
     : (Array.isArray(variant?.value.environmentVariables) ? variant.value.environmentVariables : []);
-  return <DrawerShell isOpen onClose={onClose} width="w-[640px]"><div className="flex h-full flex-col">
+  return <DrawerShell isOpen onClose={onClose} width="w-full sm:w-[640px]"><div className="flex h-full flex-col">
     <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4"><div className="flex min-w-0 items-center gap-3"><ExtensionIdentityIcon kind="mcp" name={artifact.name} manifest={artifact.manifest} /><div className="min-w-0"><h2 className="truncate text-base font-semibold">{artifact.name}</h2><p className="mt-1 text-xs text-[var(--color-text-muted)]">Configure runtime and Agent bindings</p></div></div><button type="button" onClick={onClose} className="rounded-lg p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button></div>
     <div className="flex-1 overflow-y-auto px-5 py-4">
     <label className="mb-1 block text-xs font-medium">Runtime</label><div className="mb-4"><Combobox allowCustom={false} value={String(variantIndex)} onChange={(value) => setVariantIndex(Number(value))} options={variants.map((option, index) => ({ id: `${option.kind}-${option.index}`, value: String(index), label: option.label }))} /></div>
     {definitions.map((definition, index) => { const value = definition as Record<string, unknown>; const name = String(value.name ?? `value-${index}`); return <label key={name} className="mb-3 block text-xs"><span className="mb-1 block">{name}{value.isRequired === true && " *"}</span><input type={value.isSecret === true ? "password" : "text"} value={values[name] ?? ""} onChange={(event) => setValues((old) => ({ ...old, [name]: event.target.value }))} className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-sm" /></label>; })}
-    <div className="mb-4"><span className="mb-2 block text-xs font-medium">ACP Agents</span><div className="grid grid-cols-2 gap-2">{agents.map((agent) => <label key={agent.id} className="flex items-center gap-2 rounded border border-[var(--color-border)] p-2 text-xs"><input type="checkbox" checked={selectedAgents.includes(agent.id)} onChange={() => setSelectedAgents((old) => old.includes(agent.id) ? old.filter((id) => id !== agent.id) : [...old, agent.id])} />{agent.name}</label>)}</div></div>
+    <div className="mb-4"><span className="mb-2 block text-xs font-medium">ACP Agents</span><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{agents.map((agent) => <label key={agent.id} className="flex items-center gap-2 rounded border border-[var(--color-border)] p-2 text-xs"><input type="checkbox" checked={selectedAgents.includes(agent.id)} onChange={() => setSelectedAgents((old) => old.includes(agent.id) ? old.filter((id) => id !== agent.id) : [...old, agent.id])} />{agent.name}</label>)}</div></div>
     <div className="mb-5 flex gap-3 text-xs"><label><input type="radio" checked={scope === "global"} onChange={() => setScope("global")} /> Global</label><label className={!projectPath ? "opacity-40" : ""}><input type="radio" disabled={!projectPath} checked={scope === "project"} onChange={() => setScope("project")} /> Current Project</label></div>
     </div>
     <div className="flex justify-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4"><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={saving || !variant} onClick={async () => { if (!variant) return; setSaving(true); try { await installMcp({ repo_key: artifact.repo_key, repo_path: artifact.repo_path, scope, project_path: scope === "project" ? projectPath ?? undefined : undefined, agent_ids: selectedAgents, runtime: { kind: variant.kind, index: variant.index }, values }); onSaved(); } finally { setSaving(false); } }}>{saving ? "Saving..." : selectedAgents.length === 0 ? "Remove bindings" : "Save"}</Button></div>
@@ -340,7 +346,7 @@ export function AddMcpDialog({ onClose, onCreated }: { onClose: () => void; onCr
       <div className="space-y-5">
         <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
           <h3 className="mb-3 text-sm font-semibold">Server</h3>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="text-xs"><span className="mb-1 block font-medium">Name *</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="io.company/server-name" className={inputClass} /></label>
             <label className="text-xs"><span className="mb-1 block font-medium">Version</span><input value={version} onChange={(event) => setVersion(event.target.value)} className={inputClass} /></label>
             <label className="col-span-2 text-xs"><span className="mb-1 block font-medium">Description</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this MCP server provides" className={inputClass} /></label>
@@ -350,7 +356,7 @@ export function AddMcpDialog({ onClose, onCreated }: { onClose: () => void; onCr
         <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
           <h3 className="mb-3 text-sm font-semibold">Runtime</h3>
           <div className="mb-3 flex gap-1 rounded-lg bg-[var(--color-bg-secondary)] p-1">{(["remote", "npm", "pypi", "oci"] as RuntimeType[]).map((type) => <button key={type} type="button" onClick={() => setRuntimeType(type)} className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium ${runtimeType === type ? "bg-[var(--color-highlight)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{type === "remote" ? "Remote HTTP" : type === "pypi" ? "PyPI" : type.toUpperCase()}</button>)}</div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className={`text-xs ${runtimeType === "remote" ? "col-span-2" : ""}`}><span className="mb-1 block font-medium">{runtimeType === "remote" ? "Server URL *" : "Package name *"}</span><input value={location} onChange={(event) => setLocation(event.target.value)} placeholder={runtimeType === "remote" ? "https://example.com/mcp" : runtimeType === "npm" ? "@company/mcp-server" : "package-name"} className={inputClass} /></label>
             {runtimeType !== "remote" && <label className="text-xs"><span className="mb-1 block font-medium">Package version</span><input value={runtimeVersion} onChange={(event) => setRuntimeVersion(event.target.value)} placeholder="latest" className={inputClass} /></label>}
           </div>

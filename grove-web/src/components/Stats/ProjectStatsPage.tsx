@@ -158,22 +158,37 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
   }, [fetchData]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden gap-3 select-none">
+    <div className="flex h-full min-w-0 select-none flex-col gap-3 overflow-y-auto overflow-x-hidden md:overflow-hidden">
       {/* ── Header ─────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-xl font-semibold text-[var(--color-text)] mr-3">
-          Statistics
-        </h1>
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <div className="flex w-full items-center gap-3 lg:contents">
+          <h1 className="mr-auto text-xl font-semibold text-[var(--color-text)]">Statistics</h1>
+          <ScopeToggle scope={scopeRaw} onChange={setScopeRaw} projectAvailable={!!projectId} />
+          <button type="button" onClick={fetchData} disabled={loading} aria-label="Refresh" className="shrink-0 rounded-lg border border-[var(--color-border)] p-2 transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 lg:hidden">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin text-[var(--color-text-muted)]" /> : <RefreshCw className="h-4 w-4 text-[var(--color-text-muted)]" />}
+          </button>
+        </div>
 
-        {/* Scope toggle */}
-        <ScopeToggle
-          scope={scopeRaw}
-          onChange={setScopeRaw}
-          projectAvailable={!!projectId}
-        />
+        <div className="hidden flex-1 lg:block" />
+        <div className="grid w-full gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/45 p-2 lg:hidden">
+          <SegmentedControl
+            options={[
+              { id: "total", label: "Total" },
+              { id: "input", label: "Input" },
+              { id: "cached", label: "Cache" },
+              { id: "output", label: "Output" },
+            ]}
+            value={metricType}
+            onChange={(v) => setMetricType(v as MetricType)}
+          />
+          <SegmentedControl options={RANGE_OPTIONS} value={range} onChange={(v) => setRangeAndCoerce(v as RangeId)} />
+          <div className="grid grid-cols-2 gap-2">
+            <CompactSelect label="Unit" value={unit} options={[{ id: "token", label: "Token" }, { id: "cost", label: "Cost" }]} onChange={(v) => setUnit(v as Unit)} />
+            <CompactSelect label="Bucket" value={bucket} options={BUCKET_OPTIONS.filter((option) => allowedBuckets.includes(option.id))} onChange={(v) => setBucket(v as Bucket)} />
+          </div>
+        </div>
 
-        <Spacer />
-
+        <div className="hidden lg:contents">
         <Label>Metric</Label>
         <SegmentedControl
           options={[
@@ -213,18 +228,9 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
           onChange={(v) => setBucket(v as Bucket)}
         />
 
-        <button
-          type="button"
-          onClick={fetchData}
-          disabled={loading}
-          aria-label="Refresh"
-          className="rounded-lg border border-[var(--color-border)] p-1.5 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
-        >
-          {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
-          ) : (
-            <RefreshCw className="w-4 h-4 text-[var(--color-text-muted)]" />
-          )}
+        </div>
+        <button type="button" onClick={fetchData} disabled={loading} aria-label="Refresh" className="hidden shrink-0 rounded-lg border border-[var(--color-border)] p-1.5 transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 lg:block">
+          {loading ? <Loader2 className="h-4 w-4 animate-spin text-[var(--color-text-muted)]" /> : <RefreshCw className="h-4 w-4 text-[var(--color-text-muted)]" />}
         </button>
       </div>
 
@@ -255,8 +261,8 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
             averageRates={averageRates}
           />
 
-          <div className="flex-1 grid grid-cols-12 grid-rows-2 gap-3 min-h-0">
-            <div className="col-span-8 row-span-1 min-h-0">
+          <div className="grid min-h-0 flex-none grid-cols-1 gap-3 md:flex-1 md:grid-cols-12 md:grid-rows-2">
+            <div className="min-h-[280px] md:col-span-8 md:row-span-1 md:min-h-0">
               <ActivityOverTime
                 buckets={data?.current.timeseries ?? []}
                 bucket={bucket}
@@ -265,7 +271,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
                 averageRates={averageRates}
               />
             </div>
-            <div className="col-span-4 row-span-1 min-h-0">
+            <div className="min-h-[260px] md:col-span-4 md:row-span-1 md:min-h-0">
               <AgentShare
                 items={data?.current.agent_share ?? []}
                 unit={unit}
@@ -273,14 +279,14 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
               />
             </div>
 
-            <div className="col-span-4 row-span-1 min-h-0">
+            <div className="min-h-[260px] md:col-span-4 md:row-span-1 md:min-h-0">
               <ModelsList
                 items={data?.current.models ?? []}
                 metricType={metricType}
                 unit={unit}
               />
             </div>
-            <div className="col-span-4 row-span-1 min-h-0">
+            <div className="min-h-[260px] md:col-span-4 md:row-span-1 md:min-h-0">
               <TopList
                 scope={effectiveScope}
                 items={data?.current.top ?? []}
@@ -289,7 +295,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
                 averageRates={averageRates}
               />
             </div>
-            <div className="col-span-4 row-span-1 min-h-0">
+            <div className="min-h-[260px] md:col-span-4 md:row-span-1 md:min-h-0">
               <ActivityHeatmap
                 cells={data?.current.heatmap ?? []}
                 rangeId={range}
@@ -312,10 +318,6 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Spacer() {
-  return <div className="flex-1" />;
-}
-
 function ScopeToggle({
   scope,
   onChange,
@@ -326,7 +328,7 @@ function ScopeToggle({
   projectAvailable: boolean;
 }) {
   return (
-    <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5">
+    <div className="inline-flex shrink-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5">
       <ScopeButton
         active={scope === "global"}
         onClick={() => onChange("global")}
@@ -388,7 +390,7 @@ function SegmentedControl<T extends string>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5">
+    <div className="inline-flex w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5 lg:w-auto">
       {options.map((opt) => (
         <button
           key={opt.id}
@@ -396,7 +398,7 @@ function SegmentedControl<T extends string>({
           onClick={() => !opt.disabled && onChange(opt.id)}
           disabled={opt.disabled}
           title={opt.disabled ? "Not compatible with current range" : ""}
-          className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+          className={`min-w-0 flex-1 whitespace-nowrap rounded-md px-1.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-30 lg:flex-none lg:px-2.5 ${
             value === opt.id
               ? "bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm"
               : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -406,5 +408,26 @@ function SegmentedControl<T extends string>({
         </button>
       ))}
     </div>
+  );
+}
+
+function CompactSelect<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { id: T; label: string }[];
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <label className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+      <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value as T)} className="min-w-0 flex-1 bg-transparent text-right text-xs font-medium text-[var(--color-text)] outline-none">
+        {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+    </label>
   );
 }
