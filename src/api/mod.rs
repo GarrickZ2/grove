@@ -1169,12 +1169,35 @@ pub fn create_router(
             auth::auth_middleware,
         ));
 
+        // Browser-native iframe, module, style, and image requests cannot add
+        // Grove's per-request HMAC headers (and opaque-origin module requests
+        // do not reliably carry cookies). An authenticated handshake therefore
+        // mints a narrow path capability used only by this read-only route.
+        let plugin_asset_session = Router::new()
+            .route(
+                "/plugins/{id}/asset-session",
+                post(handlers::plugins::create_plugin_asset_session),
+            )
+            .layer(middleware::from_fn_with_state(
+                auth.clone(),
+                auth::auth_middleware,
+            ))
+            .with_state(auth.clone());
+        let plugin_assets = Router::new()
+            .route(
+                "/plugin-assets/{token}/{id}/{*path}",
+                get(handlers::plugins::serve_plugin_session_asset),
+            )
+            .with_state(auth.clone());
+
         // CSRF guard wraps EVERYTHING under /api/v1 — including auth_router, so
         // /auth/verify can't be probed cross-origin. Sec-Fetch-Site / Origin /
         // Referer are checked for non-safe methods; safe methods (GET/HEAD/OPTIONS,
         // including WebSocket upgrades and CORS preflight) pass through.
         let base = Router::new()
             .nest("/api/v1", protected_api)
+            .nest("/api/v1", plugin_asset_session)
+            .nest("/api/v1", plugin_assets)
             .nest("/api/v1", auth_router)
             .route("/api/{*path}", any(api_not_found))
             .layer(middleware::from_fn(csrf::csrf_middleware));

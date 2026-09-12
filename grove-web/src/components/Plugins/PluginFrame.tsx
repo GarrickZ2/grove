@@ -9,6 +9,7 @@ import {
   type PluginUiContribution,
   type PluginUiManifest,
 } from "./pluginEntry";
+import { ensurePluginAssetSession } from "./pluginAssetSession";
 
 /** Encode each path segment but keep `/` separators (for the /data/{*path} route). */
 const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
@@ -59,6 +60,7 @@ export function PluginFrame({
 }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [entry, setEntry] = useState<string | null>(null);
+  const [assetSession, setAssetSession] = useState<{ pluginId: string; token: string } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const { selectedProject, projects } = useProject();
   const { theme } = useTheme();
@@ -71,12 +73,16 @@ export function PluginFrame({
   // distinct panel and sidebar bundles, so this cannot be inferred globally.
   useEffect(() => {
     let cancelled = false;
-    apiClient
-      .get<PluginUiManifest>(
-        `/api/v1/plugins/${plugin.id}/asset/plugin.json`,
-      )
-      .then((m) => {
-        if (!cancelled) setEntry(resolvePluginEntry(m, contribution));
+    void Promise.all([
+      ensurePluginAssetSession(plugin.id),
+      apiClient
+        .get<PluginUiManifest>(`/api/v1/plugins/${plugin.id}/asset/plugin.json`)
+        .catch(() => null),
+    ])
+      .then(([token, manifest]) => {
+        if (cancelled) return;
+        setEntry(manifest ? resolvePluginEntry(manifest, contribution) : "index.html");
+        setAssetSession({ pluginId: plugin.id, token });
       })
       .catch(() => {
         if (!cancelled) setEntry("index.html");
@@ -339,7 +345,9 @@ export function PluginFrame({
   }, [theme]);
 
   const src =
-    entry === null ? undefined : `/api/v1/plugins/${plugin.id}/asset/${entry}?v=${reloadKey}`;
+    entry === null || assetSession?.pluginId !== plugin.id
+      ? undefined
+      : `/api/v1/plugin-assets/${assetSession.token}/${plugin.id}/${entry}?v=${reloadKey}`;
 
   return (
     <div className="group relative flex h-full w-full flex-col bg-[var(--color-bg)]">

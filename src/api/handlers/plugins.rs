@@ -7,7 +7,7 @@
 //! on (un)install.
 
 use axum::{
-    extract::{Multipart, Path, Query},
+    extract::{Multipart, Path, Query, State},
     http::{header, StatusCode},
     response::IntoResponse,
     Json,
@@ -15,8 +15,9 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use std::process::Command;
+use std::sync::Arc;
 
-use crate::api::error::ApiError;
+use crate::api::{auth::ServerAuth, error::ApiError};
 
 // ─── Path validation (mirrors extension::validate_install_path) ──────────────
 //
@@ -1365,11 +1366,48 @@ pub async fn reveal_plugin_folder(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// POST /api/v1/plugins/{id}/asset-session — after the normal HMAC middleware
+/// authenticates the SPA, mint a per-process capability scoped to this one
+/// plugin's static asset path.
+pub async fn create_plugin_asset_session(
+    State(auth): State<Arc<ServerAuth>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    crate::storage::plugins::get(&id)
+        .map_err(|e| ApiError::internal(format!("registry error: {}", e)))?
+        .ok_or_else(|| ApiError::not_found(format!("plugin not found: {}", id)))?;
+
+    Ok(Json(json!({ "token": auth.plugin_asset_token(&id) })))
+}
+
 /// GET /api/v1/plugins/{id}/asset/{*path} — serve a file from the plugin's
 /// folder for its iframe panel. The resolved path is canonicalized and must
 /// stay inside the plugin folder (no `..` traversal).
 pub async fn serve_plugin_asset(
     Path((id, asset)): Path<(String, String)>,
+) -> Result<axum::response::Response, (StatusCode, Json<ApiError>)> {
+    serve_plugin_asset_file(id, asset)
+}
+
+/// GET /api/v1/plugin-assets/{token}/{id}/{*path} — browser-native resource
+/// route. Keeping the capability in a path prefix lets relative module, style,
+/// font, and image URLs inherit it without exposing Grove's main HMAC secret.
+pub async fn serve_plugin_session_asset(
+    State(auth): State<Arc<ServerAuth>>,
+    Path((token, id, asset)): Path<(String, String, String)>,
+) -> Result<axum::response::Response, (StatusCode, Json<ApiError>)> {
+    if !auth.verify_plugin_asset_token(&id, &token) {
+        return Err(ApiError::with_status(
+            StatusCode::UNAUTHORIZED,
+            "plugin asset session required",
+        ));
+    }
+    serve_plugin_asset_file(id, asset)
+}
+
+fn serve_plugin_asset_file(
+    id: String,
+    asset: String,
 ) -> Result<axum::response::Response, (StatusCode, Json<ApiError>)> {
     let plugin = crate::storage::plugins::get(&id)
         .map_err(|e| ApiError::internal(format!("registry error: {}", e)))?
@@ -1389,23 +1427,37 @@ pub async fn serve_plugin_asset(
 
     let bytes = std::fs::read(&full_canon)
         .map_err(|_| ApiError::not_found(format!("asset not found: {}", asset)))?;
-    let mime = mime_guess::from_path(&full_canon).first_or_octet_stream();
+    let content_type = mime_guess::from_path(&full_canon).first_or_octet_stream();
+    let is_html = content_type.as_ref() == "text/html";
 
-    Ok((
+    let mut response = (
         [
-            (header::CONTENT_TYPE, mime.as_ref().to_string()),
-            (header::CACHE_CONTROL, "no-cache".to_string()),
+            (header::CONTENT_TYPE, content_type.as_ref().to_string()),
+            (header::CACHE_CONTROL, "no-store".to_string()),
             // The panel iframe runs sandboxed WITHOUT allow-same-origin (opaque
             // origin) so it can't reach Grove's API directly — the postMessage
             // bridge is its only channel. But its own module scripts then load
-            // cross-origin, which requires CORS; these public asset files are
-            // safe to expose, so allow any origin. API routes deliberately do
-            // NOT send this header, which is what keeps the iframe isolated.
+            // cross-origin, which requires CORS. Possession of the scoped
+            // capability URL authorizes these static bytes; API routes never
+            // send this header, which keeps the iframe isolated from Grove.
             (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+            (header::REFERRER_POLICY, "no-referrer".to_string()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
         ],
         bytes,
     )
-        .into_response())
+        .into_response();
+    if is_html {
+        // Preserve the opaque-origin sandbox even if somebody opens the asset
+        // URL directly rather than through PluginFrame's iframe attribute.
+        response.headers_mut().insert(
+            header::CONTENT_SECURITY_POLICY,
+            "sandbox allow-scripts; frame-ancestors 'self'"
+                .parse()
+                .expect("static CSP"),
+        );
+    }
+    Ok(response)
 }
 
 // ─── VFS: /project/ (read current task's working dir) ────────────────────────

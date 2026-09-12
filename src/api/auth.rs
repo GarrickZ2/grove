@@ -40,29 +40,56 @@ pub struct ServerAuth {
     pub key_is_generated: bool,
     /// Nonce replay-prevention map: nonce → timestamp (epoch secs).
     used_nonces: Mutex<HashMap<String, i64>>,
+    /// Per-process key for narrowly scoped plugin-asset capabilities. This is
+    /// separate from the mobile HMAC secret and rotates on every restart.
+    plugin_asset_key: [u8; 32],
 }
 
 impl ServerAuth {
     /// No authentication (localhost / `grove web`).
     pub fn no_auth() -> Self {
+        let mut plugin_asset_key = [0u8; 32];
+        getrandom::getrandom(&mut plugin_asset_key).expect("Failed to generate plugin asset key");
         Self {
             mode: AuthMode::None,
             secret_key: None,
             key_is_generated: false,
             used_nonces: Mutex::new(HashMap::new()),
+            plugin_asset_key,
         }
     }
 
-    /// HMAC-SHA256 authentication (`grove mobile`). `is_generated` should be
-    /// true when the key came from `generate_secret_key()`, false when the
-    /// user typed it at the interactive prompt.
+    /// HMAC-SHA256 authentication (`grove mobile`).
     pub fn hmac(secret_key: String, is_generated: bool) -> Self {
+        let mut plugin_asset_key = [0u8; 32];
+        getrandom::getrandom(&mut plugin_asset_key).expect("Failed to generate plugin asset key");
         Self {
             mode: AuthMode::Hmac,
             secret_key: Some(secret_key),
             key_is_generated: is_generated,
             used_nonces: Mutex::new(HashMap::new()),
+            plugin_asset_key,
         }
+    }
+
+    /// Mint a per-plugin, per-process capability for static assets only.
+    pub fn plugin_asset_token(&self, plugin_id: &str) -> String {
+        let mut mac =
+            HmacSha256::new_from_slice(&self.plugin_asset_key).expect("HMAC accepts a 32-byte key");
+        mac.update(b"grove-plugin-asset-v1\0");
+        mac.update(plugin_id.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    pub fn verify_plugin_asset_token(&self, plugin_id: &str, token: &str) -> bool {
+        let Ok(bytes) = hex::decode(token) else {
+            return false;
+        };
+        let mut mac =
+            HmacSha256::new_from_slice(&self.plugin_asset_key).expect("HMAC accepts a 32-byte key");
+        mac.update(b"grove-plugin-asset-v1\0");
+        mac.update(plugin_id.as_bytes());
+        mac.verify_slice(&bytes).is_ok()
     }
 
     /// Verify an HMAC-SHA256 signature.
@@ -304,7 +331,7 @@ pub async fn auth_verify(
 
 #[cfg(test)]
 mod tests {
-    use super::canonical_path;
+    use super::{canonical_path, ServerAuth};
 
     #[test]
     fn no_query() {
@@ -362,5 +389,16 @@ mod tests {
             canonical_path("/x", Some("b=2&_sm_nck=1&a=1&_sm_byp=123"), &[]),
             "/x?a=1&b=2"
         );
+    }
+
+    #[test]
+    fn plugin_asset_token_is_scoped_and_rotates_per_process() {
+        let first = ServerAuth::hmac("mobile-secret".to_string(), false);
+        let second = ServerAuth::hmac("mobile-secret".to_string(), false);
+        let token = first.plugin_asset_token("plugin-a");
+        assert!(first.verify_plugin_asset_token("plugin-a", &token));
+        assert!(!first.verify_plugin_asset_token("plugin-b", &token));
+        assert!(!second.verify_plugin_asset_token("plugin-a", &token));
+        assert!(!first.verify_plugin_asset_token("plugin-a", "invalid"));
     }
 }
