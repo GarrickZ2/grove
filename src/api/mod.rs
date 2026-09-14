@@ -74,6 +74,33 @@ pub fn create_api_router() -> Router {
         // Config API
         .route("/config", get(handlers::config::get_config))
         .route("/config", patch(handlers::config::patch_config))
+        // IM Connect adapters and their Grove Session targets.
+        .route(
+            "/connects",
+            get(handlers::connects::list).post(handlers::connects::create),
+        )
+        .route("/connect-platforms", get(handlers::connects::platforms))
+        .route(
+            "/connects/{id}",
+            put(handlers::connects::update).delete(handlers::connects::delete),
+        )
+        .route("/connects/{id}/verify", post(handlers::connects::verify))
+        .route(
+            "/connects/credentials/verify",
+            post(handlers::connects::verify_credentials),
+        )
+        .route(
+            "/connects/registration",
+            post(handlers::connects::begin_registration),
+        )
+        .route(
+            "/connects/registration/{id}",
+            get(handlers::connects::registration_status),
+        )
+        .route(
+            "/connects/registration/finish",
+            post(handlers::connects::finish_registration),
+        )
         .route(
             "/config/applications",
             get(handlers::config::list_applications),
@@ -1742,6 +1769,7 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
     // during downtime are not back-filled; the next fire window is the next
     // scheduled tick.
     start_automation_runtime();
+    crate::connect::start();
 
     // Start the in-process agent_graph MCP listener (loopback-only). Failure to
     // bind is non-fatal — the rest of the server still boots; ACP sessions will

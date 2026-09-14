@@ -180,8 +180,8 @@ pub async fn handle_gui_open_task(Query(q): Query<GuiOpenTaskQuery>) -> StatusCo
         .chat_id
         .clone()
         .filter(|s| !s.is_empty())
-        .map(|chat_id| super::walkie_talkie::TargetMode::Chat { chat_id });
-    super::walkie_talkie::broadcast_radio_event(super::walkie_talkie::RadioEvent::FocusTask {
+        .map(|chat_id| crate::radio::TargetMode::Chat { chat_id });
+    crate::radio::publish(crate::radio::RadioEvent::FocusTask {
         project_id: q.project_id.clone(),
         task_id: q.task_id.clone(),
         target,

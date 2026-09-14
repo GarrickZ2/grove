@@ -3756,6 +3756,12 @@ export function TaskChat({
         return { label: chat.title, Icon: getChatIcon(chat.agent) };
       }
     }
+    if (sender === "connect") {
+      return {
+        label: "IM Connect",
+        Icon: MessageSquare,
+      };
+    }
     return { label: sender, Icon: Bot };
   };
 

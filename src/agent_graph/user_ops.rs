@@ -6,7 +6,7 @@
 //! handlers and the raw DB/ACP primitives.
 
 use crate::acp::{self, AcpStartConfig, AcpUpdate, QueuedMessage};
-use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+use crate::radio::{publish as broadcast_radio_event, RadioEvent};
 use crate::storage::{agent_graph as graph_db, database, tasks, workspace};
 use chrono::Utc;
 use std::time::Duration;

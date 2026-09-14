@@ -6,7 +6,7 @@ use axum::response::Response;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 
 use crate::acp;
 use crate::storage::{taskgroups, tasks, workspace};
@@ -28,210 +28,11 @@ pub fn decrement_radio_clients() {
     RADIO_CLIENT_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-// ─── Radio Events Broadcast (Radio → Desktop) ─────────────────────────────
+// ─── Radio event model ───────────────────────────────────────────────────────
 
-/// Events broadcast from Radio phone to desktop Blitz listeners.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum RadioEvent {
-    /// Radio user tapped or long-pressed a task — desktop should switch to it.
-    FocusTask {
-        project_id: String,
-        task_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        target: Option<TargetMode>,
-    },
-    /// Radio user sent a prompt to a task.
-    PromptSent { project_id: String, task_id: String },
-    /// A phone connected to the Radio server.
-    ClientConnected,
-    /// A phone disconnected from the Radio server.
-    ClientDisconnected,
-    /// Current count of connected Radio clients (sent on desktop events WS connect).
-    ClientCount { count: usize },
-    /// TaskGroup data changed (Blitz updated groups via REST).
-    GroupChanged,
-    /// Theme changed on desktop.
-    ThemeChanged { name: String },
-    /// An ACP session's busy state changed — push status to Radio clients.
-    ///
-    /// TODO: `prompt` and `started_at` are forward-compatible scaffolding —
-    /// no current consumer reads them. Tray gets prompt + started_at via
-    /// `ChatStatus` instead (chat-grained, not task-grained). Either delete
-    /// these fields or wire a consumer.
-    TaskBusy {
-        project_id: String,
-        task_id: String,
-        busy: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        prompt: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        started_at: Option<i64>,
-    },
-    /// A new hook notification was written to the DB — desktop should refetch
-    /// the notification list. Replaces the old 30s safety-net poll: hooks
-    /// fired by detached agents, CLI commands, or busy ACP sessions all flow
-    /// through this push event so the UI stays current without polling.
-    ///
-    /// `level` and `message` are populated when known so menubar tray consumers
-    /// can render a "done" card without re-reading the hooks file.
-    HookAdded {
-        project_id: String,
-        task_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        level: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        message: Option<String>,
-    },
-    /// Radio user set an active target (chat session or terminal) — desktop should switch view.
-    FocusTarget {
-        project_id: String,
-        task_id: String,
-        target: TargetMode,
-    },
-    /// Radio user sent text intended for the terminal — desktop should inject into terminal WS.
-    TerminalInput {
-        project_id: String,
-        task_id: String,
-        text: String,
-    },
-    /// Chat list under a task changed (created / deleted / renamed). Desktop should
-    /// re-fetch the chat list. Fired by the `grove_agent_spawn` MCP tool so the UI
-    /// auto-refreshes when an agent spawns a sibling session. (Commit 1 of WO-006.)
-    #[allow(dead_code)]
-    ChatListChanged { project_id: String, task_id: String },
-    /// Per-chat status transition for the agent graph view. Carries chat_id so
-    /// consumers can update a single node without re-fetching the whole graph.
-    /// Status string is one of: "connecting" | "idle" | "busy" |
-    /// "permission_required" | "disconnected" (matches NodeStatus on the wire).
-    #[allow(dead_code)]
-    ChatStatus {
-        project_id: String,
-        task_id: String,
-        chat_id: String,
-        status: String,
-        /// Populated when `status="permission_required"` so menubar tray and
-        /// other consumers can render the request without an extra round-trip
-        /// to the ACP session handle.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        permission: Option<PermissionInfo>,
-        /// Display name fields, populated by the chat-grained publisher in
-        /// `acp/mod.rs::emit()`. All optional for backward compat — old
-        /// publishers (e.g. `agent_graph/user_ops.rs::user_spawn_node`) leave
-        /// them None and consumers fall back to the raw IDs.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        project_name: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        task_name: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        chat_title: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        agent: Option<String>,
-        /// User prompt text — populated when status transitions to "busy".
-        #[serde(skip_serializing_if = "Option::is_none")]
-        prompt: Option<String>,
-        /// Final assistant message text — populated when status transitions
-        /// to "idle" after a busy phase.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        message: Option<String>,
-        /// TodoWrite-style plan progress: number of `completed` entries.
-        /// `None` for chats whose agent has never emitted a plan; pairs with
-        /// `todo_total`. Surfaced so the menubar tray can render a real
-        /// progress bar instead of the generic pulse strip.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        todo_completed: Option<u32>,
-        /// Total entries in the latest plan. See `todo_completed`.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        todo_total: Option<u32>,
-    },
-    /// A pending agent-to-agent message ticket was inserted or deleted. Carries
-    /// enough metadata for the graph view to update its in-memory pending map
-    /// (and re-derive edge state) without hitting `GET /graph`.
-    /// `op` is one of: "inserted" | "deleted".
-    #[allow(dead_code)]
-    PendingChanged {
-        project_id: String,
-        task_id: String,
-        msg_id: String,
-        from_chat_id: String,
-        to_chat_id: String,
-        op: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        body_excerpt: Option<String>,
-    },
-}
-
-/// Target mode for Radio: either a specific chat session or the terminal.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum TargetMode {
-    Chat { chat_id: String },
-    Terminal,
-}
-
-/// Lightweight description of a pending ACP permission request, attached to
-/// `RadioEvent::ChatStatus` when `status="permission_required"` so passive
-/// listeners (menubar tray, future surfaces) can render the request without
-/// holding the ACP session handle.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionInfo {
-    /// Short human-readable summary of what's being asked, e.g. tool call title.
-    pub description: String,
-    /// Options offered to the user. Carried inline so the tray can resolve the
-    /// request directly via `respond_permission(option_id)` without holding
-    /// the live ACP handle.
-    pub options: Vec<PermissionOptionInfo>,
-}
-
-/// A single option in a permission request — mirror of `PermOptionData` in
-/// `acp::history::AcpUpdate::PermissionRequest` but flattened for wire use.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionOptionInfo {
-    pub option_id: String,
-    pub name: String,
-    /// One of: "allow_once" | "allow_always" | "reject_once" | "reject_always".
-    pub kind: String,
-}
-
-/// One active chat's current state, returned by `GET /api/v1/tray/chats`.
-/// Field set and naming mirror `RadioEvent::ChatStatus` so the tray phone page
-/// can seed its `ChatItem` map identically to how it processes live events.
-#[derive(Debug, Clone, Serialize)]
-pub struct ChatSnapshot {
-    pub chat_id: String,
-    pub project_id: String,
-    pub task_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub task_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub chat_title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent: Option<String>,
-    /// "idle" | "busy" | "permission_required".
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission: Option<PermissionInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub todo_completed: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub todo_total: Option<u32>,
-}
-
-/// Global broadcast channel for radio events.
-/// Desktop Blitz WS clients subscribe to this.
-static RADIO_EVENTS: Lazy<broadcast::Sender<RadioEvent>> = Lazy::new(|| {
-    let (tx, _) = broadcast::channel(64);
-    tx
-});
-
-/// Broadcast a radio event to all desktop listeners.
-pub fn broadcast_radio_event(event: RadioEvent) {
-    let _ = RADIO_EVENTS.send(event);
-}
+// The semantic event model belongs to Grove's Radio layer. This handler only
+// consumes it while adapting the WebSocket transport.
+use crate::radio::{PermissionInfo, RadioEvent, TargetMode};
 
 /// Mirror of the desktop tray's accumulated panel state (Running / NEEDS YOU /
 /// Done with durations + full responses). The desktop tray webview is the only
@@ -249,12 +50,6 @@ pub fn clear_tray_mirror() {
     if let Ok(mut guard) = TRAY_MIRROR.lock() {
         *guard = None;
     }
-}
-
-/// Subscribe to the global radio event stream. The plugin radio bridge uses
-/// this to relay task-scoped events into plugin panels holding `chat:read`.
-pub fn subscribe_radio_events() -> broadcast::Receiver<RadioEvent> {
-    RADIO_EVENTS.subscribe()
 }
 
 /// Opaque per-process boot id (unix millis at first use). A tray client that
@@ -500,7 +295,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
     poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Subscribe to radio events (e.g. GroupChanged from Blitz REST calls)
-    let mut radio_rx = RADIO_EVENTS.subscribe();
+    let mut radio_rx = crate::radio::subscribe();
 
     use futures::{SinkExt, StreamExt};
 
@@ -531,7 +326,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
             // Radio events (GroupChanged, ThemeChanged from Blitz, etc.)
             result = radio_rx.recv() => {
                 match result {
-                    Ok(RadioEvent::GroupChanged) => {
+                    Some(RadioEvent::GroupChanged) => {
                         let snapshot = build_full_snapshot();
                         // Refresh last_statuses so the poller tracks new/removed tasks
                         last_statuses.clear();
@@ -546,10 +341,10 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                         }
                         let _ = msg_tx.send(ServerMessage::GroupUpdated { groups: snapshot });
                     }
-                    Ok(RadioEvent::ThemeChanged { name }) => {
+                    Some(RadioEvent::ThemeChanged { name }) => {
                         let _ = msg_tx.send(ServerMessage::ThemeChanged { theme: name });
                     }
-                    Ok(RadioEvent::HookAdded { project_id, task_id, level, message }) => {
+                    Some(RadioEvent::HookAdded { project_id, task_id, level, message }) => {
                         let _ = msg_tx.send(ServerMessage::HookAdded {
                             project_id,
                             task_id,
@@ -557,7 +352,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             message,
                         });
                     }
-                    Ok(RadioEvent::ChatStatus { project_id, task_id, chat_id, status, permission, project_name, task_name, chat_title, agent, prompt, message, todo_completed, todo_total }) => {
+                    Some(RadioEvent::ChatStatus { project_id, task_id, chat_id, status, permission, project_name, task_name, chat_title, agent, prompt, message, todo_completed, todo_total }) => {
                         // Per-chat granularity — never dedup. Pure state push.
                         let _ = msg_tx.send(ServerMessage::ChatStatus {
                             project_id,
@@ -575,7 +370,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             todo_total,
                         });
                     }
-                    Ok(RadioEvent::PendingChanged {
+                    Some(RadioEvent::PendingChanged {
                         project_id,
                         task_id,
                         msg_id,
@@ -594,7 +389,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             body_excerpt,
                         });
                     }
-                    Ok(RadioEvent::TaskBusy { project_id, task_id, busy, .. }) => {
+                    Some(RadioEvent::TaskBusy { project_id, task_id, busy, .. }) => {
                         // Real-time status push from ACP session.
                         //
                         // We used to dedup by (project, task) → status, but that
@@ -613,7 +408,8 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                         });
                         last_statuses.insert(key, status.to_string());
                     }
-                    _ => {}
+                    Some(_) => {}
+                    None => break,
                 }
             }
 
@@ -690,7 +486,7 @@ async fn handle_client_message(
             });
             // Broadcast focus event to desktop Blitz listeners
             if let Some(slot) = find_slot_in(&groups, &group_id, position) {
-                let _ = RADIO_EVENTS.send(RadioEvent::FocusTask {
+                crate::radio::publish(RadioEvent::FocusTask {
                     project_id: slot.project_id.clone(),
                     task_id: slot.task_id.clone(),
                     target: effective_target,
@@ -712,12 +508,12 @@ async fn handle_client_message(
                 Some(TargetMode::Terminal) => {
                     // Terminal mode: broadcast focus + terminal input to Blitz
                     if let Some(slot) = find_slot_in(&groups, &group_id, position) {
-                        let _ = RADIO_EVENTS.send(RadioEvent::FocusTarget {
+                        crate::radio::publish(RadioEvent::FocusTarget {
                             project_id: slot.project_id.clone(),
                             task_id: slot.task_id.clone(),
                             target: TargetMode::Terminal,
                         });
-                        let _ = RADIO_EVENTS.send(RadioEvent::TerminalInput {
+                        crate::radio::publish(RadioEvent::TerminalInput {
                             project_id: slot.project_id.clone(),
                             task_id: slot.task_id.clone(),
                             text: text.clone(),
@@ -735,7 +531,7 @@ async fn handle_client_message(
                 }) => {
                     // Chat mode with explicit target chat_id
                     if let Some(slot) = find_slot_in(&groups, &group_id, position) {
-                        let _ = RADIO_EVENTS.send(RadioEvent::FocusTarget {
+                        crate::radio::publish(RadioEvent::FocusTarget {
                             project_id: slot.project_id.clone(),
                             task_id: slot.task_id.clone(),
                             target: TargetMode::Chat {
@@ -753,7 +549,7 @@ async fn handle_client_message(
                     )
                     .await;
                     if let Some(slot) = find_slot_in(&groups, &group_id, position) {
-                        let _ = RADIO_EVENTS.send(RadioEvent::PromptSent {
+                        crate::radio::publish(RadioEvent::PromptSent {
                             project_id: slot.project_id.clone(),
                             task_id: slot.task_id.clone(),
                         });
@@ -763,7 +559,7 @@ async fn handle_client_message(
                 None => {
                     // Legacy: no target specified, use existing logic
                     if let Some(slot) = find_slot_in(&groups, &group_id, position) {
-                        let _ = RADIO_EVENTS.send(RadioEvent::FocusTask {
+                        crate::radio::publish(RadioEvent::FocusTask {
                             project_id: slot.project_id.clone(),
                             task_id: slot.task_id.clone(),
                             target: chat_id.clone().map(|cid| TargetMode::Chat { chat_id: cid }),
@@ -779,7 +575,7 @@ async fn handle_client_message(
                     )
                     .await;
                     if let Some(slot) = find_slot_in(&groups, &group_id, position) {
-                        let _ = RADIO_EVENTS.send(RadioEvent::PromptSent {
+                        crate::radio::publish(RadioEvent::PromptSent {
                             project_id: slot.project_id.clone(),
                             task_id: slot.task_id.clone(),
                         });
@@ -795,7 +591,7 @@ async fn handle_client_message(
         } => {
             // Broadcast focus target to desktop Blitz listeners (preemptive switching)
             if let Some(slot) = find_slot_in(&groups, &group_id, position) {
-                let _ = RADIO_EVENTS.send(RadioEvent::FocusTarget {
+                crate::radio::publish(RadioEvent::FocusTarget {
                     project_id: slot.project_id.clone(),
                     task_id: slot.task_id.clone(),
                     target,
@@ -1407,7 +1203,7 @@ pub struct TrayOpenInAppBody {
 /// the phone can reach, so this route is NOT `#[cfg(feature = "gui")]`-gated.
 ///
 /// Two paths fan out, both idempotent:
-///   1. `broadcast_radio_event(FocusTask)` — picked up by the desktop's
+///   1. `radio::publish(FocusTask)` — picked up by the desktop's
 ///      `useRadioEvents` → `BlitzPage.onFocusTask` (selects + enters
 ///      workspace + ensures chat panel). Only fires if Blitz is mounted;
 ///      in Zen mode the listener isn't registered.
@@ -1428,7 +1224,7 @@ pub async fn tray_open_in_app(
         .clone()
         .filter(|s| !s.is_empty())
         .map(|chat_id| TargetMode::Chat { chat_id });
-    broadcast_radio_event(RadioEvent::FocusTask {
+    crate::radio::publish(RadioEvent::FocusTask {
         project_id: body.project_id.clone(),
         task_id: body.task_id.clone(),
         target,
@@ -1453,7 +1249,7 @@ pub async fn radio_events_ws_handler(ws: WebSocketUpgrade) -> Response {
 
 async fn handle_radio_events_ws(socket: WebSocket) {
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let mut event_rx = RADIO_EVENTS.subscribe();
+    let mut event_rx = crate::radio::subscribe();
 
     use futures::{SinkExt, StreamExt};
 
@@ -1470,18 +1266,14 @@ async fn handle_radio_events_ws(socket: WebSocket) {
             // Forward radio events to desktop client
             result = event_rx.recv() => {
                 match result {
-                    Ok(event) => {
+                    Some(event) => {
                         if let Ok(json) = serde_json::to_string(&event) {
                             if ws_tx.send(Message::Text(json.into())).await.is_err() {
                                 break;
                             }
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        // Dropped some events, continue
-                        continue;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
+                    None => break,
                 }
             }
             // Listen for close from client

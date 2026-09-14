@@ -246,14 +246,12 @@ pub fn update_hook(
                 NotificationLevel::Warn => "warn",
                 NotificationLevel::Critical => "critical",
             };
-            crate::api::handlers::walkie_talkie::broadcast_radio_event(
-                crate::api::handlers::walkie_talkie::RadioEvent::HookAdded {
-                    project_id: project_key.to_string(),
-                    task_id: task_id.to_string(),
-                    level: Some(level_str.to_string()),
-                    message,
-                },
-            );
+            crate::radio::publish(crate::radio::RadioEvent::HookAdded {
+                project_id: project_key.to_string(),
+                task_id: task_id.to_string(),
+                level: Some(level_str.to_string()),
+                message,
+            });
         }
         Err(e) => {
             eprintln!(

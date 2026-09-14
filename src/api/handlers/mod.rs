@@ -9,6 +9,7 @@ pub mod ai_stream;
 pub mod automations;
 pub mod common;
 pub mod config;
+pub mod connects;
 pub mod custom_agent;
 pub mod env;
 pub mod extension;

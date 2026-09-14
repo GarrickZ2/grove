@@ -226,7 +226,7 @@ pub async fn create_task(
     }
 
     let _ = crate::storage::taskgroups::ensure_system_groups();
-    use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+    use crate::radio::{publish as broadcast_radio_event, RadioEvent};
     broadcast_radio_event(RadioEvent::GroupChanged);
 
     Ok(Json(TaskResponse {
@@ -339,7 +339,7 @@ pub async fn archive_task(
             })?;
 
         if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
-            use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+            use crate::radio::{publish as broadcast_radio_event, RadioEvent};
             broadcast_radio_event(RadioEvent::GroupChanged);
         }
 
@@ -430,7 +430,7 @@ pub async fn archive_task(
     })?;
 
     if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
-        use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+        use crate::radio::{publish as broadcast_radio_event, RadioEvent};
         broadcast_radio_event(RadioEvent::GroupChanged);
     }
 
@@ -498,7 +498,7 @@ pub async fn recover_task(
 
     let _ = crate::storage::taskgroups::ensure_system_groups();
     {
-        use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+        use crate::radio::{publish as broadcast_radio_event, RadioEvent};
         broadcast_radio_event(RadioEvent::GroupChanged);
     }
 
@@ -579,7 +579,7 @@ pub async fn delete_task(
         crate::symbols::on_task_deleted(&project_key, &task_id);
 
         if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
-            use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+            use crate::radio::{publish as broadcast_radio_event, RadioEvent};
             broadcast_radio_event(RadioEvent::GroupChanged);
         }
 
@@ -604,7 +604,7 @@ pub async fn delete_task(
     crate::symbols::on_task_deleted(&project_key, &task_id);
 
     if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
-        use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+        use crate::radio::{publish as broadcast_radio_event, RadioEvent};
         broadcast_radio_event(RadioEvent::GroupChanged);
     }
 

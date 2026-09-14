@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::error::AgentGraphError;
 use super::inject::{build_injected_prompt, InjectKind};
 use crate::acp::{self, AcpSessionHandle, AcpStartConfig, AcpUpdate, QueuedConfig, QueuedMessage};
-use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+use crate::radio::{publish as broadcast_radio_event, RadioEvent};
 use crate::storage::{agent_graph as graph_db, custom_agent, database, tasks, workspace};
 
 pub type AgentGraphResult<T> = Result<T, AgentGraphError>;

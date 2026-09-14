@@ -163,6 +163,17 @@ enum ServerMessage {
         config_id: String,
         message: String,
     },
+    PromptStarted {
+        message_ids: Vec<String>,
+    },
+    PromptCompleted {
+        message_ids: Vec<String>,
+        stop_reason: String,
+    },
+    PromptFailed {
+        message_ids: Vec<String>,
+        message: String,
+    },
     MessageChunk {
         text: String,
     },
@@ -497,6 +508,23 @@ impl From<AcpUpdate> for ServerMessage {
             AcpUpdate::ConfigOptionError { config_id, message } => {
                 ServerMessage::ConfigOptionError { config_id, message }
             }
+            AcpUpdate::PromptStarted { message_ids } => {
+                ServerMessage::PromptStarted { message_ids }
+            }
+            AcpUpdate::PromptCompleted {
+                message_ids,
+                stop_reason,
+            } => ServerMessage::PromptCompleted {
+                message_ids,
+                stop_reason,
+            },
+            AcpUpdate::PromptFailed {
+                message_ids,
+                message,
+            } => ServerMessage::PromptFailed {
+                message_ids,
+                message,
+            },
             AcpUpdate::MessageChunk { text } => ServerMessage::MessageChunk { text },
             AcpUpdate::MessageContentChunk { content } => {
                 ServerMessage::MessageContentChunk { content }
@@ -1605,12 +1633,10 @@ pub async fn archive_chat(
     {
         return Err(AcpError::NotFound("Active session not found".to_string()));
     }
-    crate::api::handlers::walkie_talkie::broadcast_radio_event(
-        crate::api::handlers::walkie_talkie::RadioEvent::ChatListChanged {
-            project_id: project_id.clone(),
-            task_id: task_id.clone(),
-        },
-    );
+    crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
+        project_id: project_id.clone(),
+        task_id: task_id.clone(),
+    });
     Ok(Json(ChatSessionResponse::build(
         &project_key,
         &task_id,
@@ -1631,12 +1657,10 @@ pub async fn restore_chat(
     {
         return Err(AcpError::NotFound("Archived session not found".to_string()));
     }
-    crate::api::handlers::walkie_talkie::broadcast_radio_event(
-        crate::api::handlers::walkie_talkie::RadioEvent::ChatListChanged {
-            project_id: project_id.clone(),
-            task_id: task_id.clone(),
-        },
-    );
+    crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
+        project_id: project_id.clone(),
+        task_id: task_id.clone(),
+    });
     Ok(Json(ChatSessionResponse::build(
         &project_key,
         &task_id,
@@ -1719,12 +1743,10 @@ pub async fn create_chat(
     tasks::add_chat_session(&project_key, &task_id, chat.clone())
         .map_err(|e| AcpError::Internal(e.to_string()))?;
 
-    crate::api::handlers::walkie_talkie::broadcast_radio_event(
-        crate::api::handlers::walkie_talkie::RadioEvent::ChatListChanged {
-            project_id: project_id.clone(),
-            task_id: task_id.clone(),
-        },
-    );
+    crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
+        project_id: project_id.clone(),
+        task_id: task_id.clone(),
+    });
 
     Ok(Json(ChatSessionResponse::build(
         &project_key,
@@ -1805,12 +1827,10 @@ pub async fn import_session(
     };
     tasks::add_chat_session(&project_key, &task_id, chat.clone())
         .map_err(|e| AcpError::Internal(e.to_string()))?;
-    crate::api::handlers::walkie_talkie::broadcast_radio_event(
-        crate::api::handlers::walkie_talkie::RadioEvent::ChatListChanged {
-            project_id,
-            task_id: task_id.clone(),
-        },
-    );
+    crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
+        project_id,
+        task_id: task_id.clone(),
+    });
     Ok(Json(ChatSessionResponse::build(
         &project_key,
         &task_id,
@@ -1834,12 +1854,10 @@ pub async fn update_chat(
 
     // Notify other surfaces (graph, chat header in another pane, sidebar) that
     // the chat roster changed so they refetch and pick up the new title.
-    crate::api::handlers::walkie_talkie::broadcast_radio_event(
-        crate::api::handlers::walkie_talkie::RadioEvent::ChatListChanged {
-            project_id: project_id.clone(),
-            task_id: task_id.clone(),
-        },
-    );
+    crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
+        project_id: project_id.clone(),
+        task_id: task_id.clone(),
+    });
 
     // Get the current ACP session handle status if it exists, otherwise "disconnected".
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
@@ -1849,23 +1867,21 @@ pub async fn update_chat(
         "disconnected".to_string()
     };
 
-    crate::api::handlers::walkie_talkie::broadcast_radio_event(
-        crate::api::handlers::walkie_talkie::RadioEvent::ChatStatus {
-            project_id: project_id.clone(),
-            task_id: task_id.clone(),
-            chat_id: chat_id.clone(),
-            status,
-            permission: None,
-            project_name: None,
-            task_name: None,
-            chat_title: Some(body.title.clone()),
-            agent: Some(chat.agent.clone()),
-            prompt: None,
-            message: None,
-            todo_completed: None,
-            todo_total: None,
-        },
-    );
+    crate::radio::publish(crate::radio::RadioEvent::ChatStatus {
+        project_id: project_id.clone(),
+        task_id: task_id.clone(),
+        chat_id: chat_id.clone(),
+        status,
+        permission: None,
+        project_name: None,
+        task_name: None,
+        chat_title: Some(body.title.clone()),
+        agent: Some(chat.agent.clone()),
+        prompt: None,
+        message: None,
+        todo_completed: None,
+        todo_total: None,
+    });
 
     Ok(Json(ChatSessionResponse::build(
         &project_key,
@@ -1951,12 +1967,10 @@ pub async fn delete_chat(
     // Clean up socket file
     let _ = std::fs::remove_file(acp::sock_path(&project_key, &task_id, &chat_id));
 
-    crate::api::handlers::walkie_talkie::broadcast_radio_event(
-        crate::api::handlers::walkie_talkie::RadioEvent::ChatListChanged {
-            project_id: project_id.clone(),
-            task_id: task_id.clone(),
-        },
-    );
+    crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
+        project_id: project_id.clone(),
+        task_id: task_id.clone(),
+    });
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -2049,12 +2063,10 @@ pub async fn fork_chat(
         }
     }
 
-    crate::api::handlers::walkie_talkie::broadcast_radio_event(
-        crate::api::handlers::walkie_talkie::RadioEvent::ChatListChanged {
-            project_id: project_id.clone(),
-            task_id: task_id.clone(),
-        },
-    );
+    crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
+        project_id: project_id.clone(),
+        task_id: task_id.clone(),
+    });
 
     Ok(Json(ChatSessionResponse::build(
         &project_key,

@@ -14,7 +14,7 @@
 
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::api::handlers::walkie_talkie::{subscribe_radio_events, RadioEvent};
+use crate::radio::{subscribe_plugins, RadioEvent};
 
 /// The owning task id of a radio event, if it is task-scoped.
 fn task_of(event: &RadioEvent) -> Option<&str> {
@@ -27,6 +27,7 @@ fn task_of(event: &RadioEvent) -> Option<&str> {
         | RadioEvent::TerminalInput { task_id, .. }
         | RadioEvent::ChatListChanged { task_id, .. }
         | RadioEvent::ChatStatus { task_id, .. }
+        | RadioEvent::Turn { task_id, .. }
         | RadioEvent::PendingChanged { task_id, .. } => Some(task_id),
         RadioEvent::ClientConnected
         | RadioEvent::ClientDisconnected
@@ -40,7 +41,7 @@ fn task_of(event: &RadioEvent) -> Option<&str> {
 /// the wire whenever no panel under the event's task holds `chat:read`.
 pub fn spawn() {
     tokio::spawn(async move {
-        let mut rx = subscribe_radio_events();
+        let mut rx = subscribe_plugins();
         loop {
             match rx.recv().await {
                 Ok(event) => {

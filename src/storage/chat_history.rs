@@ -234,6 +234,9 @@ pub fn should_persist(update: &AcpUpdate) -> bool {
         update,
         AcpUpdate::Busy { .. }
             | AcpUpdate::Error { .. }
+            | AcpUpdate::PromptStarted { .. }
+            | AcpUpdate::PromptCompleted { .. }
+            | AcpUpdate::PromptFailed { .. }
             | AcpUpdate::SessionEnded
             | AcpUpdate::SessionReady { .. }
             | AcpUpdate::AvailableCommands { .. }

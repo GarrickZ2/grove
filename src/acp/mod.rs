@@ -150,6 +150,13 @@ pub struct AcpSessionHandle {
     pub is_busy: std::sync::atomic::AtomicBool,
     /// 最近一轮 agent 回复的累积文本（用于 Complete 通知摘要 / 菜单栏 Tray 全文）
     last_assistant_text: Mutex<String>,
+    /// Grove-owned correlation for the turn currently executed by this
+    /// Session. External consumers receive it only through semantic Radio
+    /// events; ACP implementation details remain private.
+    active_turn_message_ids: Mutex<Vec<String>>,
+    /// Text produced after the most recent tool call in the active turn.
+    /// This is the canonical final reply carried by Radio on completion.
+    last_turn_reply: Mutex<String>,
     /// 当一段 agent 文本之后出现了 tool_call 时置位（前端 ACP Chat 会据此另起
     /// 一个 assistant 气泡）。下一段 AgentMessageChunk 写入 last_assistant_text
     /// 前补一个段落分隔，使累积文本的分段与聊天气泡边界一致，避免被工具调用
@@ -172,7 +179,7 @@ pub struct AcpSessionHandle {
     /// field only holds `(id, tx)`, not the human-readable payload. Cleared in
     /// `respond_permission`. Only meaningful while `has_pending_permission()`
     /// is true; consumers must gate on that to avoid reading stale data.
-    last_permission_info: Mutex<Option<crate::api::handlers::walkie_talkie::PermissionInfo>>,
+    last_permission_info: Mutex<Option<crate::radio::PermissionInfo>>,
     /// Tool calls in the current turn that have not reached a terminal status.
     /// Used to apply ACP's preemptive client-side cancellation semantics.
     active_tool_calls: Mutex<std::collections::HashSet<String>>,
@@ -227,6 +234,7 @@ pub struct PendingAuthState {
 /// 暂存待重发的 prompt 元组(`AuthRequired` 重试用)。
 /// 顺序与 `AcpCommand::Prompt` 字段对齐:text, attachments, sender, terminal, config。
 type PendingPromptRetry = (
+    Vec<String>,
     String,
     Vec<ContentBlockData>,
     Option<String>,
@@ -237,6 +245,9 @@ type PendingPromptRetry = (
 /// 发送给 ACP 后台任务的命令
 enum AcpCommand {
     Prompt {
+        /// Grove-owned ids for the accepted inputs represented by this turn.
+        /// Usually one id; Compact queue mode preserves every merged input id.
+        message_ids: Vec<String>,
         text: String,
         attachments: Vec<ContentBlockData>,
         sender: Option<String>,
@@ -418,6 +429,21 @@ pub enum AcpUpdate {
     },
     ConfigOptionError {
         config_id: String,
+        message: String,
+    },
+    /// Grove has started one agent turn for these accepted input messages.
+    PromptStarted {
+        message_ids: Vec<String>,
+    },
+    /// The agent turn ended. `stop_reason` distinguishes normal completion
+    /// from cancellation or a killed session for lifecycle consumers.
+    PromptCompleted {
+        message_ids: Vec<String>,
+        stop_reason: String,
+    },
+    /// The accepted input could not complete as an agent turn.
+    PromptFailed {
+        message_ids: Vec<String>,
         message: String,
     },
     /// Agent 消息文本片段
@@ -915,6 +941,33 @@ pub struct QueuedConfig {
     pub config_options: std::collections::BTreeMap<String, ConfigOptionValue>,
 }
 
+/// One select-style session config option (mode / model / effort / …) for
+/// external surfaces: the ACP config id to pass to `set_config_option`, a
+/// human-readable label, the current value, and the available (value, label)
+/// pairs.
+#[derive(Debug, Clone)]
+pub struct ConfigSelector {
+    pub config_id: String,
+    pub label: String,
+    pub current: Option<String>,
+    pub options: Vec<(String, String)>,
+}
+
+/// A Grove-owned prompt ticket. Grove allocates the message id before the
+/// command enters the ACP loop so an external integration can register its
+/// mapping before any turn event is emitted.
+pub struct PreparedTextPrompt {
+    id: String,
+    text: String,
+    sender: Option<String>,
+}
+
+impl PreparedTextPrompt {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 /// 队列中的待发送消息（支持附件）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueuedMessage {
@@ -923,6 +976,9 @@ pub struct QueuedMessage {
     /// `default` 生成新 uuid。
     #[serde(default = "default_queued_message_id")]
     pub id: String,
+    /// Accepted Grove input ids carried through queueing and Compact merges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_ids: Vec<String>,
     pub text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<ContentBlockData>,
@@ -957,8 +1013,10 @@ impl QueuedMessage {
         terminal: bool,
         config: Option<QueuedConfig>,
     ) -> Self {
+        let id = default_queued_message_id();
         Self {
-            id: default_queued_message_id(),
+            message_ids: vec![id.clone()],
+            id,
             text,
             attachments,
             sender,
@@ -4354,6 +4412,8 @@ pub async fn get_or_start_session(
                     terminal_kill_tx: Mutex::new(None),
                     is_busy: std::sync::atomic::AtomicBool::new(false),
                     last_assistant_text: Mutex::new(String::new()),
+                    active_turn_message_ids: Mutex::new(Vec::new()),
+                    last_turn_reply: Mutex::new(String::new()),
                     pending_text_separator: std::sync::atomic::AtomicBool::new(false),
                     last_user_prompt: Mutex::new(None),
                     last_plan: Mutex::new(None),
@@ -4401,9 +4461,7 @@ pub async fn get_or_start_session(
                                 sessions.remove(&self.key);
                             }
                             if let Some(ref cid) = self.chat_id {
-                                use crate::api::handlers::walkie_talkie::{
-                                    broadcast_radio_event, RadioEvent,
-                                };
+                                use crate::radio::{publish as broadcast_radio_event, RadioEvent};
                                 broadcast_radio_event(RadioEvent::ChatStatus {
                                     project_id: self.project_key.clone(),
                                     task_id: self.task_id.clone(),
@@ -4437,9 +4495,7 @@ pub async fn get_or_start_session(
                 // event on the user_spawn_node fire-and-forget path).
                 if !config.suppress_initial_connecting {
                     if let Some(ref chat_id) = config.chat_id {
-                        use crate::api::handlers::walkie_talkie::{
-                            broadcast_radio_event, RadioEvent,
-                        };
+                        use crate::radio::{publish as broadcast_radio_event, RadioEvent};
                         broadcast_radio_event(RadioEvent::ChatStatus {
                             project_id: config.project_key.clone(),
                             task_id: config.task_id.clone(),
@@ -4476,7 +4532,7 @@ pub async fn get_or_start_session(
                 let session_chat_id = config.chat_id.clone();
                 let session_agent_name = config.agent_name.clone();
 
-                let session_result = run_acp_session(handle, config, cmd_rx).await;
+                let session_result = run_acp_session(handle.clone(), config, cmd_rx).await;
                 if let Err(e) = &session_result {
                     eprintln!(
                         "[ACP] session ended with error (key={} agent={} task={} chat={:?}): {}",
@@ -4486,9 +4542,9 @@ pub async fn get_or_start_session(
                         crate::error::GroveError::Session(message) => message.clone(),
                         other => other.to_string(),
                     };
-                    let _ = update_tx.send(AcpUpdate::Error { message });
+                    handle.emit(AcpUpdate::Error { message });
                 }
-                let _ = update_tx.send(AcpUpdate::SessionEnded);
+                handle.emit(AcpUpdate::SessionEnded);
 
                 // Normal-exit cleanup. Mark EndGuard finalized FIRST so any
                 // panic during the cleanup ops below doesn't trigger Drop's
@@ -4500,7 +4556,7 @@ pub async fn get_or_start_session(
                     sessions.remove(&key_clone);
                 }
                 if let Some(ref cid) = session_chat_id {
-                    use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+                    use crate::radio::{publish as broadcast_radio_event, RadioEvent};
                     broadcast_radio_event(RadioEvent::ChatStatus {
                         project_id: session_project_key.clone(),
                         task_id: session_task_id.clone(),
@@ -5224,21 +5280,22 @@ async fn drive_session(
                                         .to_string()));
                             }
                             Some(AcpCommand::Prompt {
+                                message_ids,
                                 text,
                                 attachments,
                                 sender,
                                 terminal,
                                 config,
                             }) => {
-                                handle.pending_queue.lock().unwrap().push(
-                                    QueuedMessage::new(
+                                let mut queued = QueuedMessage::new(
                                         text,
                                         attachments,
                                         sender,
                                         terminal,
                                         config,
-                                    ),
-                                );
+                                    );
+                                queued.message_ids = message_ids;
+                                handle.pending_queue.lock().unwrap().push(queued);
                                 handle.emit(AcpUpdate::QueueUpdate {
                                     messages: handle.get_queue(),
                                 });
@@ -5316,21 +5373,22 @@ async fn drive_session(
                                 ));
                             }
                             Some(AcpCommand::Prompt {
+                                message_ids,
                                 text,
                                 attachments,
                                 sender,
                                 terminal,
                                 config,
                             }) => {
-                                handle.pending_queue.lock().unwrap().push(
-                                    QueuedMessage::new(
+                                let mut queued = QueuedMessage::new(
                                         text,
                                         attachments,
                                         sender,
                                         terminal,
                                         config,
-                                    ),
-                                );
+                                    );
+                                queued.message_ids = message_ids;
+                                handle.pending_queue.lock().unwrap().push(queued);
                                 handle.emit(AcpUpdate::QueueUpdate {
                                     messages: handle.get_queue(),
                                 });
@@ -5999,6 +6057,7 @@ async fn drive_session(
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
             AcpCommand::Prompt {
+                message_ids,
                 text,
                 attachments,
                 sender,
@@ -6024,6 +6083,10 @@ async fn drive_session(
                     .suppress_emit
                     .store(false, std::sync::atomic::Ordering::Relaxed);
                 if let Err(message) = validate_prompt_content(&prompt_capabilities, &attachments) {
+                    handle.emit(AcpUpdate::PromptFailed {
+                        message_ids,
+                        message: message.clone(),
+                    });
                     handle.emit(AcpUpdate::Error { message });
                     continue;
                 }
@@ -6031,6 +6094,7 @@ async fn drive_session(
                 // 等 authenticate 成功后自动重试。sender/attachments 后续会被
                 // 移动进 emit / content_blocks,所以必须 clone。
                 let retry_snapshot = (
+                    message_ids.clone(),
                     text.clone(),
                     attachments.clone(),
                     sender.clone(),
@@ -6269,12 +6333,15 @@ async fn drive_session(
                         handle
                             .is_busy
                             .store(false, std::sync::atomic::Ordering::Release);
-                        handle.emit(AcpUpdate::Error {
-                            message: format!(
+                        let message = format!(
                                 "Prompt not sent — {} rejected by agent ({}). Already applied before failure: {}. Session state reflects the applied settings; retry after fixing the rejected value.",
                                 field, detail, applied_str
-                            ),
+                            );
+                        handle.emit(AcpUpdate::PromptFailed {
+                            message_ids: message_ids.clone(),
+                            message: message.clone(),
                         });
+                        handle.emit(AcpUpdate::Error { message });
                         continue;
                     }
                 }
@@ -6308,6 +6375,9 @@ async fn drive_session(
                         )
                     }
                 };
+                handle.emit(AcpUpdate::PromptStarted {
+                    message_ids: message_ids.clone(),
+                });
                 handle.emit(AcpUpdate::UserMessage {
                     text: wire_text.clone(),
                     attachments: attachments.clone(),
@@ -6401,7 +6471,7 @@ async fn drive_session(
                                     // 的预期行为, 不在客户端去重。
                                     let _ = conn.send_notification(acp::CancelNotification::new(session_id_arc.clone()));
                                 }
-                                AcpCommand::Prompt { text, attachments, sender, terminal, config: prompt_config } => {
+                                AcpCommand::Prompt { message_ids, text, attachments, sender, terminal, config: prompt_config } => {
                                     // B3 fix: in-flight Prompt no longer cancels the current
                                     // turn and overwrites a single `next_prompt` slot — that
                                     // dropped N-1 messages on rapid resends. Enqueue to
@@ -6409,7 +6479,8 @@ async fn drive_session(
                                     // them in order. terminal flag is preserved so the
                                     // drained Prompt still renders as a shell echo if the
                                     // user originally sent it from Shell mode.
-                                    let qm = QueuedMessage::new(text, attachments, sender, terminal, prompt_config);
+                                    let mut qm = QueuedMessage::new(text, attachments, sender, terminal, prompt_config);
+                                    qm.message_ids = message_ids;
                                     handle.pending_queue.lock().unwrap().push(qm);
                                     handle.emit(AcpUpdate::QueueUpdate {
                                         messages: handle.get_queue(),
@@ -6523,6 +6594,21 @@ async fn drive_session(
 
                 if got_kill {
                     handle.emit(AcpUpdate::Busy { value: false });
+                    handle.emit(AcpUpdate::PromptCompleted {
+                        message_ids: message_ids.clone(),
+                        stop_reason: "killed".to_string(),
+                    });
+                    if config.chat_id.is_some() {
+                        notify_acp_event(
+                            &config.project_key,
+                            &config.task_id,
+                            config.chat_id.as_deref(),
+                            "Task Stopped",
+                            "Agent session was stopped",
+                            AcpNotificationEvent::TurnComplete,
+                            None,
+                        );
+                    }
                     break;
                 }
 
@@ -6531,6 +6617,8 @@ async fn drive_session(
                     .store(false, std::sync::atomic::Ordering::Relaxed);
                 match result {
                     Ok(resp) => {
+                        let stop_reason = format!("{:?}", resp.stop_reason);
+                        let was_cancelled = stop_reason.to_ascii_lowercase().contains("cancel");
                         pending_session_bootstrap = None;
                         if let Some((revision, _, _)) = pending_dynamic_instruction {
                             handle.clear_pending_session_instruction(revision);
@@ -6561,8 +6649,16 @@ async fn drive_session(
                                 &config.project_key,
                                 &config.task_id,
                                 config.chat_id.as_deref(),
-                                "Task Complete",
-                                &summary,
+                                if was_cancelled {
+                                    "Task Stopped"
+                                } else {
+                                    "Task Complete"
+                                },
+                                if was_cancelled {
+                                    "Agent turn was cancelled"
+                                } else {
+                                    &summary
+                                },
                                 AcpNotificationEvent::TurnComplete,
                                 None,
                             );
@@ -6613,11 +6709,15 @@ async fn drive_session(
                             }
                         }
                         handle.emit(AcpUpdate::Complete {
-                            stop_reason: format!("{:?}", resp.stop_reason),
+                            stop_reason: stop_reason.clone(),
                             usage: turn_usage,
                             start_ts: Some(turn_start_ts),
                             end_ts: Some(turn_end_ts),
                             cost: cost_owned,
+                        });
+                        handle.emit(AcpUpdate::PromptCompleted {
+                            message_ids: message_ids.clone(),
+                            stop_reason,
                         });
                     }
                     Err(e) => {
@@ -6645,7 +6745,20 @@ async fn drive_session(
                                 methods,
                                 agent_name: Some(agent_name.clone()),
                             });
+                            // Authentication is a terminal outcome for the
+                            // accepted Connect request. Grove may retain its
+                            // normal UI retry context, while external callers
+                            // receive an immediate result and clear status.
+                            handle.emit(AcpUpdate::PromptFailed {
+                                message_ids: message_ids.clone(),
+                                message: "Authentication required — open Grove to sign in."
+                                    .to_string(),
+                            });
                         } else {
+                            handle.emit(AcpUpdate::PromptFailed {
+                                message_ids: message_ids.clone(),
+                                message: e.to_string(),
+                            });
                             handle.emit(AcpUpdate::Error {
                                 // Preserve the Agent/ACP error text as-is. The event type
                                 // already provides the prompt-failure context; adding another
@@ -6738,6 +6851,7 @@ async fn drive_session(
                                             .ok()
                                             .and_then(|mut s| s.take());
                                         if let Some((
+                                            message_ids,
                                             text,
                                             attachments,
                                             sender,
@@ -6746,6 +6860,7 @@ async fn drive_session(
                                         )) = pending
                                         {
                                             handle.retry_prompt_after_auth(
+                                                message_ids,
                                                 text,
                                                 attachments,
                                                 sender,
@@ -6785,21 +6900,22 @@ async fn drive_session(
                                     ));
                                 }
                                 Some(AcpCommand::Prompt {
+                                    message_ids,
                                     text,
                                     attachments,
                                     sender,
                                     terminal,
                                     config,
                                 }) => {
-                                    handle.pending_queue.lock().unwrap().push(
-                                        QueuedMessage::new(
+                                    let mut queued = QueuedMessage::new(
                                             text,
                                             attachments,
                                             sender,
                                             terminal,
                                             config,
-                                        ),
-                                    );
+                                        );
+                                    queued.message_ids = message_ids;
+                                    handle.pending_queue.lock().unwrap().push(queued);
                                     handle.emit(AcpUpdate::QueueUpdate {
                                         messages: handle.get_queue(),
                                     });
@@ -6845,8 +6961,15 @@ async fn drive_session(
                     .lock()
                     .ok()
                     .and_then(|mut retry| retry.take());
-                if let Some((text, attachments, sender, terminal, config)) = pending {
-                    handle.retry_prompt_after_auth(text, attachments, sender, terminal, config);
+                if let Some((message_ids, text, attachments, sender, terminal, config)) = pending {
+                    handle.retry_prompt_after_auth(
+                        message_ids,
+                        text,
+                        attachments,
+                        sender,
+                        terminal,
+                        config,
+                    );
                 }
             }
             AcpCommand::Logout { reply } => {
@@ -7049,9 +7172,275 @@ async fn connect_remote_agent(
     Ok((agent_read.compat(), agent_write.compat_write()))
 }
 
+fn turn_form(snapshot: &ElicitationRequestSnapshot) -> Option<crate::radio::TurnForm> {
+    use crate::radio::{TurnForm, TurnFormField, TurnFormFieldKind};
+
+    let request = serde_json::to_value(&snapshot.request).ok()?;
+    let message = request
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("The agent needs more information.")
+        .to_owned();
+    let schema = request
+        .get("requestedSchema")
+        .or_else(|| request.get("requested_schema"))?;
+    let required: std::collections::HashSet<&str> = schema
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let fields = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flatten()
+        .map(|(name, property)| {
+            let kind = match property
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("string")
+            {
+                "integer" => TurnFormFieldKind::Integer,
+                "number" => TurnFormFieldKind::Number,
+                "boolean" => TurnFormFieldKind::Boolean,
+                "array" => TurnFormFieldKind::StringArray,
+                _ => TurnFormFieldKind::Text,
+            };
+            let options = property
+                .get("enum")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .map(|value| (value.to_owned(), value.to_owned()))
+                .collect();
+            TurnFormField {
+                name: name.clone(),
+                label: property
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(name)
+                    .to_owned(),
+                description: property
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                required: required.contains(name.as_str()),
+                kind,
+                options,
+            }
+        })
+        .collect();
+    Some(TurnForm {
+        request_id: snapshot.request_id.clone(),
+        message,
+        fields,
+    })
+}
+
+fn turn_form_values(
+    snapshot: &ElicitationRequestSnapshot,
+    fields: &HashMap<String, String>,
+) -> Result<BTreeMap<String, ElicitationValueData>, String> {
+    let request = serde_json::to_value(&snapshot.request).map_err(|error| error.to_string())?;
+    let schema = request
+        .get("requestedSchema")
+        .or_else(|| request.get("requested_schema"))
+        .ok_or_else(|| "The form has no schema.".to_owned())?;
+    let properties = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "The form has no fields.".to_owned())?;
+    let required: std::collections::HashSet<&str> = schema
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let mut values = BTreeMap::new();
+    for (name, property) in properties {
+        let raw = fields
+            .get(name)
+            .map(|value| value.trim())
+            .unwrap_or_default();
+        if raw.is_empty() {
+            if required.contains(name.as_str()) {
+                let label = property
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(name);
+                return Err(format!("{label} is required."));
+            }
+            continue;
+        }
+        let value = match property
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("string")
+        {
+            "integer" => ElicitationValueData::Integer(
+                raw.parse()
+                    .map_err(|_| format!("{name} must be an integer."))?,
+            ),
+            "number" => ElicitationValueData::Number(
+                raw.parse()
+                    .map_err(|_| format!("{name} must be a number."))?,
+            ),
+            "boolean" => ElicitationValueData::Boolean(
+                raw.parse()
+                    .map_err(|_| format!("{name} must be Yes or No."))?,
+            ),
+            "array" => ElicitationValueData::StringArray(
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            ),
+            _ => ElicitationValueData::String(raw.to_owned()),
+        };
+        values.insert(name.clone(), value);
+    }
+    Ok(values)
+}
+
 // === 公开 API ===
 
 impl AcpSessionHandle {
+    pub fn pending_turn_form(&self, expected_id: &str) -> Option<crate::radio::TurnForm> {
+        self.pending_elicitation_snapshot()
+            .filter(|snapshot| snapshot.request_id == expected_id)
+            .and_then(|snapshot| turn_form(&snapshot))
+    }
+
+    pub fn respond_turn_form(
+        &self,
+        expected_id: &str,
+        accept: bool,
+        fields: &HashMap<String, String>,
+    ) -> Result<(), String> {
+        let snapshot = self
+            .pending_elicitation_snapshot()
+            .filter(|snapshot| snapshot.request_id == expected_id)
+            .ok_or_else(|| "This form is no longer active.".to_owned())?;
+        let response = if accept {
+            ElicitationResponseData::Accept {
+                content: Some(turn_form_values(&snapshot, fields)?),
+            }
+        } else {
+            ElicitationResponseData::Decline
+        };
+        match self.respond_elicitation(expected_id, response) {
+            ElicitationResponseResult::Accepted => Ok(()),
+            ElicitationResponseResult::Stale => Err("This form is no longer active.".to_owned()),
+            ElicitationResponseResult::Invalid(message) => Err(message),
+        }
+    }
+
+    fn publish_turn_radio_event(&self, update: &AcpUpdate) {
+        use crate::radio::{
+            publish as broadcast_radio_event, PermissionInfo, PermissionOptionInfo, RadioEvent,
+            TurnEvent,
+        };
+
+        let Some(chat_id) = self.chat_id.as_ref() else {
+            return;
+        };
+        let (message_ids, event, terminal) = match update {
+            AcpUpdate::PromptStarted { message_ids } => {
+                *self.active_turn_message_ids.lock().unwrap() = message_ids.clone();
+                self.last_turn_reply.lock().unwrap().clear();
+                (message_ids.clone(), TurnEvent::Started, false)
+            }
+            AcpUpdate::MessageChunk { text } => {
+                self.last_turn_reply.lock().unwrap().push_str(text);
+                return;
+            }
+            AcpUpdate::ToolCall { .. } | AcpUpdate::ToolCallV1 { .. } => {
+                self.last_turn_reply.lock().unwrap().clear();
+                return;
+            }
+            AcpUpdate::PermissionRequest {
+                id,
+                description,
+                options,
+            } => {
+                let ids = self.active_turn_message_ids.lock().unwrap().clone();
+                let permission = PermissionInfo {
+                    description: description.clone(),
+                    options: options
+                        .iter()
+                        .map(|option| PermissionOptionInfo {
+                            option_id: option.option_id.clone(),
+                            name: option.name.clone(),
+                            kind: option.kind.clone(),
+                        })
+                        .collect(),
+                };
+                (
+                    ids,
+                    TurnEvent::PermissionRequired {
+                        request_id: id.clone(),
+                        permission,
+                    },
+                    false,
+                )
+            }
+            AcpUpdate::ElicitationRequest { snapshot } => {
+                let Some(form) = turn_form(snapshot) else {
+                    return;
+                };
+                (
+                    self.active_turn_message_ids.lock().unwrap().clone(),
+                    TurnEvent::FormRequired { form },
+                    false,
+                )
+            }
+            AcpUpdate::PromptCompleted {
+                message_ids,
+                stop_reason,
+            } => (
+                message_ids.clone(),
+                TurnEvent::Completed {
+                    stop_reason: stop_reason.clone(),
+                    message: self.last_turn_reply.lock().unwrap().trim().to_owned(),
+                },
+                true,
+            ),
+            AcpUpdate::PromptFailed {
+                message_ids,
+                message,
+            } => (
+                message_ids.clone(),
+                TurnEvent::Failed {
+                    message: message.clone(),
+                },
+                true,
+            ),
+            AcpUpdate::QueueMessageGone { id } => (vec![id.clone()], TurnEvent::Removed, true),
+            AcpUpdate::SessionEnded => (
+                self.active_turn_message_ids.lock().unwrap().clone(),
+                TurnEvent::SessionEnded,
+                true,
+            ),
+            _ => return,
+        };
+        broadcast_radio_event(RadioEvent::Turn {
+            project_id: self.project_key.clone(),
+            task_id: self.task_id.clone(),
+            chat_id: chat_id.clone(),
+            message_ids,
+            event,
+        });
+        if terminal {
+            self.active_turn_message_ids.lock().unwrap().clear();
+            self.last_turn_reply.lock().unwrap().clear();
+        }
+    }
+
     pub fn set_pending_session_instruction(&self, kind: &str, instruction: String) {
         let revision = self
             .session_instruction_revision
@@ -7194,6 +7583,23 @@ impl AcpSessionHandle {
             .map(|(id, _)| id.clone())
     }
 
+    /// Whether an option belongs to the currently pending permission request.
+    /// External surfaces use this before resolving the one-shot request.
+    pub fn pending_permission_accepts(&self, expected_id: &str, option_id: &str) -> bool {
+        if self.pending_permission_id().as_deref() != Some(expected_id) {
+            return false;
+        }
+        self.last_permission_info
+            .lock()
+            .ok()
+            .and_then(|info| info.clone())
+            .is_some_and(|info| {
+                info.options
+                    .iter()
+                    .any(|option| option.option_id == option_id)
+            })
+    }
+
     /// Derive the current chat-grained node status from in-memory handle
     /// state. Mirrors the status string used on the wire by `RadioEvent::ChatStatus`
     /// and what `GET /graph` computes per node — keep in sync with both.
@@ -7257,7 +7663,7 @@ impl AcpSessionHandle {
         // Permission gone — announce the post-take status so graph nodes can
         // leave the orange "permission_required" state immediately.
         if let Some(ref chat_id) = self.chat_id {
-            use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+            use crate::radio::{publish as broadcast_radio_event, RadioEvent};
             broadcast_radio_event(RadioEvent::ChatStatus {
                 project_id: self.project_key.clone(),
                 task_id: self.task_id.clone(),
@@ -7483,7 +7889,7 @@ impl AcpSessionHandle {
                 )
                 .unwrap_or(false)
                 {
-                    use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+                    use crate::radio::{publish as broadcast_radio_event, RadioEvent};
                     broadcast_radio_event(RadioEvent::ChatListChanged {
                         project_id: self.project_key.clone(),
                         task_id: self.task_id.clone(),
@@ -7520,7 +7926,7 @@ impl AcpSessionHandle {
             self.is_busy
                 .store(*value, std::sync::atomic::Ordering::Relaxed);
             if self.chat_id.is_some() {
-                use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+                use crate::radio::{publish as broadcast_radio_event, RadioEvent};
                 // Tag the busy=true edge with a wall-clock timestamp so menubar
                 // tray can render an elapsed-time meter without polling. `prompt`
                 // stays None at this layer — enrichment will be wired in a later
@@ -7547,7 +7953,7 @@ impl AcpSessionHandle {
         // respond_permission() because that path never emits an AcpUpdate
         // that would land here for that purpose.
         if let Some(ref chat_id) = self.chat_id {
-            use crate::api::handlers::walkie_talkie::PermissionInfo;
+            use crate::radio::PermissionInfo;
             let (next_status, permission): (Option<&'static str>, Option<PermissionInfo>) =
                 match &update {
                     AcpUpdate::SessionReady { .. } => (Some(self.derive_node_status()), None),
@@ -7562,12 +7968,10 @@ impl AcpSessionHandle {
                             description: description.clone(),
                             options: options
                                 .iter()
-                                .map(|o| {
-                                    crate::api::handlers::walkie_talkie::PermissionOptionInfo {
-                                        option_id: o.option_id.clone(),
-                                        name: o.name.clone(),
-                                        kind: o.kind.clone(),
-                                    }
+                                .map(|o| crate::radio::PermissionOptionInfo {
+                                    option_id: o.option_id.clone(),
+                                    name: o.name.clone(),
+                                    kind: o.kind.clone(),
                                 })
                                 .collect(),
                         };
@@ -7596,7 +8000,7 @@ impl AcpSessionHandle {
                     _ => (None, None),
                 };
             if let Some(status) = next_status {
-                use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+                use crate::radio::{publish as broadcast_radio_event, RadioEvent};
                 // Resolve display names so consumers (menubar tray, etc.)
                 // don't have to round-trip storage. Lookups are cheap and
                 // happen only on actual transitions, not on every message.
@@ -7722,6 +8126,8 @@ impl AcpSessionHandle {
             );
         }
 
+        self.publish_turn_radio_event(&update);
+
         // broadcast
         let _ = self.update_tx.send(update);
 
@@ -7755,8 +8161,47 @@ impl AcpSessionHandle {
         terminal: bool,
         config: Option<QueuedConfig>,
     ) -> crate::error::Result<()> {
+        self.send_tracked_prompt(text, attachments, sender, terminal, config)
+            .await
+            .map(|_| ())
+    }
+
+    /// Accepts a prompt and returns Grove's own message id. This id is local
+    /// to Grove and remains stable through queueing and Compact turns; it is
+    /// unrelated to optional ACP output `MessageId`s supplied by agents.
+    pub async fn send_tracked_prompt(
+        &self,
+        text: String,
+        attachments: Vec<ContentBlockData>,
+        sender: Option<String>,
+        terminal: bool,
+        config: Option<QueuedConfig>,
+    ) -> crate::error::Result<String> {
+        let message_id = default_queued_message_id();
+        self.send_tracked_prompt_with_id(
+            message_id.clone(),
+            text,
+            attachments,
+            sender,
+            terminal,
+            config,
+        )
+        .await?;
+        Ok(message_id)
+    }
+
+    async fn send_tracked_prompt_with_id(
+        &self,
+        message_id: String,
+        text: String,
+        attachments: Vec<ContentBlockData>,
+        sender: Option<String>,
+        terminal: bool,
+        config: Option<QueuedConfig>,
+    ) -> crate::error::Result<()> {
         self.cmd_tx
             .send(AcpCommand::Prompt {
+                message_ids: vec![message_id.clone()],
                 text,
                 attachments,
                 sender,
@@ -7764,7 +8209,73 @@ impl AcpSessionHandle {
                 config,
             })
             .await
-            .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
+            .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))?;
+        Ok(())
+    }
+
+    /// Allocate a Grove prompt id without entering the ACP command loop.
+    /// External adapters use this to register their mapping before starting
+    /// the prompt, so a very fast Turn event cannot race the mapping insert.
+    pub fn prepare_text_prompt(&self, text: String, sender: Option<String>) -> PreparedTextPrompt {
+        PreparedTextPrompt {
+            id: default_queued_message_id(),
+            text,
+            sender,
+        }
+    }
+
+    /// Start a previously prepared prompt and return its Grove message id.
+    pub async fn submit_prepared_text_prompt(
+        &self,
+        prompt: PreparedTextPrompt,
+    ) -> crate::error::Result<String> {
+        let PreparedTextPrompt { id, text, sender } = prompt;
+        let claimed = self
+            .is_busy
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .is_ok();
+        if claimed {
+            match self
+                .send_tracked_prompt_with_id(id.clone(), text, Vec::new(), sender, false, None)
+                .await
+            {
+                Ok(()) => Ok(id),
+                Err(error) => {
+                    self.is_busy
+                        .store(false, std::sync::atomic::Ordering::Release);
+                    Err(error)
+                }
+            }
+        } else {
+            let queued = QueuedMessage {
+                id: id.clone(),
+                message_ids: vec![id.clone()],
+                text,
+                attachments: Vec::new(),
+                sender,
+                config: Some(self.snapshot_config()),
+                terminal: false,
+            };
+            let messages = self.queue_message(queued);
+            self.emit(AcpUpdate::QueueUpdate { messages });
+            Ok(id)
+        }
+    }
+
+    /// Grove-level text prompt entry used by external surfaces. Session busy
+    /// state and queue behavior stay encapsulated here.
+    pub async fn submit_text_prompt(
+        &self,
+        text: String,
+        sender: Option<String>,
+    ) -> crate::error::Result<String> {
+        let prompt = self.prepare_text_prompt(text, sender);
+        self.submit_prepared_text_prompt(prompt).await
     }
 
     pub async fn set_mode(&self, mode_id: String) -> crate::error::Result<()> {
@@ -8144,6 +8655,10 @@ impl AcpSessionHandle {
                 }
                 let merged = QueuedMessage {
                     id: default_queued_message_id(),
+                    message_ids: drained
+                        .iter()
+                        .flat_map(|message| message.message_ids.clone())
+                        .collect(),
                     text: merged_text,
                     attachments: merged_attachments,
                     sender: first.sender.clone(),
@@ -8160,6 +8675,7 @@ impl AcpSessionHandle {
     /// SetSessionMode/Model/ThoughtLevel ACP 请求。
     fn try_enqueue_prompt(
         &self,
+        message_ids: Vec<String>,
         text: String,
         attachments: Vec<ContentBlockData>,
         sender: Option<String>,
@@ -8168,6 +8684,7 @@ impl AcpSessionHandle {
     ) -> bool {
         self.cmd_tx
             .try_send(AcpCommand::Prompt {
+                message_ids,
                 text,
                 attachments,
                 sender,
@@ -8206,6 +8723,7 @@ impl AcpSessionHandle {
         self.is_busy
             .store(true, std::sync::atomic::Ordering::Relaxed);
         if self.try_enqueue_prompt(
+            send_msg.message_ids.clone(),
             send_msg.text.clone(),
             send_msg.attachments.clone(),
             send_msg.sender.clone(),
@@ -8230,6 +8748,7 @@ impl AcpSessionHandle {
     /// retain the prompt at the front of the visible queue instead of dropping it.
     fn retry_prompt_after_auth(
         &self,
+        message_ids: Vec<String>,
         text: String,
         attachments: Vec<ContentBlockData>,
         sender: Option<String>,
@@ -8237,6 +8756,7 @@ impl AcpSessionHandle {
         config: Option<QueuedConfig>,
     ) {
         let command = AcpCommand::Prompt {
+            message_ids,
             text,
             attachments,
             sender,
@@ -8245,6 +8765,7 @@ impl AcpSessionHandle {
         };
         if let Err(error) = self.cmd_tx.try_send(command) {
             if let AcpCommand::Prompt {
+                message_ids,
                 text,
                 attachments,
                 sender,
@@ -8252,10 +8773,12 @@ impl AcpSessionHandle {
                 config,
             } = error.into_inner()
             {
-                self.pending_queue.lock().unwrap().insert(
-                    0,
-                    QueuedMessage::new(text, attachments, sender, terminal, config),
-                );
+                self.pending_queue.lock().unwrap().insert(0, {
+                    let mut queued =
+                        QueuedMessage::new(text, attachments, sender, terminal, config);
+                    queued.message_ids = message_ids;
+                    queued
+                });
                 self.emit(AcpUpdate::QueueUpdate {
                     messages: self.get_queue(),
                 });
@@ -8289,9 +8812,34 @@ impl AcpSessionHandle {
         }
     }
 
+    /// All select-style session config options the agent advertises (mode,
+    /// model, effort, …), read from the authoritative `configOptions`
+    /// snapshot. Non-select kinds (booleans) are not surfaced yet.
+    pub fn config_selectors(&self) -> Vec<ConfigSelector> {
+        let config_options = self.current_config_options.lock().unwrap().clone();
+        config_options
+            .iter()
+            .filter_map(|option| {
+                let acp::SessionConfigKind::Select(select) = &option.kind else {
+                    return None;
+                };
+                Some(ConfigSelector {
+                    config_id: option.id.to_string(),
+                    label: option.name.clone(),
+                    current: Some(select.current_value.to_string()),
+                    options: flatten_select_options(select),
+                })
+            })
+            .collect()
+    }
+
     /// 设置队列合并发送模式（Separate / Compact）
     pub fn set_queue_mode(&self, mode: QueueMode) {
         *self.queue_mode.lock().unwrap() = mode;
+    }
+
+    pub fn queue_mode_snapshot(&self) -> QueueMode {
+        *self.queue_mode.lock().unwrap()
     }
 
     /// 暂停队列 auto-send（用户正在编辑队列消息）
@@ -8306,6 +8854,7 @@ impl AcpSessionHandle {
     pub fn test_drain_one_queued(&self) -> bool {
         if let Some(next_msg) = self.pop_queue_front() {
             self.try_enqueue_prompt(
+                next_msg.message_ids,
                 next_msg.text,
                 next_msg.attachments,
                 next_msg.sender,
@@ -8441,8 +8990,8 @@ pub fn session_exists(key: &str) -> bool {
 ///
 /// `message` / context usage are deliberately omitted — they are only
 /// meaningful in the live event stream and the tray panel does not render them.
-pub fn snapshot_active_chats() -> Vec<crate::api::handlers::walkie_talkie::ChatSnapshot> {
-    use crate::api::handlers::walkie_talkie::ChatSnapshot;
+pub fn snapshot_active_chats() -> Vec<crate::radio::ChatSnapshot> {
+    use crate::radio::ChatSnapshot;
     use std::collections::HashMap;
 
     let handles: Vec<Arc<AcpSessionHandle>> = match ACP_SESSIONS.read() {
@@ -8607,6 +9156,8 @@ pub fn new_handle_for_test(
         terminal_kill_tx: Mutex::new(None),
         is_busy: std::sync::atomic::AtomicBool::new(false),
         last_assistant_text: Mutex::new(String::new()),
+        active_turn_message_ids: Mutex::new(Vec::new()),
+        last_turn_reply: Mutex::new(String::new()),
         pending_text_separator: std::sync::atomic::AtomicBool::new(false),
         last_user_prompt: Mutex::new(None),
         last_plan: Mutex::new(None),
@@ -8635,12 +9186,16 @@ pub fn new_handle_for_test(
         while let Some(cmd) = cmd_rx.recv().await {
             match cmd {
                 AcpCommand::Prompt {
+                    message_ids,
                     text,
                     attachments,
                     sender,
                     terminal,
                     config: _,
                 } => {
+                    handle_for_loop.emit(AcpUpdate::PromptStarted {
+                        message_ids: message_ids.clone(),
+                    });
                     handle_for_loop.emit(AcpUpdate::UserMessage {
                         text,
                         attachments,
@@ -8651,6 +9206,10 @@ pub fn new_handle_for_test(
                     // 让 C1 CAS 路径在测试里能真实地与 emit-store 路径交互。
                     handle_for_loop.emit(AcpUpdate::Busy { value: true });
                     handle_for_loop.emit(AcpUpdate::Busy { value: false });
+                    handle_for_loop.emit(AcpUpdate::PromptCompleted {
+                        message_ids,
+                        stop_reason: "end_turn".to_string(),
+                    });
                 }
                 AcpCommand::Kill => break,
                 _ => {}
@@ -9506,6 +10065,40 @@ async fn drain_stderr_to_file(stderr: tokio::process::ChildStderr, path: PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn compact_queue_preserves_accepted_message_ids() {
+        let key = format!("compact-message-id-test-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        handle.set_queue_mode(QueueMode::Compact);
+        let first = QueuedMessage::new("one".into(), vec![], None, false, None);
+        let second = QueuedMessage::new("two".into(), vec![], None, false, None);
+        let expected = vec![first.id.clone(), second.id.clone()];
+        handle.queue_message(first);
+        handle.queue_message(second);
+
+        let (merged, _) = handle.pop_queue_for_auto_send().expect("merged queue");
+        assert_eq!(merged.message_ids, expected);
+    }
+
+    #[tokio::test]
+    async fn tracked_prompt_returns_the_lifecycle_message_id() {
+        let key = format!("tracked-message-id-test-{}", uuid::Uuid::new_v4());
+        let (handle, mut updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        let message_id = handle
+            .send_tracked_prompt("hello".into(), vec![], None, false, None)
+            .await
+            .expect("prompt accepted");
+
+        loop {
+            if let AcpUpdate::PromptStarted { message_ids } =
+                updates.recv().await.expect("lifecycle update")
+            {
+                assert_eq!(message_ids, vec![message_id]);
+                break;
+            }
+        }
+    }
 
     #[tokio::test]
     async fn pending_session_instruction_keeps_latest_toggle_until_matching_turn_completes() {

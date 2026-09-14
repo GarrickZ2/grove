@@ -9,7 +9,7 @@ import { listPlugins, PLUGINS_CHANGED_EVENT, type Plugin } from "./api/plugins";
 import { MobileHeader } from "./components/Layout/MobileHeader";
 import { MobileDrawer } from "./components/Layout/MobileDrawer";
 import { NotificationPopover } from "./components/Layout/NotificationPopover";
-import { SettingsPage } from "./components/Config";
+import { ConnectDialog, SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
 import { BlitzPage } from "./components/Blitz";
 import { TasksPage } from "./components/Tasks/TasksPage";
@@ -148,6 +148,7 @@ function AppContent() {
   const addLibrary = useAddLibraryHashHandler();
 
   const [activeItem, setActiveItem] = useState("dashboard");
+  const [connectOpen, setConnectOpen] = useState(false);
   const [tasksMode, setTasksMode] = useState<TasksMode>("zen");
   // Ref mirror of tasksMode for use inside stable callbacks (e.g. the
   // tray:navigate listener) that capture the initial closure and would
@@ -551,7 +552,7 @@ function AppContent() {
   const navigateToProjectLastView = useCallback(
     (projectId: string) => {
       const saved = readLastProjectView(projectId);
-      if (saved) {
+      if (saved && saved !== "connect") {
         setActiveItem(saved);
         setNavigationData(null);
       } else {
@@ -727,7 +728,7 @@ function AppContent() {
     setAutoNavigatedFor(currentProjectId);
     setHasExitedWelcome(true);
     const saved = readLastProjectView(currentProjectId);
-    setActiveItem(saved ?? "dashboard");
+    setActiveItem(saved && saved !== "connect" ? saved : "dashboard");
   }
 
   // Keep-alive gating for WorkPage — mirrors TasksPage's always-mounted
@@ -800,7 +801,11 @@ function AppContent() {
 
       // Guard against typos / future nav-id renames so the tray can't
       // silently put the user on a page that doesn't exist.
-      setActiveItem(allowedRoutes.has(effectiveRoute) ? effectiveRoute : "dashboard");
+      if (effectiveRoute === "connect") {
+        setConnectOpen(true);
+      } else {
+        setActiveItem(allowedRoutes.has(effectiveRoute) ? effectiveRoute : "dashboard");
+      }
       if (task_id && effectiveRoute !== "work") {
         // viewMode "terminal" makes TasksPage drop into Workspace mode
         // (chat / terminal panes) — what the user expects when clicking
@@ -1266,7 +1271,9 @@ function AppContent() {
   }, [registerGlobalCommands]);
 
   const handleItemClick = useCallback((item: string) => {
-    if (item === "tasks" && activeItem === "tasks" && inWorkspace) {
+    if (item === "connect") {
+      setConnectOpen(true);
+    } else if (item === "tasks" && activeItem === "tasks" && inWorkspace) {
       setTasksExitSignal(prev => prev + 1);
     } else {
       setActiveItem(item);
@@ -1395,6 +1402,7 @@ function AppContent() {
 
   const sidebarProps = {
     activeItem,
+    connectOpen,
     onItemClick: handleItemClick,
     mode: effectiveSidebarMode,
     onSetMode: setSidebarMode,
@@ -1609,6 +1617,7 @@ function AppContent() {
           externalError={addProjectError}
           initialMode={addProjectInitialMode}
         />
+        <ConnectDialog isOpen={connectOpen} onClose={() => setConnectOpen(false)} />
         <CommandPalette />
         <ActionCommandPalette />
         <ProjectCommandPalette
@@ -1764,6 +1773,7 @@ function AppContent() {
         externalError={addProjectError}
         initialMode={addProjectInitialMode}
       />
+      <ConnectDialog isOpen={connectOpen} onClose={() => setConnectOpen(false)} />
       <CommandPalette />
       <ActionCommandPalette />
       <ProjectCommandPalette

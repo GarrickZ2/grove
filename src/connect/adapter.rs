@@ -1,0 +1,249 @@
+use async_trait::async_trait;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use super::commands::CardSpec;
+use super::platform::PlatformDefinition;
+use super::registration::RegistrationView;
+use crate::storage::connects::Connect;
+pub type AdapterRef = Arc<dyn ConnectAdapter>;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConnectionStatus {
+    pub state: String,
+    pub detail: Option<String>,
+}
+
+/// Platform-specific setup and connection lifecycle. Core only selects an
+/// implementation by platform id and treats adapter_config as opaque JSON.
+pub trait Platform: Send + Sync {
+    fn validate_config(&self, domain: &str, config: &Value, existing: bool) -> Result<(), String>;
+    fn merge_config(
+        &self,
+        domain: &str,
+        current: Option<&Value>,
+        incoming: &Value,
+    ) -> Result<Value, String>;
+    fn public_config(&self, domain: &str, config: &Value) -> Value;
+    fn start(&self, connection: Connect);
+    fn stop(&self, id: &str);
+    fn statuses(&self) -> HashMap<String, ConnectionStatus>;
+    fn begin_registration<'a>(
+        &'a self,
+        platform: &'a str,
+        domain: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<RegistrationView, String>>;
+    fn verify_config<'a>(
+        &'a self,
+        domain: &'a str,
+        config: &'a Value,
+    ) -> futures::future::BoxFuture<'a, Result<(), String>>;
+}
+
+struct FeishuPlatform;
+
+static FEISHU_PLATFORM: FeishuPlatform = FeishuPlatform;
+
+pub fn platform(id: &str) -> Option<&'static dyn Platform> {
+    match id {
+        "feishu" | "lark" => Some(&FEISHU_PLATFORM),
+        _ => None,
+    }
+}
+
+pub fn definitions() -> Vec<PlatformDefinition> {
+    super::platform::list()
+}
+
+pub async fn begin_registration(
+    platform_id: &str,
+    domain: &str,
+) -> Result<RegistrationView, String> {
+    let adapter =
+        platform(platform_id).ok_or_else(|| format!("Unsupported platform: {platform_id}"))?;
+    adapter.begin_registration(platform_id, domain).await
+}
+
+pub fn start_connections() {
+    match crate::storage::connects::list_enabled() {
+        Ok(connections) => connections.into_iter().for_each(apply_connection),
+        Err(error) => eprintln!("[connect] failed to load connections: {error}"),
+    }
+}
+
+pub fn apply_connection(connection: Connect) {
+    if let Some(adapter) = platform(&connection.platform) {
+        adapter.start(connection);
+    } else {
+        eprintln!("[connect] unsupported adapter: {}", connection.platform);
+    }
+}
+
+pub fn stop_connection(connection: &Connect) {
+    if let Some(adapter) = platform(&connection.platform) {
+        adapter.stop(&connection.id);
+    }
+}
+
+pub fn connection_statuses() -> HashMap<String, ConnectionStatus> {
+    let platform_ids = crate::storage::connects::list()
+        .map(|connections| {
+            connections
+                .into_iter()
+                .map(|connection| connection.platform)
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    let mut statuses = HashMap::new();
+    for platform_id in platform_ids {
+        if let Some(adapter) = platform(&platform_id) {
+            statuses.extend(adapter.statuses());
+        }
+    }
+    statuses
+}
+
+pub async fn verify_config(platform_id: &str, domain: &str, config: &Value) -> Result<(), String> {
+    let adapter =
+        platform(platform_id).ok_or_else(|| format!("Unsupported platform: {platform_id}"))?;
+    adapter.verify_config(domain, config).await
+}
+
+impl Platform for FeishuPlatform {
+    fn validate_config(&self, domain: &str, config: &Value, existing: bool) -> Result<(), String> {
+        super::feishu::validate_config(domain, config, existing)
+    }
+
+    fn merge_config(
+        &self,
+        _domain: &str,
+        current: Option<&Value>,
+        incoming: &Value,
+    ) -> Result<Value, String> {
+        let mut merged = current
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        let target = merged
+            .as_object_mut()
+            .ok_or_else(|| "adapter_config must be a JSON object".to_owned())?;
+        let source = incoming
+            .as_object()
+            .ok_or_else(|| "adapter_config must be a JSON object".to_owned())?;
+        for (key, value) in source {
+            if key != "app_secret" || value.as_str().is_none_or(|value| !value.is_empty()) {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+        Ok(merged)
+    }
+
+    fn public_config(&self, domain: &str, config: &Value) -> Value {
+        super::feishu::public_config(domain, config)
+    }
+
+    fn start(&self, connection: Connect) {
+        super::feishu::start(connection);
+    }
+
+    fn stop(&self, id: &str) {
+        super::feishu::stop(id);
+    }
+
+    fn statuses(&self) -> HashMap<String, ConnectionStatus> {
+        super::feishu::statuses()
+    }
+
+    fn begin_registration<'a>(
+        &'a self,
+        platform: &'a str,
+        domain: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<RegistrationView, String>> {
+        Box::pin(async move { super::registration::begin(platform, domain).await })
+    }
+
+    fn verify_config<'a>(
+        &'a self,
+        domain: &'a str,
+        config: &'a Value,
+    ) -> futures::future::BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move { super::feishu::verify_config(domain, config).await })
+    }
+}
+
+/// Platform-neutral message delivered into the Connect core.
+#[derive(Debug, Clone)]
+pub struct InboundMessage {
+    pub external_message_id: String,
+    pub conversation_id: String,
+    pub sender_id: String,
+    pub text: String,
+}
+
+/// Platform-neutral interactive action delivered into the Connect core.
+/// Platform callback payloads are decoded by the adapter before crossing this
+/// boundary.
+#[derive(Debug, Clone)]
+pub struct InboundAction {
+    pub conversation_id: String,
+    pub sender_id: String,
+    pub name: Option<String>,
+    pub fields: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum NoticeLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+/// Core result for an interactive action. Adapters decide how a notice and a
+/// replacement card are represented by their platform callback protocol.
+pub struct ActionResult {
+    pub card: Option<CardSpec>,
+    pub notice: Option<(NoticeLevel, String)>,
+}
+
+impl ActionResult {
+    pub fn ignored() -> Self {
+        Self {
+            card: None,
+            notice: None,
+        }
+    }
+
+    pub fn card(card: CardSpec) -> Self {
+        Self {
+            card: Some(card),
+            notice: None,
+        }
+    }
+
+    pub fn notice(text: impl Into<String>, level: NoticeLevel) -> Self {
+        let text = text.into();
+        Self {
+            card: Some(CardSpec::Notice(text.clone())),
+            notice: Some((level, text)),
+        }
+    }
+
+    pub fn warning_card(text: impl Into<String>, card: CardSpec) -> Self {
+        Self {
+            card: Some(card),
+            notice: Some((NoticeLevel::Warning, text.into())),
+        }
+    }
+}
+
+/// Capability surface every IM adapter exposes to the Connect core.
+/// Platform-native cards and reactions stay behind this boundary.
+#[async_trait]
+pub trait ConnectAdapter: Send + Sync + 'static {
+    async fn mark_waiting(&self, message_id: &str) -> Option<String>;
+    async fn mark_working(&self, message_id: &str, waiting: &Option<String>) -> Option<String>;
+    async fn clear_status(&self, message_id: &str, receipt: &Option<String>);
+    async fn reply_text(&self, message_id: &str, text: &str) -> Result<(), String>;
+    async fn reply_card(&self, message_id: &str, spec: &CardSpec) -> Result<(), String>;
+}

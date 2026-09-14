@@ -217,9 +217,8 @@ async fn radio_auth_middleware(
 
 async fn radio_ws_handler(ws: WebSocketUpgrade) -> axum::response::Response {
     ws.on_upgrade(|socket| async {
-        use super::handlers::walkie_talkie::{
-            broadcast_radio_event, decrement_radio_clients, increment_radio_clients, RadioEvent,
-        };
+        use super::handlers::walkie_talkie::{decrement_radio_clients, increment_radio_clients};
+        use crate::radio::{publish as broadcast_radio_event, RadioEvent};
         increment_radio_clients();
         broadcast_radio_event(RadioEvent::ClientConnected);
         super::handlers::walkie_talkie::handle_walkie_talkie_ws_inner(socket).await;

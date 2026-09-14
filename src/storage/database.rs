@@ -709,6 +709,28 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS ix_automations_next_run
             ON automations(enabled, next_run_at);
 
+        -- IM Connect: adapter credentials plus a platform-neutral Grove target.
+        CREATE TABLE IF NOT EXISTS connects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            domain TEXT NOT NULL DEFAULT 'feishu',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            adapter_config_json TEXT NOT NULL DEFAULT '{}',
+            -- Legacy credential columns are retained for on-disk compatibility;
+            -- adapter_config_json is the canonical representation.
+            app_id TEXT NOT NULL,
+            app_secret TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            bound_chat_id TEXT,
+            bound_user_id TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_connects_enabled
+            ON connects(enabled, updated_at DESC);
         -- One Memory-owned configuration row per Project. Execution settings
         -- remain on the linked Automation; Memory only owns its product
         -- switch, organization policy and the association.
@@ -786,6 +808,22 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch("ALTER TABLE session ADD COLUMN archived_at TEXT;");
     let _ = conn.execute_batch("ALTER TABLE session ADD COLUMN updated_at TEXT;");
     conn.execute_batch("UPDATE session SET updated_at = created_at WHERE updated_at IS NULL;")?;
+    add_column_if_missing(
+        conn,
+        "connects",
+        "adapter_config_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )?;
+    // Migrate the original Feishu-only fields once. New code never reads them;
+    // they remain only so older databases can be opened without a table rebuild.
+    conn.execute(
+        "UPDATE connects SET adapter_config_json=json_object('app_id', app_id, 'app_secret', app_secret) WHERE adapter_config_json='{}' AND (app_id <> '' OR app_secret <> '')",
+        [],
+    )?;
+    // Connect delivery state is intentionally process-local. Remove the
+    // short-lived durable inbox used by earlier development builds; only the
+    // `connects` configuration table remains persistent.
+    conn.execute_batch("DROP TABLE IF EXISTS connect_inbound_messages;")?;
     let usage_task_not_null = {
         let mut stmt = conn.prepare("PRAGMA table_info(chat_token_usage)")?;
         let rows = stmt.query_map([], |row| {

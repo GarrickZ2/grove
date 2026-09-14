@@ -414,7 +414,7 @@ pub async fn clone_project(
         })?;
 
     let _ = crate::storage::taskgroups::ensure_system_groups();
-    use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+    use crate::radio::{publish as broadcast_radio_event, RadioEvent};
     broadcast_radio_event(RadioEvent::GroupChanged);
 
     // Single source of truth: re-fetch via the same path GET /projects/{id}
@@ -511,7 +511,7 @@ pub async fn add_project(
     });
 
     let _ = crate::storage::taskgroups::ensure_system_groups();
-    use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+    use crate::radio::{publish as broadcast_radio_event, RadioEvent};
     broadcast_radio_event(RadioEvent::GroupChanged);
 
     Ok(Json(ProjectResponse {
@@ -612,7 +612,7 @@ pub async fn create_new_project(
             is_local: true,
         });
         let _ = crate::storage::taskgroups::ensure_system_groups();
-        use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+        use crate::radio::{publish as broadcast_radio_event, RadioEvent};
         broadcast_radio_event(RadioEvent::GroupChanged);
 
         Ok(Json(ProjectResponse {
@@ -677,7 +677,7 @@ pub async fn delete_project(Path(id): Path<String>) -> Result<StatusCode, Status
 
     workspace::remove_project(&project.path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+    use crate::radio::{publish as broadcast_radio_event, RadioEvent};
     broadcast_radio_event(RadioEvent::GroupChanged);
 
     Ok(StatusCode::NO_CONTENT)

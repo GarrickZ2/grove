@@ -224,6 +224,9 @@ pub async fn execute(agent: String, cwd: String) {
                 Ok(AcpUpdate::AuthLoggedOut) => continue,
                 Ok(
                     AcpUpdate::Busy { .. }
+                    | AcpUpdate::PromptStarted { .. }
+                    | AcpUpdate::PromptCompleted { .. }
+                    | AcpUpdate::PromptFailed { .. }
                     | AcpUpdate::UserMessage { .. }
                     | AcpUpdate::ModeChanged { .. }
                     | AcpUpdate::ModelChanged { .. }

@@ -561,7 +561,7 @@ pub async fn patch_config(
 
     // Notify Radio clients if theme changed
     if theme_changed {
-        use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+        use crate::radio::{publish as broadcast_radio_event, RadioEvent};
         // For "auto" mode, send the literal "auto" string so the Radio client
         // can resolve against ITS OWN system color scheme. Hardcoding a slot
         // id here would force every Radio client onto the desktop's guess

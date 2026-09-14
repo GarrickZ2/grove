@@ -2,6 +2,9 @@
 
 export type { ApiError } from './client';
 
+export { listConnects, createConnect, updateConnect, deleteConnect, verifyConnect, verifyConnectCredentials, listConnectPlatforms, beginConnectRegistration, getConnectRegistration, finishConnectRegistration } from './connects';
+export type { ConnectItem, ConnectInput, ConnectRuntimeState, ConnectPlatform, ConnectRegistration } from './connects';
+
 export { getConfig, patchConfig, listApplications, getAppIconUrl, previewHookSound } from './config';
 export type { AppInfo, CustomAgentServer, CustomThemeConfig } from './config';
 

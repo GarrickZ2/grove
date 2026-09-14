@@ -22,6 +22,7 @@ import {
   Plus,
   Settings2,
   Brain,
+  Link2,
 } from "lucide-react";
 import type { Plugin } from "../../api/plugins";
 import { PluginIcon } from "../Plugins/PluginIcon";
@@ -103,6 +104,7 @@ function resolveNavItems(isStudio: boolean): NavItem[] {
 
 interface SidebarProps {
   activeItem: string;
+  connectOpen?: boolean;
   onItemClick: (id: string) => void;
   mode: SidebarMode;
   onSetMode: (mode: SidebarMode) => void;
@@ -142,6 +144,7 @@ const shouldAvoidTrafficLights = isTauri && isMac;
 
 export function Sidebar({
   activeItem,
+  connectOpen,
   onItemClick,
   mode,
   onSetMode,
@@ -506,68 +509,76 @@ export function Sidebar({
 
       {/* Footer */}
       <div className="p-2 select-none">
-        {/* Search / Command Palette */}
-        {onSearch && (
-          <motion.button
-            whileHover={{ x: isCollapsed ? 0 : 2 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={onSearch}
-            title={isCollapsed ? "Search (⌘K)" : undefined}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150
-              ${isCollapsed ? "justify-center" : ""}
-              text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]`}
-          >
-            <Search className="w-5 h-5 flex-shrink-0" />
-            {!isCollapsed && (
-              <span className="flex items-center gap-2">
-                <span>Search</span>
-                <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] leading-none">⌘K</kbd>
-              </span>
-            )}
-          </motion.button>
-        )}
-
-        {/* Notification Bell */}
-        <div className="relative">
-          <motion.button
-            whileHover={{ x: isCollapsed ? 0 : 2 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => setNotifOpen(!notifOpen)}
-            title={isCollapsed ? "Notifications" : undefined}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors duration-150
-              ${isCollapsed ? "justify-center" : ""}
-              ${notifOpen
-                ? "font-semibold text-[var(--color-highlight)]"
-                : "font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]"
-              }`}
-            style={
-              notifOpen
-                ? {
-                    backgroundColor: "color-mix(in oklab, var(--color-highlight) 18%, transparent)",
-                    boxShadow:
-                      "0 1px 2px rgba(0, 0, 0, 0.05), inset 0 0 0 1px color-mix(in oklab, var(--color-highlight) 28%, transparent)",
-                  }
-                : undefined
-            }
-          >
-            <div className="relative flex-shrink-0">
-              <Bell className="w-5 h-5" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold text-white bg-red-500 rounded-full leading-none">
-                  {unreadCount > 9 ? "9+" : unreadCount}
+        <div className={`flex gap-1 ${isCollapsed ? "flex-col" : "items-center"}`}>
+          {/* Search / Command Palette */}
+          {onSearch && (
+            <motion.button
+              whileHover={{ x: isCollapsed ? 0 : 2 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={onSearch}
+              title={isCollapsed ? "Search (⌘K)" : undefined}
+              className={`flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--color-text-muted)] transition-colors duration-150 hover:bg-[var(--color-border)] hover:text-[var(--color-text)]
+                ${isCollapsed ? "justify-center" : ""}`}
+            >
+              <Search className="h-5 w-5 flex-shrink-0" />
+              {!isCollapsed && (
+                <span className="flex items-center gap-2">
+                  <span>Search</span>
+                  <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px] leading-none text-[var(--color-text-muted)]">⌘K</kbd>
                 </span>
               )}
-            </div>
-            {!isCollapsed && <span className="flex-1 text-left">Notifications</span>}
-          </motion.button>
+            </motion.button>
+          )}
+
+          {/* Compact notification bell shares the Search row. */}
+          <div className="relative shrink-0">
+            <motion.button
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.96 }}
+              onClick={() => setNotifOpen(!notifOpen)}
+              title="Notifications"
+              aria-label="Notifications"
+              className={`flex h-10 w-10 items-center justify-center rounded-xl transition-colors duration-150
+                ${notifOpen
+                  ? "text-[var(--color-highlight)]"
+                  : "text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
+                }`}
+              style={
+                notifOpen
+                  ? {
+                      backgroundColor: "color-mix(in oklab, var(--color-highlight) 18%, transparent)",
+                      boxShadow:
+                        "0 1px 2px rgba(0, 0, 0, 0.05), inset 0 0 0 1px color-mix(in oklab, var(--color-highlight) 28%, transparent)",
+                    }
+                  : undefined
+              }
+            >
+              <div className="relative">
+                <Bell className="h-5 w-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -right-2 -top-2 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </div>
+            </motion.button>
+          </div>
         </div>
 
-        <NavButton
-          item={{ id: "settings", label: "Settings", icon: Settings }}
-          isActive={activeItem === "settings"}
-          onClick={() => handleItemClick("settings")}
-          collapsed={isCollapsed}
-        />
+        <div className="space-y-0.5">
+          <NavButton
+            item={{ id: "connect", label: "IM Connect", icon: Link2 }}
+            isActive={connectOpen === true}
+            onClick={() => handleItemClick("connect")}
+            collapsed={isCollapsed}
+          />
+          <NavButton
+            item={{ id: "settings", label: "Settings", icon: Settings }}
+            isActive={activeItem === "settings"}
+            onClick={() => handleItemClick("settings")}
+            collapsed={isCollapsed}
+          />
+        </div>
 
         {/* Sidebar-mode toggles — Collapse and Dynamic Island stacked as two
             full-width, labeled rows so Island reads as a named feature

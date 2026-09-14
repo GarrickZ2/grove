@@ -12,6 +12,7 @@ mod check;
 mod cli;
 #[cfg(not(windows))]
 mod config_state;
+mod connect;
 #[cfg(not(windows))]
 mod dialogs;
 mod diff;
@@ -20,6 +21,7 @@ mod error;
 mod event;
 mod fs_link;
 mod git;
+mod grove;
 mod hooks;
 mod memory;
 mod model;
@@ -27,6 +29,7 @@ mod model;
 mod notification_state;
 mod operations;
 mod plugins;
+pub(crate) mod radio;
 mod session;
 mod speech;
 mod stats;

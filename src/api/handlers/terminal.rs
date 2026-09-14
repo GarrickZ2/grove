@@ -441,9 +441,7 @@ pub(crate) async fn handle_pty_terminal(
                     if crate::storage::tasks::touch_chat_session(project_id, task_id, chat_id)
                         .unwrap_or(false)
                     {
-                        use crate::api::handlers::walkie_talkie::{
-                            broadcast_radio_event, RadioEvent,
-                        };
+                        use crate::radio::{publish as broadcast_radio_event, RadioEvent};
                         broadcast_radio_event(RadioEvent::ChatListChanged {
                             project_id: project_id.clone(),
                             task_id: task_id.clone(),

@@ -3,7 +3,7 @@
 use axum::{extract::Path, http::StatusCode, response::IntoResponse, Json};
 use serde::Deserialize;
 
-use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+use crate::radio::{publish as broadcast_radio_event, RadioEvent};
 use crate::storage::taskgroups;
 use crate::storage::tasks::LOCAL_TASK_ID;
 
