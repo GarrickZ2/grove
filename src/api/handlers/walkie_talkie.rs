@@ -344,7 +344,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                     Some(RadioEvent::ThemeChanged { name }) => {
                         let _ = msg_tx.send(ServerMessage::ThemeChanged { theme: name });
                     }
-                    Some(RadioEvent::HookAdded { project_id, task_id, level, message }) => {
+                    Some(RadioEvent::HookAdded { project_id, task_id, level, message, .. }) => {
                         let _ = msg_tx.send(ServerMessage::HookAdded {
                             project_id,
                             task_id,

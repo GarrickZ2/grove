@@ -121,6 +121,7 @@ pub enum CardSpec {
     Config(Box<ConfigCard>),
     Permission(PermissionCard),
     Elicitation(ElicitationCard),
+    AskForm(AskFormCard),
     Notice(String),
 }
 
@@ -149,6 +150,13 @@ pub struct ElicitationField {
     pub required: bool,
     pub kind: ElicitationFieldKind,
     pub options: Vec<(String, String)>,
+}
+
+/// Grove's own structured form. Unlike ACP elicitation, submitting it starts
+/// a normal follow-up prompt; the adapter only renders the question shape.
+pub struct AskFormCard {
+    pub form_id: String,
+    pub definition: crate::agent_graph::ask_form::AskFormInput,
 }
 
 #[derive(Clone, Copy)]

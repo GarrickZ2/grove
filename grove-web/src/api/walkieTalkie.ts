@@ -76,7 +76,27 @@ export type RadioEvent =
       op: "inserted" | "deleted";
       body_excerpt?: string;
     }
-  | { type: "hook_added"; project_id: string; task_id: string }
+  | {
+      type: "hook_added";
+      project_id: string;
+      task_id: string;
+      /** Attention level — always present on new backends, absent on old ones. */
+      level?: "notice" | "warn" | "critical";
+      /** What produced the hook: presentation policy keys off this. */
+      kind?: "turn_complete" | "permission_required" | "elicitation_required" | "external";
+      /** Semantic event label, e.g. "Task Complete" / "Permission Required". */
+      label?: string;
+      message?: string;
+      chat_id?: string;
+      /** Full permission payload when kind==="permission_required" — lets a
+       *  surface render Approve/Deny without a follow-up fetch. */
+      permission?: {
+        description: string;
+        options: Array<{ option_id: string; name: string; kind: string }>;
+      };
+      project_name?: string;
+      task_name?: string;
+    }
   | { type: "chat_list_changed"; project_id: string; task_id: string }
   | { type: "client_connected" }
   | { type: "client_disconnected" }

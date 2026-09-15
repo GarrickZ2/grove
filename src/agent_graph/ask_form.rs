@@ -189,10 +189,17 @@ pub async fn grove_ask_form(
     })?;
 
     let form_id = format!("form-{}", uuid::Uuid::new_v4());
-    handle.emit(crate::acp::AcpUpdate::AskForm {
-        form_id: form_id.clone(),
-        definition: input,
-    });
+    // Capture the originating turn before the event is emitted. AskForm is
+    // delivered over a separate MCP request, so publishing it later must not
+    // re-read a potentially newer ACP turn.
+    let origin = handle.active_turn_origin();
+    handle.emit_with_origin(
+        crate::acp::AcpUpdate::AskForm {
+            form_id: form_id.clone(),
+            definition: input,
+        },
+        origin,
+    );
 
     Ok(AskFormOutput {
         form_id,

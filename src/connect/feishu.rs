@@ -237,17 +237,22 @@ where
             let inbound = InboundAction {
                 conversation_id: action
                     .card_context
+                    .clone()
                     .and_then(|context| context.open_chat_id)
                     .unwrap_or_default(),
                 sender_id: action.operator.open_id.unwrap_or_default(),
+                source_message_id: action
+                    .card_context
+                    .and_then(|context| context.open_message_id),
                 name,
                 fields,
             };
             // Feishu requires callback ACKs quickly. Core work can include
             // SQLite reads or an ACP request, so acknowledge first and use
             // the callback token to update the original card afterwards.
+            let core_adapter: AdapterRef = adapter.clone();
             tokio::spawn(async move {
-                let result = super::core::handle_action(&connection_id, inbound)
+                let result = super::core::handle_action(&connection_id, core_adapter, inbound)
                     .await
                     .unwrap_or_else(|error| ActionResult::notice(error, NoticeLevel::Error));
                 if let Err(error) = adapter
@@ -414,6 +419,7 @@ pub(crate) fn render_card(spec: &CardSpec) -> Result<Card, String> {
         CardSpec::Config(config) => render_config(config),
         CardSpec::Permission(permission) => render_permission(permission),
         CardSpec::Elicitation(elicitation) => render_elicitation(elicitation),
+        CardSpec::AskForm(form) => render_ask_form(form),
     }
 }
 
@@ -500,6 +506,173 @@ fn render_elicitation(elicitation: &ElicitationCard) -> Result<Card, String> {
         .map_err(|error| error.to_string())
 }
 
+fn render_ask_form(ask_form: &super::commands::AskFormCard) -> Result<Card, String> {
+    use crate::agent_graph::ask_form::FormQuestion;
+
+    let mut builder = Card::builder().header(ask_form.definition.title.clone());
+    if let Some(description) = &ask_form.definition.description {
+        builder = builder.element(CardElement::markdown(description.clone()));
+    }
+
+    // A one-question choice is the common confirmation flow (for example
+    // “Implement this plan?”). Render it as direct action buttons so the
+    // answer is one tap and the card stays compact.
+    if ask_form.definition.questions.len() == 1 {
+        if let FormQuestion::SingleChoice {
+            options,
+            description,
+            ..
+        } = &ask_form.definition.questions[0]
+        {
+            if let Some(description) = description {
+                builder = builder.element(CardElement::markdown(description.clone()));
+            }
+            for option in options {
+                // The label (not the id) rides on the action — the answer text
+                // the agent reads should name the choice the user tapped.
+                builder = builder.element(action_button(
+                    &option.label,
+                    true,
+                    json!({
+                        "action": format!("ask_form_submit:{}", ask_form.form_id),
+                        "answer": option.label,
+                    }),
+                ));
+            }
+            builder = builder.element(action_button(
+                "Dismiss",
+                false,
+                json!({ "action": format!("ask_form_decline:{}", ask_form.form_id) }),
+            ));
+            return builder.build().map_err(|error| error.to_string());
+        }
+    }
+
+    // IM cards are plain input/select primitives — the semantic half of each
+    // question lives in the markdown block above the field: title,
+    // description, and for MultiChoice a numbered option list the user picks
+    // from by number ("1,3"). `ask_form_response_text` maps the numbers back
+    // to labels on submit.
+    let mut elements: Vec<CardElement> = Vec::new();
+    for question in &ask_form.definition.questions {
+        let element = match question {
+            FormQuestion::SingleChoice {
+                id,
+                title,
+                description,
+                options,
+            } => {
+                elements.extend(question_intro(title, description.as_deref(), None));
+                select(
+                    id,
+                    title,
+                    false,
+                    None,
+                    options
+                        .iter()
+                        .map(|option| AgentOption {
+                            id: option.id.clone(),
+                            name: option.label.clone(),
+                        })
+                        .collect(),
+                )
+            }
+            FormQuestion::MultiChoice {
+                id,
+                title,
+                description,
+                options,
+            } => {
+                let listing = options
+                    .iter()
+                    .enumerate()
+                    .map(|(index, option)| match &option.description {
+                        Some(extra) => format!("{}. **{}** — {}", index + 1, option.label, extra),
+                        None => format!("{}. **{}**", index + 1, option.label),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("  \n");
+                elements.extend(question_intro(title, description.as_deref(), Some(listing)));
+                text_input(id, "Pick numbers, e.g. 1,3", false)
+            }
+            FormQuestion::Text {
+                id,
+                title,
+                description,
+            } => {
+                elements.extend(question_intro(title, description.as_deref(), None));
+                text_input(id, "Your answer", false)
+            }
+            FormQuestion::Textarea {
+                id,
+                title,
+                description,
+            } => {
+                elements.extend(question_intro(title, description.as_deref(), None));
+                text_input(id, "Your answer", false)
+            }
+            FormQuestion::Number {
+                id,
+                title,
+                description,
+            } => {
+                elements.extend(question_intro(title, description.as_deref(), None));
+                text_input(id, "A number, e.g. 42", false)
+            }
+            FormQuestion::Rating {
+                id,
+                title,
+                description,
+            } => {
+                elements.extend(question_intro(title, description.as_deref(), None));
+                text_input(id, "A whole number", false)
+            }
+            FormQuestion::Boolean {
+                id,
+                title,
+                description,
+            } => {
+                elements.extend(question_intro(title, description.as_deref(), None));
+                select(
+                    id,
+                    title,
+                    false,
+                    None,
+                    vec![
+                        AgentOption {
+                            id: "true".into(),
+                            name: "Yes".into(),
+                        },
+                        AgentOption {
+                            id: "false".into(),
+                            name: "No".into(),
+                        },
+                    ],
+                )
+            }
+        };
+        elements.push(element);
+    }
+    let elements = elements;
+    builder = builder.element(form(
+        "ask_form",
+        elements,
+        &[
+            (
+                &format!("ask_form_submit:{}", ask_form.form_id),
+                "Submit",
+                true,
+            ),
+            (
+                &format!("ask_form_decline:{}", ask_form.form_id),
+                "Dismiss",
+                false,
+            ),
+        ],
+    ));
+    builder.build().map_err(|error| error.to_string())
+}
+
 fn action_button(label: &str, primary: bool, value: Value) -> CardElement {
     CardElement::raw(json!({
         "tag": "button",
@@ -518,6 +691,24 @@ fn text_input(name: &str, placeholder: &str, required: bool) -> CardElement {
         "required": required,
     }))
     .expect("input element")
+}
+
+/// Markdown preamble for an AskForm question: bold title, description, and
+/// (for MultiChoice) the numbered option list. Feishu inputs carry no label
+/// element, so the question's semantics live in this block.
+fn question_intro(
+    title: &str,
+    description: Option<&str>,
+    listing: Option<String>,
+) -> std::iter::Once<CardElement> {
+    let mut parts = vec![format!("**{title}**")];
+    if let Some(description) = description.map(str::trim).filter(|d| !d.is_empty()) {
+        parts.push(description.to_string());
+    }
+    if let Some(listing) = listing {
+        parts.push(listing);
+    }
+    std::iter::once(CardElement::markdown(parts.join("\n")))
 }
 
 fn render_notice(text: &str) -> Result<Card, String> {

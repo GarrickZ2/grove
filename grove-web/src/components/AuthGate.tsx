@@ -10,6 +10,7 @@ import {
   setRadioToken,
   computeHmac,
 } from "../api/client";
+import { handRemoteAuthKeyToShell } from "../utils/tauriShell";
 
 interface AuthGateProps {
   children: ReactNode;
@@ -132,6 +133,15 @@ export function AuthGate({ children }: AuthGateProps) {
 
     init();
   }, [verifySk]);
+
+  // Once authenticated, hand the (already-verified) secret key to the Tauri
+  // shell so its local proxy can sign banner click-through actions against
+  // the remote backend. No-op in the browser and in local (no-auth) mode.
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    const sk = getSecretKey();
+    if (sk) handRemoteAuthKeyToShell(sk);
+  }, [authState]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {

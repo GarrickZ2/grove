@@ -785,6 +785,19 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/hooks/{taskId}",
             delete(handlers::hooks::dismiss_hook),
         )
+        // Desktop banner action endpoints (OS notification click-through:
+        // open task / approve / deny). Deliberately INSIDE the authenticated
+        // router: a remote GUI reaches them through its signing proxy, and a
+        // LAN attacker cannot forge a permission response. The `grove hooks`
+        // report endpoint is the only intentionally unauthenticated intake.
+        .route(
+            "/gui/open-task",
+            post(handlers::hooks::handle_gui_open_task),
+        )
+        .route(
+            "/gui/resolve-permission",
+            post(handlers::hooks::handle_gui_resolve_permission),
+        )
         // Project Git API
         .route("/projects/{id}/git/status", get(handlers::git::get_status))
         .route(
@@ -1221,31 +1234,19 @@ pub fn create_router(
         // /auth/verify can't be probed cross-origin. Sec-Fetch-Site / Origin /
         // Referer are checked for non-safe methods; safe methods (GET/HEAD/OPTIONS,
         // including WebSocket upgrades and CORS preflight) pass through.
-        let base = Router::new()
+        Router::new()
             .nest("/api/v1", protected_api)
             .nest("/api/v1", plugin_asset_session)
             .nest("/api/v1", plugin_assets)
             .nest("/api/v1", auth_router)
+            // Same-machine attention-fact intake (grove hooks CLI). Sits
+            // outside the auth layer on purpose — see report_hook's docs.
+            .nest(
+                "/api/v1",
+                Router::new().route("/hooks/report", post(handlers::hooks::report_hook)),
+            )
             .route("/api/{*path}", any(api_not_found))
-            .layer(middleware::from_fn(csrf::csrf_middleware));
-
-        // GUI-only loopback endpoints: only registered in gui builds (server binds
-        // 127.0.0.1 there). Non-gui builds (web, mobile) simply don't expose these routes.
-        #[cfg(feature = "gui")]
-        let base = {
-            let gui_router = Router::new()
-                .route(
-                    "/gui/open-task",
-                    post(handlers::hooks::handle_gui_open_task),
-                )
-                .route(
-                    "/gui/resolve-permission",
-                    post(handlers::hooks::handle_gui_resolve_permission),
-                );
-            base.nest("/api/v1", gui_router)
-        };
-
-        base
+            .layer(middleware::from_fn(csrf::csrf_middleware))
     };
 
     // Priority: external static_dir > embedded assets
@@ -1267,13 +1268,77 @@ pub fn create_router(
     }
 }
 
+/// Optional HMAC secret of the REMOTE backend, handed over by the GUI shell
+/// (`set_remote_auth_key` Tauri command after the frontend authenticates).
+/// When present, the proxy signs forwarded `/api/v1/gui/*` requests: banner
+/// click-throughs originate from the OS notifier process, which cannot sign.
+/// The frontend keeps signing its own requests; only these GUI-action paths
+/// get their (stale or absent) signature headers replaced with fresh ones.
+static PROXY_REMOTE_AUTH_KEY: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Only called from the GUI shell today; non-gui builds compile the signing
+/// machinery for `grove web --remote-url` but have no caller for this.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub fn set_proxy_remote_auth_key(key: String) {
+    if let Ok(mut slot) = PROXY_REMOTE_AUTH_KEY.lock() {
+        *slot = Some(key);
+    }
+}
+
+fn proxy_has_remote_auth_key() -> bool {
+    PROXY_REMOTE_AUTH_KEY
+        .lock()
+        .map(|slot| slot.is_some())
+        .unwrap_or(false)
+}
+
+/// Attach a fresh HMAC signature for the remote backend to a proxied
+/// `/api/v1/gui/*` request, mirroring the wire format in `auth.rs`
+/// (`{ts}|{nonce}|{METHOD}|{canonical_path}` sent via `x-*` headers).
+fn sign_proxy_gui_action(
+    mut builder: reqwest::RequestBuilder,
+    method: &str,
+    path: &str,
+    query: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let key = match PROXY_REMOTE_AUTH_KEY.lock() {
+        Ok(slot) => match slot.as_ref() {
+            Some(k) => k.clone(),
+            None => return builder,
+        },
+        Err(_) => return builder,
+    };
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
+
+    let ts = chrono::Utc::now().timestamp().to_string();
+    let mut nonce_bytes = [0u8; 16];
+    let nonce = if getrandom::getrandom(&mut nonce_bytes).is_ok() {
+        hex::encode(nonce_bytes)
+    } else {
+        return builder;
+    };
+    let canonical = auth::canonical_path(path, query, &[]);
+    let message = format!("{}|{}|{}|{}", ts, nonce, method, canonical);
+    let mut mac = match HmacSha256::new_from_slice(key.as_bytes()) {
+        Ok(mac) => mac,
+        Err(_) => return builder,
+    };
+    mac.update(message.as_bytes());
+    let sig = hex::encode(mac.finalize().into_bytes());
+    builder = builder.header("x-timestamp", ts);
+    builder = builder.header("x-nonce", nonce);
+    builder = builder.header("x-signature", sig);
+    builder
+}
+
 /// Create a router that proxies all WebSocket and HTTP requests to the remote server.
 pub fn create_proxy_router(remote: String) -> Router {
     use axum::routing::any;
     let remote_arc = Arc::new(remote);
 
-    Router::new()
-        // Map all known WebSocket routes
+    Router::new() // Map all known WebSocket routes
         .route("/ws", any(ws_proxy_handler))
         .route("/api/v1/terminal", any(ws_proxy_handler))
         .route("/api/v1/extension/ws", any(ws_proxy_handler))
@@ -1338,6 +1403,13 @@ async fn http_proxy_handler(
 
     let method = req.method().clone();
     let headers = req.headers().clone();
+    // Banner click-throughs (`/api/v1/gui/*`, POSTed by the OS notifier
+    // process) carry no usable signature — sign them here with the remote
+    // backend's key when the shell provided one.
+    let needs_remote_signature =
+        proxy_has_remote_auth_key() && req.uri().path().starts_with("/api/v1/gui/");
+    let sig_path = req.uri().path().to_string();
+    let sig_query = req.uri().query().map(str::to_string);
     let body = req.into_body();
 
     let client = reqwest::Client::builder()
@@ -1361,7 +1433,12 @@ async fn http_proxy_handler(
     // Copy original headers (except Host, Sec-WebSocket-*, Origin, Referer, and Sec-Fetch-Site which might interfere)
     for (key, value) in headers.iter() {
         let key_str = key.as_str();
-        if !key_str.eq_ignore_ascii_case("host")
+        let is_sig_header = needs_remote_signature
+            && (key_str.eq_ignore_ascii_case("x-timestamp")
+                || key_str.eq_ignore_ascii_case("x-nonce")
+                || key_str.eq_ignore_ascii_case("x-signature"));
+        if !is_sig_header
+            && !key_str.eq_ignore_ascii_case("host")
             && !key_str.starts_with("sec-websocket-")
             && !key_str.eq_ignore_ascii_case("origin")
             && !key_str.eq_ignore_ascii_case("referer")
@@ -1384,6 +1461,10 @@ async fn http_proxy_handler(
             builder = builder.header("referer", format!("{}/", remote_origin));
             builder = builder.header("sec-fetch-site", "same-origin");
         }
+    }
+
+    if needs_remote_signature {
+        builder = sign_proxy_gui_action(builder, method.as_str(), &sig_path, sig_query.as_deref());
     }
 
     match builder.send().await {
@@ -1717,6 +1798,12 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
     // subscribes; safe to start unconditionally.
     crate::plugins::radio_bridge::spawn();
 
+    // Render OS notifications for the human at this machine (TUI/web/local
+    // GUI). No-op under `grove mobile`, where the render flag is off before
+    // this runs — attached frontends render instead (capability bit on
+    // GET /api/v1/version).
+    crate::notification_renderer::spawn();
+
     // Recover any installed_agents row stuck in `installing` — happens when
     // grove was killed mid-download. Marking them failed lets the user
     // retry from Marketplace instead of staring at a perpetual spinner.
@@ -1815,6 +1902,15 @@ pub async fn start_server(
 
     let is_mobile = auth.secret_key.is_some();
 
+    // In HMAC mode the hooks-report endpoint authenticates same-machine CLIs
+    // with a per-boot token instead of the mobile secret — mint and publish
+    // it here so `grove hooks` can find it on disk.
+    if is_mobile {
+        if let Err(e) = handlers::hooks::provision_local_report_token() {
+            eprintln!("[startup] failed to write local report token: {}", e);
+        }
+    }
+
     // ── TLS branch ───────────────────────────────────────────────────────
     if is_mobile && !matches!(tls_mode, crate::cli::web::TlsMode::Off) {
         // Rustls requires an explicit crypto provider
@@ -1868,10 +1964,17 @@ pub async fn start_server(
         println!("  Scan to connect:");
         print_qr_code(&qr_url);
         println!();
+        println!("  Connect with Grove GUI:");
+        println!("    grove gui --remote-url {}", base_url);
+        println!("    (enter the Secret Key above when prompted)");
+        println!();
 
         // Set env vars so handlers (e.g. connect_info) can discover port & protocol
         std::env::set_var("GROVE_PORT", port.to_string());
         std::env::set_var("GROVE_PROTOCOL", "https");
+        // Same-machine CLIs (grove hooks reporter) must find this server even
+        // though it isn't on the default port.
+        crate::hooks::record_server_base_url(format!("https://127.0.0.1:{}", port));
 
         axum_server::bind_rustls(bind_addr, tls_config)
             .serve(app.into_make_service())
@@ -1888,6 +1991,9 @@ pub async fn start_server(
     // Set env vars so handlers (e.g. connect_info) can discover port & protocol
     std::env::set_var("GROVE_PORT", actual_port.to_string());
     std::env::set_var("GROVE_PROTOCOL", "http");
+    // Same-machine CLIs (grove hooks reporter) must find this server even
+    // when the port fell back from the default 3001.
+    crate::hooks::record_server_base_url(format!("http://127.0.0.1:{}", actual_port));
 
     if is_mobile {
         // Mobile mode: show LAN URL + HMAC info + QR code
@@ -1912,6 +2018,10 @@ pub async fn start_server(
         let qr_url = format!("{}/#sk={}", base_url, sk);
         println!("  Scan to connect:");
         print_qr_code(&qr_url);
+        println!();
+        println!("  Connect with Grove GUI:");
+        println!("    grove gui --remote-url {}", base_url);
+        println!("    (enter the Secret Key above when prompted)");
         println!();
     } else if has_ui {
         println!("Grove Web UI: http://localhost:{}", actual_port);

@@ -12,7 +12,11 @@ export interface RadioEventCallbacks {
     taskId: string,
     status: "idle" | "busy" | "disconnected",
   ) => void;
-  onHookAdded?: (projectId: string, taskId: string) => void;
+  onHookAdded?: (
+    projectId: string,
+    taskId: string,
+    payload?: Extract<RadioEvent, { type: "hook_added" }>,
+  ) => void;
   /** Task/group membership changed. Consumers should refresh both task data
    *  and task-group slots because Blitz joins the two client-side. */
   onGroupChanged?: () => void;
@@ -94,7 +98,8 @@ function dispatch(event: RadioEvent) {
       for (const s of subscribers) s.current.onTaskStatus?.(event.project_id, event.task_id, event.agent_status);
       break;
     case "hook_added":
-      for (const s of subscribers) s.current.onHookAdded?.(event.project_id, event.task_id);
+      for (const s of subscribers)
+        s.current.onHookAdded?.(event.project_id, event.task_id, event);
       break;
     case "group_changed":
       for (const s of subscribers) s.current.onGroupChanged?.();

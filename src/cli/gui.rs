@@ -12,6 +12,66 @@ const DAEMON_ENV: &str = "GROVE_GUI_DAEMON";
 pub static TAURI_APP: once_cell::sync::OnceCell<tauri::AppHandle> =
     once_cell::sync::OnceCell::new();
 
+/// Whether this GUI window attached to a REMOTE backend (`--remote-url`).
+/// Surfaces the "who renders notifications" decision to the frontend engine:
+/// a remote backend's OS notifications pop on the server machine where the
+/// user isn't, so this window renders them locally instead.
+static REMOTE_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn is_remote_mode() -> bool {
+    REMOTE_MODE.load(Ordering::Relaxed)
+}
+
+/// Tauri command: does this window talk to a remote backend?
+#[tauri::command]
+pub fn is_remote_mode_command() -> bool {
+    is_remote_mode()
+}
+
+/// Tauri command: render a desktop banner through the same machinery the
+/// in-process renderer uses. Pure capability primitive — the frontend
+/// notification engine owns filtering, composition, and policy. Banner
+/// click-through resolves against `get_active_base_url()`, which points at
+/// the local proxy in remote mode, so Approve/Deny reach the remote backend.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn notify_banner(
+    title: String,
+    body: String,
+    project_id: String,
+    task_id: String,
+    chat_id: Option<String>,
+    is_permission: bool,
+    approve_opt: Option<String>,
+    deny_opt: Option<String>,
+) {
+    crate::hooks::send_banner(
+        &title,
+        &body,
+        &project_id,
+        &task_id,
+        chat_id.as_deref(),
+        is_permission,
+        approve_opt.as_deref(),
+        deny_opt.as_deref(),
+    );
+}
+
+/// Tauri command: play a system sound by name (macOS sound library).
+#[tauri::command]
+pub fn play_sound(sound: String) {
+    crate::hooks::play_sound(&sound);
+}
+
+/// Tauri command: hand the remote backend's HMAC secret to the local proxy so
+/// it can sign forwarded `/api/v1/gui/*` banner actions (Approve/Deny clicks
+/// from the native banner bypass the frontend, which is where signing usually
+/// lives). The key never leaves this process.
+#[tauri::command]
+pub fn set_remote_auth_key(secret_key: String) {
+    api::set_proxy_remote_auth_key(secret_key);
+}
+
 /// Open an http(s) URL in the OS default browser.
 ///
 /// Tauri 2's `plugin:shell|open` requires a scope validator that is
@@ -412,6 +472,7 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
 
     let is_remote = remote_url.is_some();
     let remote_url_clone = remote_url.clone();
+    REMOTE_MODE.store(is_remote, Ordering::Relaxed);
 
     // Check for embedded assets
     if !api::has_embedded_assets() {
@@ -509,6 +570,10 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             resolve_external_drag_path,
             toggle_devtools,
             toggle_main_window_visibility,
+            is_remote_mode_command,
+            notify_banner,
+            play_sound,
+            set_remote_auth_key,
             crate::tray::tray_resolve_permission,
             crate::tray::tray_open_main,
             crate::tray::tray_open_settings,

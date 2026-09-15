@@ -25,6 +25,7 @@ mod grove;
 mod hooks;
 mod memory;
 mod model;
+mod notification_renderer;
 #[cfg(not(windows))]
 mod notification_state;
 mod operations;
@@ -251,6 +252,11 @@ fn run_tui() -> io::Result<()> {
 
     // 创建应用
     let mut app = App::new();
+
+    // Render OS notifications for the human at this machine (attention-fact
+    // subscriber). The TUI has no ambient tokio runtime — the spawn handles
+    // that internally.
+    crate::notification_renderer::spawn();
 
     // 运行主循环
     let result = run(&mut terminal, &mut app);

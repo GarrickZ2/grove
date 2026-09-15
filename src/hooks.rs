@@ -50,31 +50,7 @@ pub struct HookNotificationRecord {
     pub entry: HookEntry,
 }
 
-impl HooksFile {
-    /// 更新 task 的通知（只保留更高级别）
-    pub fn update(
-        &mut self,
-        task_id: &str,
-        level: NotificationLevel,
-        message: Option<String>,
-        chat_id: Option<String>,
-    ) {
-        let current_level = self.tasks.get(task_id).map(|e| e.level);
-        if current_level.is_none() || level > current_level.unwrap() {
-            self.tasks.insert(
-                task_id.to_string(),
-                HookEntry {
-                    level,
-                    timestamp: Utc::now(),
-                    message,
-                    chat_id,
-                },
-            );
-        }
-    }
-}
-
-fn level_to_str(level: NotificationLevel) -> &'static str {
+pub fn level_to_str(level: NotificationLevel) -> &'static str {
     match level {
         NotificationLevel::Notice => "notice",
         NotificationLevel::Warn => "warn",
@@ -82,13 +58,71 @@ fn level_to_str(level: NotificationLevel) -> &'static str {
     }
 }
 
-fn level_from_str(value: &str) -> Option<NotificationLevel> {
+pub fn level_from_str(value: &str) -> Option<NotificationLevel> {
     match value {
         "notice" => Some(NotificationLevel::Notice),
         "warn" => Some(NotificationLevel::Warn),
         "critical" => Some(NotificationLevel::Critical),
         _ => None,
     }
+}
+
+/// What produced a hook notification. Rides on the radio fact (not persisted);
+/// surfaces key their presentation policy off it: config switch, banner title,
+/// sound choice, permission buttons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookKind {
+    TurnComplete,
+    PermissionRequired,
+    ElicitationRequired,
+    /// Fired by `grove hooks` CLI (agent shell hooks). The CLI renders its own
+    /// machine itself; the server-side fact only feeds badges and remote
+    /// surfaces.
+    External,
+}
+
+impl HookKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HookKind::TurnComplete => "turn_complete",
+            HookKind::PermissionRequired => "permission_required",
+            HookKind::ElicitationRequired => "elicitation_required",
+            HookKind::External => "external",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<HookKind> {
+        match value {
+            "turn_complete" => Some(HookKind::TurnComplete),
+            "permission_required" => Some(HookKind::PermissionRequired),
+            "elicitation_required" => Some(HookKind::ElicitationRequired),
+            "external" => Some(HookKind::External),
+            _ => None,
+        }
+    }
+
+    /// Default attention level when the caller doesn't override it — mirrors
+    /// the historical mapping in the ACP notify path.
+    pub fn default_level(&self) -> NotificationLevel {
+        match self {
+            HookKind::PermissionRequired => NotificationLevel::Warn,
+            _ => NotificationLevel::Notice,
+        }
+    }
+}
+
+/// One attention fact to persist and broadcast. `permission` is only set for
+/// [`HookKind::PermissionRequired`].
+#[derive(Debug, Clone)]
+pub struct HookFact {
+    pub kind: HookKind,
+    /// Semantic event label, e.g. "Task Complete" / "Permission Required".
+    /// Renderers may fall back to a kind-derived label when None.
+    pub label: Option<String>,
+    pub level: Option<NotificationLevel>,
+    pub message: Option<String>,
+    pub chat_id: Option<String>,
+    pub permission: Option<crate::radio::PermissionInfo>,
 }
 
 /// 加载项目的 hook 通知
@@ -224,42 +258,86 @@ pub fn remove_all_hooks() {
     let _ = conn.execute("DELETE FROM hook_notifications", []);
 }
 
-/// 写入一条新通知并通过 radio 广播 `HookAdded`。所有 hook 写入路径
-/// （ACP notify、`grove hooks` CLI、未来的 MCP server）都应走这里，
-/// 确保前端能够纯 push 刷新，无需轮询。
+/// Set on headless serving surfaces (`grove mobile`): the process must not
+/// play sounds or spawn OS banners — no human sits at that machine's desktop.
+/// Per-surface renderers (in-process renderer, CLI, frontend engine) check
+/// this instead of the backend sprinkling mode checks around.
+static OS_RENDER_DISABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_os_render_disabled() {
+    OS_RENDER_DISABLED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn os_render_disabled() -> bool {
+    OS_RENDER_DISABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Persist one hook notification and broadcast the enriched `HookAdded` fact.
+/// All hook write paths (ACP notify, `grove hooks` CLI, hooks report API)
+/// funnel through here — the radio publish is what lets every surface render
+/// its own notification purely via push, no polling.
 ///
-/// `save_hooks` 失败不会向上传递（调用方都把 hook 写入当成 fire-and-forget），
-/// 但会打到 stderr 让运维 / 用户能看到 —— 静默吞 IO 错误会让通知丢失却没线索。
-pub fn update_hook(
-    project_key: &str,
-    task_id: &str,
-    level: NotificationLevel,
-    message: Option<String>,
-    chat_id: Option<String>,
-) {
-    let mut hooks = load_hooks(project_key);
-    hooks.update(task_id, level, message.clone(), chat_id);
-    match save_hooks(project_key, &hooks) {
-        Ok(()) => {
-            let level_str = match level {
-                NotificationLevel::Notice => "notice",
-                NotificationLevel::Warn => "warn",
-                NotificationLevel::Critical => "critical",
-            };
-            crate::radio::publish(crate::radio::RadioEvent::HookAdded {
-                project_id: project_key.to_string(),
-                task_id: task_id.to_string(),
-                level: Some(level_str.to_string()),
-                message,
-            });
-        }
-        Err(e) => {
-            eprintln!(
-                "hooks: failed to save hook for {}/{}: {}",
-                project_key, task_id, e
-            );
-        }
+/// The write is a single atomic UPSERT guarded by level rank (a higher level
+/// overwrites, equal/lower leaves the existing record untouched — same
+/// keep-highest semantics `HooksFile::update` had). No load→modify→rewrite
+/// round-trip, so concurrent writes to different tasks of one project can't
+/// clobber each other. Errors propagate: the report API turns them into a 5xx
+/// so the CLI falls back to its local write instead of losing the fact.
+pub fn update_hook(project_key: &str, task_id: &str, fact: HookFact) -> Result<()> {
+    let level = fact.level.unwrap_or_else(|| fact.kind.default_level());
+    let timestamp = Utc::now().to_rfc3339();
+    {
+        let conn = database::connection();
+        conn.execute(
+            "INSERT INTO hook_notifications (project_key, task_id, level, timestamp, message, chat_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(project_key, task_id) DO UPDATE SET
+                level = excluded.level,
+                timestamp = excluded.timestamp,
+                message = excluded.message,
+                chat_id = excluded.chat_id
+             WHERE (CASE hook_notifications.level
+                        WHEN 'notice' THEN 0
+                        WHEN 'warn' THEN 1
+                        ELSE 2 END)
+                 < (CASE excluded.level
+                        WHEN 'notice' THEN 0
+                        WHEN 'warn' THEN 1
+                        ELSE 2 END)",
+            params![
+                project_key,
+                task_id,
+                level_to_str(level),
+                timestamp,
+                fact.message.clone(),
+                fact.chat_id.clone()
+            ],
+        )?;
     }
+    // Display names: surfaces shouldn't need a project/task fetch to compose
+    // a banner title. Best-effort — None is fine.
+    let project_name = crate::storage::workspace::load_project_by_hash(project_key)
+        .ok()
+        .flatten()
+        .map(|p| p.name);
+    let task_name = tasks::get_task(project_key, task_id)
+        .ok()
+        .flatten()
+        .map(|t| t.name);
+    crate::radio::publish(crate::radio::RadioEvent::HookAdded {
+        project_id: project_key.to_string(),
+        task_id: task_id.to_string(),
+        level: Some(level_to_str(level).to_string()),
+        message: fact.message,
+        kind: Some(fact.kind.as_str().to_string()),
+        label: fact.label,
+        chat_id: fact.chat_id,
+        permission: fact.permission,
+        project_name,
+        task_name,
+    });
+    Ok(())
 }
 
 /// 加载 hooks 并自动清理不存在的 task
@@ -309,16 +387,32 @@ pub static ACTIVE_BASE_URL: once_cell::sync::OnceCell<String> = once_cell::sync:
 
 #[cfg(feature = "gui")]
 pub fn set_active_base_url(url: String) {
-    let _ = ACTIVE_BASE_URL.set(url.clone());
+    record_server_base_url(url);
+}
+
+/// Record the running server's loopback base URL so same-machine CLIs (the
+/// `grove hooks` reporter) can find it even when the bound port fell back
+/// from the default. Process-local OnceCell plus the cross-process endpoint
+/// file; last writer wins per boot, which is fine — one grove server owns a
+/// machine's task sessions at a time.
+pub fn record_server_base_url(base_url: String) {
+    let _ = ACTIVE_BASE_URL.set(base_url.clone());
     let grove_dir = crate::storage::grove_dir();
     if std::fs::create_dir_all(&grove_dir).is_ok() {
-        let endpoint_file = grove_dir.join("gui_endpoint");
-        let _ = std::fs::write(&endpoint_file, url);
+        let _ = std::fs::write(grove_dir.join("gui_endpoint"), base_url);
     }
 }
 
 #[cfg(target_os = "macos")]
 pub fn get_active_base_url() -> String {
+    get_server_base_url()
+}
+
+/// Portable (all-platform) resolution of the running Grove server's base URL:
+/// in-process override first, then the endpoint file written by GUI mode,
+/// then the default loopback port. Used by the `grove hooks` CLI to hand its
+/// attention fact to the live server process.
+pub fn get_server_base_url() -> String {
     if let Some(url) = ACTIVE_BASE_URL.get() {
         return url.clone();
     }
@@ -854,11 +948,14 @@ mod tests {
         std::env::set_var("HOME", &temp_home);
 
         let mut hooks = HooksFile::default();
-        hooks.update(
-            "test-task",
-            NotificationLevel::Warn,
-            Some("hello".into()),
-            None,
+        hooks.tasks.insert(
+            "test-task".to_string(),
+            HookEntry {
+                level: NotificationLevel::Warn,
+                timestamp: Utc::now(),
+                message: Some("hello".into()),
+                chat_id: None,
+            },
         );
 
         save_hooks("project-a", &hooks).unwrap();
@@ -872,7 +969,15 @@ mod tests {
         assert!(load_hooks("project-a").tasks.is_empty());
 
         let mut other_hooks = HooksFile::default();
-        other_hooks.update("other-task", NotificationLevel::Notice, None, None);
+        other_hooks.tasks.insert(
+            "other-task".to_string(),
+            HookEntry {
+                level: NotificationLevel::Notice,
+                timestamp: Utc::now(),
+                message: None,
+                chat_id: None,
+            },
+        );
         save_hooks("project-a", &hooks).unwrap();
         save_hooks("project-b", &other_hooks).unwrap();
 
@@ -883,26 +988,68 @@ mod tests {
         let _ = std::fs::remove_dir_all(temp_home);
     }
 
+    /// The UPSERT in `update_hook` must reproduce the old keep-highest
+    /// semantics: a higher level overwrites, equal/lower leaves the existing
+    /// record (message included) untouched.
     #[test]
-    fn test_update_keeps_existing_higher_level() {
-        let mut hooks = HooksFile::default();
-        hooks.update(
-            "test-task",
-            NotificationLevel::Critical,
-            Some("critical".into()),
-            None,
-        );
-        hooks.update(
-            "test-task",
-            NotificationLevel::Notice,
-            Some("notice".into()),
-            None,
-        );
+    fn test_update_hook_keeps_existing_higher_level() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let original_home = std::env::var("HOME").unwrap_or_default();
+        let _home_guard = HomeGuard(original_home);
+        let temp_home = std::env::temp_dir().join(format!(
+            "grove-hooks-upsert-test-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::env::set_var("HOME", &temp_home);
 
-        assert_eq!(hooks.tasks["test-task"].level, NotificationLevel::Critical);
+        let write = |level: NotificationLevel, message: &str| {
+            update_hook(
+                "project-upsert",
+                "test-task",
+                HookFact {
+                    kind: HookKind::TurnComplete,
+                    label: None,
+                    level: Some(level),
+                    message: Some(message.to_string()),
+                    chat_id: None,
+                    permission: None,
+                },
+            )
+            .unwrap();
+        };
+
+        write(NotificationLevel::Critical, "critical");
+        write(NotificationLevel::Notice, "notice");
+
+        let loaded = load_hooks("project-upsert");
+        assert_eq!(loaded.tasks["test-task"].level, NotificationLevel::Critical);
         assert_eq!(
-            hooks.tasks["test-task"].message.as_deref(),
+            loaded.tasks["test-task"].message.as_deref(),
             Some("critical")
         );
+
+        // A HIGHER level still can't happen after critical, but an equal-level
+        // write on a fresh task must insert normally.
+        write(NotificationLevel::Warn, "warn-on-other");
+        update_hook(
+            "project-upsert",
+            "other-task",
+            HookFact {
+                kind: HookKind::TurnComplete,
+                label: None,
+                level: Some(NotificationLevel::Warn),
+                message: Some("fresh".to_string()),
+                chat_id: None,
+                permission: None,
+            },
+        )
+        .unwrap();
+        let loaded = load_hooks("project-upsert");
+        assert_eq!(loaded.tasks["other-task"].level, NotificationLevel::Warn);
+        assert_eq!(loaded.tasks["other-task"].message.as_deref(), Some("fresh"));
+
+        remove_all_hooks();
+        let _ = std::fs::remove_dir_all(temp_home);
     }
 }

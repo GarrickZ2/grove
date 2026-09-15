@@ -6,6 +6,13 @@ use super::commands::{self, CardSpec, CommandOutcome, Parsed};
 
 static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+fn ask_form_error_result(form_id: &str, error: String) -> ActionResult {
+    match super::grove::pending_ask_form_card(form_id) {
+        Some(card) => ActionResult::warning_card(error, card),
+        None => ActionResult::notice(error, NoticeLevel::Error),
+    }
+}
+
 pub fn start() {
     if STARTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return;
@@ -40,6 +47,7 @@ pub fn shutdown(id: &str) {
 /// submitted twice.
 pub async fn handle_action(
     connection_id: &str,
+    adapter: AdapterRef,
     action: InboundAction,
 ) -> Result<ActionResult, String> {
     // Reload the record: routing may have changed since this adapter started.
@@ -94,6 +102,45 @@ pub async fn handle_action(
                 "Request declined. The agent is continuing.",
                 NoticeLevel::Info,
             ))
+        }
+        Some(name) if name.starts_with("ask_form_submit:") => {
+            let form_id = name.trim_start_matches("ask_form_submit:");
+            let Some(source_message_id) = action.source_message_id.as_deref() else {
+                return Ok(ask_form_error_result(
+                    form_id,
+                    "This form response has no reply target.".into(),
+                ));
+            };
+            // Validation failures (e.g. a non-numeric Number answer) bounce
+            // back to the user as a card error — the form stays fillable.
+            let text = match super::grove::ask_form_response_text(form_id, &action.fields) {
+                Ok(text) => text,
+                Err(error) => return Ok(ask_form_error_result(form_id, error)),
+            };
+            let inbound = InboundMessage {
+                external_message_id: source_message_id.to_owned(),
+                conversation_id: action.conversation_id.clone(),
+                sender_id: action.sender_id.clone(),
+                text: text.clone(),
+            };
+            match super::grove::deliver_prompt(current, adapter.clone(), inbound, text).await {
+                Ok(()) => {
+                    super::grove::complete_ask_form(form_id);
+                    Ok(ActionResult::notice(
+                        "Response sent. The agent is continuing.",
+                        NoticeLevel::Success,
+                    ))
+                }
+                Err(error) => {
+                    super::grove::reopen_ask_form(form_id);
+                    Ok(ask_form_error_result(form_id, error))
+                }
+            }
+        }
+        Some(name) if name.starts_with("ask_form_decline:") => {
+            let form_id = name.trim_start_matches("ask_form_decline:");
+            super::grove::dismiss_ask_form(form_id);
+            Ok(ActionResult::notice("Form dismissed.", NoticeLevel::Info))
         }
         Some("new_session_btn") => {
             let agent = field("agent");
@@ -348,8 +395,7 @@ async fn handle_parsed_message(
         }
         Parsed::Prompt => {
             let text = inbound.text.clone();
-            super::grove::deliver_prompt(connect, adapter, inbound, text).await;
-            Ok(())
+            super::grove::deliver_prompt(connect, adapter, inbound, text).await
         }
     }
 }
@@ -472,8 +518,7 @@ async fn run_command(
                 sender_id: String::new(),
                 text: text.clone(),
             };
-            super::grove::deliver_prompt(connect.clone(), adapter.clone(), inbound, text).await;
-            Ok(())
+            super::grove::deliver_prompt(connect.clone(), adapter.clone(), inbound, text).await
         }
     }
 }

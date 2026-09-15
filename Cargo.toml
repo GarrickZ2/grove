@@ -186,6 +186,12 @@ install-updater = false
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.5" }
 
+# Keep debug builds lean: full debuginfo pushes __eh_frame past the 16MB
+# compact-unwind limit on macOS arm64 (linker warning + slower unwinding).
+# Line tables keep panic backtraces symbolicated.
+[profile.dev]
+debug = "line-tables-only"
+
 # Profile used by `make flamegraph`: release optimizations + line-number
 # debuginfo so samply can symbolicate frames. Doesn't affect normal `cargo
 # build --release` (release ships from dist-workspace anyway).

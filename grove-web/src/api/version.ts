@@ -2,8 +2,12 @@
 
 import { apiClient } from './client';
 
-interface VersionResponse {
+export interface VersionResponse {
   version: string;
+  /** Whether the backend renders OS notifications for a human at its own
+   *  machine. `false` on headless serving (grove mobile) — the frontend
+   *  notification engine should render client-side instead. */
+  renders_os_notifications?: boolean;
 }
 
 export interface UpdateCheckResponse {

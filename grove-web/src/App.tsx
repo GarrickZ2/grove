@@ -869,9 +869,20 @@ function AppContent() {
         }
       })
       .catch((err) => console.warn("[tray:navigate] listen failed:", err));
+
+    // 3. Browser-surface entries (web notification clicks) dispatch the same
+    //    payload as a window CustomEvent — no Tauri bridge required. Tauri
+    //    windows ignore it; they use the tray:navigate channel above.
+    const onWindowNavigate = (e: Event) => {
+      const detail = (e as CustomEvent<NavigatePayload>).detail;
+      if (detail) applyNavigate(detail);
+    };
+    window.addEventListener("grove:navigate", onWindowNavigate);
+
     return () => {
       cancelled = true;
       if (unlistenFn) unlistenFn();
+      window.removeEventListener("grove:navigate", onWindowNavigate);
     };
   }, []);
 

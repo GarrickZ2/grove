@@ -2,7 +2,9 @@ import { createContext, useContext, useState, useCallback } from "react";
 import type { ReactNode } from "react";
 import { listAllHooks, dismissHook, clearAllHooks } from "../api/hooks";
 import type { HookEntryResponse } from "../api/hooks";
+import type { RadioEvent } from "../api/walkieTalkie";
 import { useRadioEvents } from "../hooks/useRadioEvents";
+import { renderHookNotification } from "../notifications/desktopNotifier";
 
 interface NotificationContextType {
   notifications: HookEntryResponse[];
@@ -57,16 +59,28 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   // Pure-push refresh:
   //   - `hook_added` fires whenever any code path writes a notification
-  //     (ACP completion, `grove hooks` CLI, future MCP server, …).
+  //     (ACP completion, `grove hooks` CLI, hooks report API, …).
   //   - `onConnected` fires on initial WS open AND on every reconnect — also
   //     serves as the initial-load trigger so we don't double-fetch on mount.
   //     If the WS never opens (e.g. server down), the badge stays empty,
   //     which is the correct fail-closed behaviour.
   // No polling: the event channel is the single source of truth.
+  //
+  // The same fact also feeds the frontend notification engine — banner +
+  // sound on THIS surface when the backend isn't already rendering for a
+  // human on its own machine (see desktopNotifier.ts).
   useRadioEvents({
-    onHookAdded: useCallback(() => {
-      void fetchNotifications();
-    }, [fetchNotifications]),
+    onHookAdded: useCallback(
+      (
+        _projectId: string,
+        _taskId: string,
+        payload?: Extract<RadioEvent, { type: "hook_added" }>,
+      ) => {
+        void fetchNotifications();
+        if (payload) renderHookNotification(payload);
+      },
+      [fetchNotifications],
+    ),
     onConnected: useCallback(() => {
       void fetchNotifications();
     }, [fetchNotifications]),

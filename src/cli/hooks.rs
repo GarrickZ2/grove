@@ -158,5 +158,64 @@ pub fn execute(level: HookLevel) {
         );
     }
 
-    hooks::update_hook(&project_key, &task_id, level.level(), message, chat_id);
+    // Hand the attention fact to the live Grove server first: this process is
+    // short-lived, so a radio publish here would die unheard — the server's
+    // publish is what reaches attached frontends. Fall back to writing the
+    // record ourselves when no server answers (badge still lands on disk).
+    let fact = hooks::HookFact {
+        kind: hooks::HookKind::External,
+        label: Some(level.level_name().to_string()),
+        level: Some(level.level()),
+        message,
+        chat_id: chat_id.clone(),
+        permission: None,
+    };
+    if !report_hook_to_server(&project_key, &task_id, &fact) {
+        if let Err(e) = hooks::update_hook(&project_key, &task_id, fact) {
+            eprintln!("grove hooks: failed to persist notification locally: {e}");
+        }
+    }
+}
+
+/// Best-effort POST of a hook fact to the running Grove server. Returns true
+/// only when the server acknowledged the report.
+fn report_hook_to_server(project_key: &str, task_id: &str, fact: &hooks::HookFact) -> bool {
+    let base = hooks::get_server_base_url();
+    let url = format!("{}/api/v1/hooks/report", base.trim_end_matches('/'));
+    let token = std::fs::read_to_string(crate::storage::grove_dir().join("local_report_token"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let body = serde_json::json!({
+        "project_id": project_key,
+        "task_id": task_id,
+        "level": hooks::level_to_str(fact.level.unwrap_or(hooks::NotificationLevel::Notice)),
+        "message": fact.message,
+        "chat_id": fact.chat_id,
+    });
+
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(_) => return false,
+    };
+    runtime.block_on(async {
+        // TLS-mode servers use a self-signed cert; the report is loopback and
+        // authenticated by the per-boot token, so cert validation is waived.
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(1500))
+            .danger_accept_invalid_certs(true)
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        let mut request = client.post(&url).json(&body);
+        if let Some(t) = token.as_deref() {
+            request = request.header("x-grove-local-token", t);
+        }
+        matches!(request.send().await, Ok(resp) if resp.status().is_success())
+    })
 }

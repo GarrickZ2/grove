@@ -11,6 +11,18 @@ use tokio::sync::{broadcast, mpsc};
 
 /// Grove-owned events shared by Radio, desktop surfaces, plugins, and other
 /// in-process consumers. ACP remains behind Grove's conversion boundary.
+///
+/// # Event stream contract
+///
+/// Every variant belongs to exactly one of two streams — keep new events
+/// inside one of them so consumers stay reason-able:
+///
+/// - **UI state stream** (`Turn`, `ChatStatus`, `TaskBusy`, focus/terminal
+///   events): drives what a surface renders right now. Not a notification
+///   trigger.
+/// - **Attention stream** (`HookAdded`): the human-attention inbox. The ONLY
+///   trigger for transient notifications (banners, sounds). Surfaces decide
+///   their own presentation — the backend publishes facts, never renders.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RadioEvent {
@@ -49,6 +61,23 @@ pub enum RadioEvent {
         level: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        /// What produced the hook — surfaces key their presentation policy
+        /// (banner text, sound, permission buttons, config switch) off this.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        /// Semantic event label, e.g. "Task Complete" / "Permission Required".
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chat_id: Option<String>,
+        /// Full permission payload for `kind == "permission_required"` so a
+        /// surface can render Approve/Deny without a follow-up fetch.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        permission: Option<PermissionInfo>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task_name: Option<String>,
     },
     FocusTarget {
         project_id: String,
@@ -146,6 +175,12 @@ pub enum TurnEvent {
     },
     FormRequired {
         form: TurnForm,
+    },
+    /// Grove's own non-blocking structured form (`ask_form`). The answer is
+    /// sent back as a normal follow-up prompt rather than an ACP response.
+    AskFormRequired {
+        form_id: String,
+        definition: crate::agent_graph::ask_form::AskFormInput,
     },
     Completed {
         stop_reason: String,

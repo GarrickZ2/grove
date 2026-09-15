@@ -226,6 +226,12 @@ pub async fn execute_mobile(
     public: bool,
     private: bool,
 ) {
+    // Mobile serving is headless-first: suppress this process's own sound and
+    // OS banners (the in-process renderer checks this flag too), and flip the
+    // capability bit on GET /api/v1/version so attached frontends — GUI
+    // remote, browser — know to render notifications on the user's machine.
+    crate::hooks::set_os_render_disabled();
+
     let bind_host = resolve_mobile_host(host, public, private);
     let (sk, key_is_generated) = read_passkey_interactive(bind_host == "0.0.0.0");
     let auth = Arc::new(ServerAuth::hmac(sk, key_is_generated));

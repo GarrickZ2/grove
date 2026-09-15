@@ -18,7 +18,7 @@ mod acp {
     };
 }
 use chrono::{DateTime, Utc};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
@@ -39,6 +39,11 @@ static STARTING_SESSIONS: once_cell::sync::Lazy<
 static REPORTED_PLUGIN_MCP_ISSUES: once_cell::sync::Lazy<Mutex<std::collections::HashSet<String>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(std::collections::HashSet::new()));
 
+/// Keep a small source history for Grove events that arrive just after an ACP
+/// prompt has completed (for example a Plan approval request). This is runtime
+/// state only; it is not persisted or used as a retry queue.
+const RECENT_TURN_HISTORY_LIMIT: usize = 5;
+
 fn report_plugin_mcp_issue_once(key: String, message: impl FnOnce() -> String) {
     let should_report = REPORTED_PLUGIN_MCP_ISSUES
         .lock()
@@ -56,6 +61,14 @@ struct ShortToolWatch {
     title: String,
     started_at: std::time::Instant,
     deadline: std::time::Instant,
+}
+
+/// Grove-owned attribution captured when an ACP request enters the client.
+/// ACP request payloads do not carry a turn token, so this snapshot must be
+/// taken before the request is spawned or waits on a serialization lock.
+#[derive(Clone)]
+pub(crate) struct TurnOrigin {
+    message_ids: Vec<String>,
 }
 
 fn is_short_memory_tool(title: &str) -> bool {
@@ -154,6 +167,11 @@ pub struct AcpSessionHandle {
     /// Session. External consumers receive it only through semantic Radio
     /// events; ACP implementation details remain private.
     active_turn_message_ids: Mutex<Vec<String>>,
+    /// Source ids of the most recent completed turns. This is used only for
+    /// session-level lifecycle events such as SessionEnded. Request-like
+    /// events use an ingress-time TurnOrigin instead of guessing from this
+    /// history, because ACP request payloads carry no turn token.
+    recent_completed_turn_message_ids: Mutex<VecDeque<Vec<String>>>,
     /// Text produced after the most recent tool call in the active turn.
     /// This is the canonical final reply carried by Radio on completion.
     last_turn_reply: Mutex<String>,
@@ -2031,6 +2049,7 @@ async fn handle_request_permission(
     state: &AcpClientState,
     args: acp::RequestPermissionRequest,
     cancellation: acp::RequestCancellation,
+    origin: Option<TurnOrigin>,
 ) -> acp::Result<acp::RequestPermissionResponse> {
     let _guard = tokio::select! {
         guard = state.handle.permission_lock.lock() => guard,
@@ -2077,11 +2096,14 @@ async fn handle_request_permission(
         .unwrap()
         .replace((request_id.clone(), tx));
 
-    state.handle.emit(AcpUpdate::PermissionRequest {
-        id: request_id.clone(),
-        description: desc.clone(),
-        options: options.clone(),
-    });
+    state.handle.emit_with_origin(
+        AcpUpdate::PermissionRequest {
+            id: request_id.clone(),
+            description: desc.clone(),
+            options: options.clone(),
+        },
+        origin,
+    );
 
     if state.chat_id.is_some() {
         notify_acp_event(
@@ -2338,6 +2360,7 @@ async fn handle_create_elicitation(
     state: &AcpClientState,
     request: acp::CreateElicitationRequest,
     cancellation: acp::RequestCancellation,
+    origin: Option<TurnOrigin>,
 ) -> acp::Result<acp::CreateElicitationResponse> {
     match &request.mode {
         acp::ElicitationMode::Other(_) => {
@@ -2425,7 +2448,7 @@ async fn handle_create_elicitation(
         });
     state
         .handle
-        .emit(AcpUpdate::ElicitationRequest { snapshot });
+        .emit_with_origin(AcpUpdate::ElicitationRequest { snapshot }, origin);
 
     if state.chat_id.is_some() {
         notify_acp_event(
@@ -4413,6 +4436,7 @@ pub async fn get_or_start_session(
                     is_busy: std::sync::atomic::AtomicBool::new(false),
                     last_assistant_text: Mutex::new(String::new()),
                     active_turn_message_ids: Mutex::new(Vec::new()),
+                    recent_completed_turn_message_ids: Mutex::new(VecDeque::new()),
                     last_turn_reply: Mutex::new(String::new()),
                     pending_text_separator: std::sync::atomic::AtomicBool::new(false),
                     last_user_prompt: Mutex::new(None),
@@ -4830,10 +4854,15 @@ async fn run_acp_session(
             {
                 let state = Arc::clone(&state);
                 async move |req: acp::RequestPermissionRequest, responder, cx| {
+                    // Capture attribution before spawning the handler. The
+                    // handler may wait on permission_lock while a later turn
+                    // starts; reading the active turn inside it would then
+                    // route the request to the newer turn.
+                    let origin = state.handle.active_turn_origin();
                     let state = Arc::clone(&state);
                     cx.spawn(async move {
                         let cancellation = responder.cancellation();
-                        match handle_request_permission(&state, req, cancellation).await {
+                        match handle_request_permission(&state, req, cancellation, origin).await {
                             Ok(r) => responder.respond(r),
                             Err(e) => responder.respond_with_error(e),
                         }
@@ -4847,10 +4876,14 @@ async fn run_acp_session(
             {
                 let state = Arc::clone(&state);
                 async move |request: acp::CreateElicitationRequest, responder, cx| {
+                    // See the permission handler above: attribution belongs
+                    // to request ingress, not to the eventual UI emission.
+                    let origin = state.handle.active_turn_origin();
                     let state = Arc::clone(&state);
                     cx.spawn(async move {
                         let cancellation = responder.cancellation();
-                        match handle_create_elicitation(&state, request, cancellation).await {
+                        match handle_create_elicitation(&state, request, cancellation, origin).await
+                        {
                             Ok(response) => responder.respond(response),
                             Err(error) => responder.respond_with_error(error),
                         }
@@ -7340,7 +7373,50 @@ impl AcpSessionHandle {
         }
     }
 
-    fn publish_turn_radio_event(&self, update: &AcpUpdate) {
+    /// Message ids of the ACTIVE turn, or None when no turn is running.
+    ///
+    /// ACP requests carry no protocol-level turn token, so attribution is
+    /// only trustworthy while the turn that raised a request is still
+    /// active. Deliberately NO fallback to recently-completed turns: a late
+    /// permission/form event arriving outside its turn must not be pinned
+    /// onto some other turn's messages (that once sent a permission card as
+    /// a reply to the wrong IM thread). `publish_turn_radio_event` drops
+    /// unattributable request events instead of guessing.
+    fn active_turn_ids(&self) -> Option<Vec<String>> {
+        let active = self.active_turn_message_ids.lock().unwrap().clone();
+        if active.is_empty() {
+            None
+        } else {
+            Some(active)
+        }
+    }
+
+    /// Snapshot the current turn before an asynchronous ACP request handler
+    /// is spawned. A request can outlive the turn that received it while it
+    /// waits on a client-side lock, so the handler must carry this snapshot
+    /// instead of looking up the active turn later.
+    pub(crate) fn active_turn_origin(&self) -> Option<TurnOrigin> {
+        self.active_turn_ids()
+            .map(|message_ids| TurnOrigin { message_ids })
+    }
+
+    /// Best-effort attribution for events that don't target a specific turn
+    /// (SessionEnded): consumers key by session identity, not message ids,
+    /// so the recent-turn fallback here is harmless.
+    fn turn_message_ids_for_event(&self) -> Vec<String> {
+        match self.active_turn_ids() {
+            Some(ids) => ids,
+            None => self
+                .recent_completed_turn_message_ids
+                .lock()
+                .unwrap()
+                .back()
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
+
+    fn publish_turn_radio_event(&self, update: &AcpUpdate, origin: Option<&TurnOrigin>) {
         use crate::radio::{
             publish as broadcast_radio_event, PermissionInfo, PermissionOptionInfo, RadioEvent,
             TurnEvent,
@@ -7368,7 +7444,14 @@ impl AcpSessionHandle {
                 description,
                 options,
             } => {
-                let ids = self.active_turn_message_ids.lock().unwrap().clone();
+                // Requests carry no originating-turn token. Use only the
+                // ingress-time snapshot — when it is absent, the request's
+                // true turn is unknowable and guessing can deliver a card to
+                // the wrong IM thread. Chat-level channels (ChatStatus,
+                // HookAdded notification) still fire.
+                let Some(ids) = origin.map(|origin| origin.message_ids.clone()) else {
+                    return;
+                };
                 let permission = PermissionInfo {
                     description: description.clone(),
                     options: options
@@ -7393,23 +7476,47 @@ impl AcpSessionHandle {
                 let Some(form) = turn_form(snapshot) else {
                     return;
                 };
-                (
-                    self.active_turn_message_ids.lock().unwrap().clone(),
-                    TurnEvent::FormRequired { form },
-                    false,
-                )
+                // Same attribution rule as PermissionRequest: captured origin
+                // or nothing.
+                match origin.map(|origin| origin.message_ids.clone()) {
+                    Some(ids) => (ids, TurnEvent::FormRequired { form }, false),
+                    None => return,
+                }
             }
+            AcpUpdate::AskForm {
+                form_id,
+                definition,
+            } => match origin.map(|origin| origin.message_ids.clone()) {
+                Some(ids) => (
+                    ids,
+                    TurnEvent::AskFormRequired {
+                        form_id: form_id.clone(),
+                        definition: definition.clone(),
+                    },
+                    false,
+                ),
+                None => return,
+            },
             AcpUpdate::PromptCompleted {
                 message_ids,
                 stop_reason,
-            } => (
-                message_ids.clone(),
-                TurnEvent::Completed {
-                    stop_reason: stop_reason.clone(),
-                    message: self.last_turn_reply.lock().unwrap().trim().to_owned(),
-                },
-                true,
-            ),
+            } => {
+                if !message_ids.is_empty() {
+                    let mut history = self.recent_completed_turn_message_ids.lock().unwrap();
+                    history.push_back(message_ids.clone());
+                    while history.len() > RECENT_TURN_HISTORY_LIMIT {
+                        history.pop_front();
+                    }
+                }
+                (
+                    message_ids.clone(),
+                    TurnEvent::Completed {
+                        stop_reason: stop_reason.clone(),
+                        message: self.last_turn_reply.lock().unwrap().trim().to_owned(),
+                    },
+                    true,
+                )
+            }
             AcpUpdate::PromptFailed {
                 message_ids,
                 message,
@@ -7422,7 +7529,7 @@ impl AcpSessionHandle {
             ),
             AcpUpdate::QueueMessageGone { id } => (vec![id.clone()], TurnEvent::Removed, true),
             AcpUpdate::SessionEnded => (
-                self.active_turn_message_ids.lock().unwrap().clone(),
+                self.turn_message_ids_for_event(),
                 TurnEvent::SessionEnded,
                 true,
             ),
@@ -7438,6 +7545,12 @@ impl AcpSessionHandle {
         if terminal {
             self.active_turn_message_ids.lock().unwrap().clear();
             self.last_turn_reply.lock().unwrap().clear();
+            if matches!(update, AcpUpdate::SessionEnded) {
+                self.recent_completed_turn_message_ids
+                    .lock()
+                    .unwrap()
+                    .clear();
+            }
         }
     }
 
@@ -7683,7 +7796,14 @@ impl AcpSessionHandle {
     }
 
     /// 发送更新并记录到 history buffer（带磁盘持久化）
-    pub fn emit(&self, mut update: AcpUpdate) {
+    pub fn emit(&self, update: AcpUpdate) {
+        self.emit_with_origin(update, None);
+    }
+
+    /// Emit an update with a turn origin captured at the ACP request ingress.
+    /// Ordinary updates use `emit`; only request-like events that can be
+    /// delayed across turn boundaries should use this method.
+    pub(crate) fn emit_with_origin(&self, mut update: AcpUpdate, origin: Option<TurnOrigin>) {
         // load_session 期间抑制大部分 emit；保留 available_commands 以恢复 slash
         // commands，保留 session_ready 让前端就绪(suppress 现在保持到首个用户
         // prompt，session_ready 在 cmd loop 之前发，必须放行)。
@@ -8126,7 +8246,7 @@ impl AcpSessionHandle {
             );
         }
 
-        self.publish_turn_radio_event(&update);
+        self.publish_turn_radio_event(&update, origin.as_ref());
 
         // broadcast
         let _ = self.update_tx.send(update);
@@ -9157,6 +9277,7 @@ pub fn new_handle_for_test(
         is_busy: std::sync::atomic::AtomicBool::new(false),
         last_assistant_text: Mutex::new(String::new()),
         active_turn_message_ids: Mutex::new(Vec::new()),
+        recent_completed_turn_message_ids: Mutex::new(VecDeque::new()),
         last_turn_reply: Mutex::new(String::new()),
         pending_text_separator: std::sync::atomic::AtomicBool::new(false),
         last_user_prompt: Mutex::new(None),
@@ -9749,138 +9870,53 @@ fn notify_acp_event(
     project_key: &str,
     task_id: &str,
     chat_id: Option<&str>,
-    title_suffix: &str,
+    label: &str,
     message: &str,
     event: AcpNotificationEvent,
     options: Option<&[PermOptionData]>,
 ) {
-    use crate::hooks::{self, NotificationLevel};
-    use crate::storage::{config, tasks as task_storage};
+    use crate::hooks::{self, HookFact, HookKind};
 
-    let full_cfg = config::load_config();
-    let hooks_cfg = full_cfg.hooks;
-    let notif_cfg = full_cfg.notifications;
-
-    // 主开关 + 事件子开关决定本次是否触发任何通知
-    let event_enabled = notif_cfg.notification_enabled
-        && match event {
-            AcpNotificationEvent::TurnComplete => notif_cfg.notification_show_done,
-            AcpNotificationEvent::PermissionRequired => notif_cfg.notification_show_permission,
-            AcpNotificationEvent::ElicitationRequired => notif_cfg.notification_show_elicitation,
-        };
-
-    if !event_enabled {
-        let level = if title_suffix.contains("Permission") {
-            NotificationLevel::Warn
-        } else {
-            NotificationLevel::Notice
-        };
-        // External shell hooks always fire regardless of in-app notification settings —
-        // they are a separate mechanism from the tray/system-banner notification system.
-        hooks::update_hook(
-            project_key,
-            task_id,
-            level,
-            Some(message.to_string()),
-            chat_id.map(str::to_string),
-        );
-        return;
-    }
-
-    // ── 声音 ──────────────────────────────────────────────────────────────
-    let sound = match event {
-        AcpNotificationEvent::TurnComplete => {
-            if hooks_cfg.response_sound_enabled {
-                Some(if hooks_cfg.response_sound.is_empty() {
-                    "Glass"
-                } else {
-                    &hooks_cfg.response_sound
-                })
-            } else {
-                None
-            }
-        }
-        AcpNotificationEvent::PermissionRequired => {
-            if hooks_cfg.permission_sound_enabled {
-                Some(if hooks_cfg.permission_sound.is_empty() {
-                    "Purr"
-                } else {
-                    &hooks_cfg.permission_sound
-                })
-            } else {
-                None
-            }
-        }
-        AcpNotificationEvent::ElicitationRequired => None,
+    let kind = match event {
+        AcpNotificationEvent::TurnComplete => HookKind::TurnComplete,
+        AcpNotificationEvent::PermissionRequired => HookKind::PermissionRequired,
+        AcpNotificationEvent::ElicitationRequired => HookKind::ElicitationRequired,
     };
-    if let Some(s) = sound {
-        hooks::play_sound(s);
-    }
 
-    // ── 系统横幅 ───────────────────────────────────────────────────────────
-    {
-        let project_name = crate::storage::workspace::load_project_by_hash(project_key)
-            .ok()
-            .flatten()
-            .map(|p| p.name)
-            .unwrap_or_else(|| "Grove".to_string());
-        let task_name = task_storage::get_task(project_key, task_id)
-            .ok()
-            .flatten()
-            .map(|t| t.name)
-            .unwrap_or_else(|| task_id.to_string());
+    // Full permission payload for surfaces that render Approve/Deny directly.
+    // `message` carries the permission description at both call sites, so
+    // remote consumers get the real text, not an empty placeholder.
+    let permission = options.map(|opts| crate::radio::PermissionInfo {
+        description: message.to_string(),
+        options: opts
+            .iter()
+            .map(|option| crate::radio::PermissionOptionInfo {
+                option_id: option.option_id.clone(),
+                name: option.name.clone(),
+                kind: option.kind.clone(),
+            })
+            .collect(),
+    });
 
-        let title = format!("{} - {}", project_name, title_suffix);
-        let banner_msg = format!("{} — {}", task_name, message);
-        let is_permission = event == AcpNotificationEvent::PermissionRequired;
-
-        let mut approve_opt = None;
-        let mut deny_opt = None;
-        if let Some(opts) = options {
-            // 只匹配明确的 allow 类型，找不到就不设按钮（不猜测）
-            approve_opt = opts
-                .iter()
-                .find(|o| o.kind == "allow_once")
-                .or_else(|| opts.iter().find(|o| o.kind == "allow_always"))
-                .or_else(|| opts.iter().find(|o| o.kind.contains("allow")))
-                .map(|o| o.option_id.as_str());
-
-            // 只匹配明确的 reject/deny 类型，找不到就不设按钮（不猜测）
-            deny_opt = opts
-                .iter()
-                .find(|o| o.kind == "reject_once")
-                .or_else(|| opts.iter().find(|o| o.kind == "reject_always"))
-                .or_else(|| {
-                    opts.iter()
-                        .find(|o| o.kind.contains("reject") || o.kind.contains("deny"))
-                })
-                .map(|o| o.option_id.as_str());
-        }
-
-        hooks::send_banner(
-            &title,
-            &banner_msg,
-            project_key,
-            task_id,
-            chat_id,
-            is_permission,
-            approve_opt,
-            deny_opt,
-        );
-    }
-
-    let level = if title_suffix.contains("Permission") {
-        NotificationLevel::Warn
-    } else {
-        NotificationLevel::Notice
-    };
-    hooks::update_hook(
+    // The ACP path is a pure fact publisher: persist the attention record and
+    // broadcast it. Presentation (config filtering, sound, OS banner) lives in
+    // the surface renderers — the in-process renderer for TUI/web/local-GUI,
+    // the frontend notification engine for remote GUI/browser. Write failures
+    // are fire-and-forget here but must leave a trace.
+    if let Err(e) = hooks::update_hook(
         project_key,
         task_id,
-        level,
-        Some(message.to_string()),
-        chat_id.map(str::to_string),
-    );
+        HookFact {
+            kind,
+            label: Some(label.to_string()),
+            level: Some(kind.default_level()),
+            message: Some(message.to_string()),
+            chat_id: chat_id.map(str::to_string),
+            permission,
+        },
+    ) {
+        eprintln!("acp: failed to persist hook notification for {project_key}/{task_id}: {e}");
+    }
 }
 
 /// Truncate a string to at most `max_chars` Unicode characters, appending "…" if truncated.
@@ -10065,6 +10101,173 @@ async fn drain_stderr_to_file(stderr: tokio::process::ChildStderr, path: PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A permission raised with NO active turn must not be pinned onto a
+    /// recently-completed turn's message ids — drop the Turn event instead
+    /// of guessing (a guess once delivered a permission card onto the wrong
+    /// IM thread). Chat-level channels (ChatStatus, HookAdded) still fire.
+    #[tokio::test]
+    async fn late_permission_event_is_dropped_not_attributed_to_completed_turn() {
+        // Unique ids: the radio bus is process-global and tests run in
+        // parallel, so this test filters strictly on its own task_id.
+        let task = format!("late-perm-task-{}", uuid::Uuid::new_v4());
+        let key = format!("late-permission-test-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", &task, "chat");
+
+        // Turn A runs to completion — its ids land in recent-turn history.
+        handle.emit(AcpUpdate::PromptStarted {
+            message_ids: vec!["a-msg".to_string()],
+        });
+        handle.emit(AcpUpdate::PromptCompleted {
+            message_ids: vec!["a-msg".to_string()],
+            stop_reason: "end_turn".to_string(),
+        });
+
+        // A stale permission from turn A surfaces with no turn active.
+        let mut sub = crate::radio::subscribe();
+        handle.emit(AcpUpdate::PermissionRequest {
+            id: "perm-late".to_string(),
+            description: "run a command".to_string(),
+            options: vec![PermOptionData {
+                option_id: "allow".to_string(),
+                name: "Allow".to_string(),
+                kind: "allow_once".to_string(),
+            }],
+        });
+
+        // No Turn event belonging to THIS session may arrive — the stale
+        // request is dropped instead of attributed to a guessed turn.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
+        loop {
+            let timeout = deadline.saturating_duration_since(std::time::Instant::now());
+            if timeout.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(timeout, sub.recv()).await {
+                Err(_elapsed) => break, // quiet for the whole window — pass
+                Ok(None) => break,
+                Ok(Some(crate::radio::RadioEvent::Turn { task_id, .. })) if task_id == task => {
+                    panic!("stale permission must not produce a Turn event");
+                }
+                Ok(Some(_)) => continue, // concurrent-test traffic, ignore
+            }
+        }
+    }
+
+    /// Control for the drop rule: while a turn IS active, a permission is
+    /// attributed to that turn's message ids (the honest mid-turn flow that
+    /// Feishu/Lark permission cards depend on).
+    #[tokio::test]
+    async fn permission_during_active_turn_is_attributed_to_it() {
+        let task = format!("active-perm-task-{}", uuid::Uuid::new_v4());
+        let key = format!("active-permission-test-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", &task, "chat");
+
+        let mut sub = crate::radio::subscribe();
+        handle.emit(AcpUpdate::PromptStarted {
+            message_ids: vec!["b-msg".to_string()],
+        });
+        let origin = handle.active_turn_origin();
+        handle.emit_with_origin(
+            AcpUpdate::PermissionRequest {
+                id: "perm-active".to_string(),
+                description: "run a command".to_string(),
+                options: vec![PermOptionData {
+                    option_id: "allow".to_string(),
+                    name: "Allow".to_string(),
+                    kind: "allow_once".to_string(),
+                }],
+            },
+            origin,
+        );
+
+        let mut saw_permission = false;
+        while let Ok(event) =
+            tokio::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await
+        {
+            let Some(event) = event else { break };
+            if let crate::radio::RadioEvent::Turn {
+                task_id,
+                message_ids,
+                event: turn_event,
+                ..
+            } = event
+            {
+                if task_id != task {
+                    continue;
+                }
+                if matches!(
+                    turn_event,
+                    crate::radio::TurnEvent::PermissionRequired { .. }
+                ) {
+                    assert_eq!(message_ids, vec!["b-msg".to_string()]);
+                    saw_permission = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            saw_permission,
+            "expected an attributed permission Turn event"
+        );
+    }
+
+    #[tokio::test]
+    async fn delayed_permission_uses_ingress_turn_origin() {
+        let task = format!("delayed-perm-task-{}", uuid::Uuid::new_v4());
+        let key = format!("delayed-permission-test-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", &task, "chat");
+        let mut sub = crate::radio::subscribe();
+
+        handle.emit(AcpUpdate::PromptStarted {
+            message_ids: vec!["a-msg".to_string()],
+        });
+        let origin = handle
+            .active_turn_origin()
+            .expect("turn A should be active");
+        handle.emit(AcpUpdate::PromptCompleted {
+            message_ids: vec!["a-msg".to_string()],
+            stop_reason: "end_turn".to_string(),
+        });
+        handle.emit(AcpUpdate::PromptStarted {
+            message_ids: vec!["b-msg".to_string()],
+        });
+
+        // Simulate the async request handler finally emitting after turn B
+        // has started. Its ingress snapshot must still route it to A.
+        handle.emit_with_origin(
+            AcpUpdate::PermissionRequest {
+                id: "perm-delayed".to_string(),
+                description: "run a command".to_string(),
+                options: vec![],
+            },
+            Some(origin),
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
+        let mut saw_permission = false;
+        while std::time::Instant::now() < deadline {
+            let timeout = deadline.saturating_duration_since(std::time::Instant::now());
+            match tokio::time::timeout(timeout, sub.recv()).await {
+                Ok(Some(crate::radio::RadioEvent::Turn {
+                    task_id,
+                    message_ids,
+                    event: crate::radio::TurnEvent::PermissionRequired { .. },
+                    ..
+                })) if task_id == task => {
+                    assert_eq!(message_ids, vec!["a-msg".to_string()]);
+                    saw_permission = true;
+                    break;
+                }
+                Ok(Some(_)) => continue,
+                Ok(None) | Err(_) => break,
+            }
+        }
+        assert!(
+            saw_permission,
+            "delayed permission must retain its ingress turn origin"
+        );
+    }
 
     #[tokio::test]
     async fn compact_queue_preserves_accepted_message_ids() {

@@ -1,6 +1,6 @@
 //! Hooks (notification) API handlers
 
-use axum::{extract::Path, http::StatusCode, Json};
+use axum::{extract::Path, http::HeaderMap, http::StatusCode, Json};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -153,6 +153,94 @@ pub async fn preview_sound(Json(req): Json<PreviewSoundRequest>) -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
+/// POST /hooks/report — attention-fact intake for same-machine producers.
+///
+/// The `grove hooks` CLI runs inside a task's tmux session: a short-lived
+/// process whose radio publishes die with it. Reporting here hands the fact
+/// to the live server process instead, so its `HookAdded` broadcast actually
+/// reaches attached frontends.
+///
+/// Auth model: in no-auth mode the server is loopback-only, so anyone who can
+/// reach this could already write `~/.grove` directly. In HMAC (mobile) mode
+/// the CLI holds no secret key, so it authenticates with the per-boot
+/// local-report token the server writes to `~/.grove/local_report_token`.
+/// HMAC mode is FAIL-CLOSED: until a token exists and matches, every report
+/// is rejected — a failed token write must never silently open the endpoint.
+static LOCAL_REPORT_TOKEN: once_cell::sync::OnceCell<String> = once_cell::sync::OnceCell::new();
+static LOCAL_REPORT_REQUIRED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_local_report_token(token: String) {
+    let _ = LOCAL_REPORT_TOKEN.set(token);
+}
+
+/// Provision the per-boot local-report token and publish it to the token
+/// file for same-machine CLIs. Called at server startup in HMAC mode only.
+/// The `required` flag flips BEFORE the file write, so a failed write leaves
+/// the endpoint rejecting everything instead of accepting everything.
+pub fn provision_local_report_token() -> std::io::Result<()> {
+    LOCAL_REPORT_REQUIRED.store(true, std::sync::atomic::Ordering::Relaxed);
+    let token = crate::api::auth::generate_secret_key();
+    let grove_dir = crate::storage::grove_dir();
+    std::fs::create_dir_all(&grove_dir)?;
+    let path = grove_dir.join("local_report_token");
+    std::fs::write(&path, &token)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    set_local_report_token(token);
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HookReportRequest {
+    pub project_id: String,
+    pub task_id: String,
+    pub level: String,
+    pub message: Option<String>,
+    pub chat_id: Option<String>,
+}
+
+pub async fn report_hook(headers: HeaderMap, Json(req): Json<HookReportRequest>) -> StatusCode {
+    if LOCAL_REPORT_REQUIRED.load(std::sync::atomic::Ordering::Relaxed) {
+        let expected = LOCAL_REPORT_TOKEN.get();
+        let presented = headers
+            .get("x-grove-local-token")
+            .and_then(|v| v.to_str().ok());
+        // Fail-closed: unset token (provisioning failed) rejects everything.
+        match expected {
+            Some(expected) if presented == Some(expected.as_str()) => {}
+            _ => return StatusCode::UNAUTHORIZED,
+        }
+    }
+    let level = hooks::level_from_str(&req.level).unwrap_or(NotificationLevel::Notice);
+    // 5xx on persistence failure: the CLI treats any non-2xx as "not handed
+    // off" and falls back to writing the record itself.
+    match hooks::update_hook(
+        &req.project_id,
+        &req.task_id,
+        crate::hooks::HookFact {
+            kind: crate::hooks::HookKind::External,
+            label: None,
+            level: Some(level),
+            message: req.message,
+            chat_id: req.chat_id,
+            permission: None,
+        },
+    ) {
+        Ok(()) => StatusCode::NO_CONTENT,
+        Err(e) => {
+            eprintln!(
+                "hooks: report for {}/{} failed to persist: {}",
+                req.project_id, req.task_id, e
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
 fn level_to_string(level: NotificationLevel) -> String {
     match level {
         NotificationLevel::Notice => "notice".to_string(),
@@ -161,10 +249,8 @@ fn level_to_string(level: NotificationLevel) -> String {
     }
 }
 
-#[cfg(feature = "gui")]
 use axum::extract::Query;
 
-#[cfg(feature = "gui")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuiOpenTaskQuery {
@@ -173,7 +259,11 @@ pub struct GuiOpenTaskQuery {
     pub chat_id: Option<String>,
 }
 
-#[cfg(feature = "gui")]
+/// POST /gui/open-task — banner "Open" click-through. Broadcasts a FocusTask
+/// radio event (web pages / phones navigate) and, in GUI builds, surfaces the
+/// desktop window. Registered for ALL builds behind the auth layer: a remote
+/// GUI reaches it through its signing proxy, non-gui mobile builds still
+/// serve the radio half.
 pub async fn handle_gui_open_task(Query(q): Query<GuiOpenTaskQuery>) -> StatusCode {
     // 广播 RadioEvent 焦点切换事件，使得所有连接的 Grove Web 网页端以及移动端客户端都能自动完成跳转！
     let target = q
@@ -195,7 +285,6 @@ pub async fn handle_gui_open_task(Query(q): Query<GuiOpenTaskQuery>) -> StatusCo
     StatusCode::OK
 }
 
-#[cfg(feature = "gui")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuiResolvePermissionQuery {
@@ -205,20 +294,23 @@ pub struct GuiResolvePermissionQuery {
     pub option_id: String,
 }
 
-/// POST /gui/resolve-permission — handle permission response from native macOS action button
-#[cfg(feature = "gui")]
+/// POST /gui/resolve-permission — permission response from a native banner's
+/// Approve/Deny buttons. Mirrors `walkie_talkie::tray_resolve_permission`:
+/// look up the live ACP session by key and respond. Same session handles as
+/// the Tauri tray command, but reachable over authenticated HTTP so remote
+/// GUI proxies (which sign these) and non-gui builds work too.
 pub async fn handle_gui_resolve_permission(
     Query(q): Query<GuiResolvePermissionQuery>,
 ) -> StatusCode {
-    #[cfg(feature = "gui")]
-    {
-        let _ =
-            crate::tray::tray_resolve_permission(q.project_id, q.task_id, q.chat_id, q.option_id);
-        StatusCode::OK
-    }
-    #[cfg(not(feature = "gui"))]
-    {
-        let _ = q;
-        StatusCode::NOT_IMPLEMENTED
+    let session_key = format!("{}:{}:{}", q.project_id, q.task_id, q.chat_id);
+    match crate::acp::get_session_handle(&session_key) {
+        Some(handle) => {
+            if handle.respond_permission(q.option_id) {
+                StatusCode::OK
+            } else {
+                StatusCode::CONFLICT
+            }
+        }
+        None => StatusCode::NOT_FOUND,
     }
 }

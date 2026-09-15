@@ -187,6 +187,9 @@ pub struct InboundMessage {
 pub struct InboundAction {
     pub conversation_id: String,
     pub sender_id: String,
+    /// Opaque external id of the interactive card that was clicked. Core
+    /// uses it as the reply parent when an action creates a follow-up prompt.
+    pub source_message_id: Option<String>,
     pub name: Option<String>,
     pub fields: HashMap<String, String>,
 }
