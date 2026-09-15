@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.4] - 2026-09-15
+
+### Added
+
+- **Feishu and Lark IM connections** — Connect Grove to Feishu and Lark conversations for remote agent interaction.
+
+### Improved
+
+- **Mobile feature pages and chat composer** — AI, automation, memory, skills, and stats surfaces adapt better to mobile layouts, with a more usable mobile task composer.
+- **Live chat continuity** — Active chat history remains available when switching between tasks.
+
+### Fixed
+
+- **Mobile plugin assets** — Plugin frames and icons authenticate reliably when loaded from mobile clients.
+- **Attention event routing** — Attention notifications are routed safely across Grove surfaces.
+
 ## [0.12.3] - 2026-09-09
 
 ### Added

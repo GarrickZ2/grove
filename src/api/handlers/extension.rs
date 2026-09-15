@@ -25,6 +25,8 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const COMPANION_PROTOCOL_VERSION: u32 = 2;
 const COMPANION_HANDSHAKE_GRACE: Duration = Duration::from_secs(1);
+const BUNDLED_COMPANION_MANIFEST: &str =
+    include_str!("../../../grove-extension/public/manifest.json");
 const REQUIRED_COMPANION_CAPABILITIES: &[&str] = &[
     "browser.open.wait",
     "browser.snapshot.scoped_refs",
@@ -36,6 +38,23 @@ const REQUIRED_COMPANION_CAPABILITIES: &[&str] = &[
     "browser.close",
     "browser.wait",
 ];
+
+fn bundled_companion_version() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            serde_json::from_str::<serde_json::Value>(BUNDLED_COMPANION_MANIFEST)
+                .ok()
+                .and_then(|manifest| {
+                    manifest
+                        .get("version")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+                .unwrap_or_else(|| "unknown".to_string())
+        })
+        .as_str()
+}
 
 // ─── Companion extension package (download + Chrome launcher) ────────────────
 //
@@ -105,7 +124,7 @@ fn disconnected_companion_status() -> serde_json::Value {
         "updateRequired": false,
         "updateAvailable": false,
         "installedVersion": serde_json::Value::Null,
-        "requiredVersion": env!("CARGO_PKG_VERSION"),
+        "requiredVersion": bundled_companion_version(),
         "protocolVersion": serde_json::Value::Null,
         "requiredProtocolVersion": COMPANION_PROTOCOL_VERSION,
         "capabilities": [],
@@ -133,8 +152,8 @@ fn companion_status(session: &ExtensionSession) -> serde_json::Value {
     let compatible = handshake_received
         && info.protocol_version == Some(COMPANION_PROTOCOL_VERSION)
         && missing_capabilities.is_empty();
-    let update_available =
-        handshake_received && info.extension_version.as_deref() != Some(env!("CARGO_PKG_VERSION"));
+    let update_available = handshake_received
+        && info.extension_version.as_deref() != Some(bundled_companion_version());
     let update_required = handshake_status == "legacy" || (handshake_received && !compatible);
     let mut capabilities: Vec<&str> = info.capabilities.iter().map(String::as_str).collect();
     capabilities.sort_unstable();
@@ -146,7 +165,7 @@ fn companion_status(session: &ExtensionSession) -> serde_json::Value {
         "updateRequired": update_required,
         "updateAvailable": update_available,
         "installedVersion": info.extension_version,
-        "requiredVersion": env!("CARGO_PKG_VERSION"),
+        "requiredVersion": bundled_companion_version(),
         "protocolVersion": info.protocol_version,
         "requiredProtocolVersion": COMPANION_PROTOCOL_VERSION,
         "capabilities": capabilities,
@@ -564,20 +583,20 @@ fn ensure_companion_command_supported(cmd_type: &str) -> Result<(), String> {
             );
         }
         return Err(format!(
-            "COMPANION_UPDATE_REQUIRED: connected Companion does not support the Grove browser protocol; update it to v{} from Settings > Browser Control and reload it in Chrome",
-            env!("CARGO_PKG_VERSION")
+            "COMPANION_UPDATE_REQUIRED: connected Companion does not support the Grove browser protocol; install the bundled Companion v{} from Settings > Browser Control and reload it in Chrome",
+            bundled_companion_version()
         ));
     };
     if protocol_version != COMPANION_PROTOCOL_VERSION {
         return Err(format!(
-            "COMPANION_UPDATE_REQUIRED: Companion protocol v{protocol_version} is incompatible with required protocol v{COMPANION_PROTOCOL_VERSION}; update Companion to v{} from Settings > Browser Control",
-            env!("CARGO_PKG_VERSION")
+            "COMPANION_UPDATE_REQUIRED: Companion protocol v{protocol_version} is incompatible with required protocol v{COMPANION_PROTOCOL_VERSION}; install the bundled Companion v{} from Settings > Browser Control",
+            bundled_companion_version()
         ));
     }
     if !info.capabilities.contains(required_capability) {
         return Err(format!(
-            "COMPANION_UPDATE_REQUIRED: connected Companion is missing capability {required_capability}; update it to v{} from Settings > Browser Control",
-            env!("CARGO_PKG_VERSION")
+            "COMPANION_UPDATE_REQUIRED: connected Companion is missing capability {required_capability}; install the bundled Companion v{} from Settings > Browser Control",
+            bundled_companion_version()
         ));
     }
     Ok(())
@@ -1228,14 +1247,14 @@ mod tests {
     }
 
     #[test]
-    fn companion_manifest_version_tracks_grove_version() {
+    fn companion_manifest_version_tracks_bundled_companion_version() {
         let manifest: serde_json::Value = serde_json::from_str(include_str!(
             "../../../grove-extension/public/manifest.json"
         ))
         .expect("companion manifest should be valid JSON");
         assert_eq!(
             manifest.get("version").and_then(|value| value.as_str()),
-            Some(env!("CARGO_PKG_VERSION"))
+            Some(bundled_companion_version())
         );
     }
 
@@ -1266,6 +1285,23 @@ mod tests {
         assert_eq!(status["compatible"], true);
         assert_eq!(status["updateRequired"], false);
         assert_eq!(status["updateAvailable"], true);
+    }
+
+    #[test]
+    fn compatible_companion_version_is_independent_of_grove_version() {
+        let info = CompanionInfo {
+            extension_version: Some(bundled_companion_version().to_string()),
+            protocol_version: Some(COMPANION_PROTOCOL_VERSION),
+            capabilities: REQUIRED_COMPANION_CAPABILITIES
+                .iter()
+                .map(|capability| (*capability).to_string())
+                .collect(),
+        };
+        let status = companion_status(&test_session(info, std::time::Instant::now()));
+        assert_eq!(status["compatible"], true);
+        assert_eq!(status["updateRequired"], false);
+        assert_eq!(status["updateAvailable"], false);
+        assert_eq!(status["requiredVersion"], bundled_companion_version());
     }
 
     #[test]
