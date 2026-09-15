@@ -1,13 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, CircleAlert, ExternalLink, Link2, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, CircleAlert, ExternalLink, Link2, Loader2, Pencil, Plus, RefreshCw, Search, Settings2, Trash2, X } from 'lucide-react';
 import { beginConnectRegistration, createConnect, deleteConnect, finishConnectRegistration, getConnectRegistration, getProject, listChats, listConnectPlatforms, listConnects, listProjects, listTasks, updateConnect, verifyConnect, verifyConnectCredentials, type ChatSessionResponse, type ConnectInput, type ConnectItem, type ConnectPlatform, type ConnectRegistration, type ProjectListItem, type TaskResponse } from '../../api';
 import { useTheme } from '../../context';
 import { getProjectStyle } from '../../utils/projectStyle';
+import { ConfirmDialog } from '../Dialogs';
 import { Button, DialogShell, Input, Switch } from '../ui';
 
 type NewStep = 'platform' | 'qr';
 const newDraft = (domain = 'feishu', platform = 'feishu'): ConnectInput => ({ name: domain === 'lark' ? 'Lark Connect' : `${platform} Connect`, platform, domain, enabled: true, adapter_config: {}, project_id: '', task_id: '', session_id: '' });
+
+const ADVANCED_CONFIG_FIELDS = [
+  { key: 'reconnect_count', label: 'Reconnect attempts', placeholder: 'Feishu default (unlimited)', min: '-1', description: '-1 uses the official unlimited reconnect behavior.' },
+  { key: 'reconnect_interval_secs', label: 'Reconnect interval (seconds)', placeholder: 'Feishu default (120)', min: '1', description: 'Leave blank to use the interval returned by Feishu.' },
+  { key: 'heartbeat_timeout_secs', label: 'Heartbeat timeout (seconds)', placeholder: 'Disabled by default', min: '1', description: 'Optional local liveness guard; leave blank for SDK behavior.' },
+] as const;
+type AdvancedConfigKey = typeof ADVANCED_CONFIG_FIELDS[number]['key'];
+type AdvancedDraft = Record<AdvancedConfigKey, string>;
+
+function readAdvancedConfig(config: Record<string, unknown>): AdvancedDraft {
+  return Object.fromEntries(ADVANCED_CONFIG_FIELDS.map(({ key }) => [key, String(config[key] ?? '')])) as AdvancedDraft;
+}
+
+function draftFromItem(item: ConnectItem, fieldKeys: string[]): ConnectInput {
+  const adapter_config = Object.fromEntries(fieldKeys.map((key) => [key, item.adapter_config[key] ?? '']));
+  return { name: item.name, platform: item.platform, domain: item.domain, enabled: item.enabled, adapter_config, project_id: item.project_id, task_id: item.task_id, session_id: item.session_id };
+}
 
 export function ConnectDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const [items, setItems] = useState<ConnectItem[]>([]);
@@ -32,7 +50,9 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | 'new'>(items[0]?.id ?? 'new');
   const [step, setStep] = useState<NewStep>('platform');
-  const [draft, setDraft] = useState<ConnectInput>(newDraft());
+  const [draft, setDraft] = useState<ConnectInput>(() => items[0]
+    ? draftFromItem(items[0], ['app_id', 'app_secret', ...ADVANCED_CONFIG_FIELDS.map((field) => field.key)])
+    : newDraft());
   const [flow, setFlow] = useState<ConnectRegistration | null>(null);
   const [tasks, setTasks] = useState<TaskResponse[]>([]);
   const [sessions, setSessions] = useState<ChatSessionResponse[]>([]);
@@ -43,12 +63,19 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
 
   useEffect(() => { void Promise.all([listConnectPlatforms(), listProjects()]).then(([defs, list]) => { setPlatforms(defs); setProjects(list.projects); }); }, []);
 
+  // listTasks deliberately omits the synthetic Local Task; Connect can route
+  // to it like any other task, so merge it back in from the project detail.
+  const fetchTaskOptions = async (projectId: string): Promise<TaskResponse[]> => {
+    const [tasks, detail] = await Promise.all([listTasks(projectId), getProject(projectId).catch(() => null)]);
+    return detail?.local_task ? [detail.local_task, ...tasks] : tasks;
+  };
+
   const chooseNew = () => { setSelectedId('new'); setStep('platform'); setDraft(newDraft()); setFlow(null); setError(null); };
   const chooseExisting = (item: ConnectItem) => {
     setSelectedId(item.id);
     const adapterFields = platforms.find((platform) => platform.id === item.platform)?.config_fields ?? [];
-    const adapter_config = Object.fromEntries(adapterFields.map((field) => [field.key, item.adapter_config[field.key] ?? '']));
-    setDraft({ name: item.name, platform: item.platform, domain: item.domain, enabled: item.enabled, adapter_config, project_id: item.project_id, task_id: item.task_id, session_id: item.session_id });
+    const advancedKeys = item.platform === 'feishu' || item.platform === 'lark' ? ADVANCED_CONFIG_FIELDS.map((field) => field.key) : [];
+    setDraft(draftFromItem(item, [...adapterFields.map((field) => field.key), ...advancedKeys]));
     setError(null);
     if (item.project_id) void fetchTaskOptions(item.project_id).then(setTasks);
     if (item.project_id && item.task_id) void listChats(item.project_id, item.task_id).then(setSessions);
@@ -98,12 +125,6 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
     } finally {
       setBusy(false);
     }
-  };
-  // listTasks deliberately omits the synthetic Local Task; Connect can route
-  // to it like any other task, so merge it back in from the project detail.
-  const fetchTaskOptions = async (projectId: string): Promise<TaskResponse[]> => {
-    const [tasks, detail] = await Promise.all([listTasks(projectId), getProject(projectId).catch(() => null)]);
-    return detail?.local_task ? [detail.local_task, ...tasks] : tasks;
   };
   const loadTasks = async (projectId: string) => { setTasks(projectId ? await fetchTaskOptions(projectId) : []); setSessions([]); setDraft((current) => ({ ...current, project_id: projectId, task_id: '', session_id: '' })); };
   const loadSessions = async (taskId: string) => { setSessions(taskId ? await listChats(draft.project_id, taskId) : []); setDraft((current) => ({ ...current, task_id: taskId, session_id: '' })); };
@@ -175,18 +196,30 @@ function NewConnection(props: NewProps) {
 interface ExistingProps { item: ConnectItem; draft: ConnectInput; setDraft: React.Dispatch<React.SetStateAction<ConnectInput>>; projects: ProjectListItem[]; tasks: TaskResponse[]; sessions: ChatSessionResponse[]; loadTasks: (id: string) => Promise<void>; loadSessions: (id: string) => Promise<void>; busy: boolean; setBusy: (value: boolean) => void; error: string | null; setError: (value: string | null) => void; onChanged: () => Promise<void>; onDeleted: () => void }
 function ExistingDetail({ item, draft, setDraft, projects, tasks, sessions, loadTasks, loadSessions, busy, setBusy, error, setError, onChanged, onDeleted }: ExistingProps) {
   const [editingName, setEditingName] = useState(false);
+  const [advancedState, setAdvancedState] = useState<{ itemId: string; values: AdvancedDraft }>({ itemId: item.id, values: readAdvancedConfig(item.adapter_config) });
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const advancedDraft = advancedState.itemId === item.id ? advancedState.values : readAdvancedConfig(item.adapter_config);
   const patch = <K extends keyof ConnectInput>(key: K, value: ConnectInput[K]) => setDraft((current) => ({ ...current, [key]: value }));
+  const patchAdvanced = (key: AdvancedConfigKey, value: string) => setAdvancedState({ itemId: item.id, values: { ...advancedDraft, [key]: value } });
   const save = async (next: ConnectInput) => {
     setDraft(next);
     setBusy(true);
     setError(null);
     try { await updateConnect(item.id, next); await onChanged(); } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); }
   };
-  const toggle = (enabled: boolean) => void save({ ...draft, enabled });
-  const pickProject = async (projectId: string) => { await loadTasks(projectId); void save({ ...draft, project_id: projectId, task_id: '', session_id: '' }); };
-  const pickTask = async (taskId: string) => { await loadSessions(taskId); void save({ ...draft, task_id: taskId, session_id: '' }); };
-  const pickSession = (sessionId: string) => void save({ ...draft, session_id: sessionId === '__new__' ? '' : sessionId });
-  const commitName = () => { setEditingName(false); const name = draft.name.trim(); if (name && name !== item.name) void save({ ...draft, name }); };
+  const target = item.target;
+  const projectId = draft.project_id || item.project_id;
+  const taskId = draft.task_id || item.task_id;
+  const sessionId = draft.session_id || item.session_id;
+  // The detail draft can briefly lag behind a refreshed item. Keep the
+  // persisted target in every write so a transport error never clears it.
+  const routedDraft = { ...draft, project_id: projectId, task_id: taskId, session_id: sessionId };
+  const toggle = (enabled: boolean) => void save({ ...routedDraft, enabled });
+  const pickProject = async (nextProjectId: string) => { await loadTasks(nextProjectId); void save({ ...routedDraft, project_id: nextProjectId, task_id: '', session_id: '' }); };
+  const pickTask = async (nextTaskId: string) => { await loadSessions(nextTaskId); void save({ ...routedDraft, task_id: nextTaskId, session_id: '' }); };
+  const pickSession = (nextSessionId: string) => void save({ ...routedDraft, session_id: nextSessionId === '__new__' ? '' : nextSessionId });
+  const commitName = () => { setEditingName(false); const name = draft.name.trim(); if (name && name !== item.name) void save({ ...routedDraft, name }); };
   const verify = async () => {
     setBusy(true);
     setError(null);
@@ -199,8 +232,29 @@ function ExistingDetail({ item, draft, setDraft, projects, tasks, sessions, load
       setBusy(false);
     }
   };
-  const target = item.target;
-  return <Page
+  const saveAdvanced = () => {
+    const adapter_config = { ...draft.adapter_config };
+    for (const { key } of ADVANCED_CONFIG_FIELDS) adapter_config[key] = advancedDraft[key].trim();
+    void save({ ...routedDraft, adapter_config });
+  };
+  const resetAdvanced = () => setAdvancedState({ itemId: item.id, values: readAdvancedConfig({}) });
+  const hasAdvancedOverrides = ADVANCED_CONFIG_FIELDS.some(({ key }) => advancedDraft[key].trim() !== '');
+  const confirmDelete = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteConnect(item.id);
+      setDeleteConfirmOpen(false);
+      await onChanged();
+      onDeleted();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <>
+  <Page
     title={<span className="flex items-center gap-2.5"><PlatformMark id={item.domain} size={26} />{editingName ? <span className="w-64"><Input autoFocus value={draft.name} onChange={(event) => patch('name', event.target.value)} onBlur={commitName} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setDraft((current) => ({ ...current, name: item.name })); setEditingName(false); } }} /></span> : <button type="button" className="group flex min-w-0 items-center gap-1.5 text-left" onClick={() => setEditingName(true)}><span className="truncate">{item.name}</span><Pencil className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)] opacity-0 transition-opacity group-hover:opacity-100" /></button>}</span>}
     description={<span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--color-text-muted)]"><StatusLabel state={item.runtime.state} detail={item.runtime.detail} /><span>·</span><RegionBadge domain={item.domain} /><span>·</span><span className="font-mono text-xs">{String(item.adapter_config.app_id ?? '')}</span>{item.bound_chat_id && <span className="rounded-full bg-[var(--color-success)]/10 px-2 py-0.5 text-xs text-[var(--color-success)]">Chat bound</span>}</span>}
     trailing={<Switch checked={draft.enabled} onChange={toggle} label="Enable connection" />}
@@ -210,21 +264,60 @@ function ExistingDetail({ item, draft, setDraft, projects, tasks, sessions, load
         <div className="text-sm font-medium text-[var(--color-text)]">Messages route to</div>
         <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">Incoming IM messages enter this session and reuse its queue and agent. Changes apply immediately.</p>
       </div>
-      <TargetSelect value={draft.project_id} placeholder="Select project" options={projects.map((entry) => ({ id: entry.id, title: entry.name, subtitle: entry.path, icon: <ProjectGlyph id={entry.id} /> }))} onSelect={(id) => void pickProject(id)} />
-      <TargetSelect value={draft.task_id} placeholder={draft.project_id ? 'Select task' : 'Pick a project first'} disabled={!draft.project_id} options={tasks.map((entry) => ({ id: entry.id, title: entry.name, subtitle: entry.status, icon: <LetterGlyph id={entry.id} label={entry.name} /> }))} onSelect={(id) => void pickTask(id)} />
-      <TargetSelect value={draft.session_id || (draft.task_id ? '__new__' : '')} placeholder={draft.task_id ? 'New session (created on first message)' : 'Pick a task first'} disabled={!draft.task_id} options={[{ id: '__new__', title: 'New session', subtitle: 'Created when the first message arrives', badge: 'Auto', icon: <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--color-highlight)]/12 text-[var(--color-highlight)]"><Plus className="h-3.5 w-3.5" /></span> }, ...sessions.map((entry) => ({ id: entry.id, title: entry.title, subtitle: entry.agent, icon: <LetterGlyph id={entry.id} label={entry.title} /> }))]} onSelect={pickSession} />
+      <TargetSelect value={projectId} placeholder="Select project" options={projects.map((entry) => ({ id: entry.id, title: entry.name, subtitle: entry.path, icon: <ProjectGlyph id={entry.id} /> }))} onSelect={(id) => void pickProject(id)} />
+      <TargetSelect value={taskId} placeholder={projectId ? 'Select task' : 'Pick a project first'} disabled={!projectId} options={tasks.map((entry) => ({ id: entry.id, title: entry.name, subtitle: entry.status, icon: <LetterGlyph id={entry.id} label={entry.name} /> }))} onSelect={(id) => void pickTask(id)} />
+      <TargetSelect value={sessionId || (taskId ? '__new__' : '')} placeholder={taskId ? 'New session (created on first message)' : 'Pick a task first'} disabled={!taskId} options={[{ id: '__new__', title: 'New session', subtitle: 'Created when the first message arrives', badge: 'Auto', icon: <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--color-highlight)]/12 text-[var(--color-highlight)]"><Plus className="h-3.5 w-3.5" /></span> }, ...sessions.map((entry) => ({ id: entry.id, title: entry.title, subtitle: entry.agent, icon: <LetterGlyph id={entry.id} label={entry.title} /> }))]} onSelect={pickSession} />
       {item.session_id && <p className="text-xs text-[var(--color-text-muted)]">Agent {target.agent || 'unknown'} · {target.queue_mode === 'compact' ? 'Compact queue' : 'Separate queue'} · {target.model ?? 'session default model'}{target.mode ? ` · ${target.mode}${target.thought_level ? `/${target.thought_level}` : ''}` : ''}</p>}
       {!item.session_id && item.task_id && <p className="text-xs text-[var(--color-text-muted)]">A new session is created with the task's default agent when the first IM message arrives.</p>}
     </section>
+    {(item.platform === 'feishu' || item.platform === 'lark') && <section className="rounded-xl border border-[var(--color-border)]">
+      <button type="button" onClick={() => setAdvancedOpen((open) => !open)} className="flex w-full items-center gap-2.5 px-4 py-3.5 text-left hover:bg-[var(--color-bg-secondary)]/40">
+        <Settings2 className="h-4 w-4 text-[var(--color-text-muted)]" />
+        <span className="flex-1 text-sm font-medium text-[var(--color-text)]">Advanced connection settings</span>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${hasAdvancedOverrides ? 'bg-[var(--color-highlight)]/12 text-[var(--color-highlight)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>{hasAdvancedOverrides ? 'Custom' : 'Feishu defaults'}</span>
+        <ChevronDown className={`h-4 w-4 text-[var(--color-text-muted)] transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
+      </button>
+      {advancedOpen && <div className="border-t border-[var(--color-border)] px-4 pb-4 pt-3.5">
+        <p className="mb-4 text-xs leading-relaxed text-[var(--color-text-muted)]">Leave every field blank to use Feishu’s server-provided SDK defaults. Saving custom values restarts this connection.</p>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {ADVANCED_CONFIG_FIELDS.map(({ key, label, placeholder, min, description }) => <div key={key}>
+            <Input type="number" min={min} step="1" className="appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" label={label} value={advancedDraft[key]} placeholder={placeholder} onChange={(event) => patchAdvanced(key, event.target.value)} />
+            <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--color-text-muted)]">{description}</p>
+          </div>)}
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">Official defaults are applied when a field is empty.</p>
+          <div className="flex items-center gap-2">
+            {hasAdvancedOverrides && <Button variant="ghost" size="sm" onClick={resetAdvanced} disabled={busy}>Reset</Button>}
+            <Button size="sm" onClick={saveAdvanced} disabled={busy}>{busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />}Save settings</Button>
+          </div>
+        </div>
+      </div>}
+    </section>}
     {error && <ErrorText onDismiss={() => setError(null)}>{error}</ErrorText>}
     <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] pt-4">
       <Button variant="secondary" size="sm" onClick={() => void verify()} disabled={busy}>
         {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
         {busy ? 'Verifying…' : item.runtime.state === 'error' ? 'Retry connection' : 'Verify connection'}
       </Button>
-      <Button variant="ghost" size="sm" className="!text-[var(--color-text-muted)] hover:!text-[var(--color-error)]" onClick={async () => { if (!window.confirm(`Delete ${item.name}?`)) return; await deleteConnect(item.id); await onChanged(); onDeleted(); }} disabled={busy}><Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete connection</Button>
+      <Button variant="ghost" size="sm" className="!text-[var(--color-text-muted)] hover:!text-[var(--color-error)]" onClick={() => setDeleteConfirmOpen(true)} disabled={busy}><Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete connection</Button>
     </div>
-  </div></Page>;
+  </div></Page>
+  <ConfirmDialog
+    isOpen={deleteConfirmOpen}
+    title="Delete connection"
+    variant="danger"
+    confirmLabel="Delete connection"
+    cancelLabel="Keep connection"
+    actionsDisabled={busy}
+    onConfirm={() => void confirmDelete()}
+    onCancel={() => { if (!busy) setDeleteConfirmOpen(false); }}
+    message={<div className="space-y-2">
+      <p>Are you sure you want to delete <strong className="text-[var(--color-text)]">{item.name}</strong>?</p>
+      <p>This removes the IM Connect configuration and stops its connection. Your Grove projects, tasks, and sessions are not deleted.</p>
+    </div>}
+  />
+  </>;
 }
 
 function Page({ title, description, back, trailing, children }: { title: React.ReactNode; description: React.ReactNode; back?: () => void; trailing?: React.ReactNode; children: React.ReactNode }) { return <div className="mx-auto max-w-2xl"><div className="mb-6 flex items-start gap-3">{back && <Button variant="ghost" size="sm" onClick={back}><ArrowLeft className="h-4 w-4" /></Button>}<div className="min-w-0 flex-1"><h3 className="text-lg font-semibold text-[var(--color-text)]">{title}</h3><p className="mt-1 text-sm leading-relaxed text-[var(--color-text-muted)]">{description}</p></div>{trailing}</div>{children}</div>; }

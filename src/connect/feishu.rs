@@ -39,6 +39,108 @@ fn set_status(id: &str, state: &str, detail: Option<String>) {
     );
 }
 
+const RECONNECT_COUNT_KEY: &str = "reconnect_count";
+const RECONNECT_INTERVAL_KEY: &str = "reconnect_interval_secs";
+const HEARTBEAT_TIMEOUT_KEY: &str = "heartbeat_timeout_secs";
+
+fn optional_integer(value: &Value, key: &str) -> Result<Option<i64>, String> {
+    let Some(raw) = value.get(key) else {
+        return Ok(None);
+    };
+    if raw.is_null() {
+        return Ok(None);
+    }
+    if let Some(text) = raw.as_str() {
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(None);
+        }
+        return text
+            .parse::<i64>()
+            .map(Some)
+            .map_err(|_| format!("adapter_config.{key} must be an integer"));
+    }
+    raw.as_i64()
+        .map(Some)
+        .ok_or_else(|| format!("adapter_config.{key} must be an integer"))
+}
+
+fn validate_transport_config(value: &Value) -> Result<(), String> {
+    let reconnect_count = optional_integer(value, RECONNECT_COUNT_KEY)?;
+    if reconnect_count.is_some_and(|count| count < -1) {
+        return Err(format!(
+            "adapter_config.{RECONNECT_COUNT_KEY} must be -1 or greater"
+        ));
+    }
+    for key in [RECONNECT_INTERVAL_KEY, HEARTBEAT_TIMEOUT_KEY] {
+        if optional_integer(value, key)?.is_some_and(|seconds| seconds <= 0) {
+            return Err(format!("adapter_config.{key} must be greater than 0"));
+        }
+    }
+    Ok(())
+}
+
+fn event_loop_options(value: &Value) -> Result<EventLoopOptions, String> {
+    validate_transport_config(value)?;
+    let reconnect_count = optional_integer(value, RECONNECT_COUNT_KEY)?;
+    let reconnect_interval = optional_integer(value, RECONNECT_INTERVAL_KEY)?;
+    let heartbeat_timeout = optional_integer(value, HEARTBEAT_TIMEOUT_KEY)?;
+
+    let mut options = EventLoopOptions::new();
+    if reconnect_count.is_some() || reconnect_interval.is_some() {
+        // Explicit local reconnect settings opt out of the server-provided
+        // policy. Keep the other value aligned with the Feishu SDK default.
+        options = match reconnect_count.unwrap_or(-1) {
+            -1 => options.with_unlimited_reconnects(),
+            count => options.with_max_reconnects(count as usize),
+        };
+        options = options
+            .with_reconnect_delay(Duration::from_secs(reconnect_interval.unwrap_or(120) as u64));
+    }
+    if let Some(seconds) = heartbeat_timeout {
+        options = options.with_heartbeat_timeout(Some(Duration::from_secs(seconds as u64)));
+    }
+    Ok(options)
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use lark_channel::EventReconnectLimit;
+
+    #[test]
+    fn empty_config_keeps_server_reconnect_policy_and_default_heartbeat() {
+        let options = event_loop_options(&json!({})).unwrap();
+
+        assert!(options.use_server_reconnect_config());
+        assert_eq!(options.reconnect_limit(), EventReconnectLimit::Limited(3));
+        assert_eq!(options.reconnect_delay(), Duration::from_secs(1));
+        assert_eq!(options.heartbeat_timeout(), None);
+    }
+
+    #[test]
+    fn custom_config_overrides_reconnect_and_heartbeat_defaults() {
+        let options = event_loop_options(&json!({
+            RECONNECT_COUNT_KEY: 4,
+            RECONNECT_INTERVAL_KEY: "20",
+            HEARTBEAT_TIMEOUT_KEY: 300,
+        }))
+        .unwrap();
+
+        assert!(!options.use_server_reconnect_config());
+        assert_eq!(options.reconnect_limit(), EventReconnectLimit::Limited(4));
+        assert_eq!(options.reconnect_delay(), Duration::from_secs(20));
+        assert_eq!(options.heartbeat_timeout(), Some(Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn negative_or_zero_transport_values_are_rejected() {
+        assert!(event_loop_options(&json!({ RECONNECT_COUNT_KEY: -2 })).is_err());
+        assert!(event_loop_options(&json!({ RECONNECT_INTERVAL_KEY: 0 })).is_err());
+        assert!(event_loop_options(&json!({ HEARTBEAT_TIMEOUT_KEY: 0 })).is_err());
+    }
+}
+
 pub fn statuses() -> HashMap<String, ConnectionStatus> {
     STATUSES.lock().unwrap().clone()
 }
@@ -87,14 +189,14 @@ pub fn start(connect: Connect) {
         let adapter = Arc::new(FeishuAdapter::new(openapi.clone()));
         let connector =
             OpenApiWebSocketEventConnector::new(openapi, TokioTungsteniteWebSocketTransport::new());
-        let mut event_loop = EventLoop::with_options(
-            connector,
-            EventLoopOptions::new()
-                // A failed platform connection stays offline until the user retries it.
-                // Automatic reconnects can loop forever on invalid credentials or bans.
-                .with_max_reconnects(0)
-                .with_heartbeat_timeout(Some(Duration::from_secs(45))),
-        );
+        let options = match event_loop_options(&connect.adapter_config) {
+            Ok(options) => options,
+            Err(error) => {
+                set_status(&connect.id, "error", Some(error));
+                return;
+            }
+        };
+        let mut event_loop = EventLoop::with_options(connector, options);
         set_status(&connect.id, "online", None);
         let connection_id = connect.id.clone();
         let outcome = event_loop
@@ -127,6 +229,7 @@ pub fn validate_config(domain: &str, value: &Value, existing: bool) -> Result<()
     if !existing && app_secret.trim().is_empty() {
         return Err("adapter_config.app_secret is required".into());
     }
+    validate_transport_config(value)?;
     Ok(())
 }
 
@@ -135,11 +238,23 @@ pub fn public_config(domain: &str, value: &Value) -> Value {
         .get("app_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    json!({
+    let mut public = json!({
         "domain": domain,
         "app_id": app_id,
         "has_app_secret": value.get("app_secret").and_then(Value::as_str).is_some_and(|value| !value.is_empty()),
-    })
+    });
+    if let Some(object) = public.as_object_mut() {
+        for key in [
+            RECONNECT_COUNT_KEY,
+            RECONNECT_INTERVAL_KEY,
+            HEARTBEAT_TIMEOUT_KEY,
+        ] {
+            if let Some(config) = value.get(key) {
+                object.insert(key.to_owned(), config.clone());
+            }
+        }
+    }
+    public
 }
 
 pub async fn verify_config(domain: &str, value: &Value) -> Result<(), String> {
