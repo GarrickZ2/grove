@@ -536,6 +536,36 @@ type ServerEvent = {
   [key: string]: any;
 };
 
+/** Runtime history/connection state owned by one Chat while TaskChat is mounted. */
+interface ChatHistoryRuntime {
+  /** A complete history snapshot has been hydrated into the in-memory state. */
+  loaded: boolean;
+  /** The live socket may have missed events since the last hydration. */
+  needsResync: boolean;
+  /** Monotonic guard for overlapping initial/sync history requests. */
+  generation: number;
+  /** Generation currently collecting live WS events during history hydration. */
+  loadingGeneration: number | null;
+  /** A reconnect requested hydration before React reran the active-chat effect. */
+  syncRequested: boolean;
+  /** Events for this Chat that arrive while its history request is in flight. */
+  bufferedEvents: ServerEvent[];
+  /** ACP session_ready has been observed on the current WebSocket. */
+  connected: boolean;
+}
+
+function defaultChatHistoryRuntime(): ChatHistoryRuntime {
+  return {
+    loaded: false,
+    needsResync: false,
+    generation: 0,
+    loadingGeneration: null,
+    syncRequested: false,
+    bufferedEvents: [],
+    connected: false,
+  };
+}
+
 interface SlashCommand {
   name: string;
   description: string;
@@ -2609,10 +2639,20 @@ export function TaskChat({
   finishedRef.current = finished;
   // Track intentionally closed WebSockets (don't auto-reconnect these)
   const intentionalCloseRef = useRef<Set<string>>(new Set());
-  // Per-chat reconnect attempt count for exponential backoff. Reset on
-  // successful open. Stops auto-reconnect after WS_MAX_RECONNECT_ATTEMPTS
-  // to avoid hammering the agent on permanent failures (e.g. stale saved_id).
+  // Per-chat reconnect attempt count for exponential backoff. Reset only on
+  // session_ready — a bare WS open proves nothing (the agent can die at
+  // initialize right after, and the next open would never let the ladder
+  // climb). Stops auto-reconnect after WS_MAX_RECONNECT_ATTEMPTS to avoid
+  // hammering the agent on permanent failures (e.g. stale saved_id).
   const reconnectAttemptRef = useRef<Map<string, number>>(new Map());
+  // Per-chat "did this WebSocket ever reach session_ready" flag. A socket
+  // that closes before its first session_ready means the agent failed to
+  // start (crashed at initialize, missing binary, boot-time auth error) —
+  // auto-reconnecting would just respawn the same broken process forever,
+  // so onclose stops the ladder and leaves recovery to the Reconnect
+  // button. Sockets that had reached ready keep the ladder for transient
+  // mid-session drops.
+  const wsSessionEverReadyRef = useRef<Map<string, boolean>>(new Map());
   // Track scheduled reconnect timers so they can be cancelled on unmount /
   // chat switch / intentional close — otherwise an in-flight 30s backoff
   // resurrects a zombie WebSocket after the component is gone, triggering
@@ -2629,6 +2669,7 @@ export function TaskChat({
       reconnectTimerRef.current.delete(chatId);
     }
     reconnectAttemptRef.current.delete(chatId);
+    wsSessionEverReadyRef.current.delete(chatId);
   });
   // Track in-flight connection attempts to prevent async TOCTOU race
   const connectingRef = useRef<Set<string>>(new Set());
@@ -2652,7 +2693,8 @@ export function TaskChat({
   const [connectPhase, setConnectPhase] = useState<string | null>(null);
   const [connectPhaseStartedAt, setConnectPhaseStartedAt] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const { resolveMessages, forgetMessages } =
+  const [historySyncVersion, setHistorySyncVersion] = useState(0);
+  const { resolveMessages, forgetMessages, updateMessages } =
     useLiveSessionMessages(activeChatId, messages);
   const [hiddenMessageCount, setHiddenMessageCount] = useState(0);
   const hiddenMessageCountRef = useRef(0);
@@ -3139,10 +3181,11 @@ export function TaskChat({
   const pollingOffsetRef = useRef(0);
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Buffer WS events while HTTP history is loading to avoid race condition
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const wsEventBufferRef = useRef<any[]>([]);
-  const historyLoadingRef = useRef(false);
+  // Keep the reduced history snapshot and its hydration state per Chat. A
+  // Chat's WebSocket can stay alive while another Chat is visible, so the
+  // corresponding history must advance in the same per-Chat runtime slot.
+  const historyRuntimeRef = useRef<Map<string, ChatHistoryRuntime>>(new Map());
+  const previousHistoryActiveChatRef = useRef<string | null>(null);
 
   const activeChat =
     chats.find((c) => c.id === activeChatId) ??
@@ -4525,6 +4568,11 @@ export function TaskChat({
     explicitBottomPendingRef.current = false;
     setShowScrollToBottom(false);
     const cached = perChatStateRef.current.get(chatId);
+    const runtime = historyRuntimeRef.current.get(chatId);
+    const socket = wsMapRef.current.get(chatId);
+    const chatIsConnected =
+      socket?.readyState === WebSocket.OPEN &&
+      (runtime?.connected ?? cached?.isConnected ?? false);
     const restoredMessages = resolveMessages(chatId, cached?.messages);
     if (cached) {
       setMessages(restoredMessages);
@@ -4546,7 +4594,7 @@ export function TaskChat({
       setPlanEntries(cached.planEntries);
       setShowPlan(cached.showPlan ?? false);
       setSlashCommands(cached.slashCommands);
-      setIsConnected(cached.isConnected);
+      setIsConnected(chatIsConnected);
       setPromptCaps(cached.promptCaps);
       // Each live WebSocket keeps its own initialized Agent capabilities.
       // Switching chats does not trigger another session_ready, so restore
@@ -4582,7 +4630,7 @@ export function TaskChat({
       setShowPlan(false);
       setContextUsage(null);
       setSlashCommands([]);
-      setIsConnected(false);
+      setIsConnected(chatIsConnected);
       setConnectPhase(null);
       setConnectPhaseStartedAt(null);
       setIsTerminalMode(false);
@@ -4880,10 +4928,10 @@ export function TaskChat({
 
       const ws = new WebSocket(url);
       wsMapRef.current.set(chatId, ws);
+      // This connection starts unproven; only a session_ready flips it.
+      wsSessionEverReadyRef.current.set(chatId, false);
 
       ws.onopen = () => {
-        // Successful connect — reset backoff so the next disconnect retries fast.
-        reconnectAttemptRef.current.delete(chatId);
         sendAgentVoiceState(chatId, loadAgentVoiceState(projectId, taskId, chatId));
       };
 
@@ -4894,6 +4942,36 @@ export function TaskChat({
         if (wsMapRef.current.get(chatId) !== ws) return;
         try {
           const data = JSON.parse(event.data);
+          const runtime =
+            historyRuntimeRef.current.get(chatId) ?? defaultChatHistoryRuntime();
+          if (data?.type === "session_ready") {
+            runtime.connected = true;
+            // The session is actually usable — the backoff ladder is only
+            // "paid off" here, not at WS open. Resetting the attempt count
+            // on session_ready is what lets the ladder climb across
+            // repeated start failures instead of restarting every cycle.
+            wsSessionEverReadyRef.current.set(chatId, true);
+            reconnectAttemptRef.current.delete(chatId);
+            // A reconnect leaves a gap that cannot be recovered from the live
+            // stream alone. Mark the history request as loading before the
+            // React effect runs, so events arriving in that small window are
+            // buffered instead of being overwritten by the HTTP snapshot.
+            if (
+              runtime.needsResync &&
+              runtime.loadingGeneration === null &&
+              chatId === getActiveChatId()
+            ) {
+              const generation = runtime.generation + 1;
+              runtime.generation = generation;
+              runtime.loadingGeneration = generation;
+              runtime.bufferedEvents = [];
+              runtime.syncRequested = true;
+              setHistorySyncVersion((version) => version + 1);
+            }
+          } else if (data?.type === "session_ended") {
+            runtime.connected = false;
+          }
+          historyRuntimeRef.current.set(chatId, runtime);
           if (data?.type === "agent_voice_audio") {
             const audioEvent = data as AgentVoiceAudioEvent;
             const voiceState = loadAgentVoiceState(projectId, taskId, audioEvent.chat_id);
@@ -4933,8 +5011,8 @@ export function TaskChat({
             cancelPendingReconnectRef.current(chatId);
           }
           if (chatId === getActiveChatId()) {
-            if (historyLoadingRef.current) {
-              wsEventBufferRef.current.push(data);
+            if (runtime.loadingGeneration !== null) {
+              runtime.bufferedEvents.push(data);
             } else {
               handleServerMessageRef.current(data);
             }
@@ -4962,6 +5040,21 @@ export function TaskChat({
           );
         }
         wsMapRef.current.delete(chatId);
+        const runtime = historyRuntimeRef.current.get(chatId);
+        if (runtime) {
+          runtime.connected = false;
+          // A reconnect can miss events that were persisted while this
+          // socket was down. Force the next session_ready/activation to
+          // resync history.
+          runtime.loaded = false;
+          runtime.needsResync = true;
+          // Keep an in-flight history request and its buffer alive. The
+          // response still provides the persisted prefix, while the buffer
+          // contains live events received after that prefix was read.
+          if (runtime.loadingGeneration === null) {
+            runtime.bufferedEvents = [];
+          }
+        }
         if (chatId === getActiveChatId()) {
           setIsConnected(false);
           onDisconnectedPropRef.current?.();
@@ -4974,6 +5067,21 @@ export function TaskChat({
         if (intentionalCloseRef.current.has(chatId)) {
           intentionalCloseRef.current.delete(chatId);
           cancelPendingReconnectRef.current(chatId);
+        } else if (!wsSessionEverReadyRef.current.get(chatId)) {
+          // Start failure: the agent never came up on this connection
+          // (crashed at initialize, missing binary, etc.). Auto-retrying
+          // would respawn the same broken process and append another error
+          // to the transcript on every cycle, so stop the ladder here —
+          // the Reconnect button retries on demand.
+          reconnectAttemptRef.current.delete(chatId);
+          if (chatId === getActiveChatId()) {
+            setMessages((prev) =>
+              appendSystemMessage(
+                prev,
+                "Agent failed to connect. Use Reconnect to try again.",
+              ),
+            );
+          }
         } else {
           // Exponential backoff: 1s, 2s, 4s, 8s, 16s — cap at 30s. Give up after 5
           // attempts to avoid hammering the agent on permanent failures (stale
@@ -5037,7 +5145,6 @@ export function TaskChat({
     wsMapRef.current.clear();
     intentionalCloseRef.current.clear();
     wsRef.current = null;
-    wsEventBufferRef.current = [];
     setIsConnected(false);
     setConnectPhase(null);
     setConnectPhaseStartedAt(null);
@@ -5046,13 +5153,71 @@ export function TaskChat({
 
   // activeChatIdRef is owned by useActiveChatId — no separate declaration here.
 
+  // An inactive Chat's background WebSocket can continue updating its cache.
+  // If the visible Chat changes while its history request is still in flight,
+  // invalidate that request before it can later overwrite the newer cache.
+  useEffect(() => {
+    const previousChatId = previousHistoryActiveChatRef.current;
+    if (previousChatId && previousChatId !== activeChatId) {
+      const runtime = historyRuntimeRef.current.get(previousChatId);
+      if (runtime && runtime.loadingGeneration !== null) {
+        runtime.generation += 1;
+        runtime.loadingGeneration = null;
+        runtime.bufferedEvents = [];
+        runtime.loaded = false;
+        runtime.needsResync = true;
+        runtime.syncRequested = false;
+      }
+    }
+    previousHistoryActiveChatRef.current = activeChatId;
+  }, [activeChatId]);
+
   // Connect WS first (for real-time events + SessionReady), then load history via HTTP
   useEffect(() => {
     if (!activeChatId) return;
     const chatId = activeChatId;
     const isInitialImport = initialImportChatIdRef.current === chatId;
-    historyLoadingRef.current = !isInitialImport;
-    if (!isInitialImport) wsEventBufferRef.current = [];
+    const runtime =
+      historyRuntimeRef.current.get(chatId) ?? defaultChatHistoryRuntime();
+    historyRuntimeRef.current.set(chatId, runtime);
+
+    // A live Chat already owns the authoritative in-memory transcript. The
+    // active view was restored from that snapshot before this effect ran, so
+    // re-reading the persisted history here would only replace fresh state
+    // with an older snapshot and create another merge race.
+    const existingWs = wsMapRef.current.get(chatId);
+    const pendingGeneration = runtime.loadingGeneration;
+    const startsRequestedSync = runtime.syncRequested;
+    if (
+      !isInitialImport &&
+      !startsRequestedSync &&
+      pendingGeneration !== null
+    ) {
+      // A previous effect invocation already owns this request.
+      wsRef.current = existingWs ?? null;
+      return;
+    }
+    if (
+      !isInitialImport &&
+      !startsRequestedSync &&
+      runtime.loaded &&
+      !runtime.needsResync &&
+      existingWs?.readyState === WebSocket.OPEN
+    ) {
+      wsRef.current = existingWs;
+      return;
+    }
+
+    const generation = pendingGeneration ?? runtime.generation + 1;
+    if (startsRequestedSync) {
+      // The reconnect handler pre-marked this generation before scheduling
+      // the render, closing the gap where live events could be lost.
+      runtime.syncRequested = false;
+    } else {
+      runtime.generation = generation;
+      runtime.loadingGeneration = isInitialImport ? null : generation;
+      runtime.bufferedEvents = [];
+    }
     (async () => {
       // Step 1: Connect WS for real-time events
       if (!isReadOnlyHistory) await connectChatWs(chatId);
@@ -5065,16 +5230,36 @@ export function TaskChat({
         return;
       }
       // Step 2: Load history from HTTP (one-shot, avoids "过电影" effect)
-      if (chatId !== getActiveChatId()) return;
+      if (
+        generation !== runtime.generation ||
+        chatId !== getActiveChatId()
+      ) {
+        if (generation === runtime.generation) {
+          runtime.loadingGeneration = null;
+          runtime.bufferedEvents = [];
+        }
+        return;
+      }
       let res: Awaited<ReturnType<typeof getChatHistory>>;
       try {
         res = await getChatHistory(projectId, taskId, chatId);
       } catch {
-        historyLoadingRef.current = false;
-        wsEventBufferRef.current = [];
+        if (generation === runtime.generation) {
+          runtime.loadingGeneration = null;
+          runtime.bufferedEvents = [];
+        }
         return;
       }
-      if (chatId !== getActiveChatId()) return;
+      if (
+        generation !== runtime.generation ||
+        chatId !== getActiveChatId()
+      ) {
+        if (generation === runtime.generation) {
+          runtime.loadingGeneration = null;
+          runtime.bufferedEvents = [];
+        }
+        return;
+      }
       {
         let msgs: ChatMessage[] = [];
         let historicalPlanEntries: PlanEntry[] | null = null;
@@ -5085,9 +5270,17 @@ export function TaskChat({
           }
         }
         // Drain buffered WS events that arrived during HTTP load
-        const buffered = isReadOnlyHistory ? [] : wsEventBufferRef.current;
-        wsEventBufferRef.current = [];
-        historyLoadingRef.current = false;
+        const buffered = isReadOnlyHistory ? [] : runtime.bufferedEvents;
+        runtime.bufferedEvents = [];
+        runtime.loadingGeneration = null;
+        runtime.loaded = true;
+        runtime.syncRequested = false;
+        if (
+          runtime.connected &&
+          wsMapRef.current.get(chatId)?.readyState === WebSocket.OPEN
+        ) {
+          runtime.needsResync = false;
+        }
         // Reduce buffered message events into msgs locally (avoids React batching concerns)
         for (const evt of buffered) {
           msgs = reduceHistoryMessages(msgs, evt);
@@ -5360,7 +5553,7 @@ export function TaskChat({
     // loading after this effect's first run (when launch_mode was still
     // undefined → connectChatWs bailed), the effect re-fires with the
     // resolved mode and routes the chat correctly (ACP WS vs PTY-only).
-  }, [activeChatId, activeChat?.launch_mode, connectChatWs, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot]);
+  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot]);
 
   // Cleanup all WebSockets on unmount, plus any pending reconnect timers —
   // otherwise an in-flight backoff timer fires after unmount and creates a
@@ -5944,9 +6137,40 @@ export function TaskChat({
   const handleServerMessageForCache = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (chatId: string, msg: any) => {
-      const state =
-        perChatStateRef.current.get(chatId) ?? defaultPerChatState();
+      const cached = perChatStateRef.current.get(chatId);
+      const state = cached ?? defaultPerChatState();
+      // If this is the first background event for a Chat, preserve the latest
+      // active transcript as the reducer base instead of starting from an
+      // empty cache. This keeps the live runtime and the switch cache on the
+      // same history branch.
+      if (!cached) state.messages = resolveMessages(chatId, state.messages);
+      let messagesChanged = false;
       switch (msg.type) {
+        case "error": {
+          const msgText = msg.message ?? "";
+          const isStalePermission =
+            msgText.includes("No pending permission") ||
+            msgText.includes("is no longer pending");
+          if (isStalePermission) {
+            state.messages = state.messages.map((message) =>
+              message.type === "permission" && !message.resolved
+                ? { ...message, resolved: "Cancelled" }
+                : message,
+            );
+          } else {
+            state.messages = [
+              ...state.messages,
+              { type: "system", content: msgText },
+            ];
+            state.isBusy = false;
+            runtimeBusyRef.current.set(chatId, false);
+            setSessionActivity((previous) =>
+              updateSessionRunning(previous, chatId, false, getActiveChatId()),
+            );
+          }
+          messagesChanged = true;
+          break;
+        }
         case "session_ready":
           state.isConnected = true;
           if (msg.uses_config_options || (Array.isArray(msg.config_options) && msg.config_options.length > 0)) {
@@ -5999,6 +6223,64 @@ export function TaskChat({
             }
           }
           break;
+        case "auth_required": {
+          const methods: { id: string; name: string; description?: string }[] =
+            Array.isArray(msg.methods) ? msg.methods : [];
+          state.messages = [
+            ...state.messages,
+            {
+              type: "auth_required",
+              methods,
+              agentName: msg.agent_name ?? null,
+              status: "idle",
+            },
+          ];
+          state.isBusy = false;
+          runtimeBusyRef.current.set(chatId, false);
+          setSessionActivity((previous) =>
+            updateSessionRunning(previous, chatId, false, getActiveChatId()),
+          );
+          messagesChanged = true;
+          break;
+        }
+        case "auth_succeeded":
+          state.messages = state.messages.map((message) =>
+            message.type === "auth_required" &&
+            (message.status === "idle" || message.status === "in_progress")
+              ? { ...message, status: "succeeded" }
+              : message,
+          );
+          messagesChanged = true;
+          break;
+        case "auth_failed": {
+          const errorMessage =
+            typeof msg.message === "string"
+              ? msg.message
+              : "Authentication failed. Please try again.";
+          const nextMessages = [...state.messages];
+          for (let i = nextMessages.length - 1; i >= 0; i -= 1) {
+            const message = nextMessages[i];
+            if (
+              message.type === "auth_required" &&
+              message.status === "in_progress"
+            ) {
+              nextMessages[i] = {
+                ...message,
+                status: "failed",
+                errorMessage,
+              };
+              break;
+            }
+          }
+          state.messages = nextMessages;
+          state.isBusy = false;
+          runtimeBusyRef.current.set(chatId, false);
+          setSessionActivity((previous) =>
+            updateSessionRunning(previous, chatId, false, getActiveChatId()),
+          );
+          messagesChanged = true;
+          break;
+        }
         case "thought_levels_update":
           state.thoughtLevelOptions = (msg.available ?? []).map(
             (t: { id: string; name: string }) => ({
@@ -6017,6 +6299,7 @@ export function TaskChat({
             ...state.messages,
             { type: "system", content: msg.message },
           ];
+          messagesChanged = true;
           break;
         case "mode_changed":
           state.permissionLevel = msg.mode_id;
@@ -6044,11 +6327,17 @@ export function TaskChat({
         case "terminal_output_update":
         case "permission_request":
         case "permission_response":
+        case "ask_form":
+        case "elicitation_request":
+        case "elicitation_resolved":
+        case "elicitation_validation_error":
+        case "elicitation_complete":
         case "complete":
         case "user_message":
         case "terminal_execute":
         case "terminal_chunk":
         case "terminal_complete":
+          messagesChanged = true;
           state.messages = reduceHistoryMessages(state.messages, msg);
           state.readMemoryIds = [
             ...new Set([
@@ -6107,6 +6396,7 @@ export function TaskChat({
             );
             state.messages = pruned.messages;
             state.hiddenMessageCount = pruned.hiddenMessageCount;
+            messagesChanged = true;
           }
           break;
         case "plan_update": {
@@ -6129,14 +6419,21 @@ export function TaskChat({
             ...state.messages,
             { type: "system", content: "Signed out of the agent." },
           ];
+          messagesChanged = true;
           break;
         case "session_ended":
           state.isConnected = false;
           break;
       }
       perChatStateRef.current.set(chatId, state);
+      // useLiveSessionMessages is the source used by restoreChatState. Keep
+      // it in sync with background WS reductions; otherwise it would win over
+      // the newer per-chat cache when the user switches back.
+      if (messagesChanged) {
+        updateMessages(chatId, state.messages);
+      }
     },
-    [chatRenderWindowSettings, getActiveChatId],
+    [chatRenderWindowSettings, getActiveChatId, resolveMessages, updateMessages],
   );
 
   // Keep refs in sync so connectChatWs WS handlers always call latest versions
@@ -7733,6 +8030,15 @@ export function TaskChat({
     setReconnectConfirmOpen(false);
     cancelPendingReconnectRef.current(chatId);
     intentionalCloseRef.current.add(chatId);
+    const runtime =
+      historyRuntimeRef.current.get(chatId) ?? defaultChatHistoryRuntime();
+    runtime.connected = false;
+    runtime.loaded = false;
+    runtime.needsResync = true;
+    if (runtime.loadingGeneration === null) {
+      runtime.bufferedEvents = [];
+    }
+    historyRuntimeRef.current.set(chatId, runtime);
 
     try {
       await reconnectChat(projectId, taskId, chatId);

@@ -35,5 +35,9 @@ export function useLiveSessionMessages<T>(
     runtimeMessagesRef.current.delete(sessionId);
   }, []);
 
-  return { resolveMessages, forgetMessages };
+  const updateMessages = useCallback((sessionId: string, nextMessages: T[]) => {
+    runtimeMessagesRef.current.set(sessionId, nextMessages);
+  }, []);
+
+  return { resolveMessages, forgetMessages, updateMessages };
 }
