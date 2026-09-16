@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Minimize2 } from "lucide-react";
 import { useDefineCommand, useKeyboardScope } from "../../keyboard";
@@ -74,7 +75,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
     return () => el.removeEventListener("wheel", handler);
   }, [imageUrl, svgContent]);
 
-  return (
+  const lightbox = (
     <AnimatePresence>
       {(imageUrl || svgContent) && (
         <motion.div
@@ -169,4 +170,8 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
       )}
     </AnimatePresence>
   );
+
+  // Render outside page-level stacking contexts so the lightbox always sits
+  // above fixed navigation such as the app sidebar.
+  return typeof document !== "undefined" ? createPortal(lightbox, document.body) : null;
 }
