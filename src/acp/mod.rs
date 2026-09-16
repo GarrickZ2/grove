@@ -977,6 +977,7 @@ pub struct ConfigSelector {
 pub struct PreparedTextPrompt {
     id: String,
     text: String,
+    attachments: Vec<ContentBlockData>,
     sender: Option<String>,
 }
 
@@ -8336,12 +8337,22 @@ impl AcpSessionHandle {
     /// Allocate a Grove prompt id without entering the ACP command loop.
     /// External adapters use this to register their mapping before starting
     /// the prompt, so a very fast Turn event cannot race the mapping insert.
-    pub fn prepare_text_prompt(&self, text: String, sender: Option<String>) -> PreparedTextPrompt {
+    pub fn prepare_prompt(
+        &self,
+        text: String,
+        attachments: Vec<ContentBlockData>,
+        sender: Option<String>,
+    ) -> PreparedTextPrompt {
         PreparedTextPrompt {
             id: default_queued_message_id(),
             text,
+            attachments,
             sender,
         }
+    }
+
+    pub fn prepare_text_prompt(&self, text: String, sender: Option<String>) -> PreparedTextPrompt {
+        self.prepare_prompt(text, Vec::new(), sender)
     }
 
     /// Start a previously prepared prompt and return its Grove message id.
@@ -8349,7 +8360,12 @@ impl AcpSessionHandle {
         &self,
         prompt: PreparedTextPrompt,
     ) -> crate::error::Result<String> {
-        let PreparedTextPrompt { id, text, sender } = prompt;
+        let PreparedTextPrompt {
+            id,
+            text,
+            attachments,
+            sender,
+        } = prompt;
         let claimed = self
             .is_busy
             .compare_exchange(
@@ -8361,7 +8377,7 @@ impl AcpSessionHandle {
             .is_ok();
         if claimed {
             match self
-                .send_tracked_prompt_with_id(id.clone(), text, Vec::new(), sender, false, None)
+                .send_tracked_prompt_with_id(id.clone(), text, attachments, sender, false, None)
                 .await
             {
                 Ok(()) => Ok(id),
@@ -8376,7 +8392,7 @@ impl AcpSessionHandle {
                 id: id.clone(),
                 message_ids: vec![id.clone()],
                 text,
-                attachments: Vec::new(),
+                attachments,
                 sender,
                 config: Some(self.snapshot_config()),
                 terminal: false,

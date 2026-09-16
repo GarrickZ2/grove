@@ -95,14 +95,15 @@ pub(crate) fn snapshot(
 }
 
 impl Session {
-    pub(crate) fn prepare_text_prompt(
+    pub(crate) fn prepare_prompt(
         &self,
         text: String,
+        attachments: Vec<acp::ContentBlockData>,
         sender: Option<String>,
     ) -> PreparedPrompt {
         PreparedPrompt {
             handle: self.clone(),
-            prompt: self.handle.prepare_text_prompt(text, sender),
+            prompt: self.handle.prepare_prompt(text, attachments, sender),
         }
     }
 

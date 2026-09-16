@@ -171,6 +171,26 @@ impl Platform for FeishuPlatform {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InboundAttachmentKind {
+    Image,
+    Audio,
+    File,
+}
+
+/// Platform-neutral attachment delivered into the Connect core.
+///
+/// Adapters download and validate platform resources before crossing this
+/// boundary. Core and Grove therefore do not need to know about Feishu keys or
+/// resource endpoints.
+#[derive(Debug, Clone)]
+pub struct InboundAttachment {
+    pub kind: InboundAttachmentKind,
+    pub name: String,
+    pub mime_type: Option<String>,
+    pub bytes: Vec<u8>,
+}
+
 /// Platform-neutral message delivered into the Connect core.
 #[derive(Debug, Clone)]
 pub struct InboundMessage {
@@ -178,6 +198,7 @@ pub struct InboundMessage {
     pub conversation_id: String,
     pub sender_id: String,
     pub text: String,
+    pub attachments: Vec<InboundAttachment>,
 }
 
 /// Platform-neutral interactive action delivered into the Connect core.

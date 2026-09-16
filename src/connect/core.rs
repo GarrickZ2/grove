@@ -122,6 +122,7 @@ pub async fn handle_action(
                 conversation_id: action.conversation_id.clone(),
                 sender_id: action.sender_id.clone(),
                 text: text.clone(),
+                attachments: Vec::new(),
             };
             match super::grove::deliver_prompt(current, adapter.clone(), inbound, text).await {
                 Ok(()) => {
@@ -418,10 +419,11 @@ pub async fn handle_message(connection_id: &str, adapter: AdapterRef, inbound: I
             return;
         }
     };
-    if let Err(error) = handle_parsed_message(current, adapter.clone(), inbound.clone()).await {
+    let external_message_id = inbound.external_message_id.clone();
+    if let Err(error) = handle_parsed_message(current, adapter.clone(), inbound).await {
         let _ = adapter
             .reply_text(
-                &inbound.external_message_id,
+                &external_message_id,
                 &format!("Grove Connect error: {error}"),
             )
             .await;
@@ -517,6 +519,7 @@ async fn run_command(
                 conversation_id: String::new(),
                 sender_id: String::new(),
                 text: text.clone(),
+                attachments: Vec::new(),
             };
             super::grove::deliver_prompt(connect.clone(), adapter.clone(), inbound, text).await
         }

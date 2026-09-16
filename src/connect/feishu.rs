@@ -1,12 +1,13 @@
 use async_trait::async_trait;
 use lark_channel::card::{Card, CardElement};
 use lark_channel::lark_openapi::{
-    OpenApiClient, OpenApiTransport, ReqwestOpenApiTransport, TokioTungsteniteWebSocketTransport,
-    WebSocketEventAck,
+    OpenApiBinaryTransport, OpenApiClient, ReqwestOpenApiTransport,
+    TokioTungsteniteWebSocketTransport, WebSocketEventAck,
 };
 use lark_channel::{
-    ChannelConfig, ChannelEvent, Domain, EventLoop, EventLoopOptions, MessageChatType, MessageId,
-    MessageSender, OpenApiWebSocketEventConnector, ReceivedEvent,
+    ChannelConfig, ChannelEvent, Domain, EventLoop, EventLoopOptions, MediaDownloader,
+    MessageChatType, MessageId, MessageSender, OpenApiWebSocketEventConnector, ReceivedEvent,
+    ResourceDescriptor, ResourceType,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -16,8 +17,8 @@ use std::time::Duration;
 use crate::storage::connects::Connect;
 
 use super::adapter::{
-    ActionResult, AdapterRef, ConnectAdapter, ConnectionStatus, InboundAction, InboundMessage,
-    NoticeLevel,
+    ActionResult, AdapterRef, ConnectAdapter, ConnectionStatus, InboundAction, InboundAttachment,
+    InboundAttachmentKind, InboundMessage, NoticeLevel,
 };
 use super::commands::{
     AgentOption, CardSpec, ConfigCard, ElicitationCard, ElicitationFieldKind, PermissionCard,
@@ -138,6 +139,40 @@ mod transport_tests {
         assert!(event_loop_options(&json!({ RECONNECT_COUNT_KEY: -2 })).is_err());
         assert!(event_loop_options(&json!({ RECONNECT_INTERVAL_KEY: 0 })).is_err());
         assert!(event_loop_options(&json!({ HEARTBEAT_TIMEOUT_KEY: 0 })).is_err());
+    }
+
+    #[test]
+    fn attachment_metadata_uses_safe_fallbacks() {
+        assert_eq!(
+            content_disposition_filename(Some("attachment; filename=report.pdf")),
+            Some("report.pdf".to_owned())
+        );
+        assert_eq!(
+            content_disposition_filename(Some("attachment; filename=\"report.pdf\"")),
+            Some("report.pdf".to_owned())
+        );
+        assert_eq!(
+            default_attachment_name(InboundAttachmentKind::Image, Some("image/jpeg")),
+            "image.jpeg"
+        );
+        assert_eq!(
+            default_attachment_name(
+                InboundAttachmentKind::File,
+                Some("application/octet-stream")
+            ),
+            "attachment"
+        );
+        assert_eq!(
+            effective_mime_type(
+                Some("application/octet-stream; charset=binary"),
+                InboundAttachmentKind::Image
+            ),
+            "image/png"
+        );
+        assert_eq!(
+            effective_mime_type(Some("application/pdf"), InboundAttachmentKind::File),
+            "application/pdf"
+        );
     }
 }
 
@@ -290,26 +325,109 @@ fn credentials(value: &Value) -> Result<(String, String), String> {
     Ok((app_id, app_secret))
 }
 
+fn default_mime_type(kind: InboundAttachmentKind) -> &'static str {
+    match kind {
+        InboundAttachmentKind::Image => "image/png",
+        InboundAttachmentKind::Audio => "audio/mpeg",
+        InboundAttachmentKind::File => "application/octet-stream",
+    }
+}
+
+fn default_attachment_name(kind: InboundAttachmentKind, mime_type: Option<&str>) -> String {
+    let extension = mime_type
+        .and_then(|mime_type| mime_type.strip_prefix("image/"))
+        .filter(|extension| matches!(*extension, "gif" | "jpeg" | "png" | "webp"))
+        .or_else(|| {
+            mime_type
+                .and_then(|mime_type| mime_type.strip_prefix("audio/"))
+                .filter(|extension| matches!(*extension, "mpeg" | "mp4" | "wav" | "ogg"))
+        });
+    match (kind, extension) {
+        (InboundAttachmentKind::Image, Some(extension)) => format!("image.{extension}"),
+        (InboundAttachmentKind::Audio, Some(extension)) => format!("audio.{extension}"),
+        (InboundAttachmentKind::Image, None) => "image".to_owned(),
+        (InboundAttachmentKind::Audio, None) => "audio".to_owned(),
+        (InboundAttachmentKind::File, _) => "attachment".to_owned(),
+    }
+}
+
+fn effective_mime_type(content_type: Option<&str>, kind: InboundAttachmentKind) -> String {
+    let content_type = content_type
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let usable = content_type.is_some_and(|value| match kind {
+        InboundAttachmentKind::Image => value.starts_with("image/"),
+        InboundAttachmentKind::Audio => value.starts_with("audio/"),
+        InboundAttachmentKind::File => true,
+    });
+    if usable {
+        content_type.unwrap().to_owned()
+    } else {
+        default_mime_type(kind).to_owned()
+    }
+}
+
+fn content_disposition_filename(header: Option<&str>) -> Option<String> {
+    header?.split(';').skip(1).find_map(|part| {
+        let (key, value) = part.trim().split_once('=')?;
+        if !key.trim().eq_ignore_ascii_case("filename") {
+            return None;
+        }
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        (!value.is_empty()).then(|| value.to_owned())
+    })
+}
+
 async fn handle_event<T>(
     connection_id: String,
     adapter: Arc<FeishuAdapter<T>>,
     event: ReceivedEvent,
 ) -> lark_channel::Result<WebSocketEventAck>
 where
-    T: OpenApiTransport + Clone + Send + Sync + 'static,
+    T: OpenApiBinaryTransport + Clone + Send + Sync + 'static,
 {
     match event.event {
         ChannelEvent::Message(message) => {
-            if message.chat_type != MessageChatType::P2p || message.text.trim().is_empty() {
+            if message.chat_type != MessageChatType::P2p {
                 return Ok(WebSocketEventAck::ok());
             }
-            let inbound = InboundMessage {
-                external_message_id: message.message_id,
-                conversation_id: message.chat_id,
-                sender_id: message.sender_id,
-                text: message.text.trim().to_owned(),
-            };
+            let message_id = message.message_id;
+            let resources = message.resources;
+            let conversation_id = message.chat_id;
+            let sender_id = message.sender_id;
+            let text = message.text.trim().to_owned();
             tokio::spawn(async move {
+                let attachments = match adapter.download_inbound_attachments(&resources).await {
+                    Ok(attachments) => attachments,
+                    Err(error) => {
+                        eprintln!(
+                            "[connect] failed to download Feishu message resources for {message_id}: {error}"
+                        );
+                        let _ = adapter
+                            .reply_text(
+                                &message_id,
+                                &format!(
+                                    "Grove Connect error: failed to download attachment ({error})"
+                                ),
+                            )
+                            .await;
+                        return;
+                    }
+                };
+                if text.is_empty() && attachments.is_empty() {
+                    eprintln!(
+                        "[connect] ignored Feishu message {message_id}: no text or supported attachments"
+                    );
+                    return;
+                }
+                let inbound = InboundMessage {
+                    external_message_id: message_id,
+                    conversation_id,
+                    sender_id,
+                    text,
+                    attachments,
+                };
                 let adapter: AdapterRef = adapter;
                 super::core::handle_message(&connection_id, adapter, inbound).await;
             });
@@ -389,12 +507,51 @@ pub struct FeishuAdapter<T> {
     sender: MessageSender<T>,
 }
 
-impl<T: OpenApiTransport> FeishuAdapter<T> {
+impl<T: OpenApiBinaryTransport> FeishuAdapter<T> {
     pub fn new(openapi: OpenApiClient<T>) -> Self {
         Self {
             sender: MessageSender::new(openapi.clone()),
             openapi,
         }
+    }
+
+    async fn download_inbound_attachments(
+        &self,
+        resources: &[ResourceDescriptor],
+    ) -> Result<Vec<InboundAttachment>, String> {
+        let downloader = MediaDownloader::new(self.openapi.clone());
+        let mut attachments = Vec::with_capacity(resources.len());
+        for resource in resources {
+            let kind = match resource.resource_type {
+                ResourceType::Image => InboundAttachmentKind::Image,
+                ResourceType::Audio => InboundAttachmentKind::Audio,
+                ResourceType::File | ResourceType::Media => InboundAttachmentKind::File,
+                ResourceType::Folder => {
+                    return Err("Feishu folder attachments are not supported yet".to_owned());
+                }
+                ResourceType::Sticker => {
+                    return Err("Feishu sticker attachments are not supported yet".to_owned());
+                }
+                ResourceType::Unknown => return Err("unknown Feishu attachment type".to_owned()),
+            };
+            let downloaded = downloader
+                .download(resource)
+                .await
+                .map_err(|error| error.to_string())?;
+            let mime_type = effective_mime_type(downloaded.content_type.as_deref(), kind);
+            let name = resource
+                .file_name
+                .clone()
+                .or_else(|| content_disposition_filename(downloaded.content_disposition.as_deref()))
+                .unwrap_or_else(|| default_attachment_name(kind, Some(&mime_type)));
+            attachments.push(InboundAttachment {
+                kind,
+                name,
+                mime_type: Some(mime_type),
+                bytes: downloaded.bytes,
+            });
+        }
+        Ok(attachments)
     }
 
     async fn apply_action_result(
@@ -1010,7 +1167,7 @@ fn options(agents: &[AgentOption]) -> Vec<AgentOption> {
 #[async_trait]
 impl<T> ConnectAdapter for FeishuAdapter<T>
 where
-    T: OpenApiTransport + Clone + Send + Sync + 'static,
+    T: OpenApiBinaryTransport + Clone + Send + Sync + 'static,
 {
     async fn mark_waiting(&self, message_id: &str) -> Option<String> {
         self.add_reaction(message_id, "OneSecond").await

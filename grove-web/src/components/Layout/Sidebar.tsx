@@ -531,7 +531,7 @@ export function Sidebar({
           )}
 
           {/* Compact notification bell shares the Search row. */}
-          <div className="relative shrink-0">
+          <div className={`relative shrink-0 ${isCollapsed ? "self-center" : ""}`}>
             <motion.button
               whileHover={{ scale: 1.04 }}
               whileTap={{ scale: 0.96 }}

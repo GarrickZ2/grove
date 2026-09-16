@@ -29,6 +29,7 @@ include = [
     "/grove-web/dist/**",
     "!/grove-web/dist/**/*.map",
     "!/grove-web/dist/.DS_Store",
+    "/grove-extension/public/**",
     "/grove-extension/dist/**",
     "!/grove-extension/dist/.DS_Store",
     "/scripts/**",

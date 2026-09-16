@@ -2,12 +2,14 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use base64::Engine;
 use once_cell::sync::Lazy;
 
+use crate::acp::ContentBlockData;
 use crate::radio::{RadioEvent, TurnEvent, TurnForm, TurnFormFieldKind};
 use crate::storage::connects::{self, Connect};
 
-use super::adapter::{AdapterRef, InboundMessage};
+use super::adapter::{AdapterRef, InboundAttachment, InboundAttachmentKind, InboundMessage};
 use super::commands::{
     CardSpec, ElicitationCard, ElicitationField, ElicitationFieldKind, PermissionCard,
     PermissionCardOption,
@@ -452,6 +454,86 @@ pub fn pending_elicitation_card(connect: &Connect, request_id: &str) -> Option<C
         .map(form_card)
 }
 
+fn store_inbound_attachments(
+    connect: &Connect,
+    session_id: &str,
+    attachments: Vec<InboundAttachment>,
+) -> Result<Vec<ContentBlockData>, String> {
+    let project = crate::storage::workspace::load_project_by_hash(&connect.project_id)
+        .map_err(|error| error.to_string())?;
+    let mut blocks = Vec::with_capacity(attachments.len());
+    for attachment in attachments {
+        let mime_type = attachment.mime_type.unwrap_or_else(|| {
+            match attachment.kind {
+                InboundAttachmentKind::Image => "image/png",
+                InboundAttachmentKind::Audio => "audio/mpeg",
+                InboundAttachmentKind::File => "application/octet-stream",
+            }
+            .to_owned()
+        });
+        let stored = if let Some(project) = project.as_ref() {
+            if project.project_type == crate::storage::workspace::ProjectType::Studio {
+                let input_dir = crate::storage::workspace::studio_project_dir(&project.path)
+                    .join("tasks")
+                    .join(&connect.task_id)
+                    .join("input");
+                crate::storage::chat_attachments::store_attachment_bytes_to_dir(
+                    &input_dir,
+                    &attachment.name,
+                    Some(&mime_type),
+                    &attachment.bytes,
+                )
+            } else {
+                crate::storage::chat_attachments::store_attachment_bytes(
+                    &connect.project_id,
+                    &connect.task_id,
+                    session_id,
+                    &attachment.name,
+                    Some(&mime_type),
+                    &attachment.bytes,
+                )
+            }
+        } else {
+            crate::storage::chat_attachments::store_attachment_bytes(
+                &connect.project_id,
+                &connect.task_id,
+                session_id,
+                &attachment.name,
+                Some(&mime_type),
+                &attachment.bytes,
+            )
+        }
+        .map_err(|error| error.to_string())?;
+
+        match attachment.kind {
+            InboundAttachmentKind::Image => blocks.push(ContentBlockData::Image {
+                data: base64::engine::general_purpose::STANDARD.encode(&attachment.bytes),
+                mime_type,
+                uri: Some(stored.uri),
+                label: Some(stored.name),
+            }),
+            InboundAttachmentKind::Audio => blocks.push(ContentBlockData::Audio {
+                data: base64::engine::general_purpose::STANDARD.encode(&attachment.bytes),
+                mime_type,
+                label: Some(stored.name),
+            }),
+            InboundAttachmentKind::File => {
+                let name = stored.name;
+                blocks.push(ContentBlockData::ResourceLink {
+                    uri: stored.uri,
+                    name: name.clone(),
+                    mime_type: stored.mime_type,
+                    size: Some(stored.size),
+                    title: Some(name.clone()),
+                    description: Some("Feishu attachment".to_owned()),
+                    label: Some(name),
+                });
+            }
+        }
+    }
+    Ok(blocks)
+}
+
 pub async fn deliver_prompt(
     connect: Connect,
     adapter: AdapterRef,
@@ -489,7 +571,16 @@ pub async fn deliver_prompt(
             return Err(format!("Grove Connect error: {error}"));
         }
     };
-    let prompt = session.prepare_text_prompt(text, Some("connect".into()));
+    let attachments = match store_inbound_attachments(&connect, &session_id, inbound.attachments) {
+        Ok(attachments) => attachments,
+        Err(error) => {
+            adapter
+                .clear_status(&inbound.external_message_id, &waiting)
+                .await;
+            return Err(format!("Grove Connect error: {error}"));
+        }
+    };
+    let prompt = session.prepare_prompt(text, attachments, Some("connect".into()));
     let grove_message_id = prompt.id().to_owned();
     MESSAGE_MAPPINGS.lock().unwrap().insert(
         grove_message_id.clone(),

@@ -99,6 +99,24 @@ pub fn store_attachment(
     store_attachment_to_dir(&dir, name, mime_type, data_base64)
 }
 
+/// Store an attachment that is already available as bytes in a chat's
+/// attachment directory.
+pub fn store_attachment_bytes(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+    name: &str,
+    mime_type: Option<&str>,
+    bytes: &[u8],
+) -> Result<StoredAttachment> {
+    store_attachment_bytes_to_dir(
+        &attachments_dir(project, task_id, chat_id),
+        name,
+        mime_type,
+        bytes,
+    )
+}
+
 /// Store an attachment to a specific directory (used by Studio to write to input/)
 pub fn store_attachment_to_dir(
     dir: &std::path::Path,
@@ -106,16 +124,26 @@ pub fn store_attachment_to_dir(
     mime_type: Option<&str>,
     data_base64: &str,
 ) -> Result<StoredAttachment> {
-    std::fs::create_dir_all(dir)?;
-
-    let file_name = sanitize_filename(name);
-    let path = unique_attachment_path(dir, &file_name);
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data_base64)
         .map_err(|e| {
             crate::error::GroveError::InvalidData(format!("Invalid base64 attachment: {}", e))
         })?;
-    std::fs::write(&path, &bytes)?;
+    store_attachment_bytes_to_dir(dir, name, mime_type, &bytes)
+}
+
+/// Store an attachment that is already available as bytes.
+pub fn store_attachment_bytes_to_dir(
+    dir: &std::path::Path,
+    name: &str,
+    mime_type: Option<&str>,
+    bytes: &[u8],
+) -> Result<StoredAttachment> {
+    std::fs::create_dir_all(dir)?;
+
+    let file_name = sanitize_filename(name);
+    let path = unique_attachment_path(dir, &file_name);
+    std::fs::write(&path, bytes)?;
 
     let uri = url::Url::from_file_path(&path)
         .map_err(|_| crate::error::GroveError::Session("Invalid attachment path".into()))?
