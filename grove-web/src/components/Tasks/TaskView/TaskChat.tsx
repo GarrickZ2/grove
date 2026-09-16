@@ -8,6 +8,7 @@ import {
   memo,
   Fragment,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
@@ -3115,6 +3116,7 @@ export function TaskChat({
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
+  const touchSendHandledRef = useRef(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showPreviewComments, setShowPreviewComments] = useState(false);
   const [editingPreviewCommentId, setEditingPreviewCommentId] = useState<string | null>(null);
@@ -7255,6 +7257,21 @@ export function TaskChat({
     };
   }, [activeChatId, isBusy, buildPromptConfig, requestBottom]);
 
+  const finishComposerAfterSend = useCallback((el: HTMLElement) => {
+    if (isPhoneLayout) {
+      // A touch send starts while the contentEditable still owns focus. Blur
+      // it after the payload is accepted so iOS dismisses the keyboard and
+      // the next render can promote the composer back to its banner/pill.
+      el.blur();
+      setMobileComposerOpen(false);
+      setShowSessionSettings(false);
+      return;
+    }
+    // Desktop keeps the existing rapid-send workflow: send, then keep the
+    // composer ready for the next prompt.
+    el.focus();
+  }, [isPhoneLayout]);
+
   const handleSend = useCallback(async () => {
     const el = editableRef.current;
     if (!el) return;
@@ -7349,7 +7366,7 @@ export function TaskChat({
         });
         return [];
       });
-      el.focus();
+      finishComposerAfterSend(el);
       return;
     }
 
@@ -7393,7 +7410,7 @@ export function TaskChat({
       setAttachments([]);
       setIsTerminalMode(false);
       setIsInputExpanded(false);
-      el.focus();
+      finishComposerAfterSend(el);
       return;
     }
 
@@ -7508,7 +7525,7 @@ export function TaskChat({
       setIsTerminalMode(false);
       setIsInputExpanded(false);
       onUserMessageSent?.();
-      el.focus();
+      finishComposerAfterSend(el);
     } else {
       requestBottom("auto");
       wsRef.current.send(
@@ -7538,9 +7555,33 @@ export function TaskChat({
       // 事件驱动 — 收到后才翻 true。乐观更新会和后端事件 race,产生短暂"可发送"
       // 窗口让用户连点出 bug。延迟期间发送按钮短暂仍可点也行,backend 会自己处理。
       onUserMessageSent?.();
-      el.focus();
+      finishComposerAfterSend(el);
     }
-  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, onUserMessageSent, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, sendAgentVoiceState]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, onUserMessageSent, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, sendAgentVoiceState, finishComposerAfterSend]);
+
+  // On touch browsers, blurring the contentEditable can collapse the mobile
+  // composer before a later click event reaches the Send button. Handle the
+  // send at pointerdown while the button is still mounted; the click handler
+  // remains for mouse and keyboard activation.
+  const handleSendButtonPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (event.pointerType !== "touch") return;
+      event.preventDefault();
+      touchSendHandledRef.current = true;
+      window.setTimeout(() => {
+        touchSendHandledRef.current = false;
+      }, 1000);
+      void handleSend();
+    },
+    [handleSend],
+  );
+  const handleSendButtonClick = useCallback(() => {
+    if (touchSendHandledRef.current) {
+      touchSendHandledRef.current = false;
+      return;
+    }
+    void handleSend();
+  }, [handleSend]);
 
   const sendPreviewComments = useCallback((comments: PreviewCommentDraft[]) => {
     if (
@@ -11900,24 +11941,28 @@ export function TaskChat({
                         {isCancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
                       </Button>
                     ) : !activePermissionMessage && !isBusy && hasContent ? (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        className="h-9 w-9 !p-0 rounded-xl shadow-sm"
-                        onClick={handleSend}
-                        disabled={!isConnected}
-                      >
-                        <Send className="w-3.5 h-3.5" />
-                      </Button>
+                      <span onPointerDown={handleSendButtonPointerDown} className="contents">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          className="h-9 w-9 !p-0 rounded-xl shadow-sm"
+                          onClick={handleSendButtonClick}
+                          disabled={!isConnected}
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                        </Button>
+                      </span>
                     ) : !activePermissionMessage && isBusy && hasContent ? (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        className="h-9 w-9 !p-0 rounded-xl shadow-sm"
-                        onClick={handleSend}
-                      >
-                        <ListPlus className="w-3.5 h-3.5" />
-                      </Button>
+                      <span onPointerDown={handleSendButtonPointerDown} className="contents">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          className="h-9 w-9 !p-0 rounded-xl shadow-sm"
+                          onClick={handleSendButtonClick}
+                        >
+                          <ListPlus className="w-3.5 h-3.5" />
+                        </Button>
+                      </span>
                     ) : !activePermissionMessage && isBusy && !hasContent ? (
                       pendingMessages.length > 0 ? (
                         <Button
