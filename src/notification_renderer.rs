@@ -16,6 +16,9 @@
 
 use crate::hooks::{self, HookKind};
 use crate::radio::{PermissionInfo, RadioEvent};
+use std::sync::Once;
+
+static STARTED: Once = Once::new();
 
 /// Start rendering attention facts for this machine's human. Safe to call
 /// from both async and sync contexts; no-ops when OS rendering is disabled.
@@ -23,30 +26,39 @@ pub fn spawn() {
     if hooks::os_render_disabled() {
         return;
     }
-    let run = async {
+
+    // Local Web, local GUI, and TUI can share startup helpers. Keep one
+    // subscriber per process so repeated initialization cannot produce
+    // duplicate native banners or sounds.
+    STARTED.call_once(|| {
+        // Register before scheduling the task. If subscription happens inside
+        // the future, an ACP event published during startup can beat the
+        // first poll and disappear from the Localhost notification path.
         let mut rx = crate::radio::subscribe();
-        while let Some(event) = rx.recv().await {
-            if let RadioEvent::HookAdded { .. } = event {
-                render(&event);
+        let run = async move {
+            while let Some(event) = rx.recv().await {
+                if let RadioEvent::HookAdded { .. } = event {
+                    render(&event);
+                }
+            }
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(run);
+            }
+            // Sync callers (TUI startup) have no ambient runtime — give the
+            // subscriber its own single-threaded one on a background thread.
+            Err(_) => {
+                std::thread::spawn(move || {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("notification renderer runtime")
+                        .block_on(run);
+                });
             }
         }
-    };
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            handle.spawn(run);
-        }
-        // Sync callers (TUI startup) have no ambient runtime — give the
-        // subscriber its own single-threaded one on a background thread.
-        Err(_) => {
-            std::thread::spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("notification renderer runtime")
-                    .block_on(run);
-            });
-        }
-    }
+    });
 }
 
 fn render(event: &RadioEvent) {

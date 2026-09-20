@@ -10,17 +10,23 @@
 //   (Approve / Deny / open) behave identically.
 // - Browser: Web Notifications API + a synthesized chime.
 //
-// The engine stays quiet when the backend already renders for a human on the
-// backend's machine (local GUI / `grove web`): its in-process renderer owns
-// those. It activates when `grove mobile` advertises
-// `renders_os_notifications: false` on GET /api/v1/version, or when this GUI
-// window attaches to a remote backend (shell says remote mode).
+// The engine stays quiet when the backend advertises
+// `notification_owner: "backend"` (local GUI / `grove web`): its in-process
+// renderer owns those. It activates when `grove mobile` advertises
+// `notification_owner: "client"` on GET /api/v1/version, or when this GUI
+// window attaches to a remote backend (shell says remote mode). The legacy
+// `renders_os_notifications` boolean remains a fallback for older servers.
 
 import { getVersion } from "../api/version";
-import { getConfig } from "../api/config";
+import { getConfig, previewHookSound as previewBackendSound } from "../api/config";
 import type { HooksConfig, NotificationsConfig } from "../api/config";
 import type { RadioEvent } from "../api/walkieTalkie";
 import { invokeQuiet, isTauriShell, isRemoteMode } from "../utils/tauriShell";
+import {
+  clientOwnsNotifications,
+  hasInjectedRemoteBackend,
+  isLikelyRemoteBrowser,
+} from "./notificationRouting";
 
 type HookAddedEvent = Extract<RadioEvent, { type: "hook_added" }>;
 
@@ -30,12 +36,19 @@ let activation: Promise<boolean> | null = null;
 
 function engineActive(): Promise<boolean> {
   if (!activation) {
-    activation = Promise.all([
-      isTauriShell ? isRemoteMode() : Promise.resolve(false),
-      getVersion()
-        .then((v) => v.renders_os_notifications !== false)
-        .catch(() => true),
-    ]).then(([shellRemote, backendRenders]) => shellRemote || !backendRenders);
+    const explicitlyRemote = isTauriShell
+      ? isRemoteMode()
+      : Promise.resolve(hasInjectedRemoteBackend());
+    activation = explicitlyRemote.then(async (remote) => {
+      if (remote) return true;
+      try {
+        return clientOwnsNotifications(await getVersion());
+      } catch {
+        // Do not permanently cache a transient startup/auth/network failure.
+        activation = null;
+        return false;
+      }
+    });
   }
   return activation;
 }
@@ -129,6 +142,25 @@ function playSound(sound: string): void {
   playBrowserChime();
 }
 
+/** Preview on the machine where the human is currently viewing Grove. */
+export function previewNotificationSound(sound: string): Promise<void> {
+  if (isTauriShell) {
+    return invokeQuiet("play_sound", { sound }).then(() => undefined);
+  }
+  // Keep the AudioContext creation inside the click's user-activation window.
+  if (isLikelyRemoteBrowser()) {
+    playBrowserChime();
+    return Promise.resolve();
+  }
+  return engineActive().then((active) => {
+    if (active) {
+      playBrowserChime();
+      return;
+    }
+    return previewBackendSound(sound);
+  });
+}
+
 /** Browsers can't play OS sound libraries — a short two-note chime instead. */
 function playBrowserChime(): void {
   try {
@@ -189,34 +221,77 @@ function showBrowserNotification(
   event: HookAddedEvent,
 ): void {
   if (typeof window === "undefined" || !("Notification" in window)) return;
-  const spawn = () => {
-    const tag = `grove:${event.project_id}:${event.task_id}`;
-    try {
-      const n = new Notification(title, { body, tag });
-      n.onclick = () => {
-        window.focus();
-        // Same payload shape as tray:navigate — App.tsx applies it through
-        // the shared navigation path (project select → task → chat).
-        window.dispatchEvent(
-          new CustomEvent("grove:navigate", {
-            detail: {
-              route: "tasks",
-              project_id: event.project_id,
-              task_id: event.task_id,
-              chat_id: event.chat_id ?? null,
-            },
-          }),
-        );
-        n.close();
-      };
-    } catch {
-      // Notification constructor unavailable (e.g. insecure origin).
-    }
-  };
   if (Notification.permission === "granted") {
-    spawn();
+    spawnBrowserNotification(title, body, event);
   } else if (Notification.permission === "default") {
+    pendingBrowserNotification = { title, body, event };
     armBrowserPermission();
+  }
+}
+
+function spawnBrowserNotification(
+  title: string,
+  body: string,
+  event: HookAddedEvent,
+): void {
+  const tag = `grove:${event.project_id}:${event.task_id}`;
+  try {
+    const n = new Notification(title, { body, tag });
+    n.onclick = () => {
+      window.focus();
+      // Same payload shape as tray:navigate — App.tsx applies it through the
+      // shared navigation path (project select → task → chat).
+      window.dispatchEvent(
+        new CustomEvent("grove:navigate", {
+          detail: {
+            route: "tasks",
+            project_id: event.project_id,
+            task_id: event.task_id,
+            chat_id: event.chat_id ?? null,
+          },
+        }),
+      );
+      n.close();
+    };
+  } catch {
+    // Notification constructor unavailable (e.g. insecure origin).
+  }
+}
+
+let pendingBrowserNotification: {
+  title: string;
+  body: string;
+  event: HookAddedEvent;
+} | null = null;
+
+/** Request browser permission from a settings click and replay the first
+ * pending event after approval. No-op for the Tauri shell and local browser. */
+export function requestBrowserNotificationPermission(force = false): Promise<void> {
+  if (
+    isTauriShell ||
+    (!force && !isLikelyRemoteBrowser()) ||
+    typeof window === "undefined" ||
+    !("Notification" in window) ||
+    Notification.permission !== "default"
+  ) {
+    return Promise.resolve();
+  }
+  // Keep this call synchronous with its caller's click/pointer gesture.
+  try {
+    return Notification.requestPermission()
+      .then((permission) => {
+        if (permission !== "granted") {
+          pendingBrowserNotification = null;
+          return;
+        }
+        if (!pendingBrowserNotification) return;
+        const pending = pendingBrowserNotification;
+        pendingBrowserNotification = null;
+        spawnBrowserNotification(pending.title, pending.body, pending.event);
+      })
+      .catch(() => {});
+  } catch {
+    return Promise.resolve();
   }
 }
 
@@ -224,8 +299,8 @@ function showBrowserNotification(
  * Browsers reject permission prompts raised outside a user gesture — a Radio
  * event callback doesn't count. Arm a one-shot pointer listener so the very
  * next interaction anywhere in the page requests permission; from then on
- * every banner renders. The first notification after activation may be
- * silent if the user hasn't interacted yet — the in-app bell still shows it.
+ * every banner renders. Any first event is retained and replayed after the
+ * user grants permission.
  */
 function armBrowserPermission(): void {
   if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -234,7 +309,9 @@ function armBrowserPermission(): void {
   window.addEventListener(
     "pointerdown",
     () => {
-      void Notification.requestPermission().catch(() => {});
+      // engineActive() already established that this client owns rendering;
+      // force covers localhost proxies/tunnels without guessing from the URL.
+      void requestBrowserNotificationPermission(true);
     },
     { once: true },
   );
@@ -249,7 +326,6 @@ export function renderHookNotification(event: HookAddedEvent): void {
   void (async () => {
     try {
       if (!(await engineActive())) return;
-      if (!isTauriShell) armBrowserPermission();
       const policy = await loadPolicy();
       if (!policy) return;
       const n = policy.notifications;

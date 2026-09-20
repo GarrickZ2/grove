@@ -8,6 +8,8 @@ export interface VersionResponse {
    *  machine. `false` on headless serving (grove mobile) — the frontend
    *  notification engine should render client-side instead. */
   renders_os_notifications?: boolean;
+  /** The authoritative transient-notification owner for new backends. */
+  notification_owner?: 'backend' | 'client';
 }
 
 export interface UpdateCheckResponse {

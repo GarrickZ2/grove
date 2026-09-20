@@ -39,7 +39,6 @@ import { type Theme } from "../../context/ThemeContext";
 import {
   getConfig,
   patchConfig,
-  previewHookSound,
   checkAllDependencies,
   listApplications,
   listCustomAgents,
@@ -47,6 +46,10 @@ import {
   type CustomAgentServer,
   type CustomAgentPersona,
 } from "../../api";
+import {
+  previewNotificationSound,
+  requestBrowserNotificationPermission,
+} from "../../notifications/desktopNotifier";
 import { listMarketplace, type MarketplaceAgent } from "../../api/marketplace";
 import type { BaseAgent } from "../Tasks/TaskView/useACPAvailability";
 import { LayoutEditor, type CustomLayoutConfig, type PaneType, type LayoutNode, createDefaultLayout, countPanes } from "./LayoutEditor";
@@ -2491,7 +2494,13 @@ env_vars = [
                   <div className="text-sm font-semibold text-[var(--color-text)]">System Notifications</div>
                   <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Native OS banner and sounds for agent events</div>
                 </div>
-                <ToggleSwitch checked={systemNotifEnabled} onChange={setSystemNotifEnabled} />
+                <ToggleSwitch
+                  checked={systemNotifEnabled}
+                  onChange={(enabled) => {
+                    setSystemNotifEnabled(enabled);
+                    if (enabled) void requestBrowserNotificationPermission();
+                  }}
+                />
               </div>
               <AnimatePresence initial={false}>
                 {systemNotifEnabled ? (
@@ -2532,7 +2541,7 @@ env_vars = [
                                   allowCustom={false}
                                 />
                               </div>
-                              <button onClick={() => previewHookSound(hooksPermissionSound)} title={!hooksPermissionSoundEnabled ? "Select a sound to preview" : "Preview sound"} disabled={!hooksPermissionSoundEnabled} className="h-8 w-8 flex-shrink-0 flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40 transition-colors">
+                              <button onClick={() => void previewNotificationSound(hooksPermissionSound)} title={!hooksPermissionSoundEnabled ? "Select a sound to preview" : "Preview sound"} disabled={!hooksPermissionSoundEnabled} className="h-8 w-8 flex-shrink-0 flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40 transition-colors">
                                 <Volume2 className="w-3.5 h-3.5" />
                               </button>
                             </motion.div>
@@ -2578,7 +2587,7 @@ env_vars = [
                                   allowCustom={false}
                                 />
                               </div>
-                              <button onClick={() => previewHookSound(hooksResponseSound)} title={!hooksResponseSoundEnabled ? "Select a sound to preview" : "Preview sound"} disabled={!hooksResponseSoundEnabled} className="h-8 w-8 flex-shrink-0 flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40 transition-colors">
+                              <button onClick={() => void previewNotificationSound(hooksResponseSound)} title={!hooksResponseSoundEnabled ? "Select a sound to preview" : "Preview sound"} disabled={!hooksResponseSoundEnabled} className="h-8 w-8 flex-shrink-0 flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40 transition-colors">
                                 <Volume2 className="w-3.5 h-3.5" />
                               </button>
                             </motion.div>
