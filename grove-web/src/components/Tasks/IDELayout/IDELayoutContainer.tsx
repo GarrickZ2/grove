@@ -23,6 +23,7 @@ import type { FileNavRequest } from "../../Review";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from "../../ui/sketchChipCache";
 import { useConfig, useProject } from "../../../context";
 import { useIsMobile } from "../../../hooks";
+import { apiClient } from "../../../api/client";
 import { listPlugins, type Plugin } from "../../../api/plugins";
 import {
   OPEN_PLUGIN_PANEL_EVENT,
@@ -567,12 +568,13 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         // and we never open the panel for a phantom path.
         try {
           const probeUrl = `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/file/raw?path=${encodeURIComponent(filePath)}`;
-          const resp = await fetch(probeUrl, { method: 'HEAD' });
+          await apiClient.head(probeUrl);
           // 4xx = file truly missing → bail. 5xx is server flake; be
           // optimistic and let the panel render its own fallback rather
           // than denying the user the chance to open it.
-          if (resp.status >= 400 && resp.status < 500) return false;
-        } catch {
+        } catch (error) {
+          const status = (error as { status?: number })?.status;
+          if (status !== undefined && status >= 400 && status < 500) return false;
           // Network failure (offline, dev server restart) — don't punish
           // the user; open the panel and let its content fetch fall back.
         }

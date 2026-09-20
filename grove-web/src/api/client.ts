@@ -310,6 +310,23 @@ class ApiClient {
     return response.json();
   }
 
+  async head(path: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'HEAD',
+      headers: await getSignedHeaders('HEAD', path),
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      const payload = await extractErrorPayload(response);
+      throw {
+        status: response.status,
+        message: payload.message,
+        data: payload.data,
+      } as ApiError;
+    }
+  }
+
   /**
    * Fetch a text response (assumes UTF-8 encoding).
    * Uses `response.text()` which decodes the body as UTF-8 by default.
