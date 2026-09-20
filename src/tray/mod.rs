@@ -507,6 +507,13 @@ pub fn tray_update_theme_icons(app: AppHandle, is_light: bool) {
 // ─── Init ──────────────────────────────────────────────────────────────────
 
 pub fn init(app: &AppHandle, port: u16) -> tauri::Result<()> {
+    // ConfigProvider also calls the initializer after loading the effective
+    // config. Local GUI may already have initialized during Tauri setup, while
+    // Remote GUI initializes here after authentication. Keep both paths safe.
+    if app.tray_by_id("grove-tray").is_some() {
+        return ensure_popover(app, port);
+    }
+
     let menu = Menu::with_items(
         app,
         &[
@@ -570,6 +577,22 @@ pub fn init(app: &AppHandle, port: u16) -> tauri::Result<()> {
     let is_light = resolve_current_theme_is_light();
     update_tray_icon(app, is_light);
 
+    Ok(())
+}
+
+/// Apply the effective config to the native tray. Remote GUI creates the tray
+/// before authentication so the shell owns the surface; this call hides or
+/// reveals it once the remote config becomes available.
+pub fn set_enabled(app: &AppHandle, port: u16, enabled: bool) -> tauri::Result<()> {
+    if enabled {
+        init(app, port)?;
+    }
+    if let Some(tray) = app.tray_by_id("grove-tray") {
+        tray.set_visible(enabled)?;
+    }
+    if !enabled {
+        hide_popover(app);
+    }
     Ok(())
 }
 

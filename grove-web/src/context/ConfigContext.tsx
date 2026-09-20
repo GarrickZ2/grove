@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { getConfig, type Config } from '../api/config';
 import { checkAllDependencies } from '../api';
+import { configureDesktopTray } from '../utils/tauriShell';
 
 
 interface ConfigContextValue {
@@ -24,6 +25,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     try {
       cfg = await getConfig();
       setConfig(cfg);
+      configureDesktopTray(cfg.notifications.tray_enabled);
     } catch (error) {
       console.error('Failed to load config:', error);
       cfg = null;
@@ -57,6 +59,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     try {
       const cfg = await getConfig();
       setConfig(cfg);
+      configureDesktopTray(cfg.notifications.tray_enabled);
       await checkAvailability(cfg);
     } catch (error) {
       console.error('Failed to refresh config:', error);

@@ -30,3 +30,18 @@ export function handRemoteAuthKeyToShell(secretKey: string): void {
 export function isRemoteMode(): Promise<boolean> {
   return invokeQuiet<boolean>("is_remote_mode_command").then((v) => v === true);
 }
+
+/** Initialize the native menubar tray from the effective backend config.
+ * Remote GUI defers this until after authentication because its config lives
+ * on the remote backend. No-op in an ordinary browser. */
+export function configureDesktopTray(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    // Call invoke directly instead of relying on the global-marker heuristic:
+    // custom External webviews can have a working Tauri IPC bridge before the
+    // marker globals become observable to application code.
+    void invoke("configure_desktop_tray", { enabled }).catch(() => {});
+  } catch {
+    // Ordinary browser surface — there is no native tray to configure.
+  }
+}

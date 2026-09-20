@@ -11,6 +11,8 @@ const DAEMON_ENV: &str = "GROVE_GUI_DAEMON";
 
 pub static TAURI_APP: once_cell::sync::OnceCell<tauri::AppHandle> =
     once_cell::sync::OnceCell::new();
+static GUI_PORT: once_cell::sync::OnceCell<u16> = once_cell::sync::OnceCell::new();
+static REMOTE_AUTH_KEY: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// Whether this GUI window attached to a REMOTE backend (`--remote-url`).
 /// Surfaces the "who renders notifications" decision to the frontend engine:
@@ -69,7 +71,39 @@ pub fn play_sound(sound: String) {
 /// lives). The key never leaves this process.
 #[tauri::command]
 pub fn set_remote_auth_key(secret_key: String) {
-    api::set_proxy_remote_auth_key(secret_key);
+    api::set_proxy_remote_auth_key(secret_key.clone());
+    if let Ok(mut slot) = REMOTE_AUTH_KEY.lock() {
+        *slot = Some(secret_key);
+    }
+}
+
+/// Return the already-verified remote key to Grove's own tray webview. Browser
+/// sessionStorage is isolated per webview, so the popover cannot otherwise use
+/// the key that AuthGate stored in the main window.
+#[tauri::command]
+pub fn get_remote_auth_key() -> Option<String> {
+    if !is_remote_mode() {
+        return None;
+    }
+    REMOTE_AUTH_KEY.lock().ok().and_then(|slot| slot.clone())
+}
+
+/// Apply the effective backend config to the native menubar tray. Remote GUI
+/// creates the native surface during setup, then calls this after config load
+/// so a remotely-disabled tray can be hidden again.
+#[tauri::command]
+pub fn configure_desktop_tray(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let port = GUI_PORT
+        .get()
+        .copied()
+        .ok_or_else(|| "GUI port is not initialized".to_string())?;
+    crate::tray::set_enabled(&app, port, enabled).map_err(|e| e.to_string())?;
+    eprintln!(
+        "[Grove] menubar tray configured from {} config (enabled={})",
+        if is_remote_mode() { "remote" } else { "local" },
+        enabled
+    );
+    Ok(())
 }
 
 /// Open an http(s) URL in the OS default browser.
@@ -498,6 +532,7 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
         }
     };
     let actual_port = bound_port;
+    let _ = GUI_PORT.set(actual_port);
 
     if let Some(ref base_url) = remote_url {
         println!(
@@ -574,6 +609,8 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             notify_banner,
             play_sound,
             set_remote_auth_key,
+            get_remote_auth_key,
+            configure_desktop_tray,
             crate::tray::tray_resolve_permission,
             crate::tray::tray_open_main,
             crate::tray::tray_open_settings,
@@ -730,7 +767,17 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             // Register menubar tray + popover. Gated by config so users who
             // dislike the menubar surface can opt out cleanly. Failure here
             // should not block the main window from launching — log only.
-            if !is_remote {
+            if is_remote {
+                // The remote config is only readable after the frontend has
+                // authenticated. Create the local native surface now; once
+                // ConfigProvider loads, configure_desktop_tray applies the
+                // remote tray_enabled value (including hiding it when false).
+                if let Err(e) = crate::tray::init(&app.handle().clone(), actual_port) {
+                    eprintln!("[Grove] failed to initialize remote menubar tray: {}", e);
+                } else {
+                    eprintln!("[Grove] remote menubar tray initialized");
+                }
+            } else {
                 let cfg = crate::storage::config::load_config();
                 if cfg.notifications.tray_enabled {
                     if let Err(e) = crate::tray::init(&app.handle().clone(), actual_port) {
