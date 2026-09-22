@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Clock3,
   FolderOpen,
+  MessageCircle,
   PanelRight,
   RefreshCw,
   Server,
@@ -17,11 +18,12 @@ import { deletePlugin, updatePluginSdk, type Plugin } from "../../api/plugins";
 import { ExtensionIdentityIcon } from "../Skills/ExtensionIdentityIcon";
 import { ConfirmDialog } from "../Dialogs";
 
-const HIGH_RISK_PERMISSIONS = new Set(["exec", "project:write", "chat:read", "chat:write", "inject"]);
+const HIGH_RISK_PERMISSIONS = new Set(["exec", "project:write", "chat:read", "chat:write", "inject", "connect:provider"]);
 
 const PERMISSION_LABELS: Record<string, string> = {
   "chat:read": "Read chat & AI events",
   "chat:write": "Send prompts to the AI",
+  "connect:provider": "Run an IM Connect provider",
 };
 
 const permissionLabel = (permission: string) => PERMISSION_LABELS[permission] ?? permission;
@@ -92,6 +94,12 @@ export function PluginDetailDialog({ plugin, onClose, onDeleted }: { plugin: Plu
       icon: Terminal,
       title: "Node backend",
       detail: "Runs a local backend process",
+    },
+    Boolean(plugin.contributes?.connectProviders) && {
+      id: "connectProviders",
+      icon: MessageCircle,
+      title: `${plugin.contributes?.connectProviders} IM Connect provider${plugin.contributes?.connectProviders === 1 ? "" : "s"}`,
+      detail: "Maintains external messaging connections",
     },
   ].filter(Boolean) as Array<{ id: string; icon: typeof PanelRight; title: string; detail: string }>;
 

@@ -1,31 +1,39 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PlatformDefinition {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
+    pub id: String,
+    pub name: String,
+    pub description: String,
     pub available: bool,
-    pub setup_modes: &'static [&'static str],
-    pub config_fields: &'static [ConfigField],
+    pub setup_modes: Vec<String>,
+    pub config_fields: Vec<ConfigField>,
     pub capabilities: PlatformCapabilities,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigField {
-    pub key: &'static str,
-    pub label: &'static str,
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
     pub secret: bool,
+    #[serde(default)]
     pub required: bool,
-    pub placeholder: &'static str,
+    #[serde(default)]
+    pub placeholder: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct PlatformCapabilities {
+    #[serde(default)]
     pub private_chat: bool,
+    #[serde(default)]
     pub group_chat: bool,
+    #[serde(default)]
     pub reactions: bool,
+    #[serde(default)]
     pub cards: bool,
+    #[serde(default)]
     pub qr_registration: bool,
 }
 
@@ -39,41 +47,43 @@ const FEISHU_CAPABILITIES: PlatformCapabilities = PlatformCapabilities {
     qr_registration: true,
 };
 
-const FEISHU_CONFIG_FIELDS: &[ConfigField] = &[
-    ConfigField {
-        key: "app_id",
-        label: "App ID",
-        secret: false,
-        required: true,
-        placeholder: "cli_...",
-    },
-    ConfigField {
-        key: "app_secret",
-        label: "App Secret",
-        secret: true,
-        required: true,
-        placeholder: "App secret",
-    },
-];
+fn feishu_config_fields() -> Vec<ConfigField> {
+    vec![
+        ConfigField {
+            key: "app_id".into(),
+            label: "App ID".into(),
+            secret: false,
+            required: true,
+            placeholder: "cli_...".into(),
+        },
+        ConfigField {
+            key: "app_secret".into(),
+            label: "App Secret".into(),
+            secret: true,
+            required: true,
+            placeholder: "App secret".into(),
+        },
+    ]
+}
 
 pub fn list() -> Vec<PlatformDefinition> {
     vec![
         PlatformDefinition {
-            id: "feishu",
-            name: "Feishu",
-            description: "For China accounts",
+            id: "feishu".into(),
+            name: "Feishu".into(),
+            description: "For China accounts".into(),
             available: true,
-            setup_modes: &["qr", "manual"],
-            config_fields: FEISHU_CONFIG_FIELDS,
+            setup_modes: vec!["qr".into(), "manual".into()],
+            config_fields: feishu_config_fields(),
             capabilities: FEISHU_CAPABILITIES,
         },
         PlatformDefinition {
-            id: "lark",
-            name: "Lark",
-            description: "For global accounts",
+            id: "lark".into(),
+            name: "Lark".into(),
+            description: "For global accounts".into(),
             available: true,
-            setup_modes: &["qr", "manual"],
-            config_fields: FEISHU_CONFIG_FIELDS,
+            setup_modes: vec!["qr".into(), "manual".into()],
+            config_fields: feishu_config_fields(),
             capabilities: FEISHU_CAPABILITIES,
         },
         unavailable("telegram", "Telegram"),
@@ -82,14 +92,14 @@ pub fn list() -> Vec<PlatformDefinition> {
     ]
 }
 
-fn unavailable(id: &'static str, name: &'static str) -> PlatformDefinition {
+fn unavailable(id: &str, name: &str) -> PlatformDefinition {
     PlatformDefinition {
-        id,
-        name,
-        description: "Adapter coming later",
+        id: id.into(),
+        name: name.into(),
+        description: "Adapter coming later".into(),
         available: false,
-        setup_modes: &[],
-        config_fields: &[],
+        setup_modes: Vec::new(),
+        config_fields: Vec::new(),
         capabilities: PlatformCapabilities {
             private_chat: false,
             group_chat: false,

@@ -1,8 +1,8 @@
 //! Plugin radio bridge — relays Grove's global [`RadioEvent`] stream into the
-//! per-task plugin event channel as `grove:radio` events, so plugin panels
+//! plugin event channels as `grove:radio` events, so plugin panels and backends
 //! holding `chat:read` see the same aggregated ACP/agent activity (chat status,
-//! busy transitions, prompts, final messages, hook notifications, todo
-//! progress) that the Radio phone and menubar tray already consume.
+//! busy transitions, prompts, final messages, hook notifications, todo progress)
+//! that the Radio phone and menubar tray already consume.
 //!
 //! This deliberately rides the *already-aggregated* radio event bus rather than
 //! the raw per-session `AcpUpdate` broadcast: the radio layer has done the work
@@ -37,26 +37,25 @@ fn task_of(event: &RadioEvent) -> Option<&str> {
     }
 }
 
-/// Spawn the bridge pump. Call once at server startup. The pump is a no-op on
-/// the wire whenever no panel under the event's task holds `chat:read`.
+/// Spawn the bridge pump. Call once at server startup.
 pub fn spawn() {
     tokio::spawn(async move {
         let mut rx = subscribe_plugins();
+        super::backend::start_global_backends().await;
         loop {
             match rx.recv().await {
                 Ok(event) => {
                     let Some(task_id) = task_of(&event) else {
                         continue;
                     };
-                    // Skip serialising for tasks nobody is listening on.
-                    if !super::events::has_radio_subscribers(task_id) {
-                        continue;
-                    }
                     let Ok(data) = serde_json::to_value(&event) else {
                         continue;
                     };
-                    let payload = serde_json::json!({ "name": "grove:radio", "data": data });
-                    super::events::publish_radio(task_id, &payload);
+                    super::backend::publish_radio(task_id, data.clone()).await;
+                    if super::events::has_radio_subscribers(task_id) {
+                        let payload = serde_json::json!({ "name": "grove:radio", "data": data });
+                        super::events::publish_radio(task_id, &payload);
+                    }
                 }
                 // Under a burst we may drop intermediate events; the next
                 // recv resyncs. Keep the pump alive.

@@ -53,16 +53,56 @@ pub fn platform(id: &str) -> Option<&'static dyn Platform> {
 }
 
 pub fn definitions() -> Vec<PlatformDefinition> {
-    super::platform::list()
+    let mut definitions = super::platform::list();
+    let claimed = crate::plugins::connect_provider::declared_ids();
+    definitions.retain(|definition| definition.available || !claimed.contains(&definition.id));
+    definitions.extend(crate::plugins::connect_provider::definitions());
+    definitions
 }
 
 pub async fn begin_registration(
     platform_id: &str,
     domain: &str,
 ) -> Result<RegistrationView, String> {
-    let adapter =
-        platform(platform_id).ok_or_else(|| format!("Unsupported platform: {platform_id}"))?;
-    adapter.begin_registration(platform_id, domain).await
+    if let Some(adapter) = platform(platform_id) {
+        return adapter.begin_registration(platform_id, domain).await;
+    }
+    if let Some(provider) = crate::plugins::connect_provider::find(platform_id) {
+        if !provider
+            .declaration
+            .setup_modes
+            .iter()
+            .any(|mode| mode == "oauth" || mode == "qr")
+        {
+            return Err("This connect provider supports manual setup only".into());
+        }
+        return crate::plugins::connect_provider::begin_registration(&provider, domain)
+            .await
+            .map_err(|error| error.to_string());
+    }
+    Err(format!("Unsupported platform: {platform_id}"))
+}
+
+pub async fn registration_status(platform_flow_id: &str) -> Option<RegistrationView> {
+    if let Some(view) = super::registration::get(platform_flow_id) {
+        return Some(view);
+    }
+    crate::plugins::connect_provider::registration_status(platform_flow_id).await
+}
+
+pub fn claim_registration(id: &str) -> Option<(String, Value, String, String)> {
+    super::registration::claim_credentials(id)
+        .or_else(|| crate::plugins::connect_provider::claim_registration(id))
+}
+
+pub fn release_registration(id: &str) {
+    super::registration::release_credentials(id);
+    crate::plugins::connect_provider::release_registration(id);
+}
+
+pub fn finish_registration(id: &str) {
+    super::registration::finish(id);
+    crate::plugins::connect_provider::finish_registration(id);
 }
 
 pub fn start_connections() {
@@ -75,6 +115,8 @@ pub fn start_connections() {
 pub fn apply_connection(connection: Connect) {
     if let Some(adapter) = platform(&connection.platform) {
         adapter.start(connection);
+    } else if crate::plugins::connect_provider::find(&connection.platform).is_some() {
+        crate::plugins::connect_provider::start_connection(connection);
     } else {
         eprintln!("[connect] unsupported adapter: {}", connection.platform);
     }
@@ -83,6 +125,19 @@ pub fn apply_connection(connection: Connect) {
 pub fn stop_connection(connection: &Connect) {
     if let Some(adapter) = platform(&connection.platform) {
         adapter.stop(&connection.id);
+    } else if crate::plugins::connect_provider::find(&connection.platform).is_some() {
+        crate::plugins::connect_provider::stop_connection(connection);
+    }
+}
+
+pub fn replace_connection(previous: &Connect, connection: Connect) {
+    if previous.platform == connection.platform
+        && crate::plugins::connect_provider::find(&connection.platform).is_some()
+    {
+        crate::plugins::connect_provider::replace_connection(connection);
+    } else {
+        stop_connection(previous);
+        apply_connection(connection);
     }
 }
 
@@ -99,15 +154,61 @@ pub fn connection_statuses() -> HashMap<String, ConnectionStatus> {
     for platform_id in platform_ids {
         if let Some(adapter) = platform(&platform_id) {
             statuses.extend(adapter.statuses());
+        } else if crate::plugins::connect_provider::find(&platform_id).is_some() {
+            statuses.extend(crate::plugins::connect_provider::statuses_for(&platform_id));
         }
     }
     statuses
 }
 
 pub async fn verify_config(platform_id: &str, domain: &str, config: &Value) -> Result<(), String> {
-    let adapter =
-        platform(platform_id).ok_or_else(|| format!("Unsupported platform: {platform_id}"))?;
-    adapter.verify_config(domain, config).await
+    if let Some(adapter) = platform(platform_id) {
+        return adapter.verify_config(domain, config).await;
+    }
+    let provider = crate::plugins::connect_provider::find(platform_id)
+        .ok_or_else(|| format!("Unsupported platform: {platform_id}"))?;
+    crate::plugins::connect_provider::verify_config(&provider, domain, config)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub fn validate_config(
+    platform_id: &str,
+    domain: &str,
+    config: &Value,
+    existing: bool,
+) -> Result<(), String> {
+    if let Some(adapter) = platform(platform_id) {
+        return adapter.validate_config(domain, config, existing);
+    }
+    let provider = crate::plugins::connect_provider::find(platform_id)
+        .ok_or_else(|| format!("Unsupported platform: {platform_id}"))?;
+    crate::plugins::connect_provider::validate_config(&provider, config, existing)
+        .map_err(|error| error.to_string())
+}
+
+pub fn merge_config(
+    platform_id: &str,
+    domain: &str,
+    current: Option<&Value>,
+    incoming: &Value,
+) -> Result<Value, String> {
+    if let Some(adapter) = platform(platform_id) {
+        return adapter.merge_config(domain, current, incoming);
+    }
+    let provider = crate::plugins::connect_provider::find(platform_id)
+        .ok_or_else(|| format!("Unsupported platform: {platform_id}"))?;
+    crate::plugins::connect_provider::merge_config(&provider, current, incoming)
+        .map_err(|error| error.to_string())
+}
+
+pub fn public_config(platform_id: &str, domain: &str, config: &Value) -> Value {
+    if let Some(adapter) = platform(platform_id) {
+        return adapter.public_config(domain, config);
+    }
+    crate::plugins::connect_provider::find(platform_id)
+        .map(|provider| crate::plugins::connect_provider::public_config(&provider, config))
+        .unwrap_or_else(|| Value::Object(Default::default()))
 }
 
 impl Platform for FeishuPlatform {

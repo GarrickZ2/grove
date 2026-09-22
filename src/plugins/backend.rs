@@ -12,9 +12,9 @@
 //! `{ id, result | error }` line on stdout resolves the call.
 //!
 //! One process per **(plugin, scope key)**: a task panel keys on its task id
-//! (the process is launched with that task's project fs access); a sidebar
-//! panel keys on `"global"` (no project access). Processes are spawned lazily
-//! on first invoke, reused, and reaped on idle or plugin uninstall.
+//! (the process is launched with that task's project fs access); app-wide events
+//! and integrations use `"global"` (no project access). Task processes are
+//! reaped on idle; global processes live until exit or plugin uninstall.
 //!
 //! The node process follows the same runtime policy as the MCP server (see
 //! [`super::runtime`]): scoped permissions use Node's Permission Model, while
@@ -53,6 +53,42 @@ struct Backend {
     pending: Mutex<HashMap<u64, oneshot::Sender<std::result::Result<Value, String>>>>,
     next_id: AtomicU64,
     last_used: Mutex<Instant>,
+}
+
+impl Backend {
+    async fn send_event(&self, name: &str, data: &Value) -> Result<()> {
+        let line = json!({ "type": "grove:event", "name": name, "data": data }).to_string() + "\n";
+        self.stdin
+            .lock()
+            .await
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|error| GroveError::session(format!("backend stdin write failed: {error}")))?;
+        *self.last_used.lock().await = Instant::now();
+        Ok(())
+    }
+
+    async fn send_host_response(
+        &self,
+        id: u64,
+        result: std::result::Result<Value, String>,
+    ) -> Result<()> {
+        let value = match result {
+            Ok(result) => json!({ "type": "grove:host_response", "id": id, "result": result }),
+            Err(message) => json!({
+                "type": "grove:host_response",
+                "id": id,
+                "error": { "message": message },
+            }),
+        };
+        self.stdin
+            .lock()
+            .await
+            .write_all((value.to_string() + "\n").as_bytes())
+            .await
+            .map_err(|error| GroveError::session(format!("backend stdin write failed: {error}")))?;
+        Ok(())
+    }
 }
 
 fn key(plugin_id: &str, scope_key: &str) -> String {
@@ -103,6 +139,95 @@ pub async fn invoke(
         Err(_) => {
             backend.pending.lock().await.remove(&id);
             Err(GroveError::session("backend invoke timed out".to_string()))
+        }
+    }
+}
+
+/// Start a plugin's app-scoped backend without inventing a second runtime.
+/// Event-driven plugins are started once with the rest of the plugin runtime;
+/// process exit is handled by the existing backend manager and is not supervised.
+pub async fn ensure_global(plugin_id: &str) -> Result<()> {
+    let _ = get_or_spawn(plugin_id, None, "global").await?;
+    Ok(())
+}
+
+/// Deliver a Grove event to one plugin backend. The same event envelope is used
+/// by panel subscriptions, so plugin code can share handlers across surfaces.
+pub async fn send_event(plugin_id: &str, name: &str, data: Value) -> Result<()> {
+    let backend = get_or_spawn(plugin_id, None, "global").await?;
+    backend.send_event(name, &data).await
+}
+
+fn manifest_has(plugin: &crate::storage::plugins::Plugin, contribution: &str) -> bool {
+    std::fs::read_to_string(std::path::Path::new(&plugin.local_path).join("plugin.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|manifest| {
+            manifest
+                .get("contributes")
+                .and_then(|value| value.get(contribution))
+                .cloned()
+        })
+        .is_some()
+}
+
+fn plugin_has_permission(plugin_id: &str, permission: &str) -> bool {
+    let Ok(Some(plugin)) = crate::storage::plugins::get(plugin_id) else {
+        return false;
+    };
+    std::fs::read_to_string(std::path::Path::new(&plugin.local_path).join("plugin.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|manifest| manifest.get("permissions").cloned())
+        .and_then(|permissions| permissions.as_array().cloned())
+        .is_some_and(|permissions| {
+            permissions
+                .iter()
+                .any(|value| value.as_str() == Some(permission))
+        })
+}
+
+/// Start existing plugin backends so they can subscribe to Grove events even
+/// when no panel is open. This is ordinary plugin lifecycle, not crash recovery.
+async fn start_registered_backend(plugin: &crate::storage::plugins::Plugin) {
+    let consumes_host_events =
+        plugin_has_permission(&plugin.id, "chat:read") || manifest_has(plugin, "connectProviders");
+    if manifest_has(plugin, "backend") && consumes_host_events {
+        if let Err(error) = ensure_global(&plugin.id).await {
+            eprintln!("[plugin:{}] failed to start backend: {error}", plugin.name);
+        }
+    }
+}
+
+/// Re-registration may replace a dev plugin's code or contributions. Retire its
+/// old processes, then activate the current manifest as part of plugin lifecycle.
+pub async fn registered(plugin: &crate::storage::plugins::Plugin) {
+    shutdown_plugin(&plugin.id).await;
+    start_registered_backend(plugin).await;
+}
+
+pub async fn start_global_backends() {
+    for plugin in crate::storage::plugins::list().unwrap_or_default() {
+        start_registered_backend(&plugin).await;
+    }
+}
+
+/// Fan one Radio event into every running backend allowed to observe chat
+/// activity. App-scoped backends receive every task; task-scoped backends only
+/// receive their own task.
+pub async fn publish_radio(task_id: &str, data: Value) {
+    let backends = BACKENDS
+        .read()
+        .await
+        .iter()
+        .filter_map(|(key, backend)| {
+            let (plugin_id, scope) = key.split_once("::")?;
+            (scope == "global" || scope == task_id).then(|| (plugin_id.to_owned(), backend.clone()))
+        })
+        .collect::<Vec<_>>();
+    for (plugin_id, backend) in backends {
+        if plugin_has_permission(&plugin_id, "chat:read") {
+            let _ = backend.send_event("grove:radio", &data).await;
         }
     }
 }
@@ -374,6 +499,30 @@ async fn reader_loop(stdout: ChildStdout, weak: Weak<Backend>, plugin_id: String
             }
             continue;
         }
+        // Backend → Grove API call. This makes the existing plugin backend
+        // transport bidirectional; Connect is one consumer, not a new runtime.
+        if v.get("type").and_then(|t| t.as_str()) == Some("grove:host_call") {
+            let Some(id) = v.get("id").and_then(Value::as_u64) else {
+                continue;
+            };
+            let Some(method) = v.get("method").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(backend) = weak.upgrade() else {
+                break;
+            };
+            let plugin_id = plugin_id.clone();
+            let method = method.to_owned();
+            let params = v.get("params").cloned().unwrap_or(Value::Null);
+            tokio::spawn(async move {
+                let result =
+                    crate::plugins::connect_provider::handle_host_call(&plugin_id, &method, params)
+                        .await
+                        .map_err(|error| error.to_string());
+                let _ = backend.send_host_response(id, result).await;
+            });
+            continue;
+        }
         let Some(backend) = weak.upgrade() else {
             break;
         };
@@ -400,7 +549,12 @@ async fn reader_loop(stdout: ChildStdout, weak: Weak<Backend>, plugin_id: String
             let _ = tx.send(Err("backend process exited".to_string()));
         }
     }
-    BACKENDS.write().await.remove(&map_key);
+    let mut backends = BACKENDS.write().await;
+    if let (Some(exited), Some(current)) = (weak.upgrade(), backends.get(&map_key)) {
+        if Arc::ptr_eq(&exited, current) {
+            backends.remove(&map_key);
+        }
+    }
 }
 
 /// Forward a backend's stderr to Grove's stderr, prefixed with the plugin name.
@@ -419,6 +573,12 @@ async fn reaper_loop() {
         {
             let map = BACKENDS.read().await;
             for (k, b) in map.iter() {
+                // App-scoped backends may subscribe to Grove events or maintain
+                // their own external integrations. Keep them alive normally;
+                // there is intentionally no crash supervisor or restart loop.
+                if k.ends_with("::global") {
+                    continue;
+                }
                 if now.duration_since(*b.last_used.lock().await) > IDLE_TIMEOUT {
                     stale.push(k.clone());
                 }

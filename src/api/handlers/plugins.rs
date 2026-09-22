@@ -151,7 +151,7 @@ const SCAFFOLD_PKG_JSON: &str = r#"{
     "build": "npm run clean && vite build && node scripts/build-server.mjs",
     "publish": "npm run build && node scripts/publish.mjs"
   },
-  "//": "dev builds BOTH the panel and (if present) src/server.ts / src/backend.ts → dist/, and neither wipes the other. A node backend/MCP server uses manifest-derived runtime permissions; Grove requires node >= 24.",
+  "//": "dev builds the panel and any src/server.ts / src/backend.ts entries into dist/. Node processes use manifest-derived runtime permissions; Grove requires node >= 24.",
   "engines": { "node": ">=24" },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -179,14 +179,14 @@ export default defineConfig({
 });
 "#;
 
-// Builds the plugin's node side (MCP server / backend) into dist/ when present,
+// Builds the plugin's node side (MCP / backend) when present,
 // so `npm run dev` / `npm run build` work whether or not you ship one. No-op for
 // panel-only plugins; `--watch` rebuilds on change. Cross-platform (pure node).
 const SCAFFOLD_BUILD_SERVER_MJS: &str = r#"import { existsSync } from "node:fs";
 import * as esbuild from "esbuild";
 
-// Add src/server.ts (MCP) or src/backend.ts (panel backend) and it builds here
-// automatically — no script edits needed.
+// Add src/server.ts (MCP) or src/backend.ts (panel, workflow, or Connect backend)
+// and it builds automatically — no script edits needed.
 const entries = ["src/server.ts", "src/backend.ts"].filter(existsSync);
 if (entries.length === 0) process.exit(0);
 
@@ -271,7 +271,7 @@ const SCAFFOLD_TSCONFIG: &str = r#"{
 // repo uses pnpm because it's a monorepo; a standalone plugin shouldn't impose
 // that.) Makefile recipe lines MUST be tab-indented — built as a normal string
 // with explicit \t so the tabs survive (a raw string would need literal tabs).
-const SCAFFOLD_MAKEFILE: &str = "# Grove plugin — build the dist/ that Grove serves.\n# Grove never builds on the user's machine: you build here and commit/zip dist/.\n\ninstall: ## one-time: install dev dependencies\n\tnpm install\n\ndev: ## rebuild dist/ on every change — then hit Reload in Grove's panel\n\tnpm run dev\n\nbuild: ## produce a clean dist/ (panel + any server/backend)\n\tnpm run build\n\npublish: ## build + package <name>-<version>.zip, ready to distribute\n\tnpm run publish\n\n.PHONY: install dev build publish\n";
+const SCAFFOLD_MAKEFILE: &str = "# Grove plugin — build the dist/ that Grove serves.\n# Grove never builds on the user's machine: you build here and commit/zip dist/.\n\ninstall: ## one-time: install dev dependencies\n\tnpm install\n\ndev: ## rebuild dist/ on every change — then hit Reload in Grove's panel\n\tnpm run dev\n\nbuild: ## produce a clean dist/ (panel + any node process)\n\tnpm run build\n\npublish: ## build + package <name>-<version>.zip, ready to distribute\n\tnpm run publish\n\n.PHONY: install dev build publish\n";
 
 // node_modules is local-only; dist is the SHIPPED artifact, so it is NOT ignored.
 const SCAFFOLD_GITIGNORE: &str = "node_modules\n*.log\n.DS_Store\n.publish/\n*.zip\n";
@@ -781,54 +781,127 @@ export const grove = {
 };
 "#;
 
-// Backend SDK (contributes.backend). The backend is a node process with the
-// SAME `grove` context/storage/paths as the MCP server (re-exported below), plus
-// a tiny JSON-RPC server so the panel can call it via grove.backend.invoke().
+// Backend SDK (contributes.backend). The existing stdio channel is bidirectional:
+// panels may invoke handlers, Grove may publish events, and the backend may call
+// the small set of host APIs exposed under `grove.connect`.
 const SCAFFOLD_GROVE_BACKEND_TS: &str = r#"import { createInterface } from "node:readline";
-
-// Same context/storage/paths the MCP server gets — identical code on both.
-export { grove } from "./mcp";
+import { grove as baseGrove } from "./mcp";
 
 type Handler = (params: unknown) => unknown | Promise<unknown>;
+type EventHandler = (data: unknown) => void;
 const handlers: Record<string, Handler> = {};
+const eventHandlers: Record<string, Set<EventHandler>> = {};
+const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+let nextHostCallId = 1;
 
-/** Register a method the panel can call via `grove.backend.invoke(method, params)`. */
+export interface ConnectRecord {
+  id: string; name: string; provider: string; domain: string; enabled: boolean;
+  config: Record<string, unknown>; projectId: string; taskId: string; sessionId: string;
+  boundConversationId?: string | null; boundUserId?: string | null;
+}
+export interface InboundAttachment { kind: "image" | "audio" | "file"; name: string; mimeType?: string; dataBase64: string; }
+export interface InboundMessage { externalMessageId: string; conversationId: string; senderId: string; text?: string; attachments?: InboundAttachment[]; }
+export interface InboundAction { conversationId: string; senderId: string; sourceMessageId?: string; name?: string; fields?: Record<string, string>; }
+export interface ProviderHttpRequest { method: string; query: string; headers: Record<string, string>; bodyBase64: string; }
+export interface ProviderHttpResponse { status?: number; headers?: Record<string, string>; body?: string; bodyBase64?: string; }
+export interface RegistrationResult {
+  state?: "waiting_for_scan" | "authorized" | "error"; verificationUrl?: string;
+  qrSvg?: string; expiresAt?: number; expiresIn?: number; config?: Record<string, unknown>;
+  userId?: string; error?: string; response?: ProviderHttpResponse;
+}
+export interface ConnectProviderHandlers {
+  validate?(params: { providerId: string; domain: string; config: Record<string, unknown> }): unknown | Promise<unknown>;
+  verify?(params: { providerId: string; domain: string; config: Record<string, unknown> }): unknown | Promise<unknown>;
+  registrationBegin?(params: { providerId: string; id: string; domain: string; callbackUrl: string }): RegistrationResult | Promise<RegistrationResult>;
+  registrationStatus?(params: { providerId: string; id: string }): RegistrationResult | Promise<RegistrationResult>;
+  registrationCallback?(params: { providerId: string; id: string; request: ProviderHttpRequest }): RegistrationResult | Promise<RegistrationResult>;
+}
+
+function hostCall<T>(method: string, params: unknown = {}): Promise<T> {
+  const id = nextHostCallId++;
+  return new Promise<T>((resolve, reject) => {
+    pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
+    process.stdout.write(JSON.stringify({ type: "grove:host_call", id, method, params }) + "\n");
+  });
+}
+
+export const grove = {
+  ...baseGrove,
+  events: {
+    ...baseGrove.events,
+    on<T = unknown>(name: string, callback: (data: T) => void): () => void {
+      const set = eventHandlers[name] ?? (eventHandlers[name] = new Set());
+      set.add(callback as EventHandler);
+      return () => set.delete(callback as EventHandler);
+    },
+  },
+  connect: {
+    records: {
+      list: () => hostCall<ConnectRecord[]>("connect.records.list"),
+      get: (id: string) => hostCall<ConnectRecord>("connect.records.get", { id }),
+      update: (id: string, config: Record<string, unknown>) => hostCall<ConnectRecord>("connect.records.update", { id, config }),
+    },
+    setStatus: (connectionId: string, state: "offline" | "connecting" | "online" | "error", detail?: string) =>
+      hostCall<{ ok: true }>("connect.status", { connectionId, state, detail }),
+    deliverMessage: (connectionId: string, message: InboundMessage) =>
+      hostCall<{ ok: true }>("connect.deliverMessage", { connectionId, message }),
+    deliverAction: <T = unknown>(connectionId: string, action: InboundAction) =>
+      hostCall<T>("connect.deliverAction", { connectionId, action }),
+  },
+};
+
+/** Register a method the panel or Grove registration flow can call. */
 export function registerHandler(method: string, fn: Handler): void {
   if (handlers[method]) console.error(`[grove] registerHandler: overwriting "${method}"`);
   handlers[method] = fn;
 }
 
-/**
- * Start serving: read JSON-RPC requests on stdin and write responses on stdout.
- * Call once, after registering your handlers.
- *
- * NOTE: stdout is the RPC channel — use `console.error` (stderr) for logging, or
- * you'll corrupt the protocol. Grove forwards stderr to its own log.
- */
+/** Attach optional registration/config handlers to the normal plugin backend. */
+export function registerConnectProvider(provider: ConnectProviderHandlers): void {
+  const methods: Array<[string, Handler | undefined]> = [
+    ["connect.validate", provider.validate as Handler | undefined],
+    ["connect.verify", provider.verify as Handler | undefined],
+    ["connect.registration.begin", provider.registrationBegin as Handler | undefined],
+    ["connect.registration.status", provider.registrationStatus as Handler | undefined],
+    ["connect.registration.callback", provider.registrationCallback as Handler | undefined],
+  ];
+  for (const [name, handler] of methods) if (handler) registerHandler(name, handler);
+}
+
+/** Start the backend protocol after registering handlers and event listeners. */
 export function serve(): void {
   const rl = createInterface({ input: process.stdin });
   rl.on("line", (line) => {
     const text = line.trim();
     if (!text) return;
-    let req: unknown;
-    try { req = JSON.parse(text); } catch { return; }
-    // Must be a non-null, non-array object — JSON.parse("null")/"[]" would
-    // otherwise crash the destructure below and take down the backend (DoS).
-    if (typeof req !== "object" || req === null || Array.isArray(req)) return;
-    const { id, method, params } = req as { id?: number; method?: string; params?: unknown };
-    if (typeof id !== "number" || typeof method !== "string") return;
+    let value: unknown;
+    try { value = JSON.parse(text); } catch { return; }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+    const message = value as { type?: string; id?: number; method?: string; params?: unknown; name?: string; data?: unknown; result?: unknown; error?: { message?: string } };
+    if (message.type === "grove:event" && typeof message.name === "string") {
+      for (const callback of eventHandlers[message.name] ?? []) callback(message.data);
+      return;
+    }
+    if (message.type === "grove:host_response" && typeof message.id === "number") {
+      const call = pending.get(message.id);
+      if (!call) return;
+      pending.delete(message.id);
+      if (message.error) call.reject(new Error(message.error.message ?? "Grove host call failed"));
+      else call.resolve(message.result);
+      return;
+    }
+    if (typeof message.id !== "number" || typeof message.method !== "string") return;
     void (async () => {
-      const fn = handlers[method];
-      if (!fn) { reply(id, undefined, `unknown method: ${method}`); return; }
-      try { reply(id, await fn(params)); }
-      catch (e) { reply(id, undefined, e instanceof Error ? e.message : String(e)); }
+      const fn = handlers[message.method!];
+      if (!fn) { reply(message.id!, undefined, `unknown method: ${message.method}`); return; }
+      try { reply(message.id!, await fn(message.params)); }
+      catch (error) { reply(message.id!, undefined, error instanceof Error ? error.message : String(error)); }
     })();
   });
 }
 
 function reply(id: number, result?: unknown, error?: string): void {
-  const msg = error ? { id, error: { message: error } } : { id, result: result ?? null };
-  process.stdout.write(JSON.stringify(msg) + "\n");
+  process.stdout.write(JSON.stringify(error ? { id, error: { message: error } } : { id, result: result ?? null }) + "\n");
 }
 "#;
 
@@ -929,7 +1002,7 @@ local installs). The panel entry is `dist/index.html`.
 ## Layout
 - `plugin.json` — manifest: name, version, permissions, contributes
 - `src/main.ts` — your panel UI
-- `src/grove-sdk/` — vendored SDK (index = panel · mcp.ts · backend.ts).
+- `src/grove-sdk/` — vendored SDK (panel · MCP · backend, including Connect).
   Refresh it via **Settings → Plugins → Update SDK**; don't edit by hand.
 - `index.html` · `vite.config.ts` — build config
 - `dist/` — built output · `skills/` — SKILL.md folders · `docs/` — full guide
@@ -942,6 +1015,8 @@ local installs). The panel entry is `dist/index.html`.
 - MCP / backend: `import { grove } from "./grove-sdk/mcp"` (or
   `./grove-sdk/backend`) → the SAME API, plus `grove.paths.*` for native libs
   (node 24+ required)
+- IM Connect uses the normal backend SDK: `grove.connect` for records and
+  inbound delivery, plus `grove.events.on(...)` for Radio and Connect events.
 
 See `docs/plugin-development.md` for the full reference.
 "#;
@@ -1016,7 +1091,12 @@ pub async fn update_plugin_sdk(
     // the new ones. These are Grove-managed filenames; if your code imported
     // them, repoint it at "./grove-sdk/…".
     let mut removed_legacy = Vec::new();
-    for legacy in ["grove.ts", "grove-mcp.ts", "grove-backend.ts"] {
+    for legacy in [
+        "grove.ts",
+        "grove-mcp.ts",
+        "grove-backend.ts",
+        "grove-sdk/connect.ts",
+    ] {
         if std::fs::remove_file(dir.join("src").join(legacy)).is_ok() {
             removed_legacy.push(format!("src/{}", legacy));
         }
@@ -1102,7 +1182,14 @@ pub async fn scaffold_plugin(
                 "command": "node",
                 "args": ["dist/backend.js"],
                 "note": "For a private node backend your panel calls via grove.backend.invoke(): add src/backend.ts (import from ./grove-sdk/backend) — it builds to dist/backend.js automatically — then rename this key to \"backend\". Needs node >= 24. See docs/plugin-development.md."
-            }
+            },
+            "//connectProviders": [{
+                "id": "example",
+                "name": name,
+                "setup_modes": ["form"],
+                "config_fields": [],
+                "note": "To provide an IM adapter: enable contributes.backend, declare connect:provider, then use grove.connect and grove.events from the backend SDK."
+            }]
         }
     });
     let manifest_str = format!(
@@ -1173,6 +1260,7 @@ pub async fn scaffold_plugin(
     )
     .map_err(|e| ApiError::internal(format!("failed to register plugin: {}", e)))?;
     sync_plugin_skills(&plugin.id, &plugin.name, &plugin.local_path);
+    crate::plugins::backend::registered(&plugin).await;
 
     Ok(Json(json!({
         "ok": true,
@@ -1249,7 +1337,7 @@ pub async fn list_plugins() -> Result<Json<serde_json::Value>, (StatusCode, Json
             // uninstalling — surface it as "missing" so the row can be cleaned up.
             v["exists"] = json!(std::path::Path::new(&p.local_path).is_dir());
             v["built"] = json!(plugin_is_built(&p.local_path));
-            // Per-capability: which declared entries (panel/sidebar/mcp/backend)
+            // Per-capability: which declared entries are not built
             // aren't actually built — so the UI can say "mcp not built" instead
             // of a misleading blanket "ready".
             v["unbuilt"] = json!(unbuilt_entries(&p.local_path));
@@ -1284,6 +1372,7 @@ pub async fn register_plugin(
         .map_err(|_| ApiError::bad_request(format!("no plugin.json in {}", dir.display())))?;
     let manifest: serde_json::Value = serde_json::from_str(&manifest_str)
         .map_err(|e| ApiError::bad_request(format!("invalid plugin.json: {}", e)))?;
+    validate_connect_provider_manifest(&manifest)?;
     let name = manifest
         .get("name")
         .and_then(|v| v.as_str())
@@ -1307,6 +1396,7 @@ pub async fn register_plugin(
     )
     .map_err(|e| ApiError::internal(format!("failed to register: {}", e)))?;
     sync_plugin_skills(&plugin.id, &plugin.name, &plugin.local_path);
+    crate::plugins::backend::registered(&plugin).await;
     Ok(Json(json!({ "ok": true, "plugin": plugin })))
 }
 
@@ -1320,6 +1410,11 @@ pub async fn delete_plugin(
     // touch it, just drop the registry row.
     let plugin = crate::storage::plugins::get(&id)
         .map_err(|e| ApiError::internal(format!("registry error: {}", e)))?;
+    // Stop every long-lived process before removing an installed plugin's
+    // executable files or private data.
+    crate::plugins::backend::shutdown_plugin(&id).await;
+    crate::plugins::connect_provider::remove_plugin_records(&id)
+        .map_err(|e| ApiError::internal(format!("failed to remove plugin Connect records: {e}")))?;
     if let Some(p) = &plugin {
         if p.source != "dev" {
             let owned = plugins_dir().join(&id);
@@ -1330,8 +1425,6 @@ pub async fn delete_plugin(
             }
         }
     }
-    // Stop any running backend process for this plugin before wiping its data.
-    crate::plugins::backend::shutdown_plugin(&id).await;
     // Plugin KV data is Grove-owned (under ~/.grove/plugins-data) regardless of
     // source — always remove it on uninstall.
     let _ = crate::storage::plugin_data::remove_all(&id);
@@ -1631,6 +1724,7 @@ fn read_manifest(dir: &std::path::Path) -> Result<(String, String), (StatusCode,
         .map_err(|_| ApiError::bad_request(format!("no plugin.json in {}", dir.display())))?;
     let v: serde_json::Value = serde_json::from_str(&s)
         .map_err(|e| ApiError::bad_request(format!("invalid plugin.json: {}", e)))?;
+    validate_connect_provider_manifest(&v)?;
     let name = v
         .get("name")
         .and_then(|x| x.as_str())
@@ -1646,6 +1740,84 @@ fn read_manifest(dir: &std::path::Path) -> Result<(String, String), (StatusCode,
         .unwrap_or("0.0.0")
         .to_string();
     Ok((name, version))
+}
+
+fn validate_connect_provider_manifest(
+    manifest: &serde_json::Value,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let Some(value) = manifest
+        .get("contributes")
+        .and_then(|value| value.get("connectProviders"))
+    else {
+        return Ok(());
+    };
+    let providers = value
+        .as_array()
+        .ok_or_else(|| ApiError::bad_request("contributes.connectProviders must be an array"))?;
+    let has_permission = manifest
+        .get("permissions")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .any(|value| value.as_str() == Some("connect:provider"));
+    if !has_permission {
+        return Err(ApiError::bad_request(
+            "contributes.connectProviders requires the connect:provider permission",
+        ));
+    }
+    if manifest
+        .get("contributes")
+        .and_then(|value| value.get("backend"))
+        .is_none()
+    {
+        return Err(ApiError::bad_request(
+            "contributes.connectProviders requires contributes.backend",
+        ));
+    }
+    let mut ids = std::collections::HashSet::new();
+    for provider in providers {
+        let id = provider
+            .get("id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .trim();
+        if id.is_empty() || id.contains('/') || id.contains(':') {
+            return Err(ApiError::bad_request(
+                "each connect provider needs an id without ':' or '/'",
+            ));
+        }
+        if !ids.insert(id) {
+            return Err(ApiError::bad_request(format!(
+                "duplicate connect provider id: {id}"
+            )));
+        }
+        for field in ["name"] {
+            if provider
+                .get(field)
+                .and_then(|value| value.as_str())
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                return Err(ApiError::bad_request(format!(
+                    "connect provider {id} is missing {field}"
+                )));
+            }
+        }
+        if let Some(modes) = provider.get("setup_modes") {
+            let modes = modes.as_array().ok_or_else(|| {
+                ApiError::bad_request(format!(
+                    "connect provider {id} setup_modes must be an array"
+                ))
+            })?;
+            for mode in modes.iter().filter_map(|value| value.as_str()) {
+                if !matches!(mode, "form" | "manual" | "oauth" | "qr") {
+                    return Err(ApiError::bad_request(format!(
+                        "connect provider {id} has unsupported setup mode {mode}"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Verify a plugin ships its built UI entries. Grove never builds plugins, so an
@@ -1806,7 +1978,7 @@ pub async fn install_local(
     Json(req): Json<InstallLocalRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     let src = validate_plugin_path(&req.path).map_err(ApiError::bad_request)?;
-    let plugin = install_plugin_from_source(&src, "local", None, None)?;
+    let plugin = install_plugin_from_source(&src, "local", None, None).await?;
     Ok(Json(json!({ "ok": true, "plugin": plugin })))
 }
 
@@ -1814,7 +1986,7 @@ pub async fn install_local(
 /// The Source remains the catalog authority; the Plugin runtime receives an
 /// owned snapshot under ~/.grove/plugins so source sync cannot execute changed
 /// code without an explicit reinstall/update action.
-pub(crate) fn install_plugin_from_source(
+pub(crate) async fn install_plugin_from_source(
     src: &std::path::Path,
     source: &str,
     git_url: Option<&str>,
@@ -1839,6 +2011,7 @@ pub(crate) fn install_plugin_from_source(
     )
     .map_err(|e| ApiError::internal(format!("failed to register: {}", e)))?;
     sync_plugin_skills(&plugin.id, &plugin.name, &plugin.local_path);
+    crate::plugins::backend::registered(&plugin).await;
     Ok(plugin)
 }
 
@@ -1933,6 +2106,7 @@ pub async fn install_zip(
     )
     .map_err(|e| ApiError::internal(format!("failed to register: {}", e)))?;
     sync_plugin_skills(&plugin.id, &plugin.name, &plugin.local_path);
+    crate::plugins::backend::registered(&plugin).await;
     Ok(Json(json!({ "ok": true, "plugin": plugin })))
 }
 
@@ -1989,6 +2163,7 @@ pub async fn install_git(
     )
     .map_err(|e| ApiError::internal(format!("failed to register: {}", e)))?;
     sync_plugin_skills(&plugin.id, &plugin.name, &plugin.local_path);
+    crate::plugins::backend::registered(&plugin).await;
     Ok(Json(json!({ "ok": true, "plugin": plugin })))
 }
 
@@ -2023,6 +2198,11 @@ fn read_contributes_at(local_path: &str) -> serde_json::Value {
     let sidebar = c.and_then(|c| c.get("sidebar"));
     let mcp = c.and_then(|c| c.get("mcp")).is_some();
     let backend = c.and_then(|c| c.get("backend")).is_some();
+    let connect_providers = c
+        .and_then(|c| c.get("connectProviders"))
+        .and_then(|value| value.as_array())
+        .map(|providers| providers.len())
+        .unwrap_or_default();
     json!({
         "panel": panel.map(|p| json!({
             "title": p.get("title").and_then(|v| v.as_str()),
@@ -2035,6 +2215,7 @@ fn read_contributes_at(local_path: &str) -> serde_json::Value {
         })),
         "mcp": mcp,
         "backend": backend,
+        "connectProviders": connect_providers,
     })
 }
 

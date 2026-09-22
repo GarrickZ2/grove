@@ -1,5 +1,12 @@
-use axum::{extract::Path, http::StatusCode, Json};
+use axum::{
+    body::{Body, Bytes},
+    extract::{OriginalUri, Path},
+    http::{HeaderMap, Method, Response, StatusCode},
+    Json,
+};
+use base64::Engine;
 use serde::Deserialize;
+use std::collections::HashMap;
 
 use crate::connect;
 use crate::storage::connects;
@@ -87,7 +94,8 @@ pub async fn begin_registration(
 pub async fn registration_status(
     Path(id): Path<String>,
 ) -> Result<Json<crate::connect::registration::RegistrationView>, (StatusCode, String)> {
-    crate::connect::registration::get(&id)
+    crate::connect::adapter::registration_status(&id)
+        .await
         .map(Json)
         .ok_or((StatusCode::NOT_FOUND, "registration flow not found".into()))
 }
@@ -114,7 +122,7 @@ pub async fn finish_registration(
     Json(input): Json<FinishRegistration>,
 ) -> Result<(StatusCode, Json<connect::ConnectionView>), (StatusCode, String)> {
     let (platform, adapter_config, domain, user_open_id) =
-        crate::connect::registration::claim_credentials(&input.flow_id).ok_or((
+        crate::connect::adapter::claim_registration(&input.flow_id).ok_or((
             StatusCode::CONFLICT,
             "registration is not authorized yet".into(),
         ))?;
@@ -128,14 +136,10 @@ pub async fn finish_registration(
         task_id: input.task_id,
         session_id: input.session_id,
     };
-    if let Err(error) = connect::validate(&create, false).map_err(connection_error) {
-        crate::connect::registration::release_credentials(&input.flow_id);
-        return Err(error);
-    }
-    let item = match connect::persist(create) {
+    let item = match connect::persist_authorized(create) {
         Ok(item) => item,
         Err(error) => {
-            crate::connect::registration::release_credentials(&input.flow_id);
+            crate::connect::adapter::release_registration(&input.flow_id);
             return Err(connection_error(error));
         }
     };
@@ -144,7 +148,7 @@ pub async fn finish_registration(
     if !user_open_id.is_empty() {
         if let Err(error) = connects::prebind_user(&item.id, &user_open_id) {
             let _ = connects::delete(&item.id);
-            crate::connect::registration::release_credentials(&input.flow_id);
+            crate::connect::adapter::release_registration(&input.flow_id);
             return Err((StatusCode::INTERNAL_SERVER_ERROR, error.to_string()));
         }
     }
@@ -157,6 +161,85 @@ pub async fn finish_registration(
             "created connect disappeared".into(),
         ))?;
     crate::connect::adapter::apply_connection(item.clone());
-    crate::connect::registration::finish(&input.flow_id);
+    crate::connect::adapter::finish_registration(&input.flow_id);
     Ok((StatusCode::CREATED, Json(connect::current_view(item))))
+}
+
+fn provider_request(
+    method: Method,
+    uri: OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> crate::plugins::connect_provider::ProviderHttpRequest {
+    let headers = headers
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_owned(), value.to_owned()))
+        })
+        .collect::<HashMap<_, _>>();
+    crate::plugins::connect_provider::ProviderHttpRequest {
+        method: method.as_str().to_owned(),
+        query: uri.0.query().unwrap_or_default().to_owned(),
+        headers,
+        body_base64: base64::engine::general_purpose::STANDARD.encode(body),
+    }
+}
+
+fn provider_response(
+    response: crate::plugins::connect_provider::ProviderHttpResponse,
+) -> Result<Response<Body>, (StatusCode, String)> {
+    let mut builder = Response::builder().status(response.status);
+    for (name, value) in response.headers {
+        if matches!(
+            name.to_ascii_lowercase().as_str(),
+            "connection"
+                | "content-length"
+                | "keep-alive"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "te"
+                | "trailer"
+                | "transfer-encoding"
+                | "upgrade"
+        ) {
+            continue;
+        }
+        builder = builder.header(name, value);
+    }
+    builder
+        .body(Body::from(response.body))
+        .map_err(|error| (StatusCode::BAD_GATEWAY, error.to_string()))
+}
+
+fn provider_http_error(error: crate::error::GroveError) -> (StatusCode, String) {
+    let status = if matches!(error, crate::error::GroveError::NotFound(_)) {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::BAD_GATEWAY
+    };
+    (status, error.to_string())
+}
+
+/// Public OAuth/QR callback ingress. Flow ids are unguessable and Providers
+/// must still validate platform state/signatures before returning credentials.
+pub async fn provider_registration_callback(
+    Path((plugin_id, provider_id, flow_id)): Path<(String, String, String)>,
+    method: Method,
+    uri: OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response<Body>, (StatusCode, String)> {
+    let request = provider_request(method, uri, headers, body);
+    let response = crate::plugins::connect_provider::registration_callback(
+        &plugin_id,
+        &provider_id,
+        &flow_id,
+        request,
+    )
+    .await
+    .map_err(provider_http_error)?;
+    provider_response(response)
 }

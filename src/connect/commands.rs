@@ -110,6 +110,8 @@ pub fn help() -> String {
 
 /// Platform-neutral description of an interactive card. Adapters render it
 /// into their native card format.
+#[derive(serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum CardSpec {
     /// Agent picker for a fresh session; `current` preselects the agent of
     /// the session being replaced.
@@ -125,24 +127,28 @@ pub enum CardSpec {
     Notice(String),
 }
 
+#[derive(serde::Serialize)]
 pub struct PermissionCard {
     pub request_id: String,
     pub description: String,
     pub options: Vec<PermissionCardOption>,
 }
 
+#[derive(serde::Serialize)]
 pub struct PermissionCardOption {
     pub id: String,
     pub label: String,
     pub kind: String,
 }
 
+#[derive(serde::Serialize)]
 pub struct ElicitationCard {
     pub request_id: String,
     pub message: String,
     pub fields: Vec<ElicitationField>,
 }
 
+#[derive(serde::Serialize)]
 pub struct ElicitationField {
     pub name: String,
     pub label: String,
@@ -154,12 +160,14 @@ pub struct ElicitationField {
 
 /// Grove's own structured form. Unlike ACP elicitation, submitting it starts
 /// a normal follow-up prompt; the adapter only renders the question shape.
+#[derive(serde::Serialize)]
 pub struct AskFormCard {
     pub form_id: String,
     pub definition: crate::agent_graph::ask_form::AskFormInput,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ElicitationFieldKind {
     Text,
     Integer,
@@ -169,6 +177,7 @@ pub enum ElicitationFieldKind {
 }
 
 /// Routing target editor: project / task / session (existing or auto-new).
+#[derive(serde::Serialize)]
 pub struct TargetCard {
     pub project_id: String,
     pub task_id: String,
@@ -184,10 +193,12 @@ pub struct TargetCard {
 /// Live session config editor: one dropdown per select-style config option
 /// the agent advertises (mode / model / effort / …), rendered dynamically
 /// from the session's `configOptions` snapshot.
+#[derive(serde::Serialize)]
 pub struct ConfigCard {
     pub selectors: Vec<ConfigSelectorOption>,
 }
 
+#[derive(serde::Serialize)]
 pub struct ConfigSelectorOption {
     /// Form field name (`opt_<index>`); mapped back by position on submit.
     pub name: String,
@@ -196,19 +207,19 @@ pub struct ConfigSelectorOption {
     pub options: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentOption {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ProjectOption {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TaskOption {
     pub id: String,
     pub name: String,

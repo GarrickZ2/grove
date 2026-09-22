@@ -74,8 +74,12 @@ my-plugin/
   keybinding, user-reconfigurable in Settings → Shortcuts.
 - **contributes.sidebar** — a top-level page (app-scoped).
 - **contributes.mcp** — a stdio MCP server exposing tools to the **AI agent**.
-- **contributes.backend** — a node process your **panel** talks to (see
-  *Backend*). Independent of `mcp`: ship either, both, or neither.
+- **contributes.backend** — a node process that can serve a panel, subscribe to
+  Grove events, run workflows, or implement a Connect Provider. Independent of
+  `mcp`: ship either, both, or neither.
+- **contributes.connectProviders** — optional IM Provider metadata. It requires
+  `contributes.backend` and the `connect:provider` permission; it does not start
+  another process.
 
 ## Panel SDK — `grove` (typed)
 
@@ -254,10 +258,11 @@ to the dirs you passed — enough to exercise handlers before wiring into Grove.
 
 ## Backend (`contributes.backend`)
 
-A backend is a node process your panel calls over Grove-mediated JSON-RPC. It
-has the **same `grove`** context/storage/paths as the MCP server, plus a tiny
-RPC server. One process runs per task (with that task's project access) and is
-reaped when idle.
+A backend is a node process connected to Grove over bidirectional stdio. It can
+serve panel RPC, subscribe to Grove events, and call host APIs such as
+`grove.connect`. It has the **same `grove`** context/storage/paths as the MCP
+server. Task-scoped processes are reaped when idle; the app-scoped backend stays
+available for events and external integrations.
 
 ```ts
 // src/backend.ts → built to dist/backend.js
@@ -279,11 +284,12 @@ serve();   // read stdin / write stdout — call once, after registering handler
 > two can mutate the same file/KV key, serialize that yourself (e.g. an in-flight
 > promise chain) — Grove doesn't queue calls for you.
 
-## Events (server → panel, live)
+## Events (Grove, backend, and panel)
 
 When a tool or backend method changes data, push an event so the panel
-refreshes — no polling, no manual reload. Grove relays it to the panel for the
-**same task**.
+refreshes — no polling, no manual reload. A task-scoped event reaches that
+task's panel; an app-scoped backend event reaches all open surfaces of its
+plugin, including task panels and the sidebar.
 
 Type the payload once in `src/shared.ts` and pass it as the type arg on both
 sides — `emit` and `on` are generic, so the compiler checks both ends:
@@ -300,16 +306,16 @@ grove.events.on<CasesChanged>("cases-changed", (d) => reload(d.count)); // retur
 ```
 
 Directions: **backend ⇄ panel** is full duplex (panel → backend via
-`grove.backend.invoke`, backend → panel via events); **MCP → panel** is
-emit-only (an MCP server can push events but can't receive them — its stdio is
-the agent's channel). `emit` is fire-and-forget; events are scoped to the
-current task. No transport setup — Grove injects it.
+`grove.backend.invoke`, backend → panel via events). Grove also pushes its own
+events into the backend. **MCP → panel** is emit-only because the MCP process's
+stdio belongs to the agent protocol. `emit` is fire-and-forget; no transport
+setup is required.
 
 ### `grove:radio` — Grove's own agent activity (chat:read)
 
-Beyond your own events, the panel can subscribe to a reserved `grove:radio`
-stream: Grove's aggregated, task-scoped agent/chat activity — the same signal
-the Radio phone and menubar tray consume. Requires `chat:read`.
+Both a panel and a backend can subscribe to the reserved `grove:radio` stream:
+Grove's aggregated, task-scoped agent/chat activity — the same signal the Radio
+phone and menubar tray consume. Requires `chat:read`.
 
 ```ts
 grove.events.on("grove:radio", (e) => {
@@ -319,8 +325,115 @@ grove.events.on("grove:radio", (e) => {
 });
 ```
 
-It's panel-only (the backend doesn't receive it). If your backend needs to
-react, have the panel relay it via `grove.backend.invoke`.
+The backend receives Radio without a panel being open. A plugin may use it to
+refresh UI, update its own database, trigger a workflow, or translate Grove
+Session activity for an external service. Radio is a live event stream, not a
+durable queue; do not assume replay after the plugin process was offline.
+Grove starts an event-consuming backend when its plugin is installed or
+registered, and starts installed backends again when Grove starts.
+
+## IM Connect Provider
+
+A Connect Provider is a use of the normal plugin backend, not a separate Grove
+runtime. Grove supplies registration/configuration, Session delivery, and
+events. Your backend owns the external platform connection — OAuth, webhook,
+socket, long polling, signature validation, retries, and acknowledgements.
+
+Declare the backend, permission, and Provider metadata:
+
+```jsonc
+{
+  "permissions": ["connect:provider", "chat:read"],
+  "contributes": {
+    "backend": { "command": "node", "args": ["dist/backend.js"] },
+    "connectProviders": [{
+      "id": "example",
+      "name": "Example IM",
+      "setup_modes": ["form"], // "qr" / "oauth" are also supported
+      "config_fields": [
+        { "key": "token", "label": "Token", "secret": true, "required": true }
+      ]
+    }]
+  }
+}
+```
+
+`config_fields` only describes Grove's form. `secret` selects a masked input
+and hides the saved value from the UI; the stored `config` remains opaque JSON.
+Grove does not assign credential semantics or create a separate key store.
+Grove constructs the OAuth/QR `callbackUrl` and passes it to the backend. For a
+flow completed on another device, set `GROVE_PUBLIC_BASE_URL` to the Grove
+server address reachable by that device; the default is local loopback.
+
+The backend reads and updates only records owned by its own Providers:
+
+```ts
+import { grove, registerConnectProvider, serve } from "./grove-sdk/backend";
+```
+
+For QR or OAuth registration, attach optional handlers to the same backend:
+
+```ts
+registerConnectProvider({
+  async registrationBegin({ providerId, id, callbackUrl }) {
+    // Use providerId if this plugin contributes more than one Provider.
+    return { state: "waiting_for_scan", verificationUrl: makeAuthUrl(id, callbackUrl) };
+  },
+  async registrationCallback({ request }) {
+    const config = await finishOAuth(request);
+    return { state: "authorized", config, response: { status: 200, body: "Connected" } };
+  },
+});
+```
+
+For form setup, Grove writes the form values directly to the Provider's Connect
+record; no registration handler is required.
+
+After `serve()` starts the bidirectional channel, deliver an external message
+or card action into its configured Grove Session from your external transport
+handler:
+
+```ts
+await grove.connect.deliverMessage(connectionId, {
+  externalMessageId: message.id,
+  conversationId: message.chatId,
+  senderId: message.userId,
+  text: message.text,
+});
+
+const result = await grove.connect.deliverAction(connectionId, {
+  conversationId: action.chatId,
+  senderId: action.userId,
+  sourceMessageId: action.messageId,
+  name: action.name,
+  fields: action.fields,
+});
+```
+
+Subscribe to Grove output through ordinary events. `grove:connect` is the
+connection-targeted stream for replying to an external conversation;
+`grove:radio` is the general task activity stream and may also drive unrelated
+plugin workflows:
+
+```ts
+grove.events.on("grove:radio", event => {
+  // Session status, completed turns, Permission, Form, and other agent activity.
+});
+
+grove.events.on("grove:connect", event => {
+  // Connect record changes and direct text/card/status output for this Provider.
+});
+
+serve();
+
+const records = await grove.connect.records.list();
+const record = await grove.connect.records.get(records[0].id);
+await grove.connect.records.update(record.id, { ...record.config, token: "new-value" });
+```
+
+There is deliberately no Grove platform-message webhook. Once your backend has
+a record, it chooses how to connect to the external platform and calls
+`deliverMessage` / `deliverAction` when something should enter Grove.
 
 ## Where a plugin opens
 
@@ -370,6 +483,7 @@ restrictions into external Node/shebang CLIs.
 | `project:write` | write the current task's working dir | ⚠ high |
 | `chat:read` | list chats + receive `grove:radio` agent activity | ⚠ high |
 | `chat:write` | inject prompts into a chat's agent (`grove.chat.sendPrompt`) | ⚠ high |
+| `connect:provider` | access owned Connect records and deliver external messages | ⚠ high |
 | `exec` | run commands (`grove.exec` / `child_process`) | ⚠⚠ full machine trust |
 
 A plugin can only use what it declares; high-risk permissions are flagged in the
@@ -391,5 +505,5 @@ From **Settings → Plugins**:
 - **Add → Dev folder** — reference a folder in place (hot-reload).
 
 `local`/`git` plugins live under `~/.grove/plugins/<id>` (files removed on
-uninstall); `dev` plugins reference your folder (only the registry entry is
-removed).
+uninstall); `dev` plugins reference your folder, which Grove does not delete.
+Uninstall also removes the plugin's Grove-managed data and IM Connect records.

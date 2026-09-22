@@ -47,12 +47,17 @@ fn storage(error: impl std::fmt::Display) -> ConnectionError {
 }
 
 pub fn validate(input: &connects::ConnectInput, existing: bool) -> Result<(), ConnectionError> {
-    let adapter = super::adapter::platform(&input.platform).ok_or_else(|| {
-        ConnectionError::Invalid(format!("Unsupported platform: {}", input.platform))
-    })?;
-    adapter
-        .validate_config(&input.domain, &input.adapter_config, existing)
-        .map_err(ConnectionError::Invalid)?;
+    super::adapter::validate_config(
+        &input.platform,
+        &input.domain,
+        &input.adapter_config,
+        existing,
+    )
+    .map_err(ConnectionError::Invalid)?;
+    validate_target(input)
+}
+
+fn validate_target(input: &connects::ConnectInput) -> Result<(), ConnectionError> {
     if input.name.trim().is_empty() {
         return Err(ConnectionError::Invalid("name is required".into()));
     }
@@ -117,21 +122,27 @@ fn view(
     connection: connects::Connect,
     statuses: &std::collections::HashMap<String, ConnectionStatus>,
 ) -> ConnectionView {
-    let adapter_config = super::adapter::platform(&connection.platform)
-        .map(|adapter| adapter.public_config(&connection.domain, &connection.adapter_config))
-        .unwrap_or(Value::Object(Default::default()));
-    let runtime = statuses
-        .get(&connection.id)
-        .cloned()
-        .unwrap_or(ConnectionStatus {
-            state: if connection.enabled {
-                "offline"
-            } else {
-                "disabled"
-            }
-            .into(),
+    let adapter_config = super::adapter::public_config(
+        &connection.platform,
+        &connection.domain,
+        &connection.adapter_config,
+    );
+    let provider_missing = connection.platform.starts_with("plugin:")
+        && crate::plugins::connect_provider::find(&connection.platform).is_none();
+    let runtime = if !connection.enabled {
+        ConnectionStatus {
+            state: "disabled".into(),
             detail: None,
-        });
+        }
+    } else {
+        statuses
+            .get(&connection.id)
+            .cloned()
+            .unwrap_or(ConnectionStatus {
+                state: if provider_missing { "error" } else { "offline" }.into(),
+                detail: provider_missing.then(|| "Connect provider plugin is not installed".into()),
+            })
+    };
     let snapshot = crate::grove::snapshot(
         &connection.project_id,
         &connection.task_id,
@@ -189,22 +200,44 @@ pub fn persist(input: connects::ConnectInput) -> Result<connects::Connect, Conne
     connects::create(input).map_err(storage)
 }
 
+/// OAuth/QR results are provider-owned configuration, not values entered in
+/// the provider's form. Keep Core target validation without applying the
+/// form's required-field rules to a different setup mode.
+pub fn persist_authorized(
+    input: connects::ConnectInput,
+) -> Result<connects::Connect, ConnectionError> {
+    if input.platform.starts_with("plugin:") {
+        if crate::plugins::connect_provider::find(&input.platform).is_none() {
+            return Err(ConnectionError::Invalid(
+                "Connect provider is not installed".into(),
+            ));
+        }
+        if !input.adapter_config.is_object() {
+            return Err(ConnectionError::Invalid(
+                "adapter_config must be a JSON object".into(),
+            ));
+        }
+        validate_target(&input)?;
+    } else {
+        validate(&input, false)?;
+    }
+    connects::create(input).map_err(storage)
+}
+
 pub fn update(
     id: &str,
     input: connects::ConnectInput,
 ) -> Result<connects::Connect, ConnectionError> {
     let previous = get(id)?;
-    let adapter = super::adapter::platform(&input.platform).ok_or_else(|| {
-        ConnectionError::Invalid(format!("Unsupported platform: {}", input.platform))
-    })?;
     let mut input = input;
-    input.adapter_config = adapter
-        .merge_config(
-            &input.domain,
-            Some(&previous.adapter_config),
-            &input.adapter_config,
-        )
-        .map_err(ConnectionError::Invalid)?;
+    let current_config = (previous.platform == input.platform).then_some(&previous.adapter_config);
+    input.adapter_config = super::adapter::merge_config(
+        &input.platform,
+        &input.domain,
+        current_config,
+        &input.adapter_config,
+    )
+    .map_err(ConnectionError::Invalid)?;
     validate(&input, true)?;
     let connection = connects::update(id, input)
         .map_err(storage)?
@@ -214,9 +247,8 @@ pub fn update(
         || previous.domain != connection.domain
         || previous.adapter_config != connection.adapter_config;
     if adapter_changed {
-        super::adapter::stop_connection(&previous);
         super::core::shutdown(id);
-        super::adapter::apply_connection(connection.clone());
+        super::adapter::replace_connection(&previous, connection.clone());
     }
     Ok(connection)
 }

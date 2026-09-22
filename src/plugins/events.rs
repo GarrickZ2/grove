@@ -83,19 +83,50 @@ pub fn subscribe(plugin_id: &str, task_id: &str, radio: bool) -> mpsc::Unbounded
     rx
 }
 
-/// Fan an event out to every panel subscribed to (plugin, task). `payload`
-/// is the `{name, data}` object; dead subscribers are pruned.
+/// Fan an event out to the plugin's task panel. An app-scoped backend emits
+/// with task `global`, which reaches every open surface of that plugin.
+/// `payload` is the `{name, data}` object; dead subscribers are pruned.
 pub fn publish(plugin_id: &str, task_id: &str, payload: &serde_json::Value) {
     let k = key(plugin_id, task_id);
     let line = format!("data: {}\n\n", payload);
     let mut subs = SUBS.lock().unwrap();
-    let mut empty = false;
-    if let Some(list) = subs.get_mut(&k) {
-        list.retain(|tx| tx.send(line.clone()).is_ok());
-        empty = list.is_empty();
+    if task_id == "global" {
+        let prefix = format!("{plugin_id}::");
+        subs.retain(|scope, list| {
+            if scope.starts_with(&prefix) {
+                list.retain(|tx| tx.send(line.clone()).is_ok());
+            }
+            !list.is_empty()
+        });
+    } else {
+        let mut empty = false;
+        if let Some(list) = subs.get_mut(&k) {
+            list.retain(|tx| tx.send(line.clone()).is_ok());
+            empty = list.is_empty();
+        }
+        if empty {
+            subs.remove(&k);
+        }
     }
-    if empty {
-        subs.remove(&k);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_event_reaches_only_its_plugins_surfaces() {
+        let plugin = format!("global-event-test-{}", uuid::Uuid::new_v4());
+        let other = format!("other-event-test-{}", uuid::Uuid::new_v4());
+        let mut first = subscribe(&plugin, "task-a", false);
+        let mut second = subscribe(&plugin, "task-b", false);
+        let mut sidebar = subscribe(&plugin, "global", false);
+        let mut unrelated = subscribe(&other, "task-a", false);
+        publish(&plugin, "global", &serde_json::json!({"name": "changed"}));
+        assert!(first.try_recv().is_ok());
+        assert!(second.try_recv().is_ok());
+        assert!(sidebar.try_recv().is_ok());
+        assert!(unrelated.try_recv().is_err());
     }
 }
 

@@ -31,6 +31,10 @@ struct MessageMapping {
 
 static MESSAGE_MAPPINGS: Lazy<Mutex<HashMap<String, MessageMapping>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+// Both Feishu and plugin Providers can deliver messages concurrently. Keep the
+// first-message check and session creation together so one Connect gets one
+// initial Session, regardless of which adapter delivered the messages.
+static SESSION_CREATION: Mutex<()> = Mutex::new(());
 const COMPLETED_TURN_HISTORY_LIMIT: usize = 5;
 type SessionKey = (String, String, String);
 static COMPLETED_TURNS: Lazy<Mutex<HashMap<SessionKey, VecDeque<Vec<String>>>>> =
@@ -525,7 +529,7 @@ fn store_inbound_attachments(
                     mime_type: stored.mime_type,
                     size: Some(stored.size),
                     title: Some(name.clone()),
-                    description: Some("Feishu attachment".to_owned()),
+                    description: Some("IM Connect attachment".to_owned()),
                     label: Some(name),
                 });
             }
@@ -608,6 +612,7 @@ pub async fn deliver_prompt(
 }
 
 pub fn create_session(connect: &Connect, agent_override: Option<&str>) -> Result<String, String> {
+    let _creation = SESSION_CREATION.lock().unwrap();
     if agent_override.is_none() {
         if let Ok(Some(fresh)) = connects::get(&connect.id) {
             if !fresh.session_id.is_empty() {
@@ -652,6 +657,61 @@ pub fn create_session(connect: &Connect, agent_override: Option<&str>) -> Result
 mod tests {
     use super::*;
     use crate::agent_graph::ask_form::{AskFormInput, FormQuestion};
+
+    #[test]
+    fn concurrent_first_messages_share_one_session() {
+        let _database_lock = crate::storage::database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let grove_dir = temp.path().join("grove");
+        crate::storage::set_grove_dir_override(Some(grove_dir.clone()));
+
+        let connection = connects::create(connects::ConnectInput {
+            name: "Concurrent Connect".into(),
+            platform: "feishu".into(),
+            domain: "feishu".into(),
+            enabled: true,
+            adapter_config: serde_json::json!({}),
+            project_id: "test-project".into(),
+            task_id: "test-task".into(),
+            session_id: String::new(),
+        })
+        .unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let threads = (0..2)
+            .map(|_| {
+                let connection = connection.clone();
+                let barrier = barrier.clone();
+                let grove_dir = grove_dir.clone();
+                std::thread::spawn(move || {
+                    crate::storage::set_grove_dir_override(Some(grove_dir));
+                    barrier.wait();
+                    let session_id = create_session(&connection, None).unwrap();
+                    crate::storage::set_grove_dir_override(None);
+                    session_id
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+        let ids = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(ids[0], ids[1]);
+        assert_eq!(
+            connects::get(&connection.id).unwrap().unwrap().session_id,
+            ids[0]
+        );
+        let count: i64 = crate::storage::database::connection()
+            .query_row(
+                "SELECT COUNT(*) FROM session WHERE project=?1 AND task_id=?2",
+                ["test-project", "test-task"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        crate::storage::set_grove_dir_override(None);
+    }
 
     fn number_form() -> AskFormInput {
         AskFormInput {

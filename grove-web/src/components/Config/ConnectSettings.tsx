@@ -7,7 +7,7 @@ import { getProjectStyle } from '../../utils/projectStyle';
 import { ConfirmDialog } from '../Dialogs';
 import { Button, DialogShell, Input, Switch } from '../ui';
 
-type NewStep = 'platform' | 'qr';
+type NewStep = 'platform' | 'qr' | 'manual';
 const newDraft = (domain = 'feishu', platform = 'feishu'): ConnectInput => ({ name: domain === 'lark' ? 'Lark Connect' : `${platform} Connect`, platform, domain, enabled: true, adapter_config: {}, project_id: '', task_id: '', session_id: '' });
 
 const ADVANCED_CONFIG_FIELDS = [
@@ -23,7 +23,7 @@ function readAdvancedConfig(config: Record<string, unknown>): AdvancedDraft {
 }
 
 function draftFromItem(item: ConnectItem, fieldKeys: string[]): ConnectInput {
-  const adapter_config = Object.fromEntries(fieldKeys.map((key) => [key, item.adapter_config[key] ?? '']));
+  const adapter_config = Object.fromEntries(fieldKeys.filter((key) => key in item.adapter_config).map((key) => [key, item.adapter_config[key]]));
   return { name: item.name, platform: item.platform, domain: item.domain, enabled: item.enabled, adapter_config, project_id: item.project_id, task_id: item.task_id, session_id: item.session_id };
 }
 
@@ -59,6 +59,7 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const finishingFlowRef = useRef<string | null>(null);
+  const selectedIdRef = useRef<string | 'new'>(selectedId);
   const selected = useMemo(() => items.find((item) => item.id === selectedId), [items, selectedId]);
 
   useEffect(() => { void Promise.all([listConnectPlatforms(), listProjects()]).then(([defs, list]) => { setPlatforms(defs); setProjects(list.projects); }); }, []);
@@ -70,25 +71,34 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
     return detail?.local_task ? [detail.local_task, ...tasks] : tasks;
   };
 
-  const chooseNew = () => { setSelectedId('new'); setStep('platform'); setDraft(newDraft()); setFlow(null); setError(null); };
+  const chooseNew = () => { selectedIdRef.current = 'new'; setSelectedId('new'); setStep('platform'); setDraft(newDraft()); setFlow(null); setError(null); };
   const chooseExisting = (item: ConnectItem) => {
+    selectedIdRef.current = item.id;
     setSelectedId(item.id);
     const adapterFields = platforms.find((platform) => platform.id === item.platform)?.config_fields ?? [];
     const advancedKeys = item.platform === 'feishu' || item.platform === 'lark' ? ADVANCED_CONFIG_FIELDS.map((field) => field.key) : [];
     setDraft(draftFromItem(item, [...adapterFields.map((field) => field.key), ...advancedKeys]));
+    if (platforms.length === 0) {
+      void listConnectPlatforms().then((definitions) => {
+        setPlatforms(definitions);
+        if (selectedIdRef.current !== item.id) return;
+        const fields = definitions.find((platform) => platform.id === item.platform)?.config_fields ?? [];
+        setDraft(draftFromItem(item, [...fields.map((field) => field.key), ...advancedKeys]));
+      });
+    }
     setError(null);
     if (item.project_id) void fetchTaskOptions(item.project_id).then(setTasks);
     if (item.project_id && item.task_id) void listChats(item.project_id, item.task_id).then(setSessions);
   };
   // Authorization is the moment the connection is persisted — target binding
   // is configuration, done afterwards on the detail page.
-  const saveAuthorized = async (authorized: ConnectRegistration) => {
+  const saveAuthorized = async (authorized: ConnectRegistration, connectionName = draft.name) => {
     if (finishingFlowRef.current === authorized.id) return;
     finishingFlowRef.current = authorized.id;
     setBusy(true);
     setError(null);
     try {
-      const created = await finishConnectRegistration({ flow_id: authorized.id, name: draft.name || (authorized.domain === 'lark' ? 'Lark Connect' : 'Feishu Connect'), enabled: true });
+      const created = await finishConnectRegistration({ flow_id: authorized.id, name: connectionName || (authorized.domain === 'lark' ? 'Lark Connect' : 'Feishu Connect'), enabled: true });
       await onItemsChange();
       chooseExisting(created);
     } catch (cause) {
@@ -98,14 +108,16 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
       setBusy(false);
     }
   };
-  const startQr = async (domain: string = draft.domain, platform: string = draft.platform) => {
+  const startQr = async (domain: string = draft.domain, platform: string = draft.platform, connectionName = draft.name) => {
     finishingFlowRef.current = null;
     setBusy(true);
     setError(null);
     setStep('qr');
     setFlow(null);
     try {
-      setFlow(await beginConnectRegistration(domain, platform));
+      const begun = await beginConnectRegistration(domain, platform);
+      setFlow(begun);
+      if (begun.state === 'authorized') await saveAuthorized(begun, connectionName);
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -138,19 +150,20 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
     if (!flow || flow.state !== 'waiting_for_scan') return;
     const refreshIn = Math.max(0, flow.expires_at * 1000 - Date.now() - 30_000);
     const timer = window.setTimeout(() => {
-      void beginConnectRegistration(flow.domain, flow.platform).then(setFlow).catch((cause) => setError(messageOf(cause)));
+      void beginConnectRegistration(flow.domain, flow.platform).then((next) => { setFlow(next); if (next.state === 'authorized') void saveAuthorized(next); }).catch((cause) => setError(messageOf(cause)));
     }, refreshIn);
     return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow]);
 
   return <div className="flex h-[min(780px,calc(100vh-3rem))] min-h-[560px] flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-2xl">
     <header className="flex h-16 shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-5"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#3370ff] to-[#5ed3ff]/80 shadow-sm shadow-[#3370ff]/30"><Link2 className="h-4 w-4 text-white" /></div><div className="flex-1"><h1 className="text-base font-semibold text-[var(--color-text)]">IM Connect</h1><p className="text-xs text-[var(--color-text-muted)]">External messages, native Grove Sessions</p></div><Button variant="ghost" size="sm" aria-label="Close IM Connect" onClick={onClose}><X className="h-4 w-4" /></Button></header>
-    <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]"><aside className="max-h-44 overflow-y-auto border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60 p-3 md:max-h-none md:border-b-0 md:border-r"><Button variant="secondary" size="md" className="mb-3 w-full !justify-start !py-3" onClick={chooseNew}><Plus className="mr-2 h-4 w-4" />New connection</Button><div className="space-y-1">{items.map((item) => <button type="button" key={item.id} onClick={() => chooseExisting(item)} className={`group relative flex w-full items-center gap-2.5 rounded-lg py-2 pl-2.5 pr-3 text-left transition-colors ${selectedId === item.id ? 'bg-[var(--color-bg-tertiary)]' : 'hover:bg-[var(--color-bg-tertiary)]/60'}`}><PlatformMark id={item.domain} size={26} /><div className="min-w-0 flex-1"><div className={`truncate text-sm font-medium ${selectedId === item.id ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]/90'}`}>{item.name}</div><div className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">{item.session_id ? item.target.agent || 'Grove Session' : item.task_id ? 'New session on first message' : 'Not configured'}</div></div><StatusDot state={item.runtime.state} /></button>)}</div></aside>
+    <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]"><aside className="max-h-44 overflow-y-auto border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60 p-3 md:max-h-none md:border-b-0 md:border-r"><Button variant="secondary" size="md" className="mb-3 w-full !justify-start !py-3" onClick={chooseNew}><Plus className="mr-2 h-4 w-4" />New connection</Button><div className="space-y-1">{items.map((item) => <button type="button" key={item.id} onClick={() => chooseExisting(item)} className={`group relative flex w-full items-center gap-2.5 rounded-lg py-2 pl-2.5 pr-3 text-left transition-colors ${selectedId === item.id ? 'bg-[var(--color-bg-tertiary)]' : 'hover:bg-[var(--color-bg-tertiary)]/60'}`}><PlatformMark id={item.platform} size={26} /><div className="min-w-0 flex-1"><div className={`truncate text-sm font-medium ${selectedId === item.id ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]/90'}`}>{item.name}</div><div className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">{item.session_id ? item.target.agent || 'Grove Session' : item.task_id ? 'New session on first message' : 'Not configured'}</div></div><StatusDot state={item.runtime.state} /></button>)}</div></aside>
       <main className="min-w-0 overflow-y-auto p-4 md:p-6">{selected ? <ExistingDetail item={selected} draft={draft} setDraft={setDraft} projects={projects} tasks={tasks} sessions={sessions} loadTasks={loadTasks} loadSessions={loadSessions} busy={busy} setBusy={setBusy} error={error} setError={setError} onChanged={onItemsChange} onDeleted={chooseNew} /> : <NewConnection step={step} setStep={setStep} platforms={platforms} draft={draft} setDraft={setDraft} flow={flow} busy={busy} error={error} startQr={startQr} verifyManual={verifyManual} />}</main></div>
   </div>;
 }
 
-interface NewProps { step: NewStep; setStep: (step: NewStep) => void; platforms: ConnectPlatform[]; draft: ConnectInput; setDraft: React.Dispatch<React.SetStateAction<ConnectInput>>; flow: ConnectRegistration | null; busy: boolean; error: string | null; startQr: (domain?: string, platform?: string) => Promise<void>; verifyManual: () => Promise<void> }
+interface NewProps { step: NewStep; setStep: (step: NewStep) => void; platforms: ConnectPlatform[]; draft: ConnectInput; setDraft: React.Dispatch<React.SetStateAction<ConnectInput>>; flow: ConnectRegistration | null; busy: boolean; error: string | null; startQr: (domain?: string, platform?: string, connectionName?: string) => Promise<void>; verifyManual: () => Promise<void> }
 function NewConnection(props: NewProps) {
   const { step, setStep, platforms, draft, setDraft, flow, busy, error } = props;
   const selectedPlatform = platforms.find((platform) => platform.id === draft.platform);
@@ -159,7 +172,7 @@ function NewConnection(props: NewProps) {
     const available = platforms.filter((platform) => platform.available);
     const upcoming = platforms.filter((platform) => !platform.available);
     return <Page title="New connection" description="Choose where you want to talk to Grove.">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{available.map((platform) => <button type="button" key={platform.id} disabled={busy} onClick={() => { const domain = platform.id === 'lark' ? 'lark' : 'feishu'; setDraft(newDraft(domain, platform.id)); void props.startQr(domain, platform.id); }} className="group relative flex min-h-[104px] items-center gap-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 text-left transition-all enabled:hover:-translate-y-0.5 enabled:hover:border-[var(--color-highlight)]/40 enabled:hover:shadow-lg enabled:hover:shadow-black/20">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{available.map((platform) => <button type="button" key={platform.id} disabled={busy} onClick={() => { const domain = platform.id === 'lark' ? 'lark' : platform.id === 'feishu' ? 'feishu' : platform.id; const name = `${platform.name} Connect`; setDraft({ ...newDraft(domain, platform.id), name }); if (platform.setup_modes.some((mode) => mode === 'qr' || mode === 'oauth')) void props.startQr(domain, platform.id, name); else setStep('manual'); }} className="group relative flex min-h-[104px] items-center gap-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 text-left transition-all enabled:hover:-translate-y-0.5 enabled:hover:border-[var(--color-highlight)]/40 enabled:hover:shadow-lg enabled:hover:shadow-black/20">
         <div className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-[#3370ff]/10 blur-2xl" />
         <PlatformMark id={platform.id} size={48} />
         <div className="min-w-0 flex-1"><div className="flex items-center gap-2 font-semibold text-[var(--color-text)]">{platform.name}</div><div className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">{platform.description}</div></div>
@@ -170,23 +183,34 @@ function NewConnection(props: NewProps) {
     </Page>;
   }
   if (step === 'qr') {
-    const label = draft.domain === 'lark' ? 'Lark' : 'Feishu';
-    return <Page title={`Connect ${label}`} description={`Scan with ${label} to create and authorize the Grove bot, or connect an existing app with its credentials.`} back={() => setStep('platform')}>
+    const label = selectedPlatform?.name ?? (draft.domain === 'lark' ? 'Lark' : 'Feishu');
+    const isBuiltIn = draft.platform === 'feishu' || draft.platform === 'lark';
+    return <Page title={`Connect ${label}`} description={isBuiltIn ? `Scan with ${label} to create and authorize the Grove bot, or connect an existing app with its credentials.` : `Authorize Grove with ${label}. The provider controls the external authorization flow.`} back={() => setStep('platform')}>
       <div className="mx-auto max-w-2xl space-y-5">
         <div className="flex flex-col gap-6 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 p-6 sm:flex-row">
           <div className="relative mx-auto shrink-0 self-start sm:mx-0"><div className="absolute -inset-1.5 rounded-2xl bg-gradient-to-br from-[#3370ff]/25 to-[#5ed3ff]/10" /><div className="relative flex h-[200px] w-[200px] items-center justify-center rounded-xl bg-white p-3 shadow-inner [&_svg]:h-full [&_svg]:w-full">{flow?.qr_svg ? <div className="h-full w-full" dangerouslySetInnerHTML={{ __html: flow.qr_svg }} /> : <Loader2 className="h-6 w-6 animate-spin text-[#3370ff]" />}</div></div>
           <div className="flex min-w-0 flex-1 flex-col justify-center gap-3 text-center sm:text-left">
             <div className="flex items-center justify-center gap-2 text-sm font-medium sm:justify-start"><PlatformMark id={draft.domain} size={20} />{flow?.state === 'error' ? <span className="text-[var(--color-error)]">{flow.error ?? 'Registration failed'}</span> : <><Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--color-highlight)]" /><span className="text-[var(--color-text-muted)]">{flow?.state === 'authorized' ? 'Saving connection…' : 'Waiting for authorization…'}</span></>}</div>
-            <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">Open {label} on your phone, scan the code, and confirm to create the Grove bot app. Grove receives the credentials automatically once you confirm.</p>
+            <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">{isBuiltIn ? `Open ${label} on your phone, scan the code, and confirm to create the Grove bot app.` : `Scan the code or open the authorization page, then approve access in ${label}.`} Grove saves the Provider configuration returned after authorization.</p>
             <div className="flex flex-wrap items-center justify-center gap-3 sm:justify-start">{flow && <a href={flow.verification_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-highlight)] hover:underline">Open in browser <ExternalLink className="h-3 w-3" /></a>}<Button variant="ghost" size="sm" disabled={busy} onClick={() => void props.startQr()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Refresh QR</Button></div>
             <p className="text-[11px] text-[var(--color-text-muted)]">Refreshes automatically before it expires</p>
           </div>
         </div>
-        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 p-5">
+        {selectedPlatform?.setup_modes.includes('manual') && <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 p-5">
           <div className="mb-4 flex items-center gap-3 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]"><span>Already have an app?</span><span className="h-px flex-1 bg-[var(--color-border)]" /></div>
           <div className="grid gap-4 sm:grid-cols-2">{(selectedPlatform?.config_fields ?? []).map((field) => <Input key={field.key} label={field.label} type={field.secret ? 'password' : 'text'} value={String(draft.adapter_config[field.key] ?? '')} onChange={(event) => patchConfig(field.key, event.target.value)} placeholder={field.placeholder} />)}</div>
           <div className="mt-4 flex items-center justify-between gap-4"><p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">Credentials are verified by the {label} adapter before the connection is created. QR authorization binds the authorizer automatically.</p><Button size="sm" disabled={busy || !(selectedPlatform?.config_fields ?? []).filter((field) => field.required).every((field) => draft.adapter_config[field.key])} onClick={() => void props.verifyManual()}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}Verify and continue</Button></div>
-        </div>
+        </div>}
+        {error && <ErrorText>{error}</ErrorText>}
+      </div>
+    </Page>;
+  }
+  if (step === 'manual') {
+    const label = selectedPlatform?.name ?? 'provider';
+    return <Page title={`Connect ${label}`} description={`Enter the configuration required by the ${label} provider.`} back={() => setStep('platform')}>
+      <div className="mx-auto max-w-2xl rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 p-5">
+        <div className="grid gap-4 sm:grid-cols-2">{(selectedPlatform?.config_fields ?? []).map((field) => <Input key={field.key} label={field.label} type={field.secret ? 'password' : 'text'} value={String(draft.adapter_config[field.key] ?? '')} onChange={(event) => patchConfig(field.key, event.target.value)} placeholder={field.placeholder} />)}</div>
+        <div className="mt-5 flex items-center justify-between gap-4"><p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">Configuration is stored on this Connect record and passed only to this provider. Fields marked secret are masked in settings.</p><Button size="sm" disabled={busy || !(selectedPlatform?.config_fields ?? []).filter((field) => field.required).every((field) => draft.adapter_config[field.key])} onClick={() => void props.verifyManual()}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}Verify and continue</Button></div>
         {error && <ErrorText>{error}</ErrorText>}
       </div>
     </Page>;
@@ -255,8 +279,8 @@ function ExistingDetail({ item, draft, setDraft, projects, tasks, sessions, load
   };
   return <>
   <Page
-    title={<span className="flex items-center gap-2.5"><PlatformMark id={item.domain} size={26} />{editingName ? <span className="w-64"><Input autoFocus value={draft.name} onChange={(event) => patch('name', event.target.value)} onBlur={commitName} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setDraft((current) => ({ ...current, name: item.name })); setEditingName(false); } }} /></span> : <button type="button" className="group flex min-w-0 items-center gap-1.5 text-left" onClick={() => setEditingName(true)}><span className="truncate">{item.name}</span><Pencil className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)] opacity-0 transition-opacity group-hover:opacity-100" /></button>}</span>}
-    description={<span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--color-text-muted)]"><StatusLabel state={item.runtime.state} detail={item.runtime.detail} /><span>·</span><RegionBadge domain={item.domain} /><span>·</span><span className="font-mono text-xs">{String(item.adapter_config.app_id ?? '')}</span>{item.bound_chat_id && <span className="rounded-full bg-[var(--color-success)]/10 px-2 py-0.5 text-xs text-[var(--color-success)]">Chat bound</span>}</span>}
+    title={<span className="flex items-center gap-2.5"><PlatformMark id={item.platform} size={26} />{editingName ? <span className="w-64"><Input autoFocus value={draft.name} onChange={(event) => patch('name', event.target.value)} onBlur={commitName} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setDraft((current) => ({ ...current, name: item.name })); setEditingName(false); } }} /></span> : <button type="button" className="group flex min-w-0 items-center gap-1.5 text-left" onClick={() => setEditingName(true)}><span className="truncate">{item.name}</span><Pencil className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)] opacity-0 transition-opacity group-hover:opacity-100" /></button>}</span>}
+    description={<span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--color-text-muted)]"><StatusLabel state={item.runtime.state} detail={item.runtime.detail} /><span>·</span><RegionBadge domain={item.domain} />{item.adapter_config.app_id !== undefined && <><span>·</span><span className="font-mono text-xs">{String(item.adapter_config.app_id)}</span></>}{item.bound_chat_id && <span className="rounded-full bg-[var(--color-success)]/10 px-2 py-0.5 text-xs text-[var(--color-success)]">Chat bound</span>}</span>}
     trailing={<Switch checked={draft.enabled} onChange={toggle} label="Enable connection" />}
     ><div className="space-y-4">
     <section className={`space-y-3 rounded-xl border p-4 ${item.project_id && item.task_id ? 'border-[var(--color-border)]' : 'border-[var(--color-highlight)]/40 bg-[var(--color-highlight)]/5'}`}>
@@ -322,7 +346,7 @@ function ExistingDetail({ item, draft, setDraft, projects, tasks, sessions, load
 
 function Page({ title, description, back, trailing, children }: { title: React.ReactNode; description: React.ReactNode; back?: () => void; trailing?: React.ReactNode; children: React.ReactNode }) { return <div className="mx-auto max-w-2xl"><div className="mb-6 flex items-start gap-3">{back && <Button variant="ghost" size="sm" onClick={back}><ArrowLeft className="h-4 w-4" /></Button>}<div className="min-w-0 flex-1"><h3 className="text-lg font-semibold text-[var(--color-text)]">{title}</h3><p className="mt-1 text-sm leading-relaxed text-[var(--color-text-muted)]">{description}</p></div>{trailing}</div>{children}</div>; }
 
-function RegionBadge({ domain }: { domain: string }) { return <span className="inline-flex items-center rounded-full border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-text-muted)]">{domain === 'lark' ? 'Global' : 'China'}</span>; }
+function RegionBadge({ domain }: { domain: string }) { return <span className="inline-flex items-center rounded-full border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-text-muted)]">{domain === 'lark' ? 'Global' : domain === 'feishu' ? 'China' : domain.split('/').at(-1)}</span>; }
 
 function ProjectGlyph({ id }: { id: string }) {
   const { theme } = useTheme();
@@ -417,6 +441,7 @@ function PlatformMark({ id, size }: { id: string; size: number }) {
   if (id === 'telegram') return <div className="flex shrink-0 items-center justify-center rounded-xl bg-[#26a5e4]/12" style={{ width: size + 12, height: size + 12 }}><svg width={size} height={size} viewBox="0 0 24 24"><path d={TELEGRAM_PATH} fill="#26A5E4" /></svg></div>;
   if (id === 'slack') return <div className="flex shrink-0 items-center justify-center rounded-xl bg-[#e01e5a]/10" style={{ width: size + 12, height: size + 12 }}><svg width={size} height={size} viewBox="0 0 24 24"><path d={SLACK_PATH} fill="#E01E5A" /></svg></div>;
   if (id === 'discord') return <div className="flex shrink-0 items-center justify-center rounded-xl bg-[#5865f2]/12" style={{ width: size + 12, height: size + 12 }}><svg width={size} height={size} viewBox="0 0 24 24"><path d={DISCORD_PATH} fill="#5865F2" /></svg></div>;
+  if (id.startsWith('plugin:')) return <div className="flex shrink-0 items-center justify-center rounded-xl bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]" style={{ width: size + 12, height: size + 12 }}><Link2 style={{ width: size, height: size }} /></div>;
   return <div className="flex shrink-0 items-center justify-center rounded-xl" style={{ width: size + 12, height: size + 12, background: 'linear-gradient(135deg, rgba(94,211,255,0.16), rgba(51,112,255,0.12))' }}><LarkMark size={size} /></div>;
 }
 

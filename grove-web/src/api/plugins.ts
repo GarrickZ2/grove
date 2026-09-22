@@ -87,6 +87,8 @@ export interface Plugin {
     mcp?: boolean;
     /** Whether it ships a node backend (contributes.backend) for its panel. */
     backend?: boolean;
+    /** Number of app-scoped IM Connect providers contributed by the plugin. */
+    connectProviders?: number;
   };
 }
 

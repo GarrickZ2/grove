@@ -2,8 +2,8 @@
 //! session lifecycle, queue and update stream.
 
 pub mod adapter;
-mod commands;
-mod core;
+pub(crate) mod commands;
+pub(crate) mod core;
 mod feishu;
 mod grove;
 pub mod platform;
@@ -11,7 +11,7 @@ pub mod registration;
 mod service;
 
 pub use service::{
-    create, current_view, delete, list_views, persist, update, validate, verify,
+    create, current_view, delete, list_views, persist_authorized, update, verify,
     verify_credentials, ConnectionError, ConnectionView,
 };
 

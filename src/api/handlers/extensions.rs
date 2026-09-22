@@ -370,7 +370,8 @@ pub async fn install_plugin(Json(req): Json<InstallPluginRequest>) -> impl IntoR
         },
         (source.source_type == "git").then_some(source.url.as_str()),
         (!artifact.repo_path.is_empty()).then_some(artifact.repo_path.as_str()),
-    );
+    )
+    .await;
     match result {
         Ok(plugin) => Json(json!({ "ok": true, "plugin": plugin })).into_response(),
         Err(error) => error.into_response(),

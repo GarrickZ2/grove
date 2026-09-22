@@ -1230,6 +1230,15 @@ pub fn create_router(
             )
             .with_state(auth.clone());
 
+        // OAuth / QR registration callback. Platform message transport remains
+        // entirely inside the plugin backend.
+        let connect_provider_ingress = Router::new()
+            .route(
+                "/connect-provider-callbacks/{plugin_id}/{provider_id}/{flow_id}",
+                any(handlers::connects::provider_registration_callback),
+            )
+            .layer(DefaultBodyLimit::max(16 * 1024 * 1024));
+
         // CSRF guard wraps EVERYTHING under /api/v1 — including auth_router, so
         // /auth/verify can't be probed cross-origin. Sec-Fetch-Site / Origin /
         // Referer are checked for non-safe methods; safe methods (GET/HEAD/OPTIONS,
@@ -1238,6 +1247,7 @@ pub fn create_router(
             .nest("/api/v1", protected_api)
             .nest("/api/v1", plugin_asset_session)
             .nest("/api/v1", plugin_assets)
+            .nest("/api/v1", connect_provider_ingress)
             .nest("/api/v1", auth_router)
             // Same-machine attention-fact intake (grove hooks CLI). Sits
             // outside the auth layer on purpose — see report_hook's docs.
@@ -1788,14 +1798,17 @@ pub fn start_automation_runtime() {
 /// lifecycle stay with each surface. Everything that prepares the local Grove
 /// backend belongs here so those surfaces cannot silently drift apart.
 pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
+    std::env::set_var("GROVE_PORT", port.to_string());
+    if std::env::var_os("GROVE_PROTOCOL").is_none() {
+        std::env::set_var("GROVE_PROTOCOL", "http");
+    }
     // Record our loopback base so a plugin's MCP server (a node child process,
     // not an authenticated Grove client) knows where to POST events. Always
     // loopback — the MCP server runs on this same machine regardless of bind.
     crate::plugins::events::set_server_base(format!("http://127.0.0.1:{}", port));
 
-    // Relay the aggregated radio event stream into plugin panels (holding
-    // `chat:read`) as `grove:radio` events. No-op on the wire until a panel
-    // subscribes; safe to start unconditionally.
+    // Relay the aggregated Radio stream into plugin panels and backends holding
+    // `chat:read`. Backends can consume it without a panel being open.
     crate::plugins::radio_bridge::spawn();
 
     // Render OS notifications for the human at this machine (TUI/web/local
@@ -1895,6 +1908,14 @@ pub async fn start_server(
     auth: Arc<ServerAuth>,
     tls_mode: crate::cli::web::TlsMode,
 ) -> std::io::Result<()> {
+    std::env::set_var(
+        "GROVE_PROTOCOL",
+        if auth.secret_key.is_some() && !matches!(&tls_mode, crate::cli::web::TlsMode::Off) {
+            "https"
+        } else {
+            "http"
+        },
+    );
     initialize_local_server_runtime(port).await?;
 
     let has_ui = static_dir.is_some() || has_embedded_assets();

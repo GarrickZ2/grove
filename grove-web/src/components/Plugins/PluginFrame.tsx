@@ -268,16 +268,15 @@ export function PluginFrame({
   }, [plugin.id, project, taskId, theme]);
 
   // Event bus: subscribe to events the plugin's backend/MCP server push for this
-  // task and relay them into the (isolated) iframe as `grove:event`, where the
-  // SDK's grove.events.on() dispatches them. The iframe can't open this stream
-  // itself — the host proxies it. Only task panels with a server side.
+  // task (or the global sidebar scope) and relay them into the isolated iframe.
+  // The iframe can't open this stream itself — the host proxies it.
   useEffect(() => {
     const hasServer = plugin.contributes?.mcp || plugin.contributes?.backend;
-    if (!taskId || !hasServer) return;
+    if (!hasServer) return;
     let es: EventSource | null = null;
     let cancelled = false;
     void appendHmacToUrl(
-      `/api/v1/plugins/${plugin.id}/events/subscribe?taskId=${encodeURIComponent(taskId)}`,
+      `/api/v1/plugins/${plugin.id}/events/subscribe?taskId=${encodeURIComponent(taskId ?? "global")}`,
     ).then((url) => {
       if (cancelled) return;
       es = new EventSource(url);
