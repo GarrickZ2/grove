@@ -14,6 +14,7 @@ import {
   type ArtifactFile, type ArtifactWorkDirectoryEntry, type DisplayItem,
 } from "../../../../api";
 import { apiClient } from "../../../../api/client";
+import { useAuthenticatedFileUrl } from "../../../../hooks/useAuthenticatedFileUrl";
 import {
   VSCodeIcon,
   FilePreviewDrawer,
@@ -108,8 +109,8 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   const refreshPreviewContent = useCallback((file: ArtifactFile, seq: number) => {
     if (!projectId) return;
     const t = getPreviewType(file.name);
-    // Image previews use the URL as <img src>; binary previews fetch their
-    // own bytes — neither can be re-polled via the text endpoint.
+    // Image and binary previews load their own bytes; neither can be
+    // re-polled via the text endpoint.
     if (t === "image" || t === "binary") return;
     previewArtifact(projectId, task.id, file.directory, file.path)
       .then((content) => {
@@ -1246,6 +1247,10 @@ function FileCard({
   const canPreview = !isLink && canPreviewFile(file.name);
   const ext = getExtBadge(file.name);
   const isImage = !isLink && getPreviewType(file.name) === "image";
+  const thumbnailPath = isImage && projectId && /\.(png|jpe?g|webp|gif|bmp|ico)$/i.test(file.name)
+    ? artifactDownloadUrl(projectId, taskId, file.directory, file.path)
+    : null;
+  const { url: thumbnailUrl, error: thumbnailError } = useAuthenticatedFileUrl(thumbnailPath);
   const displayName = isLink
     ? linkDisplayName(file.name)
     : viewPath && file.path.startsWith(viewPath + "/")
@@ -1304,10 +1309,11 @@ function FileCard({
             <LinkIcon className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
           )}
         </div>
-      ) : isImage && projectId ? (
+      ) : thumbnailPath ? (
         <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0"
           style={{ background: "var(--color-bg-tertiary)", border: "1px solid var(--color-border)" }}>
-          <img src={artifactDownloadUrl(projectId, taskId, file.directory, file.path)} alt="" className="w-full h-full object-cover" />
+          {thumbnailUrl ? <img src={thumbnailUrl} alt="" className="w-full h-full object-cover" />
+            : thumbnailError ? <VSCodeIcon filename={file.name} size={18} /> : null}
         </div>
       ) : (
         <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"

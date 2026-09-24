@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { AlertCircle, FileSpreadsheet, Loader2 } from 'lucide-react';
 import type { XlsxSheet } from './xlsxParser';
+import { apiClient } from '../../api/client';
 
 // DataTablePreview already lives in its own lazy chunk (previewRenderers.tsx
 // imports it via React.lazy). Importing it from here pulls that chunk in only
@@ -33,9 +34,7 @@ export function XlsxWorkbook({ downloadUrl }: XlsxWorkbookProps) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(loadedUrl);
-        if (!res.ok) throw new Error(`HTTP ${res.status} fetching workbook`);
-        const buf = await res.arrayBuffer();
+        const buf = await (await apiClient.getBlob(loadedUrl)).arrayBuffer();
         const m = await import('./xlsxParser');
         const parsed = await m.parseXlsx(buf);
         if (cancelled) return;

@@ -50,4 +50,25 @@ describe("ApiClient JSON responses", () => {
       }),
     );
   });
+
+  it("fetches binary previews with signed GET requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3])));
+    vi.stubGlobal("fetch", fetchMock);
+    setSecretKey("test-secret");
+
+    const blob = await apiClient.getBlob("/api/v1/example/download?path=image.jpeg");
+    expect(blob.size).toBe(3);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/example/download?path=image.jpeg",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          "X-Timestamp": expect.any(String),
+          "X-Nonce": expect.any(String),
+          "X-Signature": expect.any(String),
+        }),
+        cache: "no-store",
+      }),
+    );
+  });
 });

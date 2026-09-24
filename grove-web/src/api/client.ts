@@ -350,6 +350,21 @@ class ApiClient {
     return response.text();
   }
 
+  /** Fetch binary files with the same authentication as other API requests. */
+  async getBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'GET',
+      headers: await getSignedHeaders('GET', path),
+      cache: 'no-store',
+      signal,
+    });
+    if (!response.ok) {
+      const payload = await extractErrorPayload(response);
+      throw { status: response.status, message: payload.message, data: payload.data } as ApiError;
+    }
+    return response.blob();
+  }
+
   async patch<T, R>(path: string, data: T, signal?: AbortSignal): Promise<R> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: 'PATCH',

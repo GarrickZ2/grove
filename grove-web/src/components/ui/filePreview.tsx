@@ -15,6 +15,7 @@ import {
   type VirtualizedMarkdownHeading,
 } from "./VirtualizedMarkdownRenderer";
 import { FullFilePreview } from "./FullFilePreview";
+import { apiClient, appendHmacToUrl } from "../../api/client";
 import { isVirtualizedMarkdownPreview } from "./filePreviewPolicy";
 import {
   previewCommentLocatorInParentViewport,
@@ -86,20 +87,17 @@ export async function saveBlobAsFile(blob: Blob, suggestedName: string): Promise
 }
 
 export function downloadViaIframe(url: string, suggestedName?: string) {
-  const tauri = getTauriInternals();
-  if (tauri) {
-    // In the Tauri desktop build, browser-style downloads don't reach the
-    // OS download manager. Route through a native save dialog instead.
-    const name = suggestedName ?? inferNameFromUrl(url);
-    tauri
-      .invoke("download_file_dialog", { url, suggestedName: name })
-      .catch((err) => {
-        console.error("[downloadFile] Tauri save dialog failed:", err);
-        fallbackDownloadViaAnchor(url, name);
-      });
+  if (getTauriInternals()) {
+    // The save dialog can stay open past the HMAC URL's 60-second window.
+    // Fetch while authenticated, then write the bytes after the user chooses a path.
+    void apiClient.getBlob(url)
+      .then((blob) => saveBlobAsFile(blob, suggestedName ?? inferNameFromUrl(url)))
+      .catch((err) => console.error("[downloadFile] Download failed:", err));
     return;
   }
-  fallbackDownloadViaAnchor(url, suggestedName);
+  void appendHmacToUrl(url).then((signedUrl) => {
+    fallbackDownloadViaAnchor(signedUrl, suggestedName);
+  }).catch((err) => console.error("[downloadFile] Could not sign download URL:", err));
 }
 
 function inferNameFromUrl(url: string): string {
@@ -116,8 +114,8 @@ export function getPreviewType(fileName: string): "image" | "text" | "binary" | 
   const renderer = getPreviewRenderer(fileName, 'full');
   if (!renderer) return null;
   // Map contentType to the "preview kind" the parent uses to decide how to
-  // fetch. 'url' renderers hand the URL to <img>/<iframe> (no fetch needed),
-  // so we surface that as 'image' for the parent; text/binary pass through.
+  // fetch. 'url' renderers receive a file URL and fetch it through the signed
+  // API, so we surface that as 'image' for the parent; text/binary pass through.
   if (renderer.contentType === 'url') return 'image';
   return renderer.contentType;
 }

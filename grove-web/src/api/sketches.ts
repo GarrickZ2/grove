@@ -158,11 +158,8 @@ export async function restoreSketchCheckpoint(
 }
 
 /**
- * Build the URL for the sketch's PNG render. Returned synchronously so it can
- * be dropped straight into an `<img src>` (HMAC for mobile is handled by the
- * server's per-host policy, mirroring the existing `<img>` markdown path).
- * The endpoint returns 404 when no thumbnail has been uploaded yet — callers
- * should fall back to plain text on `onError`.
+ * Build the URL for the sketch's PNG render. Callers load it through the
+ * signed API before passing a local object URL to an image element.
  */
 export function sketchThumbnailUrl(
   projectId: string,

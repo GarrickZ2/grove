@@ -47,6 +47,8 @@ import mermaid from "mermaid";
 import { VSCodeIcon } from "./VSCodeIcon";
 import { SketchChip } from "./SketchChip";
 import { sketchThumbnailUrl } from "../../api/sketches";
+import { useAuthenticatedFileUrl } from "../../hooks/useAuthenticatedFileUrl";
+import { apiClient, appendHmacToUrl } from "../../api/client";
 import { highlightLines, normalizeLanguage } from "../Review/syntaxHighlight";
 import { createSlugger } from "./headingSlug";
 import { useTheme } from "../../context/ThemeContext";
@@ -571,6 +573,7 @@ function CodeBlock({
   enableRunCommand?: boolean;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [isWrapped, setIsWrapped] = useState(true); // Default: soft-wrap on
   const [showLineNumbers, setShowLineNumbers] = useState(true);
 
@@ -630,18 +633,47 @@ function CodeBlock({
   const lineNumWidth = `${String(rawLines.length).length}ch`;
 
   useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1400);
+    if (!copied && !copyFailed) return;
+    const timer = window.setTimeout(() => {
+      setCopied(false);
+      setCopyFailed(false);
+    }, 1400);
     return () => window.clearTimeout(timer);
-  }, [copied]);
+  }, [copied, copyFailed]);
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-    } catch {
-      setCopied(false);
+    let success = false;
+    // Clipboard API is unavailable on plain HTTP remote hosts. Use the
+    // synchronous browser copy command while this click still has activation.
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(code);
+        success = true;
+      } catch {
+        // Fall through to the selection-based copy path.
+      }
     }
+    if (!success) {
+      const textarea = document.createElement('textarea');
+      const previouslyFocused = document.activeElement as HTMLElement | null;
+      textarea.value = code;
+      textarea.readOnly = true;
+      textarea.style.position = 'fixed';
+      textarea.style.top = '-9999px';
+      document.body.appendChild(textarea);
+      try {
+        textarea.focus();
+        textarea.select();
+        success = document.execCommand('copy');
+      } catch {
+        success = false;
+      } finally {
+        textarea.remove();
+        previouslyFocused?.focus({ preventScroll: true });
+      }
+    }
+    setCopied(success);
+    setCopyFailed(!success);
   };
 
   const handleRun = () => {
@@ -702,11 +734,12 @@ function CodeBlock({
               hoverTone="accent"
             />
           )}
+          {copyFailed && <span role="status" className="px-1 text-[11px] text-[var(--color-warning)]">Copy failed</span>}
           <HeaderButton
             onClick={handleCopy}
-            title={copied ? "Copied" : "Copy code"}
+            title={copied ? "Copied" : copyFailed ? "Copy failed — select the code to copy it" : "Copy code"}
             icon={copied ? Check : Copy}
-            hoverTone={copied ? "success" : "default"}
+            hoverTone={copied ? "success" : copyFailed ? "accent" : "default"}
           />
         </div>
       </div>
@@ -885,17 +918,65 @@ function SketchImage({
   fallbackText: string;
   onImageClick?: (url: string) => void;
 }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) return <>{fallbackText}</>;
   const url = sketchThumbnailUrl(projectId, taskId, sketchId);
+  const { url: loadedUrl, error } = useAuthenticatedFileUrl(url);
+  const [failed, setFailed] = useState(false);
+  if (failed || error) return <>{fallbackText}</>;
+  if (!loadedUrl) return null;
   return (
     <img
-      src={url}
+      src={loadedUrl}
       alt={fallbackText}
       className={`max-w-full rounded-lg my-2 border border-[var(--color-border)]${onImageClick ? " cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
-      onClick={onImageClick ? () => onImageClick(url) : undefined}
+      onClick={onImageClick ? () => onImageClick(loadedUrl) : undefined}
       onError={() => setFailed(true)}
     />
+  );
+}
+
+function MarkdownImage({ src, alt, onImageClick }: { src: string; alt: string; onImageClick?: (url: string) => void }) {
+  const internalPath = src.startsWith('/api/v1/') ? src : null;
+  const { url: loadedUrl, error } = useAuthenticatedFileUrl(internalPath);
+  const resolved = internalPath ? loadedUrl : src;
+  if (error) return <span className="text-[var(--color-text-muted)]">{alt || 'Image unavailable'}</span>;
+  if (!resolved) return null;
+  return (
+    <img
+      src={resolved}
+      alt={alt}
+      className={`max-w-full rounded-lg my-2 border border-[var(--color-border)]${onImageClick ? " cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
+      onClick={onImageClick ? () => onImageClick(resolved) : undefined}
+      onError={(e) => {
+        const el = e.currentTarget;
+        el.style.display = 'none';
+        const placeholder = el.nextElementSibling as HTMLElement | null;
+        if (placeholder) placeholder.style.display = 'inline-flex';
+      }}
+    />
+  );
+}
+
+function MarkdownFileLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-[var(--color-highlight)] hover:underline break-words"
+      onClick={(event) => {
+        if (!href.startsWith('/api/v1/')) return;
+        event.preventDefault();
+        // Open synchronously so popup blockers allow the tab; sign immediately
+        // before navigation so the one-use HMAC nonce has not expired.
+        const tab = window.open('about:blank', '_blank');
+        void appendHmacToUrl(href).then((signed) => {
+          if (tab) tab.location.href = signed;
+          else window.location.href = signed;
+        }).catch(() => tab?.close());
+      }}
+    >
+      {children}
+    </a>
   );
 }
 
@@ -1008,16 +1089,30 @@ interface EmbeddedHtmlIframeProps extends IframeHTMLAttributes<HTMLIFrameElement
 function EmbeddedHtmlIframe({ src, fitLocalHtml, className, height, ...props }: EmbeddedHtmlIframeProps) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const frameId = useId();
+  const internalPath = src.startsWith('/api/v1/') ? src : null;
+  const [signedSource, setSignedSource] = useState<{ src: string; url: string } | null>(null);
   const [loadedDocument, setLoadedDocument] = useState<{ src: string; html: string } | null>(null);
   const [reportedHeight, setReportedHeight] = useState<{ src: string; height: number } | null>(null);
   const srcDoc = fitLocalHtml && loadedDocument?.src === src ? loadedDocument.html : undefined;
   const fittedHeight = reportedHeight?.src === src ? reportedHeight.height : undefined;
 
   useEffect(() => {
+    if (!internalPath) return;
+    let cancelled = false;
+    void appendHmacToUrl(internalPath).then((url) => {
+      if (!cancelled) setSignedSource({ src: internalPath, url });
+    });
+    return () => { cancelled = true; };
+  }, [internalPath]);
+
+  useEffect(() => {
     if (!fitLocalHtml) return;
     const controller = new AbortController();
-    fetch(src, { signal: controller.signal, credentials: "same-origin" })
-      .then((response) => response.ok ? response.text() : Promise.reject(new Error(`Unable to load embedded HTML: ${response.status}`)))
+    const content = internalPath
+      ? apiClient.getText(internalPath)
+      : fetch(src, { signal: controller.signal, credentials: "same-origin" })
+        .then((response) => response.ok ? response.text() : Promise.reject(new Error(`Unable to load embedded HTML: ${response.status}`)));
+    content
       .then((html) => {
         if (!controller.signal.aborted) setLoadedDocument({ src, html: injectEmbeddedHtmlFitScript(html, frameId) });
       })
@@ -1026,7 +1121,7 @@ function EmbeddedHtmlIframe({ src, fitLocalHtml, className, height, ...props }: 
         // and documents that are not readable through the raw-file endpoint.
       });
     return () => controller.abort();
-  }, [fitLocalHtml, frameId, src]);
+  }, [fitLocalHtml, frameId, src, internalPath]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
@@ -1039,10 +1134,14 @@ function EmbeddedHtmlIframe({ src, fitLocalHtml, className, height, ...props }: 
     return () => window.removeEventListener("message", onMessage);
   }, [frameId, src]);
 
+  const iframeSrc = internalPath
+    ? (typeof window === 'undefined' ? internalPath : signedSource?.src === internalPath ? signedSource.url : undefined)
+    : src;
+  if (!srcDoc && !iframeSrc) return null;
   return (
     <iframe
       ref={frameRef}
-      src={srcDoc ? undefined : src}
+      src={srcDoc ? undefined : iframeSrc}
       srcDoc={srcDoc}
       height={fittedHeight ?? height}
       {...props}
@@ -1222,16 +1321,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, render
               const text = extractText(children);
               const textMatch = text.match(FILE_PATH_RE);
               const finalLine = line ?? (textMatch?.[2] ? parseInt(textMatch[2], 10) : undefined);
-              const fallback = (
-                <a
-                  href={location ? resourceSrcResolver(href) : href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[var(--color-highlight)] hover:underline break-words"
-                >
-                  {children}
-                </a>
-              );
+              const fallback = <MarkdownFileLink href={location ? resourceSrcResolver(href) : href}>{children}</MarkdownFileLink>;
               return (
                 <FileChip
                   filePath={filePath}
@@ -1246,14 +1336,9 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, render
           // interceptor in main.tsx (utils/openExternal.ts), which handles
           // the Tauri-vs-browser split centrally.
           return (
-            <a
-              href={href && location ? resourceSrcResolver(href) : href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[var(--color-highlight)] hover:underline break-words"
-            >
+            <MarkdownFileLink href={href && location ? resourceSrcResolver(href) : href ?? ""}>
               {children}
-            </a>
+            </MarkdownFileLink>
           );
         },
         strong: ({ children }) => (
@@ -1339,18 +1424,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, render
             ? resourceSrcResolver(src)
             : src;
           return (
-            <img
-              src={resolved}
-              alt={alt ?? ""}
-              className={`max-w-full rounded-lg my-2 border border-[var(--color-border)]${onImageClick ? " cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
-              onClick={onImageClick ? () => onImageClick(resolved) : undefined}
-              onError={(e) => {
-                const el = e.currentTarget;
-                el.style.display = 'none';
-                const placeholder = el.nextElementSibling as HTMLElement | null;
-                if (placeholder) placeholder.style.display = 'inline-flex';
-              }}
-            />
+            <MarkdownImage src={resolved} alt={alt ?? ""} onImageClick={onImageClick} />
           );
         },
         iframe: ({ src, sandbox, referrerPolicy, ...props }) => {

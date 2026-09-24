@@ -5,6 +5,7 @@ import { PreviewCommentHost, type MarkdownCommentConfig, type MarkdownCommentMar
 import { highlightCode as highlightLocal, detectLanguage as detectLanguageLocal } from './syntaxHighlight';
 import type { DataTable } from './dataTableParsers';
 import type { FileLocation } from '../ui/fileLocation';
+import { useAuthenticatedFileUrl } from '../../hooks/useAuthenticatedFileUrl';
 
 // AG Grid Community + papaparse together weigh ~300 kB gzipped. The data-table
 // preview only renders when the user opens a .csv / .tsv / .jsonl artifact, so
@@ -68,8 +69,8 @@ export interface PreviewRenderer {
   /** Test whether this renderer handles the given file path */
   match: (path: string) => boolean;
   /**
-   * 'url'    — `content` is a URL the renderer hands to <img>/<iframe>; the
-   *            browser fetches it.
+   * 'url'    — `content` is a file URL the renderer loads through the signed
+   *            API before handing the bytes to <img>/<iframe>.
    * 'text'   — `content` is the fetched file text and is safe to render.
    * 'binary' — `downloadUrl` is the raw file URL; the renderer fetches +
    *            parses it itself (e.g. .xlsx via SheetJS).
@@ -167,27 +168,34 @@ const imageRenderer: PreviewRenderer = {
   contentType: 'url',
   layout: 'fill',
   renderFull: ({ content, onImageClick, previewComment }) => withCommentHost(
+    <AuthenticatedImagePreview path={content} onImageClick={onImageClick} />,
+    previewComment,
+    true,
+  ),
+  supportsDiffSegments: false,
+};
+
+function AuthenticatedImagePreview({ path, onImageClick }: { path: string; onImageClick?: (url: string) => void }) {
+  const { url, error } = useAuthenticatedFileUrl(path);
+  return (
     <div
       className={`flex items-center justify-center h-full p-6${onImageClick ? " cursor-pointer" : ""}`}
       style={{ background: "var(--color-bg-secondary)" }}
-      onClick={onImageClick ? () => onImageClick(content) : undefined}
+      onClick={url && onImageClick ? () => onImageClick(url) : undefined}
     >
-      <img
-        src={content}
+      {url && <img
+        src={url}
         alt=""
         className={`max-w-full max-h-[70vh] object-contain rounded-lg shadow-md${onImageClick ? " hover:opacity-80 transition-opacity" : ""}`}
         onError={(e) => {
           (e.target as HTMLImageElement).style.display = 'none';
           (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
         }}
-      />
-      <div className="hidden text-sm" style={{ color: "var(--color-text-muted)" }}>Failed to load image</div>
-    </div>,
-    previewComment,
-    true,
-  ),
-  supportsDiffSegments: false,
-};
+      />}
+      <div className={error ? 'text-sm' : 'hidden text-sm'} style={{ color: "var(--color-text-muted)" }}>Failed to load image</div>
+    </div>
+  );
+}
 
 // ============================================================================
 // Tabular Renderers (CSV / TSV / JSONL) — share DataTablePreview (AG Grid)
@@ -327,16 +335,22 @@ const pdfRenderer: PreviewRenderer = {
   match: (path) => /\.pdf$/i.test(path),
   contentType: 'url',
   layout: 'fill',
-  renderFull: ({ content }) => (
-    <iframe
-      src={content}
-      className="w-full h-full border-0"
-      title="PDF preview"
-    />
-  ),
+  renderFull: ({ content }) => <AuthenticatedPdfPreview path={content} />,
   supportsDiffSegments: false,
   supportsComments: false,
 };
+
+function AuthenticatedPdfPreview({ path }: { path: string }) {
+  const { url, error } = useAuthenticatedFileUrl(path);
+  if (error) return <div className="flex items-center justify-center h-full text-sm">Failed to load PDF</div>;
+  return url ? (
+    <iframe
+      src={url}
+      className="w-full h-full border-0"
+      title="PDF preview"
+    />
+  ) : null;
+}
 
 function resolveThemeHighlight(): string {
   if (typeof window === 'undefined') return '#f59e0b';
