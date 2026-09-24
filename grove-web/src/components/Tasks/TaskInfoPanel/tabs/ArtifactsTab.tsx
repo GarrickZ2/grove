@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -1261,6 +1261,21 @@ function FileCard({
   const btnRef = useRef<HTMLButtonElement>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
+  useLayoutEffect(() => {
+    if (!showMenu || !btnRef.current || !menuRef.current) return;
+    const button = btnRef.current.getBoundingClientRect();
+    const menu = menuRef.current.getBoundingClientRect();
+    const gap = 4;
+    const margin = 8;
+    const below = button.bottom + gap;
+    const above = button.top - menu.height - gap;
+    const top = below + menu.height <= window.innerHeight - margin
+      ? below
+      : Math.max(margin, Math.min(above, window.innerHeight - menu.height - margin));
+    const left = Math.max(margin, Math.min(button.right - menu.width, window.innerWidth - menu.width - margin));
+    setMenuPos({ top, left });
+  }, [showMenu]);
+
   useEffect(() => {
     if (!showMenu) return;
     const handler = (e: MouseEvent) => {
@@ -1357,7 +1372,7 @@ function FileCard({
         <MoreHorizontal className="w-4 h-4" />
       </button>
       {showMenu && menuPos && createPortal(
-        <div ref={menuRef} className="fixed z-[9999] min-w-[140px] rounded-lg shadow-lg py-1"
+        <div ref={menuRef} className="fixed z-[9999] min-w-[140px] max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg shadow-lg py-1"
           style={{ top: menuPos.top, left: menuPos.left, background: "var(--color-bg)", border: "1px solid var(--color-border)" }}>
           {isLink && onOpenLink && (
             <button onClick={(e) => { e.stopPropagation(); setShowMenu(false); onOpenLink(file); }}
