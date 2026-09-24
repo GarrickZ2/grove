@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.6] - 2026-09-24
+
+### Added
+
+- **Plugin prompt middleware** — Plugins can shape agent prompts through lifecycle hooks.
+- **Plugin IM Connect providers** — Plugins can provide IM Connect integrations.
+
+### Fixed
+
+- **Remote assets and code copy** — Remote clients load authenticated assets reliably, and code blocks can be copied again.
+- **Mobile session controls** — Hidden session actions no longer interfere with the mobile chat interface.
+- **Remote GUI tray** — The desktop tray remains available for remote sessions.
+- **Notification routing** — Banners appear on the active client.
+- **File chip navigation** — File chips open through authenticated probes.
+- **Artifact file menus** — Menus for files near the bottom of the panel stay within the viewport.
+
 ## [0.12.5] - 2026-09-17
 
 ### Fixed
