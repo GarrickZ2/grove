@@ -748,6 +748,35 @@ function SessionActionsMenu({
   );
 }
 
+function ArchivedSessionActionsMenu({
+  chatId,
+  onDelete,
+  surface,
+}: {
+  chatId: string;
+  onDelete: (chatId: string) => void;
+  surface: "header" | "sidebar";
+}) {
+  return (
+    <DropdownMenu
+      items={[{
+        id: "delete",
+        label: "Delete",
+        icon: Trash2,
+        onClick: () => onDelete(chatId),
+        variant: "danger",
+      }]}
+      trigger={<><MoreHorizontal className="h-3.5 w-3.5" /><span>More</span></>}
+      triggerClassName={surface === "header"
+        ? "flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-highlight)]"
+        : "flex h-full shrink-0 items-center gap-1.5 rounded-md border border-dashed border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-transparent px-2 text-[12px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-highlight)]"}
+      ariaLabel="Archived session actions"
+      portal
+      compact
+    />
+  );
+}
+
 type TitleEditSurface = "header" | "sidebar-header" | "sidebar-list";
 
 const AGENT_PICKER_MENU_WIDTH = 192;
@@ -9924,7 +9953,7 @@ export function TaskChat({
                                   aria-label="New completed activity"
                                 />
                               )}
-                              {chats.length > 1 && !isRunning && (
+                              {!isMobile && chats.length > 1 && !isRunning && (
                                 <button
                                   onClick={(event) => {
                                     event.stopPropagation();
@@ -9936,7 +9965,7 @@ export function TaskChat({
                                   <Archive className="h-3 w-3" />
                                 </button>
                               )}
-                              {chats.length > 1 && (
+                              {!isMobile && chats.length > 1 && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -9975,7 +10004,7 @@ export function TaskChat({
                                     <ChatIcon className="h-3.5 w-3.5" />
                                   </div>
                                   <div className="min-w-0 flex-1 truncate">{chat.title}</div>
-                                  <button
+                                  {!isMobile && <button
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
@@ -9985,8 +10014,8 @@ export function TaskChat({
                                     title="Restore session"
                                   >
                                     <ArchiveRestore className="h-3 w-3" />
-                                  </button>
-                                  <button
+                                  </button>}
+                                  {!isMobile && <button
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
@@ -9996,7 +10025,7 @@ export function TaskChat({
                                     title="Delete archived session"
                                   >
                                     <Trash2 className="h-3 w-3" />
-                                  </button>
+                                  </button>}
                                 </div>
                               );
                             })}
@@ -10023,7 +10052,7 @@ export function TaskChat({
                 </button>
               </div>
               {activeChat && isViewingArchived ? (
-                <button
+                <><button
                   type="button"
                   onClick={() => void handleRestoreChat(activeChat.id)}
                   className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-highlight)]"
@@ -10032,6 +10061,8 @@ export function TaskChat({
                   <ArchiveRestore className="h-3.5 w-3.5" />
                   <span>Restore</span>
                 </button>
+                {isMobile && <ArchivedSessionActionsMenu chatId={activeChat.id} onDelete={requestDeleteChat} surface="header" />}
+                </>
               ) : activeChat ? (
                 <SessionActionsMenu
                   surface="header"
@@ -10190,7 +10221,7 @@ export function TaskChat({
                     </button>
                   </div>
                   {activeChat && isViewingArchived ? (
-                    <button
+                    <><button
                       type="button"
                       onClick={() => void handleRestoreChat(activeChat.id)}
                       className="flex h-full shrink-0 items-center gap-1.5 rounded-md border border-dashed border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] px-2 text-[12px] text-[var(--color-text-muted)] transition-colors hover:border-[color-mix(in_srgb,var(--color-highlight)_34%,transparent)] hover:text-[var(--color-highlight)]"
@@ -10199,6 +10230,8 @@ export function TaskChat({
                       <ArchiveRestore className="h-3 w-3" />
                       <span>Restore</span>
                     </button>
+                    {isMobile && <ArchivedSessionActionsMenu chatId={activeChat.id} onDelete={requestDeleteChat} surface="sidebar" />}
+                    </>
                   ) : activeChat ? (
                     <SessionActionsMenu
                       surface="sidebar"
@@ -10288,7 +10321,7 @@ export function TaskChat({
                           aria-label="New completed activity"
                         />
                       )}
-                      {chats.length > 1 && !isRunning &&
+                      {!isMobile && chats.length > 1 && !isRunning &&
                         !(
                           editingTitle?.chatId === chat.id &&
                           editingTitle.surface === "sidebar-list"
@@ -10302,7 +10335,7 @@ export function TaskChat({
                             <Archive className="h-3 w-3" />
                           </button>
                         )}
-                      {chats.length > 1 &&
+                      {!isMobile && chats.length > 1 &&
                         !(
                           editingTitle?.chatId === chat.id &&
                           editingTitle.surface === "sidebar-list"
@@ -10352,22 +10385,22 @@ export function TaskChat({
                               className={`text-[12px] leading-5 ${isActive ? "font-medium text-[var(--color-text)]" : ""}`}
                             />
                           </button>
-                          <button
+                          {!isMobile && <button
                             type="button"
                             onClick={() => void handleRestoreChat(chat.id)}
                             className="shrink-0 rounded p-0.5 text-[var(--color-text-muted)] opacity-0 transition-all hover:text-[var(--color-highlight)] group-hover:opacity-100"
                             title="Restore session"
                           >
                             <ArchiveRestore className="h-3 w-3" />
-                          </button>
-                          <button
+                          </button>}
+                          {!isMobile && <button
                             type="button"
                             onClick={() => requestDeleteChat(chat.id)}
                             className="shrink-0 rounded p-0.5 text-[var(--color-text-muted)] opacity-0 transition-all hover:text-[var(--color-error)] group-hover:opacity-100"
                             title="Delete archived session"
                           >
                             <Trash2 className="h-3 w-3" />
-                          </button>
+                          </button>}
                         </div>
                       );
                     })}
