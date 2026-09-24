@@ -5,5 +5,6 @@ pub mod backend;
 pub mod connect_provider;
 pub mod events;
 pub mod exec;
+pub mod prompt_middleware;
 pub mod radio_bridge;
 pub mod runtime;

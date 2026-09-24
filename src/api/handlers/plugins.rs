@@ -816,6 +816,15 @@ export interface ConnectProviderHandlers {
   registrationStatus?(params: { providerId: string; id: string }): RegistrationResult | Promise<RegistrationResult>;
   registrationCallback?(params: { providerId: string; id: string; request: ProviderHttpRequest }): RegistrationResult | Promise<RegistrationResult>;
 }
+export interface PromptHookInput {
+  projectId: string; taskId: string; chatId: string | null;
+  messageIds: string[]; text: string; sender: string | null;
+}
+export type PromptHookResult = { allow: true; text?: string } | { allow: false; reason: string };
+export interface PromptMiddlewareHandlers {
+  submit?(input: PromptHookInput): PromptHookResult | Promise<PromptHookResult>;
+  dispatch?(input: PromptHookInput): PromptHookResult | Promise<PromptHookResult>;
+}
 
 function hostCall<T>(method: string, params: unknown = {}): Promise<T> {
   const id = nextHostCallId++;
@@ -848,6 +857,10 @@ export const grove = {
     deliverAction: <T = unknown>(connectionId: string, action: InboundAction) =>
       hostCall<T>("connect.deliverAction", { connectionId, action }),
   },
+  usage: {
+    totalTokens: (fromTs: number, toTs: number) =>
+      hostCall<{ totalTokens: number }>("usage.totalTokens", { fromTs, toTs }),
+  },
 };
 
 /** Register a method the panel or Grove registration flow can call. */
@@ -866,6 +879,12 @@ export function registerConnectProvider(provider: ConnectProviderHandlers): void
     ["connect.registration.callback", provider.registrationCallback as Handler | undefined],
   ];
   for (const [name, handler] of methods) if (handler) registerHandler(name, handler);
+}
+
+/** Register only the phases declared in contributes.promptMiddleware. */
+export function registerPromptMiddleware(hooks: PromptMiddlewareHandlers): void {
+  if (hooks.submit) registerHandler("prompt.submit", hooks.submit as Handler);
+  if (hooks.dispatch) registerHandler("prompt.dispatch", hooks.dispatch as Handler);
 }
 
 /** Start the backend protocol after registering handlers and event listeners. */
@@ -1373,6 +1392,7 @@ pub async fn register_plugin(
     let manifest: serde_json::Value = serde_json::from_str(&manifest_str)
         .map_err(|e| ApiError::bad_request(format!("invalid plugin.json: {}", e)))?;
     validate_connect_provider_manifest(&manifest)?;
+    validate_prompt_middleware_manifest(&manifest)?;
     let name = manifest
         .get("name")
         .and_then(|v| v.as_str())
@@ -1725,6 +1745,7 @@ fn read_manifest(dir: &std::path::Path) -> Result<(String, String), (StatusCode,
     let v: serde_json::Value = serde_json::from_str(&s)
         .map_err(|e| ApiError::bad_request(format!("invalid plugin.json: {}", e)))?;
     validate_connect_provider_manifest(&v)?;
+    validate_prompt_middleware_manifest(&v)?;
     let name = v
         .get("name")
         .and_then(|x| x.as_str())
@@ -1740,6 +1761,79 @@ fn read_manifest(dir: &std::path::Path) -> Result<(String, String), (StatusCode,
         .unwrap_or("0.0.0")
         .to_string();
     Ok((name, version))
+}
+
+fn validate_prompt_middleware_manifest(
+    manifest: &serde_json::Value,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let Some(value) = manifest
+        .get("contributes")
+        .and_then(|v| v.get("promptMiddleware"))
+    else {
+        return Ok(());
+    };
+    let Some(hooks) = value.as_array() else {
+        return Err(ApiError::bad_request(
+            "contributes.promptMiddleware must be an array",
+        ));
+    };
+    if hooks.is_empty()
+        || hooks
+            .iter()
+            .any(|v| !matches!(v.as_str(), Some("submit" | "dispatch")))
+    {
+        return Err(ApiError::bad_request(
+            "promptMiddleware must contain submit and/or dispatch",
+        ));
+    }
+    if manifest
+        .get("contributes")
+        .and_then(|v| v.get("backend"))
+        .is_none()
+    {
+        return Err(ApiError::bad_request(
+            "promptMiddleware requires contributes.backend",
+        ));
+    }
+    let permitted = manifest
+        .get("permissions")
+        .and_then(|v| v.as_array())
+        .is_some_and(|perms| {
+            perms
+                .iter()
+                .any(|v| v.as_str() == Some("prompt:middleware"))
+        });
+    if !permitted {
+        return Err(ApiError::bad_request(
+            "promptMiddleware requires prompt:middleware permission",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod prompt_middleware_manifest_tests {
+    use super::*;
+
+    #[test]
+    fn requires_backend_and_permission() {
+        let hooks = json!({"contributes": {"promptMiddleware": ["submit"]}});
+        assert!(validate_prompt_middleware_manifest(&hooks).is_err());
+        let backend = json!({"contributes": {"backend": {}, "promptMiddleware": ["dispatch"]}});
+        assert!(validate_prompt_middleware_manifest(&backend).is_err());
+        let valid = json!({"permissions": ["prompt:middleware"], "contributes": {
+            "backend": {}, "promptMiddleware": ["submit", "dispatch"]
+        }});
+        assert!(validate_prompt_middleware_manifest(&valid).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_phase() {
+        let invalid = json!({"permissions": ["prompt:middleware"], "contributes": {
+            "backend": {}, "promptMiddleware": ["afterTurn"]
+        }});
+        assert!(validate_prompt_middleware_manifest(&invalid).is_err());
+    }
 }
 
 fn validate_connect_provider_manifest(

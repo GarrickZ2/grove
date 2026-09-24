@@ -303,13 +303,16 @@ pub async fn user_send_message(
         )
         .is_ok();
     if !claimed {
-        let messages = handle.queue_message(QueuedMessage::new(
-            text.to_string(),
-            Vec::new(),
-            Some("user".to_string()),
-            false,
-            Some(handle.snapshot_config()),
-        ));
+        let messages = handle
+            .submit_queued_message(QueuedMessage::new(
+                text.to_string(),
+                Vec::new(),
+                Some("user".to_string()),
+                false,
+                Some(handle.snapshot_config()),
+            ))
+            .await
+            .map_err(|error| error.to_string())?;
         handle.emit(AcpUpdate::QueueUpdate { messages });
         return Ok(());
     }
@@ -328,15 +331,11 @@ pub async fn user_send_message(
     match res {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => {
-            handle
-                .is_busy
-                .store(false, std::sync::atomic::Ordering::Release);
+            handle.release_prompt_claim();
             Err(format!("send_prompt: {}", e))
         }
         Err(_) => {
-            handle
-                .is_busy
-                .store(false, std::sync::atomic::Ordering::Release);
+            handle.release_prompt_claim();
             Err("timeout".to_string())
         }
     }

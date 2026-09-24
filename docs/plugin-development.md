@@ -80,6 +80,8 @@ my-plugin/
 - **contributes.connectProviders** — optional IM Provider metadata. It requires
   `contributes.backend` and the `connect:provider` permission; it does not start
   another process.
+- **contributes.promptMiddleware** — optional `submit` and/or `dispatch` Prompt
+  hooks. Uses the same backend process; requires `prompt:middleware`.
 
 ## Panel SDK — `grove` (typed)
 
@@ -284,6 +286,56 @@ serve();   // read stdin / write stdout — call once, after registering handler
 > two can mutate the same file/KV key, serialize that yourself (e.g. an in-flight
 > promise chain) — Grove doesn't queue calls for you.
 
+### Prompt middleware
+
+Declare the phases you implement in `plugin.json`:
+
+```json
+{
+  "permissions": ["prompt:middleware", "chat:read"],
+  "contributes": {
+    "backend": { "command": "node", "args": ["dist/backend.js"] },
+    "promptMiddleware": ["submit", "dispatch"]
+  }
+}
+```
+
+Register handlers before `serve()`:
+
+```ts
+import { grove, registerPromptMiddleware, serve } from "./grove-sdk/backend";
+
+registerPromptMiddleware({
+  submit: async ({ text }) => ({ allow: true, text: text.trim() }),
+  dispatch: async ({ text }) => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() / 1000;
+    const { totalTokens } = await grove.usage.totalTokens(start, end);
+    const budget = 10000; // Replace with your plugin's calorie-derived budget.
+    return totalTokens >= budget
+      ? { allow: false, reason: "Exercise more before your next Prompt." }
+      : { allow: true, text };
+  },
+});
+serve();
+```
+
+`submit` runs before admission to the immediate-send path or queue, including
+queue edits. `dispatch` runs when the Prompt command reaches ACP, including
+auto-sent queued messages. An ACP authentication retry reuses the first
+`dispatch` result instead of invoking the hook twice. Both receive `{ projectId, taskId, chatId,
+messageIds, text, sender }`. Return `{ allow: true, text? }` to continue (omit
+`text` to keep it unchanged), or `{ allow: false, reason }` to reject. Only text
+can be changed; Grove retains attachments, sender, message IDs, and config.
+Hooks run in plugin installation order, passing modified text onward. A rejection,
+backend failure, or timeout fails that Prompt visibly; it does not bypass the
+hook. `grove.usage.totalTokens(fromTs, toTs)` requires `chat:read`, accepts a
+half-open Unix-second interval, and sums recorded usage across Grove. It does
+not reserve tokens for concurrent turns.
+Completion observation remains on
+`grove:radio`; there is no output middleware.
+
 ## Events (Grove, backend, and panel)
 
 When a tool or backend method changes data, push an event so the panel
@@ -483,6 +535,7 @@ restrictions into external Node/shebang CLIs.
 | `project:write` | write the current task's working dir | ⚠ high |
 | `chat:read` | list chats + receive `grove:radio` agent activity | ⚠ high |
 | `chat:write` | inject prompts into a chat's agent (`grove.chat.sendPrompt`) | ⚠ high |
+| `prompt:middleware` | inspect, reject, or modify Prompt text before ACP | ⚠ high |
 | `connect:provider` | access owned Connect records and deliver external messages | ⚠ high |
 | `exec` | run commands (`grove.exec` / `child_process`) | ⚠⚠ full machine trust |
 

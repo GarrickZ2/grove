@@ -58,3 +58,37 @@ pub fn insert(rec: &TokenUsageRecord<'_>) -> Result<()> {
     )?;
     Ok(())
 }
+
+/// Recorded token usage in a half-open Unix-second interval.
+pub fn total_tokens(from_ts: i64, to_ts: i64) -> Result<u64> {
+    let conn = database::connection();
+    total_tokens_in(&conn, from_ts, to_ts)
+}
+
+fn total_tokens_in(conn: &rusqlite::Connection, from_ts: i64, to_ts: i64) -> Result<u64> {
+    let total: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(total_tokens), 0)
+         FROM chat_token_usage WHERE end_ts >= ?1 AND end_ts < ?2",
+        rusqlite::params![from_ts, to_ts],
+        |row| row.get(0),
+    )?;
+    Ok(total.max(0) as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sums_recorded_turns_in_half_open_interval() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE chat_token_usage (end_ts INTEGER, total_tokens INTEGER);")
+            .unwrap();
+        conn.execute("INSERT INTO chat_token_usage VALUES (10, 120)", [])
+            .unwrap();
+        conn.execute("INSERT INTO chat_token_usage VALUES (20, 30)", [])
+            .unwrap();
+        assert_eq!(total_tokens_in(&conn, 0, 20).unwrap(), 120);
+        assert_eq!(total_tokens_in(&conn, 10, 21).unwrap(), 150);
+    }
+}

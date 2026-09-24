@@ -218,6 +218,9 @@ pub struct AcpSessionHandle {
     /// 因 `AuthRequired` 错误暂存待重试的 prompt(text, attachments, sender, terminal)。
     /// authenticate 成功后 outer command loop 会把它再丢回 cmd_tx。
     pending_auth_retry: Mutex<Option<PendingPromptRetry>>,
+    /// Message ids whose text already passed the dispatch middleware before an
+    /// auth-required retry. Consumed when the retried command reaches the loop.
+    middleware_dispatched_retries: Mutex<std::collections::HashSet<String>>,
     /// agent 是否在 initialize 响应里声明了 `session.fork` 能力
     /// (`unstable_session_fork`)。前端据此显示/隐藏 Fork 按钮。
     pub fork_capable: std::sync::atomic::AtomicBool,
@@ -254,6 +257,7 @@ pub struct PendingAuthState {
 type PendingPromptRetry = (
     Vec<String>,
     String,
+    String,
     Vec<ContentBlockData>,
     Option<String>,
     bool,
@@ -266,6 +270,10 @@ enum AcpCommand {
         /// Grove-owned ids for the accepted inputs represented by this turn.
         /// Usually one id; Compact queue mode preserves every merged input id.
         message_ids: Vec<String>,
+        /// Text as submitted by the caller. Kept separately so a queued edit
+        /// starts from user-visible input instead of re-processing a previous
+        /// middleware result.
+        source_text: String,
         text: String,
         attachments: Vec<ContentBlockData>,
         sender: Option<String>,
@@ -999,6 +1007,10 @@ pub struct QueuedMessage {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub message_ids: Vec<String>,
     pub text: String,
+    /// Result of the submit middleware. This is internal delivery state; the
+    /// serialized `text` remains the editable caller input.
+    #[serde(skip)]
+    processed_text: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<ContentBlockData>,
     /// 消息发送者标识。`None` = 用户输入；`Some("agent:<chat_id>")` = 另一个 agent
@@ -1037,11 +1049,21 @@ impl QueuedMessage {
             message_ids: vec![id.clone()],
             id,
             text,
+            processed_text: None,
             attachments,
             sender,
             config,
             terminal,
         }
+    }
+
+    fn with_processed_text(mut self, processed_text: String) -> Self {
+        self.processed_text = Some(processed_text);
+        self
+    }
+
+    fn delivery_text(&self) -> &str {
+        self.processed_text.as_deref().unwrap_or(&self.text)
     }
 }
 
@@ -4449,6 +4471,7 @@ pub async fn get_or_start_session(
                     auth_methods: Mutex::new(Vec::new()),
                     logout_capable: std::sync::atomic::AtomicBool::new(false),
                     pending_auth_retry: Mutex::new(None),
+                    middleware_dispatched_retries: Mutex::new(std::collections::HashSet::new()),
                     pending_auth: Mutex::new(None),
                     pending_session_instruction: Mutex::new(None),
                     session_instruction_revision: std::sync::atomic::AtomicU64::new(0),
@@ -5315,6 +5338,7 @@ async fn drive_session(
                             }
                             Some(AcpCommand::Prompt {
                                 message_ids,
+                                source_text,
                                 text,
                                 attachments,
                                 sender,
@@ -5322,12 +5346,12 @@ async fn drive_session(
                                 config,
                             }) => {
                                 let mut queued = QueuedMessage::new(
-                                        text,
+                                        source_text,
                                         attachments,
                                         sender,
                                         terminal,
                                         config,
-                                    );
+                                    ).with_processed_text(text);
                                 queued.message_ids = message_ids;
                                 handle.pending_queue.lock().unwrap().push(queued);
                                 handle.emit(AcpUpdate::QueueUpdate {
@@ -5408,6 +5432,7 @@ async fn drive_session(
                             }
                             Some(AcpCommand::Prompt {
                                 message_ids,
+                                source_text,
                                 text,
                                 attachments,
                                 sender,
@@ -5415,12 +5440,12 @@ async fn drive_session(
                                 config,
                             }) => {
                                 let mut queued = QueuedMessage::new(
-                                        text,
+                                        source_text,
                                         attachments,
                                         sender,
                                         terminal,
                                         config,
-                                    );
+                                    ).with_processed_text(text);
                                 queued.message_ids = message_ids;
                                 handle.pending_queue.lock().unwrap().push(queued);
                                 handle.emit(AcpUpdate::QueueUpdate {
@@ -6092,12 +6117,33 @@ async fn drive_session(
         match cmd {
             AcpCommand::Prompt {
                 message_ids,
-                text,
+                source_text,
+                mut text,
                 attachments,
                 sender,
                 terminal,
                 config: prompt_config,
             } => {
+                let already_dispatched = handle.take_middleware_dispatched_retry(&message_ids);
+                if !already_dispatched {
+                    text = match crate::plugins::prompt_middleware::run(
+                        crate::plugins::prompt_middleware::Phase::Dispatch,
+                        &handle.project_key,
+                        &handle.task_id,
+                        handle.chat_id.as_deref(),
+                        &message_ids,
+                        text,
+                        sender.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(text) => text,
+                        Err(error) => {
+                            handle.reject_prompt_before_start(message_ids, error.to_string(), true);
+                            continue;
+                        }
+                    };
+                }
                 handle
                     .cancel_requested
                     .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -6117,11 +6163,7 @@ async fn drive_session(
                     .suppress_emit
                     .store(false, std::sync::atomic::Ordering::Relaxed);
                 if let Err(message) = validate_prompt_content(&prompt_capabilities, &attachments) {
-                    handle.emit(AcpUpdate::PromptFailed {
-                        message_ids,
-                        message: message.clone(),
-                    });
-                    handle.emit(AcpUpdate::Error { message });
+                    handle.reject_prompt_before_start(message_ids, message, false);
                     continue;
                 }
                 // 提前快照,便于 -32000 AuthRequired 时把这条 prompt 暂存起来
@@ -6129,6 +6171,7 @@ async fn drive_session(
                 // 移动进 emit / content_blocks,所以必须 clone。
                 let retry_snapshot = (
                     message_ids.clone(),
+                    source_text.clone(),
                     text.clone(),
                     attachments.clone(),
                     sender.clone(),
@@ -6360,22 +6403,13 @@ async fn drive_session(
                         } else {
                             applied.join(", ")
                         };
-                        // Task Automations claim the session's busy slot
-                        // before enqueueing this Prompt. Config failure occurs
-                        // before the normal Busy=true/false pair, so release
-                        // that claim explicitly or the Chat remains stuck.
-                        handle
-                            .is_busy
-                            .store(false, std::sync::atomic::Ordering::Release);
+                        // Config failure occurs before the normal Busy=true/false
+                        // pair, so use the shared pre-start failure cleanup.
                         let message = format!(
                                 "Prompt not sent — {} rejected by agent ({}). Already applied before failure: {}. Session state reflects the applied settings; retry after fixing the rejected value.",
                                 field, detail, applied_str
                             );
-                        handle.emit(AcpUpdate::PromptFailed {
-                            message_ids: message_ids.clone(),
-                            message: message.clone(),
-                        });
-                        handle.emit(AcpUpdate::Error { message });
+                        handle.reject_prompt_before_start(message_ids, message, false);
                         continue;
                     }
                 }
@@ -6505,7 +6539,7 @@ async fn drive_session(
                                     // 的预期行为, 不在客户端去重。
                                     let _ = conn.send_notification(acp::CancelNotification::new(session_id_arc.clone()));
                                 }
-                                AcpCommand::Prompt { message_ids, text, attachments, sender, terminal, config: prompt_config } => {
+                                AcpCommand::Prompt { message_ids, source_text, text, attachments, sender, terminal, config: prompt_config } => {
                                     // B3 fix: in-flight Prompt no longer cancels the current
                                     // turn and overwrites a single `next_prompt` slot — that
                                     // dropped N-1 messages on rapid resends. Enqueue to
@@ -6513,7 +6547,8 @@ async fn drive_session(
                                     // them in order. terminal flag is preserved so the
                                     // drained Prompt still renders as a shell echo if the
                                     // user originally sent it from Shell mode.
-                                    let mut qm = QueuedMessage::new(text, attachments, sender, terminal, prompt_config);
+                                    let mut qm = QueuedMessage::new(source_text, attachments, sender, terminal, prompt_config)
+                                        .with_processed_text(text);
                                     qm.message_ids = message_ids;
                                     handle.pending_queue.lock().unwrap().push(qm);
                                     handle.emit(AcpUpdate::QueueUpdate {
@@ -6886,6 +6921,7 @@ async fn drive_session(
                                             .and_then(|mut s| s.take());
                                         if let Some((
                                             message_ids,
+                                            source_text,
                                             text,
                                             attachments,
                                             sender,
@@ -6893,14 +6929,15 @@ async fn drive_session(
                                             config,
                                         )) = pending
                                         {
-                                            handle.retry_prompt_after_auth(
+                                            handle.retry_prompt_after_auth((
                                                 message_ids,
+                                                source_text,
                                                 text,
                                                 attachments,
                                                 sender,
                                                 terminal,
                                                 config,
-                                            );
+                                            ));
                                         }
                                     }
                                     Err(e) => {
@@ -6935,6 +6972,7 @@ async fn drive_session(
                                 }
                                 Some(AcpCommand::Prompt {
                                     message_ids,
+                                    source_text,
                                     text,
                                     attachments,
                                     sender,
@@ -6942,12 +6980,12 @@ async fn drive_session(
                                     config,
                                 }) => {
                                     let mut queued = QueuedMessage::new(
-                                            text,
+                                            source_text,
                                             attachments,
                                             sender,
                                             terminal,
                                             config,
-                                        );
+                                        ).with_processed_text(text);
                                     queued.message_ids = message_ids;
                                     handle.pending_queue.lock().unwrap().push(queued);
                                     handle.emit(AcpUpdate::QueueUpdate {
@@ -6995,15 +7033,25 @@ async fn drive_session(
                     .lock()
                     .ok()
                     .and_then(|mut retry| retry.take());
-                if let Some((message_ids, text, attachments, sender, terminal, config)) = pending {
-                    handle.retry_prompt_after_auth(
+                if let Some((
+                    message_ids,
+                    source_text,
+                    text,
+                    attachments,
+                    sender,
+                    terminal,
+                    config,
+                )) = pending
+                {
+                    handle.retry_prompt_after_auth((
                         message_ids,
+                        source_text,
                         text,
                         attachments,
                         sender,
                         terminal,
                         config,
-                    );
+                    ));
                 }
             }
             AcpCommand::Logout { reply } => {
@@ -7801,16 +7849,30 @@ impl AcpSessionHandle {
         self.emit_with_origin(update, None);
     }
 
+    fn emit_unsuppressed(&self, update: AcpUpdate) {
+        self.emit_with_origin_policy(update, None, true);
+    }
+
     /// Emit an update with a turn origin captured at the ACP request ingress.
     /// Ordinary updates use `emit`; only request-like events that can be
     /// delayed across turn boundaries should use this method.
-    pub(crate) fn emit_with_origin(&self, mut update: AcpUpdate, origin: Option<TurnOrigin>) {
+    pub(crate) fn emit_with_origin(&self, update: AcpUpdate, origin: Option<TurnOrigin>) {
+        self.emit_with_origin_policy(update, origin, false);
+    }
+
+    fn emit_with_origin_policy(
+        &self,
+        mut update: AcpUpdate,
+        origin: Option<TurnOrigin>,
+        bypass_replay_suppression: bool,
+    ) {
         // load_session 期间抑制大部分 emit；保留 available_commands 以恢复 slash
         // commands，保留 session_ready 让前端就绪(suppress 现在保持到首个用户
         // prompt，session_ready 在 cmd loop 之前发，必须放行)。
-        if self
-            .suppress_emit
-            .load(std::sync::atomic::Ordering::Relaxed)
+        if !bypass_replay_suppression
+            && self
+                .suppress_emit
+                .load(std::sync::atomic::Ordering::Relaxed)
             && !matches!(
                 update,
                 AcpUpdate::AvailableCommands { .. }
@@ -8320,9 +8382,28 @@ impl AcpSessionHandle {
         terminal: bool,
         config: Option<QueuedConfig>,
     ) -> crate::error::Result<()> {
+        let source_text = text.clone();
+        let text = match crate::plugins::prompt_middleware::run(
+            crate::plugins::prompt_middleware::Phase::Submit,
+            &self.project_key,
+            &self.task_id,
+            self.chat_id.as_deref(),
+            std::slice::from_ref(&message_id),
+            text,
+            sender.as_deref(),
+        )
+        .await
+        {
+            Ok(text) => text,
+            Err(error) => {
+                self.emit_local_prompt_rejection(vec![message_id], error.to_string());
+                return Err(error);
+            }
+        };
         self.cmd_tx
             .send(AcpCommand::Prompt {
                 message_ids: vec![message_id.clone()],
+                source_text,
                 text,
                 attachments,
                 sender,
@@ -8382,8 +8463,7 @@ impl AcpSessionHandle {
             {
                 Ok(()) => Ok(id),
                 Err(error) => {
-                    self.is_busy
-                        .store(false, std::sync::atomic::Ordering::Release);
+                    self.release_prompt_claim();
                     Err(error)
                 }
             }
@@ -8392,12 +8472,13 @@ impl AcpSessionHandle {
                 id: id.clone(),
                 message_ids: vec![id.clone()],
                 text,
+                processed_text: None,
                 attachments,
                 sender,
                 config: Some(self.snapshot_config()),
                 terminal: false,
             };
-            let messages = self.queue_message(queued);
+            let messages = self.submit_queued_message(queued).await?;
             self.emit(AcpUpdate::QueueUpdate { messages });
             Ok(id)
         }
@@ -8675,6 +8756,73 @@ impl AcpSessionHandle {
         q.clone()
     }
 
+    /// Any failure before the normal Busy=true/false pair must also wake a
+    /// queued Prompt that arrived while this command held the busy claim.
+    pub fn release_prompt_claim(&self) {
+        self.is_busy
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.drain_queue_if_ready();
+    }
+
+    fn reject_prompt_before_start(
+        &self,
+        message_ids: Vec<String>,
+        message: String,
+        visible_during_replay: bool,
+    ) {
+        let failed = AcpUpdate::PromptFailed {
+            message_ids,
+            message: message.clone(),
+        };
+        if visible_during_replay {
+            self.emit_unsuppressed(failed);
+            self.emit_unsuppressed(AcpUpdate::Error { message });
+        } else {
+            self.emit(failed);
+            self.emit(AcpUpdate::Error { message });
+        }
+        self.release_prompt_claim();
+    }
+
+    fn emit_local_prompt_rejection(&self, message_ids: Vec<String>, message: String) {
+        self.emit_unsuppressed(AcpUpdate::PromptFailed {
+            message_ids,
+            message,
+        });
+    }
+
+    fn take_middleware_dispatched_retry(&self, message_ids: &[String]) -> bool {
+        let Ok(mut retries) = self.middleware_dispatched_retries.lock() else {
+            return false;
+        };
+        let skip = !message_ids.is_empty() && message_ids.iter().all(|id| retries.contains(id));
+        if skip {
+            for id in message_ids {
+                retries.remove(id);
+            }
+        }
+        skip
+    }
+
+    /// Admission path for every externally submitted queued Prompt.
+    pub async fn submit_queued_message(
+        &self,
+        mut msg: QueuedMessage,
+    ) -> crate::error::Result<Vec<QueuedMessage>> {
+        let processed_text = crate::plugins::prompt_middleware::run(
+            crate::plugins::prompt_middleware::Phase::Submit,
+            &self.project_key,
+            &self.task_id,
+            self.chat_id.as_deref(),
+            &msg.message_ids,
+            msg.text.clone(),
+            msg.sender.as_deref(),
+        )
+        .await?;
+        msg.processed_text = Some(processed_text);
+        Ok(self.queue_message(msg))
+    }
+
     /// 删除队列中指定位置的消息，返回更新后的队列
     pub fn dequeue_message(&self, index: usize) -> Vec<QueuedMessage> {
         let mut q = self.pending_queue.lock().unwrap();
@@ -8689,6 +8837,7 @@ impl AcpSessionHandle {
         let mut q = self.pending_queue.lock().unwrap();
         if index < q.len() {
             q[index].text = text;
+            q[index].processed_text = None;
         }
         q.clone()
     }
@@ -8719,17 +8868,44 @@ impl AcpSessionHandle {
         &self,
         id: &str,
         text: String,
+        processed_text: String,
     ) -> (bool, Vec<QueuedMessage>) {
         let mut q = self.pending_queue.lock().unwrap();
         let mut found = false;
         for m in q.iter_mut() {
             if m.id == id {
                 m.text = text;
+                m.processed_text = Some(processed_text);
                 found = true;
                 break;
             }
         }
         (found, q.clone())
+    }
+
+    pub async fn submit_queued_edit(
+        &self,
+        id: &str,
+        text: String,
+    ) -> crate::error::Result<(bool, Vec<QueuedMessage>)> {
+        let sender = {
+            let queue = self.pending_queue.lock().unwrap();
+            let Some(message) = queue.iter().find(|message| message.id == id) else {
+                return Ok((false, queue.clone()));
+            };
+            message.sender.clone()
+        };
+        let processed_text = crate::plugins::prompt_middleware::run(
+            crate::plugins::prompt_middleware::Phase::Submit,
+            &self.project_key,
+            &self.task_id,
+            self.chat_id.as_deref(),
+            &[id.to_owned()],
+            text.clone(),
+            sender.as_deref(),
+        )
+        .await?;
+        Ok(self.update_queued_message_by_id(id, text, processed_text))
     }
 
     /// 清空待执行队列，返回空队列
@@ -8785,6 +8961,11 @@ impl AcpSessionHandle {
                     .map(|m| m.text.as_str())
                     .collect::<Vec<_>>()
                     .join("\n");
+                let merged_delivery_text = drained
+                    .iter()
+                    .map(QueuedMessage::delivery_text)
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 let mut merged_attachments = Vec::new();
                 for m in &drained {
                     merged_attachments.extend(m.attachments.clone());
@@ -8796,6 +8977,7 @@ impl AcpSessionHandle {
                         .flat_map(|message| message.message_ids.clone())
                         .collect(),
                     text: merged_text,
+                    processed_text: Some(merged_delivery_text),
                     attachments: merged_attachments,
                     sender: first.sender.clone(),
                     config: first.config.clone(),
@@ -8809,23 +8991,17 @@ impl AcpSessionHandle {
     /// 非阻塞发送 prompt 命令(队列 auto-send 使用)。
     /// config 直接 bundle 在 Prompt 内,cmd_loop 在发 prompt 前按需先发
     /// SetSessionMode/Model/ThoughtLevel ACP 请求。
-    fn try_enqueue_prompt(
-        &self,
-        message_ids: Vec<String>,
-        text: String,
-        attachments: Vec<ContentBlockData>,
-        sender: Option<String>,
-        terminal: bool,
-        config: Option<QueuedConfig>,
-    ) -> bool {
+    fn try_enqueue_prompt(&self, msg: QueuedMessage) -> bool {
+        let text = msg.delivery_text().to_owned();
         self.cmd_tx
             .try_send(AcpCommand::Prompt {
-                message_ids,
+                message_ids: msg.message_ids,
+                source_text: msg.text,
                 text,
-                attachments,
-                sender,
-                terminal,
-                config,
+                attachments: msg.attachments,
+                sender: msg.sender,
+                terminal: msg.terminal,
+                config: msg.config,
             })
             .is_ok()
     }
@@ -8858,14 +9034,7 @@ impl AcpSessionHandle {
         // end-of-turn drain cannot remove the next queued message as well.
         self.is_busy
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        if self.try_enqueue_prompt(
-            send_msg.message_ids.clone(),
-            send_msg.text.clone(),
-            send_msg.attachments.clone(),
-            send_msg.sender.clone(),
-            send_msg.terminal,
-            send_msg.config.clone(),
-        ) {
+        if self.try_enqueue_prompt(send_msg) {
             self.emit(AcpUpdate::QueueUpdate {
                 messages: self.get_queue(),
             });
@@ -8882,17 +9051,14 @@ impl AcpSessionHandle {
     /// Re-dispatch the prompt that failed with `auth_required`. If producers
     /// filled the bounded command channel while authentication was completing,
     /// retain the prompt at the front of the visible queue instead of dropping it.
-    fn retry_prompt_after_auth(
-        &self,
-        message_ids: Vec<String>,
-        text: String,
-        attachments: Vec<ContentBlockData>,
-        sender: Option<String>,
-        terminal: bool,
-        config: Option<QueuedConfig>,
-    ) {
+    fn retry_prompt_after_auth(&self, retry: PendingPromptRetry) {
+        let (message_ids, source_text, text, attachments, sender, terminal, config) = retry;
+        if let Ok(mut retries) = self.middleware_dispatched_retries.lock() {
+            retries.extend(message_ids.iter().cloned());
+        }
         let command = AcpCommand::Prompt {
             message_ids,
+            source_text,
             text,
             attachments,
             sender,
@@ -8902,6 +9068,7 @@ impl AcpSessionHandle {
         if let Err(error) = self.cmd_tx.try_send(command) {
             if let AcpCommand::Prompt {
                 message_ids,
+                source_text,
                 text,
                 attachments,
                 sender,
@@ -8911,7 +9078,8 @@ impl AcpSessionHandle {
             {
                 self.pending_queue.lock().unwrap().insert(0, {
                     let mut queued =
-                        QueuedMessage::new(text, attachments, sender, terminal, config);
+                        QueuedMessage::new(source_text, attachments, sender, terminal, config)
+                            .with_processed_text(text);
                     queued.message_ids = message_ids;
                     queued
                 });
@@ -8989,14 +9157,7 @@ impl AcpSessionHandle {
     #[cfg(test)]
     pub fn test_drain_one_queued(&self) -> bool {
         if let Some(next_msg) = self.pop_queue_front() {
-            self.try_enqueue_prompt(
-                next_msg.message_ids,
-                next_msg.text,
-                next_msg.attachments,
-                next_msg.sender,
-                next_msg.terminal,
-                next_msg.config,
-            )
+            self.try_enqueue_prompt(next_msg)
         } else {
             false
         }
@@ -9305,6 +9466,7 @@ pub fn new_handle_for_test(
         auth_methods: Mutex::new(Vec::new()),
         logout_capable: std::sync::atomic::AtomicBool::new(false),
         pending_auth_retry: Mutex::new(None),
+        middleware_dispatched_retries: Mutex::new(std::collections::HashSet::new()),
         pending_auth: Mutex::new(None),
         pending_session_instruction: Mutex::new(None),
         session_instruction_revision: std::sync::atomic::AtomicU64::new(0),
@@ -9324,6 +9486,7 @@ pub fn new_handle_for_test(
             match cmd {
                 AcpCommand::Prompt {
                     message_ids,
+                    source_text: _,
                     text,
                     attachments,
                     sender,
@@ -10118,6 +10281,74 @@ async fn drain_stderr_to_file(stderr: tokio::process::ChildStderr, path: PathBuf
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn rejected_pre_send_claim_drains_waiting_prompt() {
+        let key = format!("claim-release-test-{}", uuid::Uuid::new_v4());
+        let (handle, mut updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        handle
+            .is_busy
+            .store(true, std::sync::atomic::Ordering::Release);
+        handle.queue_message(QueuedMessage::new(
+            "second".into(),
+            vec![],
+            None,
+            false,
+            None,
+        ));
+
+        handle.release_prompt_claim();
+
+        let update = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let update = updates.recv().await.expect("queue update");
+                if matches!(&update, AcpUpdate::UserMessage { text, .. } if text == "second") {
+                    break update;
+                }
+            }
+        })
+        .await
+        .expect("queued Prompt should run after rejection");
+        assert!(matches!(update, AcpUpdate::UserMessage { .. }));
+        assert!(handle.get_queue().is_empty());
+    }
+
+    #[tokio::test]
+    async fn local_prompt_rejection_remains_visible_during_load_replay() {
+        let key = format!("suppressed-rejection-test-{}", uuid::Uuid::new_v4());
+        let (handle, mut updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        handle
+            .suppress_emit
+            .store(true, std::sync::atomic::Ordering::Release);
+        handle.emit(AcpUpdate::MessageChunk {
+            text: "replay".into(),
+        });
+        handle.emit(AcpUpdate::Error {
+            message: "replayed error".into(),
+        });
+        handle.emit_local_prompt_rejection(vec!["first".into()], "exercise more".into());
+
+        assert!(matches!(
+            updates.recv().await.unwrap(),
+            AcpUpdate::PromptFailed { .. }
+        ));
+        assert!(updates.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn auth_retry_skips_dispatch_middleware_once() {
+        let key = format!("middleware-auth-retry-test-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        let ids = vec!["prompt-id".to_string()];
+        handle
+            .middleware_dispatched_retries
+            .lock()
+            .unwrap()
+            .insert(ids[0].clone());
+
+        assert!(handle.take_middleware_dispatched_retry(&ids));
+        assert!(!handle.take_middleware_dispatched_retry(&ids));
+    }
+
     /// A permission raised with NO active turn must not be pinned onto a
     /// recently-completed turn's message ids — drop the Turn event instead
     /// of guessing (a guess once delivered a permission card onto the wrong
@@ -10356,7 +10587,11 @@ mod tests {
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
         handle.pause_queue();
-        let (found, _) = handle.update_queued_message_by_id(&first_id, "first edited".to_string());
+        let (found, _) = handle.update_queued_message_by_id(
+            &first_id,
+            "first edited".to_string(),
+            "context:first edited".to_string(),
+        );
         assert!(found);
         handle.resume_queue();
 
@@ -10369,6 +10604,21 @@ mod tests {
             vec![first_id.as_str(), second_id.as_str()]
         );
         assert_eq!(queue[0].text, "first edited");
+        assert_eq!(queue[0].delivery_text(), "context:first edited");
+    }
+
+    #[test]
+    fn queued_message_serializes_source_text_not_middleware_output() {
+        let message = QueuedMessage::new("editable".into(), vec![], None, false, None)
+            .with_processed_text("context:editable".into());
+
+        assert_eq!(message.delivery_text(), "context:editable");
+        let serialized = serde_json::to_value(message).unwrap();
+        assert_eq!(
+            serialized.get("text").and_then(serde_json::Value::as_str),
+            Some("editable")
+        );
+        assert!(serialized.get("processed_text").is_none());
     }
 
     #[test]

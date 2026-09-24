@@ -972,13 +972,15 @@ async fn deliver_to_session(
         )
         .is_ok();
     if !claimed {
-        let messages = target_handle.queue_message(QueuedMessage::new(
-            injected,
-            Vec::new(),
-            Some(sender),
-            false,
-            queued_config,
-        ));
+        let messages = target_handle
+            .submit_queued_message(QueuedMessage::new(
+                injected,
+                Vec::new(),
+                Some(sender),
+                false,
+                queued_config,
+            ))
+            .await?;
         target_handle.emit(AcpUpdate::QueueUpdate { messages });
         return Ok(());
     }
@@ -994,15 +996,11 @@ async fn deliver_to_session(
             // Release the claim so future calls aren't permanently blocked.
             // The cmd loop will re-assert is_busy when it actually picks up
             // the next prompt.
-            target_handle
-                .is_busy
-                .store(false, std::sync::atomic::Ordering::Release);
+            target_handle.release_prompt_claim();
             Err(AgentGraphError::Internal(format!("send_prompt: {}", e)))
         }
         Err(_) => {
-            target_handle
-                .is_busy
-                .store(false, std::sync::atomic::Ordering::Release);
+            target_handle.release_prompt_claim();
             Err(AgentGraphError::Timeout)
         }
     }
@@ -1053,15 +1051,11 @@ pub async fn deliver_user_remind(
     match send_res {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => {
-            target_handle
-                .is_busy
-                .store(false, std::sync::atomic::Ordering::Release);
+            target_handle.release_prompt_claim();
             Err(format!("send_prompt: {}", e))
         }
         Err(_) => {
-            target_handle
-                .is_busy
-                .store(false, std::sync::atomic::Ordering::Release);
+            target_handle.release_prompt_claim();
             Err("timeout".to_string())
         }
     }

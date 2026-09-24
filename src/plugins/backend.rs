@@ -143,6 +143,17 @@ pub async fn invoke(
     }
 }
 
+/// Type-erased invocation for callers reached indirectly from backend host calls.
+pub fn invoke_boxed<'a>(
+    plugin_id: &'a str,
+    task: Option<(&'a str, &'a str)>,
+    method: &'a str,
+    params: Value,
+    timeout_ms: Option<u64>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+    Box::pin(invoke(plugin_id, task, method, params, timeout_ms))
+}
+
 /// Start a plugin's app-scoped backend without inventing a second runtime.
 /// Event-driven plugins are started once with the rest of the plugin runtime;
 /// process exit is handled by the existing backend manager and is not supervised.
@@ -515,10 +526,26 @@ async fn reader_loop(stdout: ChildStdout, weak: Weak<Backend>, plugin_id: String
             let method = method.to_owned();
             let params = v.get("params").cloned().unwrap_or(Value::Null);
             tokio::spawn(async move {
-                let result =
+                let result = if method == "usage.totalTokens" {
+                    let allowed = plugin_has_permission(&plugin_id, "chat:read");
+                    let from = params.get("fromTs").and_then(Value::as_i64);
+                    let to = params.get("toTs").and_then(Value::as_i64);
+                    match (allowed, from, to) {
+                        (true, Some(from), Some(to)) if from < to => {
+                            crate::storage::token_usage::total_tokens(from, to)
+                                .map(|total| json!({ "totalTokens": total }))
+                                .map_err(|error| error.to_string())
+                        }
+                        _ => Err(
+                            "usage.totalTokens requires chat:read and a valid time range"
+                                .to_string(),
+                        ),
+                    }
+                } else {
                     crate::plugins::connect_provider::handle_host_call(&plugin_id, &method, params)
                         .await
-                        .map_err(|error| error.to_string());
+                        .map_err(|error| error.to_string())
+                };
                 let _ = backend.send_host_response(id, result).await;
             });
             continue;

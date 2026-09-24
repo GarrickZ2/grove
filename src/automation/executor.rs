@@ -248,9 +248,7 @@ pub async fn run_with_payload(
         {
             Ok(()) => {}
             Err(error) => {
-                handle
-                    .is_busy
-                    .store(false, std::sync::atomic::Ordering::Release);
+                handle.release_prompt_claim();
                 let message = format!("send_prompt: {error}");
                 if let Err(mark_error) = automations::mark_run_failed(&run_id, "queue", &message) {
                     awarn!("mark_run_failed for {run_id}: {mark_error}");
@@ -272,7 +270,20 @@ pub async fn run_with_payload(
             false,
             Some(snapshot),
         );
-        let updated = handle.queue_message(qmsg);
+        let updated = match handle.submit_queued_message(qmsg).await {
+            Ok(updated) => updated,
+            Err(error) => {
+                let message = format!("queue_prompt: {error}");
+                let _ = automations::mark_run_failed(&run_id, "queue", &message);
+                return RunOutcome {
+                    run_id,
+                    status: "failed".to_string(),
+                    error: Some(message),
+                    resolved_task_id: Some(task_id),
+                    resolved_chat_id: Some(chat_id),
+                };
+            }
+        };
         handle.emit(AcpUpdate::QueueUpdate { messages: updated });
     }
 

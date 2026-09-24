@@ -18,12 +18,13 @@ import { deletePlugin, updatePluginSdk, type Plugin } from "../../api/plugins";
 import { ExtensionIdentityIcon } from "../Skills/ExtensionIdentityIcon";
 import { ConfirmDialog } from "../Dialogs";
 
-const HIGH_RISK_PERMISSIONS = new Set(["exec", "project:write", "chat:read", "chat:write", "inject", "connect:provider"]);
+const HIGH_RISK_PERMISSIONS = new Set(["exec", "project:write", "chat:read", "chat:write", "inject", "connect:provider", "prompt:middleware"]);
 
 const PERMISSION_LABELS: Record<string, string> = {
   "chat:read": "Read chat & AI events",
   "chat:write": "Send prompts to the AI",
   "connect:provider": "Run an IM Connect provider",
+  "prompt:middleware": "Inspect, block, or modify prompts",
 };
 
 const permissionLabel = (permission: string) => PERMISSION_LABELS[permission] ?? permission;

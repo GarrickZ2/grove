@@ -1167,8 +1167,9 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                                     .send_prompt(text, attachments, sender, terminal, config)
                                     .await
                                 {
-                                    eprintln!("Failed to send prompt: {}", e);
-                                    break;
+                                    handle_for_input.emit(AcpUpdate::Error {
+                                        message: e.to_string(),
+                                    });
                                 }
                             }
                             ClientMessage::Cancel => {
@@ -1224,14 +1225,23 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                                 // 兼容旧客户端。
                                 let config =
                                     msg_config.or_else(|| Some(handle_for_input.snapshot_config()));
-                                let messages = handle_for_input.queue_message(QueuedMessage::new(
-                                    text,
-                                    attachments,
-                                    None,
-                                    false,
-                                    config,
-                                ));
-                                handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                                let messages = handle_for_input
+                                    .submit_queued_message(QueuedMessage::new(
+                                        text,
+                                        attachments,
+                                        None,
+                                        false,
+                                        config,
+                                    ))
+                                    .await;
+                                match messages {
+                                    Ok(messages) => {
+                                        handle_for_input.emit(AcpUpdate::QueueUpdate { messages })
+                                    }
+                                    Err(error) => handle_for_input.emit(AcpUpdate::Error {
+                                        message: error.to_string(),
+                                    }),
+                                }
                             }
                             ClientMessage::DequeueMessage { id } => {
                                 let (found, messages) = handle_for_input.dequeue_message_by_id(&id);
@@ -1242,7 +1252,15 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                             }
                             ClientMessage::UpdateQueuedMessage { id, text } => {
                                 let (found, messages) =
-                                    handle_for_input.update_queued_message_by_id(&id, text);
+                                    match handle_for_input.submit_queued_edit(&id, text).await {
+                                        Ok(result) => result,
+                                        Err(error) => {
+                                            handle_for_input.emit(AcpUpdate::Error {
+                                                message: error.to_string(),
+                                            });
+                                            continue;
+                                        }
+                                    };
                                 handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
                                 if !found {
                                     handle_for_input.emit(AcpUpdate::QueueMessageGone { id });

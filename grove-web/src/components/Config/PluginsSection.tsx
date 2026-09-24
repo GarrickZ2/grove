@@ -9,13 +9,14 @@ import { PluginIcon } from "../Plugins/PluginIcon";
 /** Permissions that let a plugin modify files, run commands, or drive the agent
  *  — shown with a warning treatment so they don't sit flush with read-only ones.
  *  `exec` is the heaviest (spawned processes are unsandboxed ≈ full trust). */
-const HIGH_RISK_PERMISSIONS = new Set(["exec", "project:write", "chat:read", "chat:write", "inject"]);
+const HIGH_RISK_PERMISSIONS = new Set(["exec", "project:write", "chat:read", "chat:write", "inject", "connect:provider", "prompt:middleware"]);
 
 /** Human labels for declared permission strings; unknown perms fall back to the
  *  raw string so new backend permissions still render legibly. */
 const PERMISSION_LABELS: Record<string, string> = {
   "chat:read": "Read chat & AI events",
   "chat:write": "Send prompts to the AI",
+  "prompt:middleware": "Inspect, block, or modify prompts",
 };
 
 const permLabel = (perm: string): string => PERMISSION_LABELS[perm] ?? perm;
