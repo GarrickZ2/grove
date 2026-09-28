@@ -34,12 +34,13 @@ fn build_frontend(project_dir: &Path) -> bool {
     // Run npm install if node_modules doesn't exist
     let node_modules = grove_web_dir.join("node_modules");
     if !node_modules.exists() {
-        let status = Command::new("npm")
-            .arg("install")
-            .current_dir(&grove_web_dir)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status();
+        let status =
+            Command::new(crate::check::resolve_program("npm").unwrap_or_else(|| "npm".into()))
+                .arg("install")
+                .current_dir(&grove_web_dir)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
 
         if status.is_err() || !status.unwrap().success() {
             eprintln!("Failed to run npm install");
@@ -48,7 +49,7 @@ fn build_frontend(project_dir: &Path) -> bool {
     }
 
     // Run npm run build
-    let status = Command::new("npm")
+    let status = Command::new(crate::check::resolve_program("npm").unwrap_or_else(|| "npm".into()))
         .args(["run", "build"])
         .current_dir(&grove_web_dir)
         .stdout(Stdio::inherit())
@@ -301,12 +302,13 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
     // Check if node_modules exists
     if !grove_web_dir.join("node_modules").exists() {
         println!("Installing dependencies...");
-        let status = Command::new("npm")
-            .arg("install")
-            .current_dir(&grove_web_dir)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status();
+        let status =
+            Command::new(crate::check::resolve_program("npm").unwrap_or_else(|| "npm".into()))
+                .arg("install")
+                .current_dir(&grove_web_dir)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
 
         if status.is_err() || !status.unwrap().success() {
             eprintln!("Failed to run npm install");
@@ -318,14 +320,15 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
     let vite_port = 5173;
     println!("Starting Vite dev server on port {}...", vite_port);
 
-    let mut vite_process = Command::new("npm")
-        .args(["run", "dev", "--", "--port", &vite_port.to_string()])
-        .current_dir(&grove_web_dir)
-        .env("VITE_API_URL", format!("http://localhost:{}", api_port))
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("Failed to start Vite dev server");
+    let mut vite_process =
+        Command::new(crate::check::resolve_program("npm").unwrap_or_else(|| "npm".into()))
+            .args(["run", "dev", "--", "--port", &vite_port.to_string()])
+            .current_dir(&grove_web_dir)
+            .env("VITE_API_URL", format!("http://localhost:{}", api_port))
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("Failed to start Vite dev server");
 
     // Give Vite time to start
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;

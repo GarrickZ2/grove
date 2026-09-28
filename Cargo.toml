@@ -155,6 +155,7 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 junction = "1.2"
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }

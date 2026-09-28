@@ -75,6 +75,12 @@ pub fn expand_tilde(path: &str) -> String {
             .map(|p| p.join(rest).to_string_lossy().to_string())
             .unwrap_or_else(|| path.to_string());
     }
+    #[cfg(windows)]
+    if let Some(rest) = path.strip_prefix("~\\") {
+        return dirs::home_dir()
+            .map(|p| p.join(rest).to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string());
+    }
     path.to_string()
 }
 

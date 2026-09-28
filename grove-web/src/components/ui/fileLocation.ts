@@ -32,14 +32,24 @@ export function resolveRelativeFilePath(
   if (!trimmed) return undefined;
   const isFileUrl = trimmed.startsWith("file://");
   if (!isFileUrl && EXTERNAL_REFERENCE_RE.test(trimmed)) return undefined;
-  if (isFileUrl) trimmed = trimmed.slice("file://".length);
+  if (isFileUrl) {
+    trimmed = trimmed.slice("file://".length);
+    if (/^\/[A-Za-z]:[\\/]/.test(trimmed)) trimmed = trimmed.slice(1);
+    else if (!trimmed.startsWith("/")) trimmed = `//${trimmed}`;
+  }
 
   const { path: referencePath, suffix } = splitSuffix(trimmed);
   if (referencePath.startsWith("/")) {
     return { path: referencePath, suffix };
   }
+  if (/^[A-Za-z]:[\\/]/.test(referencePath) || /^\\\\[^\\/]+[\\/][^\\/]+/.test(referencePath)) {
+    return { path: referencePath.replace(/\\/g, "/"), suffix };
+  }
   const normalizedContainingFile = containingFile.replace(/\\/g, "/");
-  const containingFileIsAbsolute = normalizedContainingFile.startsWith("/");
+  const containingFileIsAbsolute = normalizedContainingFile.startsWith("/") ||
+    /^[A-Za-z]:\//.test(normalizedContainingFile);
+  const minParts = normalizedContainingFile.startsWith("//") ? 2 :
+    /^[A-Za-z]:\//.test(normalizedContainingFile) ? 1 : 0;
   const parent = normalizedContainingFile.includes("/")
     ? normalizedContainingFile.slice(0, normalizedContainingFile.lastIndexOf("/"))
     : "";
@@ -48,7 +58,7 @@ export function resolveRelativeFilePath(
   for (const part of `${parent}/${referencePath}`.replace(/\\/g, "/").split("/")) {
     if (!part || part === ".") continue;
     if (part === "..") {
-      if (parts.length > 0 && parts[parts.length - 1] !== "..") {
+      if (parts.length > minParts && parts[parts.length - 1] !== "..") {
         parts.pop();
       } else if (containingFileIsAbsolute) {
         return undefined;
@@ -65,8 +75,10 @@ export function resolveRelativeFilePath(
   }
 
   if (parts.length === 0) return undefined;
+  const prefix = normalizedContainingFile.startsWith("//") ? "//" :
+    normalizedContainingFile.startsWith("/") ? "/" : "";
   return {
-    path: `${containingFileIsAbsolute ? "/" : ""}${parts.join("/")}`,
+    path: `${prefix}${parts.join("/")}`,
     suffix,
   };
 }

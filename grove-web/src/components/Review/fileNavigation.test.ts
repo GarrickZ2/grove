@@ -29,4 +29,16 @@ describe('taskRelativeFilePath', () => {
       ),
     ).toBeNull();
   });
+
+  it('maps Windows absolute and file URL paths to the task tree', () => {
+    expect(taskRelativeFilePath('C:\\Work\\Repo\\src\\main.rs', 'c:\\work\\repo'))
+      .toBe('src/main.rs');
+    expect(taskRelativeFilePath('file:///C:/Work/Repo/src/main.rs', 'C:\\Work\\Repo'))
+      .toBe('src/main.rs');
+    expect(taskRelativeFilePath('file://Server/Share/Repo/main.rs', '\\\\server\\share\\repo'))
+      .toBe('main.rs');
+    expect(taskRelativeFilePath('D:\\Other\\main.rs', 'C:\\Work\\Repo'))
+      .toBeNull();
+    expect(taskRelativeFilePath('C:\\Work\\Repo\\main.rs', null)).toBeNull();
+  });
 });

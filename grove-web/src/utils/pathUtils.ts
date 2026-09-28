@@ -53,7 +53,10 @@ export function compactPath(path: string, maxLen: number): string {
     return shortenedPath;
   }
 
-  const parts = shortenedPath.split("/").filter(p => p !== ""); // Filter empty strings
+  const separator = shortenedPath.includes("\\") ? "\\" : "/";
+  const isNetworkShare = shortenedPath.startsWith("\\\\") || shortenedPath.startsWith("//");
+  const prefix = isNetworkShare ? separator.repeat(2) : shortenedPath.startsWith("/") ? "/" : "";
+  const parts = shortenedPath.split(/[\\/]/).filter(p => p !== ""); // Filter empty strings
   if (parts.length <= 1) {
     return truncate(shortenedPath, maxLen);
   }
@@ -61,13 +64,14 @@ export function compactPath(path: string, maxLen: number): string {
   // Try compressing directories from left to right
   const filename = parts[parts.length - 1];
   const dirs = parts.slice(0, parts.length - 1);
+  const fixedDirs = isNetworkShare ? 2 : /^[A-Za-z]:$/.test(dirs[0] || "") ? 1 : 0;
 
   // Progressively compress from left to right
   for (let compressCount = 1; compressCount <= dirs.length; compressCount++) {
     const compressedDirs = dirs.map((dir, index) =>
-      index < compressCount ? dir.charAt(0) : dir
+      index < compressCount && index >= fixedDirs ? dir.charAt(0) : dir
     );
-    const candidate = `${compressedDirs.join("/")}/${filename}`;
+    const candidate = `${prefix}${compressedDirs.join(separator)}${separator}${filename}`;
 
     if (candidate.length <= maxLen) {
       return candidate;
@@ -75,6 +79,6 @@ export function compactPath(path: string, maxLen: number): string {
   }
 
   // All dirs compressed, still too long - truncate
-  const allCompressed = `${dirs.map((d) => d.charAt(0)).join("/")}/${filename}`;
+  const allCompressed = `${prefix}${dirs.map((d, i) => i < fixedDirs ? d : d.charAt(0)).join(separator)}${separator}${filename}`;
   return truncate(allCompressed, maxLen);
 }

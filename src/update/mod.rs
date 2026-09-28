@@ -28,7 +28,11 @@ impl InstallMethod {
             InstallMethod::CargoInstall => "cargo install grove-rs",
             InstallMethod::Homebrew => "brew upgrade grove",
             InstallMethod::GitHubRelease => {
-                "curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh"
+                if cfg!(windows) {
+                    "irm https://raw.githubusercontent.com/GarrickZ2/grove/master/install.ps1 | iex"
+                } else {
+                    "curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh"
+                }
             }
             // AppBundle updates are handled in-app via the web UI
             InstallMethod::AppBundle => "",
@@ -113,7 +117,7 @@ pub fn detect_install_method() -> InstallMethod {
     }
 
     // Check for cargo install (~/.cargo/bin/)
-    if path_str.contains("/.cargo/bin/") {
+    if path_str.contains("/.cargo/bin/") || path_str.contains("\\.cargo\\bin\\") {
         return InstallMethod::CargoInstall;
     }
 
@@ -310,7 +314,11 @@ mod tests {
         );
         assert!(InstallMethod::GitHubRelease
             .update_command()
-            .contains("install.sh"));
+            .contains(if cfg!(windows) {
+                "install.ps1"
+            } else {
+                "install.sh"
+            }));
         assert_eq!(
             InstallMethod::Homebrew.update_command(),
             "brew upgrade grove"

@@ -320,7 +320,7 @@ export async function migrateMemory(id: string): Promise<{ log_id: string }> {
 }
 
 // ============================================================================
-// Folder picker (web fallback for native browse_folder)
+// Server-side folder browser
 // ============================================================================
 
 export interface FolderEntry {
@@ -341,11 +341,20 @@ export interface ListFolderResponse {
   home: string | null;
 }
 
+export interface FolderRootsResponse {
+  roots: string[];
+  home: string | null;
+}
+
+export async function getFolderRoots(): Promise<FolderRootsResponse> {
+  return apiClient.get<FolderRootsResponse>('/api/v1/folders/roots', AbortSignal.timeout(10000));
+}
+
 /**
  * List sub-directories under `path` for the web folder picker.
  * Throws on absolute-path violations, .. traversal, missing path, or non-dir.
  */
 export async function listFolder(path: string): Promise<ListFolderResponse> {
   const qs = new URLSearchParams({ path });
-  return apiClient.get<ListFolderResponse>(`/api/v1/folders/list?${qs.toString()}`);
+  return apiClient.get<ListFolderResponse>(`/api/v1/folders/list?${qs.toString()}`, AbortSignal.timeout(15000));
 }

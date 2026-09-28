@@ -2,7 +2,6 @@ import { useRef, useState, type DragEvent } from "react";
 import { CheckCircle2, Code, FileArchive, FolderOpen, GitBranch, Sparkles, Terminal, X } from "lucide-react";
 import { Button, DialogShell } from "../ui";
 import {
-  browsePluginFolder,
   installLocalPlugin,
   installGitPlugin,
   installZipPlugin,
@@ -10,6 +9,7 @@ import {
   scaffoldPlugin,
 } from "../../api/plugins";
 import { parseGitInput } from "../../utils/gitUrl";
+import { useBrowseFolder } from "../Projects/useBrowseFolder";
 
 type Mode = "local" | "git" | "dev" | "create";
 
@@ -28,6 +28,7 @@ const MODE_META: Record<Mode, { label: string; icon: typeof Terminal }> = {
  *   - create: scaffold a new plugin and register it as development source
  */
 export function AddPluginDialog({ onClose }: { onClose: () => void }) {
+  const { browseFolder, folderPicker } = useBrowseFolder("Select Plugin Folder");
   const [mode, setMode] = useState<Mode>("local");
   const [gitUrl, setGitUrl] = useState("");
   const [subpath, setSubpath] = useState("");
@@ -49,12 +50,12 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const picked = await browsePluginFolder();
-      if (!picked.path) {
+      const path = await browseFolder();
+      if (!path) {
         setBusy(false);
         return; // cancelled
       }
-      const res = await install(picked.path);
+      const res = await install(path);
       setDone({ name: res.plugin.name, warning: res.warning });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -75,9 +76,9 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const picked = await browsePluginFolder();
-      if (!picked.path) return;
-      const result = await scaffoldPlugin(picked.path, trimmed);
+      const path = await browseFolder();
+      if (!path) return;
+      const result = await scaffoldPlugin(path, trimmed);
       setDone({ name: result.name, path: result.path, next: result.next });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -142,6 +143,7 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
+    <>
     <DialogShell isOpen onClose={onClose}>
       <div
         className="w-full max-w-lg rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-5 shadow-xl"
@@ -382,5 +384,7 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
         )}
       </div>
     </DialogShell>
+    {folderPicker}
+    </>
   );
 }

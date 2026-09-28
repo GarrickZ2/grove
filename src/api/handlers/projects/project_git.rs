@@ -160,7 +160,9 @@ pub async fn open_ide(Path(id): Path<String>) -> Result<Json<OpenResponse>, Stat
             .args(["-a", &ide_cmd, &project.path])
             .spawn()
     } else {
-        Command::new(&ide_cmd).arg(&project.path).spawn()
+        Command::new(resolve_ide_command(&ide_cmd))
+            .arg(&project.path)
+            .spawn()
     };
 
     let display_name = if ide_cmd.ends_with(".app") {
@@ -185,6 +187,28 @@ pub async fn open_ide(Path(id): Path<String>) -> Result<Json<OpenResponse>, Stat
     }
 }
 
+fn resolve_ide_command(ide_cmd: &str) -> std::path::PathBuf {
+    if let Some(path) = crate::check::resolve_program(ide_cmd) {
+        return path;
+    }
+    #[cfg(windows)]
+    if ide_cmd == "code" {
+        for (base, relative) in [
+            ("LOCALAPPDATA", "Programs\\Microsoft VS Code\\Code.exe"),
+            ("PROGRAMFILES", "Microsoft VS Code\\Code.exe"),
+            ("PROGRAMFILES(X86)", "Microsoft VS Code\\Code.exe"),
+        ] {
+            if let Some(root) = std::env::var_os(base) {
+                let path = std::path::PathBuf::from(root).join(relative);
+                if path.is_file() {
+                    return path;
+                }
+            }
+        }
+    }
+    ide_cmd.into()
+}
+
 /// POST /api/v1/projects/{id}/open-terminal
 pub async fn open_terminal(Path(id): Path<String>) -> Result<Json<OpenResponse>, StatusCode> {
     use crate::storage::config;
@@ -194,91 +218,141 @@ pub async fn open_terminal(Path(id): Path<String>) -> Result<Json<OpenResponse>,
 
     let terminal_cmd = config.web.terminal.as_deref();
 
-    let (result, display_name) = match terminal_cmd {
-        Some(cmd) if cmd.ends_with(".app") => {
-            let app_name = std::path::Path::new(cmd)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or(cmd);
+    #[cfg(windows)]
+    {
+        let (result, display_name) = match terminal_cmd {
+            None | Some("wt") | Some("Windows Terminal") => {
+                if let Some(wt) = crate::check::resolve_program("wt") {
+                    (
+                        Command::new(wt).arg("-d").arg(&project.path).spawn(),
+                        "Windows Terminal",
+                    )
+                } else {
+                    (
+                        Command::new("powershell.exe")
+                            .current_dir(&project.path)
+                            .spawn(),
+                        "PowerShell",
+                    )
+                }
+            }
+            Some("powershell") | Some("powershell.exe") => (
+                Command::new("powershell.exe")
+                    .current_dir(&project.path)
+                    .spawn(),
+                "PowerShell",
+            ),
+            Some("cmd") | Some("cmd.exe") => (
+                Command::new("cmd.exe").current_dir(&project.path).spawn(),
+                "Command Prompt",
+            ),
+            Some(cmd) => (
+                Command::new(crate::check::resolve_program(cmd).unwrap_or_else(|| cmd.into()))
+                    .current_dir(&project.path)
+                    .spawn(),
+                cmd,
+            ),
+        };
+        return Ok(Json(match result {
+            Ok(_) => OpenResponse {
+                success: true,
+                message: format!("Opening {} in {}", project.name, display_name),
+            },
+            Err(e) => OpenResponse {
+                success: false,
+                message: format!("Failed to open terminal '{}': {}", display_name, e),
+            },
+        }));
+    }
 
-            if app_name.to_lowercase().contains("iterm") {
-                let script = format!(
-                    r#"tell application "iTerm"
+    #[cfg(not(windows))]
+    {
+        let (result, display_name) = match terminal_cmd {
+            Some(cmd) if cmd.ends_with(".app") => {
+                let app_name = std::path::Path::new(cmd)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(cmd);
+
+                if app_name.to_lowercase().contains("iterm") {
+                    let script = format!(
+                        r#"tell application "iTerm"
                                     activate
                                     create window with default profile
                                     tell current session of current window
                                         write text "cd '{}'"
                                     end tell
                                 end tell"#,
-                    project.path
-                );
-                (
-                    Command::new("osascript").args(["-e", &script]).spawn(),
-                    app_name.to_string(),
-                )
-            } else {
-                (
-                    Command::new("open")
-                        .args(["-a", cmd, &project.path])
-                        .spawn(),
-                    app_name.to_string(),
-                )
+                        project.path
+                    );
+                    (
+                        Command::new("osascript").args(["-e", &script]).spawn(),
+                        app_name.to_string(),
+                    )
+                } else {
+                    (
+                        Command::new("open")
+                            .args(["-a", cmd, &project.path])
+                            .spawn(),
+                        app_name.to_string(),
+                    )
+                }
             }
-        }
-        Some("iterm") | Some("iTerm") => {
-            let script = format!(
-                r#"tell application "iTerm"
+            Some("iterm") | Some("iTerm") => {
+                let script = format!(
+                    r#"tell application "iTerm"
                                 activate
                                 create window with default profile
                                 tell current session of current window
                                     write text "cd '{}'"
                                 end tell
                             end tell"#,
-                project.path
-            );
-            (
-                Command::new("osascript").args(["-e", &script]).spawn(),
-                "iTerm".to_string(),
-            )
-        }
-        Some("warp") | Some("Warp") => (
-            Command::new("open")
-                .args(["-a", "Warp", &project.path])
-                .spawn(),
-            "Warp".to_string(),
-        ),
-        Some("kitty") => (
-            Command::new("kitty")
-                .args(["--directory", &project.path])
-                .spawn(),
-            "Kitty".to_string(),
-        ),
-        Some("alacritty") => (
-            Command::new("alacritty")
-                .args(["--working-directory", &project.path])
-                .spawn(),
-            "Alacritty".to_string(),
-        ),
-        Some(cmd) => (
-            Command::new(cmd).arg(&project.path).spawn(),
-            cmd.to_string(),
-        ),
-        None => (
-            Command::new("open")
-                .args(["-a", "Terminal", &project.path])
-                .spawn(),
-            "Terminal".to_string(),
-        ),
-    };
+                    project.path
+                );
+                (
+                    Command::new("osascript").args(["-e", &script]).spawn(),
+                    "iTerm".to_string(),
+                )
+            }
+            Some("warp") | Some("Warp") => (
+                Command::new("open")
+                    .args(["-a", "Warp", &project.path])
+                    .spawn(),
+                "Warp".to_string(),
+            ),
+            Some("kitty") => (
+                Command::new("kitty")
+                    .args(["--directory", &project.path])
+                    .spawn(),
+                "Kitty".to_string(),
+            ),
+            Some("alacritty") => (
+                Command::new("alacritty")
+                    .args(["--working-directory", &project.path])
+                    .spawn(),
+                "Alacritty".to_string(),
+            ),
+            Some(cmd) => (
+                Command::new(cmd).arg(&project.path).spawn(),
+                cmd.to_string(),
+            ),
+            None => (
+                Command::new("open")
+                    .args(["-a", "Terminal", &project.path])
+                    .spawn(),
+                "Terminal".to_string(),
+            ),
+        };
 
-    match result {
-        Ok(_) => Ok(Json(OpenResponse {
-            success: true,
-            message: format!("Opening {} in {}", project.name, display_name),
-        })),
-        Err(e) => Ok(Json(OpenResponse {
-            success: false,
-            message: format!("Failed to open terminal '{}': {}", display_name, e),
-        })),
+        match result {
+            Ok(_) => Ok(Json(OpenResponse {
+                success: true,
+                message: format!("Opening {} in {}", project.name, display_name),
+            })),
+            Err(e) => Ok(Json(OpenResponse {
+                success: false,
+                message: format!("Failed to open terminal '{}': {}", display_name, e),
+            })),
+        }
     }
 }

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Code, FolderOpen, X } from "lucide-react";
 import { Button } from "../ui";
-import { browsePluginFolder, scaffoldPlugin } from "../../api/plugins";
+import { scaffoldPlugin } from "../../api/plugins";
+import { useBrowseFolder } from "../Projects/useBrowseFolder";
 
 /**
  * "Develop Plugin" dialog: enter a plugin name, pick a parent folder, and the
@@ -10,6 +11,7 @@ import { browsePluginFolder, scaffoldPlugin } from "../../api/plugins";
  * it as a dev plugin.
  */
 export function DevelopPluginDialog({ onClose }: { onClose: () => void }) {
+  const { browseFolder, folderPicker } = useBrowseFolder("Select Plugin Parent Folder");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,12 +26,12 @@ export function DevelopPluginDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const picked = await browsePluginFolder();
-      if (!picked.path) {
+      const path = await browseFolder();
+      if (!path) {
         setBusy(false);
         return; // user cancelled the folder picker
       }
-      const res = await scaffoldPlugin(picked.path, trimmed);
+      const res = await scaffoldPlugin(path, trimmed);
       setDone({ name: res.name, path: res.path, next: res.next });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -38,7 +40,9 @@ export function DevelopPluginDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
-  return createPortal(
+  return (
+    <>
+      {createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
@@ -129,5 +133,8 @@ export function DevelopPluginDialog({ onClose }: { onClose: () => void }) {
       </div>
     </div>,
     document.body,
+      )}
+      {folderPicker}
+    </>
   );
 }

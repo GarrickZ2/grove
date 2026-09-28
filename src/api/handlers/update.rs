@@ -136,6 +136,82 @@ struct GitHubReleaseWithAssets {
     assets: Vec<GitHubAsset>,
 }
 
+fn update_archive_path() -> std::path::PathBuf {
+    let extension = if cfg!(windows) { "zip" } else { "tar.gz" };
+    std::env::temp_dir().join(format!("grove-update-{}.{}", std::process::id(), extension))
+}
+
+fn release_target(os: &str, arch: &str) -> Option<(&'static str, &'static str)> {
+    match (os, arch) {
+        ("windows", "x86_64") => Some(("x86_64-pc-windows-msvc", ".zip")),
+        ("windows", "aarch64") => Some(("aarch64-pc-windows-msvc", ".zip")),
+        ("macos", "x86_64") => Some(("x86_64-apple-darwin", ".tar.gz")),
+        ("macos", "aarch64") => Some(("aarch64-apple-darwin", ".tar.gz")),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn ps_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(windows)]
+fn prepare_windows_update(exe: &std::path::Path) -> Result<(), String> {
+    let archive = std::fs::File::open(update_archive_path())
+        .map_err(|e| format!("Cannot open update archive: {e}"))?;
+    let mut zip =
+        zip::ZipArchive::new(archive).map_err(|e| format!("Invalid update archive: {e}"))?;
+    let mut binary = zip
+        .by_name("grove.exe")
+        .map_err(|e| format!("grove.exe missing from update archive: {e}"))?;
+    let staged = std::env::temp_dir().join(format!("grove-update-{}.exe", std::process::id()));
+    let mut output =
+        std::fs::File::create(&staged).map_err(|e| format!("Cannot stage update: {e}"))?;
+    std::io::copy(&mut binary, &mut output).map_err(|e| format!("Cannot extract update: {e}"))?;
+    output
+        .sync_all()
+        .map_err(|e| format!("Cannot save update: {e}"))?;
+
+    let script_path =
+        std::env::temp_dir().join(format!("grove-updater-{}.ps1", std::process::id()));
+    let args = std::env::args()
+        .skip(1)
+        .map(|arg| ps_literal(&format!("\"{}\"", arg.replace('"', "\\\""))))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let restart = if args.is_empty() {
+        "Start-Process -FilePath $target".to_string()
+    } else {
+        format!("Start-Process -FilePath $target -ArgumentList @({args})")
+    };
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'\n\
+         Wait-Process -Id {} -ErrorAction SilentlyContinue\n\
+         $source = {}\n\
+         $target = {}\n\
+         for ($i = 0; $i -lt 30; $i++) {{\n\
+           try {{ Copy-Item -LiteralPath $source -Destination $target -Force -ErrorAction Stop; break }}\n\
+           catch {{ if ($i -eq 29) {{ throw }}; Start-Sleep -Seconds 1 }}\n\
+         }}\n\
+         {}\n\
+         Remove-Item -LiteralPath $source, {} -Force -ErrorAction SilentlyContinue\n\
+         Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\n",
+        std::process::id(),
+        ps_literal(&staged.to_string_lossy()),
+        ps_literal(&exe.to_string_lossy()),
+        restart,
+        ps_literal(&update_archive_path().to_string_lossy()),
+    );
+    std::fs::write(&script_path, script).map_err(|e| format!("Cannot write updater: {e}"))?;
+    std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(&script_path)
+        .spawn()
+        .map_err(|e| format!("Cannot start updater: {e}"))?;
+    Ok(())
+}
+
 /// Download the update binary in a blocking thread, tracking progress.
 /// Returns the version tag on success.
 fn fetch_and_download_update() -> Result<String, String> {
@@ -152,17 +228,20 @@ fn fetch_and_download_update() -> Result<String, String> {
         .into_json()
         .map_err(|e| format!("Failed to parse release info: {e}"))?;
 
-    let arch_str = match std::env::consts::ARCH {
-        "aarch64" => "aarch64-apple-darwin",
-        "x86_64" => "x86_64-apple-darwin",
-        other => return Err(format!("Unsupported architecture: {other}")),
-    };
+    let (target, extension) = release_target(std::env::consts::OS, std::env::consts::ARCH)
+        .ok_or_else(|| {
+            format!(
+                "Unsupported platform: {}/{}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            )
+        })?;
 
     let asset = release
         .assets
         .iter()
-        .find(|a| a.name.contains(arch_str) && a.name.ends_with(".tar.gz"))
-        .ok_or_else(|| format!("No asset found for arch: {arch_str}"))?;
+        .find(|a| a.name.contains(target) && a.name.ends_with(extension))
+        .ok_or_else(|| format!("No asset found for target: {target}"))?;
 
     let download_url = asset.browser_download_url.clone();
     let version = release.tag_name.clone();
@@ -189,7 +268,7 @@ fn fetch_and_download_update() -> Result<String, String> {
     }
 
     let mut reader = dl_response.into_reader();
-    let mut file = std::fs::File::create("/tmp/grove-update.tar.gz")
+    let mut file = std::fs::File::create(update_archive_path())
         .map_err(|e| format!("Failed to create temp file: {e}"))?;
 
     let mut buf = [0u8; 16384];
@@ -368,86 +447,137 @@ pub async fn install_app_update() -> Json<serde_json::Value> {
             );
         }
     };
+    #[cfg(not(windows))]
     let current_exe_str = current_exe.to_string_lossy().to_string();
 
-    UPDATE_PROGRESS.lock().unwrap().stage = AppUpdateStage::Installing;
-
-    // Extract the archive to a temp directory
-    let _ = std::fs::create_dir_all("/tmp/grove-update-extract");
-    let extract_out = std::process::Command::new("tar")
-        .args([
-            "-xzf",
-            "/tmp/grove-update.tar.gz",
-            "-C",
-            "/tmp/grove-update-extract",
-            "--strip-components=1",
-        ])
-        .output();
-
-    match extract_out {
-        Err(e) => {
-            let mut prog = UPDATE_PROGRESS.lock().unwrap();
-            prog.stage = AppUpdateStage::Error;
-            prog.error = Some(format!("Extraction failed: {e}"));
-            return Json(serde_json::json!({"ok": false, "error": "Extraction failed"}));
+    #[cfg(windows)]
+    {
+        match prepare_windows_update(&current_exe) {
+            Ok(()) => {
+                UPDATE_PROGRESS.lock().unwrap().stage = AppUpdateStage::Installing;
+                tokio::spawn(async {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    std::process::exit(0);
+                });
+                return Json(serde_json::json!({"ok": true}));
+            }
+            Err(e) => {
+                let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                prog.stage = AppUpdateStage::Error;
+                prog.error = Some(e.clone());
+                return Json(serde_json::json!({"ok": false, "error": e}));
+            }
         }
-        Ok(output) if !output.status.success() => {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let mut prog = UPDATE_PROGRESS.lock().unwrap();
-            prog.stage = AppUpdateStage::Error;
-            prog.error = Some(format!("Extraction error: {stderr}"));
-            return Json(serde_json::json!({"ok": false, "error": "Extraction failed"}));
-        }
-        _ => {}
     }
 
-    if let Err(e) = std::fs::copy(
-        "/tmp/grove-update-extract/grove",
-        "/tmp/grove-update-binary",
-    ) {
-        let mut prog = UPDATE_PROGRESS.lock().unwrap();
-        prog.stage = AppUpdateStage::Error;
-        prog.error = Some(format!("Failed to copy binary: {e}"));
-        return Json(serde_json::json!({"ok": false, "error": "Failed to copy binary"}));
-    }
+    #[cfg(not(windows))]
+    {
+        UPDATE_PROGRESS.lock().unwrap().stage = AppUpdateStage::Installing;
 
-    // Get current arguments to relaunch the server identically
-    let args: Vec<String> = std::env::args().collect();
-    let args_str = args[1..].join(" ");
+        // Extract the archive to a temp directory
+        let _ = std::fs::create_dir_all("/tmp/grove-update-extract");
+        let extract_out = std::process::Command::new("tar")
+            .args([
+                "-xzf",
+                update_archive_path()
+                    .to_str()
+                    .unwrap_or("/tmp/grove-update.tar.gz"),
+                "-C",
+                "/tmp/grove-update-extract",
+                "--strip-components=1",
+            ])
+            .output();
 
-    // Write the helper script that replaces the binary and re-launches the app
-    let script = format!(
-        "#!/bin/bash\n\
+        match extract_out {
+            Err(e) => {
+                let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                prog.stage = AppUpdateStage::Error;
+                prog.error = Some(format!("Extraction failed: {e}"));
+                return Json(serde_json::json!({"ok": false, "error": "Extraction failed"}));
+            }
+            Ok(output) if !output.status.success() => {
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                prog.stage = AppUpdateStage::Error;
+                prog.error = Some(format!("Extraction error: {stderr}"));
+                return Json(serde_json::json!({"ok": false, "error": "Extraction failed"}));
+            }
+            _ => {}
+        }
+
+        if let Err(e) = std::fs::copy(
+            "/tmp/grove-update-extract/grove",
+            "/tmp/grove-update-binary",
+        ) {
+            let mut prog = UPDATE_PROGRESS.lock().unwrap();
+            prog.stage = AppUpdateStage::Error;
+            prog.error = Some(format!("Failed to copy binary: {e}"));
+            return Json(serde_json::json!({"ok": false, "error": "Failed to copy binary"}));
+        }
+
+        // Get current arguments to relaunch the server identically
+        let args: Vec<String> = std::env::args().collect();
+        let args_str = args[1..].join(" ");
+
+        // Write the helper script that replaces the binary and re-launches the app
+        let script = format!(
+            "#!/bin/bash\n\
          sleep 1\n\
          cp /tmp/grove-update-binary {exe}\n\
          chmod +x {exe}\n\
          nohup {exe} {args_str} >/dev/null 2>&1 &\n\
-         rm -rf /tmp/grove-update-binary /tmp/grove-update.tar.gz /tmp/grove-update-extract\n\
+         rm -rf /tmp/grove-update-binary \"{archive}\" /tmp/grove-update-extract\n\
          rm -f \"$0\"\n",
-        exe = current_exe_str,
-        args_str = args_str
-    );
+            exe = current_exe_str,
+            args_str = args_str,
+            archive = update_archive_path().display(),
+        );
 
-    if let Err(e) = std::fs::write("/tmp/grove-updater.sh", &script) {
-        let mut prog = UPDATE_PROGRESS.lock().unwrap();
-        prog.stage = AppUpdateStage::Error;
-        prog.error = Some(format!("Failed to write updater script: {e}"));
-        return Json(serde_json::json!({"ok": false, "error": "Failed to write updater script"}));
+        if let Err(e) = std::fs::write("/tmp/grove-updater.sh", &script) {
+            let mut prog = UPDATE_PROGRESS.lock().unwrap();
+            prog.stage = AppUpdateStage::Error;
+            prog.error = Some(format!("Failed to write updater script: {e}"));
+            return Json(
+                serde_json::json!({"ok": false, "error": "Failed to write updater script"}),
+            );
+        }
+
+        let _ = std::process::Command::new("chmod")
+            .args(["+x", "/tmp/grove-updater.sh"])
+            .output();
+
+        let _ = std::process::Command::new("bash")
+            .arg("/tmp/grove-updater.sh")
+            .spawn();
+
+        // Give the HTTP response time to reach the client before we exit
+        tokio::spawn(async {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            std::process::exit(0);
+        });
+
+        Json(serde_json::json!({"ok": true}))
     }
+}
 
-    let _ = std::process::Command::new("chmod")
-        .args(["+x", "/tmp/grove-updater.sh"])
-        .output();
+#[cfg(test)]
+mod tests {
+    use super::release_target;
 
-    let _ = std::process::Command::new("bash")
-        .arg("/tmp/grove-updater.sh")
-        .spawn();
-
-    // Give the HTTP response time to reach the client before we exit
-    tokio::spawn(async {
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        std::process::exit(0);
-    });
-
-    Json(serde_json::json!({"ok": true}))
+    #[test]
+    fn release_assets_match_platform() {
+        assert_eq!(
+            release_target("windows", "x86_64"),
+            Some(("x86_64-pc-windows-msvc", ".zip"))
+        );
+        assert_eq!(
+            release_target("windows", "aarch64"),
+            Some(("aarch64-pc-windows-msvc", ".zip"))
+        );
+        assert_eq!(
+            release_target("macos", "x86_64"),
+            Some(("x86_64-apple-darwin", ".tar.gz"))
+        );
+        assert_eq!(release_target("linux", "x86_64"), None);
+    }
 }

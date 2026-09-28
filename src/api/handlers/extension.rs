@@ -857,6 +857,9 @@ fn validate_install_path(p: &str) -> Result<std::path::PathBuf, String> {
     if !path.is_absolute() {
         return Err(format!("path must be absolute: {}", p));
     }
+    if path.parent().is_none() {
+        return Err(format!("refusing to install into filesystem root: {}", p));
+    }
     // Reject empty or root-ish directories. Writing to `/` or `/System` etc.
     // is either harmless-but-noisy (Chrome won't load it) or requires sudo,
     // which we can't escalate — surface a useful error instead.
@@ -975,88 +978,14 @@ pub async fn reveal_install_path(
     }
 }
 
-/// GET /api/v1/extension/browse-install-folder — pop a native folder picker
-/// so the user can choose where the companion gets installed. Returns
-/// `{ path: <abs path> }` on selection or `{ path: null }` if cancelled.
-///
-/// Mirrors `folder::browse_folder` (osascript / zenity / kdialog) but with a
-/// companion-specific prompt — copy-pasting the helper rather than adding
-/// a prompt argument keeps the existing endpoint's signature stable.
+/// Legacy Companion folder-picker endpoint. Reuse the shared non-blocking
+/// handler; Windows clients use the in-app folder browser instead.
 pub async fn browse_install_folder() -> Json<serde_json::Value> {
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg("POSIX path of (choose folder with prompt \"Where to install Grove Companion?\")")
-            .output();
-        if let Ok(output) = output {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let zenity = std::process::Command::new("zenity")
-            .args([
-                "--file-selection",
-                "--directory",
-                "--title=Where to install Grove Companion?",
-            ])
-            .output();
-        if let Ok(output) = zenity {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-        let kdialog = std::process::Command::new("kdialog")
-            .args([
-                "--getexistingdirectory",
-                ".",
-                "--title",
-                "Where to install Grove Companion?",
-            ])
-            .output();
-        if let Ok(output) = kdialog {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        // PowerShell FolderBrowserDialog. The trailing trim removes the
-        // PowerShell-injected newline / CR pair so the path matches what
-        // Chrome's file picker would see.
-        let ps = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Where to install Grove Companion?'; if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath }",
-            ])
-            .output();
-        if let Ok(output) = ps {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-    }
-
-    Json(json!({ "path": serde_json::Value::Null }))
+    let response = crate::api::handlers::folder::browse_folder_with_prompt(
+        "Where to install Grove Companion?",
+    )
+    .await;
+    Json(json!({ "path": response.0.path }))
 }
 
 /// POST /api/v1/extension/open-chrome — launch the user's default browser
@@ -1154,7 +1083,6 @@ fn open_url_with_default_browser(url: &str) -> Result<String, String> {
         // Detection on Windows is fiddly (HKCU\\...\\UserChoice + ProgId
         // command lookup). For now, try the common Chromium browsers in
         // turn — defaults work for ~95% of Windows users.
-        let _ = url;
         let candidates = [
             ("Chrome", "chrome"),
             ("Edge", "msedge"),
@@ -1163,15 +1091,35 @@ fn open_url_with_default_browser(url: &str) -> Result<String, String> {
             ("Opera", "opera"),
         ];
         for (label, exe) in candidates {
-            let r = std::process::Command::new("cmd")
-                .args(["/C", "start", "", exe, url])
-                .spawn();
-            if r.is_ok() {
+            let Some(path) = windows_browser_path(exe) else {
+                continue;
+            };
+            if std::process::Command::new(path).arg(url).spawn().is_ok() {
                 return Ok(label.to_string());
             }
         }
         Err("no Chromium-based browser found".to_string())
     }
+}
+
+#[cfg(windows)]
+fn windows_browser_path(exe: &str) -> Option<std::path::PathBuf> {
+    if let Some(path) = crate::check::resolve_program(exe) {
+        return Some(path);
+    }
+    let relative = match exe {
+        "chrome" => "Google\\Chrome\\Application\\chrome.exe",
+        "msedge" => "Microsoft\\Edge\\Application\\msedge.exe",
+        "brave" => "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+        "vivaldi" => "Vivaldi\\Application\\vivaldi.exe",
+        "opera" => "Opera\\launcher.exe",
+        _ => return None,
+    };
+    ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"]
+        .iter()
+        .filter_map(|name| std::env::var_os(name))
+        .map(|base| std::path::PathBuf::from(base).join(relative))
+        .find(|path| path.is_file())
 }
 
 #[cfg(target_os = "macos")]

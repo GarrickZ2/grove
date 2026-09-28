@@ -28,6 +28,9 @@ fn validate_plugin_path(p: &str) -> Result<std::path::PathBuf, String> {
     if !path.is_absolute() {
         return Err(format!("path must be absolute: {}", p));
     }
+    if path.parent().is_none() {
+        return Err(format!("refusing to write into filesystem root: {}", p));
+    }
     let forbidden = ["/", "/System", "/usr", "/etc", "/var", "/bin", "/sbin"];
     for f in forbidden {
         if path.as_os_str() == std::ffi::OsStr::new(f) {
@@ -37,85 +40,13 @@ fn validate_plugin_path(p: &str) -> Result<std::path::PathBuf, String> {
     Ok(path)
 }
 
-/// GET /api/v1/plugins/browse-folder — native folder picker with a
-/// plugin-specific prompt. Returns `{ path: <abs path> }` or `{ path: null }`.
-///
-/// Copy of `extension::browse_install_folder` with a different prompt — same
-/// rationale as that one: a per-feature prompt is worth the small duplication
-/// and avoids changing the shared `folder::browse_folder` signature (used by
-/// project import).
+/// Legacy plugin folder-picker endpoint. Reuse the shared non-blocking handler;
+/// Windows clients use the in-app folder browser instead.
 pub async fn browse_plugin_folder() -> Json<serde_json::Value> {
-    #[cfg(target_os = "macos")]
-    {
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg("POSIX path of (choose folder with prompt \"Choose a folder for your plugin\")")
-            .output();
-        if let Ok(output) = output {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let zenity = Command::new("zenity")
-            .args([
-                "--file-selection",
-                "--directory",
-                "--title=Choose a folder for your plugin",
-            ])
-            .output();
-        if let Ok(output) = zenity {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-        let kdialog = Command::new("kdialog")
-            .args([
-                "--getexistingdirectory",
-                ".",
-                "--title",
-                "Choose a folder for your plugin",
-            ])
-            .output();
-        if let Ok(output) = kdialog {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let ps = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Choose a folder for your plugin'; if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath }",
-            ])
-            .output();
-        if let Ok(output) = ps {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(json!({ "path": path }));
-                }
-            }
-        }
-    }
-
-    Json(json!({ "path": serde_json::Value::Null }))
+    let response =
+        crate::api::handlers::folder::browse_folder_with_prompt("Choose a folder for your plugin")
+            .await;
+    Json(json!({ "path": response.0.path }))
 }
 
 #[derive(Debug, Deserialize)]

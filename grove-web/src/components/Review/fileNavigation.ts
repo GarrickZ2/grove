@@ -8,15 +8,21 @@ export function taskRelativeFilePath(
   taskPath: string | null,
 ): string | null {
   const target = targetPath
+    .replace(/^file:\/\/(?=[^/])/, '//')
     .replace(/^file:\/\//, '')
     .replace(/\\/g, '/')
+    .replace(/^\/([A-Za-z]:\/)/, '$1')
     .replace(/^\.\//, '');
 
-  if (!target.startsWith('/')) return target;
+  const absolute = target.startsWith('/') || /^[A-Za-z]:\//.test(target);
+  if (!absolute) return target;
   if (!taskPath) return null;
 
   const root = taskPath.replace(/\\/g, '/').replace(/\/+$/, '');
-  if (target === root) return '';
-  if (target.startsWith(`${root}/`)) return target.slice(root.length + 1);
+  const windowsPath = /^[A-Za-z]:\//.test(root) || root.startsWith('//');
+  const comparableTarget = windowsPath ? target.toLowerCase() : target;
+  const comparableRoot = windowsPath ? root.toLowerCase() : root;
+  if (comparableTarget === comparableRoot) return '';
+  if (comparableTarget.startsWith(`${comparableRoot}/`)) return target.slice(root.length + 1);
   return null;
 }

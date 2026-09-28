@@ -1095,18 +1095,22 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
         }
     }
 
-    // Sync busy state on (re)connect
-    if is_existing && handle.is_busy.load(std::sync::atomic::Ordering::Relaxed) {
-        let msg = ServerMessage::Busy { value: true };
+    // A reconnect may have missed Busy(false) while the browser was suspended.
+    // Always send the current value so the client can clear stale working UI.
+    if is_existing {
+        let msg = ServerMessage::Busy {
+            value: handle.is_busy.load(std::sync::atomic::Ordering::Relaxed),
+        };
         if let Ok(json) = serde_json::to_string(&msg) {
             let _ = ws_sender.send(Message::Text(json.into())).await;
         }
     }
 
-    // Send current pending queue state on (re)connect
-    let queue = handle.get_queue();
-    if !queue.is_empty() {
-        let msg = ServerMessage::QueueUpdate { messages: queue };
+    // An empty queue is also authoritative after a missed update while away.
+    if is_existing {
+        let msg = ServerMessage::QueueUpdate {
+            messages: handle.get_queue(),
+        };
         if let Ok(json) = serde_json::to_string(&msg) {
             let _ = ws_sender.send(Message::Text(json.into())).await;
         }
@@ -1116,13 +1120,29 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
     let voice_chat_id = history_chat_id.clone();
 
     // Task: Forward ACP updates to WebSocket
+    let handle_for_updates = handle.clone();
     let mut updates_to_ws = tokio::spawn(async move {
         loop {
             tokio::select! {
                 update = update_rx.recv() => match update {
                     Ok(update) => {
                         let is_ended = matches!(update, AcpUpdate::SessionEnded);
-                        let msg: ServerMessage = update.into();
+                        // The receiver subscribed before the reconnect snapshot.
+                        // Queued Busy/QueueUpdate events can therefore be older
+                        // than their snapshots; send live values instead.
+                        let msg: ServerMessage = if matches!(update, AcpUpdate::Busy { .. }) {
+                            ServerMessage::Busy {
+                                value: handle_for_updates
+                                    .is_busy
+                                    .load(std::sync::atomic::Ordering::Relaxed),
+                            }
+                        } else if matches!(update, AcpUpdate::QueueUpdate { .. }) {
+                            ServerMessage::QueueUpdate {
+                                messages: handle_for_updates.get_queue(),
+                            }
+                        } else {
+                            update.into()
+                        };
                         if let Ok(json) = serde_json::to_string(&msg) {
                             if ws_sender.send(Message::Text(json.into())).await.is_err() {
                                 break;

@@ -14,6 +14,8 @@ import {
   type ArtifactFile, type ArtifactWorkDirectoryEntry, type DisplayItem,
 } from "../../../../api";
 import { apiClient } from "../../../../api/client";
+import { useBrowseFolder } from "../../../Projects/useBrowseFolder";
+import { filesystemBasename } from "../../../../utils/filesystemPath";
 import { useAuthenticatedFileUrl } from "../../../../hooks/useAuthenticatedFileUrl";
 import {
   VSCodeIcon,
@@ -62,6 +64,7 @@ function dropContainsDirectory(dataTransfer: DataTransfer): boolean {
 }
 
 export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy }: ArtifactsTabProps) {
+  const { browseFolder, folderPicker } = useBrowseFolder("Select Artifact Folder");
   const { drafts: previewCommentDrafts, addDraft, updateDraft, removeDraft } = usePreviewComments();
   const [inputFiles, setInputFiles] = useState<ArtifactFile[]>([]);
   const [outputFiles, setOutputFiles] = useState<ArtifactFile[]>([]);
@@ -243,9 +246,10 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     let data: { path: string | null } | null = null;
     let err: unknown = null;
     try {
-      data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
-      if (data.path) {
-        await addArtifactWorkdir(projectId, task.id, data.path);
+      const path = await browseFolder();
+      data = { path };
+      if (path) {
+        await addArtifactWorkdir(projectId, task.id, path);
         await loadWorkdirs();
       }
     } catch (e) {
@@ -255,11 +259,11 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       setError(err instanceof Error ? err.message : "Failed to add folder");
     } else if (data && data.path) {
       const folderPath = data.path;
-      const folderName = folderPath.split("/").pop();
+      const folderName = filesystemBasename(folderPath);
       setToastMessage(`Added folder "${folderName}"`);
     }
     setIsAddingWorkdir(false);
-  }, [projectId, task.id, loadWorkdirs]);
+  }, [projectId, task.id, loadWorkdirs, browseFolder]);
 
   const handleDeleteWorkdir = useCallback(async (entry: ArtifactWorkDirectoryEntry) => {
     if (!projectId) return;
@@ -986,6 +990,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
           setToastMessage(`Updated link "${payload.name}"`);
         }}
       />
+      {folderPicker}
     </div>
   );
 }

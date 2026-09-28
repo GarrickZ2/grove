@@ -18,7 +18,7 @@ import {
   listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir,
   type ResourceFile, type WorkDirectoryEntry,
 } from "../../api";
-import { apiClient } from "../../api/client";
+import { useBrowseFolder } from "../Projects/useBrowseFolder";
 import type { DisplayItem } from "../../api/studio-types";
 import {
   VSCodeIcon,
@@ -93,6 +93,7 @@ function dropContainsDirectory(dataTransfer: DataTransfer): boolean {
 }
 
 export function ResourcePage() {
+  const { browseFolder, folderPicker } = useBrowseFolder("Select Resource Folder");
   const { selectedProject } = useProject();
   const { showBanner } = useBanner();
   const projectId = selectedProject?.id;
@@ -398,9 +399,9 @@ export function ResourcePage() {
     setWorkdirError(null);
     let caught: unknown = null;
     try {
-      const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
-      if (data.path) {
-        await addResourceWorkdir(projectId, data.path);
+      const path = await browseFolder();
+      if (path) {
+        await addResourceWorkdir(projectId, path);
         await loadWorkdirs();
       }
     } catch (err) {
@@ -410,7 +411,7 @@ export function ResourcePage() {
       setWorkdirError(errorMessage(caught, "Failed to add folder"));
     }
     setIsAddingWorkdir(false);
-  }, [projectId, loadWorkdirs]);
+  }, [projectId, loadWorkdirs, browseFolder]);
 
   const handleDeleteWorkdir = useCallback(async (entry: WorkDirectoryEntry) => {
     if (!projectId) return;
@@ -1164,6 +1165,7 @@ export function ResourcePage() {
   );
 
   return (
+    <>
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
@@ -1382,6 +1384,8 @@ export function ResourcePage() {
         </div>
       </div>
     </motion.div>
+    {folderPicker}
+    </>
   );
 }
 

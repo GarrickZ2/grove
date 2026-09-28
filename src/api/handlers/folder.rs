@@ -11,8 +11,8 @@ use crate::api::error::ApiError;
 pub struct BrowseFolderResponse {
     pub path: Option<String>,
     /// `true` when the user dismissed the native dialog. `false` when the
-    /// picker was unavailable — it couldn't be spawned at all (e.g. running
-    /// on a headless host without osascript/zenity/kdialog) or it spawned
+    /// picker was unavailable or disabled on Windows. It couldn't be spawned
+    /// (e.g. on a headless host without osascript/zenity/kdialog) or it spawned
     /// but couldn't reach a graphical session (`DISPLAY` set but stale) —
     /// the frontend uses this to decide whether to fall back to the in-app
     /// web picker.
@@ -101,14 +101,37 @@ fn linux_display_available(display: Option<&str>, wayland_display: Option<&str>)
 }
 
 pub async fn browse_folder() -> Json<BrowseFolderResponse> {
+    browse_folder_with_prompt("Select Git Repository Folder").await
+}
+
+pub async fn browse_folder_with_prompt(prompt: &'static str) -> Json<BrowseFolderResponse> {
+    // A native picker can wait indefinitely for the user (or appear behind a
+    // window). Never run that wait on a Tokio worker serving API requests.
+    #[cfg(target_os = "windows")]
+    {
+        let _ = prompt;
+        return response_for(PickerOutcome::Unavailable);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    match tokio::task::spawn_blocking(move || browse_folder_blocking(prompt)).await {
+        Ok(outcome) => response_for(outcome),
+        Err(_) => response_for(PickerOutcome::Unavailable),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn browse_folder_blocking(prompt: &str) -> PickerOutcome {
     #[cfg(target_os = "macos")]
     {
-        response_for(classify_picker(
+        classify_picker(
             Command::new("osascript")
                 .arg("-e")
-                .arg("POSIX path of (choose folder with prompt \"Select Git Repository Folder\")")
+                .arg(format!(
+                    "POSIX path of (choose folder with prompt \"{prompt}\")"
+                ))
                 .output(),
-        ))
+        )
     }
 
     #[cfg(target_os = "linux")]
@@ -121,7 +144,7 @@ pub async fn browse_folder() -> Json<BrowseFolderResponse> {
         let display = std::env::var("DISPLAY").ok();
         let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
         if !linux_display_available(display.as_deref(), wayland_display.as_deref()) {
-            return response_for(PickerOutcome::Unavailable);
+            return PickerOutcome::Unavailable;
         }
 
         // Try zenity first; if it's installed and the user either picked or
@@ -129,45 +152,44 @@ pub async fn browse_folder() -> Json<BrowseFolderResponse> {
         // fall through to kdialog. kdialog's outcome is final.
         let zenity = classify_picker(
             Command::new("zenity")
-                .args([
-                    "--file-selection",
-                    "--directory",
-                    "--title=Select Git Repository Folder",
-                ])
+                .args(["--file-selection", "--directory"])
+                .arg(format!("--title={prompt}"))
                 .output(),
         );
         let outcome = if matches!(zenity, PickerOutcome::Unavailable) {
             classify_picker(
                 Command::new("kdialog")
-                    .args([
-                        "--getexistingdirectory",
-                        ".",
-                        "--title",
-                        "Select Git Repository Folder",
-                    ])
+                    .args(["--getexistingdirectory", ".", "--title", prompt])
                     .output(),
             )
         } else {
             zenity
         };
-        response_for(outcome)
+        outcome
     }
+}
 
+#[derive(Debug, Serialize)]
+pub struct FolderRootsResponse {
+    pub roots: Vec<String>,
+    pub home: Option<String>,
+}
+
+pub async fn folder_roots() -> Json<FolderRootsResponse> {
     #[cfg(target_os = "windows")]
-    {
-        // Exit non-zero on cancel so classify_picker reports `Cancelled`
-        // (a zero-exit / empty-stdout case would also report Cancelled, but
-        // making it explicit keeps intent clear and the script future-proof).
-        let script = "Add-Type -AssemblyName System.Windows.Forms; \
-                      $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
-                      $f.Description = 'Select Git Repository Folder'; \
-                      if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath } else { exit 1 }";
-        return response_for(classify_picker(
-            Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-Command", script])
-                .output(),
-        ));
-    }
+    let roots = {
+        use windows_sys::Win32::Storage::FileSystem::GetLogicalDrives;
+        let mask = unsafe { GetLogicalDrives() };
+        (0..26)
+            .filter(|index| mask & (1 << index) != 0)
+            .map(|index| format!("{}:\\", (b'A' + index as u8) as char))
+            .collect()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let roots = vec!["/".to_string()];
+
+    let home = dirs::home_dir().map(|path| path.to_string_lossy().into_owned());
+    Json(FolderRootsResponse { roots, home })
 }
 
 // ─── Read File Handler ───────────────────────────────────────────────────────
@@ -192,11 +214,11 @@ pub async fn read_file(
         return Err(ApiError::bad_request("Only .md files are supported"));
     }
 
-    if !path.starts_with('/') {
+    if !std::path::Path::new(path).is_absolute() {
         return Err(ApiError::bad_request("Path must be absolute"));
     }
 
-    match std::fs::read_to_string(path) {
+    match tokio::fs::read_to_string(path).await {
         Ok(content) => Ok(Json(ReadFileResponse {
             path: path.clone(),
             content,
@@ -262,7 +284,10 @@ pub fn list_folder_inner(q: ListFolderQuery) -> Result<ListFolderResponse, ListF
     // `grove mobile`, Cloudflare Access / equivalent for public deploys) gates
     // who can call this endpoint. If you ever expose this without an auth
     // layer in front, add `canonicalize()` + an allowlist-prefix check.
-    if raw.split('/').any(|seg| seg == "..") {
+    if std::path::Path::new(raw)
+        .components()
+        .any(|component| component == std::path::Component::ParentDir)
+    {
         return Err(ListFolderError::BadRequest(
             "path must not contain `..`".into(),
         ));
@@ -315,16 +340,19 @@ pub fn list_folder_inner(q: ListFolderQuery) -> Result<ListFolderResponse, ListF
         path: raw.to_string(),
         parent: p.parent().map(|pp| pp.to_string_lossy().to_string()),
         entries,
-        home: std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .ok(),
+        home: dirs::home_dir().map(|path| path.to_string_lossy().into_owned()),
     })
 }
 
 pub async fn list_folder(
     Query(q): Query<ListFolderQuery>,
 ) -> Result<Json<ListFolderResponse>, (StatusCode, Json<ApiError>)> {
-    match list_folder_inner(q) {
+    // Network drives can block in metadata/read_dir. Keep that wait off the
+    // runtime worker so one inaccessible drive cannot stall unrelated APIs.
+    let result = tokio::task::spawn_blocking(move || list_folder_inner(q))
+        .await
+        .map_err(|e| ApiError::internal(format!("folder listing failed: {e}")))?;
+    match result {
         Ok(r) => Ok(Json(r)),
         Err(ListFolderError::BadRequest(msg)) => Err(ApiError::bad_request(&msg)),
         Err(ListFolderError::Forbidden(msg)) => Err(ApiError::forbidden(&msg)),
@@ -387,8 +415,9 @@ mod tests {
 
     #[test]
     fn list_folder_rejects_traversal() {
+        let td = TempDir::new().unwrap();
         let q = ListFolderQuery {
-            path: "/etc/../etc".into(),
+            path: td.path().join("..").join("other").to_string_lossy().into(),
         };
         let err = list_folder_inner(q).unwrap_err();
         assert!(err.to_string().contains(".."));
@@ -396,8 +425,13 @@ mod tests {
 
     #[test]
     fn list_folder_404_on_missing() {
+        let td = TempDir::new().unwrap();
         let q = ListFolderQuery {
-            path: "/no/such/path/xyz123".into(),
+            path: td
+                .path()
+                .join("no-such-path-xyz123")
+                .to_string_lossy()
+                .into(),
         };
         let err = list_folder_inner(q).unwrap_err();
         let s = err.to_string();
@@ -421,7 +455,10 @@ mod tests {
     }
 
     fn fake_output_with_stderr(success: bool, stdout: &str, stderr: &str) -> Output {
+        #[cfg(unix)]
         use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
         Output {
             status: std::process::ExitStatus::from_raw(if success { 0 } else { 1 }),
             stdout: stdout.as_bytes().to_vec(),
@@ -429,7 +466,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     fn err_output() -> io::Result<Output> {
         Err(io::Error::new(io::ErrorKind::NotFound, "no such binary"))
     }
@@ -501,6 +537,29 @@ mod tests {
             "Gtk-Message: Failed to load module \"canberra-gtk-module\"\n",
         )));
         assert_eq!(r, PickerOutcome::Cancelled);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_native_picker_returns_web_fallback_without_spawning_powershell() {
+        let response = browse_folder().await.0;
+        assert!(response.path.is_none());
+        assert!(!response.cancelled);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_roots_include_current_drive() {
+        let current = std::env::current_dir().unwrap();
+        let root = current
+            .components()
+            .next()
+            .unwrap()
+            .as_os_str()
+            .to_string_lossy();
+        let expected = format!("{}\\", root);
+        let response = folder_roots().await.0;
+        assert!(response.roots.iter().any(|drive| drive == &expected));
     }
 
     #[cfg(target_os = "linux")]

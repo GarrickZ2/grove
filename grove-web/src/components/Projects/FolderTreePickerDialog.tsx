@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Folder, GitBranch, ChevronUp, ChevronRight, Home as HomeIcon, Check, X } from "lucide-react";
 import { Button, DialogShell } from "../ui";
-import { listFolder, type ListFolderResponse } from "../../api/projects";
+import { getFolderRoots, listFolder, type ListFolderResponse } from "../../api/projects";
+import { filesystemBreadcrumbs } from "../../utils/filesystemPath";
 
 interface Props {
   isOpen: boolean;
@@ -10,7 +11,7 @@ interface Props {
   onSelect: (path: string) => void;
   /** Modal title. Default: "Select Folder". */
   title?: string;
-  /** Starting dir. Default: server's $HOME (probed via root). */
+  /** Starting dir. Default: the server user's home directory. */
   initialPath?: string;
 }
 
@@ -38,6 +39,9 @@ export function FolderTreePickerDialog({
   const [data, setData] = useState<ListFolderResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [roots, setRoots] = useState<string[]>([]);
+  const [home, setHome] = useState<string | null>(null);
+  const [directPath, setDirectPath] = useState("");
 
   const reqIdRef = useRef(0);
   const prevIsOpenRef = useRef(false);
@@ -59,63 +63,43 @@ export function FolderTreePickerDialog({
     }
   };
 
-  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (isOpen && !prevIsOpenRef.current) {
       // close→open transition: initialize browser state
-      if (initialPath) {
-        void load(initialPath);
-      } else {
-        void (async () => {
-          const myId = ++reqIdRef.current;
-          try {
-            const probe = await listFolder("/");
-            if (reqIdRef.current !== myId) return;
-            await load(probe.home || "/");
-          } catch (e: unknown) {
-            if (reqIdRef.current === myId) setError(extractErrorMessage(e));
+      setData(null);
+      setLoading(true);
+      void (async () => {
+        const myId = ++reqIdRef.current;
+        try {
+          const locations = await getFolderRoots();
+          if (reqIdRef.current !== myId) return;
+          setRoots(locations.roots);
+          setHome(locations.home);
+          const start = initialPath || locations.home || locations.roots[0];
+          if (start) await load(start);
+          else {
+            setError("No folders are available on this system.");
+            setLoading(false);
           }
-        })();
-      }
+        } catch (e: unknown) {
+          if (reqIdRef.current === myId) {
+            setError(extractErrorMessage(e));
+            setLoading(false);
+          }
+        }
+      })();
     }
     prevIsOpenRef.current = isOpen;
   }, [isOpen, initialPath]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!isOpen) return null;
 
-  // Detect path separator from the response. Windows paths use '\' and start
-  // with a drive letter (e.g. "C:\Users\dev"); Unix uses '/' with a synthetic
-  // root. We assume paths don't mix separators within a single response.
-  const sep: "/" | "\\" = data?.path.includes("\\") ? "\\" : "/";
-
-  // Build breadcrumb segments cross-platform.
-  // Linux "/home/dev"   → [{/, /}, {home, /home}, {dev, /home/dev}]
-  // Windows "C:\Users\dev" → [{C:, C:\}, {Users, C:\Users}, {dev, C:\Users\dev}]
-  const crumbs: Array<{ label: string; path: string }> = [];
-  if (data) {
-    const segs = data.path.split(sep).filter(Boolean);
-    if (sep === "/") {
-      crumbs.push({ label: "/", path: "/" });
-    }
-    let acc = "";
-    segs.forEach((seg, i) => {
-      if (sep === "\\" && i === 0) {
-        // First Windows segment is the drive letter; root path is "DRIVE\"
-        acc = `${seg}${sep}`;
-      } else if (sep === "/" && i === 0) {
-        acc = `/${seg}`;
-      } else {
-        acc = `${acc}${sep}${seg}`;
-      }
-      crumbs.push({ label: seg, path: acc });
-    });
-  }
+  const crumbs = data ? filesystemBreadcrumbs(data.path) : [];
 
   const currentName = crumbs.length ? crumbs[crumbs.length - 1].label : "";
 
   return (
-    <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-2xl">
+    <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-2xl" zIndex={300}>
       <div className="glass-overlay rounded-2xl overflow-hidden w-full max-w-[95vw]">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
@@ -134,6 +118,17 @@ export function FolderTreePickerDialog({
         <div className="px-5 py-4 space-y-3">
           {/* Toolbar */}
           <div className="flex items-center gap-2">
+            {roots.length > 0 && roots[0] !== "/" && (
+              <select
+                aria-label="Drive"
+                value={roots.find((root) => data?.path.slice(0, 2).toLowerCase() === root.slice(0, 2).toLowerCase()) || ""}
+                onChange={(e) => void load(e.target.value)}
+                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-sm text-[var(--color-text)]"
+              >
+                <option value="" disabled>Drive</option>
+                {roots.map((root) => <option key={root} value={root}>{root}</option>)}
+              </select>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -146,20 +141,20 @@ export function FolderTreePickerDialog({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => data?.home && void load(data.home)}
-              disabled={!data?.home || loading}
+              onClick={() => home && void load(home)}
+              disabled={!home || loading}
               type="button"
             >
               <HomeIcon className="w-4 h-4 mr-1" /> Home
             </Button>
             <div className="flex-1 flex items-center gap-0.5 overflow-x-auto text-xs text-[var(--color-text-muted)] whitespace-nowrap">
               {crumbs.map((c, i) => (
-                <span key={c.path || sep} className="flex items-center gap-0.5 shrink-0">
+                <span key={c.path} className="flex items-center gap-0.5 shrink-0">
                   {i > 0 && <ChevronRight className="w-3 h-3 opacity-40 shrink-0" />}
                   <button
                     type="button"
                     className="px-1.5 py-0.5 rounded-md hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)] disabled:opacity-50 transition-colors"
-                    onClick={() => void load(c.path || sep)}
+                    onClick={() => void load(c.path)}
                     disabled={loading}
                     title={c.path}
                   >
@@ -169,6 +164,22 @@ export function FolderTreePickerDialog({
               ))}
             </div>
           </div>
+          <form
+            className="flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (directPath.trim()) void load(directPath.trim());
+            }}
+          >
+            <input
+              aria-label="Folder path"
+              value={directPath}
+              onChange={(event) => setDirectPath(event.target.value)}
+              placeholder="Go to an absolute path, including network shares"
+              className="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-sm text-[var(--color-text)]"
+            />
+            <Button type="submit" variant="secondary" size="sm" disabled={!directPath.trim() || loading}>Go</Button>
+          </form>
 
           {/* List */}
           <div

@@ -1,8 +1,8 @@
 /**
  * Install Chrome Companion — 2-step wizard.
  *
- * Step 1: "Choose Folder & Install" — user picks a directory via native
- *         OS folder picker, backend unpacks the embedded companion into
+ * Step 1: "Choose Folder & Install" — user picks a directory, then the
+ *         backend unpacks the embedded companion into
  *         that path, then launches the user's default browser on
  *         chrome://extensions/ (Chromium browsers forward to their own
  *         protocol automatically).
@@ -14,7 +14,8 @@
  *         user can always see where the companion was installed.
  *
  * Backend pieces this depends on:
- *   - GET  /api/v1/extension/browse-install-folder → native folder picker
+ *   - GET  /api/v1/browse-folder              → native picker where available
+ *   - GET  /api/v1/folders/*                 → in-app server folder browser
  *   - POST /api/v1/extension/install               → unpack to user path
  *   - POST /api/v1/extension/open-chrome           → default browser launch
  *   - POST /api/v1/extension/reveal-path           → file manager on dir
@@ -36,10 +37,10 @@ import {
   installCompanion,
   openChromeExtensions,
   revealCompanionPath,
-  browseInstallFolder,
   getExtensionStatusDetails,
   type ExtensionStatus,
 } from "../../api/extension";
+import { useBrowseFolder } from "../Projects/useBrowseFolder";
 
 interface Props {
   /** Parent should mount with `{open && <InstallExtensionDialog ... />}`.
@@ -51,6 +52,7 @@ interface Props {
 type StepKind = 1 | 2;
 
 export function InstallExtensionDialog({ onClose }: Props) {
+  const { browseFolder, folderPicker } = useBrowseFolder("Select Companion Install Folder");
   const [step, setStep] = useState<StepKind>(1);
   const [installing, setInstalling] = useState(false);
   const [installPath, setInstallPath] = useState<string | null>(null);
@@ -81,14 +83,14 @@ export function InstallExtensionDialog({ onClose }: Props) {
     setInstallError(null);
     setChromeWarning(null);
     try {
-      // 1. Pop native folder picker. Cancelled = stay on step 1.
-      const picked = await browseInstallFolder();
-      if (!picked.path) {
+      // 1. Choose a folder. Cancelled = stay on step 1.
+      const path = await browseFolder();
+      if (!path) {
         setInstalling(false);
         return;
       }
       // 2. Unpack the embedded companion into the chosen path.
-      const result = await installCompanion(picked.path);
+      const result = await installCompanion(path);
       setInstallPath(result.path);
       setStep(2);
       // 3. Best-effort: launch the user's default browser on
@@ -130,7 +132,9 @@ export function InstallExtensionDialog({ onClose }: Props) {
     }
   };
 
-  return createPortal(
+  return (
+    <>
+      {createPortal(
     <div
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-6"
       onClick={onClose}
@@ -238,6 +242,9 @@ export function InstallExtensionDialog({ onClose }: Props) {
       </motion.div>
     </div>,
     document.body,
+      )}
+      {folderPicker}
+    </>
   );
 }
 

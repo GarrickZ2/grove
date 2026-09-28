@@ -3,9 +3,9 @@ import { motion } from "framer-motion";
 import { X, Plus, FolderOpen, GitBranch, Sparkles, Code2, Globe } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
-import { FolderTreePickerDialog } from "./FolderTreePickerDialog";
+import { useBrowseFolder } from "./useBrowseFolder";
 import { useIsMobile } from "../../hooks";
-import { apiClient } from "../../api/client";
+import { filesystemBasename, isAbsoluteFilesystemPath, joinFilesystemPath } from "../../utils/filesystemPath";
 import { useCommand, useKeyboardScope } from "../../keyboard";
 
 type ProjectMode = "coding" | "studio";
@@ -124,8 +124,7 @@ export function AddProjectDialog({
 
   const [error, setError] = useState("");
   const { isMobile } = useIsMobile();
-
-  const [pickerOpen, setPickerOpen] = useState<null | "existing" | "parent">(null);
+  const { browseFolder, folderPicker } = useBrowseFolder();
 
   const prevIsOpenRef = useRef(isOpen);
 
@@ -145,7 +144,6 @@ export function AddProjectDialog({
       setGitName("");
       setGitNameTouched(false);
       setError("");
-      setPickerOpen(null);
     }
     prevIsOpenRef.current = isOpen;
   }, [isOpen, initialMode]);
@@ -185,12 +183,7 @@ export function AddProjectDialog({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // Auto-derive a project name from a filesystem path (last segment).
-  const deriveNameFromPath = (p: string): string => {
-    const trimmed = p.trim().replace(/\/+$/, "");
-    if (!trimmed) return "";
-    const parts = trimmed.split("/");
-    return parts[parts.length - 1] ?? "";
-  };
+  const deriveNameFromPath = filesystemBasename;
 
   // Auto-derive a project name from a git URL — uses parseGitInput to
   // handle web UI URLs (merge_requests, pulls, tree, etc.) properly.
@@ -206,62 +199,19 @@ export function AddProjectDialog({
   const displayedExistingName = existingNameTouched ? existingName : deriveNameFromPath(path);
   const displayedGitName = gitNameTouched ? gitName : deriveNameFromGitUrl(gitUrl);
 
-  // In remote/mobile mode the native dialog would open on the server's
-  // physical screen (invisible to the remote user) and `Command::output()`
-  // blocks until someone dismisses it on that screen — so the request hangs
-  // and our "fallback when null/throw" path never triggers. Skip the native
-  // call entirely in that mode and go straight to the web picker.
-  // `window.__GROVE_REMOTE__` is set by AuthGate when `/api/v1/auth/info`
-  // reports either `remote: true` or `required: true`.
-  const isRemoteMode = (): boolean =>
-    (window as unknown as Record<string, unknown>).__GROVE_REMOTE__ === true;
-
-  // Use apiClient (not raw fetch) so HMAC headers are attached in mobile mode.
   const handleBrowseExisting = async () => {
-    if (isRemoteMode()) {
-      setPickerOpen("existing");
-      return;
-    }
-    try {
-      const data = await apiClient.get<{ path: string | null; cancelled?: boolean }>(
-        "/api/v1/browse-folder",
-      );
-      if (data.path) {
-        setPath(data.path);
-        if (!existingNameTouched) setExistingName(deriveNameFromPath(data.path));
-        setError("");
-      } else if (!data.cancelled) {
-        // Native dialog unavailable (headless host) — open web picker.
-        setPickerOpen("existing");
-      }
-      // cancelled === true → user dismissed the native dialog; do nothing.
-    } catch (err) {
-      console.error("Failed to browse folder:", err);
-      // Network/API failure — fall back to web picker rather than dead-ending.
-      setPickerOpen("existing");
-    }
+    const selected = await browseFolder("Select Project Folder");
+    if (!selected) return;
+    setPath(selected);
+    if (!existingNameTouched) setExistingName(deriveNameFromPath(selected));
+    setError("");
   };
 
   const handleBrowseParent = async () => {
-    if (isRemoteMode()) {
-      setPickerOpen("parent");
-      return;
-    }
-    try {
-      const data = await apiClient.get<{ path: string | null; cancelled?: boolean }>(
-        "/api/v1/browse-folder",
-      );
-      if (data.path) {
-        setParentDir(data.path);
-        setError("");
-      } else if (!data.cancelled) {
-        setPickerOpen("parent");
-      }
-      // cancelled === true → user dismissed the native dialog; do nothing.
-    } catch (err) {
-      console.error("Failed to browse folder:", err);
-      setPickerOpen("parent");
-    }
+    const selected = await browseFolder("Select Parent Directory");
+    if (!selected) return;
+    setParentDir(selected);
+    setError("");
   };
 
   const handleSubmitExisting = async () => {
@@ -269,8 +219,8 @@ export function AddProjectDialog({
       setError("Project path is required");
       return;
     }
-    if (!path.startsWith("/") && !path.startsWith("~")) {
-      setError("Please enter an absolute path (e.g., /Users/... or ~/...)");
+    if (!isAbsoluteFilesystemPath(path)) {
+      setError("Please enter an absolute path");
       return;
     }
     setError("");
@@ -278,16 +228,16 @@ export function AddProjectDialog({
     await onAdd(path.trim(), finalName || undefined);
   };
 
-  const trimmedParent = parentDir.trim().replace(/\/+$/, "");
+  const trimmedParent = parentDir.trim();
   const trimmedName = name.trim();
-  const fullPath = trimmedParent && trimmedName ? `${trimmedParent}/${trimmedName}` : "";
+  const fullPath = trimmedParent && trimmedName ? joinFilesystemPath(trimmedParent, trimmedName) : "";
 
   const handleSubmitNew = async () => {
     if (!trimmedParent) {
       setError("Parent directory is required");
       return;
     }
-    if (!trimmedParent.startsWith("/") && !trimmedParent.startsWith("~")) {
+    if (!isAbsoluteFilesystemPath(trimmedParent)) {
       setError("Parent directory must be an absolute path");
       return;
     }
@@ -661,21 +611,7 @@ export function AddProjectDialog({
         </div>
       </div>
     </DialogShell>
-    <FolderTreePickerDialog
-      isOpen={pickerOpen !== null}
-      onClose={() => setPickerOpen(null)}
-      onSelect={(p) => {
-        if (pickerOpen === "existing") {
-          setPath(p);
-          if (!existingNameTouched) setExistingName(deriveNameFromPath(p));
-        } else if (pickerOpen === "parent") {
-          setParentDir(p);
-        }
-        setError("");
-        setPickerOpen(null);
-      }}
-      title={pickerOpen === "parent" ? "Select Parent Directory" : "Select Project Folder"}
-    />
+    {folderPicker}
     </>
   );
 }

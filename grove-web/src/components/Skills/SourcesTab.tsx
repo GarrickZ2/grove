@@ -20,7 +20,7 @@ function isPluginSource(source: SkillSource) {
 
 function sourceDisplayName(source: SkillSource) {
   if (!isPluginSource(source)) return source.name;
-  const parts = source.url.replace(/\/+$/, "").split("/");
+  const parts = source.url.replace(/[\\/]+$/, "").split(/[\\/]/);
   return parts.length >= 2 ? parts[parts.length - 2] : source.name;
 }
 

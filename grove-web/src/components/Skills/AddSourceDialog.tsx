@@ -2,7 +2,7 @@ import { useState } from "react";
 import { X, GitBranch, FolderOpen } from "lucide-react";
 import { Button, DialogShell } from "../ui";
 import { useIsMobile } from "../../hooks";
-import { apiClient } from "../../api/client";
+import { useBrowseFolder } from "../Projects/useBrowseFolder";
 import { addSource, updateSource } from "../../api";
 import type { SkillSource } from "../../api";
 import { useCommand, useKeyboardScope } from "../../keyboard";
@@ -24,6 +24,7 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved, initi
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isBrowsing, setIsBrowsing] = useState(false);
+  const { browseFolder, folderPicker } = useBrowseFolder("Select Skill Source Folder");
   const [isNameAutoFilled, setIsNameAutoFilled] = useState(false);
   const { isMobile } = useIsMobile();
 
@@ -98,11 +99,8 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved, initi
   const handleBrowse = async () => {
     setIsBrowsing(true);
     try {
-      // apiClient signs requests with HMAC in mobile mode; raw fetch would 401.
-      const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
-      if (data.path) {
-        handleUrlChange(data.path.replace(/\/+$/, ""));
-      }
+      const path = await browseFolder();
+      if (path) handleUrlChange(path);
     } catch {
       // ignore — picker dismissed or unavailable
     }
@@ -147,6 +145,7 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved, initi
   };
 
   return (
+    <>
     <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-lg">
       {isOpen && (
         <AddSourceDialogBindings
@@ -273,6 +272,8 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved, initi
               </div>
       </div>
     </DialogShell>
+    {folderPicker}
+    </>
   );
 }
 

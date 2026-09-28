@@ -29,6 +29,19 @@ describe("resolveRelativeFilePath", () => {
       suffix: "",
     });
   });
+
+  it("keeps Windows absolute roots while resolving file references", () => {
+    expect(resolveRelativeFilePath("C:\\work\\docs\\readme.md", "../image.png")).toEqual({
+      path: "C:/work/image.png", suffix: "",
+    });
+    expect(resolveRelativeFilePath("C:\\readme.md", "../image.png")).toBeUndefined();
+    expect(resolveRelativeFilePath("\\\\server\\share\\docs\\readme.md", "../image.png")).toEqual({
+      path: "//server/share/image.png", suffix: "",
+    });
+    expect(resolveRelativeFilePath("docs/readme.md", "file:///C:/work/image.png")).toEqual({
+      path: "C:/work/image.png", suffix: "",
+    });
+  });
 });
 
 describe("resolveFileReference", () => {
