@@ -28,6 +28,10 @@ enum ClientMessage {
     Prompt {
         text: String,
         #[serde(default)]
+        client_message_id: Option<String>,
+        #[serde(default)]
+        retry: bool,
+        #[serde(default)]
         attachments: Vec<ContentBlockData>,
         #[serde(default)]
         sender: Option<String>,
@@ -58,6 +62,10 @@ enum ClientMessage {
     /// Add a message to the pending queue
     QueueMessage {
         text: String,
+        #[serde(default)]
+        client_message_id: Option<String>,
+        #[serde(default)]
+        retry: bool,
         #[serde(default)]
         attachments: Vec<ContentBlockData>,
         /// Per-message config bundle captured at the moment the user clicked
@@ -165,6 +173,13 @@ enum ServerMessage {
     },
     PromptStarted {
         message_ids: Vec<String>,
+    },
+    InputAccepted {
+        client_message_id: String,
+    },
+    InputRejected {
+        client_message_id: String,
+        message: String,
     },
     PromptCompleted {
         message_ids: Vec<String>,
@@ -274,6 +289,8 @@ enum ServerMessage {
     },
     UserMessage {
         text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client_message_id: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<ContentBlockData>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -511,6 +528,16 @@ impl From<AcpUpdate> for ServerMessage {
             AcpUpdate::PromptStarted { message_ids } => {
                 ServerMessage::PromptStarted { message_ids }
             }
+            AcpUpdate::InputAccepted { client_message_id } => {
+                ServerMessage::InputAccepted { client_message_id }
+            }
+            AcpUpdate::InputRejected {
+                client_message_id,
+                message,
+            } => ServerMessage::InputRejected {
+                client_message_id,
+                message,
+            },
             AcpUpdate::PromptCompleted {
                 message_ids,
                 stop_reason,
@@ -710,11 +737,13 @@ impl From<AcpUpdate> for ServerMessage {
             AcpUpdate::Error { message } => ServerMessage::Error { message },
             AcpUpdate::UserMessage {
                 text,
+                client_message_id,
                 attachments,
                 sender,
                 terminal,
             } => ServerMessage::UserMessage {
                 text,
+                client_message_id,
                 attachments,
                 sender,
                 terminal,
@@ -801,11 +830,25 @@ impl From<AcpUpdate> for ServerMessage {
 }
 
 /// Handle the ACP WebSocket connection
-async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartConfig) {
+async fn handle_acp_ws(
+    socket: WebSocket,
+    session_key: String,
+    config: AcpStartConfig,
+    attach_only: bool,
+) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Check if we're reattaching to an existing session
     let is_existing = acp::session_exists(&session_key);
+    if attach_only && !is_existing {
+        let msg = ServerMessage::Error {
+            message: "No live ACP session to refresh. Use Reconnect to start it again.".into(),
+        };
+        if let Ok(json) = serde_json::to_string(&msg) {
+            let _ = ws_sender.send(Message::Text(json.into())).await;
+        }
+        return;
+    }
     let should_cancel_replayed_unresolved_events = !is_existing
         && config.chat_id.as_ref().is_some_and(|chat_id| {
             tasks::get_chat_session(&config.project_key, &config.task_id, chat_id)
@@ -868,7 +911,21 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
     let history_chat_id = config.chat_id.clone();
 
     // Get or start ACP session (thread managed by acp module)
-    let (handle, mut update_rx) = match acp::get_or_start_session(session_key, config).await {
+    let session = if attach_only {
+        acp::get_session_handle(&session_key)
+            .map(|handle| {
+                let rx = handle.subscribe();
+                (handle, rx)
+            })
+            .ok_or_else(|| {
+                crate::error::GroveError::Session(
+                    "No live ACP session to refresh. Use Reconnect to start it again.".into(),
+                )
+            })
+    } else {
+        acp::get_or_start_session(session_key, config).await
+    };
+    let (handle, mut update_rx) = match session {
         Ok(r) => r,
         Err(e) => {
             let msg = ServerMessage::Error {
@@ -1122,8 +1179,14 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
     // Task: Forward ACP updates to WebSocket
     let handle_for_updates = handle.clone();
     let mut updates_to_ws = tokio::spawn(async move {
+        let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(15));
         loop {
             tokio::select! {
+                _ = heartbeat.tick() => {
+                    if ws_sender.send(Message::Text("{\"type\":\"heartbeat\"}".into())).await.is_err() {
+                        break;
+                    }
+                }
                 update = update_rx.recv() => match update {
                     Ok(update) => {
                         let is_ended = matches!(update, AcpUpdate::SessionEnded);
@@ -1178,12 +1241,50 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                         match client_msg {
                             ClientMessage::Prompt {
                                 text,
+                                client_message_id,
+                                retry,
                                 attachments,
                                 sender,
                                 terminal,
                                 config,
                             } => {
-                                if let Err(e) = handle_for_input
+                                if let Some(id) = client_message_id {
+                                    if id.len() > 128 || id.is_empty() {
+                                        handle_for_input.emit(AcpUpdate::InputRejected {
+                                            client_message_id: id,
+                                            message: "Invalid message id".into(),
+                                        });
+                                        continue;
+                                    }
+                                    if !handle_for_input.claim_browser_input(&id, retry) {
+                                        handle_for_input.emit(AcpUpdate::InputAccepted {
+                                            client_message_id: id,
+                                        });
+                                        continue;
+                                    }
+                                    match handle_for_input
+                                        .send_tracked_prompt_with_id(
+                                            id.clone(),
+                                            text,
+                                            attachments,
+                                            sender,
+                                            terminal,
+                                            config,
+                                        )
+                                        .await
+                                    {
+                                        Ok(()) => handle_for_input.emit(AcpUpdate::InputAccepted {
+                                            client_message_id: id,
+                                        }),
+                                        Err(e) => {
+                                            handle_for_input.release_browser_input(&id);
+                                            handle_for_input.emit(AcpUpdate::InputRejected {
+                                                client_message_id: id,
+                                                message: e.to_string(),
+                                            });
+                                        }
+                                    }
+                                } else if let Err(e) = handle_for_input
                                     .send_prompt(text, attachments, sender, terminal, config)
                                     .await
                                 {
@@ -1237,6 +1338,8 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                             }
                             ClientMessage::QueueMessage {
                                 text,
+                                client_message_id,
+                                retry,
                                 attachments,
                                 config: msg_config,
                             } => {
@@ -1245,18 +1348,44 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                                 // 兼容旧客户端。
                                 let config =
                                     msg_config.or_else(|| Some(handle_for_input.snapshot_config()));
-                                let messages = handle_for_input
-                                    .submit_queued_message(QueuedMessage::new(
-                                        text,
-                                        attachments,
-                                        None,
-                                        false,
-                                        config,
-                                    ))
-                                    .await;
+                                if let Some(id) = client_message_id.as_deref() {
+                                    if id.len() > 128 || id.is_empty() {
+                                        handle_for_input.emit(AcpUpdate::InputRejected {
+                                            client_message_id: id.to_owned(),
+                                            message: "Invalid message id".into(),
+                                        });
+                                        continue;
+                                    }
+                                    if !handle_for_input.claim_browser_input(id, retry) {
+                                        handle_for_input.emit(AcpUpdate::InputAccepted {
+                                            client_message_id: id.to_owned(),
+                                        });
+                                        continue;
+                                    }
+                                }
+                                let mut queued =
+                                    QueuedMessage::new(text, attachments, None, false, config);
+                                if let Some(id) = client_message_id.as_ref() {
+                                    queued.id = id.clone();
+                                    queued.message_ids = vec![id.clone()];
+                                }
+                                let messages = handle_for_input.submit_queued_message(queued).await;
                                 match messages {
                                     Ok(messages) => {
-                                        handle_for_input.emit(AcpUpdate::QueueUpdate { messages })
+                                        handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                                        if let Some(id) = client_message_id {
+                                            handle_for_input.emit(AcpUpdate::InputAccepted {
+                                                client_message_id: id,
+                                            });
+                                        }
+                                    }
+                                    Err(e) if client_message_id.is_some() => {
+                                        let id = client_message_id.unwrap();
+                                        handle_for_input.release_browser_input(&id);
+                                        handle_for_input.emit(AcpUpdate::InputRejected {
+                                            client_message_id: id,
+                                            message: e.to_string(),
+                                        });
                                     }
                                     Err(error) => handle_for_input.emit(AcpUpdate::Error {
                                         message: error.to_string(),
@@ -2177,6 +2306,8 @@ pub async fn upload_chat_attachment(
 pub struct ImportConnectQuery {
     #[serde(default)]
     import: bool,
+    #[serde(default)]
+    attach_only: bool,
 }
 
 /// WebSocket upgrade handler for per-chat ACP sessions
@@ -2327,7 +2458,7 @@ pub async fn chat_ws_handler(
         persona_injection,
     };
 
-    Ok(ws.on_upgrade(move |socket| handle_acp_ws(socket, session_key, config)))
+    Ok(ws.on_upgrade(move |socket| handle_acp_ws(socket, session_key, config, query.attach_only)))
 }
 
 // ─── History & Take Control Handlers ─────────────────────────────────────────

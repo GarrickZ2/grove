@@ -122,6 +122,8 @@ pub struct AcpSessionHandle {
     replay_user_messages: std::sync::atomic::AtomicBool,
     /// 待执行消息队列（agent 完成当前任务后自动发送下一条）
     pending_queue: Mutex<Vec<QueuedMessage>>,
+    /// Browser input ids already admitted by this live session.
+    admitted_browser_inputs: Mutex<std::collections::HashSet<String>>,
     /// 队列暂停标志（用户正在编辑队列消息时暂停 auto-send）
     queue_paused: std::sync::atomic::AtomicBool,
     /// Serializes end-of-turn and edit-resume queue drains. Without this,
@@ -461,6 +463,14 @@ pub enum AcpUpdate {
     PromptStarted {
         message_ids: Vec<String>,
     },
+    /// Transport acknowledgement for a browser-submitted input.
+    InputAccepted {
+        client_message_id: String,
+    },
+    InputRejected {
+        client_message_id: String,
+        message: String,
+    },
     /// The agent turn ended. `stop_reason` distinguishes normal completion
     /// from cancellation or a killed session for lifecycle consumers.
     PromptCompleted {
@@ -651,6 +661,8 @@ pub enum AcpUpdate {
     /// 用户消息（load_session 回放时由 agent 发送）
     UserMessage {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_message_id: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<ContentBlockData>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3012,6 +3024,7 @@ async fn handle_session_notification(
                 let (text, attachments) = content_block_to_user_message(&chunk.content);
                 state.handle.emit(AcpUpdate::UserMessage {
                     text,
+                    client_message_id: None,
                     attachments,
                     sender: None,
                     terminal: false,
@@ -4443,6 +4456,7 @@ pub async fn get_or_start_session(
                         config.import_session,
                     ),
                     pending_queue: Mutex::new(Vec::new()),
+                    admitted_browser_inputs: Mutex::new(std::collections::HashSet::new()),
                     queue_paused: std::sync::atomic::AtomicBool::new(false),
                     queue_drain_lock: Mutex::new(()),
                     queue_mode: Mutex::new(QueueMode::default()),
@@ -6448,6 +6462,7 @@ async fn drive_session(
                 });
                 handle.emit(AcpUpdate::UserMessage {
                     text: wire_text.clone(),
+                    client_message_id: (message_ids.len() == 1).then(|| message_ids[0].clone()),
                     attachments: attachments.clone(),
                     sender,
                     terminal,
@@ -8349,6 +8364,32 @@ impl AcpSessionHandle {
             .map(|_| ())
     }
 
+    /// Claim a browser input before its asynchronous submit path. A recent
+    /// persisted UserMessage also covers retries after a backend restart.
+    pub(crate) fn claim_browser_input(&self, id: &str, retry: bool) -> bool {
+        let mut admitted = self.admitted_browser_inputs.lock().unwrap();
+        if admitted.contains(id) {
+            return false;
+        }
+        if let Some(chat_id) = self.chat_id.as_deref().filter(|_| retry) {
+            if crate::storage::chat_history::contains_client_message_id(
+                &self.project_key,
+                &self.task_id,
+                chat_id,
+                id,
+            ) {
+                admitted.insert(id.to_owned());
+                return false;
+            }
+        }
+        admitted.insert(id.to_owned());
+        true
+    }
+
+    pub(crate) fn release_browser_input(&self, id: &str) {
+        self.admitted_browser_inputs.lock().unwrap().remove(id);
+    }
+
     /// Accepts a prompt and returns Grove's own message id. This id is local
     /// to Grove and remains stable through queueing and Compact turns; it is
     /// unrelated to optional ACP output `MessageId`s supplied by agents.
@@ -8373,7 +8414,7 @@ impl AcpSessionHandle {
         Ok(message_id)
     }
 
-    async fn send_tracked_prompt_with_id(
+    pub(crate) async fn send_tracked_prompt_with_id(
         &self,
         message_id: String,
         text: String,
@@ -9438,6 +9479,7 @@ pub fn new_handle_for_test(
         suppress_emit: std::sync::atomic::AtomicBool::new(false),
         replay_user_messages: std::sync::atomic::AtomicBool::new(false),
         pending_queue: Mutex::new(Vec::new()),
+        admitted_browser_inputs: Mutex::new(std::collections::HashSet::new()),
         queue_paused: std::sync::atomic::AtomicBool::new(false),
         queue_drain_lock: Mutex::new(()),
         queue_mode: Mutex::new(QueueMode::default()),
@@ -9498,6 +9540,7 @@ pub fn new_handle_for_test(
                     });
                     handle_for_loop.emit(AcpUpdate::UserMessage {
                         text,
+                        client_message_id: (message_ids.len() == 1).then(|| message_ids[0].clone()),
                         attachments,
                         sender,
                         terminal,

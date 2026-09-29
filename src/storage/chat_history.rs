@@ -235,6 +235,8 @@ pub fn should_persist(update: &AcpUpdate) -> bool {
         AcpUpdate::Busy { .. }
             | AcpUpdate::Error { .. }
             | AcpUpdate::PromptStarted { .. }
+            | AcpUpdate::InputAccepted { .. }
+            | AcpUpdate::InputRejected { .. }
             | AcpUpdate::PromptCompleted { .. }
             | AcpUpdate::PromptFailed { .. }
             | AcpUpdate::SessionEnded
@@ -307,6 +309,31 @@ fn append_json_line(f: &mut fs::File, event: &AcpUpdate) {
 pub fn load_history(project: &str, task_id: &str, chat_id: &str) -> Vec<AcpUpdate> {
     let path = history_file_path(project, task_id, chat_id);
     load_history_from_path(&path, Some(MAX_HISTORY_READ_BYTES))
+}
+
+/// Retry deduplication must search the whole history, not the bounded UI tail.
+pub fn contains_client_message_id(project: &str, task_id: &str, chat_id: &str, id: &str) -> bool {
+    let path = history_file_path(project, task_id, chat_id);
+    contains_client_message_id_at_path(&path, id)
+}
+
+fn contains_client_message_id_at_path(path: &Path, id: &str) -> bool {
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    let reader = std::io::BufReader::new(file);
+    for line in reader.lines().map_while(Result::ok) {
+        if !line.contains("client_message_id") {
+            continue;
+        }
+        if serde_json::Deserializer::from_str(&line)
+            .into_iter::<AcpUpdate>()
+            .any(|event| matches!(event, Ok(AcpUpdate::UserMessage { client_message_id: Some(existing), .. }) if existing == id))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn load_history_from_path(path: &Path, max_read_bytes: Option<u64>) -> Vec<AcpUpdate> {
@@ -806,11 +833,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn client_message_id_survives_history_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        let event = AcpUpdate::UserMessage {
+            text: "retry me".into(),
+            client_message_id: Some("browser-message-1".into()),
+            attachments: vec![],
+            sender: None,
+            terminal: false,
+        };
+        append_event_to_path(&path, &event);
+        let restored = load_history_from_path(&path, None);
+        assert!(
+            matches!(restored.as_slice(), [AcpUpdate::UserMessage { client_message_id: Some(id), .. }] if id == "browser-message-1")
+        );
+        assert!(contains_client_message_id_at_path(
+            &path,
+            "browser-message-1"
+        ));
+        assert!(!contains_client_message_id_at_path(
+            &path,
+            "browser-message-2"
+        ));
+    }
+
+    #[test]
     fn full_history_reader_keeps_events_before_the_bounded_tail() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("history.jsonl");
         let first = AcpUpdate::UserMessage {
             text: "first prompt".to_string(),
+            client_message_id: None,
             attachments: Vec::new(),
             sender: None,
             terminal: false,
@@ -1215,6 +1269,7 @@ mod tests {
         let events = vec![
             AcpUpdate::UserMessage {
                 text: "hello".into(),
+                client_message_id: None,
                 attachments: vec![],
                 sender: None,
                 terminal: false,

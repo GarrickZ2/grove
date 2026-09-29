@@ -225,6 +225,8 @@ pub async fn execute(agent: String, cwd: String) {
                 Ok(
                     AcpUpdate::Busy { .. }
                     | AcpUpdate::PromptStarted { .. }
+                    | AcpUpdate::InputAccepted { .. }
+                    | AcpUpdate::InputRejected { .. }
                     | AcpUpdate::PromptCompleted { .. }
                     | AcpUpdate::PromptFailed { .. }
                     | AcpUpdate::UserMessage { .. }

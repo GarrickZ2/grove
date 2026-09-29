@@ -41,6 +41,7 @@ import {
   LogIn,
   LogOut,
   RefreshCw,
+  RotateCw,
   Pencil,
   Square,
   Paperclip,
@@ -537,6 +538,18 @@ type ServerEvent = {
   [key: string]: any;
 };
 
+type PendingInput = {
+  id: string;
+  text: string;
+  attachments: ServerEvent[];
+  config: unknown;
+  mode: "prompt" | "queue_message";
+  status: "sending" | "accepted" | "delayed" | "failed";
+  serverAccepted?: boolean;
+  sentAt: number;
+  error?: string;
+};
+
 /** Runtime history/connection state owned by one Chat while TaskChat is mounted. */
 interface ChatHistoryRuntime {
   /** A complete history snapshot has been hydrated into the in-memory state. */
@@ -608,6 +621,7 @@ interface SessionActionsMenuProps {
   importNextCursor?: string;
   authMethods: AuthMethodOption[];
   logoutCapable: boolean;
+  refreshDisabled: boolean;
   reconnectDisabled: boolean;
   actionsDisabled: boolean;
   deleteDisabled: boolean;
@@ -618,6 +632,7 @@ interface SessionActionsMenuProps {
   onImport: (session: ImportableSession) => void;
   onLogin: (method: AuthMethodOption) => void;
   onLogout: () => void;
+  onRefresh: () => void;
   onReconnect: () => void;
   onDelete: (chatId: string) => void;
   onArchive: (chatId: string) => void;
@@ -633,6 +648,7 @@ function SessionActionsMenu({
   importNextCursor,
   authMethods,
   logoutCapable,
+  refreshDisabled,
   reconnectDisabled,
   actionsDisabled,
   deleteDisabled,
@@ -643,6 +659,7 @@ function SessionActionsMenu({
   onImport,
   onLogin,
   onLogout,
+  onRefresh,
   onReconnect,
   onDelete,
   onArchive,
@@ -682,8 +699,17 @@ function SessionActionsMenu({
     items.push({ id: "import", label: "Import", icon: Download, children, onOpen: onOpenImport, wideChildren: true, disabled: actionsDisabled });
   }
   items.push({
+    id: "refresh",
+    label: "Refresh",
+    description: "Reload chat without restarting the agent",
+    icon: RotateCw,
+    onClick: onRefresh,
+    disabled: refreshDisabled,
+  });
+  items.push({
     id: "reconnect",
     label: "Reconnect",
+    description: "Restart the ACP agent session",
     icon: RefreshCw,
     onClick: onReconnect,
     disabled: reconnectDisabled,
@@ -966,6 +992,7 @@ type TaskChatVirtuosoContext = {
   hiddenMessageCount: number;
   inputAreaHeight: number;
   showThinking: boolean;
+  pendingInputContent: ReactNode;
 };
 
 function TaskChatVirtuosoHeader({
@@ -988,6 +1015,7 @@ function TaskChatVirtuosoFooter({
 }: ContextProp<TaskChatVirtuosoContext>) {
   return (
     <div>
+      {context.pendingInputContent}
       {context.showThinking && (
         <div className="mx-auto w-full max-w-[920px] px-4 py-2 sm:px-6">
           <ThinkingStatus label="Thinking" active />
@@ -2662,6 +2690,10 @@ export function TaskChat({
   const runtimeBusyRef = useRef<Map<string, boolean>>(new Map());
   // Per-chat WebSocket connections
   const wsMapRef = useRef<Map<string, WebSocket>>(new Map());
+  // A Refresh opts this chat into attach-only WS connections until the user
+  // explicitly chooses the runtime-restarting Reconnect action.
+  const attachOnlyChatsRef = useRef<Set<string>>(new Set());
+  const lastWsMessageAtRef = useRef<Map<string, number>>(new Map());
   // ChatListChanged may fire for both UserMessage and Complete. Only the most
   // recent async refresh may commit; otherwise an older ordering can win late.
   const chatListRefreshGenerationRef = useRef(0);
@@ -2909,6 +2941,54 @@ export function TaskChat({
   const [pendingMessages, setPendingMessages] = useState<
     { id: string; text: string }[]
   >([]);
+  const pendingInputsRef = useRef<Map<string, PendingInput[]>>(new Map());
+  const [pendingInputs, setPendingInputs] = useState<PendingInput[]>([]);
+  const updatePendingInputs = useCallback((chatId: string, update: (items: PendingInput[]) => PendingInput[]) => {
+    const previous = pendingInputsRef.current.get(chatId) ?? [];
+    const next = update(previous);
+    if (next.length === previous.length && next.every((item, index) => item === previous[index])) return;
+    pendingInputsRef.current.set(chatId, next);
+    try {
+      sessionStorage.setItem(`grove:pending-inputs:${projectId}:${taskId}`, JSON.stringify([...pendingInputsRef.current]));
+    } catch {
+      // Keep the in-memory copy when browser storage is unavailable or full.
+    }
+    if (chatId === getActiveChatId()) setPendingInputs(next);
+  }, [getActiveChatId, projectId, taskId]);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(`grove:pending-inputs:${projectId}:${taskId}`);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as [string, PendingInput[]][];
+      if (!Array.isArray(saved)) return;
+      pendingInputsRef.current = new Map(saved.map(([chatId, inputs]) => [
+        chatId,
+        inputs.filter((input) => input && typeof input.id === "string" && typeof input.text === "string")
+          .map((input) => ({ ...input, status: "delayed" as const })),
+      ]));
+      setPendingInputs(pendingInputsRef.current.get(getActiveChatId() ?? "") ?? []);
+    } catch {
+      // Corrupt or unavailable tab storage should not block Chat startup.
+    }
+  }, [projectId, taskId, getActiveChatId]);
+  useEffect(() => {
+    setPendingInputs(pendingInputsRef.current.get(activeChatId ?? "") ?? []);
+  }, [activeChatId]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      pendingInputsRef.current.forEach((items, chatId) => {
+        if (items.some((item) => (item.status === "sending" || item.status === "accepted") && now - item.sentAt > 20000)) {
+          updatePendingInputs(chatId, (current) => current.map((item) =>
+            (item.status === "sending" || item.status === "accepted") && now - item.sentAt > 20000
+              ? { ...item, status: "delayed" }
+              : item,
+          ));
+        }
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [updatePendingInputs]);
   // Stable React keys for pending messages that arrive without a server-side
   // id. Pure derivation off `(index, text)` — no Math.random / crypto, no
   // ref mutation during render — so React Compiler is happy. Two identical
@@ -3133,6 +3213,7 @@ export function TaskChat({
   const [authMethods, setAuthMethods] = useState<AuthMethodOption[]>([]);
   const [logoutCapable, setLogoutCapable] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [reconnectConfirmOpen, setReconnectConfirmOpen] = useState(false);
   const [deleteConfirmChatId, setDeleteConfirmChatId] = useState<string | null>(null);
   const [deleteConfirmTargetCapable, setDeleteConfirmTargetCapable] = useState(false);
@@ -4770,7 +4851,7 @@ export function TaskChat({
   // Forward-declared ref for connectChatWs so handlers defined before its
   // useCallback (e.g. the ChatListChanged refetch handler) can call it
   // without creating a TDZ reference that React Compiler refuses to compile.
-  const connectChatWsRef = useRef<(chatId: string, importing?: boolean) => Promise<void>>(
+  const connectChatWsRef = useRef<(chatId: string, importing?: boolean, attachOnly?: boolean) => Promise<void>>(
     async () => {},
   );
 
@@ -4923,7 +5004,7 @@ export function TaskChat({
 
   /** Connect a WebSocket for a given chat ID (idempotent) */
   const connectChatWs = useCallback(
-    async (chatId: string, importing = false) => {
+    async (chatId: string, importing = false, attachOnly = false) => {
       if (finishedRef.current) return;
       if (wsMapRef.current.has(chatId)) return; // Already connected
       if (connectingRef.current.has(chatId)) return; // Connection already in-flight
@@ -4946,11 +5027,17 @@ export function TaskChat({
 
       const host = getApiHost();
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const url = await appendHmacToUrl(
-        `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/ws${importing ? "?import=true" : ""}`,
-      );
-
-      connectingRef.current.delete(chatId);
+      const onlyExisting = attachOnly || attachOnlyChatsRef.current.has(chatId);
+      const query = [importing ? "import=true" : "", onlyExisting ? "attach_only=true" : ""]
+        .filter(Boolean).join("&");
+      let url: string;
+      try {
+        url = await appendHmacToUrl(
+          `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/ws${query ? `?${query}` : ""}`,
+        );
+      } finally {
+        connectingRef.current.delete(chatId);
+      }
       // The Run may have reached its terminal state while URL signing was in
       // flight. A finished view must never create a late live attachment.
       if (finishedRef.current) return;
@@ -4959,6 +5046,7 @@ export function TaskChat({
 
       const ws = new WebSocket(url);
       wsMapRef.current.set(chatId, ws);
+      lastWsMessageAtRef.current.set(chatId, Date.now());
       // This connection starts unproven; only a session_ready flips it.
       wsSessionEverReadyRef.current.set(chatId, false);
 
@@ -4971,8 +5059,30 @@ export function TaskChat({
         // Otherwise a late `session_ended` from the old owner can downgrade
         // the state established by the successor connection.
         if (wsMapRef.current.get(chatId) !== ws) return;
+        lastWsMessageAtRef.current.set(chatId, Date.now());
         try {
           const data = JSON.parse(event.data);
+          if (data?.type === "heartbeat") return;
+          if (data?.type === "input_accepted" && typeof data.client_message_id === "string") {
+            updatePendingInputs(chatId, (items) => items.map((item) =>
+              item.id === data.client_message_id
+                ? { ...item, status: item.status === "delayed" ? "delayed" : "accepted", serverAccepted: true }
+                : item,
+            ));
+          } else if (data?.type === "input_rejected" && typeof data.client_message_id === "string") {
+            updatePendingInputs(chatId, (items) => items.map((item) =>
+              item.id === data.client_message_id
+                ? { ...item, status: "failed", serverAccepted: false, error: data.message }
+                : item,
+            ));
+          } else if (data?.type === "user_message" && typeof data.client_message_id === "string") {
+            if (chatId !== getActiveChatId() || (historyRuntimeRef.current.get(chatId)?.loadingGeneration ?? null) === null) {
+              updatePendingInputs(chatId, (items) => items.filter((item) => item.id !== data.client_message_id));
+            }
+          } else if (data?.type === "queue_update") {
+            const queuedIds = new Set((data.messages ?? []).map((message: { id?: string }) => message.id));
+            updatePendingInputs(chatId, (items) => items.filter((item) => item.mode !== "queue_message" || !queuedIds.has(item.id)));
+          }
           const runtime =
             historyRuntimeRef.current.get(chatId) ?? defaultChatHistoryRuntime();
           if (data?.type === "session_ready") {
@@ -5071,6 +5181,7 @@ export function TaskChat({
           );
         }
         wsMapRef.current.delete(chatId);
+        lastWsMessageAtRef.current.delete(chatId);
         const runtime = historyRuntimeRef.current.get(chatId);
         if (runtime) {
           runtime.connected = false;
@@ -5086,6 +5197,11 @@ export function TaskChat({
             runtime.bufferedEvents = [];
           }
         }
+        updatePendingInputs(chatId, (items) => items.map((item) =>
+          item.status === "sending" || item.status === "accepted"
+            ? { ...item, status: "delayed" }
+            : item,
+        ));
         if (chatId === getActiveChatId()) {
           setIsConnected(false);
           onDisconnectedPropRef.current?.();
@@ -5154,13 +5270,59 @@ export function TaskChat({
         }
       };
     },
-    [projectId, taskId, getActiveChatId, sendAgentVoiceState],
+    [projectId, taskId, getActiveChatId, sendAgentVoiceState, updatePendingInputs],
   );
 
 
   useEffect(() => {
     connectChatWsRef.current = connectChatWs;
   }, [connectChatWs]);
+
+  // Browser readyState can remain OPEN after an unclean network drop. Server
+  // heartbeats prove the full path still delivers messages; replace stale
+  // sockets without touching the underlying ACP session.
+  useEffect(() => {
+    const inspect = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      wsMapRef.current.forEach((ws, chatId) => {
+        if (!wsSessionEverReadyRef.current.get(chatId) || ws.readyState !== WebSocket.OPEN) return;
+        if (now - (lastWsMessageAtRef.current.get(chatId) ?? now) < 45000) return;
+        wsMapRef.current.delete(chatId);
+        lastWsMessageAtRef.current.delete(chatId);
+        ws.close();
+        const runtime = historyRuntimeRef.current.get(chatId);
+        if (runtime) {
+          runtime.connected = false;
+          runtime.loaded = false;
+          runtime.needsResync = true;
+        }
+        updatePendingInputs(chatId, (items) => items.map((item) =>
+          item.status === "sending" || item.status === "accepted"
+            ? { ...item, status: "delayed" }
+            : item,
+        ));
+        const cached = perChatStateRef.current.get(chatId);
+        if (cached) cached.isConnected = false;
+        if (chatId === getActiveChatId()) {
+          wsRef.current = null;
+          setIsConnected(false);
+          onDisconnectedPropRef.current?.();
+        }
+        void connectChatWsRef.current(chatId).then(() => {
+          if (chatId === getActiveChatId()) wsRef.current = wsMapRef.current.get(chatId) ?? null;
+        });
+      });
+    };
+    const timer = window.setInterval(inspect, 5000);
+    document.addEventListener("visibilitychange", inspect);
+    window.addEventListener("online", inspect);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", inspect);
+      window.removeEventListener("online", inspect);
+    };
+  }, [getActiveChatId, updatePendingInputs]);
 
   // A finished Run is a persisted, read-only transcript. Detach this view
   // from every live transport without killing the Agent-owned session.
@@ -5293,11 +5455,22 @@ export function TaskChat({
       }
       {
         let msgs: ChatMessage[] = [];
+        const historicalInputIds = new Set(
+          [...res.events, ...runtime.bufferedEvents]
+            .filter((event) => event.type === "user_message" && typeof event.client_message_id === "string")
+            .map((event) => event.client_message_id as string),
+        );
+        if (historicalInputIds.size > 0) {
+          updatePendingInputs(chatId, (items) => items.filter((item) => !historicalInputIds.has(item.id)));
+        }
         let historicalPlanEntries: PlanEntry[] | null = null;
+        let historicalPlanFile: { path: string; content?: string } | null = null;
         for (const evt of res.events) {
           msgs = reduceHistoryMessages(msgs, evt);
           if (evt.type === "plan_update") {
             historicalPlanEntries = normalizePlanEntries(evt.entries);
+          } else if (evt.type === "plan_file_update" && typeof evt.path === "string") {
+            historicalPlanFile = { path: evt.path, content: evt.content };
           }
         }
         // Drain buffered WS events that arrived during HTTP load
@@ -5333,6 +5506,20 @@ export function TaskChat({
           // Restored history exposes the Todo pill without unexpectedly
           // opening the composer panel on every app launch.
           setShowPlan(false);
+        }
+        if (historicalPlanFile) {
+          setPlanFilePath(historicalPlanFile.path);
+          planFilePathRef.current = historicalPlanFile.path;
+          if (historicalPlanFile.content) {
+            setPlanFileContent(historicalPlanFile.content);
+          } else {
+            const path = historicalPlanFile.path;
+            void readFile(path).then((result) => {
+              if (chatId === getActiveChatId() && runtime.generation === generation) {
+                setPlanFileContent(result.content);
+              }
+            }).catch(() => {});
+          }
         }
         // Keep attachment numbering based on full history, even when old
         // rendered messages are hidden from the view.
@@ -5584,7 +5771,7 @@ export function TaskChat({
     // loading after this effect's first run (when launch_mode was still
     // undefined → connectChatWs bailed), the effect re-fires with the
     // resolved mode and routes the chat correctly (ACP WS vs PTY-only).
-  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot]);
+  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs]);
 
   // Cleanup all WebSockets on unmount, plus any pending reconnect timers —
   // otherwise an in-flight backoff timer fires after unmount and creates a
@@ -7521,72 +7708,50 @@ export function TaskChat({
       );
     }
 
-    if (isBusy) {
-      // Queue message on server when agent is busy
-      if (followStateRef.current === "following") {
-        requestBottom("auto");
-      }
-      wsRef.current.send(
-        JSON.stringify({
-          type: "queue_message",
-          text,
-          attachments: contentAttachments,
-          // FR2: queued messages must carry the same per-prompt config the
-          // user has selected (model / thinking / agent overrides). Without
-          // it the backend falls back to whatever snapshot was current when
-          // the agent was last spawned, silently dropping the user's choice.
-          config: buildPromptConfig(),
-        }),
-      );
-      if (hasPendingVoiceInstruction) {
-        clearPendingAgentVoiceInstruction(projectId, taskId, activeChatId);
-      }
-      promoteChatForLocalActivity(activeChatId);
-      el.innerHTML = "";
-      clearChatDraft(activeChatId);
-      setHasContent(false);
-      setAttachments((prev) => {
-        prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
-        return [];
-      });
-      setShowSlashMenu(false);
-      setShowFileMenu(false);
-      setIsTerminalMode(false);
-      setIsInputExpanded(false);
-      onUserMessageSent?.();
-      finishComposerAfterSend(el);
-    } else {
-      requestBottom("auto");
-      wsRef.current.send(
-        JSON.stringify({
-          type: "prompt",
-          text,
-          attachments: contentAttachments,
-          config: buildPromptConfig(),
-        }),
-      );
-      if (hasPendingVoiceInstruction) {
-        clearPendingAgentVoiceInstruction(projectId, taskId, activeChatId);
-      }
-      promoteChatForLocalActivity(activeChatId);
-      el.innerHTML = "";
-      clearChatDraft(activeChatId);
-      setHasContent(false);
-      setAttachments((prev) => {
-        prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
-        return [];
-      });
-      setShowSlashMenu(false);
-      setShowFileMenu(false);
-      setIsTerminalMode(false);
-      setIsInputExpanded(false);
-      // Part B: 不再乐观 updateBusy(true)。busy 状态由后端 "busy" / "user_message"
-      // 事件驱动 — 收到后才翻 true。乐观更新会和后端事件 race,产生短暂"可发送"
-      // 窗口让用户连点出 bug。延迟期间发送按钮短暂仍可点也行,backend 会自己处理。
-      onUserMessageSent?.();
-      finishComposerAfterSend(el);
+    const input: PendingInput = {
+      id: crypto.randomUUID(),
+      text,
+      attachments: contentAttachments,
+      config: buildPromptConfig(),
+      mode: isBusy ? "queue_message" : "prompt",
+      status: "sending",
+      serverAccepted: false,
+      sentAt: Date.now(),
+    };
+    updatePendingInputs(activeChatId, (items) => [...items, input]);
+    requestBottom("auto");
+    try {
+      wsRef.current.send(JSON.stringify({
+        type: input.mode,
+        client_message_id: input.id,
+        text: input.text,
+        attachments: input.attachments,
+        config: input.config,
+      }));
+    } catch (error) {
+      updatePendingInputs(activeChatId, (items) => items.map((item) =>
+        item.id === input.id ? { ...item, status: "failed", error: String(error) } : item,
+      ));
+      return;
     }
-  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, onUserMessageSent, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, sendAgentVoiceState, finishComposerAfterSend]);
+    if (hasPendingVoiceInstruction) {
+      clearPendingAgentVoiceInstruction(projectId, taskId, activeChatId);
+    }
+    promoteChatForLocalActivity(activeChatId);
+    el.innerHTML = "";
+    clearChatDraft(activeChatId);
+    setHasContent(false);
+    setAttachments((prev) => {
+      prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
+      return [];
+    });
+    setShowSlashMenu(false);
+    setShowFileMenu(false);
+    setIsTerminalMode(false);
+    setIsInputExpanded(false);
+    onUserMessageSent?.();
+    finishComposerAfterSend(el);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, onUserMessageSent, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, sendAgentVoiceState, finishComposerAfterSend, updatePendingInputs]);
 
   // On touch browsers, blurring the contentEditable can collapse the mobile
   // composer before a later click event reaches the Send button. Handle the
@@ -7611,6 +7776,45 @@ export function TaskChat({
     }
     void handleSend();
   }, [handleSend]);
+
+  const retryPendingInput = useCallback((input: PendingInput) => {
+    if (!activeChatId) return;
+    const ws = wsMapRef.current.get(activeChatId);
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    updatePendingInputs(activeChatId, (items) => items.map((item) =>
+      item.id === input.id ? { ...item, status: "sending", sentAt: Date.now(), error: undefined } : item,
+    ));
+    try {
+      ws.send(JSON.stringify({
+        type: input.mode,
+        client_message_id: input.id,
+        retry: true,
+        text: input.text,
+        attachments: input.attachments,
+        config: input.config,
+      }));
+    } catch (error) {
+      updatePendingInputs(activeChatId, (items) => items.map((item) =>
+        item.id === input.id ? { ...item, status: "failed", error: String(error) } : item,
+      ));
+    }
+  }, [activeChatId, updatePendingInputs]);
+
+  const editPendingInput = useCallback((input: PendingInput) => {
+    const el = editableRef.current;
+    if (!el) return;
+    const existing = getPromptFromEditable(el);
+    el.textContent = existing ? `${existing}\n${input.text}` : input.text;
+    setHasContent(true);
+    if (activeChatId) saveChatDraft(activeChatId, el.innerHTML);
+    if (isPhoneLayout) setMobileComposerOpen(true);
+    el.focus();
+  }, [activeChatId, isPhoneLayout]);
+
+  const cancelPendingInput = useCallback((id: string) => {
+    if (!activeChatId) return;
+    updatePendingInputs(activeChatId, (items) => items.filter((item) => item.id !== id));
+  }, [activeChatId, updatePendingInputs]);
 
   const sendPreviewComments = useCallback((comments: PreviewCommentDraft[]) => {
     if (
@@ -8092,9 +8296,67 @@ export function TaskChat({
     wsRef.current.send(JSON.stringify({ type: "logout" }));
   }, []);
 
+  const handleRefresh = useCallback(async () => {
+    if (!activeChatId || isRefreshing || isReconnecting) return;
+    const chatId = activeChatId;
+    setIsRefreshing(true);
+    attachOnlyChatsRef.current.add(chatId);
+    cancelPendingReconnectRef.current(chatId);
+    const existingWs = wsMapRef.current.get(chatId);
+    wsMapRef.current.delete(chatId);
+    lastWsMessageAtRef.current.delete(chatId);
+    existingWs?.close();
+    wsSessionEverReadyRef.current.delete(chatId);
+
+    // Invalidate any older HTTP hydration before requesting the current
+    // transcript. The new socket's snapshot supplies Busy/queue/capabilities.
+    const runtime = historyRuntimeRef.current.get(chatId) ?? defaultChatHistoryRuntime();
+    runtime.generation += 1;
+    runtime.loadingGeneration = null;
+    runtime.bufferedEvents = [];
+    runtime.syncRequested = false;
+    runtime.loaded = false;
+    runtime.needsResync = true;
+    runtime.connected = false;
+    historyRuntimeRef.current.set(chatId, runtime);
+    const cached = perChatStateRef.current.get(chatId);
+    if (cached) {
+      cached.isConnected = false;
+      cached.pendingMessages = [];
+      cached.planEntries = [];
+    }
+    wsRef.current = null;
+    setIsConnected(false);
+    setConnectPhase(null);
+    setConnectPhaseStartedAt(null);
+    updateBusy(false, chatId);
+    setPendingMessages([]);
+    setPlanEntries([]);
+    setShowPlan(false);
+    setPlanFilePath("");
+    setPlanFileContent("");
+    setShowPlanFile(false);
+    setContextUsage(null);
+
+    try {
+      // Attach only: Refresh must never spawn or restart the ACP Runtime.
+      const connecting = connectChatWs(chatId, false, true);
+      setHistorySyncVersion((version) => version + 1);
+      await connecting;
+      if (getActiveChatId() === chatId) {
+        wsRef.current = wsMapRef.current.get(chatId) ?? null;
+      }
+    } catch (error) {
+      setMessages((previous) => appendSystemMessage(previous, `Refresh failed: ${apiErrorMessage(error)}`));
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [activeChatId, connectChatWs, getActiveChatId, isReconnecting, isRefreshing, updateBusy]);
+
   const performReconnect = useCallback(async () => {
     if (!activeChatId || isReconnecting) return;
     const chatId = activeChatId;
+    attachOnlyChatsRef.current.delete(chatId);
     const existingWs = wsMapRef.current.get(chatId);
     setIsReconnecting(true);
     setReconnectConfirmOpen(false);
@@ -9770,6 +10032,29 @@ export function TaskChat({
     hiddenMessageCount,
     inputAreaHeight: transcriptFooterState.inputAreaHeight,
     showThinking: transcriptFooterState.showThinking,
+    pendingInputContent: pendingInputs.length > 0 && !isTerminalLaunchMode ? (
+      <div className="mx-auto w-full max-w-[920px] space-y-2 px-4 py-2 sm:px-6" aria-live="polite">
+        {pendingInputs.map((input) => (
+          <div key={input.id} className="ml-auto max-w-[80%] rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-3.5 py-2.5 text-sm opacity-70">
+            <div className="whitespace-pre-wrap break-words">{input.text}</div>
+            {input.attachments.length > 0 && <div className="mt-1 text-xs">{input.attachments.length} attachment{input.attachments.length === 1 ? "" : "s"}</div>}
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--color-text-muted)]">
+              {input.status === "sending" ? "Sending…" :
+                input.status === "accepted" ? "Received by Grove · waiting for agent" :
+                input.status === "failed" ? `Send failed${input.error ? `: ${input.error}` : ""}` :
+                (input.serverAccepted ? "Grove received it · Agent response delayed" : "Still waiting · delivery not confirmed")}
+              {(input.status === "delayed" || input.status === "failed") && (
+                <>
+                  <button type="button" className="text-[var(--color-highlight)] hover:underline disabled:opacity-50" disabled={!isConnected} onClick={() => retryPendingInput(input)}>Retry</button>
+                  <button type="button" className="text-[var(--color-highlight)] hover:underline" title="Copy the text into the composer; the original may still arrive" onClick={() => editPendingInput(input)}>Edit in composer</button>
+                </>
+              )}
+              <button type="button" className="hover:underline" title="Remove this waiting copy; this cannot retract a message Grove already received" onClick={() => cancelPendingInput(input.id)}>Cancel waiting</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : null,
   };
 
   // ─── Collapsed mode ──────────────────────────────────────────────────────
@@ -10074,7 +10359,8 @@ export function TaskChat({
                   importNextCursor={importNextCursor}
                   authMethods={authMethods}
                   logoutCapable={logoutCapable}
-                  reconnectDisabled={isReconnecting || activeChat.launch_mode === "terminal"}
+                  refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+                  reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
                   actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
                   deleteDisabled={chats.length <= 1}
                   archiveDisabled={chats.length <= 1 || isBusy}
@@ -10084,6 +10370,7 @@ export function TaskChat({
                   onImport={(session) => void handleImportSession(session)}
                   onLogin={handleMenuLogin}
                   onLogout={handleLogout}
+                  onRefresh={() => void handleRefresh()}
                   onReconnect={handleReconnect}
                   onDelete={requestDeleteChat}
                   onArchive={(chatId) => void handleArchiveChat(chatId)}
@@ -10243,7 +10530,8 @@ export function TaskChat({
                       importNextCursor={importNextCursor}
                       authMethods={authMethods}
                       logoutCapable={logoutCapable}
-                      reconnectDisabled={isReconnecting || activeChat.launch_mode === "terminal"}
+                      refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+                      reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
                       actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
                       deleteDisabled={chats.length <= 1}
                       archiveDisabled={chats.length <= 1 || isBusy}
@@ -10253,6 +10541,7 @@ export function TaskChat({
                       onImport={(session) => void handleImportSession(session)}
                       onLogin={handleMenuLogin}
                       onLogout={handleLogout}
+                      onRefresh={() => void handleRefresh()}
                       onReconnect={handleReconnect}
                       onDelete={requestDeleteChat}
                       onArchive={(chatId) => void handleArchiveChat(chatId)}
