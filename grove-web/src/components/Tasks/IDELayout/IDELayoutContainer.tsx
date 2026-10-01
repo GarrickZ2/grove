@@ -491,12 +491,14 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         persisted.terminalActiveId && terminalTabs.some((t) => t.id === persisted.terminalActiveId)
           ? persisted.terminalActiveId
           : terminalTabs[0].id;
+      const auxVisible = persisted.auxVisible ?? false;
+      const infoVisible = (persisted.infoVisible ?? false) && (!isMobile || !auxVisible);
       return {
         auxType: persisted.auxType ?? null,
-        auxVisible: persisted.auxVisible ?? false,
-        chatVisible: persisted.chatVisible ?? true,
+        auxVisible,
+        chatVisible: isMobile ? !auxVisible && !infoVisible : persisted.chatVisible ?? true,
         infoType: persisted.infoType ?? null,
-        infoVisible: persisted.infoVisible ?? false,
+        infoVisible,
         fileNavRequest: null,
         artifactPreviewRequest: null,
         lastChatIdleAt: undefined,
@@ -585,14 +587,15 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         } else {
           update({ fileNavRequest: { file: filePath, line, mode, seq } });
         }
-        if (isStudio) {
-          setStateTagged((prev) => ({ ...prev, auxType: "artifacts", auxVisible: true }));
-        } else {
-          setStateTagged((prev) => ({ ...prev, auxType: "review", auxVisible: true }));
-        }
+        setStateTagged((prev) => ({
+          ...prev,
+          auxType: isStudio ? "artifacts" : "review",
+          auxVisible: true,
+          ...(isMobile ? { chatVisible: false, infoVisible: false } : {}),
+        }));
         return true;
       },
-      [isStudio, update, setStateTagged, projectId, task.id],
+      [isStudio, isMobile, update, setStateTagged, projectId, task.id],
     );
 
     const handleChatBecameIdle = useCallback(() => {

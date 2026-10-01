@@ -530,7 +530,7 @@
 }
 
 /* ── Mobile: single visible pane (toolbar acts as pane switcher) ────────── */
-@media (max-width: 768px) {
+@media (max-width: 1199px) {
   .ide-workbench {
     padding: 4px;
   }
