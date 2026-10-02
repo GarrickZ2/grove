@@ -580,37 +580,37 @@ export function Sidebar({
           />
         </div>
 
-        {/* Sidebar-mode toggles — Collapse and Dynamic Island stacked as two
-            full-width, labeled rows so Island reads as a named feature
-            instead of an unlabeled icon nobody recognizes. */}
+        {/* Collapsed mode only needs the expand action. */}
         {!drawerMode && (
-          <div className="flex flex-col gap-1 mt-1">
+          <div className={isCollapsed ? "mt-2" : "mt-2 grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)] gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-1"}>
             <motion.button
-              whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleToggleCollapse}
-              className="w-full flex items-center justify-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
+              title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className={`flex min-w-0 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)] ${isCollapsed ? "w-full" : "px-1.5"}`}
             >
               {isCollapsed ? (
                 <ChevronRight className="w-4 h-4" />
               ) : (
                 <>
-                  <ChevronLeft className="w-4 h-4" />
-                  <span className="flex-1 text-left">Collapse</span>
+                  <ChevronLeft className="h-4 w-4 shrink-0" />
+                  <span className="whitespace-nowrap">Collapse</span>
                 </>
               )}
             </motion.button>
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={handleToggleIsland}
-              title="Archive sidebar to Dynamic Island — Mod+."
-              aria-label="Archive sidebar to Dynamic Island"
-              className="w-full flex items-center justify-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
-            >
-              <PictureInPicture2 className="w-4 h-4" />
-              {!isCollapsed && <span className="flex-1 text-left">Dynamic Island</span>}
-            </motion.button>
+            {!isCollapsed && (
+              <motion.button
+                whileTap={{ scale: 0.98 }}
+                onClick={handleToggleIsland}
+                title="Archive sidebar to Dynamic Island — Mod+."
+                aria-label="Archive sidebar to Dynamic Island"
+                className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-1.5 py-2 text-xs font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
+              >
+                <PictureInPicture2 className="h-4 w-4 shrink-0" />
+                <span className="whitespace-nowrap">Dynamic Island</span>
+              </motion.button>
+            )}
           </div>
         )}
       </div>
