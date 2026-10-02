@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.7] - 2026-10-02
+
+### Added
+
+- **Explicit upgrade command** — Run `grove upgrade` to check for and install updates on demand.
+- **Chat history loading controls** — Configure how much conversation history the browser loads.
+
+### Fixed
+
+- **Windows paths and folder browsing** — Folder selection and file paths work more reliably on Windows.
+- **ACP chat recovery** — Refresh restores delivery state and reconnects to existing sessions more reliably.
+- **Mobile file navigation** — Opening a file shows one workspace panel without overlapping chat or info panels.
+- **Sidebar mode controls** — Mode controls are simpler to use.
+- **Preview comments** — Comments remain available instead of being removed automatically.
+
 ## [0.12.6] - 2026-09-24
 
 ### Added
