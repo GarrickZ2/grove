@@ -1100,7 +1100,20 @@ interface ChatHistoryResponse {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   events: any[];
   total: number;
+  omitted_turns?: number;
+  context?: {
+    attachment_counts: { image: number; audio: number; resource: number };
+    read_memory_ids: string[];
+    plan_entries?: Array<{ content: string; priority?: string; status: string }>;
+    plan_file_path?: string;
+  };
   session: SessionMetadata | null;
+}
+
+export interface ChatHistoryOptions {
+  recentTurns?: number;
+  includeMedia?: boolean;
+  includeToolDetails?: boolean;
 }
 
 interface TakeControlResponse {
@@ -1118,10 +1131,15 @@ export async function getChatHistory(
   projectId: string,
   taskId: string,
   chatId: string,
-  offset: number = 0
+  offset: number = 0,
+  options: ChatHistoryOptions = {},
 ): Promise<ChatHistoryResponse> {
+  const query = new URLSearchParams({ offset: String(offset) });
+  if (options.recentTurns) query.set('recent_turns', String(options.recentTurns));
+  if (options.includeMedia === false) query.set('include_media', 'false');
+  if (options.includeToolDetails === false) query.set('include_tool_details', 'false');
   return apiClient.get<ChatHistoryResponse>(
-    `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/history?offset=${offset}`
+    `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/history?${query}`
   );
 }
 

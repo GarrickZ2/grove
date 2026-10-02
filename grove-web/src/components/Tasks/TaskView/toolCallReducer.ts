@@ -56,8 +56,7 @@ export function formatToolInputValue(value: string): string {
 
 function hasReadableContentBlock(block: AgentContentBlock): boolean {
   if (block.type === "text") return block.text.trim().length > 0;
-  if (block.type === "image") return block.data.length > 0 || Boolean(block.uri);
-  if (block.type === "audio") return block.data.length > 0;
+  if (block.type === "image" || block.type === "audio") return true;
   if (block.type === "resource_link") return block.uri.length > 0 || block.name.length > 0;
   return Boolean(block.uri || block.text?.trim() || block.blob);
 }

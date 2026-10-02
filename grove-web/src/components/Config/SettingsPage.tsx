@@ -66,6 +66,7 @@ import {
 import { getExtensionStatusDetails, type ExtensionStatus } from "../../api/extension";
 import { formatShortcut } from "../AI/utils";
 import { useKeyboardScope } from "../../keyboard";
+import { loadChatHistoryPreferences, saveChatHistoryPreferences } from "../Tasks/TaskView/chatHistoryPreferences";
 
 interface SettingsPageProps {
   config: {
@@ -263,6 +264,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [chatRenderWindowTrigger, setChatRenderWindowTrigger] = useState(1500);
   const [chatRenderWindowLimitDraft, setChatRenderWindowLimitDraft] = useState("0");
   const [chatRenderWindowTriggerDraft, setChatRenderWindowTriggerDraft] = useState("1500");
+  const [chatHistoryRecentTurns, setChatHistoryRecentTurns] = useState(0);
+  const [chatHistoryRecentTurnsDraft, setChatHistoryRecentTurnsDraft] = useState("0");
+  const [chatHistoryIncludeMedia, setChatHistoryIncludeMedia] = useState(true);
+  const [chatHistoryIncludeToolDetails, setChatHistoryIncludeToolDetails] = useState(true);
   // Agent command availability: command name → exists on PATH
   const [commandAvailability, setCommandAvailability] = useState<Record<string, boolean>>({});
 
@@ -489,12 +494,17 @@ export function SettingsPage({ config }: SettingsPageProps) {
     if (acp?.custom_agents) {
       setCustomAgents(acp.custom_agents);
     }
-    const renderWindowLimit = acp?.render_window_limit ?? 0;
-    const renderWindowTrigger = acp?.render_window_trigger ?? 1500;
+    const preferences = loadChatHistoryPreferences(acp);
+    const renderWindowLimit = preferences.renderWindowLimit;
+    const renderWindowTrigger = preferences.renderWindowTrigger;
     setChatRenderWindowLimit(renderWindowLimit);
     setChatRenderWindowTrigger(renderWindowTrigger);
     setChatRenderWindowLimitDraft(String(renderWindowLimit));
     setChatRenderWindowTriggerDraft(String(renderWindowTrigger));
+    setChatHistoryRecentTurns(preferences.recentTurns);
+    setChatHistoryRecentTurnsDraft(String(preferences.recentTurns));
+    setChatHistoryIncludeMedia(preferences.includeMedia);
+    setChatHistoryIncludeToolDetails(preferences.includeToolDetails);
 
     if (cfg.hooks) {
       setHooksResponseSoundEnabled(cfg.hooks.response_sound_enabled);
@@ -680,14 +690,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
     const webIde = ideCommand ? ideCommand : undefined;
     const webTerminal = terminalCommand ? terminalCommand : undefined;
     const acpAgentCommand = acpAgent ? acpAgent : undefined;
-    let renderWindowTrigger: number;
-    if (chatRenderWindowLimit > 0) {
-      renderWindowTrigger = Math.max(chatRenderWindowTrigger, chatRenderWindowLimit + 1);
-    } else if (chatRenderWindowTrigger) {
-      renderWindowTrigger = chatRenderWindowTrigger;
-    } else {
-      renderWindowTrigger = 1500;
-    }
     const patch = {
       layout: {
         default: selectedLayout,
@@ -707,8 +709,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
       terminal_multiplexer: terminalMultiplexer,
       acp: {
         agent_command: acpAgentCommand,
-        render_window_limit: chatRenderWindowLimit,
-        render_window_trigger: renderWindowTrigger,
       },
       auto_link: {
         patterns: autoLinkPatterns,
@@ -751,7 +751,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, trayDoneRetentionMode, trayDoneRetentionUnit, trayDoneRetentionValue, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, trayDoneRetentionMode, trayDoneRetentionUnit, trayDoneRetentionValue, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
   const handleModeChange = useCallback((newMode: "auto" | "light" | "dark") => {
@@ -878,7 +878,19 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }
   }, [showBanner]);
 
-  // Auto-save when any config value changes (debounced)
+  // These preferences belong to this browser, never to the shared Grove server.
+  useEffect(() => {
+    if (!isLoaded) return;
+    saveChatHistoryPreferences({
+      recentTurns: chatHistoryRecentTurns,
+      includeMedia: chatHistoryIncludeMedia,
+      includeToolDetails: chatHistoryIncludeToolDetails,
+      renderWindowLimit: chatRenderWindowLimit,
+      renderWindowTrigger: chatRenderWindowTrigger,
+    });
+  }, [isLoaded, chatHistoryRecentTurns, chatHistoryIncludeMedia, chatHistoryIncludeToolDetails, chatRenderWindowLimit, chatRenderWindowTrigger]);
+
+  // Auto-save when any server config value changes (debounced)
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -887,7 +899,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, isLoaded, saveConfig]);
+  }, [selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, isLoaded, saveConfig]);
 
   useEffect(() => {
     if (!isRecordingWindowShortcut) return;
@@ -1487,76 +1499,119 @@ env_vars = [
               />
             </div>
 
-            {/* Chat render window */}
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">Chat Render Window</div>
-                  <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">
-                    {chatRenderWindowLimit > 0
-                      ? `Keep latest ${chatRenderWindowLimit.toLocaleString()} messages`
-                      : "Keep the full conversation in view"}
+            <div>
+              <div className="mb-2 text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)] select-none">Chat History Loading</div>
+              <div className="divide-y divide-[var(--color-border)] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+                <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-[var(--color-text)]">Messages to load</div>
+                    <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">Choose how much history this browser downloads.</div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                    <div className="inline-flex shrink-0 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5">
+                      <button type="button" onClick={() => { setChatHistoryRecentTurns(0); setChatHistoryRecentTurnsDraft("0"); }} className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${chatHistoryRecentTurns === 0 ? "bg-[var(--color-highlight)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>All</button>
+                      <button type="button" onClick={() => { if (chatHistoryRecentTurns === 0) { setChatHistoryRecentTurns(50); setChatHistoryRecentTurnsDraft("50"); } }} className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${chatHistoryRecentTurns > 0 ? "bg-[var(--color-highlight)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>Recent</button>
+                    </div>
+                    {chatHistoryRecentTurns > 0 && (
+                      <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+                        <input type="number" min={1} max={10000} value={chatHistoryRecentTurnsDraft} onChange={(event) => setChatHistoryRecentTurnsDraft(event.target.value)} onBlur={() => {
+                          const next = Math.max(1, Math.min(10000, Math.floor(Number(chatHistoryRecentTurnsDraft) || chatHistoryRecentTurns)));
+                          setChatHistoryRecentTurns(next);
+                          setChatHistoryRecentTurnsDraft(String(next));
+                        }} className="h-8 w-20 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-highlight)]" aria-label="Recent chat turns to load" />
+                        turns
+                      </label>
+                    )}
                   </div>
                 </div>
-                <div className="inline-flex rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setChatRenderWindowMode("unlimited")}
-                    className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
-                      chatRenderWindowLimit === 0
-                        ? "bg-[var(--color-highlight)] text-white"
-                        : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                    }`}
-                  >
-                    Unlimited
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setChatRenderWindowMode("custom")}
-                    className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
-                      chatRenderWindowLimit > 0
-                        ? "bg-[var(--color-highlight)] text-white"
-                        : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                    }`}
-                  >
-                    Custom
-                  </button>
+                <div className="flex items-center justify-between gap-4 p-4">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-[var(--color-text)]">Images & audio</div>
+                    <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">{chatHistoryIncludeMedia ? "Download historical media with messages." : "Show placeholders without downloading media."}</div>
+                  </div>
+                  <ToggleSwitch checked={chatHistoryIncludeMedia} onChange={setChatHistoryIncludeMedia} label="Include historical images and audio" />
+                </div>
+                <div className="flex items-center justify-between gap-4 p-4">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-[var(--color-text)]">Tool call details</div>
+                    <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">{chatHistoryIncludeToolDetails ? "Include tool inputs and outputs." : "Keep tool names and status only."}</div>
+                  </div>
+                  <ToggleSwitch checked={chatHistoryIncludeToolDetails} onChange={setChatHistoryIncludeToolDetails} label="Include tool call details" />
                 </div>
               </div>
-              {chatRenderWindowLimit > 0 && (
-                <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-text-muted)]">
-                  <span>Prune at</span>
-                  <label className="inline-flex items-center">
-                    <input
-                      type="number"
-                      min={1}
-                      step={100}
-                      value={chatRenderWindowLimitDraft}
-                      onChange={(e) => setChatRenderWindowLimitDraft(e.target.value)}
-                      onBlur={() => commitChatRenderWindowLimit(chatRenderWindowLimitDraft)}
-                      className="h-8 w-24 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-highlight)]"
-                      aria-label="Chat render window view size limit"
-                    />
-                  </label>
-                  <span>messages when view reaches</span>
-                  <label className="inline-flex items-center">
-                    <input
-                      type="number"
-                      min={chatRenderWindowLimit + 1}
-                      step={100}
-                      value={chatRenderWindowTriggerDraft}
-                      onChange={(e) => setChatRenderWindowTriggerDraft(e.target.value)}
-                      onBlur={() => commitChatRenderWindowTrigger(chatRenderWindowTriggerDraft)}
-                      className="h-8 w-24 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-highlight)]"
-                      aria-label="Chat render window prune trigger size"
-                    />
-                  </label>
-                  <span>messages.</span>
+            </div>
+
+            {/* Chat render window */}
+            <div>
+              <div className="mb-2 text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">Chat Render Window</div>
+              <div className="divide-y divide-[var(--color-border)] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+                <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-[var(--color-text)]">Messages in view</div>
+                    <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+                      {chatRenderWindowLimit > 0
+                        ? `Keep latest ${chatRenderWindowLimit.toLocaleString()} messages`
+                        : "Keep the full conversation in view"}
+                    </div>
+                  </div>
+                  <div className="inline-flex self-start rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5 sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setChatRenderWindowMode("unlimited")}
+                      className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                        chatRenderWindowLimit === 0
+                          ? "bg-[var(--color-highlight)] text-white"
+                          : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                      }`}
+                    >
+                      Unlimited
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChatRenderWindowMode("custom")}
+                      className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                        chatRenderWindowLimit > 0
+                          ? "bg-[var(--color-highlight)] text-white"
+                          : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                      }`}
+                    >
+                      Custom
+                    </button>
+                  </div>
                 </div>
-              )}
-              <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-                Custom hides older UI messages after a turn completes. Full chat history remains saved.
-              </p>
+                {chatRenderWindowLimit > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 p-4 text-sm text-[var(--color-text-muted)]">
+                    <span>Prune at</span>
+                    <label className="inline-flex items-center">
+                      <input
+                        type="number"
+                        min={1}
+                        step={100}
+                        value={chatRenderWindowLimitDraft}
+                        onChange={(e) => setChatRenderWindowLimitDraft(e.target.value)}
+                        onBlur={() => commitChatRenderWindowLimit(chatRenderWindowLimitDraft)}
+                        className="h-8 w-24 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-highlight)]"
+                        aria-label="Chat render window view size limit"
+                      />
+                    </label>
+                    <span>messages when view reaches</span>
+                    <label className="inline-flex items-center">
+                      <input
+                        type="number"
+                        min={chatRenderWindowLimit + 1}
+                        step={100}
+                        value={chatRenderWindowTriggerDraft}
+                        onChange={(e) => setChatRenderWindowTriggerDraft(e.target.value)}
+                        onBlur={() => commitChatRenderWindowTrigger(chatRenderWindowTriggerDraft)}
+                        className="h-8 w-24 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-highlight)]"
+                        aria-label="Chat render window prune trigger size"
+                      />
+                    </label>
+                    <span>messages.</span>
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-[var(--color-text-muted)]">Older messages are hidden after a turn completes. Full chat history remains saved.</p>
             </div>
           </div>
         </Section>
@@ -3062,14 +3117,17 @@ function CategoryToggle({
 function ToggleSwitch({
   checked,
   onChange,
+  label,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
+  label?: string;
 }) {
   return (
     <button
       type="button"
       role="switch"
+      aria-label={label}
       aria-checked={checked}
       onClick={() => onChange(!checked)}
       className="relative h-[20px] w-[34px] rounded-full border transition-all"

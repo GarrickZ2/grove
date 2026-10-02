@@ -2466,13 +2466,235 @@ pub async fn chat_ws_handler(
 #[derive(Deserialize)]
 pub struct HistoryQuery {
     pub offset: Option<usize>,
+    pub recent_turns: Option<usize>,
+    #[serde(default = "default_true")]
+    pub include_media: bool,
+    #[serde(default = "default_true")]
+    pub include_tool_details: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Serialize)]
 pub(crate) struct HistoryResponse {
-    events: Vec<ServerMessage>,
+    events: Vec<serde_json::Value>,
     total: usize,
+    omitted_turns: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<HistoryContext>,
     session: Option<acp::SessionMetadata>,
+}
+
+#[derive(Default, Serialize)]
+struct HistoryAttachmentCounts {
+    image: usize,
+    audio: usize,
+    resource: usize,
+}
+
+/// Small state needed to render a suffix of a chat without transferring its old events.
+#[derive(Default, Serialize)]
+struct HistoryContext {
+    attachment_counts: HistoryAttachmentCounts,
+    read_memory_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_entries: Option<Vec<PlanEntryMsg>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_file_path: Option<String>,
+}
+
+fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
+    let mut context = HistoryContext::default();
+    let mut tools: HashMap<String, (String, Vec<ToolCallInputData>, String)> = HashMap::new();
+    let mut tool_order = Vec::new();
+    for (index, update) in history.iter().enumerate() {
+        if let AcpUpdate::UserMessage { attachments, .. } = update {
+            for attachment in attachments {
+                match attachment {
+                    ContentBlockData::Image { .. } => context.attachment_counts.image += 1,
+                    ContentBlockData::Audio { .. } => context.attachment_counts.audio += 1,
+                    ContentBlockData::ResourceLink { .. } | ContentBlockData::Resource { .. } => {
+                        context.attachment_counts.resource += 1;
+                    }
+                    ContentBlockData::Text { .. } => {}
+                }
+            }
+        }
+        if index < start {
+            match update {
+                AcpUpdate::PlanUpdate { entries } => {
+                    context.plan_entries = Some(
+                        entries
+                            .iter()
+                            .map(|entry| PlanEntryMsg {
+                                content: entry.content.clone(),
+                                priority: entry.priority.clone(),
+                                status: entry.status.clone(),
+                            })
+                            .collect(),
+                    );
+                }
+                AcpUpdate::PlanFileUpdate { path, .. } => {
+                    context.plan_file_path = Some(path.clone())
+                }
+                _ => {}
+            }
+        }
+        if !matches!(
+            update,
+            AcpUpdate::ToolCall { .. }
+                | AcpUpdate::ToolCallUpdate { .. }
+                | AcpUpdate::ToolCallV1 { .. }
+                | AcpUpdate::ToolCallUpdateV1 { .. }
+        ) {
+            continue;
+        }
+        match ServerMessage::from(update.clone()) {
+            ServerMessage::ToolCall {
+                id,
+                title,
+                input,
+                status,
+                ..
+            } => {
+                if !tools.contains_key(&id) {
+                    tool_order.push(id.clone());
+                }
+                tools.insert(id, (title, input, status.unwrap_or_default()));
+            }
+            ServerMessage::ToolCallUpdate {
+                id,
+                title,
+                input,
+                status,
+                ..
+            } => {
+                if !tools.contains_key(&id) {
+                    tool_order.push(id.clone());
+                }
+                let tool = tools.entry(id).or_default();
+                if let Some(title) = title {
+                    tool.0 = title;
+                }
+                if let Some(input) = input {
+                    tool.1 = input;
+                }
+                if !status.is_empty() {
+                    tool.2 = status;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    for id in tool_order {
+        let Some((title, input, status)) = tools.get(&id) else {
+            continue;
+        };
+        if status != "completed" {
+            continue;
+        }
+        let tool_name = input
+            .iter()
+            .find(|field| field.label.trim().eq_ignore_ascii_case("tool"))
+            .map(|field| field.value.trim());
+        let memory_read = tool_name.is_some_and(|name| name.eq_ignore_ascii_case("memory_read"))
+            || title.trim().to_ascii_lowercase().ends_with("memory_read");
+        if !memory_read {
+            continue;
+        }
+        if let Some(entity_id) = input
+            .iter()
+            .find(|field| {
+                field
+                    .label
+                    .to_ascii_lowercase()
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric())
+                    .collect::<String>()
+                    .ends_with("entityid")
+            })
+            .map(|field| field.value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            if seen.insert(entity_id.to_owned()) {
+                context.read_memory_ids.push(entity_id.to_owned());
+            }
+        }
+    }
+    context
+}
+
+fn history_start_for_recent_turns(history: &[AcpUpdate], turns: usize) -> (usize, usize) {
+    if turns == 0 {
+        return (0, 0);
+    }
+    let starts: Vec<usize> = history
+        .iter()
+        .enumerate()
+        .filter_map(|(index, update)| {
+            matches!(update, AcpUpdate::UserMessage { .. }).then_some(index)
+        })
+        .collect();
+    if starts.len() <= turns {
+        (0, 0)
+    } else {
+        (starts[starts.len() - turns], starts.len() - turns)
+    }
+}
+
+fn trim_history_payload(
+    value: &mut serde_json::Value,
+    include_media: bool,
+    include_tool_details: bool,
+) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if !include_tool_details
+                && matches!(
+                    object.get("type").and_then(|v| v.as_str()),
+                    Some("tool_call" | "tool_call_update" | "tool_call_v1" | "tool_call_update_v1")
+                )
+            {
+                for field in [
+                    "raw_input",
+                    "input",
+                    "output",
+                    "content",
+                    "display_content",
+                    "legacy_raw_input",
+                    "legacy_raw_output",
+                    "legacy_content",
+                ] {
+                    object.remove(field);
+                }
+            }
+            if !include_tool_details
+                && object.get("type").and_then(|v| v.as_str()) == Some("terminal_output_update")
+            {
+                object.insert("output".into(), serde_json::Value::String(String::new()));
+            }
+            if !include_media
+                && matches!(
+                    object.get("type").and_then(|v| v.as_str()),
+                    Some("image" | "audio")
+                )
+            {
+                object.remove("data");
+            }
+            for child in object.values_mut() {
+                trim_history_payload(child, include_media, include_tool_details);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                trim_history_payload(child, include_media, include_tool_details);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// GET /api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/history?offset=N
@@ -2487,17 +2709,33 @@ pub async fn get_chat_history(
     let history = chat_history::load_history(&project_key, &task_id, &chat_id);
     let total = history.len();
     let offset = params.offset.unwrap_or(0).min(total);
-    let events: Vec<ServerMessage> = history[offset..]
+    let (start, omitted_turns) = if offset == 0 {
+        history_start_for_recent_turns(&history, params.recent_turns.unwrap_or(0).min(10_000))
+    } else {
+        (offset, 0)
+    };
+    let events: Vec<serde_json::Value> = history[start..]
         .iter()
         .cloned()
-        .map(ServerMessage::from)
+        .map(|update| {
+            let mut value = serde_json::to_value(ServerMessage::from(update)).unwrap_or_default();
+            trim_history_payload(
+                &mut value,
+                params.include_media,
+                params.include_tool_details,
+            );
+            value
+        })
         .collect();
 
     let session = acp::read_session_metadata(&project_key, &task_id, &chat_id);
+    let context = (offset == 0).then(|| history_context(&history, start));
 
     Ok(Json(HistoryResponse {
         events,
         total,
+        omitted_turns,
+        context,
         session,
     }))
 }
@@ -2596,6 +2834,125 @@ pub async fn reconnect_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recent_turn_start_preserves_whole_turn() {
+        let user = |text: &str| AcpUpdate::UserMessage {
+            text: text.into(),
+            client_message_id: None,
+            attachments: Vec::new(),
+            sender: None,
+            terminal: false,
+        };
+        let history = vec![
+            user("one"),
+            AcpUpdate::MessageChunk {
+                text: "first".into(),
+            },
+            user("two"),
+            AcpUpdate::MessageChunk {
+                text: "second".into(),
+            },
+        ];
+        assert_eq!(history_start_for_recent_turns(&history, 1), (2, 1));
+        assert_eq!(history_start_for_recent_turns(&history, 2), (0, 0));
+        assert_eq!(history_start_for_recent_turns(&history, 0), (0, 0));
+    }
+
+    #[test]
+    fn history_projection_keeps_media_placeholder_and_tool_summary() {
+        let mut value = serde_json::json!({
+            "type": "user_message",
+            "attachments": [{"type": "image", "mime_type": "image/png", "data": "base64", "label": "Image #1"}]
+        });
+        trim_history_payload(&mut value, false, false);
+        assert!(value["attachments"][0].get("data").is_none());
+        assert!(value["attachments"][0].get("media_ref").is_none());
+        assert_eq!(value["attachments"][0]["label"], "Image #1");
+
+        let mut tool = serde_json::json!({"type":"tool_call_v1", "id":"1", "title":"Bash", "status":"completed", "input":[{"large":"input"}], "output":[{"large":"output"}]});
+        trim_history_payload(&mut tool, true, false);
+        assert_eq!(tool["title"], "Bash");
+        assert_eq!(tool["status"], "completed");
+        assert!(tool.get("input").is_none());
+        assert!(tool.get("output").is_none());
+
+        let mut tool_media = serde_json::json!({
+            "type": "tool_call",
+            "output": [{"type": "content", "content": {"type": "image", "data": "base64", "mime_type": "image/png"}}]
+        });
+        trim_history_payload(&mut tool_media, false, true);
+        assert!(tool_media["output"][0]["content"].get("data").is_none());
+        assert_eq!(tool_media["output"][0]["content"]["type"], "image");
+
+        let mut terminal = serde_json::json!({"type":"terminal_chunk", "output":"shell result"});
+        trim_history_payload(&mut terminal, true, false);
+        assert_eq!(terminal["output"], "shell result");
+
+        let mut tool_terminal =
+            serde_json::json!({"type":"terminal_output_update", "output":"large detail"});
+        trim_history_payload(&mut tool_terminal, true, false);
+        assert_eq!(tool_terminal["output"], "");
+    }
+
+    #[test]
+    fn truncated_history_context_preserves_prior_ui_state() {
+        let history = vec![
+            AcpUpdate::UserMessage {
+                text: "old".into(),
+                client_message_id: None,
+                attachments: vec![ContentBlockData::Image {
+                    data: "base64".into(),
+                    mime_type: "image/png".into(),
+                    uri: None,
+                    label: None,
+                }],
+                sender: None,
+                terminal: false,
+            },
+            AcpUpdate::PlanUpdate {
+                entries: vec![acp::PlanEntryData {
+                    content: "First step".into(),
+                    priority: None,
+                    status: "pending".into(),
+                }],
+            },
+            AcpUpdate::PlanFileUpdate {
+                path: "plan.md".into(),
+                content: Some("large body".into()),
+            },
+            AcpUpdate::ToolCallV1 {
+                id: "read-1".into(),
+                title: "memory_read".into(),
+                kind: "read".into(),
+                status: "completed".into(),
+                content: None,
+                input: vec![ToolCallInputData {
+                    label: "entity_id".into(),
+                    value: "mem-123".into(),
+                }],
+                legacy_raw_input: None,
+                legacy_raw_output: None,
+                output: vec![],
+                locations: vec![],
+                timestamp: None,
+            },
+            AcpUpdate::UserMessage {
+                text: "new".into(),
+                client_message_id: None,
+                attachments: vec![],
+                sender: None,
+                terminal: false,
+            },
+        ];
+        let (start, omitted) = history_start_for_recent_turns(&history, 1);
+        assert_eq!(omitted, 1);
+        let context = history_context(&history, start);
+        assert_eq!(context.attachment_counts.image, 1);
+        assert_eq!(context.read_memory_ids, ["mem-123"]);
+        assert_eq!(context.plan_entries.unwrap()[0].content, "First step");
+        assert_eq!(context.plan_file_path.as_deref(), Some("plan.md"));
+    }
 
     #[test]
     fn restored_available_commands_preserves_an_authoritative_empty_list() {

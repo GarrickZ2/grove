@@ -253,6 +253,10 @@ describe("tool-call presentation", () => {
     ).toBe(false);
     expect(hasReadableToolOutput(undefined, "  ")).toBe(false);
     expect(hasReadableToolOutput(undefined, "legacy output")).toBe(true);
+    expect(hasReadableToolOutput([{
+      type: "content",
+      content: { type: "image", mime_type: "image/png" },
+    }], "")).toBe(true);
     expect(hasReadableToolInput([])).toBe(false);
     expect(hasReadableToolInput([{ label: "Command", value: "git status" }])).toBe(true);
   });

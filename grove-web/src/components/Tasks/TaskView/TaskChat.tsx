@@ -180,6 +180,7 @@ import { useActiveChatId } from "./useActiveChatId";
 import { useLiveSessionMessages } from "./useLiveSessionMessages";
 import { useTypewriter } from "./useTypewriter";
 import { useIsMobile } from "../../../hooks/useIsMobile";
+import { CHAT_HISTORY_PREFERENCES_CHANGED, CHAT_HISTORY_PREFERENCES_KEY, loadChatHistoryPreferences } from "./chatHistoryPreferences";
 import {
   markSessionRead,
   removeSessionActivity,
@@ -554,6 +555,8 @@ type PendingInput = {
 interface ChatHistoryRuntime {
   /** A complete history snapshot has been hydrated into the in-memory state. */
   loaded: boolean;
+  /** Absolute persisted event offset for read-only polling. */
+  historyTotal: number | null;
   /** The live socket may have missed events since the last hydration. */
   needsResync: boolean;
   /** Monotonic guard for overlapping initial/sync history requests. */
@@ -571,6 +574,7 @@ interface ChatHistoryRuntime {
 function defaultChatHistoryRuntime(): ChatHistoryRuntime {
   return {
     loaded: false,
+    historyTotal: null,
     needsResync: false,
     generation: 0,
     loadingGeneration: null,
@@ -990,6 +994,7 @@ function renderItemKey(item: RenderItem): string {
 
 type TaskChatVirtuosoContext = {
   hiddenMessageCount: number;
+  limitedHistoryTurns: number;
   inputAreaHeight: number;
   showThinking: boolean;
   pendingInputContent: ReactNode;
@@ -998,11 +1003,12 @@ type TaskChatVirtuosoContext = {
 function TaskChatVirtuosoHeader({
   context,
 }: ContextProp<TaskChatVirtuosoContext>) {
-  return context.hiddenMessageCount > 0 ? (
+  return context.hiddenMessageCount > 0 || context.limitedHistoryTurns > 0 ? (
     <div className="px-4 pt-4">
       <div className="mx-auto max-w-[720px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-center text-xs text-[var(--color-text-muted)]">
-        {context.hiddenMessageCount.toLocaleString()} earlier messages are
-        hidden from this view. Full history is still saved.
+        {context.limitedHistoryTurns > 0 && <>Loading at most the latest {context.limitedHistoryTurns} turns on this device. </>}
+        {context.hiddenMessageCount > 0 && <>{context.hiddenMessageCount.toLocaleString()} loaded earlier messages are hidden from this view. </>}
+        Full history remains saved on the server.
       </div>
     </div>
   ) : (
@@ -2440,7 +2446,7 @@ function reduceHistoryMessages(
           uri: a.uri ?? undefined,
           size: a.size ?? undefined,
           previewUrl:
-            a.type === "image"
+            a.type === "image" && a.data
               ? `data:${a.mime_type};base64,${a.data}`
               : undefined,
         })) ?? [];
@@ -3092,15 +3098,47 @@ export function TaskChat({
   // selection (same pattern as TaskInfoPanel / FlexLayoutContainer).
   const taskProject = projects.find((p) => p.id === projectId) ?? selectedProject;
   const isStudioProject = taskProject?.projectType === "studio";
+  const [historyPreferences, setHistoryPreferences] = useState(() => loadChatHistoryPreferences(appConfig?.acp));
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(CHAT_HISTORY_PREFERENCES_KEY)) return;
+    } catch { /* Use legacy settings when local storage is unavailable. */ }
+    setHistoryPreferences(loadChatHistoryPreferences(appConfig?.acp));
+  }, [appConfig?.acp]);
+  useEffect(() => {
+    const onChange = (event: Event) => {
+      if (event instanceof StorageEvent && event.key !== CHAT_HISTORY_PREFERENCES_KEY) return;
+      setHistoryPreferences(loadChatHistoryPreferences(appConfig?.acp));
+      const chatId = getActiveChatId();
+      if (chatId) {
+        const runtime = historyRuntimeRef.current.get(chatId);
+        if (runtime) {
+          runtime.generation += 1;
+          runtime.loadingGeneration = null;
+          runtime.bufferedEvents = [];
+          runtime.syncRequested = false;
+          runtime.loaded = false;
+          runtime.needsResync = true;
+        }
+        setHistorySyncVersion((version) => version + 1);
+      }
+    };
+    window.addEventListener(CHAT_HISTORY_PREFERENCES_CHANGED, onChange);
+    window.addEventListener("storage", onChange);
+    return () => {
+      window.removeEventListener(CHAT_HISTORY_PREFERENCES_CHANGED, onChange);
+      window.removeEventListener("storage", onChange);
+    };
+  }, [appConfig?.acp, getActiveChatId]);
   const chatRenderWindowSettings = useMemo(
     () =>
       normalizeChatRenderWindowSettings(
-        appConfig?.acp?.render_window_limit,
-        appConfig?.acp?.render_window_trigger,
+        historyPreferences.renderWindowLimit,
+        historyPreferences.renderWindowTrigger,
       ),
     [
-      appConfig?.acp?.render_window_limit,
-      appConfig?.acp?.render_window_trigger,
+      historyPreferences.renderWindowLimit,
+      historyPreferences.renderWindowTrigger,
     ],
   );
   const updateHiddenMessageCount = useCallback((value: number) => {
@@ -3290,7 +3328,6 @@ export function TaskChat({
   const [isTakingControl, setIsTakingControl] = useState(false);
   const [isSavingToNote, setIsSavingToNote] = useState(false);
   const [saveToNoteDone, setSaveToNoteDone] = useState(false);
-  const pollingOffsetRef = useRef(0);
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Keep the reduced history snapshot and its hydration state per Chat. A
@@ -5435,7 +5472,11 @@ export function TaskChat({
       }
       let res: Awaited<ReturnType<typeof getChatHistory>>;
       try {
-        res = await getChatHistory(projectId, taskId, chatId);
+        res = await getChatHistory(projectId, taskId, chatId, 0, {
+          recentTurns: historyPreferences.recentTurns,
+          includeMedia: historyPreferences.includeMedia,
+          includeToolDetails: historyPreferences.includeToolDetails,
+        });
       } catch {
         if (generation === runtime.generation) {
           runtime.loadingGeneration = null;
@@ -5463,8 +5504,12 @@ export function TaskChat({
         if (historicalInputIds.size > 0) {
           updatePendingInputs(chatId, (items) => items.filter((item) => !historicalInputIds.has(item.id)));
         }
-        let historicalPlanEntries: PlanEntry[] | null = null;
-        let historicalPlanFile: { path: string; content?: string } | null = null;
+        let historicalPlanEntries: PlanEntry[] | null = res.context?.plan_entries
+          ? normalizePlanEntries(res.context.plan_entries)
+          : null;
+        let historicalPlanFile: { path: string; content?: string } | null = res.context?.plan_file_path
+          ? { path: res.context.plan_file_path }
+          : null;
         for (const evt of res.events) {
           msgs = reduceHistoryMessages(msgs, evt);
           if (evt.type === "plan_update") {
@@ -5478,6 +5523,7 @@ export function TaskChat({
         runtime.bufferedEvents = [];
         runtime.loadingGeneration = null;
         runtime.loaded = true;
+        runtime.historyTotal = res.total;
         runtime.syncRequested = false;
         if (
           runtime.connected &&
@@ -5491,8 +5537,8 @@ export function TaskChat({
         }
         // Capture the complete History evidence before applying the optional
         // render window. A visual optimization must not erase Memory usage.
-        setReadMemoryIds(collectReadMemoryIds(msgs));
-        const attachmentCounters = buildAttachmentCounters(msgs);
+        setReadMemoryIds([...new Set([...(res.context?.read_memory_ids ?? []), ...collectReadMemoryIds(msgs)])]);
+        const attachmentCounters = res.context?.attachment_counts ?? buildAttachmentCounters(msgs);
         const prunedHistory = pruneChatViewMessages(
           msgs,
           0,
@@ -5771,7 +5817,7 @@ export function TaskChat({
     // loading after this effect's first run (when launch_mode was still
     // undefined → connectChatWs bailed), the effect re-fires with the
     // resolved mode and routes the chat correctly (ACP WS vs PTY-only).
-  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs]);
+  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs, historyPreferences]);
 
   // Cleanup all WebSockets on unmount, plus any pending reconnect timers —
   // otherwise an in-flight backoff timer fires after unmount and creates a
@@ -6670,38 +6716,44 @@ export function TaskChat({
       return;
     }
 
-    // Load initial history
+    // The normal hydration above loads the initial history. Poll only events
+    // persisted after that snapshot; a second full request doubles traffic.
     const chatId = activeChatId;
-    getChatHistory(projectId, taskId, chatId, 0)
-      .then((res) => {
-        if (res.events.length > 0) {
-          for (const evt of res.events) {
-            handleServerMessageRef.current(evt);
-          }
-          pollingOffsetRef.current = res.total;
-        }
-      })
-      .catch(() => {});
+    const historyOptions = {
+      recentTurns: historyPreferences.recentTurns,
+      includeMedia: historyPreferences.includeMedia,
+      includeToolDetails: historyPreferences.includeToolDetails,
+    };
+    let cancelled = false;
+    let polling = false;
 
     // Poll every 5 seconds for incremental updates
     const loadLatest = async () => {
+      const runtime = historyRuntimeRef.current.get(chatId);
+      if (cancelled || polling || !runtime?.loaded || runtime.historyTotal === null) return;
+      const generation = runtime.generation;
+      polling = true;
       let res: Awaited<ReturnType<typeof getChatHistory>>;
       try {
         res = await getChatHistory(
           projectId,
           taskId,
           chatId,
-          pollingOffsetRef.current,
+          runtime.historyTotal,
+          historyOptions,
         );
       } catch {
+        polling = false;
         return;
       }
+      polling = false;
+      if (cancelled || !runtime.loaded || runtime.generation !== generation) return;
       if (res.events.length > 0) {
         for (const evt of res.events) {
           handleServerMessageRef.current(evt);
         }
-        pollingOffsetRef.current = res.total;
       }
+      runtime.historyTotal = res.total;
       // If session is gone, auto-exit read-only mode
       if (!res.session) {
         setIsRemoteSession(false);
@@ -6712,10 +6764,11 @@ export function TaskChat({
     pollingTimerRef.current = timer;
 
     return () => {
+      cancelled = true;
       clearInterval(timer);
       pollingTimerRef.current = null;
     };
-  }, [isRemoteSession, activeChatId, projectId, taskId]);
+  }, [isRemoteSession, activeChatId, projectId, taskId, historyPreferences]);
 
   // ─── Chat switching ────────────────────────────────────────────────────
 
@@ -7352,7 +7405,6 @@ export function TaskChat({
             : m,
       ),
     );
-    pollingOffsetRef.current = 0;
     // Reconnect via WebSocket (normal flow). Cancel any pending backoff timer
     // first so the explicit reconnect path below isn't racing a scheduled one.
     cancelPendingReconnectRef.current(activeChatId);
@@ -10030,6 +10082,7 @@ export function TaskChat({
   // their content without unmounting Virtuoso's measured boundary elements.
   const virtuosoContext: TaskChatVirtuosoContext = {
     hiddenMessageCount,
+    limitedHistoryTurns: historyPreferences.recentTurns,
     inputAreaHeight: transcriptFooterState.inputAreaHeight,
     showThinking: transcriptFooterState.showThinking,
     pendingInputContent: pendingInputs.length > 0 && !isTerminalLaunchMode ? (
@@ -13211,6 +13264,13 @@ function EmbeddedResourceCard({
   );
 }
 
+function OmittedMedia({ label }: { label: string }) {
+  return <div className="inline-flex max-w-full items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+    <span className="truncate text-[var(--color-text)]">{label}</span>
+    <span className="shrink-0">Not loaded</span>
+  </div>;
+}
+
 function AgentContentBlocks({
   blocks,
   renderText,
@@ -13227,6 +13287,7 @@ function AgentContentBlocks({
           return <Fragment key={index}>{renderText(block.text, index)}</Fragment>;
         }
         if (block.type === "image") {
+          if (!block.data) return <OmittedMedia key={index} label={block.label || "Agent image"} />;
           const src = `data:${block.mime_type};base64,${block.data}`;
           return (
             <img
@@ -13239,6 +13300,7 @@ function AgentContentBlocks({
           );
         }
         if (block.type === "audio") {
+          if (!block.data) return <OmittedMedia key={index} label={block.label || "Agent audio"} />;
           return (
             <audio
               key={index}
@@ -13418,7 +13480,9 @@ const MessageItem = memo(function MessageItem({
             })()}
             <div className="rounded-2xl px-3.5 py-2.5 bg-[color-mix(in_srgb,var(--color-bg-tertiary)_78%,transparent)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-sm text-[var(--color-text)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
               {message.attachments?.map((att, i) =>
-                att.type === "image" && att.previewUrl ? (
+                !att.data && (att.type === "image" || att.type === "audio") ? (
+                  <OmittedMedia key={i} label={att.label || att.type} />
+                ) : att.type === "image" && att.previewUrl ? (
                   <div key={i} className="group/img relative mb-2 inline-block max-w-full">
                     <img
                       src={att.previewUrl}

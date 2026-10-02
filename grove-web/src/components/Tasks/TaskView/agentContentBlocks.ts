@@ -2,12 +2,12 @@ export type AgentContentBlock =
   | { type: "text"; text: string }
   | {
       type: "image";
-      data: string;
+      data?: string;
       mime_type: string;
       uri?: string;
       label?: string;
     }
-  | { type: "audio"; data: string; mime_type: string; label?: string }
+  | { type: "audio"; data?: string; mime_type: string; label?: string }
   | {
       type: "resource_link";
       uri: string;
