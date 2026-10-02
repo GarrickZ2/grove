@@ -29,6 +29,8 @@ pub struct Cli {
 pub enum Commands {
     /// Launch the terminal UI (same as running 'grove' with no arguments)
     Tui,
+    /// Check for a new Grove release now and install it without prompting
+    Upgrade,
     /// Send hook notifications
     Hooks {
         #[command(subcommand)]

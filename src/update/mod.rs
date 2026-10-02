@@ -26,7 +26,7 @@ impl InstallMethod {
     pub fn update_command(&self) -> &'static str {
         match self {
             InstallMethod::CargoInstall => "cargo install grove-rs",
-            InstallMethod::Homebrew => "brew upgrade grove",
+            InstallMethod::Homebrew => "brew update && brew upgrade garrickz2/grove/grove",
             InstallMethod::GitHubRelease => {
                 if cfg!(windows) {
                     "irm https://raw.githubusercontent.com/GarrickZ2/grove/master/install.ps1 | iex"
@@ -207,12 +207,105 @@ pub fn check_for_updates(cached_version: Option<&str>, last_check: Option<&str>)
     }
 }
 
+/// Ignore the startup cache and install a newer release using the detected
+/// installation method. This is the explicit `grove upgrade` path.
+pub fn upgrade() -> Result<(), String> {
+    let update_info = check_for_updates(None, None);
+    let latest = update_info
+        .latest_version
+        .as_deref()
+        .ok_or("could not check the latest GitHub release")?;
+    Version::parse(latest.trim_start_matches('v'))
+        .map_err(|error| format!("invalid latest release version {latest}: {error}"))?;
+
+    let mut config = crate::storage::config::load_config();
+    config.update.latest_version = Some(latest.to_string());
+    config.update.last_check = update_info.check_time.map(|time| time.to_rfc3339());
+    if let Err(error) = crate::storage::config::save_config(&config) {
+        eprintln!("Could not save update check: {error}");
+    }
+
+    if !update_info.has_update() {
+        println!(
+            "Grove {} is already up to date.",
+            update_info.current_version
+        );
+        return Ok(());
+    }
+
+    let command = match update_info.install_method {
+        InstallMethod::AppBundle => {
+            return Err("macOS app bundles must be updated from the Grove app".to_string());
+        }
+        InstallMethod::Unknown => {
+            return Err("unknown installation method; update Grove manually".to_string());
+        }
+        _ => update_info.update_command(),
+    };
+
+    println!("Upgrading Grove {} → {latest}", update_info.current_version);
+    println!("Executing: {command}");
+    execute_update_command(command)?;
+    if update_info.install_method == InstallMethod::Homebrew {
+        verify_homebrew_version(latest)?;
+    }
+    println!("Update completed. Restart Grove to use the new version.");
+    Ok(())
+}
+
+fn verify_homebrew_version(latest: &str) -> Result<(), String> {
+    let output = std::process::Command::new("brew")
+        .args(["list", "--versions", "garrickz2/grove/grove"])
+        .output()
+        .map_err(|error| format!("could not verify Homebrew installation: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "could not verify Homebrew installation: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let installed = String::from_utf8_lossy(&output.stdout);
+    let version = installed
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|version| Version::parse(version).ok())
+        .max()
+        .ok_or("could not read the installed Homebrew version")?;
+    let latest_version = Version::parse(latest.trim_start_matches('v'))
+        .map_err(|error| format!("invalid latest release version {latest}: {error}"))?;
+    if version < latest_version {
+        return Err(format!(
+            "Homebrew has Grove {version}, but GitHub has {latest}; the tap formula may not be published yet"
+        ));
+    }
+    Ok(())
+}
+
+fn execute_update_command(command: &str) -> Result<(), String> {
+    use std::process::Command;
+
+    let status = if cfg!(windows) {
+        Command::new("powershell")
+            .args(["-Command", command])
+            .status()
+    } else {
+        Command::new("sh").args(["-c", command]).status()
+    }
+    .map_err(|error| format!("could not execute update command: {error}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("update command exited with status {status}"))
+    }
+}
+
 /// Prompt the user in the CLI to update if a new version is available.
 /// If they choose to update, execute the installation command and exit.
 /// Otherwise, continue starting the application.
 pub fn prompt_and_execute_update(update_info: &UpdateInfo) {
     use std::io::{self, IsTerminal, Write};
-    use std::process::Command;
 
     // Check if stdin is a terminal to avoid hanging in non-interactive/AppBundle environments
     if !io::stdin().is_terminal() {
@@ -242,29 +335,13 @@ pub fn prompt_and_execute_update(update_info: &UpdateInfo) {
         if trimmed == "y" || trimmed == "yes" {
             println!("Executing update command: {}\n", command_str);
 
-            // Execute the command using the system shell
-            let status = if cfg!(windows) {
-                Command::new("powershell")
-                    .args(["-Command", command_str])
-                    .status()
-            } else {
-                Command::new("sh").args(["-c", command_str]).status()
-            };
-
-            match status {
-                Ok(s) if s.success() => {
+            match execute_update_command(command_str) {
+                Ok(()) => {
                     println!("\nUpdate completed! Please restart Grove.");
                     std::process::exit(0);
                 }
-                Ok(s) => {
-                    eprintln!("\nUpdate failed, exit code: {:?}", s.code());
-                    print!("Press Enter to continue starting Grove...");
-                    let _ = io::stdout().flush();
-                    let mut dummy = String::new();
-                    let _ = io::stdin().read_line(&mut dummy);
-                }
-                Err(e) => {
-                    eprintln!("\nUnable to execute update command: {}", e);
+                Err(error) => {
+                    eprintln!("\nUpdate failed: {error}");
                     print!("Press Enter to continue starting Grove...");
                     let _ = io::stdout().flush();
                     let mut dummy = String::new();
@@ -321,7 +398,7 @@ mod tests {
             }));
         assert_eq!(
             InstallMethod::Homebrew.update_command(),
-            "brew upgrade grove"
+            "brew update && brew upgrade garrickz2/grove/grove"
         );
         assert_eq!(InstallMethod::AppBundle.update_command(), "");
     }

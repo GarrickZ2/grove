@@ -414,6 +414,12 @@ fn main() -> io::Result<()> {
             #[cfg(not(windows))]
             run_tui()?;
         }
+        Commands::Upgrade => {
+            if let Err(error) = update::upgrade() {
+                eprintln!("Upgrade failed: {error}");
+                std::process::exit(1);
+            }
+        }
         Commands::Hooks { level } => {
             cli::hooks::execute(level);
         }
