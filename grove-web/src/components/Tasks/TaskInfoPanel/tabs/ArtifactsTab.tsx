@@ -501,11 +501,6 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     (id: string, comment: string) => updateDraft(id, { comment }),
     [updateDraft],
   );
-  const handleStaleMarkersCleaned = useCallback(
-    (count: number) => setToastMessage(`Removed ${count} stale preview comment${count > 1 ? "s" : ""}`),
-    [],
-  );
-
   const handleOpenLink = useCallback(async (file: ArtifactFile) => {
     if (!projectId) return;
     try {
@@ -698,7 +693,6 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
             }
             onUpdatePreviewComment={handleUpdatePreviewComment}
             onDeletePreviewComment={removeDraft}
-            onStaleMarkersCleaned={handleStaleMarkersCleaned}
             previewCommentDrafts={currentFilePreviewDrafts}
             previewCommentMarkers={currentFilePreviewMarkers}
             sketchContext={projectId ? { projectId, taskId: task.id } : undefined}

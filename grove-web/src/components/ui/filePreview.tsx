@@ -141,7 +141,6 @@ interface FilePreviewDrawerProps {
   onCreatePreviewComment?: (locator: PreviewCommentLocator, comment: string, rendererId: string) => void;
   onUpdatePreviewComment?: (id: string, comment: string) => void;
   onDeletePreviewComment?: (id: string) => void;
-  onStaleMarkersCleaned?: (count: number) => void;
   previewCommentMarkers?: PreviewCommentMarker[];
   previewCommentDrafts?: PreviewCommentDraft[];
   /** When provided, markdown previews resolve `sketch://<uuid>` refs to the
@@ -166,7 +165,6 @@ export function FilePreviewDrawer({
   onCreatePreviewComment,
   onUpdatePreviewComment,
   onDeletePreviewComment,
-  onStaleMarkersCleaned,
   previewCommentMarkers,
   previewCommentDrafts,
   sketchContext,
@@ -410,7 +408,7 @@ export function FilePreviewDrawer({
   useEffect(() => {
     if (!commentable) return;
     const handler = (event: MessageEvent) => {
-      const data = event.data as { type?: string; previewId?: string; payload?: PreviewCommentLocator; markerId?: string; ids?: string[] };
+      const data = event.data as { type?: string; previewId?: string; payload?: PreviewCommentLocator; markerId?: string };
       if (!data || data.previewId !== previewId) return;
       if (data.type === "grove-preview-comment:selected" && data.payload) {
         // Keep commentMode true so the picker resumes once the modal closes,
@@ -429,14 +427,11 @@ export function FilePreviewDrawer({
           setCommentText(draft.comment);
           setEditingDraftId(draft.id);
         }
-      } else if (data.type === "grove-preview-comment:markers-stale" && Array.isArray(data.ids) && onDeletePreviewComment) {
-        data.ids.forEach((id) => onDeletePreviewComment(id));
-        if (data.ids.length) onStaleMarkersCleaned?.(data.ids.length);
       }
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [commentable, previewId, previewCommentDrafts, onDeletePreviewComment, onStaleMarkersCleaned]);
+  }, [commentable, previewId, previewCommentDrafts]);
 
   const closeCommentModal = () => {
     setPendingLocator(null);

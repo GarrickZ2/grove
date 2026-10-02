@@ -727,7 +727,7 @@ export function DiffFileView({
   useEffect(() => {
     if (!previewRenderer || previewRenderer.supportsComments === false) return;
     const handler = (event: MessageEvent) => {
-      const data = event.data as { type?: string; previewId?: string; payload?: PreviewCommentLocator; markerId?: string; ids?: string[] };
+      const data = event.data as { type?: string; previewId?: string; payload?: PreviewCommentLocator; markerId?: string };
       if (!data || data.previewId !== previewCommentId) return;
       if (data.type === 'grove-preview-comment:selected' && data.payload) {
         setPendingPreviewLocator(previewCommentLocatorInParentViewport(data.payload, event.source, bodyRef.current));
@@ -746,16 +746,11 @@ export function DiffFileView({
           setEditingPreviewDraftId(draft.id);
           setPreviewCommentMode(false);
         }
-      } else if (data.type === 'grove-preview-comment:markers-stale' && Array.isArray(data.ids)) {
-        data.ids.forEach((id) => removeDraft(id));
-        if (data.ids.length) {
-          console.info(`[preview-comments] Removed ${data.ids.length} stale preview comment${data.ids.length > 1 ? 's' : ''} (target element no longer in DOM)`);
-        }
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [previewRenderer, previewCommentId, projectId, taskId, file.new_path, removeDraft]);
+  }, [previewRenderer, previewCommentId, projectId, taskId, file.new_path]);
 
   const previewCommentMarkersKey = useMemo(() => {
     if (!projectId || !taskId) return '[]';

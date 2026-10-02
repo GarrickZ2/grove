@@ -1,5 +1,7 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { PreviewCommentDraft } from "./PreviewCommentContext";
+import { PreviewCommentProvider, usePreviewComments, type PreviewCommentDraft } from "./PreviewCommentContext";
 import {
   previewCommentLocatorInParentViewport,
   previewCommentMarkerData,
@@ -20,6 +22,31 @@ function draft(id: string, projectId: string, taskId: string): PreviewCommentDra
     createdAt: 1,
   };
 }
+
+describe("PreviewCommentProvider", () => {
+  it("restores an old unsent comment without expiring it", () => {
+    const originalStorage = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: () => JSON.stringify([draft("old", "project-1", "task-1")]),
+      },
+    });
+    function DraftCount() {
+      return createElement("span", null, usePreviewComments().drafts.length);
+    }
+
+    try {
+      const html = renderToStaticMarkup(
+        createElement(PreviewCommentProvider, null, createElement(DraftCount)),
+      );
+      expect(html).toBe("<span>1</span>");
+    } finally {
+      if (originalStorage) Object.defineProperty(window, "localStorage", originalStorage);
+      else Reflect.deleteProperty(window, "localStorage");
+    }
+  });
+});
 
 describe("previewCommentTaskLabel", () => {
   it("numbers comments within the current task instead of provider-wide", () => {

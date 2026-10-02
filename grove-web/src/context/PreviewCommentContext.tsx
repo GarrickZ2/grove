@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 const STORAGE_KEY = "grove:previewCommentDrafts";
-const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 const WRITE_DEBOUNCE_MS = 300;
 
 function loadFromStorage(): PreviewCommentDraft[] {
@@ -11,14 +10,12 @@ function loadFromStorage(): PreviewCommentDraft[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    const now = Date.now();
     return parsed.filter(
       (d): d is PreviewCommentDraft =>
         d && typeof d === "object"
         && typeof d.id === "string"
         && typeof d.comment === "string"
-        && typeof d.createdAt === "number"
-        && now - d.createdAt < MAX_AGE_MS,
+        && typeof d.createdAt === "number",
     );
   } catch {
     return [];

@@ -729,44 +729,12 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
 
     resolve();
 
-    // Settle verification — a longer window (6s) plus debounce-on-mutation
-    // prevents false positives for async-rendered content (Mermaid/D2/SVG).
-    let verifyTimer: ReturnType<typeof setTimeout> | null = null;
-    let verifyDeadline = 0;
-    const doVerify = () => {
-      verifyTimer = null;
-      verifyDeadline = 0;
-      if (!previewId) return;
-      const stale: string[] = [];
-      for (const m of markers) {
-        // A marker is stale only if its primary block can't be resolved.
-        // Missing extra blocks degrade gracefully (fewer rects).
-        if (!lookupOne(m.selector, m.xpath)) stale.push(m.id);
-      }
-      if (stale.length) {
-        window.postMessage({ type: 'grove-preview-comment:markers-stale', previewId, ids: stale }, '*');
-      }
-    };
-    // Standard debounce 6s, but cap with a 30s hard deadline so a constantly
-    // mutating preview (animations, async data) still gets verified instead
-    // of resetting the timer indefinitely.
-    const scheduleVerify = () => {
-      const now = Date.now();
-      if (!verifyDeadline) verifyDeadline = now + 30000;
-      const remaining = Math.max(0, verifyDeadline - now);
-      const delay = Math.min(6000, remaining);
-      if (verifyTimer) clearTimeout(verifyTimer);
-      verifyTimer = setTimeout(doVerify, delay);
-    };
-    if (markers.length) scheduleVerify();
-
     let raf = 0;
     const schedule = () => {
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
         resolve();
-        if (markers.length) scheduleVerify();
       });
     };
 
@@ -779,14 +747,13 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
     window.addEventListener('resize', schedule);
 
     return () => {
-      if (verifyTimer) clearTimeout(verifyTimer);
       ro.disconnect();
       mo.disconnect();
       window.removeEventListener('scroll', schedule, true);
       window.removeEventListener('resize', schedule);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [markersKey, previewId]);
+  }, [markersKey]);
 
   return (
     <div ref={hostRef} className={`relative w-full${fill ? " h-full min-h-0" : ""}`}>
