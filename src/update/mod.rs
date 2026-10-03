@@ -25,13 +25,23 @@ impl InstallMethod {
     /// Returns the update command for this installation method
     pub fn update_command(&self) -> &'static str {
         match self {
-            InstallMethod::CargoInstall => "cargo install grove-rs",
+            InstallMethod::CargoInstall => {
+                if cfg!(feature = "gui") {
+                    "cargo install grove-rs --features gui"
+                } else {
+                    "cargo install grove-rs"
+                }
+            }
             InstallMethod::Homebrew => "brew update && brew upgrade garrickz2/grove/grove",
             InstallMethod::GitHubRelease => {
                 if cfg!(windows) {
                     "irm https://raw.githubusercontent.com/GarrickZ2/grove/master/install.ps1 | iex"
                 } else {
-                    "curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh"
+                    if cfg!(all(target_os = "linux", feature = "gui")) {
+                        "bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | GROVE_GUI=1 sh'"
+                    } else {
+                        "bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh'"
+                    }
                 }
             }
             // AppBundle updates are handled in-app via the web UI
@@ -245,10 +255,7 @@ pub fn upgrade() -> Result<(), String> {
 
     println!("Upgrading Grove {} → {latest}", update_info.current_version);
     println!("Executing: {command}");
-    execute_update_command(command)?;
-    if update_info.install_method == InstallMethod::Homebrew {
-        verify_homebrew_version(latest)?;
-    }
+    execute_and_verify_update(command, update_info.install_method, latest)?;
     println!("Update completed. Restart Grove to use the new version.");
     Ok(())
 }
@@ -280,6 +287,63 @@ fn verify_homebrew_version(latest: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn verify_installed_version(exe: &std::path::Path, latest: &str) -> Result<(), String> {
+    let output = std::process::Command::new(exe)
+        .arg("--version")
+        .output()
+        .map_err(|error| format!("could not verify installed Grove: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "installed Grove did not report its version: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let reported = String::from_utf8_lossy(&output.stdout);
+    let installed = reported
+        .split_whitespace()
+        .last()
+        .and_then(|value| Version::parse(value.trim_start_matches('v')).ok())
+        .ok_or_else(|| {
+            format!(
+                "could not parse installed Grove version: {}",
+                reported.trim()
+            )
+        })?;
+    let expected = Version::parse(latest.trim_start_matches('v'))
+        .map_err(|error| format!("invalid latest release version {latest}: {error}"))?;
+    if installed < expected {
+        return Err(format!(
+            "Grove is still {installed}, but the latest release is {expected}"
+        ));
+    }
+    Ok(())
+}
+
+fn verify_update_result(
+    method: InstallMethod,
+    latest: &str,
+    exe: &std::path::Path,
+) -> Result<(), String> {
+    if method == InstallMethod::Homebrew {
+        verify_homebrew_version(latest)
+    } else {
+        verify_installed_version(exe, latest)
+    }
+}
+
+fn execute_and_verify_update(
+    command: &str,
+    method: InstallMethod,
+    latest: &str,
+) -> Result<(), String> {
+    // Capture the path before the installer replaces the running executable.
+    // On Linux, current_exe() can then point at the unlinked old inode.
+    let exe =
+        env::current_exe().map_err(|error| format!("could not locate Grove binary: {error}"))?;
+    execute_update_command(command)?;
+    verify_update_result(method, latest, &exe)
 }
 
 fn execute_update_command(command: &str) -> Result<(), String> {
@@ -335,7 +399,7 @@ pub fn prompt_and_execute_update(update_info: &UpdateInfo) {
         if trimmed == "y" || trimmed == "yes" {
             println!("Executing update command: {}\n", command_str);
 
-            match execute_update_command(command_str) {
+            match execute_and_verify_update(command_str, update_info.install_method, latest) {
                 Ok(()) => {
                     println!("\nUpdate completed! Please restart Grove.");
                     std::process::exit(0);
@@ -387,7 +451,11 @@ mod tests {
     fn test_update_commands() {
         assert_eq!(
             InstallMethod::CargoInstall.update_command(),
-            "cargo install grove-rs"
+            if cfg!(feature = "gui") {
+                "cargo install grove-rs --features gui"
+            } else {
+                "cargo install grove-rs"
+            }
         );
         assert!(InstallMethod::GitHubRelease
             .update_command()

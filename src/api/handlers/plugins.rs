@@ -1816,16 +1816,14 @@ fn validate_connect_provider_manifest(
                 "duplicate connect provider id: {id}"
             )));
         }
-        for field in ["name"] {
-            if provider
-                .get(field)
-                .and_then(|value| value.as_str())
-                .is_none_or(|value| value.trim().is_empty())
-            {
-                return Err(ApiError::bad_request(format!(
-                    "connect provider {id} is missing {field}"
-                )));
-            }
+        if provider
+            .get("name")
+            .and_then(|value| value.as_str())
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err(ApiError::bad_request(format!(
+                "connect provider {id} is missing name"
+            )));
         }
         if let Some(modes) = provider.get("setup_modes") {
             let modes = modes.as_array().ok_or_else(|| {

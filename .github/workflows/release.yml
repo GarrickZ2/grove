@@ -319,6 +319,36 @@ jobs:
           gh release upload ${{ needs.create-release.outputs.tag }} --clobber \
             target/x86_64-pc-windows-msvc/release/grove-${{ needs.create-release.outputs.tag }}-x86_64-pc-windows-msvc.zip
 
+  build-windows-arm64:
+    needs: [create-release, build-frontend, build-extension]
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: grove-web/dist
+      - name: Download extension dist
+        uses: actions/download-artifact@v4
+        with:
+          name: grove-extension-dist
+          path: grove-extension/dist
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - name: Build (with GUI support)
+        run: cargo build --release --target aarch64-pc-windows-msvc --features gui
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path target/aarch64-pc-windows-msvc/release/grove.exe -DestinationPath grove-${{ needs.create-release.outputs.tag }}-aarch64-pc-windows-msvc.zip
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: gh release upload ${{ needs.create-release.outputs.tag }} grove-${{ needs.create-release.outputs.tag }}-aarch64-pc-windows-msvc.zip --clobber
+
   # Build macOS universal .app + DMG (arm64 + x86_64 combined)
   build-macos-dmg:
     needs: [create-release, build-frontend, build-extension]
@@ -416,7 +446,7 @@ jobs:
 
   # Publish the release
   publish-release:
-    needs: [create-release, build-macos-arm, build-macos-intel, build-linux-x64, build-linux-arm, build-linux-gui-x64, build-macos-dmg, build-windows-x64, build-extension]
+    needs: [create-release, build-macos-arm, build-macos-intel, build-linux-x64, build-linux-arm, build-linux-gui-x64, build-macos-dmg, build-windows-x64, build-windows-arm64, build-extension]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

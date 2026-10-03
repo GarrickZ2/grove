@@ -364,6 +364,9 @@ impl ActionResult {
 
 /// Capability surface every IM adapter exposes to the Connect core.
 /// Platform-native cards and reactions stay behind this boundary.
+// async_trait emits #[must_use] on boxed futures; Clippy 1.99 treats the
+// future's own #[must_use] as sufficient.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait ConnectAdapter: Send + Sync + 'static {
     async fn mark_waiting(&self, message_id: &str) -> Option<String>;

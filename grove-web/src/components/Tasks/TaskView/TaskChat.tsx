@@ -82,6 +82,7 @@ import {
   DropdownMenu,
 } from "../../ui";
 import { agentOptions } from "../../../data/agents";
+import { createClientMessageId } from "../../../utils/clientMessageId";
 import {
   buildMentionItems,
   buildStudioMentionItems,
@@ -2204,6 +2205,12 @@ function getPromptFromEditable(el: HTMLElement): string {
   return parts.join("").trim();
 }
 
+function draftMatchesPendingInput(html: string, pending: PendingInput): boolean {
+  const probe = document.createElement("div");
+  probe.innerHTML = html;
+  return getPromptFromEditable(probe) === pending.text;
+}
+
 function reduceHistoryMessages(
   messages: ChatMessage[],
   msg: ServerEvent,
@@ -2949,6 +2956,9 @@ export function TaskChat({
   >([]);
   const pendingInputsRef = useRef<Map<string, PendingInput[]>>(new Map());
   const [pendingInputs, setPendingInputs] = useState<PendingInput[]>([]);
+  const [composerPendingId, setComposerPendingId] = useState<string | null>(null);
+  const pendingComposerRef = useRef<Map<string, { id: string; html: string; attachments: Attachment[] }>>(new Map());
+  const sendingAttemptRef = useRef<Set<string>>(new Set());
   const updatePendingInputs = useCallback((chatId: string, update: (items: PendingInput[]) => PendingInput[]) => {
     const previous = pendingInputsRef.current.get(chatId) ?? [];
     const next = update(previous);
@@ -2972,13 +2982,29 @@ export function TaskChat({
         inputs.filter((input) => input && typeof input.id === "string" && typeof input.text === "string")
           .map((input) => ({ ...input, status: "delayed" as const })),
       ]));
+      const currentChatId = getActiveChatId();
+      const currentDraft = currentChatId ? loadChatDraft(currentChatId) : "";
+      const currentPending = currentChatId ? pendingInputsRef.current.get(currentChatId)?.at(-1) : undefined;
+      if (currentChatId && currentDraft && currentPending && draftMatchesPendingInput(currentDraft, currentPending)) {
+        pendingComposerRef.current.set(currentChatId, { id: currentPending.id, html: currentDraft, attachments: [] });
+        setComposerPendingId(currentPending.id);
+      }
       setPendingInputs(pendingInputsRef.current.get(getActiveChatId() ?? "") ?? []);
     } catch {
       // Corrupt or unavailable tab storage should not block Chat startup.
     }
   }, [projectId, taskId, getActiveChatId]);
   useEffect(() => {
-    setPendingInputs(pendingInputsRef.current.get(activeChatId ?? "") ?? []);
+    const inputs = pendingInputsRef.current.get(activeChatId ?? "") ?? [];
+    setPendingInputs(inputs);
+    if (activeChatId && !pendingComposerRef.current.has(activeChatId)) {
+      const draft = loadChatDraft(activeChatId);
+      const pending = inputs.at(-1);
+      if (draft && pending && draftMatchesPendingInput(draft, pending)) {
+        pendingComposerRef.current.set(activeChatId, { id: pending.id, html: draft, attachments: [] });
+      }
+    }
+    setComposerPendingId(pendingComposerRef.current.get(activeChatId ?? "")?.id ?? null);
   }, [activeChatId]);
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -3258,6 +3284,8 @@ export function TaskChat({
   const [isDeletingChat, setIsDeletingChat] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const attachmentsRef = useRef(attachments);
+  useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
   const attachCountersRef = useRef<AttachmentCounters>({ image: 0, audio: 0, resource: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -4885,6 +4913,43 @@ export function TaskChat({
     setHasContent(text.length > 0 || el.querySelector("[data-command],[data-file]") !== null);
   }, [activeChatId]);
 
+  const completePendingComposer = useCallback((chatId: string, id: string) => {
+    const pending = pendingComposerRef.current.get(chatId);
+    if (!pending || pending.id !== id) return;
+    pendingComposerRef.current.delete(chatId);
+    const isActive = chatId === getActiveChatId();
+    if (isActive) setComposerPendingId(null);
+    const cached = perChatStateRef.current.get(chatId);
+    if (!isActive) {
+      if (cached?.draftHtml === pending.html) cached.draftHtml = "";
+      if (loadChatDraft(chatId) === pending.html) clearChatDraft(chatId);
+      return;
+    }
+    const el = editableRef.current;
+    if (!el || el.innerHTML !== pending.html ||
+        (pending.attachments.length > 0 && attachmentsRef.current !== pending.attachments)) return;
+    if (cached?.draftHtml === pending.html) cached.draftHtml = "";
+    if (loadChatDraft(chatId) === pending.html) clearChatDraft(chatId);
+    el.innerHTML = "";
+    setHasContent(false);
+    setAttachments((previous) => {
+      if (previous !== pending.attachments) return previous;
+      previous.forEach((attachment) => { if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl); });
+      return [];
+    });
+    setShowSlashMenu(false);
+    setShowFileMenu(false);
+    setIsInputExpanded(false);
+    onUserMessageSent?.();
+    if (isPhoneLayout) {
+      el.blur();
+      setMobileComposerOpen(false);
+      setShowSessionSettings(false);
+    } else {
+      el.focus();
+    }
+  }, [getActiveChatId, isPhoneLayout, onUserMessageSent]);
+
   // Forward-declared ref for connectChatWs so handlers defined before its
   // useCallback (e.g. the ChatListChanged refetch handler) can call it
   // without creating a TDZ reference that React Compiler refuses to compile.
@@ -5113,11 +5178,15 @@ export function TaskChat({
                 : item,
             ));
           } else if (data?.type === "user_message" && typeof data.client_message_id === "string") {
+            completePendingComposer(chatId, data.client_message_id);
             if (chatId !== getActiveChatId() || (historyRuntimeRef.current.get(chatId)?.loadingGeneration ?? null) === null) {
               updatePendingInputs(chatId, (items) => items.filter((item) => item.id !== data.client_message_id));
             }
           } else if (data?.type === "queue_update") {
             const queuedIds = new Set((data.messages ?? []).map((message: { id?: string }) => message.id));
+            for (const id of queuedIds) {
+              if (typeof id === "string") completePendingComposer(chatId, id);
+            }
             updatePendingInputs(chatId, (items) => items.filter((item) => item.mode !== "queue_message" || !queuedIds.has(item.id)));
           }
           const runtime =
@@ -5307,7 +5376,7 @@ export function TaskChat({
         }
       };
     },
-    [projectId, taskId, getActiveChatId, sendAgentVoiceState, updatePendingInputs],
+    [projectId, taskId, getActiveChatId, sendAgentVoiceState, updatePendingInputs, completePendingComposer],
   );
 
 
@@ -5502,6 +5571,7 @@ export function TaskChat({
             .map((event) => event.client_message_id as string),
         );
         if (historicalInputIds.size > 0) {
+          for (const id of historicalInputIds) completePendingComposer(chatId, id);
           updatePendingInputs(chatId, (items) => items.filter((item) => !historicalInputIds.has(item.id)));
         }
         let historicalPlanEntries: PlanEntry[] | null = res.context?.plan_entries
@@ -5817,7 +5887,7 @@ export function TaskChat({
     // loading after this effect's first run (when launch_mode was still
     // undefined → connectChatWs bailed), the effect re-fires with the
     // resolved mode and routes the chat correctly (ACP WS vs PTY-only).
-  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs, historyPreferences]);
+  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs, historyPreferences, completePendingComposer]);
 
   // Cleanup all WebSockets on unmount, plus any pending reconnect timers —
   // otherwise an in-flight backoff timer fires after unmount and creates a
@@ -7540,7 +7610,7 @@ export function TaskChat({
     el.focus();
   }, [isPhoneLayout]);
 
-  const handleSend = useCallback(async () => {
+  const performSend = useCallback(async () => {
     const el = editableRef.current;
     if (!el) return;
     // Guard activeChatId before consuming any UI state — if we return after
@@ -7549,6 +7619,10 @@ export function TaskChat({
     // Same reason for the connecting phase: input is editable so users can
     // pre-compose, but the session has nowhere to receive the prompt yet.
     if (!isConnected) return;
+    const draftHtml = el.innerHTML;
+    const composerStillCurrent = () =>
+      getActiveChatId() === activeChatId && editableRef.current === el &&
+      el.innerHTML === draftHtml && attachmentsRef.current === attachments;
     const prompt = getPromptFromEditable(el);
 
     // Terminal launch mode: chatbox forwards the typed text + any attachment
@@ -7603,6 +7677,8 @@ export function TaskChat({
         }
       }
 
+      if (!composerStillCurrent()) return;
+
       const paths = resolved
         .map((a) => a.uri)
         .map((u) => fileUrlToPath(u))
@@ -7639,7 +7715,8 @@ export function TaskChat({
     }
 
     if (!prompt && attachments.length === 0) return;
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
       // Not connected yet — keep the draft, surface a hint so the user
       // doesn't think their Enter was eaten. appendSystemMessage dedupes
       // repeated presses of the same message.
@@ -7667,8 +7744,9 @@ export function TaskChat({
     // Shell mode → send terminal_execute directly (bypasses AI)
     if (isTerminalMode) {
       if (!prompt || isBusy) return;
+      if (!composerStillCurrent() || wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) return;
       requestBottom("auto");
-      wsRef.current.send(
+      ws.send(
         JSON.stringify({ type: "terminal_execute", command: prompt }),
       );
       promoteChatForLocalActivity(activeChatId);
@@ -7681,6 +7759,12 @@ export function TaskChat({
       finishComposerAfterSend(el);
       return;
     }
+
+    // Keep this draft until the server accepts it. A second click or Enter
+    // while the acknowledgement is in flight must not submit it twice.
+    const previousComposer = pendingComposerRef.current.get(activeChatId);
+    const previousInput = pendingInputsRef.current.get(activeChatId)?.find((item) => item.id === previousComposer?.id);
+    if (previousInput && (previousInput.status === "sending" || previousInput.status === "accepted")) return;
 
     const text = prompt;
 
@@ -7727,6 +7811,8 @@ export function TaskChat({
       }
     }
 
+    if (!composerStillCurrent() || wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) return;
+
     // Build attachments payload for server
     const contentAttachments = resolvedAttachments.map((att) => ({
       ...(att.type === "resource"
@@ -7760,22 +7846,33 @@ export function TaskChat({
       );
     }
 
+    const retry = !!previousComposer && !!previousInput &&
+      previousComposer.html === draftHtml && previousComposer.attachments === attachments;
+    if (previousComposer && !retry) {
+      updatePendingInputs(activeChatId, (items) => items.filter((item) => item.id !== previousComposer.id));
+    }
     const input: PendingInput = {
-      id: crypto.randomUUID(),
-      text,
-      attachments: contentAttachments,
-      config: buildPromptConfig(),
-      mode: isBusy ? "queue_message" : "prompt",
+      id: retry ? previousInput!.id : createClientMessageId(),
+      text: retry ? previousInput!.text : text,
+      attachments: retry ? previousInput!.attachments : contentAttachments,
+      config: retry ? previousInput!.config : buildPromptConfig(),
+      mode: retry ? previousInput!.mode : isBusy ? "queue_message" : "prompt",
       status: "sending",
       serverAccepted: false,
       sentAt: Date.now(),
     };
-    updatePendingInputs(activeChatId, (items) => [...items, input]);
+    pendingComposerRef.current.set(activeChatId, { id: input.id, html: draftHtml, attachments });
+    setComposerPendingId(input.id);
+    saveChatDraft(activeChatId, draftHtml);
+    updatePendingInputs(activeChatId, (items) => retry
+      ? items.map((item) => item.id === input.id ? input : item)
+      : [...items, input]);
     requestBottom("auto");
     try {
-      wsRef.current.send(JSON.stringify({
+      ws.send(JSON.stringify({
         type: input.mode,
         client_message_id: input.id,
+        ...(retry ? { retry: true } : {}),
         text: input.text,
         attachments: input.attachments,
         config: input.config,
@@ -7790,20 +7887,17 @@ export function TaskChat({
       clearPendingAgentVoiceInstruction(projectId, taskId, activeChatId);
     }
     promoteChatForLocalActivity(activeChatId);
-    el.innerHTML = "";
-    clearChatDraft(activeChatId);
-    setHasContent(false);
-    setAttachments((prev) => {
-      prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
-      return [];
-    });
-    setShowSlashMenu(false);
-    setShowFileMenu(false);
-    setIsTerminalMode(false);
-    setIsInputExpanded(false);
-    onUserMessageSent?.();
-    finishComposerAfterSend(el);
-  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, onUserMessageSent, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, sendAgentVoiceState, finishComposerAfterSend, updatePendingInputs]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, sendAgentVoiceState, finishComposerAfterSend, updatePendingInputs, getActiveChatId]);
+
+  const handleSend = useCallback(async () => {
+    if (!activeChatId || sendingAttemptRef.current.has(activeChatId)) return;
+    sendingAttemptRef.current.add(activeChatId);
+    try {
+      await performSend();
+    } finally {
+      sendingAttemptRef.current.delete(activeChatId);
+    }
+  }, [activeChatId, performSend]);
 
   // On touch browsers, blurring the contentEditable can collapse the mobile
   // composer before a later click event reaches the Send button. Handle the
@@ -7865,6 +7959,10 @@ export function TaskChat({
 
   const cancelPendingInput = useCallback((id: string) => {
     if (!activeChatId) return;
+    if (pendingComposerRef.current.get(activeChatId)?.id === id) {
+      pendingComposerRef.current.delete(activeChatId);
+      setComposerPendingId(null);
+    }
     updatePendingInputs(activeChatId, (items) => items.filter((item) => item.id !== id));
   }, [activeChatId, updatePendingInputs]);
 
@@ -10080,18 +10178,21 @@ export function TaskChat({
 
   // Keep the Header/Footer component types stable. Updating context changes
   // their content without unmounting Virtuoso's measured boundary elements.
+  const composerPendingInput = pendingInputs.find((input) => input.id === composerPendingId);
+  const composerWaiting = composerPendingInput?.status === "sending" || composerPendingInput?.status === "accepted";
+  const transcriptPendingInputs = pendingInputs.filter((input) => input.id !== composerPendingId);
   const virtuosoContext: TaskChatVirtuosoContext = {
     hiddenMessageCount,
     limitedHistoryTurns: historyPreferences.recentTurns,
     inputAreaHeight: transcriptFooterState.inputAreaHeight,
     showThinking: transcriptFooterState.showThinking,
-    pendingInputContent: pendingInputs.length > 0 && !isTerminalLaunchMode ? (
+    pendingInputContent: transcriptPendingInputs.length > 0 && !isTerminalLaunchMode ? (
       <div className="mx-auto w-full max-w-[920px] space-y-2 px-4 py-2 sm:px-6" aria-live="polite">
-        {pendingInputs.map((input) => (
-          <div key={input.id} className="ml-auto max-w-[80%] rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-3.5 py-2.5 text-sm opacity-70">
-            <div className="whitespace-pre-wrap break-words">{input.text}</div>
-            {input.attachments.length > 0 && <div className="mt-1 text-xs">{input.attachments.length} attachment{input.attachments.length === 1 ? "" : "s"}</div>}
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--color-text-muted)]">
+        {transcriptPendingInputs.map((input) => (
+          <div key={input.id} className="ml-auto flex max-w-[80%] flex-wrap items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+            <span className="max-w-48 truncate" title={input.text}>{input.text}</span>
+            <span aria-hidden="true">·</span>
+            <span className="flex flex-wrap items-center gap-2">
               {input.status === "sending" ? "Sending…" :
                 input.status === "accepted" ? "Received by Grove · waiting for agent" :
                 input.status === "failed" ? `Send failed${input.error ? `: ${input.error}` : ""}` :
@@ -10103,7 +10204,7 @@ export function TaskChat({
                 </>
               )}
               <button type="button" className="hover:underline" title="Remove this waiting copy; this cannot retract a message Grove already received" onClick={() => cancelPendingInput(input.id)}>Cancel waiting</button>
-            </div>
+            </span>
           </div>
         ))}
       </div>
@@ -11618,6 +11719,7 @@ export function TaskChat({
                 ref={fileInputRef}
                 type="file"
                 multiple
+                disabled={composerWaiting}
                 className="hidden"
                 onChange={handleFileSelect}
               />
@@ -11634,7 +11736,7 @@ export function TaskChat({
                 style={{ transform: "translateY(-6px)" }}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
+                onDrop={composerWaiting ? (event) => event.preventDefault() : handleDrop}
               >
                 {/* Localized drop overlay — only fires inside the composer */}
                 {isDragging && (
@@ -12055,6 +12157,7 @@ export function TaskChat({
                         </div>
                         <button
                           onClick={() => removeAttachment(i)}
+                          disabled={composerWaiting}
                           className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-error)] text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           &times;
@@ -12104,6 +12207,16 @@ export function TaskChat({
                     </span>
                   )}
                   <div className="relative flex-1">
+                    {composerPendingInput && (
+                      <div className="flex items-center justify-between gap-2 px-4 pt-2 text-xs text-[var(--color-text-muted)]" aria-live="polite">
+                        <span>{composerWaiting
+                          ? "Sending… Draft locked until the chat confirms delivery."
+                          : composerPendingInput.status === "failed"
+                            ? `Send failed. Draft kept.${composerPendingInput.error ? ` ${composerPendingInput.error}` : ""}`
+                            : "Still unconfirmed. Draft kept; edit or retry."}</span>
+                        <button type="button" className="shrink-0 underline" title="Stop waiting without retracting a message already received by Grove" onClick={() => cancelPendingInput(composerPendingInput.id)}>Cancel waiting</button>
+                      </div>
+                    )}
                     {!hasContent && !isInputFocused && (
                       <div
                         className={`pointer-events-none absolute top-2 text-sm leading-7 text-[var(--color-text-muted)] select-none ${
@@ -12126,7 +12239,7 @@ export function TaskChat({
                     <div
                       ref={editableRef}
                       contentEditable={
-                        !isRemoteSession && !activePermissionMessage
+                        !isRemoteSession && !activePermissionMessage && !composerWaiting
                       }
                       suppressContentEditableWarning
                       onInput={handleInput}
@@ -12179,6 +12292,7 @@ export function TaskChat({
                       (promptCaps.image || promptCaps.audio) && (
                         <button
                           onClick={() => fileInputRef.current?.click()}
+                          disabled={composerWaiting}
                           className="h-9 w-9 flex items-center justify-center rounded-xl bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors shrink-0"
                           title="Attach file"
                         >
@@ -12322,7 +12436,7 @@ export function TaskChat({
                           size="sm"
                           className="h-9 w-9 !p-0 rounded-xl shadow-sm"
                           onClick={handleSendButtonClick}
-                          disabled={!isConnected}
+                          disabled={!isConnected || composerWaiting}
                         >
                           <Send className="w-3.5 h-3.5" />
                         </Button>
@@ -12334,6 +12448,7 @@ export function TaskChat({
                           size="sm"
                           className="h-9 w-9 !p-0 rounded-xl shadow-sm"
                           onClick={handleSendButtonClick}
+                          disabled={composerWaiting}
                         >
                           <ListPlus className="w-3.5 h-3.5" />
                         </Button>
