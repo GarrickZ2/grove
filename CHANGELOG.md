@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.8] - 2026-10-03
+
+### Improved
+
+- **Windows ARM64 release** — Publish a native Windows ARM64 archive with each release.
+
+### Fixed
+
+- **Mobile chat sending** — Messages send from HTTP LAN sessions without a secure-origin UUID error.
+- **Chat draft delivery** — Keep the message in the input while delivery is pending; unlock it for editing or retry after failure, timeout, or cancellation. Prevent duplicate sends during attachment upload.
+- **Upgrade verification** — Preserve GUI support when updating and verify the installed version without mistaking a replaced Linux binary for a failed upgrade.
+- **Release CI** — Resolve Clippy errors under the current GitHub Rust toolchain.
+
 ## [0.12.7] - 2026-10-02
 
 ### Added
