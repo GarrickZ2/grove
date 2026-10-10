@@ -168,6 +168,15 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   );
   const tasks = filter === "archived" ? archivedTasks : activeTasks;
 
+  // Selecting a task explicitly also opens its detail in the mobile stack.
+  // Share this between list clicks and navigation from other pages.
+  const handleSelectTask = useCallback((task: Task) => {
+    pageHandlers.handleSelectTask(task);
+    if (isMobile) {
+      setMobileShowDetail(true);
+    }
+  }, [pageHandlers, isMobile]);
+
   // Handle initial task selection from navigation
   useEffect(() => {
     if (!initialTaskId || activeTasks.length === 0) return;
@@ -175,18 +184,22 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
     const task = activeTasks.find((t) => t.id === initialTaskId);
     if (!task) return;
 
-    if (pageState.selectedTask?.id !== task.id) {
-      pageHandlers.setSelectedTask(task);
-    }
+    // Apply selection and consume navigation together after the effect.
+    // Cancel stale requests if the target changes before the callback runs.
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      handleSelectTask(task);
 
-    // If initialViewMode is "terminal", enter Workspace
-    if (initialViewMode === "terminal") {
-      pageHandlers.setInWorkspace(true);
-    }
+      // If initialViewMode is "terminal", enter Workspace
+      if (initialViewMode === "terminal") {
+        pageHandlers.setInWorkspace(true);
+      }
 
-    // Consume the navigation data so it doesn't re-trigger
-    onNavigationConsumed?.();
-  }, [initialTaskId, initialViewMode, activeTasks, pageState.selectedTask?.id, onNavigationConsumed, pageHandlers]);
+      onNavigationConsumed?.();
+    });
+    return () => { cancelled = true; };
+  }, [initialTaskId, initialViewMode, activeTasks, onNavigationConsumed, pageHandlers, handleSelectTask]);
 
   // Navigate to the specific chat session if provided (deep-link — tray,
   // notifications, the Dynamic Island live-activity alert, ...). Separate
@@ -301,14 +314,6 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
       })),
     };
   });
-
-  // Wrap page handlers to handle auto-start state
-  const handleSelectTask = useCallback((task: Task) => {
-    pageHandlers.handleSelectTask(task);
-    if (isMobile) {
-      setMobileShowDetail(true);
-    }
-  }, [pageHandlers, isMobile]);
 
   const handleDoubleClickTask = useCallback((task: Task) => {
     pageHandlers.handleDoubleClickTask(task);

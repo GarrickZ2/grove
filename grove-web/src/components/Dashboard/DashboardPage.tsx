@@ -105,6 +105,8 @@ interface GuidanceTip {
 export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const { selectedProject, refreshSelectedProject, applySelectedProject } = useProject();
   const { theme } = useTheme();
+  const isRemote = typeof window !== "undefined" &&
+    (window as unknown as Record<string, unknown>).__GROVE_REMOTE__ === true;
 
   const [showBranchDrawer, setShowBranchDrawer] = useState(false);
   const [showNewBranchDialog, setShowNewBranchDialog] = useState(false);
@@ -788,13 +790,13 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             </div>
             {!isStudio && (
               <div className="flex items-center gap-1.5 shrink-0">
-                {serverPlatform === "macos" && (
+                {!isRemote && serverPlatform === "macos" && (
                   <>
                     <HeroButton icon={Code2} label="Open IDE" onClick={handleOpenIDE} />
                     <HeroButton icon={TerminalSquare} label="Terminal" onClick={handleOpenTerminal} />
                   </>
                 )}
-                {(serverPlatform === "windows" || serverPlatform === "linux") && (
+                {!isRemote && (serverPlatform === "windows" || serverPlatform === "linux") && (
                   <>
                     <HeroButton
                       icon={Code2}
@@ -947,7 +949,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-[var(--color-text)]">Go to Work</div>
-                  <div className="text-xs text-[var(--color-text-muted)]">
+                  <div className="hidden text-xs text-[var(--color-text-muted)] min-[1200px]:block">
                     {hasLocalWork
                       ? `Main repository${isGitRepo ? ` · ${currentStatus.unstaged} changes` : ""}`
                       : "Main repository"
@@ -968,7 +970,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-[var(--color-text)]">New Task</div>
-                  <div className="text-xs text-[var(--color-text-muted)]">
+                  <div className="hidden text-xs text-[var(--color-text-muted)] min-[1200px]:block">
                     {isStudio ? "Create AI agent workspace" : "Create isolated worktree"}
                   </div>
                 </div>
@@ -986,7 +988,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-[var(--color-text)]">Manage Resource</div>
-                  <div className="text-xs text-[var(--color-text-muted)]">
+                  <div className="hidden text-xs text-[var(--color-text-muted)] min-[1200px]:block">
                     Open the shared resource library
                   </div>
                 </div>
