@@ -26,6 +26,7 @@ import {
   Loader2,
   CheckCircle2,
   Circle,
+  CircleAlert,
   Brain,
   ListTodo,
   Slash,
@@ -497,6 +498,7 @@ type ChatMessage =
       sender?: string;
       attachments?: Attachment[];
       terminal?: boolean;
+      clientMessageId?: string;
     }
   | {
       type: "assistant";
@@ -543,13 +545,68 @@ type ServerEvent = {
 type PendingInput = {
   id: string;
   text: string;
+  draftHtml?: string;
   attachments: ServerEvent[];
   config: unknown;
   mode: "prompt" | "queue_message";
-  status: "sending" | "accepted" | "delayed" | "failed";
+  status: "sending" | "accepted" | "failed";
   serverAccepted?: boolean;
+  serverQueued?: boolean;
+  dispatched?: boolean;
+  cancelled?: boolean;
   sentAt: number;
   error?: string;
+};
+
+type QueuedInput = {
+  id: string;
+  text: string;
+  attachments?: ServerEvent[];
+  messageIds?: string[];
+};
+
+type PendingQueueRow = QueuedInput & { input?: PendingInput };
+
+function inputLocation(input: PendingInput): "timeline" | "queue" {
+  return input.mode === "queue_message" ? "queue" : "timeline";
+}
+
+function normalizeQueuedInputs(messages: ServerEvent[] | string[]): QueuedInput[] {
+  return messages.map((message) => typeof message === "string"
+    ? { id: "", text: message }
+    : {
+        id: message.id ?? "",
+        text: message.text,
+        attachments: message.attachments ?? [],
+        messageIds: message.message_ids ?? [],
+      });
+}
+
+function queuedInputIds(message: QueuedInput): string[] {
+  return [message.id, ...(message.messageIds ?? [])].filter(Boolean);
+}
+
+function buildPendingQueueRows(messages: QueuedInput[], inputs: PendingInput[]): PendingQueueRow[] {
+  const representedIds = new Set(messages.flatMap(queuedInputIds));
+  const rows: PendingQueueRow[] = messages.map((message) => {
+    const ids = queuedInputIds(message);
+    const input = inputs.find((item) => ids.includes(item.id));
+    return { ...message, input };
+  });
+  inputs.forEach((input, index) => {
+    if (inputLocation(input) !== "queue" || representedIds.has(input.id)) return;
+    // Keep failures before later local sends, even if those later sends have
+    // already appeared in the server snapshot. Retry appends to inputs.
+    const next = rows.findIndex((row) => row.input && inputs.indexOf(row.input) > index);
+    rows.splice(next < 0 ? rows.length : next, 0, { id: input.id, text: input.text, attachments: input.attachments, input });
+  });
+  return rows;
+}
+
+type LocalInputPlacement = {
+  id: string;
+  /** Number of server messages preceding this send, including hidden history. */
+  position: number;
 };
 
 /** Runtime history/connection state owned by one Chat while TaskChat is mounted. */
@@ -867,7 +924,7 @@ interface PerChatState {
   /** Pending queue snapshot — kept in cache so chat-tab switches don't
    * clear queued messages. WS server only re-sends QueueUpdate on reconnect,
    * not on tab switch (the WS stays alive). */
-  pendingMessages: { id: string; text: string }[];
+  pendingMessages: QueuedInput[];
 }
 
 const applyConfigOptionsToCachedState = (
@@ -973,7 +1030,7 @@ type WorkSummaryItem = {
   index: number;
 };
 type RenderItem =
-  | { kind: "single"; message: ChatMessage; index: number }
+  | { kind: "single"; message: ChatMessage; index: number; sourceIndex?: number }
   | { kind: "tool-section"; sectionId: string; tools: ToolSectionItem[] }
   | {
       kind: "work-summary";
@@ -985,7 +1042,9 @@ type RenderItem =
 
 function renderItemKey(item: RenderItem): string {
   return item.kind === "single"
-    ? `m-${item.index}`
+    ? item.message.type === "user" && item.message.clientMessageId
+      ? `user-${item.message.clientMessageId}`
+      : `m-${item.sourceIndex ?? item.index}`
     : item.kind === "tool-section"
       ? `ts-${item.sectionId}`
       : item.kind === "work-summary"
@@ -998,7 +1057,6 @@ type TaskChatVirtuosoContext = {
   limitedHistoryTurns: number;
   inputAreaHeight: number;
   showThinking: boolean;
-  pendingInputContent: ReactNode;
 };
 
 function TaskChatVirtuosoHeader({
@@ -1022,7 +1080,6 @@ function TaskChatVirtuosoFooter({
 }: ContextProp<TaskChatVirtuosoContext>) {
   return (
     <div>
-      {context.pendingInputContent}
       {context.showThinking && (
         <div className="mx-auto w-full max-w-[920px] px-4 py-2 sm:px-6">
           <ThinkingStatus label="Thinking" active />
@@ -1458,14 +1515,34 @@ interface AttachmentCounters {
 
 function buildAttachmentCounters(messages: ChatMessage[]): AttachmentCounters {
   const counters: AttachmentCounters = { image: 0, audio: 0, resource: 0 };
+  const labelMaxima: AttachmentCounters = { image: 0, audio: 0, resource: 0 };
   for (const msg of messages) {
     if (msg.type === "user" && msg.attachments) {
       for (const att of msg.attachments) {
         counters[att.type]++;
+        const number = Number(att.label.match(/#(\d+)$/)?.[1] ?? 0);
+        labelMaxima[att.type] = Math.max(labelMaxima[att.type], number);
       }
     }
   }
-  return counters;
+  return {
+    image: Math.max(counters.image, labelMaxima.image),
+    audio: Math.max(counters.audio, labelMaxima.audio),
+    resource: Math.max(counters.resource, labelMaxima.resource),
+  };
+}
+
+function reservePendingAttachmentLabels(counters: AttachmentCounters, inputs: PendingInput[]): AttachmentCounters {
+  const reserved = { ...counters };
+  for (const input of inputs) {
+    for (const attachment of input.attachments) {
+      const type = attachment.type === "resource_link" ? "resource" : attachment.type;
+      if (type !== "image" && type !== "audio" && type !== "resource") continue;
+      const number = Number(String(attachment.label ?? "").match(/#(\d+)$/)?.[1] ?? 0);
+      reserved[type] = Math.max(reserved[type], number);
+    }
+  }
+  return reserved;
 }
 
 function attachmentLabel(type: "image" | "audio" | "resource", index: number): string {
@@ -2205,10 +2282,80 @@ function getPromptFromEditable(el: HTMLElement): string {
   return parts.join("").trim();
 }
 
-function draftMatchesPendingInput(html: string, pending: PendingInput): boolean {
-  const probe = document.createElement("div");
-  probe.innerHTML = html;
-  return getPromptFromEditable(probe) === pending.text;
+function attachmentFromContent(a: ServerEvent): Attachment {
+  return {
+    type: a.type === "resource_link" ? "resource" : (a.type as Attachment["type"]),
+    data: a.data ?? a.blob ?? a.text ?? "",
+    mimeType: a.mime_type ?? "",
+    name: a.name ?? a.uri?.split("/").filter(Boolean).pop() ?? "",
+    label: a.label ?? a.title ?? a.name ?? "",
+    uri: a.uri ?? undefined,
+    size: a.size ?? undefined,
+    previewUrl: a.type === "image" && a.data
+      ? `data:${a.mime_type};base64,${a.data}`
+      : undefined,
+  };
+}
+
+function attachmentToContent(att: Attachment): ServerEvent {
+  return att.type === "resource" ? {
+    type: "resource_link",
+    uri: att.uri,
+    name: att.name,
+    label: att.label,
+    mime_type: att.mimeType || undefined,
+    size: att.size,
+  } : {
+    type: att.type,
+    data: att.data,
+    name: att.name,
+    label: att.label,
+    mime_type: att.mimeType,
+    ...(att.type === "image" && att.uri ? { uri: att.uri } : {}),
+  };
+}
+
+/** Keep local sends at their original position while server events arrive. */
+function buildMessageTimeline(
+  messages: ChatMessage[],
+  pendingInputs: PendingInput[],
+  placements: LocalInputPlacement[],
+  hiddenMessageCount: number,
+): { messages: ChatMessage[]; sourceIndices: number[]; endPosition: number } {
+  // Server messages always retain their real order. Only inputs without a
+  // matching user_message get a local bubble, including during hydration.
+  const serverIds = new Set(messages.flatMap((message) =>
+    message.type === "user" && message.clientMessageId ? [message.clientMessageId] : [],
+  ));
+  const positions = new Map(placements.map((entry) => [entry.id, entry.position]));
+  const endPosition = hiddenMessageCount + messages.length;
+  const insertions = new Map<number, { message: ChatMessage; sourceIndex: number }[]>();
+  for (const input of pendingInputs) {
+    if (inputLocation(input) !== "timeline" || serverIds.has(input.id)) continue;
+    const item = {
+      message: {
+        type: "user" as const,
+        clientMessageId: input.id,
+        content: input.text,
+        attachments: input.attachments.map(attachmentFromContent),
+      },
+      sourceIndex: -1,
+    };
+    const position = Math.max(0, Math.min(messages.length, (positions.get(input.id) ?? endPosition) - hiddenMessageCount));
+    const bucket = insertions.get(position) ?? [];
+    bucket.push(item);
+    insertions.set(position, bucket);
+  }
+  const result: { message: ChatMessage; sourceIndex: number }[] = [];
+  for (let index = 0; index <= messages.length; index += 1) {
+    result.push(...(insertions.get(index) ?? []));
+    if (index < messages.length) result.push({ message: messages[index], sourceIndex: index });
+  }
+  return {
+    messages: result.map((item) => item.message),
+    sourceIndices: result.map((item) => item.sourceIndex),
+    endPosition,
+  };
 }
 
 function reduceHistoryMessages(
@@ -2441,24 +2588,10 @@ function reduceHistoryMessages(
     }
     case "user_message":
       {
-        const incomingAttachments: Attachment[] = msg.attachments?.map((a: ServerEvent) => ({
-          type:
-            a.type === "resource_link"
-              ? "resource"
-              : (a.type as "image" | "audio" | "resource"),
-          data: a.data ?? a.blob ?? a.text ?? "",
-          mimeType: a.mime_type ?? "",
-          name: a.name ?? a.uri?.split("/").filter(Boolean).pop() ?? "",
-          label: a.label ?? a.title ?? a.name ?? "",
-          uri: a.uri ?? undefined,
-          size: a.size ?? undefined,
-          previewUrl:
-            a.type === "image" && a.data
-              ? `data:${a.mime_type};base64,${a.data}`
-              : undefined,
-        })) ?? [];
+        const incomingAttachments: Attachment[] = msg.attachments?.map(attachmentFromContent) ?? [];
         const previous = messages[messages.length - 1];
-        if (previous?.type === "user" && !previous.terminal && !msg.terminal) {
+        if (previous?.type === "user" && !previous.terminal && !msg.terminal &&
+            (typeof msg.client_message_id !== "string" || previous.clientMessageId === msg.client_message_id)) {
           return [
             ...messages.slice(0, -1),
             {
@@ -2478,6 +2611,7 @@ function reduceHistoryMessages(
           content: msg.text,
           terminal: !!msg.terminal,
           sender: msg.sender || undefined,
+          clientMessageId: typeof msg.client_message_id === "string" ? msg.client_message_id : undefined,
             attachments: incomingAttachments,
           },
         ];
@@ -2951,45 +3085,125 @@ export function TaskChat({
   const [, setAutoExpandSectionId] = useState<string | null>(null);
   // pending 消息现在带 id(uuid,后端在入队时分配);所有 edit/delete 都用
   // id 精准定位 — index 在网络往返期间可能因为队首被 drain 而漂移。
-  const [pendingMessages, setPendingMessages] = useState<
-    { id: string; text: string }[]
-  >([]);
+  const [pendingMessages, setPendingMessages] = useState<QueuedInput[]>([]);
   const pendingInputsRef = useRef<Map<string, PendingInput[]>>(new Map());
   const [pendingInputs, setPendingInputs] = useState<PendingInput[]>([]);
-  const [composerPendingId, setComposerPendingId] = useState<string | null>(null);
-  const pendingComposerRef = useRef<Map<string, { id: string; html: string; attachments: Attachment[] }>>(new Map());
+  const localInputPlacementsRef = useRef<Map<string, LocalInputPlacement[]>>(new Map());
+  const [localInputPlacements, setLocalInputPlacements] = useState<LocalInputPlacement[]>([]);
+  // Own raw files and blob previews until delivery or Edit transfers them back.
+  const pendingAttachmentsRef = useRef<Map<string, Attachment[]>>(new Map());
+  const pendingAttemptsRef = useRef<Map<string, object>>(new Map());
+  const startedInputIdsRef = useRef<Map<string, string[]>>(new Map());
+  const discardedInputIdsRef = useRef<Set<string>>(new Set());
+  const pendingQueueEditRef = useRef<{ chatId: string; id: string } | null>(null);
+  const pendingQueueResumesRef = useRef<Set<string>>(new Set());
   const sendingAttemptRef = useRef<Set<string>>(new Set());
+  const savePendingInputState = useCallback(() => {
+    try {
+      sessionStorage.setItem(`grove:pending-inputs:${projectId}:${taskId}`, JSON.stringify({
+        pendingInputs: [...pendingInputsRef.current],
+        placements: [...localInputPlacementsRef.current],
+        discardedIds: [...discardedInputIdsRef.current],
+        queueResumes: [...pendingQueueResumesRef.current],
+      }));
+    } catch {
+      // Keep the in-memory copy when browser storage is unavailable or full.
+    }
+  }, [projectId, taskId]);
+  const updateLocalInputPlacements = useCallback((chatId: string, update: (items: LocalInputPlacement[]) => LocalInputPlacement[]) => {
+    const previous = localInputPlacementsRef.current.get(chatId) ?? [];
+    const next = update(previous);
+    if (next.length === previous.length && next.every((item, index) => item === previous[index])) return;
+    if (next.length > 0) localInputPlacementsRef.current.set(chatId, next);
+    else localInputPlacementsRef.current.delete(chatId);
+    savePendingInputState();
+    if (chatId === getActiveChatId()) setLocalInputPlacements(next);
+  }, [getActiveChatId, savePendingInputState]);
   const updatePendingInputs = useCallback((chatId: string, update: (items: PendingInput[]) => PendingInput[]) => {
     const previous = pendingInputsRef.current.get(chatId) ?? [];
     const next = update(previous);
     if (next.length === previous.length && next.every((item, index) => item === previous[index])) return;
-    pendingInputsRef.current.set(chatId, next);
-    try {
-      sessionStorage.setItem(`grove:pending-inputs:${projectId}:${taskId}`, JSON.stringify([...pendingInputsRef.current]));
-    } catch {
-      // Keep the in-memory copy when browser storage is unavailable or full.
+    for (const removed of previous.filter((item) => !next.some((entry) => entry.id === item.id))) {
+      pendingAttachmentsRef.current.get(removed.id)?.forEach((attachment) => {
+        if (attachment.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(attachment.previewUrl);
+      });
+      pendingAttachmentsRef.current.delete(removed.id);
+      pendingAttemptsRef.current.delete(removed.id);
     }
+    if (next.length > 0) pendingInputsRef.current.set(chatId, next);
+    else pendingInputsRef.current.delete(chatId);
+    savePendingInputState();
     if (chatId === getActiveChatId()) setPendingInputs(next);
-  }, [getActiveChatId, projectId, taskId]);
+  }, [getActiveChatId, savePendingInputState]);
+  const reconcileInputQueue = useCallback((chatId: string, queue: QueuedInput[]) => {
+    const queuedById = new Map(queue.flatMap((message) => queuedInputIds(message).map((id) => [id, message] as const)));
+    const removedIds = new Set<string>();
+    updatePendingInputs(chatId, (items) => items.flatMap((input) => {
+      const queued = queuedById.get(input.id);
+      if (queued) {
+        if (input.cancelled) {
+          const ws = wsMapRef.current.get(chatId);
+          if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "dequeue_message", id: queued.id }));
+        }
+        return [{
+          ...input,
+          mode: "queue_message" as const,
+          status: input.cancelled ? "failed" as const : "accepted" as const,
+          serverAccepted: true,
+          serverQueued: true,
+          error: input.cancelled ? input.error : undefined,
+        }];
+      }
+      if (input.serverQueued && !input.cancelled) {
+        // A confirmed queue entry leaving the snapshot was drained or removed.
+        // Its eventual user_message owns the transcript position.
+        removedIds.add(input.id);
+        return [];
+      }
+      return [input.serverQueued ? { ...input, serverQueued: false } : input];
+    }));
+    updateLocalInputPlacements(chatId, (items) => items.filter((item) => !queuedById.has(item.id) && !removedIds.has(item.id)));
+  }, [updatePendingInputs, updateLocalInputPlacements]);
+  const pendingInputMode = useCallback((chatId: string, id?: string): PendingInput["mode"] => {
+    const busy = runtimeBusyRef.current.get(chatId) ?? perChatStateRef.current.get(chatId)?.isBusy ?? false;
+    // Reserve the first direct send locally until Busy/user_message arrives.
+    // Rapid Enter presses must not bypass the backend queue during this gap.
+    const promptInFlight = pendingInputsRef.current.get(chatId)?.some((input) =>
+      input.id !== id && input.mode === "prompt" && input.dispatched && input.status !== "failed",
+    );
+    return busy || promptInFlight ? "queue_message" : "prompt";
+  }, []);
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(`grove:pending-inputs:${projectId}:${taskId}`);
       if (!raw) return;
-      const saved = JSON.parse(raw) as [string, PendingInput[]][];
+      const stored = JSON.parse(raw) as [string, PendingInput[]][] | {
+        pendingInputs: [string, PendingInput[]][];
+        placements?: [string, LocalInputPlacement[]][];
+        discardedIds?: string[];
+        queueResumes?: string[];
+      };
+      const saved = Array.isArray(stored) ? stored : stored.pendingInputs;
       if (!Array.isArray(saved)) return;
+      discardedInputIdsRef.current = new Set(Array.isArray(stored) ? [] : stored.discardedIds ?? []);
+      pendingQueueResumesRef.current = new Set(Array.isArray(stored) ? [] : stored.queueResumes ?? []);
       pendingInputsRef.current = new Map(saved.map(([chatId, inputs]) => [
         chatId,
         inputs.filter((input) => input && typeof input.id === "string" && typeof input.text === "string")
-          .map((input) => ({ ...input, status: "delayed" as const })),
+          .map((input) => input.serverAccepted
+            ? { ...input, status: input.status === "failed" ? "failed" as const : "accepted" as const }
+            : { ...input, status: "failed" as const, error: input.error ?? "Delivery was not confirmed before the page reloaded." }),
       ]));
-      const currentChatId = getActiveChatId();
-      const currentDraft = currentChatId ? loadChatDraft(currentChatId) : "";
-      const currentPending = currentChatId ? pendingInputsRef.current.get(currentChatId)?.at(-1) : undefined;
-      if (currentChatId && currentDraft && currentPending && draftMatchesPendingInput(currentDraft, currentPending)) {
-        pendingComposerRef.current.set(currentChatId, { id: currentPending.id, html: currentDraft, attachments: [] });
-        setComposerPendingId(currentPending.id);
-      }
+      localInputPlacementsRef.current = new Map<string, LocalInputPlacement[]>(
+        (Array.isArray(stored) ? [] : stored.placements ?? []).map(([chatId, placements]) => {
+          const ids = new Set((pendingInputsRef.current.get(chatId) ?? [])
+            .filter((input) => inputLocation(input) === "timeline").map((input) => input.id));
+          return [chatId, placements.filter((item) => ids.has(item.id) && Number.isFinite(item.position))
+            .map(({ id, position }) => ({ id, position }))] as const;
+        }),
+      );
       setPendingInputs(pendingInputsRef.current.get(getActiveChatId() ?? "") ?? []);
+      setLocalInputPlacements(localInputPlacementsRef.current.get(getActiveChatId() ?? "") ?? []);
     } catch {
       // Corrupt or unavailable tab storage should not block Chat startup.
     }
@@ -2997,23 +3211,27 @@ export function TaskChat({
   useEffect(() => {
     const inputs = pendingInputsRef.current.get(activeChatId ?? "") ?? [];
     setPendingInputs(inputs);
-    if (activeChatId && !pendingComposerRef.current.has(activeChatId)) {
-      const draft = loadChatDraft(activeChatId);
-      const pending = inputs.at(-1);
-      if (draft && pending && draftMatchesPendingInput(draft, pending)) {
-        pendingComposerRef.current.set(activeChatId, { id: pending.id, html: draft, attachments: [] });
-      }
-    }
-    setComposerPendingId(pendingComposerRef.current.get(activeChatId ?? "")?.id ?? null);
+    setLocalInputPlacements(localInputPlacementsRef.current.get(activeChatId ?? "") ?? []);
   }, [activeChatId]);
+  useEffect(() => {
+    const previews = pendingAttachmentsRef.current;
+    const attempts = pendingAttemptsRef.current;
+    return () => {
+      attempts.clear();
+      previews.forEach((items) => items.forEach((attachment) => {
+        if (attachment.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(attachment.previewUrl);
+      }));
+      previews.clear();
+    };
+  }, []);
   useEffect(() => {
     const timer = window.setInterval(() => {
       const now = Date.now();
       pendingInputsRef.current.forEach((items, chatId) => {
-        if (items.some((item) => (item.status === "sending" || item.status === "accepted") && now - item.sentAt > 20000)) {
+        if (items.some((item) => item.status === "sending" && !item.serverAccepted && now - item.sentAt > 20000)) {
           updatePendingInputs(chatId, (current) => current.map((item) =>
-            (item.status === "sending" || item.status === "accepted") && now - item.sentAt > 20000
-              ? { ...item, status: "delayed" }
+            item.status === "sending" && !item.serverAccepted && now - item.sentAt > 20000
+              ? { ...item, status: "failed", error: "Delivery confirmation timed out." }
               : item,
           ));
         }
@@ -3021,6 +3239,18 @@ export function TaskChat({
     }, 1000);
     return () => window.clearInterval(timer);
   }, [updatePendingInputs]);
+  const messageTimeline = useMemo(
+    () => buildMessageTimeline(messages, pendingInputs, localInputPlacements, hiddenMessageCount),
+    [messages, pendingInputs, localInputPlacements, hiddenMessageCount],
+  );
+  const timelineEndRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (activeChatId) timelineEndRef.current.set(activeChatId, messageTimeline.endPosition);
+  }, [activeChatId, messageTimeline.endPosition]);
+  const pendingQueueRows = useMemo(
+    () => buildPendingQueueRows(pendingMessages, pendingInputs),
+    [pendingMessages, pendingInputs],
+  );
   // Stable React keys for pending messages that arrive without a server-side
   // id. Pure derivation off `(index, text)` — no Math.random / crypto, no
   // ref mutation during render — so React Compiler is happy. Two identical
@@ -3031,10 +3261,10 @@ export function TaskChat({
   const sawEmptyPendingIdRef = useRef(false);
   const pendingMessageKeys = useMemo(
     () =>
-      pendingMessages.map((msg, idx) =>
+      pendingQueueRows.map((msg, idx) =>
         msg.id ? msg.id : `local-${idx}-${msg.text}`,
       ),
-    [pendingMessages],
+    [pendingQueueRows],
   );
   useEffect(() => {
     // One-shot warn when empty-id queue messages first appear — backend bug
@@ -3050,12 +3280,34 @@ export function TaskChat({
   }, [pendingMessages]);
   const [showPendingQueue, setShowPendingQueue] = useState(true);
   const [editingPendingId, setEditingPendingId] = useState<string | null>(null);
-  // 给 websocket onmessage 这种长生命周期闭包用 — useState 值会过期,ref 不会
-  const editingPendingIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    editingPendingIdRef.current = editingPendingId;
-  }, [editingPendingId]);
   const [editingPendingValue, setEditingPendingValue] = useState("");
+  const resumeEditedQueue = useCallback((chatId: string) => {
+    const ws = wsMapRef.current.get(chatId);
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "resume_queue" }));
+      pendingQueueResumesRef.current.delete(chatId);
+    } else {
+      // Restore our pause on the next connection, including after a reload.
+      pendingQueueResumesRef.current.add(chatId);
+    }
+    savePendingInputState();
+  }, [savePendingInputState]);
+  const finishPendingQueueEdit = useCallback(() => {
+    const edit = pendingQueueEditRef.current;
+    pendingQueueEditRef.current = null;
+    if (edit) resumeEditedQueue(edit.chatId);
+    setEditingPendingId(null);
+    setEditingPendingValue("");
+  }, [resumeEditedQueue]);
+  useEffect(() => {
+    const edit = pendingQueueEditRef.current;
+    if (edit && edit.chatId !== activeChatId) finishPendingQueueEdit();
+  }, [activeChatId, finishPendingQueueEdit]);
+  useEffect(() => () => {
+    const edit = pendingQueueEditRef.current;
+    pendingQueueEditRef.current = null;
+    if (edit) resumeEditedQueue(edit.chatId);
+  }, [resumeEditedQueue]);
   // Compact/Separate queue send mode — global flat localStorage key, not
   // scoped per-project/per-chat (product decision: one choice sticks everywhere).
   const [queueMode, setQueueMode] = useState<QueueSendMode>(() => loadQueueMode());
@@ -3287,6 +3539,12 @@ export function TaskChat({
   const attachmentsRef = useRef(attachments);
   useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
   const attachCountersRef = useRef<AttachmentCounters>({ image: 0, audio: 0, resource: 0 });
+  useEffect(() => {
+    attachCountersRef.current = reservePendingAttachmentLabels(
+      attachCountersRef.current,
+      pendingInputsRef.current.get(activeChatId ?? "") ?? [],
+    );
+  }, [activeChatId, pendingInputs]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
@@ -3491,7 +3749,7 @@ export function TaskChat({
   );
   const hasTodoPanel = planEntries.length > 0;
   const hasPlanPanel = !!planFileContent;
-  const hasPendingPanel = pendingMessages.length > 0;
+  const hasPendingPanel = pendingQueueRows.length > 0;
   // Memory evidence is chat-scoped, not render-window-scoped. History load
   // seeds this from the full transcript before old messages are pruned; live
   // ToolCalls then accumulate into it without removing earlier reads.
@@ -4838,7 +5096,10 @@ export function TaskChat({
       return [];
     });
     attachCountersRef.current =
-      cached?.attachmentCounters ?? buildAttachmentCounters(restoredMessages);
+      reservePendingAttachmentLabels(
+        cached?.attachmentCounters ?? buildAttachmentCounters(restoredMessages),
+        pendingInputsRef.current.get(chatId) ?? [],
+      );
     // Point wsRef to this chat's WebSocket
     wsRef.current = wsMapRef.current.get(chatId) ?? null;
     // Restore the unsent composer draft for this chat. innerHTML round-trip
@@ -4912,43 +5173,6 @@ export function TaskChat({
     const text = el.textContent?.trim() || "";
     setHasContent(text.length > 0 || el.querySelector("[data-command],[data-file]") !== null);
   }, [activeChatId]);
-
-  const completePendingComposer = useCallback((chatId: string, id: string) => {
-    const pending = pendingComposerRef.current.get(chatId);
-    if (!pending || pending.id !== id) return;
-    pendingComposerRef.current.delete(chatId);
-    const isActive = chatId === getActiveChatId();
-    if (isActive) setComposerPendingId(null);
-    const cached = perChatStateRef.current.get(chatId);
-    if (!isActive) {
-      if (cached?.draftHtml === pending.html) cached.draftHtml = "";
-      if (loadChatDraft(chatId) === pending.html) clearChatDraft(chatId);
-      return;
-    }
-    const el = editableRef.current;
-    if (!el || el.innerHTML !== pending.html ||
-        (pending.attachments.length > 0 && attachmentsRef.current !== pending.attachments)) return;
-    if (cached?.draftHtml === pending.html) cached.draftHtml = "";
-    if (loadChatDraft(chatId) === pending.html) clearChatDraft(chatId);
-    el.innerHTML = "";
-    setHasContent(false);
-    setAttachments((previous) => {
-      if (previous !== pending.attachments) return previous;
-      previous.forEach((attachment) => { if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl); });
-      return [];
-    });
-    setShowSlashMenu(false);
-    setShowFileMenu(false);
-    setIsInputExpanded(false);
-    onUserMessageSent?.();
-    if (isPhoneLayout) {
-      el.blur();
-      setMobileComposerOpen(false);
-      setShowSessionSettings(false);
-    } else {
-      el.focus();
-    }
-  }, [getActiveChatId, isPhoneLayout, onUserMessageSent]);
 
   // Forward-declared ref for connectChatWs so handlers defined before its
   // useCallback (e.g. the ChatListChanged refetch handler) can call it
@@ -5151,6 +5375,7 @@ export function TaskChat({
       lastWsMessageAtRef.current.set(chatId, Date.now());
       // This connection starts unproven; only a session_ready flips it.
       wsSessionEverReadyRef.current.set(chatId, false);
+      startedInputIdsRef.current.delete(chatId);
 
       ws.onopen = () => {
         sendAgentVoiceState(chatId, loadAgentVoiceState(projectId, taskId, chatId));
@@ -5168,7 +5393,12 @@ export function TaskChat({
           if (data?.type === "input_accepted" && typeof data.client_message_id === "string") {
             updatePendingInputs(chatId, (items) => items.map((item) =>
               item.id === data.client_message_id
-                ? { ...item, status: item.status === "delayed" ? "delayed" : "accepted", serverAccepted: true }
+                ? {
+                    ...item,
+                    status: item.cancelled || (item.serverAccepted && item.status === "failed") ? item.status : "accepted",
+                    serverAccepted: true,
+                    error: item.cancelled || (item.serverAccepted && item.status === "failed") ? item.error : undefined,
+                  }
                 : item,
             ));
           } else if (data?.type === "input_rejected" && typeof data.client_message_id === "string") {
@@ -5177,22 +5407,55 @@ export function TaskChat({
                 ? { ...item, status: "failed", serverAccepted: false, error: data.message }
                 : item,
             ));
-          } else if (data?.type === "user_message" && typeof data.client_message_id === "string") {
-            completePendingComposer(chatId, data.client_message_id);
+          } else if (data?.type === "prompt_started") {
+            const ids = (data.message_ids ?? []) as string[];
+            startedInputIdsRef.current.set(chatId, ids);
+            runtimeBusyRef.current.set(chatId, true);
+            updatePendingInputs(chatId, (items) => items.map((item) => ids.includes(item.id)
+              ? { ...item, status: "accepted", serverAccepted: true, error: undefined }
+              : item));
+          } else if (data?.type === "prompt_failed") {
+            const ids = new Set<string>(data.message_ids ?? []);
+            startedInputIdsRef.current.delete(chatId);
+            updatePendingInputs(chatId, (items) => items.map((item) => ids.has(item.id)
+              ? { ...item, status: "failed", serverAccepted: true, error: data.message }
+              : item));
+          } else if (data?.type === "user_message") {
+            // Compact turns carry several input ids on prompt_started and no
+            // single client_message_id on the combined user_message.
+            const ids = new Set<string>(typeof data.client_message_id === "string"
+              ? [data.client_message_id]
+              : startedInputIdsRef.current.get(chatId) ?? []);
+            startedInputIdsRef.current.delete(chatId);
+            let discardedChanged = false;
+            ids.forEach((id) => { if (discardedInputIdsRef.current.delete(id)) discardedChanged = true; });
+            if (discardedChanged) savePendingInputState();
             if (chatId !== getActiveChatId() || (historyRuntimeRef.current.get(chatId)?.loadingGeneration ?? null) === null) {
-              updatePendingInputs(chatId, (items) => items.filter((item) => item.id !== data.client_message_id));
+              updateLocalInputPlacements(chatId, (items) => items.filter((item) => !ids.has(item.id)));
+              updatePendingInputs(chatId, (items) => items.filter((item) => !ids.has(item.id)));
             }
           } else if (data?.type === "queue_update") {
-            const queuedIds = new Set((data.messages ?? []).map((message: { id?: string }) => message.id));
-            for (const id of queuedIds) {
-              if (typeof id === "string") completePendingComposer(chatId, id);
+            data.messages = (data.messages ?? []).filter((message: ServerEvent | string) => {
+              if (typeof message === "string" || ![message.id, ...(message.message_ids ?? [])].some((id) => discardedInputIdsRef.current.has(id))) return true;
+              ws.send(JSON.stringify({ type: "dequeue_message", id: message.id }));
+              return false;
+            });
+            reconcileInputQueue(chatId, normalizeQueuedInputs(data.messages));
+          } else if (data?.type === "queue_message_gone") {
+            if (discardedInputIdsRef.current.delete(data.id)) savePendingInputState();
+            const edit = pendingQueueEditRef.current;
+            if (edit?.chatId === chatId && edit.id === data.id) {
+              finishPendingQueueEdit();
+              console.warn("Your queued message was already sent to the agent before the edit landed.");
             }
-            updatePendingInputs(chatId, (items) => items.filter((item) => item.mode !== "queue_message" || !queuedIds.has(item.id)));
           }
           const runtime =
             historyRuntimeRef.current.get(chatId) ?? defaultChatHistoryRuntime();
           if (data?.type === "session_ready") {
             runtime.connected = true;
+            if (pendingQueueResumesRef.current.has(chatId) && pendingQueueEditRef.current?.chatId !== chatId) {
+              resumeEditedQueue(chatId);
+            }
             // The session is actually usable — the backoff ladder is only
             // "paid off" here, not at WS open. Resetting the attempt count
             // on session_ready is what lets the ladder climb across
@@ -5287,6 +5550,7 @@ export function TaskChat({
           );
         }
         wsMapRef.current.delete(chatId);
+        if (pendingQueueEditRef.current?.chatId === chatId) finishPendingQueueEdit();
         lastWsMessageAtRef.current.delete(chatId);
         const runtime = historyRuntimeRef.current.get(chatId);
         if (runtime) {
@@ -5304,8 +5568,8 @@ export function TaskChat({
           }
         }
         updatePendingInputs(chatId, (items) => items.map((item) =>
-          item.status === "sending" || item.status === "accepted"
-            ? { ...item, status: "delayed" }
+          item.status === "sending" && !item.serverAccepted
+            ? { ...item, status: "failed", error: "Connection lost before delivery was confirmed." }
             : item,
         ));
         if (chatId === getActiveChatId()) {
@@ -5376,7 +5640,7 @@ export function TaskChat({
         }
       };
     },
-    [projectId, taskId, getActiveChatId, sendAgentVoiceState, updatePendingInputs, completePendingComposer],
+    [projectId, taskId, getActiveChatId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, reconcileInputQueue, savePendingInputState, finishPendingQueueEdit, resumeEditedQueue],
   );
 
 
@@ -5395,6 +5659,7 @@ export function TaskChat({
         if (!wsSessionEverReadyRef.current.get(chatId) || ws.readyState !== WebSocket.OPEN) return;
         if (now - (lastWsMessageAtRef.current.get(chatId) ?? now) < 45000) return;
         wsMapRef.current.delete(chatId);
+        if (pendingQueueEditRef.current?.chatId === chatId) finishPendingQueueEdit();
         lastWsMessageAtRef.current.delete(chatId);
         ws.close();
         const runtime = historyRuntimeRef.current.get(chatId);
@@ -5404,8 +5669,8 @@ export function TaskChat({
           runtime.needsResync = true;
         }
         updatePendingInputs(chatId, (items) => items.map((item) =>
-          item.status === "sending" || item.status === "accepted"
-            ? { ...item, status: "delayed" }
+          item.status === "sending" && !item.serverAccepted
+            ? { ...item, status: "failed", error: "Connection timed out before delivery was confirmed." }
             : item,
         ));
         const cached = perChatStateRef.current.get(chatId);
@@ -5428,7 +5693,7 @@ export function TaskChat({
       document.removeEventListener("visibilitychange", inspect);
       window.removeEventListener("online", inspect);
     };
-  }, [getActiveChatId, updatePendingInputs]);
+  }, [getActiveChatId, updatePendingInputs, finishPendingQueueEdit]);
 
   // A finished Run is a persisted, read-only transcript. Detach this view
   // from every live transport without killing the Agent-owned session.
@@ -5567,11 +5832,17 @@ export function TaskChat({
         let msgs: ChatMessage[] = [];
         const historicalInputIds = new Set(
           [...res.events, ...runtime.bufferedEvents]
-            .filter((event) => event.type === "user_message" && typeof event.client_message_id === "string")
-            .map((event) => event.client_message_id as string),
+            .flatMap((event) => event.type === "prompt_started"
+              ? event.message_ids ?? []
+              : event.type === "user_message" && typeof event.client_message_id === "string"
+                ? [event.client_message_id]
+                : []),
         );
         if (historicalInputIds.size > 0) {
-          for (const id of historicalInputIds) completePendingComposer(chatId, id);
+          let discardedChanged = false;
+          historicalInputIds.forEach((id) => { if (discardedInputIdsRef.current.delete(id)) discardedChanged = true; });
+          if (discardedChanged) savePendingInputState();
+          updateLocalInputPlacements(chatId, (items) => items.filter((item) => !historicalInputIds.has(item.id)));
           updatePendingInputs(chatId, (items) => items.filter((item) => !historicalInputIds.has(item.id)));
         }
         let historicalPlanEntries: PlanEntry[] | null = res.context?.plan_entries
@@ -5605,10 +5876,24 @@ export function TaskChat({
         for (const evt of buffered) {
           msgs = reduceHistoryMessages(msgs, evt);
         }
+        // Older saved pending inputs did not record a transcript position.
+        // Anchor those once history has loaded, before later sends arrive.
+        const pending = pendingInputsRef.current.get(chatId) ?? [];
+        const position = buildMessageTimeline(msgs, pending, localInputPlacementsRef.current.get(chatId) ?? [], 0).endPosition;
+        updateLocalInputPlacements(chatId, (items) => [
+          ...items,
+          ...pending.filter((input) => inputLocation(input) === "timeline" && !items.some((item) => item.id === input.id))
+            .map((input) => ({ id: input.id, position })),
+        ]);
         // Capture the complete History evidence before applying the optional
         // render window. A visual optimization must not erase Memory usage.
         setReadMemoryIds([...new Set([...(res.context?.read_memory_ids ?? []), ...collectReadMemoryIds(msgs)])]);
-        const attachmentCounters = res.context?.attachment_counts ?? buildAttachmentCounters(msgs);
+        const historyCounters = buildAttachmentCounters(msgs);
+        const attachmentCounters = {
+          image: Math.max(res.context?.attachment_counts.image ?? 0, historyCounters.image),
+          audio: Math.max(res.context?.attachment_counts.audio ?? 0, historyCounters.audio),
+          resource: Math.max(res.context?.attachment_counts.resource ?? 0, historyCounters.resource),
+        };
         const prunedHistory = pruneChatViewMessages(
           msgs,
           0,
@@ -5639,7 +5924,12 @@ export function TaskChat({
         }
         // Keep attachment numbering based on full history, even when old
         // rendered messages are hidden from the view.
-        attachCountersRef.current = attachmentCounters;
+        const reservedCounters = reservePendingAttachmentLabels(attachmentCounters, pending);
+        attachCountersRef.current = {
+          image: Math.max(reservedCounters.image, attachCountersRef.current.image),
+          audio: Math.max(reservedCounters.audio, attachCountersRef.current.audio),
+          resource: Math.max(reservedCounters.resource, attachCountersRef.current.resource),
+        };
         // Process non-message side effects from buffered events
         for (const evt of buffered) {
           switch (evt.type) {
@@ -5767,14 +6057,7 @@ export function TaskChat({
               break;
             }
             case "queue_update":
-              setPendingMessages(
-                (evt.messages ?? []).map(
-                  (m: { id?: string; text: string } | string) =>
-                    typeof m === "string"
-                      ? { id: "", text: m }
-                      : { id: m.id ?? "", text: m.text },
-                ),
-              );
+              setPendingMessages(normalizeQueuedInputs(evt.messages ?? []));
               break;
             case "available_commands":
               setSlashCommands(evt.commands ?? []);
@@ -5887,7 +6170,7 @@ export function TaskChat({
     // loading after this effect's first run (when launch_mode was still
     // undefined → connectChatWs bailed), the effect re-fires with the
     // resolved mode and routes the chat correctly (ACP WS vs PTY-only).
-  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs, historyPreferences, completePendingComposer]);
+  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs, updateLocalInputPlacements, historyPreferences, savePendingInputState]);
 
   // Cleanup all WebSockets on unmount, plus any pending reconnect timers —
   // otherwise an in-flight backoff timer fires after unmount and creates a
@@ -6412,28 +6695,7 @@ export function TaskChat({
           break;
         case "queue_update":
           // Server now always sends QueuedMessage[] with id+text.
-          setPendingMessages(
-            (msg.messages ?? []).map(
-              (m: { id?: string; text: string } | string) =>
-                typeof m === "string"
-                  ? { id: "", text: m }
-                  : { id: m.id ?? "", text: m.text },
-            ),
-          );
-          break;
-        case "queue_message_gone":
-          // 用户编辑/删除的消息已经在服务端被 drain 出去发给 agent 了。
-          // 关闭编辑态并提示。
-          if (editingPendingIdRef.current === msg.id) {
-            setEditingPendingId(null);
-            setEditingPendingValue("");
-            // Project does not currently expose a global toast/notification
-            // surface — log to console so the loss is at least visible in
-            // devtools. Promote to a real toast when the UI gains one.
-            console.warn(
-              "Your queued message was already sent to the agent before the edit landed.",
-            );
-          }
+          setPendingMessages(normalizeQueuedInputs(msg.messages ?? []));
           break;
         case "remote_session":
           // Session is owned by another process — enter read-only observation mode
@@ -6704,12 +6966,7 @@ export function TaskChat({
         case "queue_update":
           // 即使该 chat 当前不是 active,也得把 queue 写进 cache,
           // 否则用户切回来时只能看到空 queue(WS 不会主动再发一次)。
-          state.pendingMessages = (msg.messages ?? []).map(
-            (m: { id?: string; text: string } | string) =>
-              typeof m === "string"
-                ? { id: "", text: m }
-                : { id: m.id ?? "", text: m.text },
-          );
+          state.pendingMessages = normalizeQueuedInputs(msg.messages ?? []);
           break;
         case "queue_message_gone":
           // 后台 chat 的编辑状态由前端 active 路径管理,这里只需让 cache
@@ -7066,6 +7323,17 @@ export function TaskChat({
         cancelPendingReconnectRef.current(chatId);
         perChatStateRef.current.delete(chatId);
         runtimeBusyRef.current.delete(chatId);
+        updatePendingInputs(chatId, () => []);
+        updateLocalInputPlacements(chatId, () => []);
+        startedInputIdsRef.current.delete(chatId);
+        timelineEndRef.current.delete(chatId);
+        if (pendingQueueEditRef.current?.chatId === chatId) {
+          pendingQueueEditRef.current = null;
+          setEditingPendingId(null);
+          setEditingPendingValue("");
+        }
+        pendingQueueResumesRef.current.delete(chatId);
+        savePendingInputState();
         forgetMessages(chatId);
         setSessionActivity((previous) => removeSessionActivity(previous, chatId));
         const remaining = chats.filter((chat) => chat.id !== chatId);
@@ -7097,7 +7365,7 @@ export function TaskChat({
       }
       setShowChatMenu(false);
     },
-    [activeChatId, archivedChats, chats, connectChatWs, forgetMessages, projectId, restoreChatState, setActiveChatId, taskId],
+    [activeChatId, archivedChats, chats, connectChatWs, forgetMessages, projectId, restoreChatState, setActiveChatId, taskId, updatePendingInputs, updateLocalInputPlacements, savePendingInputState],
   );
 
   // ─── Chat fork ─────────────────────────────────────────────────────────
@@ -7372,35 +7640,9 @@ export function TaskChat({
     setAttachments((prev) => {
       const att = prev[index];
       if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
-      const remaining = prev.filter((_, i) => i !== index);
-      // Re-label all remaining attachments so numbering stays contiguous
-      const counters: AttachmentCounters = { ...attachCountersRef.current };
-      // Reset counters to history baseline, then re-number pending attachments
-      const historyBase = { ...counters };
-      // Count how many of each type exist in remaining
-      const pendingCounts: AttachmentCounters = { image: 0, audio: 0, resource: 0 };
-      for (const a of remaining) pendingCounts[a.type]++;
-      // History base = current counter - old pending count (before removal)
-      const oldPendingCounts: AttachmentCounters = { image: 0, audio: 0, resource: 0 };
-      for (const a of prev) oldPendingCounts[a.type]++;
-      historyBase.image = counters.image - oldPendingCounts.image;
-      historyBase.audio = counters.audio - oldPendingCounts.audio;
-      historyBase.resource = counters.resource - oldPendingCounts.resource;
-      // Re-assign labels sequentially
-      // Plain for-loop instead of `.map` so the counter mutation is local
-      // (not captured in a lambda) — React Compiler flags captured-mutable
-      // variables as "Expected references to be consistently local".
-      const reCount: AttachmentCounters = { ...historyBase };
-      const relabeled: Attachment[] = [];
-      for (const a of remaining) {
-        reCount[a.type] += 1;
-        relabeled.push({
-          ...a,
-          label: attachmentLabel(a.type, reCount[a.type]),
-        });
-      }
-      attachCountersRef.current = reCount;
-      return relabeled;
+      // Labels are identifiers used by inline reference chips and restored
+      // failed messages. Removing one attachment must not rename the others.
+      return prev.filter((_, i) => i !== index);
     });
   }, []);
 
@@ -7598,7 +7840,7 @@ export function TaskChat({
   const finishComposerAfterSend = useCallback((el: HTMLElement) => {
     if (isPhoneLayout) {
       // A touch send starts while the contentEditable still owns focus. Blur
-      // it after the payload is accepted so iOS dismisses the keyboard and
+      // it after capturing the message so iOS dismisses the keyboard and
       // the next render can promote the composer back to its banner/pill.
       el.blur();
       setMobileComposerOpen(false);
@@ -7610,15 +7852,101 @@ export function TaskChat({
     el.focus();
   }, [isPhoneLayout]);
 
+  const openInputQueue = useCallback(() => {
+    setShowPendingQueue(true);
+    setShowPlan(false);
+    setShowPlanFile(false);
+    setShowMemoryPanel(false);
+    setShowPreviewComments(false);
+  }, []);
+
+  const dispatchPendingInput = useCallback(async (chatId: string, id: string, retry = false) => {
+    const attempt = {};
+    pendingAttemptsRef.current.set(id, attempt);
+    const currentInput = () => pendingInputsRef.current.get(chatId)?.find((item) => item.id === id);
+    const attemptIsCurrent = () => {
+      const input = currentInput();
+      return pendingAttemptsRef.current.get(id) === attempt &&
+        input?.status === "sending" && !input.serverAccepted;
+    };
+    try {
+      const input = currentInput();
+      if (!input || !attemptIsCurrent()) return;
+      const ws = wsMapRef.current.get(chatId);
+      if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error("Not connected. Retry when the connection is ready.");
+      const original = pendingAttachmentsRef.current.get(id) ?? input.attachments.map(attachmentFromContent);
+      const resolved = await Promise.all(original.map(async (attachment) => {
+        if (!attachment.pendingFile) {
+          if (attachment.type === "resource" && !attachment.uri) {
+            throw new Error("This file is no longer available. Edit the message and attach it again.");
+          }
+          return attachment;
+        }
+        const file = attachment.pendingFile;
+        const data = await fileToBase64(file);
+        if (!attemptIsCurrent()) return attachment;
+        const result = await uploadChatAttachment(projectId, taskId, chatId, {
+          name: file.name,
+          mime_type: file.type || undefined,
+          data,
+        });
+        return {
+          ...attachment,
+          uri: result.uri,
+          name: result.name,
+          mimeType: result.mime_type ?? attachment.mimeType,
+          size: result.size,
+          pendingFile: undefined,
+        };
+      }));
+      // Cancel, Edit, timeout, and a newer Retry all invalidate this attempt.
+      if (!attemptIsCurrent()) return;
+      if (wsMapRef.current.get(chatId) !== ws || ws.readyState !== WebSocket.OPEN) {
+        throw new Error("Connection lost before the message could be sent.");
+      }
+      pendingAttachmentsRef.current.set(id, resolved);
+      const contentAttachments = resolved.map(attachmentToContent);
+      // Uploading can span a Busy transition. Choose the route again at the
+      // actual dispatch, including Retry, rather than reuse the original mode.
+      const mode = pendingInputMode(chatId, id);
+      const location = mode === "queue_message" ? "queue" : "timeline";
+      if (location === "queue" && chatId === getActiveChatId()) openInputQueue();
+      updatePendingInputs(chatId, (items) => items.map((item) => item.id === id
+        ? { ...item, attachments: contentAttachments, mode, dispatched: true }
+        : item));
+      updateLocalInputPlacements(chatId, (items) => location === "queue"
+        ? items.filter((item) => item.id !== id)
+        : items.some((item) => item.id === id)
+          ? items
+          : [...items, { id, position: timelineEndRef.current.get(chatId) ?? 0 }]);
+      const hasVoiceInstruction = hasPendingAgentVoiceInstruction(projectId, taskId, chatId);
+      if (hasVoiceInstruction) {
+        sendAgentVoiceState(chatId, loadAgentVoiceState(projectId, taskId, chatId), true);
+      }
+      ws.send(JSON.stringify({
+        type: mode,
+        client_message_id: id,
+        ...(retry ? { retry: true } : {}),
+        text: input.text,
+        attachments: contentAttachments,
+        config: input.config,
+      }));
+      if (hasVoiceInstruction) clearPendingAgentVoiceInstruction(projectId, taskId, chatId);
+    } catch (error) {
+      if (!attemptIsCurrent()) return;
+      updatePendingInputs(chatId, (items) => items.map((item) => item.id === id
+        ? { ...item, status: "failed", error: error instanceof Error ? error.message : String(error) }
+        : item));
+    }
+  }, [projectId, taskId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, pendingInputMode, getActiveChatId, openInputQueue]);
+
   const performSend = useCallback(async () => {
     const el = editableRef.current;
     if (!el) return;
     // Guard activeChatId before consuming any UI state — if we return after
     // clearing the editable, the user's typed message is silently lost.
     if (!activeChatId) return;
-    // Same reason for the connecting phase: input is editable so users can
-    // pre-compose, but the session has nowhere to receive the prompt yet.
-    if (!isConnected) return;
+    if ((isTerminalLaunchMode || isTerminalMode) && !isConnected) return;
     const draftHtml = el.innerHTML;
     const composerStillCurrent = () =>
       getActiveChatId() === activeChatId && editableRef.current === el &&
@@ -7716,34 +8044,21 @@ export function TaskChat({
 
     if (!prompt && attachments.length === 0) return;
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      // Not connected yet — keep the draft, surface a hint so the user
-      // doesn't think their Enter was eaten. appendSystemMessage dedupes
-      // repeated presses of the same message.
-      setMessages((prev) =>
-        appendSystemMessage(
-          prev,
-          "Waiting for the agent to connect. Your message will be sent once the session is ready — try again in a moment.",
-        ),
-      );
-      return;
-    }
+    if (isTerminalMode && (!ws || ws.readyState !== WebSocket.OPEN)) return;
 
     // A persisted Session can reopen with Agent Voice already enabled, but a
     // browser refresh creates a new AudioContext that is locked until the next
     // user gesture. Sending a real message is that gesture, so unlock here as
     // well as when the user explicitly selects a Speaking Profile.
     if (agentVoiceState.enabled) {
-      try {
-        await unlockAgentVoiceAudio();
-      } catch (error) {
+      void unlockAgentVoiceAudio().catch((error) => {
         console.error("[Agent Voice] audio unlock failed", error);
-      }
+      });
     }
 
     // Shell mode → send terminal_execute directly (bypasses AI)
     if (isTerminalMode) {
-      if (!prompt || isBusy) return;
+      if (!prompt || isBusy || !ws) return;
       if (!composerStillCurrent() || wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) return;
       requestBottom("auto");
       ws.send(
@@ -7760,134 +8075,46 @@ export function TaskChat({
       return;
     }
 
-    // Keep this draft until the server accepts it. A second click or Enter
-    // while the acknowledgement is in flight must not submit it twice.
-    const previousComposer = pendingComposerRef.current.get(activeChatId);
-    const previousInput = pendingInputsRef.current.get(activeChatId)?.find((item) => item.id === previousComposer?.id);
-    if (previousInput && (previousInput.status === "sending" || previousInput.status === "accepted")) return;
-
-    const text = prompt;
-
-    // Upload any pending files now (deferred from drag/drop time)
-    let resolvedAttachments = attachments;
-    const pendingOnes = attachments.filter((a) => a.pendingFile);
-    if (pendingOnes.length > 0) {
-      if (!activeChatId) return;
-      try {
-        const uploadResults = await Promise.all(
-          pendingOnes.map(async (att) => {
-            const data = await fileToBase64(att.pendingFile!);
-            return uploadChatAttachment(projectId, taskId, activeChatId, {
-              name: att.pendingFile!.name,
-              mime_type: att.pendingFile!.type || undefined,
-              data,
-            });
-          }),
-        );
-        // Map each pending attachment to its upload result by identity, then
-        // walk attachments to apply. Avoids a mutated counter captured in
-        // a lambda (which the React Compiler flags).
-        const resultByAtt = new Map(pendingOnes.map((att, i) => [att, uploadResults[i]]));
-        resolvedAttachments = attachments.map((att) => {
-          if (!att.pendingFile) return att;
-          const result = resultByAtt.get(att)!;
-          return {
-            ...att,
-            uri: result.uri,
-            name: result.name,
-            mimeType: result.mime_type ?? att.mimeType,
-            size: result.size,
-            pendingFile: undefined,
-          };
-        });
-      } catch (err) {
-        console.error("Failed to upload attachment:", err);
-        const errMessage = err instanceof Error ? err.message : String(err);
-        setMessages((prev) => [
-          ...prev,
-          { type: "system", content: `Failed to upload attachment: ${errMessage}` },
-        ]);
-        return;
-      }
-    }
-
-    if (!composerStillCurrent() || wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) return;
-
-    // Build attachments payload for server
-    const contentAttachments = resolvedAttachments.map((att) => ({
-      ...(att.type === "resource"
-        ? {
-            type: "resource_link",
-            uri: att.uri,
-            name: att.name,
-            label: att.label,
-            mime_type: att.mimeType || undefined,
-            size: att.size,
-          }
-        : {
-            type: att.type,
-            data: att.data,
-            label: att.label,
-            mime_type: att.mimeType,
-            ...(att.type === "image" && att.uri ? { uri: att.uri } : {}),
-        }),
-    }));
-
-    const hasPendingVoiceInstruction = hasPendingAgentVoiceInstruction(
-      projectId,
-      taskId,
-      activeChatId,
-    );
-    if (hasPendingVoiceInstruction) {
-      sendAgentVoiceState(
-        activeChatId,
-        loadAgentVoiceState(projectId, taskId, activeChatId),
-        true,
-      );
-    }
-
-    const retry = !!previousComposer && !!previousInput &&
-      previousComposer.html === draftHtml && previousComposer.attachments === attachments;
-    if (previousComposer && !retry) {
-      updatePendingInputs(activeChatId, (items) => items.filter((item) => item.id !== previousComposer.id));
-    }
     const input: PendingInput = {
-      id: retry ? previousInput!.id : createClientMessageId(),
-      text: retry ? previousInput!.text : text,
-      attachments: retry ? previousInput!.attachments : contentAttachments,
-      config: retry ? previousInput!.config : buildPromptConfig(),
-      mode: retry ? previousInput!.mode : isBusy ? "queue_message" : "prompt",
+      id: createClientMessageId(),
+      text: prompt,
+      draftHtml,
+      attachments: attachments.map(attachmentToContent),
+      config: buildPromptConfig(),
+      mode: pendingInputMode(activeChatId),
       status: "sending",
       serverAccepted: false,
       sentAt: Date.now(),
     };
-    pendingComposerRef.current.set(activeChatId, { id: input.id, html: draftHtml, attachments });
-    setComposerPendingId(input.id);
-    saveChatDraft(activeChatId, draftHtml);
-    updatePendingInputs(activeChatId, (items) => retry
-      ? items.map((item) => item.id === input.id ? input : item)
-      : [...items, input]);
+    pendingAttachmentsRef.current.set(input.id, attachments);
+    if (inputLocation(input) === "timeline") {
+      updateLocalInputPlacements(activeChatId, (items) => [...items, { id: input.id, position: messageTimeline.endPosition }]);
+    } else {
+      openInputQueue();
+    }
+    updatePendingInputs(activeChatId, (items) => [...items, input]);
+
+    // Release the composer immediately; confirmations only update the bubble.
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    if (composerEmptyTimerRef.current) clearTimeout(composerEmptyTimerRef.current);
+    draftSaveTimerRef.current = null;
+    composerEmptyTimerRef.current = null;
+    el.innerHTML = "";
+    clearChatDraft(activeChatId);
+    const cached = perChatStateRef.current.get(activeChatId);
+    if (cached) cached.draftHtml = "";
+    attachmentsRef.current = [];
+    setAttachments([]);
+    setHasContent(false);
+    setShowSlashMenu(false);
+    setShowFileMenu(false);
+    setIsInputExpanded(false);
+    onUserMessageSent?.();
+    finishComposerAfterSend(el);
     requestBottom("auto");
-    try {
-      ws.send(JSON.stringify({
-        type: input.mode,
-        client_message_id: input.id,
-        ...(retry ? { retry: true } : {}),
-        text: input.text,
-        attachments: input.attachments,
-        config: input.config,
-      }));
-    } catch (error) {
-      updatePendingInputs(activeChatId, (items) => items.map((item) =>
-        item.id === input.id ? { ...item, status: "failed", error: String(error) } : item,
-      ));
-      return;
-    }
-    if (hasPendingVoiceInstruction) {
-      clearPendingAgentVoiceInstruction(projectId, taskId, activeChatId);
-    }
     promoteChatForLocalActivity(activeChatId);
-  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, sendAgentVoiceState, finishComposerAfterSend, updatePendingInputs, getActiveChatId]);
+    void dispatchPendingInput(activeChatId, input.id);
+  }, [isTerminalMode, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, finishComposerAfterSend, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, getActiveChatId, onUserMessageSent, dispatchPendingInput, pendingInputMode, openInputQueue]);
 
   const handleSend = useCallback(async () => {
     if (!activeChatId || sendingAttemptRef.current.has(activeChatId)) return;
@@ -7925,45 +8152,81 @@ export function TaskChat({
 
   const retryPendingInput = useCallback((input: PendingInput) => {
     if (!activeChatId) return;
-    const ws = wsMapRef.current.get(activeChatId);
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    updatePendingInputs(activeChatId, (items) => items.map((item) =>
-      item.id === input.id ? { ...item, status: "sending", sentAt: Date.now(), error: undefined } : item,
-    ));
-    try {
-      ws.send(JSON.stringify({
-        type: input.mode,
-        client_message_id: input.id,
-        retry: true,
-        text: input.text,
-        attachments: input.attachments,
-        config: input.config,
-      }));
-    } catch (error) {
-      updatePendingInputs(activeChatId, (items) => items.map((item) =>
-        item.id === input.id ? { ...item, status: "failed", error: String(error) } : item,
-      ));
+    const mode = pendingInputMode(activeChatId, input.id);
+    // Unknown delivery retries retain the id for deduplication. An explicitly
+    // cancelled or already-accepted attempt is a new submission.
+    const id = input.cancelled || input.serverAccepted ? createClientMessageId() : input.id;
+    if (id !== input.id) {
+      if (input.dispatched || input.serverAccepted) discardedInputIdsRef.current.add(input.id);
+      setPendingMessages((items) => items.filter((item) => !queuedInputIds(item).includes(input.id)));
+      const original = pendingAttachmentsRef.current.get(input.id);
+      pendingAttachmentsRef.current.delete(input.id);
+      if (original) pendingAttachmentsRef.current.set(id, original);
     }
-  }, [activeChatId, updatePendingInputs]);
+    updateLocalInputPlacements(activeChatId, (items) => {
+      const next = items.filter((item) => item.id !== input.id);
+      return mode === "prompt" ? [...next, { id, position: messageTimeline.endPosition }] : next;
+    });
+    updatePendingInputs(activeChatId, (items) => [
+      ...items.filter((item) => item.id !== input.id),
+      { ...input, id, mode, status: "sending", serverAccepted: false, serverQueued: false, dispatched: false, cancelled: false, sentAt: Date.now(), error: undefined },
+    ]);
+    if (mode === "queue_message") openInputQueue();
+    requestBottom("auto");
+    void dispatchPendingInput(activeChatId, id, id === input.id);
+  }, [activeChatId, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, requestBottom, dispatchPendingInput, pendingInputMode, openInputQueue]);
 
   const editPendingInput = useCallback((input: PendingInput) => {
     const el = editableRef.current;
-    if (!el) return;
-    const existing = getPromptFromEditable(el);
-    el.textContent = existing ? `${existing}\n${input.text}` : input.text;
-    setHasContent(true);
-    if (activeChatId) saveChatDraft(activeChatId, el.innerHTML);
-    if (isPhoneLayout) setMobileComposerOpen(true);
-    el.focus();
-  }, [activeChatId, isPhoneLayout]);
+    if (!el || !activeChatId) return;
+    pendingAttemptsRef.current.delete(input.id);
+    if (input.dispatched || input.serverAccepted) discardedInputIdsRef.current.add(input.id);
+    setPendingMessages((items) => items.filter((item) => !queuedInputIds(item).includes(input.id)));
+    const ws = wsMapRef.current.get(activeChatId);
+    if (input.mode === "queue_message" && input.dispatched && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "dequeue_message", id: input.id }));
+    }
+    const restored = pendingAttachmentsRef.current.get(input.id) ?? input.attachments.map(attachmentFromContent);
+    // Transfer preview ownership before removing the bubble, so cleanup cannot
+    // revoke images that have just been restored to the composer.
+    pendingAttachmentsRef.current.delete(input.id);
+    const draft = document.createElement("div");
+    if (input.draftHtml !== undefined) draft.innerHTML = input.draftHtml;
+    else draft.textContent = input.text;
+    if (getPromptFromEditable(el) && draft.hasChildNodes()) el.appendChild(document.createElement("br"));
+    el.append(...Array.from(draft.childNodes));
+    const nextAttachments = [...attachmentsRef.current, ...restored];
+    attachmentsRef.current = nextAttachments;
+    setAttachments(nextAttachments);
+    for (const attachment of restored) {
+      const number = Number(attachment.label.match(/#(\d+)$/)?.[1] ?? 0);
+      attachCountersRef.current[attachment.type] = Math.max(attachCountersRef.current[attachment.type], number);
+    }
+    setHasContent(!!getPromptFromEditable(el) || nextAttachments.length > 0);
+    saveChatDraft(activeChatId, el.innerHTML);
+    updatePendingInputs(activeChatId, (items) => items.filter((item) => item.id !== input.id));
+    updateLocalInputPlacements(activeChatId, (items) => items.filter((item) => item.id !== input.id));
+    // Keep focus in the menu's user gesture so iOS can reopen the keyboard.
+    el.focus({ preventScroll: true });
+    if (isPhoneLayout) flushSync(() => setMobileComposerOpen(true));
+    const selection = window.getSelection();
+    if (selection) {
+      selection.selectAllChildren(el);
+      selection.collapseToEnd();
+    }
+  }, [activeChatId, isPhoneLayout, updatePendingInputs, updateLocalInputPlacements]);
 
   const cancelPendingInput = useCallback((id: string) => {
     if (!activeChatId) return;
-    if (pendingComposerRef.current.get(activeChatId)?.id === id) {
-      pendingComposerRef.current.delete(activeChatId);
-      setComposerPendingId(null);
+    pendingAttemptsRef.current.delete(id);
+    const input = pendingInputsRef.current.get(activeChatId)?.find((item) => item.id === id);
+    const ws = wsMapRef.current.get(activeChatId);
+    if (input?.mode === "queue_message" && input.dispatched && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "dequeue_message", id }));
     }
-    updatePendingInputs(activeChatId, (items) => items.filter((item) => item.id !== id));
+    updatePendingInputs(activeChatId, (items) => items.map((item) => item.id === id
+      ? { ...item, status: "failed", cancelled: true, error: "Sending cancelled." }
+      : item));
   }, [activeChatId, updatePendingInputs]);
 
   const sendPreviewComments = useCallback((comments: PreviewCommentDraft[]) => {
@@ -8086,67 +8349,71 @@ export function TaskChat({
   // 弹出发送,覆盖用户正在进行的编辑。save/cancel 都要 resume。
   const handleEditPending = useCallback(
     (msg: { id: string; text: string }) => {
+      const chatId = getActiveChatId();
+      const ws = chatId ? wsMapRef.current.get(chatId) : undefined;
+      if (!chatId || !msg.id || ws?.readyState !== WebSocket.OPEN) return;
+      if (pendingQueueEditRef.current) finishPendingQueueEdit();
+      pendingQueueEditRef.current = { chatId, id: msg.id };
+      pendingQueueResumesRef.current.add(chatId);
+      savePendingInputState();
       setEditingPendingId(msg.id);
       setEditingPendingValue(msg.text);
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "pause_queue" }));
-      }
+      ws.send(JSON.stringify({ type: "pause_queue" }));
     },
-    [],
+    [getActiveChatId, finishPendingQueueEdit, savePendingInputState],
   );
 
   const handleSavePendingEdit = useCallback(() => {
-    if (
-      editingPendingId === null ||
-      !wsRef.current ||
-      wsRef.current.readyState !== WebSocket.OPEN
-    )
-      return;
+    const edit = pendingQueueEditRef.current;
+    if (!edit) return;
+    const ws = wsMapRef.current.get(edit.chatId);
+    if (ws?.readyState !== WebSocket.OPEN) return;
     const trimmed = editingPendingValue.trim();
+    // Enter/Escape followed by blur must not submit this edit twice.
+    pendingQueueEditRef.current = null;
     if (!trimmed) {
-      wsRef.current.send(
-        JSON.stringify({ type: "dequeue_message", id: editingPendingId }),
+      ws.send(
+        JSON.stringify({ type: "dequeue_message", id: edit.id }),
       );
     } else {
-      wsRef.current.send(
+      ws.send(
         JSON.stringify({
           type: "update_queued_message",
-          id: editingPendingId,
+          id: edit.id,
           text: trimmed,
         }),
       );
     }
-    wsRef.current.send(JSON.stringify({ type: "resume_queue" }));
+    resumeEditedQueue(edit.chatId);
     setEditingPendingId(null);
     setEditingPendingValue("");
-  }, [editingPendingId, editingPendingValue]);
+  }, [editingPendingValue, resumeEditedQueue]);
 
-  const handleCancelPendingEdit = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "resume_queue" }));
-    }
-    setEditingPendingId(null);
-    setEditingPendingValue("");
-  }, []);
+  const handleCancelPendingEdit = finishPendingQueueEdit;
 
   const handleDeletePending = useCallback(
     (id: string) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       wsRef.current.send(JSON.stringify({ type: "dequeue_message", id }));
-      if (editingPendingId === id) {
-        setEditingPendingId(null);
-        setEditingPendingValue("");
-      }
+      if (pendingQueueEditRef.current?.id === id) finishPendingQueueEdit();
     },
-    [editingPendingId],
+    [finishPendingQueueEdit],
   );
 
   const handleClearPending = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: "clear_queue" }));
-    setEditingPendingId(null);
-    setEditingPendingValue("");
-  }, []);
+    if (!activeChatId) return;
+    const connected = wsRef.current?.readyState === WebSocket.OPEN;
+    if (connected) wsRef.current!.send(JSON.stringify({ type: "clear_queue" }));
+    finishPendingQueueEdit();
+    const removedIds = new Set<string>();
+    updatePendingInputs(activeChatId, (items) => items.filter((input) => {
+      if (inputLocation(input) !== "queue" || (input.status === "accepted" && !connected)) return true;
+      removedIds.add(input.id);
+      if (input.dispatched || input.serverAccepted) discardedInputIdsRef.current.add(input.id);
+      return false;
+    }));
+    updateLocalInputPlacements(activeChatId, (items) => items.filter((item) => !removedIds.has(item.id)));
+  }, [activeChatId, updatePendingInputs, updateLocalInputPlacements, finishPendingQueueEdit]);
 
   const handleSetQueueMode = useCallback((mode: QueueSendMode) => {
     setQueueMode(mode);
@@ -8207,8 +8474,8 @@ export function TaskChat({
   useCommand(
     "chat.pending.clear",
     () => { handleClearPending(); },
-    { enabled: () => pendingMessages.length > 0 },
-    [pendingMessages, handleClearPending],
+    { enabled: () => pendingQueueRows.length > 0 },
+    [pendingQueueRows, handleClearPending],
   );
   useCommand(
     "chat.fork",
@@ -8524,6 +8791,26 @@ export function TaskChat({
 
     try {
       await reconnectChat(projectId, taskId, chatId);
+      // The reset deliberately discards the confirmed backend queue. Other
+      // local attempts remain editable, but cannot keep waiting on that runtime.
+      if (pendingQueueEditRef.current?.chatId === chatId) {
+        pendingQueueEditRef.current = null;
+        setEditingPendingId(null);
+        setEditingPendingValue("");
+      }
+      pendingQueueResumesRef.current.delete(chatId);
+      const removedIds = new Set<string>();
+      updatePendingInputs(chatId, (items) => items.flatMap((input) => {
+        if (input.serverQueued && input.status === "accepted") {
+          removedIds.add(input.id);
+          return [];
+        }
+        return [input.status === "sending" || input.status === "accepted"
+          ? { ...input, status: "failed" as const, cancelled: true, serverQueued: false, error: "Connection restarted before execution was confirmed." }
+          : { ...input, serverQueued: false }];
+      }));
+      updateLocalInputPlacements(chatId, (items) => items.filter((item) => !removedIds.has(item.id)));
+      savePendingInputState();
 
       // The backend normally closes this socket through SessionEnded. Keep a
       // local fallback for broken links where that close frame never arrives.
@@ -8565,7 +8852,7 @@ export function TaskChat({
     } finally {
       setIsReconnecting(false);
     }
-  }, [activeChatId, connectChatWs, getActiveChatId, isReconnecting, projectId, taskId, updateBusy]);
+  }, [activeChatId, connectChatWs, getActiveChatId, isReconnecting, projectId, taskId, updateBusy, updatePendingInputs, updateLocalInputPlacements, savePendingInputState]);
 
   const handleReconnect = useCallback(() => {
     if (isReconnecting) return;
@@ -9603,15 +9890,17 @@ export function TaskChat({
   );
 
   const renderItems = useMemo(
-    () => buildRenderItems(messages, isBusy),
-    [messages, isBusy],
+    () => buildRenderItems(messageTimeline.messages, isBusy).map((item) => item.kind === "single"
+      ? { ...item, sourceIndex: messageTimeline.sourceIndices[item.index] }
+      : item),
+    [messageTimeline, isBusy],
   );
   // The minimap is deliberately derived from the same `messages` state that
   // renders the chat. It is therefore immediately available for loaded
   // history and updates as an assistant streams, with no second history API.
   const conversationTurns = useMemo(
-    () => buildConversationTurns(messages, renderItems),
-    [messages, renderItems],
+    () => buildConversationTurns(messageTimeline.messages, renderItems),
+    [messageTimeline.messages, renderItems],
   );
   const bottomOriginTurns = useMemo<BottomOriginTurn[]>(
     () =>
@@ -10081,12 +10370,52 @@ export function TaskChat({
     });
   }, []);
 
+  const renderPendingInputActions = (input: PendingInput, queue = false) => {
+    if (input.status === "accepted") return null;
+    const waiting = input.status === "sending";
+    return (
+      <DropdownMenu
+        key={waiting ? "sending" : "failed"}
+        portal
+        compact
+        size="small"
+        placement="bottom"
+        ariaLabel={waiting ? "Sending message actions" : "Failed message actions"}
+        triggerClassName={`flex ${queue ? "h-7 w-7" : "h-9 w-9"} shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--color-bg-tertiary)] ${waiting ? "text-[var(--color-text-muted)]" : "text-[var(--color-error)]"}`}
+        trigger={waiting
+          ? <Loader2 className="h-4 w-4 animate-spin" aria-label="Sending" />
+          : <CircleAlert className="h-4 w-4" aria-label="Send failed" />}
+        items={waiting ? [{
+          id: "cancel",
+          label: "Cancel sending",
+          icon: X,
+          onClick: () => cancelPendingInput(input.id),
+        }] : [{
+          id: "retry",
+          label: "Retry",
+          icon: RotateCw,
+          onClick: () => retryPendingInput(input),
+        }, {
+          id: "edit",
+          label: "Edit",
+          icon: Pencil,
+          onClick: () => editPendingInput(input),
+        }]}
+      />
+    );
+  };
+
   const renderChatItem = (idx: number, item: RenderItem) => {
     const rowClassName =
       "mx-auto flow-root w-full max-w-[920px] px-4 pt-3 sm:px-6";
     const dataItemIndex = idx;
     const measureKey = measuredHeightKey(item);
     if (item.kind === "single") {
+      const clientMessageId = item.message.type === "user" ? item.message.clientMessageId : undefined;
+      const input = clientMessageId
+        ? pendingInputs.find((pending) => pending.id === clientMessageId)
+        : undefined;
+      const waiting = input?.status === "sending";
       return (
         <MeasuredTaskChatRow
           className={rowClassName}
@@ -10097,7 +10426,7 @@ export function TaskChat({
         >
           <MessageItem
             message={item.message}
-            index={item.index}
+            index={item.sourceIndex ?? item.index}
             isBusy={isBusy}
             agentLabel={agentLabel}
             projectId={projectId}
@@ -10115,6 +10444,8 @@ export function TaskChat({
             onMermaidClick={setLightboxSvg}
             onD2Click={setLightboxSvg}
             onInsertReference={insertAttachmentReference}
+            delivery={input ? renderPendingInputActions(input) : undefined}
+            deliveryError={waiting ? undefined : input?.error}
           />
         </MeasuredTaskChatRow>
       );
@@ -10178,37 +10509,11 @@ export function TaskChat({
 
   // Keep the Header/Footer component types stable. Updating context changes
   // their content without unmounting Virtuoso's measured boundary elements.
-  const composerPendingInput = pendingInputs.find((input) => input.id === composerPendingId);
-  const composerWaiting = composerPendingInput?.status === "sending" || composerPendingInput?.status === "accepted";
-  const transcriptPendingInputs = pendingInputs.filter((input) => input.id !== composerPendingId);
   const virtuosoContext: TaskChatVirtuosoContext = {
     hiddenMessageCount,
     limitedHistoryTurns: historyPreferences.recentTurns,
     inputAreaHeight: transcriptFooterState.inputAreaHeight,
     showThinking: transcriptFooterState.showThinking,
-    pendingInputContent: transcriptPendingInputs.length > 0 && !isTerminalLaunchMode ? (
-      <div className="mx-auto w-full max-w-[920px] space-y-2 px-4 py-2 sm:px-6" aria-live="polite">
-        {transcriptPendingInputs.map((input) => (
-          <div key={input.id} className="ml-auto flex max-w-[80%] flex-wrap items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
-            <span className="max-w-48 truncate" title={input.text}>{input.text}</span>
-            <span aria-hidden="true">·</span>
-            <span className="flex flex-wrap items-center gap-2">
-              {input.status === "sending" ? "Sending…" :
-                input.status === "accepted" ? "Received by Grove · waiting for agent" :
-                input.status === "failed" ? `Send failed${input.error ? `: ${input.error}` : ""}` :
-                (input.serverAccepted ? "Grove received it · Agent response delayed" : "Still waiting · delivery not confirmed")}
-              {(input.status === "delayed" || input.status === "failed") && (
-                <>
-                  <button type="button" className="text-[var(--color-highlight)] hover:underline disabled:opacity-50" disabled={!isConnected} onClick={() => retryPendingInput(input)}>Retry</button>
-                  <button type="button" className="text-[var(--color-highlight)] hover:underline" title="Copy the text into the composer; the original may still arrive" onClick={() => editPendingInput(input)}>Edit in composer</button>
-                </>
-              )}
-              <button type="button" className="hover:underline" title="Remove this waiting copy; this cannot retract a message Grove already received" onClick={() => cancelPendingInput(input.id)}>Cancel waiting</button>
-            </span>
-          </div>
-        ))}
-      </div>
-    ) : null,
   };
 
   // ─── Collapsed mode ──────────────────────────────────────────────────────
@@ -11239,7 +11544,7 @@ export function TaskChat({
                         <div>
                           <div className="flex h-5 items-center gap-2 px-0.5">
                             <div className="text-[9px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)] opacity-55">
-                              Queued · {pendingMessages.length}
+                              Pending · {pendingQueueRows.length}
                             </div>
                             <div className="ml-auto inline-flex items-center gap-2 text-[9px]">
                               {(
@@ -11271,7 +11576,7 @@ export function TaskChat({
                               ))}
                             </div>
                           </div>
-                          {pendingMessages.map((msg, i) => (
+                          {pendingQueueRows.map((msg, i) => (
                             <div
                               key={pendingMessageKeys[i] ?? `idx-${i}`}
                               className="flex min-h-7 items-center gap-2 rounded-lg px-0.5 text-sm transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_3%,transparent)]"
@@ -11304,39 +11609,56 @@ export function TaskChat({
                                 />
                               ) : (
                                 <>
-                                  <span className="flex-1 min-w-0 truncate text-[var(--color-text)]">
-                                    {msg.text}
+                                  <span
+                                    className="flex-1 min-w-0 truncate text-[var(--color-text)]"
+                                    title={msg.input?.error ?? msg.text}
+                                  >
+                                    {msg.text || "Attachments"}
                                   </span>
+                                  {(msg.attachments?.length ?? 0) > 0 && (
+                                    <span
+                                      className="inline-flex shrink-0 items-center gap-0.5 text-xs text-[var(--color-text-muted)]"
+                                      title={msg.attachments!.map((attachment) => attachment.name ?? attachment.label ?? "Attachment").join(", ")}
+                                    >
+                                      <Paperclip className="h-3 w-3" />
+                                      {msg.attachments!.length}
+                                    </span>
+                                  )}
                                   <div className="flex items-center gap-1 shrink-0">
-                                    {i === 0 && (
-                                      <button
-                                        onClick={() => handleSendNow()}
-                                        disabled={isCancelling}
-                                        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title={isCancelling ? "Cancelling…" : "Send Now"}
-                                      >
-                                        {isCancelling ? (
-                                          <Loader2 className="h-3 w-3 animate-spin" />
-                                        ) : (
-                                          <Send className="h-3 w-3" />
+                                    {msg.input && (msg.input.status !== "accepted" || !msg.input.serverQueued) ? renderPendingInputActions(msg.input, true) : (
+                                      <>
+                                        {msg.id === pendingMessages[0]?.id && (
+                                          <button
+                                            onClick={() => handleSendNow()}
+                                            disabled={isCancelling}
+                                            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title={isCancelling ? "Cancelling…" : "Send Now"}
+                                          >
+                                            {isCancelling ? (
+                                              <Loader2 className="h-3 w-3 animate-spin" />
+                                            ) : (
+                                              <Send className="h-3 w-3" />
+                                            )}
+                                            <span>Now</span>
+                                          </button>
                                         )}
-                                        <span>Now</span>
-                                      </button>
+                                        <button
+                                          onClick={() => handleEditPending(msg)}
+                                          disabled={!isConnected || !msg.id}
+                                          className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] disabled:opacity-50"
+                                          title="Edit"
+                                        >
+                                          <Pencil className="h-3 w-3" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeletePending(msg.id)}
+                                          className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-error)]"
+                                          title="Delete"
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </button>
+                                      </>
                                     )}
-                                    <button
-                                      onClick={() => handleEditPending(msg)}
-                                      className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
-                                      title="Edit"
-                                    >
-                                      <Pencil className="h-3 w-3" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeletePending(msg.id)}
-                                      className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-error)]"
-                                      title="Delete"
-                                    >
-                                      <Trash2 className="h-3 w-3" />
-                                    </button>
                                   </div>
                                 </>
                               )}
@@ -11719,7 +12041,6 @@ export function TaskChat({
                 ref={fileInputRef}
                 type="file"
                 multiple
-                disabled={composerWaiting}
                 className="hidden"
                 onChange={handleFileSelect}
               />
@@ -11736,7 +12057,7 @@ export function TaskChat({
                 style={{ transform: "translateY(-6px)" }}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
-                onDrop={composerWaiting ? (event) => event.preventDefault() : handleDrop}
+                onDrop={handleDrop}
               >
                 {/* Localized drop overlay — only fires inside the composer */}
                 {isDragging && (
@@ -12157,7 +12478,6 @@ export function TaskChat({
                         </div>
                         <button
                           onClick={() => removeAttachment(i)}
-                          disabled={composerWaiting}
                           className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-error)] text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           &times;
@@ -12207,16 +12527,6 @@ export function TaskChat({
                     </span>
                   )}
                   <div className="relative flex-1">
-                    {composerPendingInput && (
-                      <div className="flex items-center justify-between gap-2 px-4 pt-2 text-xs text-[var(--color-text-muted)]" aria-live="polite">
-                        <span>{composerWaiting
-                          ? "Sending… Draft locked until the chat confirms delivery."
-                          : composerPendingInput.status === "failed"
-                            ? `Send failed. Draft kept.${composerPendingInput.error ? ` ${composerPendingInput.error}` : ""}`
-                            : "Still unconfirmed. Draft kept; edit or retry."}</span>
-                        <button type="button" className="shrink-0 underline" title="Stop waiting without retracting a message already received by Grove" onClick={() => cancelPendingInput(composerPendingInput.id)}>Cancel waiting</button>
-                      </div>
-                    )}
                     {!hasContent && !isInputFocused && (
                       <div
                         className={`pointer-events-none absolute top-2 text-sm leading-7 text-[var(--color-text-muted)] select-none ${
@@ -12239,7 +12549,7 @@ export function TaskChat({
                     <div
                       ref={editableRef}
                       contentEditable={
-                        !isRemoteSession && !activePermissionMessage && !composerWaiting
+                        !isRemoteSession && !activePermissionMessage
                       }
                       suppressContentEditableWarning
                       onInput={handleInput}
@@ -12292,7 +12602,6 @@ export function TaskChat({
                       (promptCaps.image || promptCaps.audio) && (
                         <button
                           onClick={() => fileInputRef.current?.click()}
-                          disabled={composerWaiting}
                           className="h-9 w-9 flex items-center justify-center rounded-xl bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors shrink-0"
                           title="Attach file"
                         >
@@ -12307,8 +12616,8 @@ export function TaskChat({
                           : isBusy
                             ? hasContent
                               ? "Ready to queue"
-                              : pendingMessages.length > 0
-                                ? `${pendingMessages.length} queued`
+                              : pendingQueueRows.length > 0
+                                ? `${pendingQueueRows.length} pending`
                                 : "Agent running"
                             : isInputExpanded
                               ? "\u2318\u21A9 send \u00b7 \u21A9 newline"
@@ -12436,7 +12745,7 @@ export function TaskChat({
                           size="sm"
                           className="h-9 w-9 !p-0 rounded-xl shadow-sm"
                           onClick={handleSendButtonClick}
-                          disabled={!isConnected || composerWaiting}
+                          disabled={!isConnected && (isTerminalLaunchMode || isTerminalMode)}
                         >
                           <Send className="w-3.5 h-3.5" />
                         </Button>
@@ -12448,7 +12757,6 @@ export function TaskChat({
                           size="sm"
                           className="h-9 w-9 !p-0 rounded-xl shadow-sm"
                           onClick={handleSendButtonClick}
-                          disabled={composerWaiting}
                         >
                           <ListPlus className="w-3.5 h-3.5" />
                         </Button>
@@ -13455,8 +13763,12 @@ const MessageItem = memo(function MessageItem({
   onD2Click,
   onInsertReference,
   resolveSender,
+  delivery,
+  deliveryError,
 }: {
   message: ChatMessage;
+  delivery?: ReactNode;
+  deliveryError?: string;
   index: number;
   isBusy: boolean;
   agentLabel?: string;
@@ -13575,7 +13887,8 @@ const MessageItem = memo(function MessageItem({
         );
       }
       return (
-        <div className="flex justify-end">
+        <div className="flex items-end justify-end gap-1">
+          {delivery && <div className="shrink-0" title={deliveryError}>{delivery}</div>}
           <div className="max-w-[80%] min-w-0">
             {message.sender && (() => {
               const resolved = resolveSender?.(message.sender) ?? {

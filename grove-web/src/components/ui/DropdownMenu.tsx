@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react";
@@ -27,6 +27,9 @@ interface DropdownMenuProps {
   /** Match the compact, viewport-aware New Session picker surface. */
   portal?: boolean;
   compact?: boolean;
+  size?: "default" | "small";
+  /** Portal menus can open below the trigger and flip above when needed. */
+  placement?: "side" | "bottom";
 }
 
 export function DropdownMenu({
@@ -37,6 +40,8 @@ export function DropdownMenu({
   ariaLabel = "More actions",
   portal = false,
   compact = false,
+  size = "default",
+  placement = "side",
 }: DropdownMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeSubmenuId, setActiveSubmenuId] = useState<string | null>(null);
@@ -51,7 +56,8 @@ export function DropdownMenu({
   );
   const visibleItems = activeSubmenu?.children ?? items;
   const submenuIsWide = !!activeSubmenu?.wideChildren;
-  const menuWidth = submenuIsWide ? 360 : 192;
+  const small = size === "small";
+  const menuWidth = submenuIsWide ? 360 : small ? 128 : 192;
   const menuMaxHeight = submenuIsWide ? 420 : 256;
 
   const closeMenu = useCallback(() => {
@@ -108,9 +114,13 @@ export function DropdownMenu({
     };
     window.addEventListener("resize", handleResize);
     window.addEventListener("scroll", handleScroll, true);
+    window.visualViewport?.addEventListener("resize", handleResize);
+    window.visualViewport?.addEventListener("scroll", handleResize);
     return () => {
       window.removeEventListener("resize", handleResize);
       window.removeEventListener("scroll", handleScroll, true);
+      window.visualViewport?.removeEventListener("resize", handleResize);
+      window.visualViewport?.removeEventListener("scroll", handleResize);
     };
   }, [closeMenu, isOpen, portal]);
 
@@ -129,6 +139,29 @@ export function DropdownMenu({
     if (portal && triggerRef.current) {
       const viewportMargin = 8;
       const rect = triggerRef.current.getBoundingClientRect();
+      if (placement === "bottom") {
+        const viewport = window.visualViewport;
+        const viewportLeft = viewport?.offsetLeft ?? 0;
+        const viewportTop = viewport?.offsetTop ?? 0;
+        const viewportRight = viewportLeft + (viewport?.width ?? window.innerWidth);
+        const viewportBottom = viewportTop + (viewport?.height ?? window.innerHeight);
+        const height = Math.min(
+          menuRef.current?.offsetHeight ?? visibleItems.length * (small ? 24 : 32) + 8,
+          maxHeight,
+        );
+        const gap = 4;
+        const below = viewportBottom - viewportMargin - rect.bottom - gap;
+        const above = rect.top - gap - viewportTop - viewportMargin;
+        const top = below >= height || below >= above ? rect.bottom + gap : rect.top - height - gap;
+        setPortalAnchor({
+          top: Math.max(viewportTop + viewportMargin, Math.min(top, viewportBottom - height - viewportMargin)),
+          left: Math.max(viewportLeft + viewportMargin, Math.min(
+            align === "right" ? rect.right - width : rect.left,
+            viewportRight - width - viewportMargin,
+          )),
+        });
+        return;
+      }
       setPortalAnchor({
         top: Math.max(
           viewportMargin,
@@ -146,14 +179,14 @@ export function DropdownMenu({
         ),
       });
     }
-  }, [portal]);
+  }, [align, placement, portal, small, visibleItems.length]);
 
   const openMenu = () => {
-    updatePortalAnchor(192, 256);
+    updatePortalAnchor(menuWidth, menuMaxHeight);
     setIsOpen(true);
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isOpen || !portal) return;
     updatePortalAnchor(menuWidth, menuMaxHeight);
   }, [activeSubmenuId, isOpen, menuMaxHeight, menuWidth, portal, updatePortalAnchor]);
@@ -179,6 +212,8 @@ export function DropdownMenu({
         className={`w-full flex items-center text-left transition-colors focus:outline-none ${
           item.listAction
             ? "justify-center border-t border-[var(--color-border)] px-3 py-2 text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
+            : small
+            ? "gap-1.5 px-2 py-1 text-xs leading-4"
             : compact
             ? "gap-2 px-2.5 py-1.5 text-[12.5px]"
             : item.description
@@ -189,8 +224,8 @@ export function DropdownMenu({
         }`}
       >
         {Icon && (
-          <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-            <Icon className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
+          <span className={`flex shrink-0 items-center justify-center ${small ? "h-3 w-3" : "h-4 w-4"}`}>
+            <Icon className={small ? "h-3 w-3" : compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
           </span>
         )}
         <span className={item.listAction ? "min-w-0" : "min-w-0 flex-1"}>
@@ -218,7 +253,7 @@ export function DropdownMenu({
           <span>{activeSubmenu.label}</span>
         </button>
       )}
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1" onWheel={(event) => event.stopPropagation()}>
+      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain ${small ? "py-0.5" : "py-1"}`} onWheel={(event) => event.stopPropagation()}>
         {visibleItems.map(renderItem)}
       </div>
     </div>
@@ -254,7 +289,7 @@ export function DropdownMenu({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.95 }}
             transition={{ duration: 0.15 }}
-            className={`absolute z-50 mt-1 ${submenuIsWide ? "w-[360px]" : activeSubmenu ? "min-w-[220px]" : "min-w-[140px]"} max-h-[420px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg ${
+            className={`absolute z-50 mt-1 ${submenuIsWide ? "w-[360px]" : activeSubmenu ? "min-w-[220px]" : small ? "w-32" : "min-w-[140px]"} max-h-[420px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg ${
               align === "right" ? "right-0" : "left-0"
             }`}
           >
@@ -278,7 +313,7 @@ export function DropdownMenu({
               maxHeight: menuMaxHeight,
               zIndex: 1000,
             }}
-            className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg"
+            className={`overflow-hidden border border-[var(--color-border)] bg-[var(--color-bg)] ${small ? "rounded-md shadow-md" : "rounded-lg shadow-lg"}`}
           >
             {menuItems}
           </div>,
