@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useIsMobile } from "../../hooks";
@@ -45,6 +45,8 @@ interface DialogShellProps {
    * trigger the bottom sheet and clip against the tiny window.
    */
   variant?: "responsive" | "centered";
+  /** Allow a downward swipe on the mobile drag indicator to dismiss. */
+  swipeToClose?: boolean;
 }
 
 /**
@@ -58,7 +60,9 @@ export function DialogShell({
   maxWidth = "max-w-md",
   zIndex = 50,
   variant = "responsive",
+  swipeToClose = false,
 }: DialogShellProps) {
+  const swipeStartRef = useRef<number | null>(null);
   const { isMobile: isNarrow } = useIsMobile();
   // `centered` callers opt out of the width-based bottom-sheet entirely.
   const isMobile = variant === "responsive" && isNarrow;
@@ -144,7 +148,20 @@ export function DialogShell({
               >
                 <div className="glass-overlay rounded-t-2xl overflow-hidden">
                   {/* Drag indicator */}
-                  <div className="flex justify-center pt-3 pb-1">
+                  <div
+                    className={`flex justify-center ${swipeToClose ? "touch-none cursor-grab py-3" : "pt-3 pb-1"}`}
+                    onPointerDown={swipeToClose ? (event) => {
+                      event.stopPropagation();
+                      swipeStartRef.current = event.clientY;
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    } : undefined}
+                    onPointerUp={swipeToClose ? (event) => {
+                      const start = swipeStartRef.current;
+                      swipeStartRef.current = null;
+                      if (start !== null && event.clientY - start > 48) onClose();
+                    } : undefined}
+                    onPointerCancel={() => { swipeStartRef.current = null; }}
+                  >
                     <div className="w-10 h-1 rounded-full bg-[var(--color-border)]" />
                   </div>
                   {children}

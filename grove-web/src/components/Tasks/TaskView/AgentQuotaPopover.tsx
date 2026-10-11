@@ -285,7 +285,7 @@ export function AgentQuotaPopover({
                 onMouseEnter={handlePopoverEnter}
                 onMouseLeave={handlePopoverLeave}
               >
-                <PopoverCard
+                <AgentQuotaCard
                   usage={usage}
                   refreshing={refreshing}
                   onRefresh={onRefresh}
@@ -300,7 +300,7 @@ export function AgentQuotaPopover({
   );
 }
 
-function PopoverCard({
+export function AgentQuotaCard({
   usage,
   refreshing,
   onRefresh,
@@ -311,7 +311,7 @@ function PopoverCard({
   onRefresh: () => void;
   /** Max height of the scrollable middle section. Header & footer stay
    *  pinned and the whole card is bounded by header + middle + footer. */
-  maxBodyHeight: number;
+  maxBodyHeight?: number;
 }) {
   return (
     <div

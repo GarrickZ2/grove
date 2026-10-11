@@ -102,6 +102,8 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
 
   // Page state hook
   const [pageState, pageHandlers] = useTaskPageState();
+  // Entering a workspace also enters the detail stack at any viewport width.
+  if (pageState.inWorkspace && !mobileShowDetail) setMobileShowDetail(true);
   const helpKey = useHelpKeyDisplay();
   useReportDebugId("taskId", pageState.selectedTask?.id ?? null);
 
@@ -172,10 +174,8 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   // Share this between list clicks and navigation from other pages.
   const handleSelectTask = useCallback((task: Task) => {
     pageHandlers.handleSelectTask(task);
-    if (isMobile) {
-      setMobileShowDetail(true);
-    }
-  }, [pageHandlers, isMobile]);
+    setMobileShowDetail(true);
+  }, [pageHandlers]);
 
   // Handle initial task selection from navigation
   useEffect(() => {
@@ -949,10 +949,11 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
 
       {/* Main Content */}
       <div className="flex-1 relative overflow-hidden">
+        <div className={`absolute inset-0 ${pageState.inWorkspace ? "pointer-events-none" : ""}`} aria-hidden={pageState.inWorkspace || undefined}>
         {isMobile ? (
           /* Mobile: Stacked navigation */
           <AnimatePresence initial={false}>
-            {mobileShowDetail && pageState.selectedTask ? (
+            {!pageState.inWorkspace && (mobileShowDetail && pageState.selectedTask ? (
               <motion.div
                 key="mobile-detail"
                 initial={{ x: "100%" }}
@@ -961,27 +962,6 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
                 transition={{ type: "spring", damping: 30, stiffness: 300 }}
                 className="absolute inset-0"
               >
-                {pageState.inWorkspace ? (
-                  <div className="h-full flex flex-col">
-                    <TaskView
-                      ref={taskViewRef}
-                      isActive={pageVisible}
-                      projectId={selectedProject.id}
-                      task={pageState.selectedTask}
-                      projectName={selectedProject.name}
-                      fullscreen={isFullscreen}
-                      onFullscreenChange={setIsFullscreen}
-                      onBack={handleMobileBack}
-                      onCommit={isStudio ? undefined : opsHandlers.handleCommit}
-                      onRebase={isStudio ? undefined : opsHandlers.handleRebase}
-                      onSync={isStudio ? undefined : opsHandlers.handleSync}
-                      onMerge={isStudio ? undefined : opsHandlers.handleMerge}
-                      onArchive={opsHandlers.handleArchive}
-                      onClean={opsHandlers.handleClean}
-                      onReset={isStudio ? undefined : opsHandlers.handleReset}
-                    />
-                  </div>
-                ) : (
                   <TaskInfoPanel
                     projectId={selectedProject.id}
                     task={pageState.selectedTask}
@@ -1000,7 +980,6 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
                     activeTab={pageState.infoPanelTab}
                     onTabChange={pageHandlers.setInfoPanelTab}
                   />
-                )}
               </motion.div>
             ) : (
               <motion.div
@@ -1025,7 +1004,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
                   fullWidth
                 />
               </motion.div>
-            )}
+            ))}
           </AnimatePresence>
         ) : (
           /* Desktop: Side-by-side layout */
@@ -1109,7 +1088,10 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
               </div>
             </motion.div>
 
-            {/* Workspace Page: Info Panel + TaskView */}
+          </>
+        )}
+        </div>
+            {/* Keep one TaskView mounted while only its responsive layout changes. */}
             <AnimatePresence mode="popLayout">
               {pageState.inWorkspace && pageState.selectedTask && (
                 <motion.div
@@ -1128,7 +1110,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
                     projectName={selectedProject.name}
                     fullscreen={isFullscreen}
                     onFullscreenChange={setIsFullscreen}
-                    onBack={pageHandlers.handleCloseTask}
+                    onBack={isMobile ? handleMobileBack : pageHandlers.handleCloseTask}
                     onCommit={isStudio ? undefined : opsHandlers.handleCommit}
                     onRebase={isStudio ? undefined : opsHandlers.handleRebase}
                     onSync={isStudio ? undefined : opsHandlers.handleSync}
@@ -1140,8 +1122,6 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
                 </motion.div>
               )}
             </AnimatePresence>
-          </>
-        )}
       </div>
 
       {/* Operation Message Toast */}

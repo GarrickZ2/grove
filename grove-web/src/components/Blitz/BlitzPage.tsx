@@ -206,6 +206,7 @@ export function BlitzPage({
 
   // Page state hook
   const [pageState, pageHandlers] = useTaskPageState();
+  if (pageState.inWorkspace && !mobileShowDetail) setMobileShowDetail(true);
 
   // Post-merge archive hook (with Blitz-specific projectId tracking)
   const [postMergeState, postMergeHandlers] = usePostMergeArchive({
@@ -504,6 +505,7 @@ export function BlitzPage({
     // truth for the right-pane TaskView and the list-item "isSelected"
     // styling (BlitzTaskListItem.tsx reads it via prop).
     setSelectedBlitzTask(bt);
+    setMobileShowDetail(true);
 
     // viewMode "terminal" is the tray/notification "open this in detail"
     // signal — mirror TasksPage's behavior by entering the workspace and
@@ -550,10 +552,8 @@ export function BlitzPage({
   // Task selection handlers (Blitz-specific: handle BlitzTask)
   const handleSelectTask = useCallback((bt: BlitzTask) => {
     setSelectedBlitzTask(bt);
-    if (isMobile) {
-      setMobileShowDetail(true);
-    }
-  }, [isMobile]);
+    setMobileShowDetail(true);
+  }, []);
 
   const handleDoubleClickTask = useCallback((bt: BlitzTask) => {
     if (bt.task.status === "archived") return;

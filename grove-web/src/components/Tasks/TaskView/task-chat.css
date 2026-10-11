@@ -310,6 +310,27 @@
 }
 
 @media (max-width: 767px) {
+  .mobile-composer-status-scroll {
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding-block: 2px;
+  }
+
+  .mobile-composer-status-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mobile-composer-sheet-body {
+    max-height: min(64dvh, 520px);
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-composer-sheet-content button,
+  .mobile-composer-sheet-content input {
+    min-height: 40px;
+  }
+
   /* Keep the collapsed editor focusable so one trusted iOS tap can summon the
      keyboard, but disable the expensive glass layer that Safari otherwise
      composites even through an opacity:0 ancestor. */
@@ -329,6 +350,15 @@
     border-radius: 22px;
     padding: 8px 10px;
     transform: none !important;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    transition-property: background-color, border-color;
+  }
+
+  /* Keep the phone surface opaque so its rounded box shadow is painted
+     without a rectangular backdrop layer inside the animated wrapper. */
+  .task-chat-mobile-composer:not(.mobile-composer-expanded-hidden) .chatbox-bubble {
+    background: color-mix(in srgb, var(--color-bg-secondary) 96%, var(--color-bg));
   }
 
   .task-chat-mobile-composer .chatbox-header {

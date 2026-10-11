@@ -34,6 +34,10 @@ interface ContextUsagePillProps {
 /** Show the inline Compact button only once context pressure crosses this. */
 const COMPACT_BUTTON_THRESHOLD = 60;
 
+export function contextUsagePercent(usage: ContextUsageData): number {
+  return usage.size > 0 ? Math.max(0, Math.min(100, Math.round((usage.used / usage.size) * 100))) : 0;
+}
+
 const POPOVER_GAP = 8;
 const MIN_WIDTH = 240;
 const MAX_WIDTH = 360;
@@ -67,10 +71,7 @@ export function ContextUsagePill({
   hasCompactCommand = false,
   onCompact,
 }: ContextUsagePillProps) {
-  const percent =
-    usage.size > 0
-      ? Math.max(0, Math.min(100, Math.round((usage.used / usage.size) * 100)))
-      : 0;
+  const percent = contextUsagePercent(usage);
   const color = contextHealthColor(percent);
 
   // Hooks must run unconditionally — call them all before the size==0 early
@@ -287,15 +288,9 @@ export function ContextUsagePill({
                 onMouseEnter={handlePopoverEnter}
                 onMouseLeave={handlePopoverLeave}
               >
-                <ContextUsageCard
+                <ContextUsageDetails
                   usage={usage}
-                  percent={percent}
-                  color={color}
-                  showCompact={
-                    hasCompactCommand &&
-                    !!onCompact &&
-                    percent >= COMPACT_BUTTON_THRESHOLD
-                  }
+                  hasCompactCommand={hasCompactCommand}
                   onCompact={onCompact}
                 />
               </motion.div>
@@ -305,6 +300,11 @@ export function ContextUsagePill({
         )}
     </span>
   );
+}
+
+export function ContextUsageDetails({ usage, hasCompactCommand = false, onCompact }: Pick<ContextUsagePillProps, "usage" | "hasCompactCommand" | "onCompact">) {
+  const percent = contextUsagePercent(usage);
+  return <ContextUsageCard usage={usage} percent={percent} color={contextHealthColor(percent)} showCompact={hasCompactCommand && !!onCompact && percent >= COMPACT_BUTTON_THRESHOLD} onCompact={onCompact} />;
 }
 
 function ContextUsageCard({

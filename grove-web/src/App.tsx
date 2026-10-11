@@ -1518,141 +1518,9 @@ function AppContent() {
     );
   }
 
-  // Mobile layout
-  if (isMobile) {
-    return (
-      <div className="grove-app-shell flex flex-col bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)]">
-        <UpdateBanner />
-        <MobileHeader
-          onMenuOpen={() => setDrawerOpen(true)}
-          onNotificationOpen={() => setMobileNotifOpen(true)}
-        />
-        <NotificationPopover
-          isOpen={mobileNotifOpen}
-          onClose={() => setMobileNotifOpen(false)}
-          onNavigate={handleNavigate}
-        />
-        <MobileDrawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)}>
-          <Sidebar
-            {...sidebarProps}
-            drawerMode
-            onDrawerClose={() => setDrawerOpen(false)}
-          />
-        </MobileDrawer>
-
-        <main className={`relative min-h-0 flex-1 ${(activeItem === "tasks" && tasksMode !== "blitz") || activeItem === "work" || activeItem === "ai" ? "overflow-hidden" : "overflow-y-auto"}`}>
-          {/* TasksPage always mounted on mobile too */}
-          <div
-            className="h-full p-3"
-            style={{ display: activeItem === "tasks" && tasksMode !== "blitz" ? "block" : "none" }}
-          >
-            <TasksPage
-              pageVisible={activeItem === "tasks" && tasksMode !== "blitz"}
-              initialTaskId={tasksMode === "blitz" ? undefined : navigationData?.taskId as string | undefined}
-              initialChatId={tasksMode === "blitz" ? undefined : navigationData?.chatId as string | undefined}
-              initialViewMode={tasksMode === "blitz" ? undefined : navigationData?.viewMode as string | undefined}
-              initialOpenNewTask={tasksMode === "blitz" ? undefined : navigationData?.openNewTask as boolean | undefined}
-              onNavigationConsumed={() => setNavigationData(null)}
-              onNavByIndex={navigateSidebar}
-              exitWorkspaceSignal={tasksExitSignal}
-            />
-          </div>
-          {/* WorkPage keep-alive on mobile too — same lazy-mount + display-flip
-              contract as the desktop host above. */}
-          <div
-            className="h-full p-3"
-            style={{ display: activeItem === "work" ? "block" : "none" }}
-          >
-            {workEverVisited && (
-              <WorkPage
-                pageVisible={activeItem === "work"}
-                initialChatId={navigationData?.chatId as string | undefined}
-                onNavigationConsumed={() => setNavigationData(null)}
-              />
-            )}
-          </div>
-          <div className={activeItem === "work" || activeItem === "ai" ? "h-full p-3" : isFullWidthPage ? "min-h-full p-3" : "max-w-5xl mx-auto p-3"}
-               style={{ display: (activeItem === "tasks" && tasksMode !== "blitz") || activeItem === "work" ? "none" : undefined }}>
-            <AnimatePresence mode="wait">
-              {tasksMode === "blitz" ? (
-                <motion.div
-                  key="blitz"
-                  className="w-full h-full"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <BlitzPage
-                    onSwitchToZen={handleSwitchToZen}
-                    onNavigate={setActiveItem}
-                    initialTaskId={navigationData?.taskId as string | undefined}
-                    initialProjectId={navigationData?.projectId as string | undefined}
-                    initialChatId={navigationData?.chatId as string | undefined}
-                    initialViewMode={navigationData?.viewMode as string | undefined}
-                    onNavigationConsumed={() => setNavigationData(null)}
-                  />
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="zen-content"
-                  className={activeItem === "work" || activeItem === "ai" ? "w-full h-full" : "w-full min-h-full"}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  {renderContent()}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          {selectedProject && !selectedProject.exists &&
-            activeItem !== "projects" && activeItem !== "settings" && (
-              <div className="absolute inset-0 z-40 bg-[var(--color-bg)] flex items-center justify-center">
-                <MissingProjectState project={selectedProject} />
-              </div>
-            )}
-        </main>
-
-        <AddProjectDialog
-          isOpen={showAddProject}
-          onClose={() => {
-            setShowAddProject(false);
-            setAddProjectError(null);
-          }}
-          onAdd={handleAddProject}
-          onCreateNew={handleCreateNewProject}
-          onClone={handleCloneProject}
-          isLoading={isAddingProject}
-          externalError={addProjectError}
-          initialMode={addProjectInitialMode}
-        />
-        <ConnectDialog isOpen={connectOpen} onClose={() => setConnectOpen(false)} />
-        <CommandPalette />
-        <ActionCommandPalette />
-        <ProjectCommandPalette
-          isOpen={projectPaletteOpen}
-          onClose={closeProjectPalette}
-          onProjectSelect={handleProjectSwitch}
-        />
-        <TaskCommandPalette
-          isOpen={taskPaletteOpen}
-          onClose={closeTaskPalette}
-          tasks={selectedProject?.tasks ?? []}
-          selectedTask={null}
-          onTaskSelect={handleTaskSelectFromPalette}
-        />
-        <GlobalAudioRecorder projectId={selectedProject?.id ?? null} />
-        <GlobalVoiceControlRecorder isLoading={isLoading} />
-        {addLibraryDialog}
-      </div>
-    );
-  }
-
-  // Desktop layout (unchanged)
+  // One page tree across breakpoints keeps task/workspace state alive.
   return (
-    <div className="flex h-screen bg-[var(--color-bg)] overflow-hidden">
+    <div className={isMobile ? "grove-app-shell flex flex-col bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)]" : "flex h-screen bg-[var(--color-bg)] overflow-hidden"}>
       {/* Invisible top-edge drag strip — Tauri Overlay title-bar mode hides
           the OS title bar, so the user expects to drag the window from
           anywhere along the top edge (Raycast / Tahoe convention).
@@ -1668,16 +1536,21 @@ function AppContent() {
           data-window-drag-strip: picked up by the document-level mousedown
             listener in the parent useEffect to trigger startDragging(). */}
       <div
-        className="fixed top-0 left-0 right-0 h-6 z-[45]"
+        className={`fixed top-0 left-0 right-0 h-6 z-[45] ${isMobile ? "hidden" : ""}`}
         data-tauri-drag-region
         data-window-drag-strip
       />
       <UpdateBanner />
-      <AnimatePresence mode="wait">
+      {isMobile && <MobileHeader onMenuOpen={() => setDrawerOpen(true)} onNotificationOpen={() => setMobileNotifOpen(true)} />}
+      <NotificationPopover isOpen={isMobile && mobileNotifOpen} onClose={() => setMobileNotifOpen(false)} onNavigate={handleNavigate} />
+      <MobileDrawer isOpen={isMobile && drawerOpen} onClose={() => setDrawerOpen(false)}>
+        <Sidebar {...sidebarProps} drawerMode onDrawerClose={() => setDrawerOpen(false)} />
+      </MobileDrawer>
+      <AnimatePresence key="app-content" mode="wait">
         {tasksMode === "blitz" ? (
           <motion.div
             key="blitz"
-            className="flex w-full h-full"
+            className={isMobile ? "flex w-full min-h-0 flex-1" : "flex w-full h-full"}
             initial={{ opacity: 0, x: 40 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 40 }}
@@ -1696,21 +1569,21 @@ function AppContent() {
         ) : (
           <motion.div
             key="zen"
-            className="flex w-full h-full"
+            className={isMobile ? "flex w-full min-h-0 flex-1" : "flex w-full h-full"}
             initial={{ opacity: 0, x: -40 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -40 }}
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
-            <div data-grove-sidebar><Sidebar {...sidebarProps} /></div>
+            <div data-grove-sidebar className={isMobile ? "hidden" : undefined}>{!isMobile && <Sidebar {...sidebarProps} />}</div>
             {/* Floating main card — mirrors the sidebar's "floating panel"
                language so the chrome reads as a single design system:
                two cards on a desktop, 12px gap between them and to all
                window edges. left tracks the sidebar collapsed state so
                the gap stays visually consistent in both modes. */}
             <main
-              className={`fixed top-3 right-3 bottom-3 rounded-2xl bg-[var(--color-bg)] transition-[left] duration-200 ease-in-out ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}
-              style={{
+              className={isMobile ? `relative min-h-0 flex-1 ${activeItem === "tasks" || activeItem === "work" || activeItem === "ai" ? "overflow-hidden" : "overflow-y-auto"}` : `fixed top-3 right-3 bottom-3 rounded-2xl bg-[var(--color-bg)] transition-[left] duration-200 ease-in-out ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}
+              style={isMobile ? undefined : {
                 // Three-tier left: island → 12px (pill is at top-center, sidebar is
                 // effectively absent on the left edge so main uses full width);
                 // collapsed → 96px; expanded → 280px. Matches the visual gap of the
@@ -1728,7 +1601,7 @@ function AppContent() {
                   (.ide-workbench) now matches main's rounded-2xl corners exactly, so
                   an extra p-2 here would just reintroduce a redundant border gap. */}
               <div
-                className={`h-full transition-[padding] duration-300 ease-out ${inWorkspace ? '' : 'p-6'} ${inWorkspace && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? 'ide-traffic-light-clearance' : ''}`}
+                className={`h-full transition-[padding] duration-300 ease-out ${isMobile ? "p-3" : inWorkspace ? "" : "p-6"} ${!isMobile && inWorkspace && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? "ide-traffic-light-clearance" : ""}`}
                 style={{ display: activeItem === "tasks" ? "block" : "none" }}
               >
                 <TasksPage
@@ -1745,7 +1618,7 @@ function AppContent() {
               {/* WorkPage keep-alive — mirrors the TasksPage host above: mounts
                   on first visit, then only `display` flips across nav switches. */}
               <div
-                className={`h-full ${activeItem === "work" && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? 'ide-traffic-light-clearance' : ''}`}
+                className={`h-full ${isMobile ? "p-3" : ""} ${!isMobile && activeItem === "work" && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? "ide-traffic-light-clearance" : ""}`}
                 style={{ display: activeItem === "work" ? "block" : "none" }}
               >
                 {workEverVisited && (
@@ -1757,7 +1630,7 @@ function AppContent() {
                 )}
               </div>
               {activeItem !== "tasks" && activeItem !== "work" && (
-                <div className={isFullWidthPage ? "h-full transition-[padding] duration-300 ease-out p-6" : "max-w-5xl mx-auto p-6"}>
+                <div className={isMobile ? activeItem === "ai" ? "h-full p-3" : isFullWidthPage ? "min-h-full p-3" : "max-w-5xl mx-auto p-3" : isFullWidthPage ? "h-full transition-[padding] duration-300 ease-out p-6" : "max-w-5xl mx-auto p-6"}>
                   {renderContent()}
                 </div>
               )}
@@ -1801,7 +1674,7 @@ function AppContent() {
       />
       <GlobalAudioRecorder projectId={selectedProject?.id ?? null} />
       <GlobalVoiceControlRecorder isLoading={isLoading} />
-      <HelpOverlay isOpen={showHelp} onClose={() => setShowHelp(false)} />
+      <HelpOverlay isOpen={!isMobile && showHelp} onClose={() => setShowHelp(false)} />
       {addLibraryDialog}
     </div>
   );

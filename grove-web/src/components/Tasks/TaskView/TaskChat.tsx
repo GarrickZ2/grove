@@ -229,8 +229,10 @@ import { useReportDebugId } from "../../../perf/debugIdsStore";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { getProjectStyle } from "../../../utils/projectStyle";
 import { useAgentQuota, useRadioEvents } from "../../../hooks";
-import { AgentQuotaPopover } from "./AgentQuotaPopover";
-import { ContextUsagePill } from "./ContextUsagePill";
+import { AgentQuotaCard, AgentQuotaPopover } from "./AgentQuotaPopover";
+import { ContextUsageDetails, ContextUsagePill, contextUsagePercent } from "./ContextUsagePill";
+import { ChatComposerPanel } from "./ChatComposerPanel";
+import { MobileComposerStatus, mobileComposerPanelTitles, type MobileComposerPanel } from "./MobileComposerStatus";
 import { TurnUsageMeta } from "./TurnUsageMeta";
 import { collectReadMemoryIds } from "./memoryRead";
 import {
@@ -3848,6 +3850,10 @@ export function TaskChat({
     [previewCommentDrafts, projectId, taskId],
   );
   const hasPreviewCommentsPanel = taskPreviewCommentDrafts.length > 0;
+  const [mobileDetails, setMobileDetails] = useState<{ chatId: string; panel: MobileComposerPanel } | null>(null);
+  // A details sheet belongs to the Session where it was explicitly opened.
+  if (mobileDetails && (!isPhoneLayout || mobileDetails.chatId !== activeChatId)) setMobileDetails(null);
+  const requestedMobilePanel = mobileDetails && mobileDetails.chatId === activeChatId ? mobileDetails.panel : null;
   const activeComposerPanel =
     showAuthPanel && activeAuthMessage
       ? "auth"
@@ -3855,6 +3861,8 @@ export function TaskChat({
         ? "permission"
         : showFormPanel && activeSurveyMessage
           ? "ask_form"
+          : isPhoneLayout
+            ? requestedMobilePanel
           : showMemoryPanel && hasMemoryPanel
             ? "memory"
             : showPlan && hasTodoPanel
@@ -3872,14 +3880,31 @@ export function TaskChat({
     (activeComposerPanel === "permission" ||
       activeComposerPanel === "auth" ||
       activeComposerPanel === "ask_form");
+  const mobileDetailsPanelOpen = isPhoneLayout && composerPanelOpen && !mobileActionPanelOpen;
   const showMobileComposerPill =
     isPhoneLayout &&
     !mobileComposerOpen &&
-    !composerPanelOpen &&
+    (!composerPanelOpen || mobileDetailsPanelOpen) &&
     !activePermissionMessage &&
     !activeSurveyMessage &&
     !activeAuthMessage &&
     !isRemoteSession;
+  const openMobileDetails = useCallback((panel: MobileComposerPanel) => {
+    if (!activeChatId || mobileActionPanelOpen) return;
+    const editable = editableRef.current;
+    if (editable) saveChatDraft(activeChatId, editable.innerHTML);
+    setMobileDetails({ chatId: activeChatId, panel });
+    setMobileComposerOpen(false);
+    setShowSessionSettings(false);
+    setShowAgentVoiceMenu(false);
+    setShowSlashMenu(false);
+    setShowFileMenu(false);
+    editable?.blur();
+  }, [activeChatId, mobileActionPanelOpen]);
+  const closeMobileDetails = useCallback(() => {
+    finishPendingQueueEdit();
+    setMobileDetails(null);
+  }, [finishPendingQueueEdit]);
 
   // When a permission message appears, force the permission panel open and
   // close any rival panels. When it goes away, close the panel. Done via
@@ -3891,6 +3916,7 @@ export function TaskChat({
   if (activePermissionMessage !== prevActivePermissionMessage) {
     setPrevActivePermissionMessage(activePermissionMessage);
     if (activePermissionMessage) {
+      setMobileDetails(null);
       setShowPermissionPanel(true);
       setShowPlan(false);
       setShowPlanFile(false);
@@ -3908,6 +3934,7 @@ export function TaskChat({
   if (activeSurveyMessage !== prevActiveFormMessage) {
     setPrevActiveFormMessage(activeSurveyMessage);
     if (activeSurveyMessage) {
+      setMobileDetails(null);
       setShowFormPanel(true);
       setShowPlan(false);
       setShowPlanFile(false);
@@ -3925,6 +3952,7 @@ export function TaskChat({
   if (activeAuthMessage !== prevActiveAuthMessage) {
     setPrevActiveAuthMessage(activeAuthMessage);
     if (activeAuthMessage) {
+      setMobileDetails(null);
       setShowAuthPanel(true);
       setShowPermissionPanel(false);
       setShowPlan(false);
@@ -8207,8 +8235,11 @@ export function TaskChat({
     updatePendingInputs(activeChatId, (items) => items.filter((item) => item.id !== input.id));
     updateLocalInputPlacements(activeChatId, (items) => items.filter((item) => item.id !== input.id));
     // Keep focus in the menu's user gesture so iOS can reopen the keyboard.
+    if (isPhoneLayout) flushSync(() => {
+      setMobileDetails(null);
+      setMobileComposerOpen(true);
+    });
     el.focus({ preventScroll: true });
-    if (isPhoneLayout) flushSync(() => setMobileComposerOpen(true));
     const selection = window.getSelection();
     if (selection) {
       selection.selectAllChildren(el);
@@ -8263,6 +8294,7 @@ export function TaskChat({
     clearPreviewCommentDrafts(comments.map((comment) => comment.id));
     setEditingPreviewCommentId(null);
     setEditingPreviewCommentText("");
+    setMobileDetails(null);
     setShowPreviewComments(false);
     setShowSlashMenu(false);
     setShowFileMenu(false);
@@ -10551,6 +10583,24 @@ export function TaskChat({
     );
   }
 
+  const mobileStatus = isPhoneLayout ? (
+    <MobileComposerStatus
+      pendingCount={pendingQueueRows.length}
+      failedCount={pendingQueueRows.filter((row) => row.input?.status === "failed").length}
+      completedTodos={planEntries.filter((entry) => entry.status === "completed").length}
+      totalTodos={planEntries.length}
+      quotaPercent={quotaBadgePercentRemaining === null ? null : Math.round(quotaBadgePercentRemaining)}
+      quotaOutdated={agentQuota?.outdated ?? false}
+      contextPercent={contextUsage && contextUsage.size > 0 ? contextUsagePercent(contextUsage) : null}
+      memoryCount={readMemories.length}
+      hasPlan={hasPlanPanel}
+      commentCount={taskPreviewCommentDrafts.length}
+      activePanel={requestedMobilePanel}
+      disabled={mobileActionPanelOpen}
+      onOpen={openMobileDetails}
+    />
+  ) : null;
+
   // ─── Full chat view ──────────────────────────────────────────────────────
 
   return (
@@ -11314,14 +11364,16 @@ export function TaskChat({
             {!showMobileComposerPill && (
               <div className="task-chat-input-scrim pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
             )}
+
             <AnimatePresence initial={false}>
             {showMobileComposerPill && (
               <motion.button
-                type="button"
+                key="mobile-composer"
                 initial={{ opacity: 0, y: 8, scale: 0.98 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 8, scale: 0.96 }}
                 transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                type="button"
                 onPointerDown={(event) => {
                   if (event.pointerType !== "touch") return;
                   // Keep the editor rendered (though visually transparent)
@@ -11373,21 +11425,13 @@ export function TaskChat({
             </AnimatePresence>
             <motion.div
               initial={false}
-              animate={isPhoneLayout
-                ? showMobileComposerPill
-                  ? {
-                      opacity: 0,
-                      y: 12,
-                      scale: 0.92,
-                      clipPath: "inset(82% 9% 0% 9% round 999px)",
-                    }
-                  : {
-                      opacity: 1,
-                      y: 0,
-                      scale: 1,
-                      clipPath: "inset(0% 0% 0% 0% round 24px)",
-                    }
-                : { opacity: 1, y: 0, scale: 1 }}
+              animate={{
+                opacity: showMobileComposerPill ? 0 : 1,
+                y: showMobileComposerPill ? 12 : 0,
+                scale: showMobileComposerPill ? 0.92 : 1,
+                // Opacity hides the editor without a second clip/compositing layer.
+                clipPath: "none",
+              }}
               transition={isPhoneLayout
                 ? { type: "spring", stiffness: 390, damping: 34, mass: 0.82 }
                 : { duration: 0 }}
@@ -11419,18 +11463,24 @@ export function TaskChat({
                   </div>
                 </div>
               )}
-              <AnimatePresence initial={false}>
-                {composerPanelOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10, height: 0 }}
-                    animate={{ opacity: 1, y: 0, height: "auto" }}
-                    exit={{ opacity: 0, y: 8, height: 0 }}
-                    transition={{ duration: 0.2, ease: "easeOut" }}
+              <ChatComposerPanel
+                    open={composerPanelOpen}
+                    mobileSheet={isPhoneLayout && !mobileActionPanelOpen}
+                    title={mobileComposerPanelTitles[requestedMobilePanel ?? "pending"]}
+                    onClose={closeMobileDetails}
+                    onSheetClosed={finishPendingQueueEdit}
                     className={`mb-3 overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_92%,transparent)] shadow-[0_12px_32px_rgba(0,0,0,0.14)] backdrop-blur-md ${mobileActionPanelOpen ? `mobile-action-sheet mobile-action-sheet-${activeComposerPanel}` : ""}`}
                   >
-                    <div className={`max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain ${activeComposerPanel === "previewComments" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
+                    <div className={`${mobileDetailsPanelOpen ? "mobile-composer-sheet-content" : "max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain"} ${activeComposerPanel === "previewComments" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
+                      {activeComposerPanel === "quota" && (
+                        agentQuota ? <AgentQuotaCard usage={agentQuota} refreshing={quotaRefreshing} onRefresh={refreshAgentQuota} /> : <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">Quota data is unavailable.</p>
+                      )}
+                      {activeComposerPanel === "context" && (
+                        contextUsage && contextUsage.size > 0 ? <ContextUsageDetails usage={contextUsage} hasCompactCommand={hasCompactCommand} onCompact={() => { closeMobileDetails(); handleCompact(); }} /> : <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">Context usage is unavailable.</p>
+                      )}
                       {activeComposerPanel === "todo" && (
                         <div className="space-y-1">
+                          {displayedPlanEntries.length === 0 && <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">No todos.</p>}
                           {displayedPlanEntries.map((entry, i) => (
                             <div
                               key={`${entry.priority ?? "legacy"}:${entry.content}:${i}`}
@@ -11542,7 +11592,7 @@ export function TaskChat({
 
                       {activeComposerPanel === "pending" && (
                         <div>
-                          <div className="flex h-5 items-center gap-2 px-0.5">
+                          <div className={`flex items-center gap-2 px-0.5 ${isPhoneLayout ? "min-h-10" : "h-5"}`}>
                             <div className="text-[9px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)] opacity-55">
                               Pending · {pendingQueueRows.length}
                             </div>
@@ -11576,10 +11626,11 @@ export function TaskChat({
                               ))}
                             </div>
                           </div>
+                          {pendingQueueRows.length === 0 && <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">No pending messages.</p>}
                           {pendingQueueRows.map((msg, i) => (
                             <div
                               key={pendingMessageKeys[i] ?? `idx-${i}`}
-                              className="flex min-h-7 items-center gap-2 rounded-lg px-0.5 text-sm transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_3%,transparent)]"
+                              className={`flex items-center gap-2 rounded-lg px-0.5 text-sm transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_3%,transparent)] ${isPhoneLayout ? "min-h-12 py-2" : "min-h-7"}`}
                             >
                               <span className="w-4 shrink-0 text-right text-xs text-[var(--color-text-muted)]">
                                 {i + 1}
@@ -11610,7 +11661,7 @@ export function TaskChat({
                               ) : (
                                 <>
                                   <span
-                                    className="flex-1 min-w-0 truncate text-[var(--color-text)]"
+                                    className={`flex-1 min-w-0 text-[var(--color-text)] ${isPhoneLayout ? "whitespace-pre-wrap break-words leading-5" : "truncate"}`}
                                     title={msg.input?.error ?? msg.text}
                                   >
                                     {msg.text || "Attachments"}
@@ -11950,9 +12001,7 @@ export function TaskChat({
                           )
                         )}
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              </ChatComposerPanel>
 
               <AnimatePresence>
                 {showScrollToBottom && (
@@ -12068,6 +12117,7 @@ export function TaskChat({
                     </div>
                   </div>
                 )}
+                {!showMobileComposerPill && mobileStatus}
                 <div className="chatbox-header mb-2 flex items-center justify-between gap-2 pr-10 select-none">
                   <div className="flex min-w-0 items-center gap-2 select-none">
                     <div className="chatbox-agent-pill inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[11px] text-[var(--color-text)]">
