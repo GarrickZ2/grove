@@ -1,6 +1,8 @@
 import {
   useState,
   useEffect,
+  useLayoutEffect,
+  useId,
   useRef,
   useCallback,
   useMemo,
@@ -16080,6 +16082,65 @@ const FileChangeSummaryView = memo(function FileChangeSummaryView({
   ) => Promise<boolean>;
 }) {
   const summary = useMemo(() => summarizeToolSection(tools, true), [tools]);
+  const [expanded, setExpanded] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  const [collapsedLayout, setCollapsedLayout] = useState({
+    visibleCount: summary.editItems.length,
+    height: null as number | null,
+  });
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+
+    const measure = () => {
+      const chips = Array.from(list.children) as HTMLElement[];
+      let row = 0;
+      let rowTop = -1;
+      let visibleCount = 0;
+      let height = 0;
+      for (const chip of chips) {
+        if (chip.offsetTop !== rowTop) {
+          rowTop = chip.offsetTop;
+          row += 1;
+        }
+        if (row > 3) break;
+        visibleCount += 1;
+        height = Math.max(height, chip.offsetTop + chip.offsetHeight);
+      }
+      const collapsedHeight = visibleCount < chips.length ? height : null;
+      setCollapsedLayout((previous) =>
+        previous.visibleCount === visibleCount && previous.height === collapsedHeight
+          ? previous
+          : { visibleCount, height: collapsedHeight },
+      );
+    };
+
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    // Keep all chips laid out so wrapping can be measured while collapsed.
+    // Measure outside observer delivery because the resulting height changes
+    // this same element and would otherwise cause resize-loop warnings.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    });
+    observer.observe(list);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [summary.editItems]);
+
+  const hiddenCount = Math.max(0, summary.editItems.length - collapsedLayout.visibleCount);
   const additions = summary.editItems.reduce(
     (total, item) => total + item.additions,
     0,
@@ -16106,12 +16167,19 @@ const FileChangeSummaryView = memo(function FileChangeSummaryView({
           </span>
         )}
       </div>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {summary.editItems.map((item) => (
+      <div
+        ref={listRef}
+        id={listId}
+        className={`relative mt-2 flex flex-wrap gap-1.5 ${!expanded && hiddenCount > 0 ? "overflow-hidden" : ""}`}
+        style={!expanded && collapsedLayout.height !== null ? { maxHeight: collapsedLayout.height } : undefined}
+      >
+        {summary.editItems.map((item, index) => (
           <button
             key={item.key}
             type="button"
             disabled={!item.fullPath}
+            tabIndex={!expanded && index >= collapsedLayout.visibleCount ? -1 : undefined}
+            aria-hidden={(!expanded && index >= collapsedLayout.visibleCount) || undefined}
             onClick={() =>
               item.fullPath && onFileClick?.(item.fullPath, undefined, "diff")
             }
@@ -16138,6 +16206,18 @@ const FileChangeSummaryView = memo(function FileChangeSummaryView({
           </button>
         ))}
       </div>
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={listId}
+          onClick={() => setExpanded((previous) => !previous)}
+          className="mt-2 inline-flex min-h-6 items-center gap-1 rounded-md px-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        >
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {expanded ? "Show less" : `+${hiddenCount} more`}
+        </button>
+      )}
     </div>
   );
 });
