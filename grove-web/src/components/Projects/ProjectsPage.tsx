@@ -251,18 +251,21 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
   const tabMeta = {
     coding: {
       label: "Coding Projects",
+      mobileLabel: "Coding",
       items: codingProjects,
       icon: Code2,
       includeAddCard: true,
     },
     studio: {
       label: "Studio Projects",
+      mobileLabel: "Studio",
       items: studioProjects,
       icon: Sparkles,
       includeAddCard: true,
     },
     archived: {
       label: "Archived Projects",
+      mobileLabel: "Archived",
       items: archivedProjects,
       icon: Archive,
       includeAddCard: false,
@@ -270,7 +273,9 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
   } as const;
 
   const currentTab = tabMeta[activeTab];
-  const primaryTabs = ["coding", "studio"] as const;
+  const visibleTabs = isMobile
+    ? (["coding", "studio", "archived"] as const)
+    : (["coding", "studio"] as const);
 
   return (
     <OptionalPerfProfiler id="ProjectsPage">
@@ -282,52 +287,60 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <div className="inline-flex rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-1">
-          {primaryTabs.map((key) => {
+        <div className={`${isMobile ? "grid w-full min-w-0 grid-cols-3" : "inline-flex"} rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-1`}>
+          {visibleTabs.map((key) => {
             const tab = tabMeta[key];
             const Icon = tab.icon;
             const isActive = activeTab === key;
             return (
               <button
                 key={key}
+                type="button"
+                aria-pressed={isActive}
                 onClick={() => setActiveTab(key)}
-                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
+                className={`inline-flex items-center rounded-xl font-medium transition-colors ${
+                  isMobile
+                    ? "min-h-11 min-w-0 justify-center gap-1 whitespace-nowrap px-1 py-2 text-xs"
+                    : "gap-2 px-4 py-2 text-sm"
+                } ${
                   isActive
                     ? "bg-[var(--color-highlight)] text-white shadow-sm"
                     : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 }`}
               >
-                <Icon className="w-4 h-4" />
-                <span>{tab.label}</span>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] ${isActive ? "bg-white/15 text-white" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
-                  {tab.items.length}
-                </span>
+                {!isMobile && <Icon className="w-4 h-4" />}
+                <span>{isMobile ? tab.mobileLabel : tab.label}</span>
+                {(key !== "archived" || tab.items.length > 0) && (
+                  <span className={`shrink-0 rounded-full py-0.5 ${isMobile ? "px-1 text-[10px]" : "px-2 text-[11px]"} ${isActive ? "bg-white/15 text-white" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
+                    {tab.items.length}
+                  </span>
+                )}
               </button>
             );
           })}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setActiveTab("archived")}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-              activeTab === "archived"
-                ? "border-[var(--color-highlight)]/30 bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
-                : "border-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
-            }`}
-          >
-            <Archive className="w-3.5 h-3.5" />
-            <span>Archived</span>
-            {archivedProjects.length > 0 && (
-              <span className={`rounded-full px-1.5 py-0.5 text-[11px] ${
+        {!isMobile && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveTab("archived")}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
                 activeTab === "archived"
-                  ? "bg-[var(--color-highlight)]/15 text-[var(--color-highlight)]"
-                  : "text-[var(--color-text-muted)]"
-              }`}>
-                {archivedProjects.length}
-              </span>
-            )}
-          </button>
-          {!isMobile && (
+                  ? "border-[var(--color-highlight)]/30 bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
+                  : "border-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
+              }`}
+            >
+              <Archive className="w-3.5 h-3.5" />
+              <span>Archived</span>
+              {archivedProjects.length > 0 && (
+                <span className={`rounded-full px-1.5 py-0.5 text-[11px] ${
+                  activeTab === "archived"
+                    ? "bg-[var(--color-highlight)]/15 text-[var(--color-highlight)]"
+                    : "text-[var(--color-text-muted)]"
+                }`}>
+                  {archivedProjects.length}
+                </span>
+              )}
+            </button>
             <Button
               onClick={() => openAddDialog(
                 activeTab === "archived"
@@ -339,8 +352,8 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
               <Plus className="w-4 h-4 mr-1.5" />
               Add Project
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {error && !showAddDialog && (
