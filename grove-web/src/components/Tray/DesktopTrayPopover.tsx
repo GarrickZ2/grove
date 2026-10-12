@@ -9,10 +9,13 @@
 
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TrayPopover, type TrayPlatform } from "./TrayPopover";
 import { RadioConnectDialog } from "../Blitz/RadioConnectDialog";
-import { apiClient, setSecretKey } from "../../api/client";
+import { apiClient, AUTH_EXPIRED_EVENT, clearTabAuthorization, setDeviceSession, setSecretKey } from "../../api/client";
+import { AuthRequestError, getAuthSession } from "../../api/auth";
+import type { RemoteAuthorization } from "../../utils/tauriShell";
 
 export function DesktopTrayPopover() {
   const [syncOpen, setSyncOpen] = useState(false);
@@ -20,36 +23,60 @@ export function DesktopTrayPopover() {
 
   useEffect(() => {
     let cancelled = false;
-    let retry: number | null = null;
+    let generation = 0;
+    let unlisten: (() => void) | undefined;
 
     const prepareAuth = async () => {
+      const current = ++generation;
       try {
         const info = await apiClient.get<{ required?: boolean }>("/api/v1/auth/info");
         if (!info.required) {
-          if (!cancelled) setAuthReady(true);
+          if (!cancelled && current === generation) setAuthReady(true);
           return;
         }
-
-        const waitForVerifiedKey = async () => {
-          const key = await invoke<string | null>("get_remote_auth_key").catch(() => null);
-          if (cancelled) return;
-          if (key) {
-            setSecretKey(key);
-            setAuthReady(true);
-          } else {
-            retry = window.setTimeout(() => void waitForVerifiedKey(), 250);
-          }
-        };
-        await waitForVerifiedKey();
+        const authorization = await invoke<RemoteAuthorization | null>("get_remote_auth");
+        if (cancelled || current !== generation) return;
+        clearTabAuthorization();
+        setAuthReady(false);
+        if (!authorization) {
+          return;
+        }
+        if (authorization.deviceId) {
+          setDeviceSession(authorization.deviceId, authorization.signingKey);
+          // A stale shell credential cannot keep a revoked tray mounted.
+          await getAuthSession();
+        } else {
+          setSecretKey(authorization.signingKey);
+        }
+        if (!cancelled && current === generation) setAuthReady(true);
       } catch (error) {
-        console.error("[tray] auth bootstrap failed", error);
+        if (cancelled || current !== generation) return;
+        const revoked = error instanceof AuthRequestError && error.status === 401 && error.code === 'AUTH_REVOKED';
+        if (revoked) clearTabAuthorization();
+        setAuthReady(false);
+        if (!revoked) {
+          console.error("[tray] auth bootstrap failed", error);
+        }
       }
     };
 
-    void prepareAuth();
+    const expired = () => {
+      setAuthReady(false);
+      clearTabAuthorization();
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, expired);
+    const online = () => { void prepareAuth(); };
+    window.addEventListener('online', online);
+    void listen("grove-remote-auth-changed", () => { void prepareAuth(); }).then(stop => {
+      if (cancelled) stop();
+      else { unlisten = stop; void prepareAuth(); }
+    }).catch(() => { if (!cancelled) void prepareAuth(); });
     return () => {
       cancelled = true;
-      if (retry !== null) window.clearTimeout(retry);
+      generation++;
+      unlisten?.();
+      window.removeEventListener(AUTH_EXPIRED_EVENT, expired);
+      window.removeEventListener('online', online);
     };
   }, []);
 

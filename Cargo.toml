@@ -162,6 +162,7 @@ tauri-build = { version = "2", features = [], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
 # reqwest 已在 [dependencies] 声明（runtime 用），dev-dependencies 不再重复
 
 # Config for 'cargo dist'

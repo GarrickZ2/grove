@@ -1,8 +1,9 @@
 //! ACP WebSocket handler for Grove Web
 
+use crate::api::device_auth::RevocableWebSocketUpgrade as WebSocketUpgrade;
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocket},
         Path, Query,
     },
     http::StatusCode,
@@ -1509,6 +1510,11 @@ async fn handle_acp_ws(
             }
         }
     });
+
+    let _socket_tasks = crate::api::device_auth::SocketTasks(vec![
+        updates_to_ws.abort_handle(),
+        ws_to_acp.abort_handle(),
+    ]);
 
     // Wait for either task to finish, then abort the other. Without the
     // abort, the loser keeps running detached in the background (tokio::spawn

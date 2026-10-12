@@ -18,12 +18,14 @@ export function invokeQuiet<T>(
   return invoke<T>(command, args).catch(() => null);
 }
 
-/** Hand the remote backend's HMAC secret to the shell so the local proxy can
- *  sign banner click-through actions (`/api/v1/gui/*`) — those POSTs
- *  originate from the OS notifier process, which can't sign. The key never
- *  leaves the shell process. No-op outside Tauri. */
-export function handRemoteAuthKeyToShell(secretKey: string): void {
-  void invokeQuiet("set_remote_auth_key", { secretKey });
+export interface RemoteAuthorization {
+  signingKey: string;
+  deviceId: string | null;
+}
+
+/** Share the active authorization with the tray and native banner actions. */
+export function handRemoteAuthToShell(authorization: RemoteAuthorization | null): void {
+  void invokeQuiet("set_remote_auth", { authorization });
 }
 
 /** Does this window talk to a remote backend? Always false outside Tauri. */

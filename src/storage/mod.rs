@@ -2,6 +2,7 @@ pub mod agent_graph;
 pub mod agent_install;
 pub mod agent_registry;
 pub mod ai;
+pub mod auth_devices;
 pub mod automations;
 pub mod chat_attachments;
 pub mod chat_history;

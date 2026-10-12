@@ -12,7 +12,6 @@ const DAEMON_ENV: &str = "GROVE_GUI_DAEMON";
 pub static TAURI_APP: once_cell::sync::OnceCell<tauri::AppHandle> =
     once_cell::sync::OnceCell::new();
 static GUI_PORT: once_cell::sync::OnceCell<u16> = once_cell::sync::OnceCell::new();
-static REMOTE_AUTH_KEY: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// Whether this GUI window attached to a REMOTE backend (`--remote-url`).
 /// Surfaces the "who renders notifications" decision to the frontend engine:
@@ -65,27 +64,22 @@ pub fn play_sound(sound: String) {
     crate::hooks::play_sound(&sound);
 }
 
-/// Tauri command: hand the remote backend's HMAC secret to the local proxy so
-/// it can sign forwarded `/api/v1/gui/*` banner actions (Approve/Deny clicks
-/// from the native banner bypass the frontend, which is where signing usually
-/// lives). The key never leaves this process.
+/// Native actions and the tray use the main window's revocable authorization.
 #[tauri::command]
-pub fn set_remote_auth_key(secret_key: String) {
-    api::set_proxy_remote_auth_key(secret_key.clone());
-    if let Ok(mut slot) = REMOTE_AUTH_KEY.lock() {
-        *slot = Some(secret_key);
-    }
+pub fn set_remote_auth(app: tauri::AppHandle, authorization: Option<api::RemoteAuthorization>) {
+    use tauri::Emitter;
+    api::set_proxy_remote_auth(authorization);
+    // Notify without broadcasting the credential in the event payload.
+    let _ = app.emit("grove-remote-auth-changed", ());
 }
 
-/// Return the already-verified remote key to Grove's own tray webview. Browser
-/// sessionStorage is isolated per webview, so the popover cannot otherwise use
-/// the key that AuthGate stored in the main window.
+/// Browser sessionStorage is isolated per webview.
 #[tauri::command]
-pub fn get_remote_auth_key() -> Option<String> {
+pub fn get_remote_auth() -> Option<api::RemoteAuthorization> {
     if !is_remote_mode() {
         return None;
     }
-    REMOTE_AUTH_KEY.lock().ok().and_then(|slot| slot.clone())
+    api::proxy_remote_auth()
 }
 
 /// Apply the effective backend config to the native menubar tray. Remote GUI
@@ -608,8 +602,8 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             is_remote_mode_command,
             notify_banner,
             play_sound,
-            set_remote_auth_key,
-            get_remote_auth_key,
+            set_remote_auth,
+            get_remote_auth,
             configure_desktop_tray,
             crate::tray::tray_resolve_permission,
             crate::tray::tray_open_main,

@@ -1,10 +1,11 @@
 //! WebSocket endpoint streaming sketch events for a single task.
 
+use crate::api::device_auth::RevocableWebSocketUpgrade as WebSocketUpgrade;
 use std::time::Duration;
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocket},
         Path,
     },
     response::{IntoResponse, Response},

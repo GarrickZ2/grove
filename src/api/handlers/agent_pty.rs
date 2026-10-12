@@ -6,11 +6,9 @@
 //! the raw PTY stream in xterm.js and `--session-id` / `--resume <uuid>`
 //! lets `claude` persist its own conversation across reconnects.
 
+use crate::api::device_auth::RevocableWebSocketUpgrade as WebSocketUpgrade;
 use axum::{
-    extract::{
-        ws::{WebSocket, WebSocketUpgrade},
-        Path, Query,
-    },
+    extract::{ws::WebSocket, Path, Query},
     http::StatusCode,
     response::{IntoResponse, Response},
 };

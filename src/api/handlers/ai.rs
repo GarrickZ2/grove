@@ -1,6 +1,7 @@
 //! AI Settings API handlers (providers + audio + transcribe)
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use crate::api::device_auth::RevocableWebSocketUpgrade as WebSocketUpgrade;
+use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Multipart, Path, Query};
 use axum::http::StatusCode;
 use axum::response::Response;

@@ -133,6 +133,30 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
 
     conn.execute_batch(
         "
+        -- Each listening server has an authorization generation. Changing its
+        -- password deletes the previous generation instead of resurrecting it.
+        CREATE TABLE IF NOT EXISTS auth_servers (
+            id             TEXT PRIMARY KEY,
+            password_scope TEXT NOT NULL,
+            scope          TEXT NOT NULL
+        );
+
+        -- expires_at is retained for compatibility with the development schema;
+        -- new authorizations use 0 and have no time-based expiration.
+        CREATE TABLE IF NOT EXISTS auth_devices (
+            scope        TEXT NOT NULL,
+            id           TEXT NOT NULL,
+            name         TEXT NOT NULL,
+            client       TEXT NOT NULL,
+            trusted      INTEGER NOT NULL,
+            created_at   INTEGER NOT NULL,
+            last_used_at INTEGER NOT NULL,
+            expires_at   INTEGER NOT NULL,
+            token_hash   TEXT,
+            browser_id   TEXT,
+            PRIMARY KEY (scope, id)
+        );
+
         -- Projects
         CREATE TABLE IF NOT EXISTS projects (
             hash         TEXT PRIMARY KEY,
@@ -1097,6 +1121,10 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         "INTEGER NOT NULL DEFAULT 0",
     )?;
     add_column_if_missing(conn, "tasks", "files_changed", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "auth_devices", "browser_id", "TEXT")?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS auth_device_browser ON auth_devices(scope, browser_id);",
+    )?;
 
     // Chat session launch mode: "acp" (default, JSON-RPC over stdio) or
     // "terminal" (spawn agent CLI under a PTY, no protocol). Old chats stay

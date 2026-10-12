@@ -1415,13 +1415,18 @@ pub async fn reveal_plugin_folder(
 /// plugin's static asset path.
 pub async fn create_plugin_asset_session(
     State(auth): State<Arc<ServerAuth>>,
+    axum::Extension(identity): axum::Extension<crate::api::device_auth::RequestAuth>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     crate::storage::plugins::get(&id)
         .map_err(|e| ApiError::internal(format!("registry error: {}", e)))?
         .ok_or_else(|| ApiError::not_found(format!("plugin not found: {}", id)))?;
 
-    Ok(Json(json!({ "token": auth.plugin_asset_token(&id) })))
+    let token = identity
+        .id()
+        .map(|device_id| auth.plugin_device_asset_token(&id, device_id))
+        .unwrap_or_else(|| auth.plugin_asset_token(&id));
+    Ok(Json(json!({ "token": token })))
 }
 
 /// GET /api/v1/plugins/{id}/asset/{*path} — serve a file from the plugin's

@@ -21,7 +21,8 @@
 //! LocalAgreement commit because the product wants the whole current sentence
 //! to stay refreshable until it's spoken out.
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use crate::api::device_auth::RevocableWebSocketUpgrade as WebSocketUpgrade;
+use axum::extract::ws::{Message, WebSocket};
 use axum::extract::Query;
 use axum::response::Response;
 use serde::{Deserialize, Serialize};

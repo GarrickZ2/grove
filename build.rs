@@ -87,6 +87,9 @@ fn build_tauri() {
                 "tray_set_pinned",
                 "tray_is_pinned",
                 "tray_update_theme_icons",
+                "set_remote_auth",
+                "get_remote_auth",
+                "configure_desktop_tray",
             ]),
         ))
         .expect("failed to run tauri-build");

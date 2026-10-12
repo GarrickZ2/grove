@@ -8,6 +8,8 @@ const API_BASE_URL: string =
   import.meta.env.VITE_API_URL ||
   '';
 
+export function getApiBaseUrl(): string { return API_BASE_URL; }
+
 export interface ApiError {
   status: number;
   message: string;
@@ -15,11 +17,83 @@ export interface ApiError {
   data?: unknown;
 }
 
-type ErrorPayload = { message: string; data?: unknown };
+type ErrorPayload = { message: string; data?: unknown; code?: string };
 
 // ─── Secret Key management (HMAC-SHA256) ─────────────────────────────────────
 
 const SK_KEY = 'grove_auth_sk';
+const DEVICE_ID_KEY = 'grove_auth_device_id';
+const DEVICE_SIGNING_KEY = 'grove_auth_device_key';
+const REMEMBERED_DEVICE_KEY = `grove_auth_remembered:${new URL(API_BASE_URL || window.location.origin, window.location.origin).origin}`;
+
+type RememberedDevice = { id: string; signingKey?: string };
+function rememberedDevice(): RememberedDevice | null {
+  try {
+    const device = JSON.parse(localStorage.getItem(REMEMBERED_DEVICE_KEY) || 'null') as RememberedDevice | null;
+    if (!device || !/^[a-f0-9]{64}$/i.test(device.id)
+      || (device.signingKey !== undefined && !/^[a-f0-9]{64}$/i.test(device.signingKey))) return null;
+    return device;
+  } catch { return null; }
+}
+
+export function rememberDeviceSession(id: string, signingKey: string | undefined) {
+  localStorage.setItem(REMEMBERED_DEVICE_KEY, JSON.stringify({ id, signingKey }));
+}
+
+export function restoreRememberedDeviceSession() {
+  const device = rememberedDevice();
+  if (!device) return;
+  setDeviceSession(device.id, device.signingKey);
+}
+
+export function forgetRememberedDeviceSession(id: string) {
+  if (rememberedDevice()?.id === id) localStorage.removeItem(REMEMBERED_DEVICE_KEY);
+}
+
+export function getDeviceSigningKey() { return sessionStorage.getItem(DEVICE_SIGNING_KEY); }
+
+export const AUTH_EXPIRED_EVENT = 'grove-auth-expired';
+export const AUTH_CHANGED_EVENT = 'grove-auth-changed';
+let authTransitions = 0;
+export const isAuthTransitionPending = () => authTransitions > 0;
+export async function withAuthTransition<T>(operation: () => Promise<T>): Promise<T> {
+  authTransitions++;
+  try { return await operation(); } finally {
+    authTransitions--;
+    window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+  }
+}
+
+export function getDeviceId(): string | null {
+  return sessionStorage.getItem(DEVICE_ID_KEY);
+}
+
+export function setDeviceSession(id: string, signingKey?: string) {
+  sessionStorage.setItem(DEVICE_ID_KEY, id);
+  if (signingKey) sessionStorage.setItem(DEVICE_SIGNING_KEY, signingKey);
+  else sessionStorage.removeItem(DEVICE_SIGNING_KEY);
+  clearSecretKey();
+  window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+}
+
+export function clearDeviceSession() {
+  const id = getDeviceId();
+  if (id) forgetRememberedDeviceSession(id);
+  clearTabAuthorization();
+}
+
+/** Auxiliary webviews must not remove another window's remembered device. */
+export function clearTabAuthorization() {
+  sessionStorage.removeItem(DEVICE_ID_KEY);
+  sessionStorage.removeItem(DEVICE_SIGNING_KEY);
+  clearSecretKey();
+  clearRadioToken();
+  window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+}
+
+function getSigningKey(): string | null {
+  return sessionStorage.getItem(DEVICE_SIGNING_KEY) || getSecretKey();
+}
 
 export function getSecretKey(): string | null {
   return sessionStorage.getItem(SK_KEY);
@@ -27,6 +101,7 @@ export function getSecretKey(): string | null {
 
 export function setSecretKey(sk: string) {
   sessionStorage.setItem(SK_KEY, sk);
+  window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
 }
 
 export function clearSecretKey() {
@@ -94,7 +169,7 @@ import { hmacSha256Hex } from './hmac';
 
 /** Compute HMAC-SHA256(sk, message) and return hex string. */
 export async function computeHmac(message: string): Promise<string | null> {
-  const sk = getSecretKey();
+  const sk = getSigningKey();
   if (!sk) return null;
   return hmacSha256Hex(sk, message);
 }
@@ -145,20 +220,21 @@ export function canonicalPath(path: string, excludeKeys: string[] = []): string 
 async function signRequest(
   method: string,
   path: string,
-): Promise<{ timestamp: string; nonce: string; signature: string } | null> {
-  const sk = getSecretKey();
+): Promise<{ timestamp: string; nonce: string; signature: string; deviceId: string | null } | null> {
+  const sk = getSigningKey();
   if (!sk) return null;
+  const deviceId = sessionStorage.getItem(DEVICE_SIGNING_KEY) ? getDeviceId() : null;
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const nonce = generateNonce();
   const canonical = canonicalPath(path);
   const message = `${timestamp}|${nonce}|${method}|${canonical}`;
-  const signature = await computeHmac(message);
+  const signature = await hmacSha256Hex(sk, message);
   if (!signature) return null;
-  return { timestamp, nonce, signature };
+  return { timestamp, nonce, signature, deviceId };
 }
 
 /** Build HMAC auth headers for an HTTP request. */
-async function getSignedHeaders(
+export async function getSignedHeaders(
   method: string,
   path: string,
 ): Promise<Record<string, string>> {
@@ -178,6 +254,7 @@ async function getSignedHeaders(
     headers['X-Timestamp'] = sig.timestamp;
     headers['X-Nonce'] = sig.nonce;
     headers['X-Signature'] = sig.signature;
+    if (sig.deviceId) headers['X-Device-Id'] = sig.deviceId;
   }
   return headers;
 }
@@ -201,6 +278,7 @@ async function getAuthOnlyHeaders(
     headers['X-Timestamp'] = sig.timestamp;
     headers['X-Nonce'] = sig.nonce;
     headers['X-Signature'] = sig.signature;
+    if (sig.deviceId) headers['X-Device-Id'] = sig.deviceId;
   }
   return headers;
 }
@@ -218,6 +296,13 @@ export async function appendHmacToUrl(url: string): Promise<string> {
     return `${url}${sep}token=${encodeURIComponent(radioToken)}`;
   }
 
+  const deviceId = sessionStorage.getItem(DEVICE_SIGNING_KEY) && getDeviceId();
+  if (deviceId) {
+    const parsed = new URL(url, window.location.origin);
+    parsed.searchParams.set('device_id', deviceId);
+    url = parsed.toString();
+  }
+
   // Extract pathname + query for signing. The signature must cover existing
   // query params (e.g. `?session_id=…`) so a MITM can't swap them.
   let pathWithQuery: string;
@@ -233,12 +318,12 @@ export async function appendHmacToUrl(url: string): Promise<string> {
   // signature itself. Mirrors the server-side exclude list in auth.rs.
   const canonical = canonicalPath(pathWithQuery, ['ts', 'nonce', 'sig']);
 
-  const sk = getSecretKey();
+  const sk = getSigningKey();
   if (!sk) return url;
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const nonce = generateNonce();
   const message = `${timestamp}|${nonce}|GET|${canonical}`;
-  const signature = await computeHmac(message);
+  const signature = await hmacSha256Hex(sk, message);
   if (!signature) return url;
 
   const sep = url.includes('?') ? '&' : '?';
@@ -247,27 +332,43 @@ export async function appendHmacToUrl(url: string): Promise<string> {
 
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
-// Try to extract error message (and JSON body) from response
-async function extractErrorPayload(response: Response): Promise<ErrorPayload> {
+type RequestAuthorization = { deviceId: string | null; masterKey: string | null };
+const responseAuthorizations = new WeakMap<Response, RequestAuthorization>();
+
+export async function fetchWithAuthorization(url: string, init: RequestInit): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const deviceId = headers.get('X-Device-Id') ?? (headers.has('X-Signature') ? null : getDeviceId());
+  const masterKey = headers.has('X-Signature') && !deviceId ? getSecretKey() : null;
+  const response = await fetch(url, init);
+  // An unauthenticated or previous-session request must not expire a newer login.
+  responseAuthorizations.set(response, headers.has('Authorization') ? { deviceId: null, masterKey: null } : { deviceId, masterKey });
+  return response;
+}
+
+// Shared error handling for API calls and authentication endpoints.
+export async function extractErrorPayload(response: Response): Promise<ErrorPayload> {
+  let payload: ErrorPayload = { message: response.statusText };
+  let code = response.headers.get('x-grove-auth-error');
   try {
     const text = await response.text();
     if (text) {
       try {
         const json = JSON.parse(text);
-        // Check common error message fields
-        return {
-          message: json.message || json.error || json.detail || text,
-          data: json,
-        };
-      } catch {
-        // Not JSON, return raw text
-        return { message: text };
-      }
+        code ??= json.code;
+        payload = { message: json.message || json.error || json.detail || text, data: json };
+      } catch { payload = { message: text }; }
     }
-  } catch {
-    // Ignore extraction errors
+  } catch { /* Keep the status message if the response body is unavailable. */ }
+  const rejectedDevice = response.headers.get('x-grove-device-id');
+  const authorization = responseAuthorizations.get(response);
+  const currentDevice = authorization?.deviceId && authorization.deviceId === getDeviceId()
+    && (!rejectedDevice || rejectedDevice === authorization.deviceId);
+  const currentMaster = authorization?.masterKey && authorization.masterKey === getSecretKey() && !rejectedDevice;
+  if (response.status === 401 && code === 'AUTH_REVOKED' && !getRadioToken()
+    && !isAuthTransitionPending() && (currentDevice || currentMaster)) {
+    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
   }
-  return { message: response.statusText };
+  return { ...payload, code: typeof code === 'string' ? code : undefined };
 }
 
 class ApiClient {
@@ -278,7 +379,7 @@ class ApiClient {
   }
 
   async get<T>(path: string, signal?: AbortSignal): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'GET',
       headers: await getSignedHeaders('GET', path),
       // Grove data is user-specific and changes at any time (MCP writes,
@@ -311,7 +412,7 @@ class ApiClient {
   }
 
   async head(path: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'HEAD',
       headers: await getSignedHeaders('HEAD', path),
       cache: 'no-store',
@@ -333,7 +434,7 @@ class ApiClient {
    * For binary content, use download URLs instead.
    */
   async getText(path: string): Promise<string> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'GET',
       headers: await getSignedHeaders('GET', path),
     });
@@ -352,7 +453,7 @@ class ApiClient {
 
   /** Fetch binary files with the same authentication as other API requests. */
   async getBlob(path: string, signal?: AbortSignal): Promise<Blob> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'GET',
       headers: await getSignedHeaders('GET', path),
       cache: 'no-store',
@@ -366,7 +467,7 @@ class ApiClient {
   }
 
   async patch<T, R>(path: string, data: T, signal?: AbortSignal): Promise<R> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'PATCH',
       headers: await getSignedHeaders('PATCH', path),
       body: JSON.stringify(data),
@@ -391,7 +492,7 @@ class ApiClient {
   }
 
   async post<T, R>(path: string, data?: T): Promise<R> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: await getSignedHeaders('POST', path),
       body: data ? JSON.stringify(data) : undefined,
@@ -419,7 +520,7 @@ class ApiClient {
    * streaming body — e.g. the plugin exec NDJSON stream. Throws on non-2xx.
    */
   async postStream<T>(path: string, data?: T): Promise<Response> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: await getSignedHeaders('POST', path),
       body: data ? JSON.stringify(data) : undefined,
@@ -436,7 +537,7 @@ class ApiClient {
   }
 
   async postNoContent(path: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: await getSignedHeaders('POST', path),
     });
@@ -452,7 +553,7 @@ class ApiClient {
   }
 
   async delete<T = void>(path: string): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'DELETE',
       headers: await getSignedHeaders('DELETE', path),
     });
@@ -475,7 +576,7 @@ class ApiClient {
   }
 
   async postFormData<R>(path: string, formData: FormData, signal?: AbortSignal): Promise<R> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: await getAuthOnlyHeaders('POST', path),
       body: formData,
@@ -507,7 +608,7 @@ class ApiClient {
   ): Promise<boolean> {
     const headers = await getAuthOnlyHeaders('POST', path);
     headers['Content-Type'] = contentType;
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers,
       body,
@@ -530,7 +631,7 @@ class ApiClient {
    * only.
    */
   async putKeepalive<T>(path: string, data: T): Promise<void> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'PUT',
       headers: await getSignedHeaders('PUT', path),
       body: JSON.stringify(data),
@@ -547,7 +648,7 @@ class ApiClient {
   }
 
   async put<T, R>(path: string, data: T): Promise<R> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'PUT',
       headers: await getSignedHeaders('PUT', path),
       body: JSON.stringify(data),

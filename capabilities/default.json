@@ -25,6 +25,8 @@
     "allow-toggle-devtools",
     "allow-toggle-main-window-visibility",
     "allow-toggle-tray-popover-visibility",
-    "allow-tray-update-theme-icons"
+    "allow-tray-update-theme-icons",
+    "allow-set-remote-auth",
+    "allow-configure-desktop-tray"
   ]
 }

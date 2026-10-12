@@ -31,6 +31,7 @@ import {
   Share2,
   ChevronRight,
   Clock,
+  MonitorSmartphone,
 } from "lucide-react";
 import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal, VSCodeIcon } from "../ui";
 import type { ComboboxOption } from "../ui";
@@ -67,6 +68,7 @@ import { getExtensionStatusDetails, type ExtensionStatus } from "../../api/exten
 import { formatShortcut } from "../AI/utils";
 import { useKeyboardScope } from "../../keyboard";
 import { loadChatHistoryPreferences, saveChatHistoryPreferences } from "../Tasks/TaskView/chatHistoryPreferences";
+import { LoginDevicesPanel } from "./LoginDevicesPanel";
 
 interface SettingsPageProps {
   config: {
@@ -218,7 +220,6 @@ interface DependencyState {
 export function SettingsPage({ config }: SettingsPageProps) {
   const { theme, mode, lightThemeId, darkThemeId, customThemes, themes, setAppearance } = useTheme();
   const { updateAvailability, refresh: refreshGlobalConfig } = useConfig();
-
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     terminal: false,
     chat: false,
@@ -2885,6 +2886,11 @@ env_vars = [
           </div>
         </Section>
 
+        <Section id="devices" title="Login devices" description="Trusted devices and active sign-ins"
+          icon={MonitorSmartphone} iconColor="var(--color-highlight)" isOpen={!!openSections.devices}
+          onToggle={() => setOpenSections(previous => ({ ...previous, devices: !previous.devices }))}>
+          <LoginDevicesPanel />
+        </Section>
       </div>
 
       {/* Custom Agent Servers Modal (existing) */}

@@ -1,9 +1,10 @@
 //! Chrome Extension integration handlers for Axum.
 //! Enables dynamic page sniffing, multi-port discovery, and browser tab queries.
 
+use crate::api::device_auth::RevocableWebSocketUpgrade as WebSocketUpgrade;
 use axum::{
     body::Body,
-    extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    extract::ws::{Message, WebSocket},
     http::{header, StatusCode},
     response::Response,
     Json,
@@ -265,11 +266,12 @@ async fn handle_ws(socket: WebSocket) {
     //    the first one's `pending_requests` map and the previously-routed
     //    responses would arrive at a session that no longer knows about
     //    them.
+    let connected_at = std::time::Instant::now();
     let session = ExtensionSession {
         sender: tx,
         pending_requests: std::sync::Mutex::new(HashMap::new()),
         companion_info: std::sync::Mutex::new(CompanionInfo::default()),
-        connected_at: std::time::Instant::now(),
+        connected_at,
     };
 
     // Take the slot atomically. `std::sync::RwLockWriteGuard` is !Send, so the
@@ -300,6 +302,29 @@ async fn handle_ws(socket: WebSocket) {
             .await;
         return;
     }
+
+    // Run on normal disconnect and when device revocation cancels this future.
+    struct ConnectionGuard(std::time::Instant);
+    impl Drop for ConnectionGuard {
+        fn drop(&mut self) {
+            let removed = EXTENSION_SESSION.write().ok().and_then(|mut slot| {
+                if slot
+                    .as_ref()
+                    .is_some_and(|session| session.connected_at == self.0)
+                {
+                    slot.take()
+                } else {
+                    None
+                }
+            });
+            if let Some(session) = removed {
+                if let Ok(mut pending) = session.pending_requests.lock() {
+                    pending.clear();
+                }
+            }
+        }
+    }
+    let _connection_guard = ConnectionGuard(connected_at);
 
     // 2. Spawn a background task to forward outbound payloads to the WebSocket
     let mut ws_write_task = tokio::spawn(async move {
@@ -354,6 +379,11 @@ async fn handle_ws(socket: WebSocket) {
         }
     });
 
+    let _socket_tasks = crate::api::device_auth::SocketTasks(vec![
+        ws_write_task.abort_handle(),
+        ws_read_task.abort_handle(),
+    ]);
+
     // 4. Await termination of either task (read or write disconnect)
     tokio::select! {
         _ = &mut ws_write_task => {},
@@ -366,12 +396,7 @@ async fn handle_ws(socket: WebSocket) {
     //    individual timeouts. Without this drain, every in-flight request
     //    has to time out independently (1.5s–5s each) when the extension
     //    disconnects.
-    let removed = EXTENSION_SESSION.write().ok().and_then(|mut g| g.take());
-    if let Some(session) = removed {
-        if let Ok(mut pending) = session.pending_requests.lock() {
-            pending.clear();
-        }
-    }
+    drop(_connection_guard);
     ws_write_task.abort();
     ws_read_task.abort();
 }

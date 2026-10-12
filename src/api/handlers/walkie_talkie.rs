@@ -1,7 +1,8 @@
 //! Walkie-Talkie WebSocket handler for real-time duplex communication
 //! between a mobile phone and the Grove backend.
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use crate::api::device_auth::RevocableWebSocketUpgrade as WebSocketUpgrade;
+use axum::extract::ws::{Message, WebSocket};
 use axum::response::Response;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};

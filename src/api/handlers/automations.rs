@@ -9,11 +9,12 @@
 //!   POST   /api/v1/projects/{id}/automations/{aid}/trigger         — run now
 //!   GET    /api/v1/projects/{id}/automations/{aid}/runs            — history
 
+use crate::api::device_auth::RevocableWebSocketUpgrade as WebSocketUpgrade;
 use std::time::Duration;
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocket},
         Path,
     },
     http::StatusCode,

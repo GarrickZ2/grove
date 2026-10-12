@@ -46,6 +46,43 @@ fn host_matches(value: &str, host_header: &str) -> bool {
     host_part.eq_ignore_ascii_case(host_header)
 }
 
+/// Cookie credentials also require an origin check on safe methods, notably
+/// WebSocket upgrades. CORS alone cannot protect a WebSocket connection.
+pub(crate) fn same_origin_request(request: &Request<Body>) -> bool {
+    if !same_origin_browser_request(request) {
+        return false;
+    }
+    if let Some(origin) = header_str(request, header::ORIGIN) {
+        return origin.starts_with("https://");
+    }
+    if let Some(referer) = header_str(request, header::REFERER) {
+        return referer.starts_with("https://");
+    }
+    true
+}
+
+/// Local device administration is available over HTTP, but must not expose
+/// device metadata to another site through the API's permissive CORS layer.
+pub(crate) fn same_origin_browser_request(request: &Request<Body>) -> bool {
+    if let Some(site) = header_str(request, header::HeaderName::from_static("sec-fetch-site")) {
+        if !matches!(site, "same-origin" | "none") {
+            return false;
+        }
+    }
+    let Some(host) = header_str(request, header::HOST)
+        .or_else(|| request.uri().authority().map(|value| value.as_str()))
+    else {
+        return false;
+    };
+    if let Some(origin) = header_str(request, header::ORIGIN) {
+        return host_matches(origin, host);
+    }
+    if let Some(referer) = header_str(request, header::REFERER) {
+        return host_matches(referer, host);
+    }
+    true
+}
+
 pub async fn csrf_middleware(request: Request<Body>, next: Next) -> Response {
     if is_safe_method(request.method()) {
         return next.run(request).await;

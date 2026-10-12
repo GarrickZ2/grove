@@ -1,8 +1,9 @@
 //! Terminal WebSocket handler for Grove Web
 
+use crate::api::device_auth::RevocableWebSocketUpgrade as WebSocketUpgrade;
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocket},
         Path, Query,
     },
     http::StatusCode,
@@ -367,11 +368,22 @@ pub(crate) async fn handle_pty_terminal(
         }
     };
 
+    // Revocation can cancel this future before the usual cleanup path runs.
+    struct ChildGuard(Arc<std::sync::Mutex<Box<dyn portable_pty::Child + Send + Sync>>>);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            if let Ok(mut child) = self.0.lock() {
+                let _ = child.kill();
+            }
+        }
+    }
+
     // Wrap in Arc for sharing
     let master = Arc::new(std::sync::Mutex::new(master));
     let reader = Arc::new(std::sync::Mutex::new(reader));
     let writer = Arc::new(std::sync::Mutex::new(writer));
     let child = Arc::new(std::sync::Mutex::new(child));
+    let _child_guard = ChildGuard(child.clone());
 
     // Create channels for communication
     let (pty_tx, mut pty_rx) = mpsc::channel::<String>(100);
@@ -475,6 +487,12 @@ pub(crate) async fn handle_pty_terminal(
             }
         }
     });
+
+    let _socket_tasks = crate::api::device_auth::SocketTasks(vec![
+        pty_to_ws.abort_handle(),
+        ws_to_pty.abort_handle(),
+        pty_writer_task.abort_handle(),
+    ]);
 
     // Wait for any task to complete, detect panics
     tokio::select! {

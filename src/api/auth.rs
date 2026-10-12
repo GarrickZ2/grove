@@ -2,8 +2,8 @@
 //!
 //! Supports two modes:
 //! - **No auth** (`grove web`): all requests pass through
-//! - **HMAC-SHA256** (`grove mobile`): every request must carry a valid signature;
-//!   the secret key never travels over the wire
+//! - **Mobile auth**: device-scoped HMAC signatures, or HTTPS-only trusted-device
+//!   cookies. Legacy HMAC clients remain supported; the master key stays off the wire.
 
 use axum::{
     body::Body,
@@ -16,9 +16,36 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 type HmacSha256 = Hmac<Sha256>;
+
+pub(crate) struct RequestSignature<'a> {
+    pub timestamp: &'a str,
+    pub nonce: &'a str,
+    pub method: &'a str,
+    pub path: &'a str,
+    pub signature: &'a str,
+}
+
+impl<'a> RequestSignature<'a> {
+    pub fn new(
+        timestamp: &'a str,
+        nonce: &'a str,
+        method: &'a str,
+        path: &'a str,
+        signature: &'a str,
+    ) -> Self {
+        Self {
+            timestamp,
+            nonce,
+            method,
+            path,
+            signature,
+        }
+    }
+}
 
 /// Label exposed to the frontend via `/auth/info`.
 #[derive(Clone, Copy, Serialize)]
@@ -43,6 +70,10 @@ pub struct ServerAuth {
     /// Per-process key for narrowly scoped plugin-asset capabilities. This is
     /// separate from the mobile HMAC secret and rotates on every restart.
     plugin_asset_key: [u8; 32],
+    pub(crate) secure_cookies: AtomicBool,
+    pub(crate) device_changes: tokio::sync::watch::Sender<u64>,
+    pub(crate) device_scope: OnceLock<String>,
+    pub(crate) device_cookie_name: OnceLock<String>,
 }
 
 impl ServerAuth {
@@ -56,6 +87,10 @@ impl ServerAuth {
             key_is_generated: false,
             used_nonces: Mutex::new(HashMap::new()),
             plugin_asset_key,
+            secure_cookies: AtomicBool::new(false),
+            device_changes: tokio::sync::watch::channel(0).0,
+            device_scope: OnceLock::new(),
+            device_cookie_name: OnceLock::new(),
         }
     }
 
@@ -69,6 +104,10 @@ impl ServerAuth {
             key_is_generated: is_generated,
             used_nonces: Mutex::new(HashMap::new()),
             plugin_asset_key,
+            secure_cookies: AtomicBool::new(false),
+            device_changes: tokio::sync::watch::channel(0).0,
+            device_scope: OnceLock::new(),
+            device_cookie_name: OnceLock::new(),
         }
     }
 
@@ -81,7 +120,28 @@ impl ServerAuth {
         hex::encode(mac.finalize().into_bytes())
     }
 
+    /// Opaque, per-process handle for local device administration. Neither the
+    /// password-derived scope nor the original device ID leaves local storage.
+    pub(crate) fn device_management_id(&self, scope: &str, id: &str) -> String {
+        let mut mac = HmacSha256::new_from_slice(&self.plugin_asset_key).expect("HMAC key");
+        mac.update(b"grove-device-management-v1\0");
+        mac.update(scope.as_bytes());
+        mac.update(b"\0");
+        mac.update(id.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
     pub fn verify_plugin_asset_token(&self, plugin_id: &str, token: &str) -> bool {
+        if let Some((id, token)) = token.split_once('.') {
+            if !self.device_is_active(id) {
+                return false;
+            }
+            let Ok(bytes) = hex::decode(token) else {
+                return false;
+            };
+            let mac = self.plugin_device_mac(plugin_id, id);
+            return mac.verify_slice(&bytes).is_ok();
+        }
         let Ok(bytes) = hex::decode(token) else {
             return false;
         };
@@ -90,6 +150,27 @@ impl ServerAuth {
         mac.update(b"grove-plugin-asset-v1\0");
         mac.update(plugin_id.as_bytes());
         mac.verify_slice(&bytes).is_ok()
+    }
+
+    fn plugin_device_mac(&self, plugin_id: &str, device_id: &str) -> HmacSha256 {
+        let mut mac = HmacSha256::new_from_slice(&self.plugin_asset_key).expect("HMAC key");
+        mac.update(b"grove-plugin-device-asset-v1\0");
+        mac.update(device_id.as_bytes());
+        mac.update(b"\0");
+        mac.update(plugin_id.as_bytes());
+        mac
+    }
+
+    pub(crate) fn plugin_device_asset_token(&self, plugin_id: &str, device_id: &str) -> String {
+        format!(
+            "{}.{}",
+            device_id,
+            hex::encode(
+                self.plugin_device_mac(plugin_id, device_id)
+                    .finalize()
+                    .into_bytes()
+            )
+        )
     }
 
     /// Verify an HMAC-SHA256 signature.
@@ -111,13 +192,42 @@ impl ServerAuth {
             None => return true, // no auth mode
         };
 
+        self.verify_signature_with_key(
+            sk,
+            RequestSignature::new(timestamp, nonce, method, path, signature),
+        )
+    }
+
+    pub(crate) fn verify_signature_with_key(
+        &self,
+        key: &str,
+        request_signature: RequestSignature<'_>,
+    ) -> bool {
+        let RequestSignature {
+            timestamp,
+            nonce,
+            method,
+            path,
+            signature,
+        } = request_signature;
         // 1. Timestamp window check (±60 s)
         let ts: i64 = match timestamp.parse() {
             Ok(v) => v,
             Err(_) => return false,
         };
         let now = chrono::Utc::now().timestamp();
-        if (now - ts).abs() > 60 {
+        if now.abs_diff(ts) > 60 {
+            return false;
+        }
+
+        // Authenticate before recording the nonce; invalid requests cannot poison it.
+        let Ok(bytes) = hex::decode(signature) else {
+            return false;
+        };
+        let mut mac =
+            HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC accepts any key length");
+        mac.update(format!("{}|{}|{}|{}", timestamp, nonce, method, path).as_bytes());
+        if mac.verify_slice(&bytes).is_err() {
             return false;
         }
 
@@ -133,18 +243,10 @@ impl ServerAuth {
             nonces.insert(nonce.to_string(), ts);
 
             // Purge stale nonces (> 120 s old)
-            nonces.retain(|_, &mut t| (now - t).abs() <= 120);
+            nonces.retain(|_, &mut t| now.abs_diff(t) <= 120);
         }
 
-        // 3. Compute expected HMAC
-        let message = format!("{}|{}|{}|{}", timestamp, nonce, method, path);
-        let mut mac =
-            HmacSha256::new_from_slice(sk.as_bytes()).expect("HMAC accepts any key length");
-        mac.update(message.as_bytes());
-        let expected = hex::encode(mac.finalize().into_bytes());
-
-        // Constant-time-ish comparison (hex strings, both lowercase)
-        expected == signature
+        true
     }
 }
 
@@ -231,11 +333,14 @@ pub fn canonical_path(path: &str, query: Option<&str>, exclude_keys: &[&str]) ->
 pub async fn auth_middleware(
     axum::extract::State(auth): axum::extract::State<Arc<ServerAuth>>,
     original_uri: axum::extract::OriginalUri,
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
 ) -> Response {
     // No-auth mode → pass through
     if auth.secret_key.is_none() {
+        request
+            .extensions_mut()
+            .insert(super::device_auth::RequestAuth::master());
         return next.run(request).await;
     }
 
@@ -243,6 +348,13 @@ pub async fn auth_middleware(
     // Use the original (un-stripped) URI so the path matches what the client signed.
     let path = original_uri.path();
     let query = original_uri.query();
+    let request_device_id = request
+        .headers()
+        .get("x-device-id")
+        .and_then(|value| value.to_str().ok())
+        .or_else(|| query.and_then(|query| query_param(query, "device_id")))
+        .or_else(|| auth.cookie_device_id(request.headers()))
+        .map(str::to_owned);
 
     // Try headers first. Header-signed requests include the full query string
     // in the canonical path (after sorting by key); no keys are excluded.
@@ -255,10 +367,21 @@ pub async fn auth_middleware(
 
     if let Some((ts, nonce, sig)) = from_headers {
         let canonical = canonical_path(path, query, &[]);
-        if auth.verify_signature(&ts, &nonce, &method, &canonical, &sig) {
+        let identity = auth.authenticate_signature(
+            request
+                .headers()
+                .get("x-device-id")
+                .and_then(|v| v.to_str().ok()),
+            RequestSignature::new(&ts, &nonce, &method, &canonical, &sig),
+        );
+        if let Some(identity) = identity {
+            if let Some(id) = identity.id() {
+                let _ = crate::storage::auth_devices::touch(&auth.device_scope(), id);
+            }
+            request.extensions_mut().insert(identity);
             return next.run(request).await;
         }
-        return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
+        return unauthorized(&auth, "Invalid signature", request_device_id.as_deref());
     }
 
     // Fallback: query params (WebSocket upgrade). The signature itself rides
@@ -271,20 +394,63 @@ pub async fn auth_middleware(
             query_param(query, "sig"),
         ) {
             let canonical = canonical_path(path, Some(query), &["ts", "nonce", "sig"]);
-            if auth.verify_signature(ts, nonce, &method, &canonical, sig) {
+            if let Some(identity) = auth.authenticate_signature(
+                query_param(query, "device_id"),
+                RequestSignature::new(ts, nonce, &method, &canonical, sig),
+            ) {
+                if let Some(id) = identity.id() {
+                    let _ = crate::storage::auth_devices::touch(&auth.device_scope(), id);
+                }
+                request.extensions_mut().insert(identity);
                 return next.run(request).await;
             }
-            return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
+            return unauthorized(&auth, "Invalid signature", request_device_id.as_deref());
         }
     }
 
-    (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+    if let Some(identity) = auth.authenticate_cookie(request.headers()) {
+        if !super::csrf::same_origin_request(&request) {
+            return (StatusCode::FORBIDDEN, "Cross-origin request blocked").into_response();
+        }
+        if let Some(id) = identity.id() {
+            let _ = crate::storage::auth_devices::touch(&auth.device_scope(), id);
+        }
+        request.extensions_mut().insert(identity);
+        return next.run(request).await;
+    }
+
+    unauthorized(&auth, "Unauthorized", request_device_id.as_deref())
+}
+
+fn unauthorized(auth: &ServerAuth, message: &'static str, device_id: Option<&str>) -> Response {
+    let code = if device_id.is_some_and(|id| !auth.device_is_active(id)) {
+        "AUTH_REVOKED"
+    } else {
+        "AUTH_REQUIRED"
+    };
+    let mut response = (
+        StatusCode::UNAUTHORIZED,
+        [("x-grove-auth-required", "1"), ("x-grove-auth-error", code)],
+        Json(serde_json::json!({ "code": code, "message": message })),
+    )
+        .into_response();
+    if let Some(id) =
+        device_id.filter(|id| id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        response
+            .headers_mut()
+            .insert("x-grove-device-id", id.parse().expect("device ID header"));
+    }
+    response
 }
 
 #[derive(Serialize)]
 pub struct AuthInfoResponse {
     pub required: bool,
     pub mode: AuthMode,
+    pub device_sessions: bool,
+    pub trusted_devices: bool,
+    pub trusted_device_cookies: bool,
 }
 
 /// `GET /api/v1/auth/info` — tells the SPA whether auth is required and which mode.
@@ -294,6 +460,9 @@ pub async fn auth_info(
     Json(AuthInfoResponse {
         required: auth.secret_key.is_some(),
         mode: auth.mode,
+        device_sessions: true,
+        trusted_devices: auth.secret_key.is_some(),
+        trusted_device_cookies: auth.secure_cookies.load(Ordering::Relaxed),
     })
 }
 
@@ -318,9 +487,10 @@ pub async fn auth_verify(
             let mut mac =
                 HmacSha256::new_from_slice(sk.as_bytes()).expect("HMAC accepts any key length");
             mac.update(b"grove-verify");
-            let expected = hex::encode(mac.finalize().into_bytes());
-
-            if req.proof == expected {
+            if hex::decode(req.proof)
+                .ok()
+                .is_some_and(|proof| mac.verify_slice(&proof).is_ok())
+            {
                 Ok(Json(VerifyResponse { valid: true }))
             } else {
                 Err(StatusCode::UNAUTHORIZED)

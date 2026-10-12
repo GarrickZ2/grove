@@ -1,223 +1,207 @@
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import {
-  extractSkFromUrl,
-  extractPageFromUrl,
-  extractRadioTokenFromUrl,
-  getSecretKey,
-  setSecretKey,
-  clearSecretKey,
-  setPageIntent,
-  setRadioToken,
-  computeHmac,
-} from "../api/client";
-import { handRemoteAuthKeyToShell } from "../utils/tauriShell";
+  extractSkFromUrl, extractPageFromUrl, extractRadioTokenFromUrl,
+  getSecretKey, setSecretKey, clearSecretKey, getDeviceId, getDeviceSigningKey, clearDeviceSession,
+  setDeviceSession, restoreRememberedDeviceSession, setPageIntent, setRadioToken, AUTH_CHANGED_EVENT, AUTH_EXPIRED_EVENT, getApiBaseUrl, isAuthTransitionPending,
+} from '../api/client';
+import {
+  AuthRequestError, canTrustDevice, canUseTrustedDeviceCookie, getAuthInfo,
+  getAuthSession, loginDevice, subscribeToLogout, type AuthInfo,
+} from '../api/auth';
+import { hmacSha256Hex } from '../api/hmac';
+import { handRemoteAuthToShell } from '../utils/tauriShell';
+import { Checkbox } from './ui/Checkbox';
 
-interface AuthGateProps {
-  children: ReactNode;
-}
+type AuthState = 'loading' | 'authenticated' | 'needs_auth' | 'connection_error';
 
-type AuthState = "loading" | "authenticated" | "needs_auth";
-
-/** Base URL for raw auth probes (pre-auth, so we can't use apiClient).
- *
- * Priority:
- *   1. window.__GROVE_API_BASE__ — injected by `grove web --remote-url`
- *   2. '' — relative to current origin (local mode)
- */
-function getAuthBase(): string {
-  const g = window as unknown as Record<string, unknown>;
-  return (typeof g.__GROVE_API_BASE__ === "string" && g.__GROVE_API_BASE__) || "";
-}
-
-export function AuthGate({ children }: AuthGateProps) {
-  const [authState, setAuthState] = useState<AuthState>("loading");
-  const [skInput, setSkInput] = useState("");
+export function AuthGate({ children }: { children: ReactNode }) {
+  const [authState, setAuthState] = useState<AuthState>('loading');
+  const [info, setInfo] = useState<AuthInfo | null>(null);
+  const [skInput, setSkInput] = useState('');
+  const [trusted, setTrusted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const initializing = useRef(false);
+  const offeredSecret = useRef<string | null>(null);
 
-  /** Verify the current SK by sending HMAC("grove-verify") to the server. */
-  const verifySk = useCallback(async (): Promise<boolean> => {
-    const proof = await computeHmac("grove-verify");
-    if (!proof) return false;
-    try {
-      // Intentional raw fetch: this endpoint is the pre-auth handshake and
-      // accepts an unsigned request body containing the HMAC proof. The
-      // global apiClient would attach signed headers, which the server's
-      // /auth/verify path is allowed to ignore but which require us to
-      // already know the SK is valid — chicken-and-egg.
-      const resp = await fetch(`${getAuthBase()}/api/v1/auth/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ proof }),
-      });
-      return resp.ok;
-    } catch {
-      return false;
-    }
+  const legacyLogin = useCallback(async (secret: string) => {
+    const proof = await hmacSha256Hex(secret, 'grove-verify');
+    const response = await fetch(`${getApiBaseUrl()}/api/v1/auth/verify`, {
+      method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proof }),
+    });
+    if (!response.ok) throw new AuthRequestError(response.status, 'Unable to verify the secret key');
+    setSecretKey(secret);
   }, []);
 
-  useEffect(() => {
-    const init = async () => {
-      // Step 1: Try to extract SK, page intent, and radio token from URL hash fragment.
-      // The `token=` key is generic and collides with other flows (e.g. Excalidraw's
-      // `#addLibrary=...&token=...` callback), so only treat it as a radio token when
-      // it appears alongside an `sk=` or `page=` (which are unique to the auth flow).
+  const initialize = useCallback(async () => {
+    if (initializing.current) return;
+    initializing.current = true;
+    setAuthState('loading');
+    setError(null);
+    try {
       const hashSk = extractSkFromUrl();
       const hashPage = extractPageFromUrl();
       const hashToken = (hashSk || hashPage) ? extractRadioTokenFromUrl() : null;
-      if (hashSk) {
-        setSecretKey(hashSk);
-      }
-      if (hashPage) {
-        setPageIntent(hashPage);
-      }
-      if (hashToken) {
-        setRadioToken(hashToken);
-      }
-      // Only strip the keys WE consumed from the hash. Wholesale clearing
-      // would eat unrelated params like `#addLibrary=...` that downstream
-      // hooks (useAddLibraryHashHandler) need to see.
+      if (hashSk) offeredSecret.current = hashSk;
+      if (hashPage) setPageIntent(hashPage);
+      if (hashToken) setRadioToken(hashToken);
       if (hashSk || hashPage || hashToken) {
         const params = new URLSearchParams(window.location.hash.slice(1));
-        if (hashSk) params.delete("sk");
-        if (hashPage) params.delete("page");
-        if (hashToken) params.delete("token");
+        if (hashSk) params.delete('sk');
+        if (hashPage) params.delete('page');
+        if (hashToken) params.delete('token');
         const remaining = params.toString();
-        window.history.replaceState(
-          null,
-          "",
-          window.location.pathname +
-            window.location.search +
-            (remaining ? "#" + remaining : ""),
-        );
+        window.history.replaceState(null, '', window.location.pathname + window.location.search + (remaining ? `#${remaining}` : ''));
       }
 
-      // Step 2: Check if auth is required
-      try {
-        // Intentional raw fetch: pre-auth probe to discover if the server
-        // requires HMAC signing at all. apiClient assumes a valid SK exists.
-        const resp = await fetch(`${getAuthBase()}/api/v1/auth/info`);
-        if (!resp.ok) {
-          // If auth/info fails, assume no auth needed (backwards compat)
-          setAuthState("authenticated");
-          return;
-        }
-        const info = await resp.json();
-        if (info && (info.remote || info.required)) {
-          (window as unknown as Record<string, unknown>).__GROVE_REMOTE__ = true;
-        }
-        if (!info.required) {
-          setAuthState("authenticated");
-          return;
-        }
-      } catch {
-        // Network error — assume no auth needed
-        setAuthState("authenticated");
-        return;
-      }
+      const authInfo = await getAuthInfo();
+      setInfo(authInfo);
+      if (authInfo.remote || authInfo.required) (window as unknown as Record<string, unknown>).__GROVE_REMOTE__ = true;
+      if (!authInfo.required) { setAuthState('authenticated'); return; }
 
-      // Step 3: Auth is required (HMAC mode). Check if we have a stored SK.
-      const storedSk = getSecretKey();
-      if (storedSk) {
-        // Verify the stored SK
-        if (await verifySk()) {
-          setAuthState("authenticated");
-          return;
-        }
-        // SK invalid, clear it
+      if (authInfo.device_sessions) {
+        const master = offeredSecret.current ?? getSecretKey();
+        offeredSecret.current = master;
         clearSecretKey();
+        if (!getDeviceId()) restoreRememberedDeviceSession();
+        let session: Awaited<ReturnType<typeof getAuthSession>> | null = null;
+        try { session = await getAuthSession(); }
+        catch (err) {
+          if (!(err instanceof AuthRequestError && err.status === 401)) throw err;
+          if (err.code === 'AUTH_REVOKED') clearDeviceSession();
+          else if (getDeviceId()) throw err;
+          if (!master) throw err;
+        }
+        if (session?.device) {
+          if (getDeviceId() !== session.device.id) setDeviceSession(session.device.id);
+        } else if (master) {
+          await loginDevice(master, false);
+        } else throw new AuthRequestError(401, 'Sign in again');
+        offeredSecret.current = null;
+      } else {
+        const master = offeredSecret.current ?? getSecretKey();
+        if (!master) { setAuthState('needs_auth'); return; }
+        await legacyLogin(master);
+        offeredSecret.current = null;
       }
+      setAuthState('authenticated');
+    } catch (err) {
+      if (err instanceof AuthRequestError && err.status === 401
+        && (err.code === 'AUTH_REVOKED' || !getDeviceId())) {
+        offeredSecret.current = null;
+        if (err.code === 'AUTH_REVOKED') clearDeviceSession();
+        else clearSecretKey();
+        setAuthState('needs_auth');
+      } else {
+        // Only explicit revocation invalidates an existing device credential.
+        setError('Unable to connect to Grove. Your saved sign-in has been kept.');
+        setAuthState('connection_error');
+      }
+    } finally { initializing.current = false; }
+  }, [legacyLogin]);
 
-      setAuthState("needs_auth");
-    };
+  useEffect(() => { void Promise.resolve().then(initialize); }, [initialize]);
 
-    init();
-  }, [verifySk]);
-
-  // Once authenticated, hand the (already-verified) secret key to the Tauri
-  // shell so its local proxy can sign banner click-through actions against
-  // the remote backend. No-op in the browser and in local (no-auth) mode.
   useEffect(() => {
-    if (authState !== "authenticated") return;
-    const sk = getSecretKey();
-    if (sk) handRemoteAuthKeyToShell(sk);
-  }, [authState]);
+    if (authState === 'loading' || authState === 'connection_error') return;
+    const sync = () => {
+      if (isAuthTransitionPending()) return;
+      const deviceId = info?.device_sessions ? getDeviceId() : null;
+      const signingKey = info?.device_sessions ? getDeviceSigningKey() : getSecretKey();
+      handRemoteAuthToShell(authState === 'authenticated' && signingKey
+        ? { deviceId, signingKey } : null);
+    };
+    sync();
+    window.addEventListener(AUTH_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, sync);
+  }, [authState, info?.device_sessions]);
 
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
+  useEffect(() => {
+    const expired = () => {
+      if (authState !== 'authenticated' || !info?.required || isAuthTransitionPending()) return;
+      clearDeviceSession();
+      setSkInput('');
+      setError('Signed out.');
+      setAuthState('needs_auth');
+      handRemoteAuthToShell(null);
+    };
+    const unsubscribe = subscribeToLogout(() => {
+      setSkInput('');
       setError(null);
-      setVerifying(true);
+      setAuthState('needs_auth');
+      handRemoteAuthToShell(null);
+    });
+    window.addEventListener(AUTH_EXPIRED_EVENT, expired);
+    return () => { unsubscribe(); window.removeEventListener(AUTH_EXPIRED_EVENT, expired); };
+  }, [authState, info?.required]);
 
-      try {
-        // Temporarily store the SK so computeHmac can use it
-        setSecretKey(skInput);
-        if (await verifySk()) {
-          setAuthState("authenticated");
-        } else {
-          clearSecretKey();
-          setError("Invalid secret key");
-        }
-      } catch {
-        clearSecretKey();
-        setError("Connection failed");
+  useEffect(() => {
+    if (authState === 'authenticated') return;
+    const online = () => { void initialize(); };
+    window.addEventListener('online', online);
+    return () => window.removeEventListener('online', online);
+  }, [authState, initialize]);
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (verifying) return;
+    setVerifying(true);
+    setError(null);
+    try {
+      if (trusted && (!info || !canTrustDevice(info))) {
+        throw new AuthRequestError(409, 'Update Grove to remember this device.');
       }
-      setVerifying(false);
-    },
-    [skInput, verifySk]
+      if (info?.device_sessions) {
+        await loginDevice(skInput, trusted, canUseTrustedDeviceCookie(info));
+      } else { await legacyLogin(skInput); }
+      setSkInput('');
+      offeredSecret.current = null;
+      setAuthState('authenticated');
+    } catch (err) {
+      if (err instanceof AuthRequestError && err.status === 401) {
+        clearSecretKey();
+        setError('Invalid secret key or authorization. Please try again.');
+      } else if (err instanceof AuthRequestError && err.status === 409) { setError(err.message); }
+      else { setError('Connection failed. Please try again.'); }
+    } finally { setVerifying(false); }
+  };
+
+  if (authState === 'loading') return (
+    <div className="flex min-h-dvh items-center justify-center bg-[#0a0a0a]">
+      <div role="status" aria-label="Connecting" className="w-8 h-8 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" />
+    </div>
   );
+  if (authState === 'authenticated') return <>{children}</>;
 
-  if (authState === "loading") {
-    return (
-      <div className="flex h-screen items-center justify-center bg-[#0a0a0a]">
-        <div className="w-8 h-8 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (authState === "authenticated") {
-    return <>{children}</>;
-  }
-
-  // SK input page
   return (
-    <div className="flex h-screen items-center justify-center bg-[#0a0a0a] p-4">
+    <div className="flex min-h-dvh items-center justify-center bg-[#0a0a0a] p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-white mb-2">Grove</h1>
-          <p className="text-[#888] text-sm">Enter the secret key to continue</p>
+          <p className="text-[#888] text-sm">{authState === 'connection_error' ? 'Connection unavailable' : 'Enter the secret key to continue'}</p>
         </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <input
-              type="password"
-              value={skInput}
-              onChange={(e) => {
-                setSkInput(e.target.value);
-                if (error) setError(null);
-              }}
-              placeholder="Secret key"
-              autoFocus
-              className={`w-full px-4 py-3 bg-[#1a1a1a] border rounded-lg text-white placeholder-[#666] focus:outline-none focus:ring-1 font-mono text-sm transition-colors ${
-                error
-                  ? "border-red-500 focus:border-red-500 focus:ring-red-500"
-                  : "border-[#333] focus:border-[#3b82f6] focus:ring-[#3b82f6]"
-              }`}
-            />
-            {error && (
-              <p className="mt-1.5 text-red-400 text-xs">{error}</p>
-            )}
+        {authState === 'connection_error' ? (
+          <div className="space-y-4">
+            <p role="alert" className="text-sm text-[#aaa]">{error}</p>
+            <button onClick={() => { void initialize(); }} className="w-full py-3 bg-[#3b82f6] text-white rounded-lg text-sm">Retry connection</button>
           </div>
-
-          <button
-            type="submit"
-            disabled={!skInput || verifying}
-            className="w-full py-3 bg-[#3b82f6] hover:bg-[#2563eb] disabled:bg-[#333] disabled:text-[#666] text-white rounded-lg font-medium transition-colors text-sm"
-          >
-            {verifying ? "Verifying..." : "Connect"}
-          </button>
-        </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <input type="password" name="password" autoComplete="current-password" value={skInput}
+              onChange={event => { setSkInput(event.target.value); setError(null); }}
+              placeholder="Secret key" aria-label="Secret key" autoFocus
+              className="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333] rounded-lg text-white placeholder-[#666] focus:outline-none focus:ring-1 focus:ring-[#3b82f6] font-mono text-sm" />
+            {info?.required && (
+              <Checkbox checked={trusted} onChange={setTrusted} label="Trust this device"
+                className="min-h-11 gap-2.5 text-sm text-[#bbb] transition-colors hover:text-white [--color-bg:#1a1a1a] [--color-border:#444] [--color-highlight:#3b82f6]" />
+            )}
+            {error && <p role="alert" className="text-red-400 text-xs">{error}</p>}
+            <button type="submit" disabled={!skInput || verifying} className="w-full py-3 bg-[#3b82f6] hover:bg-[#2563eb] disabled:bg-[#333] disabled:text-[#666] text-white rounded-lg font-medium text-sm">
+              {verifying ? 'Connecting…' : 'Connect'}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );
