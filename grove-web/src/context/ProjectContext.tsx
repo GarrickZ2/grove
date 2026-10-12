@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import type { Project, Task } from "../data/types";
+import { readNavigationState } from "../utils/navigationState";
 import {
   listProjects,
   getProject,
@@ -102,6 +103,7 @@ function convertProjectListItem(item: ProjectListItem): Project {
 }
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
+  const [restoredProjectId] = useState(() => readNavigationState()?.projectId ?? null);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
@@ -119,6 +121,19 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       const response = await listProjects();
       setProjects(response.projects.map(convertProjectListItem));
       setCurrentProjectId(response.current_project_id);
+      if (isInitial) {
+        let savedProjectId: string | null = null;
+        try { savedProjectId = localStorage.getItem("grove-selected-project"); } catch { /* storage unavailable */ }
+        // A reload restores this tab's project before the server's launch directory.
+        // A fresh tab still follows the existing startup selection order.
+        const candidates = [restoredProjectId, response.current_project_id, savedProjectId, response.projects[0]?.id];
+        const projectId = candidates.find(id => id && response.projects.some(project => project.id === id));
+        if (projectId) {
+          const project = convertProject(await getProject(projectId));
+          setSelectedProject(project);
+          try { localStorage.setItem("grove-selected-project", project.id); } catch { /* storage unavailable */ }
+        }
+      }
       initialLoadDone.current = true;
     } catch (err) {
       console.error("Failed to load projects:", err);
@@ -127,7 +142,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setCurrentProjectId(null);
     }
     if (isInitial) setIsLoading(false);
-  }, []);
+  }, [restoredProjectId]);
 
   // Load full project data when selected
   const loadProjectDetails = useCallback(async (projectId: string) => {

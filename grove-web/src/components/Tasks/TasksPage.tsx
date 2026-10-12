@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, ArrowLeft, GitBranch } from "lucide-react";
+import { Plus, GitBranch } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "./TaskView";
@@ -29,6 +29,7 @@ import {
 import type { Task, TaskFilter } from "../../data/types";
 import { convertTaskResponse } from "../../utils/taskConvert";
 import { fuzzyFindByName } from "../../utils/fuzzySearch";
+import { writeTaskPageLocation } from "../../utils/navigationState";
 import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
 import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
 import type { PanelType } from "./PanelSystem/types";
@@ -42,6 +43,9 @@ interface TasksPageProps {
   initialChatId?: string;
   /** Initial view mode to use (from navigation, e.g. "terminal") */
   initialViewMode?: string;
+  initialTaskFilter?: TaskFilter;
+  initialShowDetail?: boolean;
+  restoringNavigation?: boolean;
   /** Callback when navigation data has been consumed */
   onNavigationConsumed?: () => void;
   /** Fallback for Cmd+N navigation when workspace doesn't have a matching tab.
@@ -59,7 +63,7 @@ interface TasksPageProps {
   pageVisible?: boolean;
 }
 
-export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNavigationConsumed, onNavByIndex, initialOpenNewTask, exitWorkspaceSignal, pageVisible = true }: TasksPageProps) {
+export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initialTaskFilter, initialShowDetail, restoringNavigation = false, onNavigationConsumed, onNavByIndex, initialOpenNewTask, exitWorkspaceSignal, pageVisible = true }: TasksPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
   const prevProjectIdRef = useRef<string | undefined>(selectedProject?.id);
   const isStudio = selectedProject?.projectType === "studio";
@@ -67,9 +71,9 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   const { isMobile } = useIsMobile();
 
   // Zen-specific state
-  const [filter, setFilter] = useState<TaskFilter>("active");
+  const [filter, setFilter] = useState<TaskFilter>(initialTaskFilter ?? "active");
   // Mobile: whether the detail view is showing (stacked navigation)
-  const [mobileShowDetail, setMobileShowDetail] = useState(false);
+  const [mobileShowDetail, setMobileShowDetail] = useState(initialShowDetail ?? false);
   const [showNewTaskDialog, setShowNewTaskDialog] = useState(initialOpenNewTask ?? false);
   useEffect(() => {
     if (initialOpenNewTask) {
@@ -83,6 +87,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   const [createError, setCreateError] = useState<string | null>(null);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [isLoadingArchived, setIsLoadingArchived] = useState(false);
+  const [archivedLoadedFor, setArchivedLoadedFor] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   // Mirror fullscreen state onto <body> so the sidebar (lives in App.tsx,
   // out of TasksPage's tree) can be hidden via CSS. Otherwise toggling
@@ -101,9 +106,13 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
 
   // Page state hook
-  const [pageState, pageHandlers] = useTaskPageState();
+  const [pageState, pageHandlers] = useTaskPageState(isMobile);
   // Entering a workspace also enters the detail stack at any viewport width.
   if (pageState.inWorkspace && !mobileShowDetail) setMobileShowDetail(true);
+  // A desktop Overview or a saved detail becomes Workspace on mobile.
+  if (isMobile && mobileShowDetail && pageState.selectedTask && !pageState.inWorkspace) {
+    pageHandlers.setInWorkspace(true);
+  }
   const helpKey = useHelpKeyDisplay();
   useReportDebugId("taskId", pageState.selectedTask?.id ?? null);
 
@@ -156,6 +165,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
         })
         .finally(() => {
           if (cancelled) return;
+          setArchivedLoadedFor(selectedProject.id);
           setIsLoadingArchived(false);
         });
     }
@@ -179,27 +189,49 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
 
   // Handle initial task selection from navigation
   useEffect(() => {
-    if (!initialTaskId || activeTasks.length === 0) return;
-
-    const task = activeTasks.find((t) => t.id === initialTaskId);
-    if (!task) return;
+    if (!selectedProject || selectedProject.taskCount !== undefined) return;
+    if (!initialTaskId && !restoringNavigation) return;
+    const activeTask = activeTasks.find((t) => t.id === initialTaskId);
+    if (restoringNavigation && !activeTask && filter === "archived" && (isLoadingArchived || archivedLoadedFor !== selectedProject.id)) return;
+    const task = activeTask ?? (restoringNavigation ? tasks.find((t) => t.id === initialTaskId) : undefined);
+    if (!task && !restoringNavigation) return;
 
     // Apply selection and consume navigation together after the effect.
     // Cancel stale requests if the target changes before the callback runs.
     let cancelled = false;
     Promise.resolve().then(() => {
       if (cancelled) return;
-      handleSelectTask(task);
+      if (task) {
+        handleSelectTask(task);
+        if (initialShowDetail !== undefined) setMobileShowDetail(initialShowDetail);
+      } else {
+        setMobileShowDetail(false);
+        pageHandlers.setInWorkspace(false);
+      }
 
-      // If initialViewMode is "terminal", enter Workspace
-      if (initialViewMode === "terminal") {
+      if (task && (isMobile || task.status !== "archived") && (initialViewMode === "terminal" || (isMobile && initialShowDetail !== false))) {
         pageHandlers.setInWorkspace(true);
+      } else if (restoringNavigation || (isMobile && initialShowDetail === false)) {
+        pageHandlers.setInWorkspace(false);
       }
 
       onNavigationConsumed?.();
     });
     return () => { cancelled = true; };
-  }, [initialTaskId, initialViewMode, activeTasks, onNavigationConsumed, pageHandlers, handleSelectTask]);
+  }, [selectedProject, initialTaskId, initialViewMode, initialShowDetail, restoringNavigation, activeTasks, tasks, filter, isLoadingArchived, archivedLoadedFor, onNavigationConsumed, pageHandlers, handleSelectTask, isMobile]);
+
+  useEffect(() => {
+    if (!pageVisible || !selectedProject || selectedProject.taskCount !== undefined || initialTaskId || restoringNavigation) return;
+    if (filter === "archived" && archivedLoadedFor !== selectedProject.id) return;
+    if (pageState.selectedTask && !activeTasks.some(task => task.id === pageState.selectedTask?.id) && !tasks.some(task => task.id === pageState.selectedTask?.id)) return;
+    writeTaskPageLocation("zen", {
+      projectId: selectedProject.id,
+      taskId: pageState.selectedTask?.id ?? null,
+      inWorkspace: pageState.inWorkspace,
+      showDetail: mobileShowDetail,
+      filter,
+    });
+  }, [pageVisible, selectedProject, initialTaskId, restoringNavigation, activeTasks, tasks, pageState.selectedTask, pageState.inWorkspace, mobileShowDetail, filter, archivedLoadedFor]);
 
   // Navigate to the specific chat session if provided (deep-link — tray,
   // notifications, the Dynamic Island live-activity alert, ...). Separate
@@ -221,7 +253,13 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   }, [pageState.inWorkspace]);
   useEffect(() => {
     if (!exitWorkspaceSignal) return;
-    if (inWorkspaceRef.current) pageHandlers.handleCloseTask();
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      setMobileShowDetail(false);
+      if (inWorkspaceRef.current) pageHandlers.handleCloseTask();
+    });
+    return () => { cancelled = true; };
     // pageHandlers intentionally omitted: it's recreated every render, which
     // would re-fire this effect after re-entering Workspace and immediately
     // close it. handleCloseTask is useCallback-stable.
@@ -319,14 +357,11 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
     pageHandlers.handleDoubleClickTask(task);
   }, [pageHandlers]);
 
-  // Mobile: go back from detail to list
+  // Mobile has only the list and Workspace; Back returns directly to the list.
   const handleMobileBack = useCallback(() => {
-    if (pageState.inWorkspace) {
-      pageHandlers.handleCloseTask();
-    } else {
-      setMobileShowDetail(false);
-    }
-  }, [pageState.inWorkspace, pageHandlers]);
+    setMobileShowDetail(false);
+    pageHandlers.setInWorkspace(false);
+  }, [pageHandlers]);
 
   // Handle recover archived task (Zen-only)
   const handleRecover = useCallback(async () => {
@@ -635,9 +670,9 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
     defaultBindings: [{ key: "Escape" }],
     scope: "tasks",
     hidden: true,
-    handler: pageHandlers.handleCloseTask,
+    handler: isMobile ? handleMobileBack : pageHandlers.handleCloseTask,
     enabled: () => pageState.inWorkspace || hasTask,
-  }, [pageHandlers, pageState.inWorkspace, hasTask]);
+  }, [pageHandlers, pageState.inWorkspace, hasTask, isMobile, handleMobileBack]);
 
   // --- Workspace tab switching (Cmd+1-9 / Cmd+Shift+[ ] / Option+Cmd+Up/Down / Cmd+W).
   // These live in the `workspace` scope (pushed by TaskView) so they only
@@ -916,17 +951,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
       {/* Header - hidden in fullscreen and workspace */}
       {!isFullscreen && !pageState.inWorkspace && (
         <div className="flex items-center justify-between mb-4 flex-shrink-0">
-          {isMobile && mobileShowDetail ? (
-            <button
-              onClick={handleMobileBack}
-              className="flex items-center gap-1 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </button>
-          ) : (
-            <h1 className="text-xl font-semibold text-[var(--color-text)] select-none">Tasks</h1>
-          )}
+          <h1 className="text-xl font-semibold text-[var(--color-text)] select-none">Tasks</h1>
           <div className="flex items-center gap-2">
             {!isMobile && (
               <button
@@ -937,12 +962,10 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
                 <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">{helpKey}</kbd>
               </button>
             )}
-            {!(isMobile && mobileShowDetail) && (
-              <Button onClick={() => setShowNewTaskDialog(true)} size="sm">
-                <Plus className="w-4 h-4 mr-1.5" />
-                New Task
-              </Button>
-            )}
+            <Button onClick={() => setShowNewTaskDialog(true)} size="sm">
+              <Plus className="w-4 h-4 mr-1.5" />
+              New Task
+            </Button>
           </div>
         </div>
       )}
@@ -951,37 +974,9 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
       <div className="flex-1 relative overflow-hidden">
         <div className={`absolute inset-0 ${pageState.inWorkspace ? "pointer-events-none" : ""}`} aria-hidden={pageState.inWorkspace || undefined}>
         {isMobile ? (
-          /* Mobile: Stacked navigation */
+          /* Mobile: List or Workspace, without an Overview step. */
           <AnimatePresence initial={false}>
-            {!pageState.inWorkspace && (mobileShowDetail && pageState.selectedTask ? (
-              <motion.div
-                key="mobile-detail"
-                initial={{ x: "100%" }}
-                animate={{ x: 0 }}
-                exit={{ x: "100%" }}
-                transition={{ type: "spring", damping: 30, stiffness: 300 }}
-                className="absolute inset-0"
-              >
-                  <TaskInfoPanel
-                    projectId={selectedProject.id}
-                    task={pageState.selectedTask}
-                    projectName={selectedProject.name}
-                    onClose={handleMobileBack}
-                    onEnterWorkspace={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterWorkspace : undefined}
-                    onAddPanel={pageState.selectedTask.status !== "archived" ? handleAddPanelFromInfo : undefined}
-                    onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
-                    onClean={opsHandlers.handleClean}
-                    onCommit={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
-                    onRebase={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleRebase : undefined}
-                    onSync={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleSync : undefined}
-                    onMerge={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleMerge : undefined}
-                    onArchive={pageState.selectedTask.status !== "archived" ? opsHandlers.handleArchive : undefined}
-                    onReset={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleReset : undefined}
-                    activeTab={pageState.infoPanelTab}
-                    onTabChange={pageHandlers.setInfoPanelTab}
-                  />
-              </motion.div>
-            ) : (
+            {!pageState.inWorkspace && (
               <motion.div
                 key="mobile-list"
                 initial={{ opacity: 1 }}
@@ -1004,7 +999,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
                   fullWidth
                 />
               </motion.div>
-            ))}
+            )}
           </AnimatePresence>
         ) : (
           /* Desktop: Side-by-side layout */

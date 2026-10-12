@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, ArrowLeft, ChevronRight, Laptop, Radio, Plus, Folder } from "lucide-react";
+import { Search, ChevronRight, Laptop, Radio, Plus, Folder } from "lucide-react";
 import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "../Tasks/TaskView";
 import { CommitDialog, ConfirmDialog, DirtyBranchDialog, MergeDialog } from "../Dialogs";
@@ -29,6 +29,7 @@ import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
 import type { PanelType } from "../Tasks/PanelSystem/types";
 import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
 import { fuzzyFindByName } from "../../utils/fuzzySearch";
+import { writeTaskPageLocation } from "../../utils/navigationState";
 
 
 interface DragInfo {
@@ -80,6 +81,8 @@ interface BlitzPageProps {
   initialProjectId?: string;
   initialChatId?: string;
   initialViewMode?: string;
+  initialShowDetail?: boolean;
+  restoringNavigation?: boolean;
   onNavigationConsumed?: () => void;
 }
 
@@ -90,6 +93,8 @@ export function BlitzPage({
   initialProjectId,
   initialChatId,
   initialViewMode,
+  initialShowDetail,
+  restoringNavigation = false,
   onNavigationConsumed,
 }: BlitzPageProps) {
   const { blitzTasks, isLoading, refresh } = useBlitzTasks();
@@ -121,7 +126,7 @@ export function BlitzPage({
 
   // Blitz-specific state
   const [selectedBlitzTask, setSelectedBlitzTask] = useState<BlitzTask | null>(null);
-  const [mobileShowDetail, setMobileShowDetail] = useState(false);
+  const [mobileShowDetail, setMobileShowDetail] = useState(initialShowDetail ?? false);
 
   // ── Unified drag-and-drop state ──────────────────────────────────────────
   // Single ref tracks the drag source; render state tracks visual feedback
@@ -205,8 +210,22 @@ export function BlitzPage({
   const selectedTask = liveSelected?.task ?? null;
 
   // Page state hook
-  const [pageState, pageHandlers] = useTaskPageState();
+  const [pageState, pageHandlers] = useTaskPageState(isMobile);
   if (pageState.inWorkspace && !mobileShowDetail) setMobileShowDetail(true);
+  if (isMobile && mobileShowDetail && selectedTask && !pageState.inWorkspace) {
+    pageHandlers.setInWorkspace(true);
+  }
+
+  useEffect(() => {
+    if (isLoading || initialTaskId || restoringNavigation) return;
+    writeTaskPageLocation("blitz", {
+      projectId: activeProjectId ?? "",
+      taskId: selectedTask?.id ?? null,
+      inWorkspace: pageState.inWorkspace,
+      showDetail: mobileShowDetail,
+      filter: "active",
+    });
+  }, [isLoading, initialTaskId, restoringNavigation, activeProjectId, selectedTask?.id, pageState.inWorkspace, mobileShowDetail]);
 
   // Post-merge archive hook (with Blitz-specific projectId tracking)
   const [postMergeState, postMergeHandlers] = usePostMergeArchive({
@@ -438,10 +457,10 @@ export function BlitzPage({
   // notification while in Blitz mode produced no visible effect:
   // navigationData was set but BlitzPage never read it.
   useEffect(() => {
-    if (!initialTaskId) return;
+    if (!initialTaskId && !restoringNavigation) return;
     // Wait for tasks to load — blitzTasks is the single source of truth
     // across all projects in Blitz (vs TasksPage's selectedProject.tasks).
-    if (blitzTasks.length === 0) return;
+    if (isLoading) return;
 
     // Filter by both task id AND project id. The local task always has
     // id "_local" (LOCAL_TASK_ID, one per project), so a project-less
@@ -459,10 +478,22 @@ export function BlitzPage({
         (initialProjectId === undefined || t.projectId === initialProjectId),
     );
     if (!bt) {
-      console.warn("[BlitzNav] task NOT FOUND in blitzTasks", {
-        initialTaskId,
-        initialProjectId,
-      });
+      if (initialTaskId) {
+        console.warn("[BlitzNav] task NOT FOUND in blitzTasks", {
+          initialTaskId,
+          initialProjectId,
+        });
+      }
+      if (restoringNavigation) {
+        let cancelled = false;
+        Promise.resolve().then(() => {
+          if (cancelled) return;
+          setMobileShowDetail(false);
+          pageHandlers.setInWorkspace(false);
+          onNavigationConsumed?.();
+        });
+        return () => { cancelled = true; };
+      }
       return;
     }
 
@@ -505,14 +536,16 @@ export function BlitzPage({
     // truth for the right-pane TaskView and the list-item "isSelected"
     // styling (BlitzTaskListItem.tsx reads it via prop).
     setSelectedBlitzTask(bt);
-    setMobileShowDetail(true);
+    setMobileShowDetail(initialShowDetail ?? true);
 
     // viewMode "terminal" is the tray/notification "open this in detail"
     // signal — mirror TasksPage's behavior by entering the workspace and
     // ensuring the chat panel is open (notifications are chat-bound).
-    if (initialViewMode === "terminal") {
+    if (initialViewMode === "terminal" || (isMobile && initialShowDetail !== false)) {
       pageHandlers.setInWorkspace(true);
-      ensureRadioPanel("chat");
+      if (!restoringNavigation && initialViewMode === "terminal") ensureRadioPanel("chat");
+    } else if (restoringNavigation) {
+      pageHandlers.setInWorkspace(false);
     }
 
     // Scroll the row into view. Retry briefly because expanding a
@@ -536,7 +569,7 @@ export function BlitzPage({
     // onNavigationConsumed / pageHandlers intentionally omitted from
     // deps: pageHandlers is recreated every render (re-firing would
     // re-enter workspace); onNavigationConsumed is a stable setter.
-  }, [initialTaskId, initialProjectId, initialChatId, initialViewMode, blitzTasks, customGroups, expandedGroups, mainTasksExpanded, localTasksExpanded, ensureRadioPanel, onNavigationConsumed, setGroupExpanded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialTaskId, initialProjectId, initialChatId, initialViewMode, initialShowDetail, restoringNavigation, isLoading, blitzTasks, customGroups, expandedGroups, mainTasksExpanded, localTasksExpanded, ensureRadioPanel, onNavigationConsumed, setGroupExpanded, isMobile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Navigate to the specific chat session if provided (deep-link — tray,
   // notifications, the Dynamic Island live-activity alert, ...). Separate
@@ -553,7 +586,8 @@ export function BlitzPage({
   const handleSelectTask = useCallback((bt: BlitzTask) => {
     setSelectedBlitzTask(bt);
     setMobileShowDetail(true);
-  }, []);
+    if (isMobile) pageHandlers.setInWorkspace(true);
+  }, [isMobile, pageHandlers]);
 
   const handleDoubleClickTask = useCallback((bt: BlitzTask) => {
     if (bt.task.status === "archived") return;
@@ -712,12 +746,15 @@ export function BlitzPage({
 
   // Wrap page handlers to handle selectedBlitzTask
   const handleCloseTask = useCallback(() => {
-    if (pageState.inWorkspace) {
+    if (isMobile) {
+      setMobileShowDetail(false);
+      pageHandlers.setInWorkspace(false);
+    } else if (pageState.inWorkspace) {
       pageHandlers.handleCloseTask();
     } else {
       setSelectedBlitzTask(null);
     }
-  }, [pageState.inWorkspace, pageHandlers]);
+  }, [isMobile, pageState.inWorkspace, pageHandlers]);
 
   // Handle adding panel from Info Panel (enter workspace + open panel)
   const handleAddPanelFromInfo = useCallback((type: PanelType) => {
@@ -1162,14 +1199,6 @@ export function BlitzPage({
     return () => unregisterPageCommands();
   }, [registerPageCommands, unregisterPageCommands]);
 
-  const handleMobileBack = useCallback(() => {
-    if (pageState.inWorkspace) {
-      pageHandlers.setInWorkspace(false);
-    } else {
-      setMobileShowDetail(false);
-    }
-  }, [pageState.inWorkspace, pageHandlers]);
-
   return (
     <>
       {/* Blitz Sidebar — replaces the normal app sidebar.
@@ -1180,7 +1209,7 @@ export function BlitzPage({
       <aside
         className={
           isMobile
-            ? `${mobileShowDetail ? "hidden" : "w-full h-full"} bg-[var(--color-bg)] flex flex-col flex-shrink-0`
+            ? `${pageState.inWorkspace ? "hidden" : "w-full h-full"} bg-[var(--color-bg)] flex flex-col flex-shrink-0`
             : "blitz-area glass-panel fixed top-3 bottom-3 left-3 w-72 z-40 rounded-2xl flex flex-col"
         }
       >
@@ -1594,7 +1623,7 @@ export function BlitzPage({
       <main
         className={
           isMobile
-            ? `flex-1 overflow-hidden relative ${!mobileShowDetail ? "hidden" : ""}`
+            ? `flex-1 overflow-hidden relative ${!pageState.inWorkspace ? "hidden" : ""}`
             : "blitz-area flex-1 ml-[312px] mt-3 mr-3 mb-3 rounded-2xl bg-[var(--color-bg)] overflow-hidden relative"
         }
         style={
@@ -1606,18 +1635,6 @@ export function BlitzPage({
               }
         }
       >
-        {/* Mobile back button */}
-        {isMobile && mobileShowDetail && (
-          <div className="absolute top-2 left-2 z-10">
-            <button
-              onClick={handleMobileBack}
-              className="flex items-center gap-1 px-2 py-1 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-bg)]/80 backdrop-blur rounded-lg transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </button>
-          </div>
-        )}
         {/* Hairline inner padding so child content doesn't get clipped by
            the main card's rounded-2xl corners. Matches Zen's workspace-mode
            p-2 (8px); Zen's non-workspace pages use p-6 instead. Blitz uses
@@ -1636,7 +1653,7 @@ export function BlitzPage({
               className={`absolute inset-0 ${pageState.inWorkspace ? "pointer-events-none" : ""}`}
             >
               <AnimatePresence mode="wait">
-                {!pageState.inWorkspace && currentSelected ? (
+                {!isMobile && !pageState.inWorkspace && currentSelected ? (
                   <motion.div
                     key="info-panel"
                     initial={{ opacity: 0, x: 20 }}

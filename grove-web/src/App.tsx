@@ -44,6 +44,7 @@ import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
 import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
 import { readLastProjectView, writeLastProjectView } from "./utils/lastProjectView";
+import { readNavigationState, restoredTaskNavigation, writeNavigationState } from "./utils/navigationState";
 import { fuzzyFindByName } from "./utils/fuzzySearch";
 import { useCommand, useContextKey, commandRegistry, useVoiceControlContext } from "./keyboard";
 import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette";
@@ -147,9 +148,10 @@ function AppContent() {
   // can't be guaranteed to land on a sketch view.
   const addLibrary = useAddLibraryHashHandler();
 
-  const [activeItem, setActiveItem] = useState("dashboard");
+  const [restoredNavigation] = useState(readNavigationState);
+  const [activeItem, setActiveItem] = useState(restoredNavigation?.page ?? "dashboard");
   const [connectOpen, setConnectOpen] = useState(false);
-  const [tasksMode, setTasksMode] = useState<TasksMode>("zen");
+  const [tasksMode, setTasksMode] = useState<TasksMode>(restoredNavigation?.tasksMode ?? "zen");
   // Ref mirror of tasksMode for use inside stable callbacks (e.g. the
   // tray:navigate listener) that capture the initial closure and would
   // otherwise see a stale mode. Sync via effect — refs cannot be
@@ -272,8 +274,8 @@ function AppContent() {
     setSidebarIsland(next === "island");
     setSidebarCollapsed(next === "collapsed");
   }, []);
-  const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
-  const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
+  const [hasExitedWelcome, setHasExitedWelcome] = useState(restoredNavigation?.hasExitedWelcome ?? false);
+  const [navigationData, setNavigationData] = useState(() => restoredTaskNavigation(restoredNavigation));
 
   // Installed plugins that contribute a top-level sidebar page.
   // the sidebar renders a nav entry per plugin (id `plugin:<id>`) and
@@ -571,6 +573,11 @@ function AppContent() {
     writeLastProjectView(selectedProject.id, activeItem);
   }, [selectedProject, activeItem]);
 
+  useEffect(() => {
+    if (isLoading || (projects.length > 0 && !selectedProject)) return;
+    writeNavigationState({ page: activeItem, projectId: selectedProject?.id ?? null, tasksMode, hasExitedWelcome });
+  }, [isLoading, projects.length, selectedProject, activeItem, tasksMode, hasExitedWelcome]);
+
   // Initialize agent configuration on app startup
   useEffect(() => {
     const initializeAgentConfig = async () => {
@@ -719,6 +726,14 @@ function AppContent() {
   // stored in state) so we don't setState inside an effect.
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders
   const [autoNavigatedFor, setAutoNavigatedFor] = useState<string | null>(null);
+  const [restoredProjectChecked, setRestoredProjectChecked] = useState(false);
+  if (!isLoading && !restoredProjectChecked) {
+    setRestoredProjectChecked(true);
+    if (restoredNavigation?.projectId && restoredNavigation.projectId !== selectedProject?.id && tasksMode === "zen") {
+      setNavigationData(null);
+      if (!["settings", "projects", "skills", "ai"].includes(activeItem)) setActiveItem("dashboard");
+    }
+  }
   if (
     currentProjectId &&
     selectedProject &&
@@ -1563,6 +1578,8 @@ function AppContent() {
               initialProjectId={navigationData?.projectId as string | undefined}
               initialChatId={navigationData?.chatId as string | undefined}
               initialViewMode={navigationData?.viewMode as string | undefined}
+              initialShowDetail={navigationData?.showDetail as boolean | undefined}
+              restoringNavigation={navigationData?.restore === true}
               onNavigationConsumed={() => setNavigationData(null)}
             />
           </motion.div>
@@ -1609,6 +1626,9 @@ function AppContent() {
                   initialTaskId={navigationData?.taskId as string | undefined}
                   initialChatId={navigationData?.chatId as string | undefined}
                   initialViewMode={navigationData?.viewMode as string | undefined}
+                  initialTaskFilter={navigationData?.taskFilter as "active" | "archived" | undefined}
+                  initialShowDetail={navigationData?.showDetail as boolean | undefined}
+                  restoringNavigation={navigationData?.restore === true}
                   initialOpenNewTask={navigationData?.openNewTask as boolean | undefined}
                   onNavigationConsumed={() => setNavigationData(null)}
                   onNavByIndex={navigateSidebar}

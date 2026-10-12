@@ -59,7 +59,7 @@ interface TaskPageHandlers {
  *
  * @returns [state, handlers]
  */
-export function useTaskPageState(): [TaskPageState, TaskPageHandlers] {
+export function useTaskPageState(isMobile = false): [TaskPageState, TaskPageHandlers] {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [inWorkspace, setInWorkspace] = useState(false);
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
@@ -69,11 +69,11 @@ export function useTaskPageState(): [TaskPageState, TaskPageHandlers] {
   const [searchQuery, setSearchQuery] = useState("");
   const [pendingPanel, setPendingPanel] = useState<PanelType | null>(null);
 
-  // Handle single click - show Info Panel (stay in Task List page)
+  // Mobile selection enters Workspace; desktop selection shows the Info Panel.
   const handleSelectTask = useCallback((task: Task) => {
     setSelectedTask(task);
-    // inWorkspace remains unchanged
-  }, []);
+    if (isMobile) setInWorkspace(true);
+  }, [isMobile]);
 
   // Handle double click - enter Workspace with default layout
   const handleDoubleClickTask = useCallback((task: Task) => {

@@ -119,6 +119,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
           key={`${ctx.projectId}:${ctx.task.id}`}
           projectId={ctx.projectId}
           taskId={ctx.task.id}
+          finished={ctx.task.status === "archived"}
           fullscreen
           onNavigateToFile={ctx.navigateToFile}
           onChatBecameIdle={ctx.onChatBecameIdle}
