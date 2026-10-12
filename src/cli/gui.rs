@@ -9,6 +9,40 @@ use std::sync::Arc;
 
 const DAEMON_ENV: &str = "GROVE_GUI_DAEMON";
 
+/// Tauri sets the small window icon, but its Windows runtime leaves the large
+/// taskbar icon unset. Use the icon resource embedded by tauri-build for it.
+#[cfg(target_os = "windows")]
+fn set_windows_taskbar_icon(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        LoadImageW, SendMessageW, ICON_BIG, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED, WM_SETICON,
+    };
+
+    let hwnd = window.hwnd()?.0;
+    // SAFETY: called during Tauri setup with a live main-window handle. The
+    // executable module and LR_SHARED's icon live for the process lifetime;
+    // the shared icon must not be destroyed. Resource 32512 is set by tauri-build.
+    unsafe {
+        let module = GetModuleHandleW(std::ptr::null());
+        if module.is_null() {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let icon = LoadImageW(
+            module,
+            32512 as *const u16,
+            IMAGE_ICON,
+            0,
+            0,
+            LR_DEFAULTSIZE | LR_SHARED,
+        );
+        if icon.is_null() {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, icon as isize);
+    }
+    Ok(())
+}
+
 pub static TAURI_APP: once_cell::sync::OnceCell<tauri::AppHandle> =
     once_cell::sync::OnceCell::new();
 static GUI_PORT: once_cell::sync::OnceCell<u16> = once_cell::sync::OnceCell::new();
@@ -661,6 +695,11 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
 
             #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             let main_window = builder.build()?;
+
+            #[cfg(target_os = "windows")]
+            if let Err(error) = set_windows_taskbar_icon(&main_window) {
+                eprintln!("[Grove] failed to set Windows taskbar icon: {error}");
+            }
 
             // WKWebView on macOS does NOT expose `navigator.mediaDevices` by
             // default — getUserMedia returns "undefined is not an object" and
