@@ -8,6 +8,7 @@
   --color-border: #27272a;
   --color-text: #fafafa;
   --color-text-muted: #71717a;
+  --agent-monochrome-icon-filter: brightness(0) invert(1);
   --grove-text: #fafafa;
   --grove-bg: #0a0a0b;
   --color-highlight: #10b981;
@@ -16,6 +17,21 @@
   --color-warning: #f59e0b;
   --color-error: #ef4444;
   --color-info: #3b82f6;
+}
+
+/* Local monochrome artwork also renders through <img> or SVG <image>, so
+   currentColor cannot inherit Grove's text color. Keep colored artwork
+   (including kiro.svg) out of this list. */
+:is(img, image):is(
+  [src="/agent-icon/cursor.svg"], [href="/agent-icon/cursor.svg"],
+  [src="/agent-icon/githubcopilot.svg"], [href="/agent-icon/githubcopilot.svg"],
+  [src="/agent-icon/hermes.svg"], [href="/agent-icon/hermes.svg"],
+  [src="/agent-icon/openai.svg"], [href="/agent-icon/openai.svg"],
+  [src="/agent-icon/opencode.svg"], [href="/agent-icon/opencode.svg"],
+  [src="/agent-icon/traex.svg"], [href="/agent-icon/traex.svg"],
+  [src="/agent-icon/windsurf.svg"], [href="/agent-icon/windsurf.svg"]
+) {
+  filter: var(--agent-monochrome-icon-filter);
 }
 
 * {

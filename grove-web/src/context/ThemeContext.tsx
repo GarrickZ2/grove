@@ -457,6 +457,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--color-border", colors.border);
     root.style.setProperty("--color-text", colors.text);
     root.style.setProperty("--color-text-muted", colors.textMuted);
+    root.style.setProperty("--agent-monochrome-icon-filter", theme.isLight ? "brightness(0)" : "brightness(0) invert(1)");
     root.style.setProperty("--grove-text", colors.text);
     root.style.setProperty("--grove-bg", colors.bg);
     root.style.setProperty("--color-highlight", colors.highlight);

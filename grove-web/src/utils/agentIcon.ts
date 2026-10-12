@@ -252,7 +252,9 @@ function getImageComponent(url: string): ComponentType<{ size?: number; classNam
       alt: "",
       width: size,
       height: size,
-      style: { width: size, height: size },
+      // Registry SVGs use currentColor, which an <img> cannot inherit.
+      // Keep the monochrome artwork visible using Grove's active theme.
+      style: { width: size, height: size, filter: "var(--agent-monochrome-icon-filter)" },
       className,
       // NOT `loading="lazy"`. These icons are tiny (~20px) and live inside
       // modals / popovers that animate in — the browser's lazy-load
