@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Puzzle } from "lucide-react";
 import type { Plugin } from "../../api/plugins";
-import { ensurePluginAssetSession } from "./pluginAssetSession";
+import { ensurePluginAssetSession, getPluginAssetSessionGeneration, subscribeToPluginAssetSessionChanges } from "./pluginAssetSession";
 
 /** A manifest `icon` value is an image if it has an image extension or a path
  *  separator; otherwise it's treated as text (an emoji). */
@@ -24,14 +24,16 @@ export function PluginIcon({
 }) {
   const icon = plugin.icon;
   const isImage = Boolean(icon && (IMG_RE.test(icon) || icon.includes("/")));
-  const [assetSession, setAssetSession] = useState<{ pluginId: string; token: string } | null>(null);
+  const generation = useSyncExternalStore(subscribeToPluginAssetSessionChanges, getPluginAssetSessionGeneration);
+  const [assetSession, setAssetSession] = useState<{ pluginId: string; token: string; generation: number } | null>(null);
+  const [failedToken, setFailedToken] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     if (!isImage) return;
     void ensurePluginAssetSession(plugin.id)
       .then((token) => {
-        if (!cancelled) setAssetSession({ pluginId: plugin.id, token });
+        if (!cancelled) setAssetSession({ pluginId: plugin.id, token, generation });
       })
       .catch(() => {
         // Keep the safe fallback visible; a later mount can retry.
@@ -39,15 +41,15 @@ export function PluginIcon({
     return () => {
       cancelled = true;
     };
-  }, [plugin.id, isImage]);
+  }, [plugin.id, isImage, generation, failedToken]);
 
   if (icon && (IMG_RE.test(icon) || icon.includes("/"))) {
-    if (assetSession?.pluginId !== plugin.id) return <Puzzle className={className} />;
+    if (assetSession?.pluginId !== plugin.id || assetSession.generation !== generation || assetSession.token === failedToken) return <Puzzle className={className} />;
     const src = `/api/v1/plugin-assets/${assetSession.token}/${plugin.id}/${icon
       .split("/")
       .map(encodeURIComponent)
       .join("/")}`;
-    return <img src={src} alt="" className={`${className} object-contain`} />;
+    return <img src={src} alt="" className={`${className} object-contain`} onError={() => setFailedToken(assetSession.token)} />;
   }
   if (icon) {
     return (

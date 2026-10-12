@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { RefreshCw } from "lucide-react";
 import { apiClient, appendHmacToUrl } from "../../api/client";
 import { useProject, useTheme } from "../../context";
@@ -9,7 +9,7 @@ import {
   type PluginUiContribution,
   type PluginUiManifest,
 } from "./pluginEntry";
-import { ensurePluginAssetSession } from "./pluginAssetSession";
+import { ensurePluginAssetSession, getPluginAssetSessionGeneration, subscribeToPluginAssetSessionChanges } from "./pluginAssetSession";
 
 /** Encode each path segment but keep `/` separators (for the /data/{*path} route). */
 const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
@@ -60,7 +60,8 @@ export function PluginFrame({
 }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [entry, setEntry] = useState<string | null>(null);
-  const [assetSession, setAssetSession] = useState<{ pluginId: string; token: string } | null>(null);
+  const generation = useSyncExternalStore(subscribeToPluginAssetSessionChanges, getPluginAssetSessionGeneration);
+  const [assetSession, setAssetSession] = useState<{ pluginId: string; token: string | null; generation: number; reloadKey: number } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const { selectedProject, projects } = useProject();
   const { theme } = useTheme();
@@ -82,15 +83,15 @@ export function PluginFrame({
       .then(([token, manifest]) => {
         if (cancelled) return;
         setEntry(manifest ? resolvePluginEntry(manifest, contribution) : "index.html");
-        setAssetSession({ pluginId: plugin.id, token });
+        setAssetSession({ pluginId: plugin.id, token, generation, reloadKey });
       })
       .catch(() => {
-        if (!cancelled) setEntry("index.html");
+        if (!cancelled) setAssetSession({ pluginId: plugin.id, token: null, generation, reloadKey });
       });
     return () => {
       cancelled = true;
     };
-  }, [plugin.id, contribution]);
+  }, [plugin.id, contribution, generation, reloadKey]);
 
   // postMessage bridge.
   useEffect(() => {
@@ -301,7 +302,7 @@ export function PluginFrame({
       cancelled = true;
       es?.close();
     };
-  }, [plugin.id, taskId, plugin.contributes?.mcp, plugin.contributes?.backend]);
+  }, [plugin.id, taskId, plugin.contributes?.mcp, plugin.contributes?.backend, generation]);
 
   // Active-chat injection: tell the iframe which chat is currently focused, once
   // on mount and again whenever the focus changes. The real focused-chat id is
@@ -332,7 +333,7 @@ export function PluginFrame({
       iframe?.removeEventListener("load", onLoad);
       window.removeEventListener("grove-active-chat-changed", onChange);
     };
-  }, [plugin.id, taskId, reloadKey]);
+  }, [plugin.id, taskId, reloadKey, assetSession?.token]);
 
   // Push the theme into the iframe whenever it changes (the SDK requests the
   // initial one via `theme.get` on load; this keeps it live).
@@ -343,8 +344,9 @@ export function PluginFrame({
     );
   }, [theme]);
 
+  const sessionReady = assetSession?.pluginId === plugin.id && assetSession.generation === generation && assetSession.reloadKey === reloadKey;
   const src =
-    entry === null || assetSession?.pluginId !== plugin.id
+    entry === null || !sessionReady || !assetSession?.token
       ? undefined
       : `/api/v1/plugin-assets/${assetSession.token}/${plugin.id}/${entry}?v=${reloadKey}`;
 
@@ -376,7 +378,11 @@ export function PluginFrame({
         />
       ) : (
         <div className="flex flex-1 items-center justify-center text-xs text-[var(--color-text-muted)]">
-          Loading…
+          {sessionReady && !assetSession.token ? (
+            <button type="button" onClick={() => setReloadKey((key) => key + 1)} className="rounded-lg px-3 py-2 hover:bg-[var(--color-bg-secondary)]">
+              Retry
+            </button>
+          ) : "Loading…"}
         </div>
       )}
     </div>
