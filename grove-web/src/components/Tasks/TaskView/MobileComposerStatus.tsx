@@ -1,18 +1,7 @@
 import type { ComponentType } from "react";
 import { BookOpen, Brain, CircleAlert, Database, ListPlus, ListTodo, MessageSquarePlus } from "lucide-react";
 import { contextHealthColor, quotaBatteryIcon, quotaHealthColor } from "./quotaColors";
-
-export type MobileComposerPanel = "pending" | "todo" | "quota" | "context" | "memory" | "plan" | "previewComments";
-
-export const mobileComposerPanelTitles: Record<MobileComposerPanel, string> = {
-  pending: "Pending messages",
-  todo: "Todo",
-  quota: "Agent quota",
-  context: "Context usage",
-  memory: "Read memory",
-  plan: "Plan",
-  previewComments: "Preview comments",
-};
+import type { MobileComposerPanel } from "./mobileComposerPanels";
 
 interface MobileComposerStatusProps {
   pendingCount: number;

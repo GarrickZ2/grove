@@ -14,12 +14,7 @@ import { Brain, Zap } from "lucide-react";
 import { contextHealthColor } from "./quotaColors";
 import { formatTokens } from "../../Stats/formatters";
 import { useDefineCommand, useKeyboardScope } from "../../../keyboard";
-
-export interface ContextUsageData {
-  used: number;
-  size: number;
-  cost: { amount: number; currency: string } | null;
-}
+import { contextUsagePercent, type ContextUsageData } from "./contextUsage";
 
 interface ContextUsagePillProps {
   usage: ContextUsageData;
@@ -33,10 +28,6 @@ interface ContextUsagePillProps {
 
 /** Show the inline Compact button only once context pressure crosses this. */
 const COMPACT_BUTTON_THRESHOLD = 60;
-
-export function contextUsagePercent(usage: ContextUsageData): number {
-  return usage.size > 0 ? Math.max(0, Math.min(100, Math.round((usage.used / usage.size) * 100))) : 0;
-}
 
 const POPOVER_GAP = 8;
 const MIN_WIDTH = 240;

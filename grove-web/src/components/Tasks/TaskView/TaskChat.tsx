@@ -232,9 +232,11 @@ import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { getProjectStyle } from "../../../utils/projectStyle";
 import { useAgentQuota, useRadioEvents } from "../../../hooks";
 import { AgentQuotaCard, AgentQuotaPopover } from "./AgentQuotaPopover";
-import { ContextUsageDetails, ContextUsagePill, contextUsagePercent } from "./ContextUsagePill";
+import { ContextUsageDetails, ContextUsagePill } from "./ContextUsagePill";
+import { contextUsagePercent } from "./contextUsage";
 import { ChatComposerPanel } from "./ChatComposerPanel";
-import { MobileComposerStatus, mobileComposerPanelTitles, type MobileComposerPanel } from "./MobileComposerStatus";
+import { MobileComposerStatus } from "./MobileComposerStatus";
+import { mobileComposerPanelTitles, type MobileComposerPanel } from "./mobileComposerPanels";
 import { TurnUsageMeta } from "./TurnUsageMeta";
 import { collectReadMemoryIds } from "./memoryRead";
 import {
@@ -8144,7 +8146,7 @@ export function TaskChat({
     requestBottom("auto");
     promoteChatForLocalActivity(activeChatId);
     void dispatchPendingInput(activeChatId, input.id);
-  }, [isTerminalMode, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, finishComposerAfterSend, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, getActiveChatId, onUserMessageSent, dispatchPendingInput, pendingInputMode, openInputQueue]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, finishComposerAfterSend, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, getActiveChatId, onUserMessageSent, dispatchPendingInput, pendingInputMode, openInputQueue]);
 
   const handleSend = useCallback(async () => {
     if (!activeChatId || sendingAttemptRef.current.has(activeChatId)) return;
