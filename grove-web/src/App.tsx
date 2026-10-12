@@ -250,9 +250,15 @@ function AppContent() {
       });
 
     const handler = (e: MouseEvent) => {
-      if (!win) return;
-      const target = e.target as HTMLElement | null;
-      if (!target?.closest('[data-window-drag-strip]')) return;
+      if (!win || e.button !== 0 || e.defaultPrevented) return;
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      // Native dragging can consume the mouse-up needed for a button click,
+      // especially on Windows. Keep interactive descendants out of dragging.
+      if (target.closest(
+        'button, a[href], input, textarea, select, [role="button"], [role="link"], [contenteditable]:not([contenteditable="false"])',
+      )) return;
+      if (!target.closest('[data-window-drag-strip]')) return;
       void win.startDragging().catch(() => {});
     };
     document.addEventListener("mousedown", handler);

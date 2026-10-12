@@ -1215,11 +1215,9 @@ export function BlitzPage({
       >
         {/* Logo + Mode Brand
            pt-8 clears macOS traffic lights when Tauri title bar is Overlay.
-           data-tauri-drag-region gives double-click-maximize; data-window-drag-strip
-           is what the App.tsx native mousedown listener uses to call startDragging()
-           (the bare data-tauri-drag-region silently fails after the first drag when
-           the webview is loaded from http://localhost). */}
-        <div className={`px-4 pb-4 flex items-center justify-between ${shouldAvoidTrafficLights ? "pt-8" : "pt-4"}`} data-tauri-drag-region data-window-drag-strip>
+           Keep the mode and Radio buttons outside window drag regions;
+           App.tsx provides a separate top-edge strip for window dragging. */}
+        <div className={`px-4 pb-4 flex items-center justify-between ${shouldAvoidTrafficLights ? "pt-8" : "pt-4"}`}>
           <LogoBrand mode="blitz" onToggle={onSwitchToZen} />
           <button
             onClick={() => setShowRadioConnect(true)}
