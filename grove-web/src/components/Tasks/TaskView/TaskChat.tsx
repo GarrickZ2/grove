@@ -85,6 +85,7 @@ import {
   DropdownMenu,
 } from "../../ui";
 import { agentOptions } from "../../../data/agents";
+import { invalidateAgentCatalog } from "../../../api/agentCatalogChanges";
 import { createClientMessageId } from "../../../utils/clientMessageId";
 import {
   buildMentionItems,
@@ -4222,11 +4223,10 @@ export function TaskChat({
 
   // Compute available ACP agent options from backend availability. Hide
   // unavailable agents entirely — they live in the Marketplace modal now.
-  // While availability is still loading, fall back to the static list so
-  // the chat-create flow isn't blank during the first fetch.
+  // While availability is loading, do not offer unverified Agents.
   const acpAgentOptions = useMemo(() => {
     if (!acpAvailabilityLoaded) {
-      return agentOptions;
+      return [];
     }
     return baseAgents
       .filter((base) => base.available)
@@ -4907,6 +4907,8 @@ export function TaskChat({
       setShowAgentPicker(false);
       return;
     }
+
+    invalidateAgentCatalog();
 
     const rect = el.getBoundingClientRect();
     const viewportWidth = window.innerWidth;

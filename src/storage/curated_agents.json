@@ -1,5 +1,5 @@
 {
-  "_comment": "Product-owned onboarding agent ids shipped with Grove. Package, version, args, and environment are resolved from the ACP registry; this file controls only which agents are reconciled automatically and recommended in Marketplace.",
+  "_comment": "Product-owned onboarding agent ids shipped with Grove. Package, version, args, and environment are resolved from the ACP registry; defaults are initialized once for installations without the onboarding marker and recommended in Marketplace.",
   "version": 2,
   "agents": [
     "claude-acp",

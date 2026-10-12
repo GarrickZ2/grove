@@ -274,10 +274,9 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   }, []);
 
   // Build the spawn picker option list from launchable marketplace rows.
-  // While the marketplace probe is still in flight, fall back to the static
-  // catalog so the picker has something to show.
+  // Wait for backend availability before offering spawn candidates.
   const acpAgentOptions = useMemo(() => {
-    if (!acpAvailabilityLoaded) return agentOptions;
+    if (!acpAvailabilityLoaded) return [];
     return baseAgents
       .filter((b) => b.available)
       .map((b) => {

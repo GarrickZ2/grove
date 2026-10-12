@@ -1,3 +1,4 @@
+import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 import { useState, useEffect, useCallback } from "react";
 import { useCommand, useKeyboardScope } from "../../keyboard";
 import { motion, AnimatePresence } from "framer-motion";
@@ -103,6 +104,7 @@ interface GuidanceTip {
 }
 
 export function DashboardPage({ onNavigate }: DashboardPageProps) {
+  const catalogRevision = useAgentCatalogRevision();
   const { selectedProject, refreshSelectedProject, applySelectedProject } = useProject();
   const { theme } = useTheme();
   const isRemote = typeof window !== "undefined" &&
@@ -284,7 +286,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       }
     };
     check();
-  }, []);
+  }, [catalogRevision]);
 
   const showMessage = (message: string) => {
     setOperationMessage(message);

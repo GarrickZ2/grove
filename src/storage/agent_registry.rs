@@ -236,6 +236,7 @@ pub async fn refresh() -> Result<RegistryDocument> {
     let doc: RegistryDocument = serde_json::from_slice(&bytes)
         .map_err(|e| crate::error::GroveError::storage(format!("registry parse: {}", e)))?;
     write_cache(&doc)?;
+    crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
     Ok(doc)
 }
 

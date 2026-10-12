@@ -6,6 +6,7 @@ import { agentIconComponent } from "../../utils/agentIcon";
 import type { CustomAgentServer } from "../../api/config";
 import type { CustomAgentPersona } from "../../api";
 import { agentOptions, type AgentOption } from "../../data/agents";
+import { invalidateAgentCatalog } from "../../api/agentCatalogChanges";
 
 // Re-export so existing call sites importing from "./ui/AgentPicker" or
 // "../ui" keep working without churn. New consumers should import from
@@ -13,6 +14,7 @@ import { agentOptions, type AgentOption } from "../../data/agents";
 // eslint-disable-next-line react-refresh/only-export-components
 export { agentOptions };
 export type { AgentOption };
+const emptyOptions: AgentOption[] = [];
 
 /** Renders an agent icon via the unified `agentIcon` util.
  *  Wrapped in `createElement` (vs JSX) so `react-hooks/static-components`
@@ -87,7 +89,7 @@ export function AgentPicker({
   triggerShape = "rounded",
   triggerSize = "default",
 }: AgentPickerProps) {
-  const displayOptions = externalOptions ?? agentOptions;
+  const displayOptions = externalOptions ?? emptyOptions;
   const [isOpen, setIsOpen] = useState(false);
 
   // Post-v2.6 migration, stored ids are canonical — direct match against
@@ -451,7 +453,10 @@ export function AgentPicker({
         ) : (
           <button
             ref={triggerRef}
-            onClick={() => setIsOpen(!isOpen)}
+            onClick={() => {
+              if (!isOpen) invalidateAgentCatalog();
+              setIsOpen(!isOpen);
+            }}
             className={`w-full flex items-center bg-[var(--color-bg-secondary)] border ${
               triggerShape === "pill" ? "rounded-full" : "rounded-lg"
             } ${

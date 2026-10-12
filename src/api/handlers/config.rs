@@ -332,6 +332,8 @@ pub async fn patch_config(
 ) -> Result<Json<ConfigResponse>, StatusCode> {
     let _guard = CONFIG_WRITE_LOCK.lock().await;
     let mut config = config::load_config();
+    let previous_agents =
+        serde_json::to_value(&config.acp).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Apply theme patch
     let mut theme_changed = false;
@@ -558,6 +560,11 @@ pub async fn patch_config(
 
     // Save config
     config::save_config(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if serde_json::to_value(&config.acp).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        != previous_agents
+    {
+        crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
+    }
 
     // Notify Radio clients if theme changed
     if theme_changed {

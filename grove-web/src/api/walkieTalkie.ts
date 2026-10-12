@@ -102,4 +102,5 @@ export type RadioEvent =
   | { type: "client_disconnected" }
   | { type: "client_count"; count: number }
   | { type: "group_changed" }
+  | { type: "agents_changed" }
   | { type: "theme_changed" };

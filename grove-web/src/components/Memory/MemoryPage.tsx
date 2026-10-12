@@ -1,3 +1,4 @@
+import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
@@ -133,6 +134,7 @@ const DEFAULT_DRAFT: MemoryConfigInput = {
 };
 
 export function MemoryPage() {
+  const catalogRevision = useAgentCatalogRevision();
   const { selectedProject } = useProject();
   const projectId = selectedProject?.id ?? null;
   const [tab, setTab] = useState<Tab>("overview");
@@ -197,7 +199,7 @@ export function MemoryPage() {
 
   useEffect(() => {
     void Promise.resolve().then(loadAgents);
-  }, [loadAgents, tab]);
+  }, [loadAgents, tab, catalogRevision]);
 
   useEffect(() => {
     void Promise.resolve().then(() => {

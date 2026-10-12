@@ -1,3 +1,4 @@
+import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -218,6 +219,7 @@ interface DependencyState {
 }
 
 export function SettingsPage({ config }: SettingsPageProps) {
+  const catalogRevision = useAgentCatalogRevision();
   const { theme, mode, lightThemeId, darkThemeId, customThemes, themes, setAppearance } = useTheme();
   const { updateAvailability, refresh: refreshGlobalConfig } = useConfig();
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
@@ -626,7 +628,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const loadBaseAgents = useCallback(async () => {
     setBaseAgentsLoading(true);
     try {
-      const resp = await listMarketplace();
+      const [resp, cfg] = await Promise.all([listMarketplace(), getConfig()]);
+      setCustomAgents(cfg.acp?.custom_agents ?? []);
       setMarketplaceIcons(
         resp.agents.map((a) => ({ id: a.id, icon_url: a.icon_url })),
       );
@@ -656,20 +659,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
       // commandAvailability map. Marker entry stands in for the old probe map.
       setCommandAvailability({ __marketplace_loaded__: true });
     } catch {
-      // Fail-open: surface the static catalog so the picker isn't
-      // blank. User will get a runtime error if they pick an agent the
-      // backend can't actually launch. NOTE: terminal-launchability
-      // is intentionally LEFT EMPTY — surfacing every static id as
-      // terminal-capable would let the user pick e.g. codex-acp for
-      // the terminal slot and hit a 400 on launch.
-      setBaseAgents(
-        agentOptions.map((opt) => ({
-          id: opt.id,
-          display_name: opt.label,
-          icon_id: opt.id,
-          available: true,
-        })),
-      );
+      setBaseAgents([]);
       setTerminalLaunchableIds(new Set());
       setCommandAvailability({ __marketplace_loaded__: true });
     }
@@ -979,11 +969,16 @@ export function SettingsPage({ config }: SettingsPageProps) {
         loadConfig(),
         checkDependencies(),
         loadApplications(),
-        loadBaseAgents(),
-        loadCustomAgentPersonas(),
       ]);
     })();
-  }, [loadConfig, checkDependencies, loadApplications, loadBaseAgents, loadCustomAgentPersonas]);
+  }, [loadConfig, checkDependencies, loadApplications]);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      void loadBaseAgents();
+      void loadCustomAgentPersonas();
+    });
+  }, [loadBaseAgents, loadCustomAgentPersonas, catalogRevision]);
 
   // Terminal availability
   const tmuxInstalled = depStates["tmux"]?.status === "installed";

@@ -25,7 +25,7 @@ const CURATED_JSON: &str = include_str!("curated_agents.json");
 /// version, args, and env are always resolved from the ACP registry.
 ///
 /// Keep this separate from the operator-editable on-disk curated file: a stale
-/// or customized recommendation list must never disable first-run auto install.
+/// or customized recommendation list must never disable one-time auto install.
 pub const ONBOARDING_AGENT_IDS: &[&str] =
     &["claude-acp", "codex-acp", "github-copilot-cli", "qwen-code"];
 

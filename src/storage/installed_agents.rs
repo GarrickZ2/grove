@@ -211,6 +211,10 @@ pub fn list() -> Result<Vec<InstalledAgent>> {
 
 pub fn get(id: &str) -> Result<Option<InstalledAgent>> {
     let conn = crate::storage::database::connection();
+    get_on(&conn, id)
+}
+
+fn get_on(conn: &rusqlite::Connection, id: &str) -> Result<Option<InstalledAgent>> {
     let row = conn
         .query_row(
             &format!("SELECT {} FROM installed_agents WHERE id = ?1", COLUMNS),
@@ -262,6 +266,9 @@ pub fn save_capability_snapshot(id: &str, snapshot: &serde_json::Value) -> Resul
             canonical,
         ],
     )?;
+    if changed > 0 {
+        crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
+    }
     Ok(changed > 0)
 }
 
@@ -269,6 +276,13 @@ pub fn save_capability_snapshot(id: &str, snapshot: &serde_json::Value) -> Resul
 /// (at least one installation, selected_install_method matching one of them).
 pub fn upsert(agent: &InstalledAgent) -> Result<()> {
     let conn = crate::storage::database::connection();
+    upsert_on(&conn, agent)?;
+    drop(conn);
+    crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
+    Ok(())
+}
+
+fn upsert_on(conn: &rusqlite::Connection, agent: &InstalledAgent) -> Result<()> {
     let installations_json =
         serde_json::to_string(&agent.installations).unwrap_or_else(|_| "[]".into());
     let args_json = serde_json::to_string(&agent.args_override).unwrap_or_else(|_| "[]".into());
@@ -303,6 +317,10 @@ pub fn upsert(agent: &InstalledAgent) -> Result<()> {
 pub fn delete(id: &str) -> Result<bool> {
     let conn = crate::storage::database::connection();
     let n = conn.execute("DELETE FROM installed_agents WHERE id = ?1", params![id])?;
+    drop(conn);
+    if n > 0 {
+        crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
+    }
     Ok(n > 0)
 }
 
@@ -743,6 +761,23 @@ pub fn auto_scan_path_binaries(
         if !has_external {
             continue;
         }
+        // An incomplete/offline registry must not deregister a still-present
+        // local binary. Completed onboarding no longer requires a complete
+        // registry at startup, so orphaned entries can legitimately occur.
+        if !registry.agents.iter().any(|reg| reg.id == agent.id)
+            && agent.installations.iter().any(|install| {
+                install.method == InstallMethod::External
+                    && install.install_path.as_deref().is_some_and(|path| {
+                        std::path::Path::new(path)
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .and_then(crate::check::resolve_program)
+                            .is_some_and(|resolved| resolved == std::path::Path::new(path))
+                    })
+            })
+        {
+            continue;
+        }
         // If External wasn't the user's selected channel, just drop it
         // (the user wasn't relying on it; quiet cleanup).
         if agent.selected_install_method != InstallMethod::External {
@@ -1048,7 +1083,18 @@ pub fn launch_env_for(
 
 // ─── Onboarding agent reconciliation ────────────────────────────────────────
 
-/// Boot-time onboarding reconciliation: ensure every product-owned onboarding
+/// Whether default Agent initialization has completed for this installation.
+/// This marker survives removal of all installed Agent rows.
+pub fn onboarding_completed() -> Result<bool> {
+    let conn = crate::storage::database::connection();
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM agent_onboarding WHERE id = 1)",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+/// One-time onboarding reconciliation: ensure every product-owned onboarding
 /// agent has an Npx installation channel. Package metadata is resolved from
 /// the registry; only the four canonical ids are owned by grove.
 ///
@@ -1065,7 +1111,7 @@ pub fn launch_env_for(
 /// startup caller now awaits this function before exposing the server.
 ///
 /// Behaviour:
-///   - No gate on row count / remap audit; safe to call on every boot.
+///   - Runs only when the persistent onboarding marker is absent.
 ///   - Adds the Npx channel ONE-BY-ONE only when missing.
 ///   - Moves Claude from the historical External selection to Npx while
 ///     retaining External data for old terminal chats.
@@ -1073,6 +1119,15 @@ pub fn launch_env_for(
 pub fn reconcile_onboarding_agents(
     registry_doc: &crate::storage::agent_registry::RegistryDocument,
 ) -> Result<usize> {
+    let conn = crate::storage::database::connection();
+    let tx = rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)?;
+    if tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM agent_onboarding WHERE id = 1)",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Ok(0);
+    }
     // Validate the complete registry contract before writing anything. A
     // partial registry must not produce a partially initialized onboarding
     // state that the rest of startup mistakes for success.
@@ -1100,7 +1155,7 @@ pub fn reconcile_onboarding_agents(
     let now = Utc::now();
     let mut seeded = 0usize;
     for (id, reg) in registry_agents {
-        let existing = get(id)?;
+        let existing = get_on(&tx, id)?;
         let has_npx = existing.as_ref().is_some_and(|a| {
             a.installations
                 .iter()
@@ -1115,7 +1170,10 @@ pub fn reconcile_onboarding_agents(
                     .as_ref()
                     .is_some_and(|a| a.selected_install_method == InstallMethod::External)
             {
-                patch_or_create(id, Some(InstallMethod::Npx), None, None, None)?;
+                let mut agent = existing.unwrap();
+                agent.selected_install_method = InstallMethod::Npx;
+                agent.updated_at = now;
+                upsert_on(&tx, &agent)?;
             }
             continue;
         }
@@ -1127,12 +1185,31 @@ pub fn reconcile_onboarding_agents(
             failure_reason: None,
             installed_at: now,
         };
-        add_installation(id, install)?;
+        let mut agent = existing.unwrap_or_else(|| InstalledAgent {
+            id: id.to_string(),
+            installations: Vec::new(),
+            selected_install_method: InstallMethod::Npx,
+            args_override: Vec::new(),
+            env_override: HashMap::new(),
+            hidden: false,
+            created_at: now,
+            updated_at: now,
+        });
+        agent.installations.push(install);
+        agent.updated_at = now;
         if id == "claude-acp" {
-            patch_or_create(id, Some(InstallMethod::Npx), None, None, None)?;
+            agent.selected_install_method = InstallMethod::Npx;
         }
+        upsert_on(&tx, &agent)?;
         seeded += 1;
     }
+    tx.execute(
+        "INSERT INTO agent_onboarding (id, completed_at) VALUES (1, ?1)",
+        params![now.to_rfc3339()],
+    )?;
+    tx.commit()?;
+    drop(conn);
+    crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
     Ok(seeded)
 }
 
@@ -1386,8 +1463,20 @@ mod tests {
         assert!(get("gemini").unwrap().is_none());
 
         // Idempotent: running again seeds nothing further.
+        patch_or_create(
+            "claude-acp",
+            Some(InstallMethod::External),
+            Some(vec!["--user-arg".into()]),
+            None,
+            Some(true),
+        )
+        .unwrap();
         let seeded_again = reconcile_onboarding_agents(&registry).unwrap();
         assert_eq!(seeded_again, 0);
+        let agent = get("claude-acp").unwrap().unwrap();
+        assert_eq!(agent.selected_install_method, InstallMethod::External);
+        assert_eq!(agent.args_override, vec!["--user-arg"]);
+        assert!(agent.hidden);
 
         crate::storage::set_grove_dir_override(None);
     }
@@ -1403,7 +1492,81 @@ mod tests {
         let err = reconcile_onboarding_agents(&registry).unwrap_err();
         assert!(err.to_string().contains("qwen-code"));
         assert!(list().unwrap().is_empty());
+        assert!(!onboarding_completed().unwrap());
+        assert_eq!(
+            reconcile_onboarding_agents(&onboarding_registry()).unwrap(),
+            4
+        );
+        assert!(onboarding_completed().unwrap());
 
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn completed_onboarding_preserves_uninstalls_across_restarts() {
+        let _l = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let empty_path = tempfile::tempdir().unwrap();
+        let _path = PathGuard::set(empty_path.path());
+        let registry = onboarding_registry();
+        assert!(!onboarding_completed().unwrap());
+        assert_eq!(reconcile_registry_state(&registry).unwrap(), 4);
+        assert!(onboarding_completed().unwrap());
+
+        for id in ["github-copilot-cli", "qwen-code"] {
+            remove_installation(id, InstallMethod::Npx).unwrap();
+        }
+        // Reopen the DB, as a new server process would do.
+        crate::storage::set_grove_dir_override(Some(empty_path.path().to_path_buf()));
+        assert!(!onboarding_completed().unwrap());
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        assert!(onboarding_completed().unwrap());
+        assert_eq!(reconcile_registry_state(&registry).unwrap(), 0);
+        assert!(get("github-copilot-cli").unwrap().is_none());
+        assert!(get("qwen-code").unwrap().is_none());
+
+        // Even an empty install table must not be treated as a new user.
+        for agent in list().unwrap() {
+            delete(&agent.id).unwrap();
+        }
+        assert_eq!(reconcile_registry_state(&registry).unwrap(), 0);
+        assert!(list().unwrap().is_empty());
+        // Completion bypasses registry validation too (offline/stale cache).
+        assert_eq!(
+            reconcile_onboarding_agents(&crate::storage::agent_registry::RegistryDocument {
+                version: "empty".into(),
+                agents: vec![],
+            })
+            .unwrap(),
+            0
+        );
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    #[tokio::test]
+    async fn onboarding_write_failure_rolls_back_channels_and_marker() {
+        let _l = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        crate::storage::database::connection()
+            .execute_batch(
+                "CREATE TRIGGER fail_onboarding BEFORE INSERT ON installed_agents
+             WHEN NEW.id = 'qwen-code' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;",
+            )
+            .unwrap();
+        assert!(reconcile_onboarding_agents(&onboarding_registry()).is_err());
+        assert!(list().unwrap().is_empty());
+        assert!(!onboarding_completed().unwrap());
+        crate::storage::database::connection()
+            .execute_batch("DROP TRIGGER fail_onboarding;")
+            .unwrap();
+        assert_eq!(
+            reconcile_onboarding_agents(&onboarding_registry()).unwrap(),
+            4
+        );
+        assert!(onboarding_completed().unwrap());
         crate::storage::set_grove_dir_override(None);
     }
 
@@ -1568,6 +1731,18 @@ mod tests {
                 .as_deref(),
             binary_b.to_str()
         );
+
+        // Missing registry cache after onboarding must preserve a binary
+        // that still resolves on the current PATH.
+        {
+            let _path = PathGuard::set(path_b.path());
+            refresh_path_installations(&crate::storage::agent_registry::RegistryDocument {
+                version: "empty".into(),
+                agents: vec![],
+            })
+            .unwrap();
+        }
+        assert!(get("local-fixture-agent").unwrap().is_some());
 
         // Removing the binary from PATH removes the auto-managed DB row.
         let empty_path = tempfile::tempdir().unwrap();

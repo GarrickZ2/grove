@@ -42,6 +42,8 @@ pub enum RadioEvent {
         count: usize,
     },
     GroupChanged,
+    /// Installed channels, registry metadata, or custom Agent configuration changed.
+    AgentsChanged,
     ThemeChanged {
         name: String,
     },

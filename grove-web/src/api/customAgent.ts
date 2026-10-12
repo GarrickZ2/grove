@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import { agentCatalogReader, invalidateAgentCatalog } from './agentCatalogChanges';
 import type { AgentConfigSelection } from './agentConfig';
 
 export interface CustomAgent {
@@ -41,19 +42,24 @@ interface ListResponse {
   agents: CustomAgent[];
 }
 
-export async function listCustomAgents(): Promise<CustomAgent[]> {
+export const listCustomAgents = agentCatalogReader(async (): Promise<CustomAgent[]> => {
   const r = await apiClient.get<ListResponse>('/api/v1/custom-agents');
   return r.agents;
-}
+});
 
 export async function createCustomAgent(input: CustomAgentInput): Promise<CustomAgent> {
-  return apiClient.post<CustomAgentInput, CustomAgent>('/api/v1/custom-agents', input);
+  const agent = await apiClient.post<CustomAgentInput, CustomAgent>('/api/v1/custom-agents', input);
+  invalidateAgentCatalog();
+  return agent;
 }
 
 export async function updateCustomAgent(id: string, patch: CustomAgentPatch): Promise<CustomAgent> {
-  return apiClient.patch<CustomAgentPatch, CustomAgent>(`/api/v1/custom-agents/${encodeURIComponent(id)}`, patch);
+  const agent = await apiClient.patch<CustomAgentPatch, CustomAgent>(`/api/v1/custom-agents/${encodeURIComponent(id)}`, patch);
+  invalidateAgentCatalog();
+  return agent;
 }
 
 export async function deleteCustomAgent(id: string): Promise<void> {
   await apiClient.delete(`/api/v1/custom-agents/${encodeURIComponent(id)}`);
+  invalidateAgentCatalog();
 }

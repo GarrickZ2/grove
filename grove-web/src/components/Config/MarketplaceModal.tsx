@@ -1,3 +1,4 @@
+import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 /**
  * Agent Marketplace Modal — single window for browsing the ACP registry +
  * supplement, installing/uninstalling, and editing per-agent config.
@@ -101,6 +102,7 @@ function hasUpdate(a: MarketplaceAgent): boolean {
 }
 
 export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
+  const catalogRevision = useAgentCatalogRevision();
   const [data, setData] = useState<MarketplaceResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -134,7 +136,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
     // flags. The lint can't tell the difference, hence the disable.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
-  }, [open]);
+  }, [open, catalogRevision]);
 
   const handleRefresh = async () => {
     setRefreshing(true);

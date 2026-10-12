@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAgentCatalogRevision } from "../../../hooks/useAgentCatalogRevision";
 import {
   getConfig,
   listCustomAgents,
@@ -56,11 +57,12 @@ function toBaseAgent(a: MarketplaceAgent): BaseAgent {
 }
 
 /**
- * Loads launchable agents from the marketplace on mount, alongside Custom
+ * Loads launchable agents from the marketplace on mount and catalog changes, alongside Custom
  * Agent servers and personas. Replaces the old `listBaseAgents()` probe —
  * marketplace data is now the single source of truth for availability.
  */
 export function useACPAvailability(): Result {
+  const catalogRevision = useAgentCatalogRevision();
   const [baseAgents, setBaseAgents] = useState<BaseAgent[]>([]);
   const [acpAvailabilityLoaded, setAcpAvailabilityLoaded] = useState(false);
   const [customAgents, setCustomAgents] = useState<CustomAgentServer[]>([]);
@@ -110,7 +112,7 @@ export function useACPAvailability(): Result {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [catalogRevision]);
 
   return {
     baseAgents,

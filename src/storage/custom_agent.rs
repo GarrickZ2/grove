@@ -216,6 +216,8 @@ pub fn create(input: CustomAgentInput) -> Result<CustomAgent> {
             now_s,
         ],
     )?;
+    drop(conn);
+    crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
     Ok(CustomAgent {
         id,
         name: input.name,
@@ -305,10 +307,12 @@ pub fn update(id: &str, patch: CustomAgentPatch) -> Result<Option<CustomAgent>> 
         ],
     )?;
     tx.commit()?;
+    drop(conn);
     if n == 0 {
         // 并发 delete 在 SELECT 与 UPDATE 之间发生
         Ok(None)
     } else {
+        crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
         Ok(Some(existing))
     }
 }
@@ -317,5 +321,9 @@ pub fn update(id: &str, patch: CustomAgentPatch) -> Result<Option<CustomAgent>> 
 pub fn delete(id: &str) -> Result<bool> {
     let conn = crate::storage::database::connection();
     let n = conn.execute("DELETE FROM custom_agent WHERE id = ?1", params![id])?;
+    drop(conn);
+    if n > 0 {
+        crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
+    }
     Ok(n > 0)
 }

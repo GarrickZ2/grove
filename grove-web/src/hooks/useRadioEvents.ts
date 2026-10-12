@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { RadioEvent, TargetMode, NodeStatus } from "../api/walkieTalkie";
 import { getApiHost, appendHmacToUrl } from "../api/client";
+import { invalidateAgentCatalog } from "../api/agentCatalogChanges";
 
 export interface RadioEventCallbacks {
   onFocusTask?: (projectId: string, taskId: string, target?: TargetMode) => void;
@@ -82,6 +83,9 @@ function notifyClientCount() {
 
 function dispatch(event: RadioEvent) {
   switch (event.type) {
+    case "agents_changed":
+      invalidateAgentCatalog();
+      break;
     case "focus_task":
       for (const s of subscribers) s.current.onFocusTask?.(event.project_id, event.task_id, event.target);
       break;
@@ -159,6 +163,7 @@ async function openSharedWs() {
 
   ws.onopen = () => {
     reconnectAttempts = 0;
+    invalidateAgentCatalog();
     // Notify subscribers so they can do a one-shot re-sync (covers events
     // missed during the disconnect window — e.g. hooks fired while offline).
     for (const s of subscribers) s.current.onConnected?.();

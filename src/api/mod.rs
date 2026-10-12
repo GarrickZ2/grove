@@ -1865,16 +1865,26 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
         );
     }
 
-    // Agent onboarding is a startup prerequisite, not a fire-and-forget task:
-    //   1. resolve a complete registry snapshot (cache first, network fallback)
-    //   2. reconcile the four product-owned Npx channels
+    // Default Agent onboarding runs once for new/upgrading installations.
+    // After completion, startup no longer requires the onboarding registry
+    // contract and must preserve user uninstalls and channel selections.
+    //   1. resolve a complete registry snapshot only when onboarding is pending
+    //   2. initialize the four product-owned Npx channels once
     //   3. scan every registry agent for local PATH installations
     //   4. only then choose valid defaults and expose the server
-    let startup_registry = crate::storage::agent_registry::get_for_auto_install()
-        .await
-        .map_err(|e| {
-            std::io::Error::other(format!("agent registry initialization failed: {}", e))
+    let onboarding_completed =
+        crate::storage::installed_agents::onboarding_completed().map_err(|e| {
+            std::io::Error::other(format!("agent onboarding marker read failed: {}", e))
         })?;
+    let startup_registry = if onboarding_completed {
+        crate::storage::agent_registry::get()
+    } else {
+        crate::storage::agent_registry::get_for_auto_install()
+            .await
+            .map_err(|e| {
+                std::io::Error::other(format!("agent registry initialization failed: {}", e))
+            })?
+    };
     let seeded = tokio::task::spawn_blocking(move || -> crate::error::Result<usize> {
         crate::storage::installed_agents::reconcile_registry_state(&startup_registry)
     })

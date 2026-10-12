@@ -33,6 +33,7 @@ fn task_of(event: &RadioEvent) -> Option<&str> {
         | RadioEvent::ClientDisconnected
         | RadioEvent::ClientCount { .. }
         | RadioEvent::GroupChanged
+        | RadioEvent::AgentsChanged
         | RadioEvent::ThemeChanged { .. } => None,
     }
 }

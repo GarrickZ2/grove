@@ -1,3 +1,4 @@
+import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 // Create/edit dialog for one Automation.
 //
 // Visual conventions follow NewTaskDialog: header with icon pill, sectioned
@@ -167,6 +168,7 @@ export function AutomationDialog({
   initial,
   onSubmit,
 }: AutomationDialogProps) {
+  const catalogRevision = useAgentCatalogRevision();
   const { selectedProject } = useProject();
   const isStudio = selectedProject?.projectType === "studio";
   const { baseAgents, customAgents, customAgentPersonas, acpAvailabilityLoaded } =
@@ -177,7 +179,7 @@ export function AutomationDialog({
   // picker can offer "Claude with my XYZ config" as a single click.
   const availableAgentOptions = useMemo(() => {
     if (!acpAvailabilityLoaded) {
-      return agentOptions;
+      return [];
     }
     return baseAgents
       .filter((b) => b.available)
@@ -331,7 +333,7 @@ export function AutomationDialog({
     return () => {
       alive = false;
     };
-  }, [isOpen]);
+  }, [isOpen, catalogRevision]);
 
   // Load tasks for the "existing" picker.
   useEffect(() => {

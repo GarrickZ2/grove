@@ -552,6 +552,13 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             updated_at                TEXT NOT NULL
         );
 
+        -- One-time default Agent initialization, independent of installed rows.
+        -- Uninstalling every default Agent must never reset onboarding.
+        CREATE TABLE IF NOT EXISTS agent_onboarding (
+            id           INTEGER PRIMARY KEY CHECK (id = 1),
+            completed_at TEXT NOT NULL
+        );
+
         -- v2.6: One-time id remap audit. Rows that the 2.5→2.6 migration
         -- *touched* (rewrote installed_agents.id / session.agent / custom_agent.base_agent
         -- from a legacy id to its canonical successor) get a row here.

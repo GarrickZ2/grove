@@ -1,6 +1,7 @@
 // Config API
 
 import { apiClient } from './client';
+import { invalidateAgentCatalog } from './agentCatalogChanges';
 
 export interface CustomThemeConfig {
   id: string;
@@ -178,7 +179,9 @@ export async function getConfig(signal?: AbortSignal): Promise<Config> {
 }
 
 export async function patchConfig(patch: ConfigPatch): Promise<Config> {
-  return apiClient.patch<ConfigPatch, Config>('/api/v1/config', patch);
+  const config = await apiClient.patch<ConfigPatch, Config>('/api/v1/config', patch);
+  if (patch.acp) invalidateAgentCatalog();
+  return config;
 }
 
 export async function listApplications(): Promise<{ apps: AppInfo[]; platform: string }> {

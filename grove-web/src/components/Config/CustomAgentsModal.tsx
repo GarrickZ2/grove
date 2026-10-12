@@ -1,3 +1,4 @@
+import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -128,6 +129,7 @@ export function CustomAgentsModal({
   onChanged,
   loading = false,
 }: CustomAgentsModalProps) {
+  const catalogRevision = useAgentCatalogRevision();
   // local list mirrors props but adds drafts (not yet persisted)
   const [list, setList] = useState<(CustomAgentPersona | DraftAgent)[]>(agents);
   const [selectedId, setSelectedId] = useState<string | null>(agents[0]?.id ?? null);
@@ -160,7 +162,7 @@ export function CustomAgentsModal({
     return () => {
       active = false;
     };
-  }, [isOpen]);
+  }, [isOpen, catalogRevision]);
 
   // Refs for keyboard handler so it always calls the latest closures without
   // re-adding the document listener on every render.

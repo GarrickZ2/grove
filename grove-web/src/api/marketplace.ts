@@ -8,6 +8,7 @@
  */
 
 import { apiClient } from "./client";
+import { agentCatalogReader, invalidateAgentCatalog } from "./agentCatalogChanges";
 
 export type InstallMethod = "npx" | "binary" | "uvx" | "external";
 export type InstallStatus = "installing" | "installed" | "failed";
@@ -109,22 +110,24 @@ export interface PatchAgentRequest {
   hidden?: boolean;
 }
 
-export async function listMarketplace(): Promise<MarketplaceResponse> {
+export const listMarketplace = agentCatalogReader(async (): Promise<MarketplaceResponse> => {
   return apiClient.get<MarketplaceResponse>("/api/v1/agents/marketplace");
-}
+});
 
-export async function listInstalledAgentConfigs(): Promise<InstalledAgentConfig[]> {
+export const listInstalledAgentConfigs = agentCatalogReader(async (): Promise<InstalledAgentConfig[]> => {
   const response = await apiClient.get<{ agents: InstalledAgentConfig[] }>(
     "/api/v1/agents/installed",
   );
   return response.agents;
-}
+});
 
 export async function refreshRegistry(): Promise<MarketplaceResponse> {
-  return apiClient.post<unknown, MarketplaceResponse>(
+  const response = await apiClient.post<unknown, MarketplaceResponse>(
     "/api/v1/agents/marketplace/refresh",
     {},
   );
+  invalidateAgentCatalog();
+  return response;
 }
 
 /** Install ONE channel for an agent. The same agent may be installed via
@@ -133,10 +136,12 @@ export async function installAgent(
   id: string,
   method: InstallMethod,
 ): Promise<{ agent: InstalledAgentView }> {
-  return apiClient.post<{ method: InstallMethod }, { agent: InstalledAgentView }>(
+  const response = await apiClient.post<{ method: InstallMethod }, { agent: InstalledAgentView }>(
     `/api/v1/agents/marketplace/${encodeURIComponent(id)}/install`,
     { method },
   );
+  invalidateAgentCatalog();
+  return response;
 }
 
 /** Uninstall ONE channel by method. Backend deletes the whole agent row
@@ -148,14 +153,17 @@ export async function uninstallAgent(
   await apiClient.delete<void>(
     `/api/v1/agents/marketplace/${encodeURIComponent(id)}/install?method=${encodeURIComponent(method)}`,
   );
+  invalidateAgentCatalog();
 }
 
 export async function patchAgent(
   id: string,
   body: PatchAgentRequest,
 ): Promise<InstalledAgentView> {
-  return apiClient.patch<PatchAgentRequest, InstalledAgentView>(
+  const response = await apiClient.patch<PatchAgentRequest, InstalledAgentView>(
     `/api/v1/agents/marketplace/${encodeURIComponent(id)}`,
     body,
   );
+  invalidateAgentCatalog();
+  return response;
 }

@@ -1,3 +1,4 @@
+import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ChevronLeft, ChevronRight, Download, FolderOpen, GitBranch, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { Button, Combobox, DialogShell, DrawerShell } from "../ui";
@@ -37,6 +38,7 @@ interface Props {
 }
 
 export function ExtensionsExplore({ agents, sources, installed, projectPath, refreshToken, onInstalled }: Props) {
+  const catalogRevision = useAgentCatalogRevision();
   const { isMobile } = useIsMobile();
   const [items, setItems] = useState<ExtensionArtifact[]>([]);
   const [plugins, setPlugins] = useState<Plugin[]>([]);
@@ -78,7 +80,7 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
     }
   }, []);
 
-  useEffect(() => { void Promise.resolve().then(reload); }, [reload, refreshToken]);
+  useEffect(() => { void Promise.resolve().then(reload); }, [reload, refreshToken, catalogRevision]);
 
   const records = useMemo<CatalogRecord[]>(() => items.map((item) => {
     const plugin = resolveInstalledPlugin(item, plugins);
