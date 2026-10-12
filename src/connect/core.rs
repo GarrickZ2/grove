@@ -6,6 +6,132 @@ use super::commands::{self, CardSpec, CommandOutcome, Parsed};
 
 static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+#[cfg(test)]
+mod tests {
+    use super::super::adapter::ConnectAdapter;
+    use super::*;
+
+    #[derive(Default)]
+    struct TestAdapter {
+        replies: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ConnectAdapter for TestAdapter {
+        async fn mark_waiting(&self, _: &str) -> Option<String> {
+            None
+        }
+        async fn mark_working(&self, _: &str, _: &Option<String>) -> Option<String> {
+            None
+        }
+        async fn clear_status(&self, _: &str, _: &Option<String>) {}
+        async fn reply_text(&self, _: &str, text: &str) -> Result<(), String> {
+            self.replies.lock().unwrap().push(text.to_owned());
+            Ok(())
+        }
+        async fn reply_card(&self, _: &str, _: &CardSpec) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    struct GroveDirGuard;
+    impl Drop for GroveDirGuard {
+        fn drop(&mut self) {
+            crate::storage::set_grove_dir_override(None);
+        }
+    }
+
+    fn connection() -> Connect {
+        connects::create(connects::ConnectInput {
+            name: "Startup test".into(),
+            platform: "feishu".into(),
+            domain: "feishu".into(),
+            enabled: true,
+            adapter_config: serde_json::json!({}),
+            project_id: "unregistered-project".into(),
+            task_id: "task".into(),
+            session_id: String::new(),
+        })
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn config_creates_a_session_and_attempts_startup_without_a_prompt() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _guard = GroveDirGuard;
+        let connect = connection();
+        let adapter: AdapterRef = std::sync::Arc::new(TestAdapter::default());
+        // The real launcher detects the missing project. Previously /config
+        // never reached startup and just asked the user to send a message.
+        let error = run_command(&connect, &adapter, "parent", "config", "")
+            .await
+            .unwrap_err();
+        assert!(error.contains("project not registered"), "{error}");
+        let current = connects::get(&connect.id).unwrap().unwrap();
+        assert!(!current.session_id.is_empty());
+        let error = run_command(&current, &adapter, "parent", "config", "")
+            .await
+            .unwrap_err();
+        assert!(error.contains("project not registered"), "{error}");
+        assert_eq!(
+            connects::get(&connect.id).unwrap().unwrap().session_id,
+            current.session_id
+        );
+
+        // Once a handle is ready, the same command reuses it without sending
+        // an artificial prompt or requiring the project to be launched again.
+        let key = format!(
+            "{}:{}:{}",
+            current.project_id, current.task_id, current.session_id
+        );
+        let (handle, mut updates, _session_guard) = crate::acp::new_handle_for_test(
+            &key,
+            &current.project_id,
+            &current.task_id,
+            &current.session_id,
+        );
+        run_command(&current, &adapter, "parent", "config", "")
+            .await
+            .unwrap();
+        assert!(!handle.is_busy.load(std::sync::atomic::Ordering::Acquire));
+        assert!(updates.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn new_session_does_not_report_success_before_startup() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _guard = GroveDirGuard;
+        let connect = connection();
+        connects::bind_private_chat(&connect.id, "chat", "user").unwrap();
+        let adapter: AdapterRef = std::sync::Arc::new(TestAdapter::default());
+        let result = handle_action(
+            &connect.id,
+            adapter,
+            InboundAction {
+                conversation_id: "chat".into(),
+                sender_id: "user".into(),
+                source_message_id: None,
+                name: Some("new_session_btn".into()),
+                fields: [("agent".into(), "codex-acp".into())].into_iter().collect(),
+            },
+        )
+        .await;
+        let error = result
+            .err()
+            .expect("a failed launch must not return a success card");
+        assert!(error.contains("project not registered"), "{error}");
+        let current = connects::get(&connect.id).unwrap().unwrap();
+        let (_, _, chat) = crate::storage::tasks::find_chat_session(&current.session_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(chat.agent, "codex-acp");
+    }
+}
+
 fn ask_form_error_result(form_id: &str, error: String) -> ActionResult {
     match super::grove::pending_ask_form_card(form_id) {
         Some(card) => ActionResult::warning_card(error, card),
@@ -153,7 +279,7 @@ pub async fn handle_action(
                     "This connection has no Grove target yet. Send /target to set it up.".into(),
                 );
             }
-            super::grove::create_session(&current, Some(&agent))?;
+            super::grove::start_new_session(&current, &agent).await?;
             Ok(ActionResult::notice(
                 format!("New session started with {agent}."),
                 NoticeLevel::Success,
@@ -299,17 +425,7 @@ pub async fn handle_action(
             ))
         }
         Some("save_config_btn") => {
-            if current.session_id.is_empty() {
-                return Err("No session is running yet — send a message first.".into());
-            }
-            let Some(session) =
-                crate::grove::session(&current.project_id, &current.task_id, &current.session_id)
-            else {
-                return Err(
-                    "The session is not running right now — send a message first, then retry."
-                        .into(),
-                );
-            };
+            let session = super::grove::ensure_routed_session(&current).await?;
             // The selectors are read fresh from the handle; "opt_<index>"
             // field names map positionally onto this list. Only options whose
             // submitted value differs from the session's current value get an
@@ -467,19 +583,20 @@ async fn run_command(
             }
         }
         "config" => {
-            let reason = config_card_reason(connect);
-            match reason {
-                Some(reason) => CommandOutcome::Reply(reason),
-                None => {
-                    let spec = live_config_card(connect);
-                    match &spec {
-                        CardSpec::Config(config) if config.selectors.is_empty() => {
-                            CommandOutcome::Reply(
-                                "The running session exposes no configurable options.".into(),
-                            )
-                        }
-                        _ => CommandOutcome::Card(spec),
+            if connect.project_id.is_empty() || connect.task_id.is_empty() {
+                CommandOutcome::Reply(
+                    "This connection has no Grove target yet. Send /target to set it up.".into(),
+                )
+            } else {
+                let session = super::grove::ensure_routed_session(connect).await?;
+                let spec = live_config_card(&session);
+                match &spec {
+                    CardSpec::Config(config) if config.selectors.is_empty() => {
+                        CommandOutcome::Reply(
+                            "The running session exposes no configurable options.".into(),
+                        )
                     }
+                    _ => CommandOutcome::Card(spec),
                 }
             }
         }
@@ -526,37 +643,12 @@ async fn run_command(
     }
 }
 
-/// Why /config can't render right now — the card is built purely from a live
-/// session's advertised config options, so spawning an agent process just to
-/// show it is never worth it.
-fn config_card_reason(connect: &Connect) -> Option<String> {
-    if connect.project_id.is_empty() || connect.task_id.is_empty() {
-        return Some("This connection has no Grove target yet. Send /target to set it up.".into());
-    }
-    if connect.session_id.is_empty() {
-        return Some(
-            "No session yet — one is created on the first message. Send /new to start one now."
-                .into(),
-        );
-    }
-    if crate::grove::session(&connect.project_id, &connect.task_id, &connect.session_id).is_none() {
-        return Some(
-            "The session is not running right now — send a message to wake it, then retry /config."
-                .into(),
-        );
-    }
-    None
-}
-
 /// Assembles the /config card from the live handle's config options snapshot:
 /// one dropdown per select-style option (mode / model / effort / …), each
 /// preselected with its current value. Field names are positional so the
 /// callback maps submissions back onto the handle's list.
-fn live_config_card(connect: &Connect) -> CardSpec {
-    let selectors =
-        crate::grove::session(&connect.project_id, &connect.task_id, &connect.session_id)
-            .map(|session| session.config_selectors())
-            .unwrap_or_default();
+fn live_config_card(session: &crate::grove::Session) -> CardSpec {
+    let selectors = session.config_selectors();
     CardSpec::Config(Box::new(commands::ConfigCard {
         selectors: selectors
             .into_iter()

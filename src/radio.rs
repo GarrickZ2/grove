@@ -171,6 +171,14 @@ pub struct ChatSnapshot {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum TurnEvent {
     Started,
+    MessageChunk {
+        text: String,
+    },
+    ToolChanged {
+        id: String,
+        title: Option<String>,
+        status: Option<String>,
+    },
     PermissionRequired {
         request_id: String,
         permission: PermissionInfo,

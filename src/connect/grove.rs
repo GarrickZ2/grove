@@ -27,6 +27,7 @@ struct MessageMapping {
     session_id: String,
     adapter: AdapterRef,
     status: Option<String>,
+    progress: Option<super::progress::TurnProgress>,
 }
 
 static MESSAGE_MAPPINGS: Lazy<Mutex<HashMap<String, MessageMapping>>> =
@@ -99,6 +100,7 @@ fn retain_completed_routes(
             // The external status is cleared below, while the mapping itself
             // remains available for a late PermissionRequired/AskForm event.
             mapping.status = None;
+            mapping.progress = None;
         }
     }
     if routes.is_empty() {
@@ -143,6 +145,9 @@ pub fn shutdown(connection_id: &str) {
     };
     let removed = take_routes(&ids);
     for mapping in removed {
+        if let Some(progress) = &mapping.progress {
+            progress.finish("Connection closed.");
+        }
         tokio::spawn(async move {
             mapping
                 .adapter
@@ -596,6 +601,7 @@ pub async fn deliver_prompt(
             session_id,
             adapter: adapter.clone(),
             status: waiting,
+            progress: None,
         },
     );
     if let Err(error) = prompt.start().await {
@@ -609,6 +615,27 @@ pub async fn deliver_prompt(
         return Err(format!("Grove Connect error: {error}"));
     }
     Ok(())
+}
+
+pub(crate) async fn ensure_routed_session(
+    connect: &Connect,
+) -> Result<crate::grove::Session, String> {
+    if connect.project_id.is_empty() || connect.task_id.is_empty() {
+        return Err("This connection has no Grove target yet. Send /target to set it up.".into());
+    }
+    let session_id = if connect.session_id.is_empty() {
+        create_session(connect, None)?
+    } else {
+        connect.session_id.clone()
+    };
+    crate::grove::ensure_session(&connect.project_id, &connect.task_id, &session_id).await
+}
+
+pub(crate) async fn start_new_session(connect: &Connect, agent: &str) -> Result<String, String> {
+    let mut next = connect.clone();
+    next.session_id = create_session(connect, Some(agent))?;
+    ensure_routed_session(&next).await?;
+    Ok(next.session_id)
 }
 
 pub fn create_session(connect: &Connect, agent_override: Option<&str>) -> Result<String, String> {
@@ -804,6 +831,17 @@ pub async fn handle_turn_event(
 ) {
     match event {
         TurnEvent::Started => {
+            if let Some((id, route)) = routes(&message_ids).pop() {
+                if route.adapter.supports_turn_cards() && route.progress.is_none() {
+                    let progress = super::progress::TurnProgress::start(
+                        route.adapter.clone(),
+                        route.external_message_id,
+                    );
+                    if let Some(current) = MESSAGE_MAPPINGS.lock().unwrap().get_mut(&id) {
+                        current.progress = Some(progress);
+                    }
+                }
+            }
             for (id, route) in routes(&message_ids) {
                 let working = route
                     .adapter
@@ -811,6 +849,20 @@ pub async fn handle_turn_event(
                     .await;
                 if let Some(current) = MESSAGE_MAPPINGS.lock().unwrap().get_mut(&id) {
                     current.status = working;
+                }
+            }
+        }
+        TurnEvent::MessageChunk { text } => {
+            if let Some((_, route)) = routes(&message_ids).pop() {
+                if let Some(progress) = route.progress {
+                    progress.message(&text);
+                }
+            }
+        }
+        TurnEvent::ToolChanged { id, title, status } => {
+            if let Some((_, route)) = routes(&message_ids).pop() {
+                if let Some(progress) = route.progress {
+                    progress.tool(&id, title.as_deref(), status.as_deref());
                 }
             }
         }
@@ -834,6 +886,9 @@ pub async fn handle_turn_event(
                     })
                     .collect(),
             });
+            if let Some(progress) = &route.progress {
+                progress.status("Waiting for permission");
+            }
             if let Err(error) = route
                 .adapter
                 .reply_card(&route.external_message_id, &card)
@@ -847,6 +902,9 @@ pub async fn handle_turn_event(
                 return;
             };
             let card = form_card(form);
+            if let Some(progress) = &route.progress {
+                progress.status("Waiting for input");
+            }
             if let Err(error) = route
                 .adapter
                 .reply_card(&route.external_message_id, &card)
@@ -886,6 +944,11 @@ pub async fn handle_turn_event(
             };
             if stopped {
                 let removed = take_routes(&message_ids);
+                for route in &removed {
+                    if let Some(progress) = &route.progress {
+                        progress.finish("Agent stopped.");
+                    }
+                }
                 clear_routes(&removed).await;
             } else if let Some((_, route)) = matched_routes.last() {
                 let reply = if message.trim().is_empty() {
@@ -893,6 +956,13 @@ pub async fn handle_turn_event(
                 } else {
                     message.trim()
                 };
+                if let Some(progress) = &route.progress {
+                    progress.finish(reply);
+                    let completed =
+                        retain_completed_routes(&project_id, &task_id, &session_id, &message_ids);
+                    clear_routes(&completed).await;
+                    return;
+                }
                 match route
                     .adapter
                     .reply_text(&route.external_message_id, reply)
@@ -916,6 +986,12 @@ pub async fn handle_turn_event(
         TurnEvent::Failed { message } => {
             let matched_routes = routes(&message_ids);
             if let Some((_, route)) = matched_routes.last() {
+                if let Some(progress) = &route.progress {
+                    progress.finish(&format!("Agent error: {message}"));
+                    let removed = take_routes(&message_ids);
+                    clear_routes(&removed).await;
+                    return;
+                }
                 match route
                     .adapter
                     .reply_text(
@@ -936,6 +1012,11 @@ pub async fn handle_turn_event(
         }
         TurnEvent::Removed => {
             let routes = take_routes(&message_ids);
+            for route in &routes {
+                if let Some(progress) = &route.progress {
+                    progress.finish("Agent stopped.");
+                }
+            }
             clear_routes(&routes).await;
         }
         TurnEvent::SessionEnded => {
@@ -952,6 +1033,11 @@ pub async fn handle_turn_event(
                     .collect::<Vec<_>>()
             };
             let routes = take_routes(&ids);
+            for route in &routes {
+                if let Some(progress) = &route.progress {
+                    progress.finish("Session ended.");
+                }
+            }
             clear_routes(&routes).await;
         }
     }

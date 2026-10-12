@@ -79,6 +79,13 @@ fn is_short_memory_tool(title: &str) -> bool {
 static ACP_SESSIONS: once_cell::sync::Lazy<RwLock<HashMap<String, Arc<AcpSessionHandle>>>> =
     once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
 
+#[derive(Clone)]
+enum SessionReadiness {
+    Starting,
+    Ready,
+    Failed(String),
+}
+
 /// ACP 会话句柄 — 外部持有，用于查询状态和发送操作
 pub struct AcpSessionHandle {
     pub key: String,
@@ -92,6 +99,7 @@ pub struct AcpSessionHandle {
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     /// Agent info stored after initialization: (session_id, name, version)
     pub agent_info: std::sync::RwLock<Option<(String, String, String)>>,
+    readiness: tokio::sync::watch::Sender<SessionReadiness>,
     /// 待处理的权限请求响应 channel + 它的 id（来源是 ACP tool_call.id）。
     /// id 用来在 reconcile 时把这条 live pending 与 history 中的 PermissionRequest
     /// 精确匹配 —— 同 id 的留给前端响应，其它 unresolved 落 Cancelled。
@@ -4441,6 +4449,7 @@ pub async fn get_or_start_session(
                     cmd_tx,
                     shutdown_tx,
                     agent_info: std::sync::RwLock::new(None),
+                    readiness: tokio::sync::watch::channel(SessionReadiness::Starting).0,
                     pending_permission: Mutex::new(None),
                     permission_lock: tokio::sync::Mutex::new(()),
                     pending_elicitation: Mutex::new(None),
@@ -7407,6 +7416,28 @@ fn turn_form_values(
 // === 公开 API ===
 
 impl AcpSessionHandle {
+    pub(crate) async fn wait_until_ready(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<(), String> {
+        let mut readiness = self.readiness.subscribe();
+        tokio::time::timeout(timeout, async {
+            loop {
+                let state = readiness.borrow_and_update().clone();
+                match state {
+                    SessionReadiness::Ready => return Ok(()),
+                    SessionReadiness::Failed(message) => return Err(message),
+                    SessionReadiness::Starting => readiness
+                        .changed()
+                        .await
+                        .map_err(|_| "Agent session ended before it was ready".to_owned())?,
+                }
+            }
+        })
+        .await
+        .map_err(|_| "Timed out waiting for the agent session to become ready".to_owned())?
+    }
+
     pub fn pending_turn_form(&self, expected_id: &str) -> Option<crate::radio::TurnForm> {
         self.pending_elicitation_snapshot()
             .filter(|snapshot| snapshot.request_id == expected_id)
@@ -7497,11 +7528,72 @@ impl AcpSessionHandle {
             }
             AcpUpdate::MessageChunk { text } => {
                 self.last_turn_reply.lock().unwrap().push_str(text);
-                return;
+                let Some(ids) = self.active_turn_ids() else {
+                    return;
+                };
+                (ids, TurnEvent::MessageChunk { text: text.clone() }, false)
             }
-            AcpUpdate::ToolCall { .. } | AcpUpdate::ToolCallV1 { .. } => {
+            AcpUpdate::ToolCall { id, title, .. } => {
                 self.last_turn_reply.lock().unwrap().clear();
-                return;
+                let Some(ids) = self.active_turn_ids() else {
+                    return;
+                };
+                (
+                    ids,
+                    TurnEvent::ToolChanged {
+                        id: id.clone(),
+                        title: Some(title.clone()),
+                        status: Some("in_progress".into()),
+                    },
+                    false,
+                )
+            }
+            AcpUpdate::ToolCallV1 {
+                id, title, status, ..
+            } => {
+                self.last_turn_reply.lock().unwrap().clear();
+                let Some(ids) = self.active_turn_ids() else {
+                    return;
+                };
+                (
+                    ids,
+                    TurnEvent::ToolChanged {
+                        id: id.clone(),
+                        title: Some(title.clone()),
+                        status: Some(status.clone()),
+                    },
+                    false,
+                )
+            }
+            AcpUpdate::ToolCallUpdate { id, status, .. } => {
+                let Some(ids) = self.active_turn_ids() else {
+                    return;
+                };
+                (
+                    ids,
+                    TurnEvent::ToolChanged {
+                        id: id.clone(),
+                        title: None,
+                        status: Some(status.clone()),
+                    },
+                    false,
+                )
+            }
+            AcpUpdate::ToolCallUpdateV1 {
+                id, title, status, ..
+            } => {
+                let Some(ids) = self.active_turn_ids() else {
+                    return;
+                };
+                (
+                    ids,
+                    TurnEvent::ToolChanged {
+                        id: id.clone(),
+                        title: title.clone(),
+                        status: status.clone(),
+                    },
+                    false,
+                )
             }
             AcpUpdate::PermissionRequest {
                 id,
@@ -8324,6 +8416,27 @@ impl AcpSessionHandle {
             );
         }
 
+        let was_ready = matches!(*self.readiness.borrow(), SessionReadiness::Ready);
+        match &update {
+            AcpUpdate::SessionReady { .. } => {
+                self.readiness.send_replace(SessionReadiness::Ready);
+            }
+            AcpUpdate::SessionEnded => {
+                self.readiness
+                    .send_replace(SessionReadiness::Failed("Agent session ended".into()));
+            }
+            AcpUpdate::Error { message } if !was_ready => {
+                self.readiness
+                    .send_replace(SessionReadiness::Failed(message.clone()));
+            }
+            AcpUpdate::AuthRequired { .. } if !was_ready => {
+                self.readiness.send_replace(SessionReadiness::Failed(
+                    "Agent authentication is required. Sign in to the agent in Grove, then retry."
+                        .into(),
+                ));
+            }
+            _ => {}
+        }
         self.publish_turn_radio_event(&update, origin.as_ref());
 
         // broadcast
@@ -9466,6 +9579,7 @@ pub fn new_handle_for_test(
             "claude".into(),
             "test".into(),
         ))),
+        readiness: tokio::sync::watch::channel(SessionReadiness::Ready).0,
         pending_permission: Mutex::new(None),
         permission_lock: tokio::sync::Mutex::new(()),
         pending_elicitation: Mutex::new(None),
@@ -10323,6 +10437,168 @@ async fn drain_stderr_to_file(stderr: tokio::process::ChildStderr, path: PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ReadinessGroveDirGuard;
+    impl Drop for ReadinessGroveDirGuard {
+        fn drop(&mut self) {
+            crate::storage::set_grove_dir_override(None);
+        }
+    }
+
+    #[tokio::test]
+    async fn session_readiness_waits_for_initialization_and_remembers_completion() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _dir_guard = ReadinessGroveDirGuard;
+        let key = format!("ready-test-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", &key, "chat");
+        handle.readiness.send_replace(SessionReadiness::Starting);
+        assert!(handle
+            .wait_until_ready(std::time::Duration::ZERO)
+            .await
+            .is_err());
+
+        // Use the real initialization event; readiness must be published only
+        // after its config snapshot is installed.
+        let ready: AcpUpdate = serde_json::from_value(serde_json::json!({
+            "type": "session_ready", "session_id": "session",
+            "agent_name": "Agent", "agent_version": "1",
+            "available_modes": [], "current_mode_id": null,
+            "available_models": [], "current_model_id": null,
+            "prompt_capabilities": {}, "uses_config_options": true,
+            "config_options": [{"id": "model", "name": "Model", "type": "select",
+                "currentValue": "fast", "options": [{"value": "fast", "name": "Fast"}]}]
+        }))
+        .unwrap();
+        let waiting_handle = handle.clone();
+        let waiter = tokio::spawn(async move {
+            waiting_handle
+                .wait_until_ready(std::time::Duration::from_secs(1))
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+        if let AcpUpdate::SessionReady { config_options, .. } = &ready {
+            *handle.current_config_options.lock().unwrap() = config_options.clone();
+        }
+        handle.emit(ready);
+        waiter.await.unwrap().unwrap();
+        assert_eq!(
+            handle.config_selectors()[0].current.as_deref(),
+            Some("fast")
+        );
+        // A caller subscribing after initialization must not miss readiness.
+        handle
+            .wait_until_ready(std::time::Duration::ZERO)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn session_readiness_preserves_startup_failures_but_not_prompt_errors() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _dir_guard = ReadinessGroveDirGuard;
+        let key = format!("ready-error-test-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", &key, "chat");
+        handle.emit(AcpUpdate::Error {
+            message: "Prompt failed".into(),
+        });
+        handle
+            .wait_until_ready(std::time::Duration::ZERO)
+            .await
+            .unwrap();
+        handle.readiness.send_replace(SessionReadiness::Starting);
+        handle.emit(AcpUpdate::Error {
+            message: "Startup failed".into(),
+        });
+        assert_eq!(
+            handle
+                .wait_until_ready(std::time::Duration::ZERO)
+                .await
+                .unwrap_err(),
+            "Startup failed"
+        );
+        handle.emit(AcpUpdate::SessionEnded);
+        assert_eq!(
+            handle
+                .wait_until_ready(std::time::Duration::ZERO)
+                .await
+                .unwrap_err(),
+            "Agent session ended"
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_progress_forwards_tools_and_preserves_final_answer_boundary() {
+        let task = format!("turn-progress-{}", uuid::Uuid::new_v4());
+        let key = format!("turn-progress-session-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", &task, "chat");
+        let mut sub = crate::radio::subscribe();
+        let ids = vec!["input".to_string()];
+        for update in [
+            AcpUpdate::PromptStarted {
+                message_ids: ids.clone(),
+            },
+            AcpUpdate::MessageChunk {
+                text: "I will search".into(),
+            },
+            AcpUpdate::ToolCall {
+                id: "tool".into(),
+                title: "Search files".into(),
+                locations: vec![],
+                timestamp: None,
+                raw_input: None,
+            },
+            AcpUpdate::ToolCallUpdate {
+                id: "tool".into(),
+                status: "completed".into(),
+                content: None,
+                locations: vec![],
+                raw_input: None,
+            },
+            AcpUpdate::MessageChunk {
+                text: "Final answer".into(),
+            },
+            AcpUpdate::PromptCompleted {
+                message_ids: ids.clone(),
+                stop_reason: "end_turn".into(),
+            },
+        ] {
+            handle.publish_turn_radio_event(&update, None);
+        }
+        let mut events = Vec::new();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while events.len() < 6 {
+                if let Some(crate::radio::RadioEvent::Turn {
+                    task_id,
+                    message_ids,
+                    event,
+                    ..
+                }) = sub.recv().await
+                {
+                    if task_id == task {
+                        assert_eq!(message_ids, ids);
+                        events.push(event);
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            matches!(&events[2], crate::radio::TurnEvent::ToolChanged {title:Some(title),status:Some(status),..} if title=="Search files" && status=="in_progress")
+        );
+        assert!(
+            matches!(&events[3], crate::radio::TurnEvent::ToolChanged {status:Some(status),..} if status=="completed")
+        );
+        assert!(
+            matches!(&events[5], crate::radio::TurnEvent::Completed {message,..} if message=="Final answer")
+        );
+        assert!(handle.active_turn_ids().is_none());
+    }
 
     #[tokio::test]
     async fn rejected_pre_send_claim_drains_waiting_prompt() {

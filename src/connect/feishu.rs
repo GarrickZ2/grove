@@ -6,8 +6,8 @@ use lark_channel::lark_openapi::{
 };
 use lark_channel::{
     ChannelConfig, ChannelEvent, Domain, EventLoop, EventLoopOptions, MediaDownloader,
-    MessageChatType, MessageId, MessageSender, OpenApiWebSocketEventConnector, ReceivedEvent,
-    ResourceDescriptor, ResourceType,
+    MessageChatType, OpenApiWebSocketEventConnector, ReceivedEvent, ResourceDescriptor,
+    ResourceType,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -216,12 +216,13 @@ pub fn start(connect: Connect) {
         } else {
             Domain::Feishu
         };
-        let openapi = OpenApiClient::new(config, ReqwestOpenApiTransport::new());
+        let transport = ReqwestOpenApiTransport::new();
+        let openapi = OpenApiClient::new(config, transport.clone());
         if let Err(error) = openapi.tenant_access_token().await {
             set_status(&connect.id, "error", Some(error.to_string()));
             return;
         }
-        let adapter = Arc::new(FeishuAdapter::new(openapi.clone()));
+        let adapter = Arc::new(FeishuAdapter::new(openapi.clone(), transport));
         let connector =
             OpenApiWebSocketEventConnector::new(openapi, TokioTungsteniteWebSocketTransport::new());
         let options = match event_loop_options(&connect.adapter_config) {
@@ -504,13 +505,20 @@ where
 #[derive(Clone)]
 pub struct FeishuAdapter<T> {
     openapi: OpenApiClient<T>,
-    sender: MessageSender<T>,
+    card_api: Arc<super::feishu_card::CardApi>,
 }
 
 impl<T: OpenApiBinaryTransport> FeishuAdapter<T> {
-    pub fn new(openapi: OpenApiClient<T>) -> Self {
+    pub fn new(openapi: OpenApiClient<T>, transport: T) -> Self {
         Self {
-            sender: MessageSender::new(openapi.clone()),
+            card_api: Arc::new(super::feishu_card::CardApi::new(
+                openapi.config().base_url().to_string(),
+                &openapi.config().app_id,
+                Arc::new(super::feishu_auth::SdkTokens::new(
+                    openapi.clone(),
+                    transport,
+                )),
+            )),
             openapi,
         }
     }
@@ -590,28 +598,42 @@ impl<T: OpenApiBinaryTransport> FeishuAdapter<T> {
                 card = Card::from_value(value).map_err(|error| error.to_string())?;
             }
         }
-        self.openapi
-            .update_message_card_with_callback_token(token, &card)
+        if token.trim().is_empty() {
+            return Err("Feishu card callback token is empty".into());
+        }
+        self.card_api
+            .request(
+                reqwest::Method::POST,
+                "/open-apis/interactive/v1/card/update",
+                json!({"token":token, "card":card.into_value()}),
+            )
             .await
-            .map_err(|error| error.to_string())
+            .map(|_| ())
     }
 
     async fn add_reaction(&self, message_id: &str, emoji_type: &str) -> Option<String> {
         let path = format!("/open-apis/im/v1/messages/{message_id}/reactions");
-        let response: Value = self
-            .openapi
-            .post_tenant_json(
+        match self
+            .card_api
+            .request(
+                reqwest::Method::POST,
                 &path,
-                &json!({
-                    "reaction_type": { "emoji_type": emoji_type }
-                }),
+                json!({"reaction_type":{"emoji_type":emoji_type}}),
             )
             .await
-            .ok()?;
-        response
-            .pointer("/data/reaction_id")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
+        {
+            Ok(data) => {
+                let receipt = data["reaction_id"].as_str().map(str::to_owned);
+                if receipt.is_none() {
+                    eprintln!("[connect] failed to add reaction {emoji_type}: missing reaction_id");
+                }
+                receipt
+            }
+            Err(error) => {
+                eprintln!("[connect] failed to add reaction {emoji_type}: {error}");
+                None
+            }
+        }
     }
 
     async fn delete_reaction_once(
@@ -619,37 +641,14 @@ impl<T: OpenApiBinaryTransport> FeishuAdapter<T> {
         message_id: &str,
         reaction_id: &str,
     ) -> Result<(), String> {
-        let Ok(token) = self.openapi.tenant_access_token().await else {
-            return Err("failed to obtain tenant token for reaction cleanup".into());
-        };
-        let Ok(url) = self.openapi.config().base_url().join(&format!(
-            "/open-apis/im/v1/messages/{message_id}/reactions/{reaction_id}"
-        )) else {
-            return Err("failed to build reaction cleanup URL".into());
-        };
-        let response = reqwest::Client::new()
-            .delete(url)
-            .bearer_auth(token)
-            .send()
+        self.card_api
+            .request(
+                reqwest::Method::DELETE,
+                &format!("/open-apis/im/v1/messages/{message_id}/reactions/{reaction_id}"),
+                Value::Null,
+            )
             .await
-            .map_err(|error| error.to_string())?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(format!("reaction cleanup returned HTTP {status}"));
-        }
-        let body: Value = response
-            .json()
-            .await
-            .map_err(|error| format!("invalid reaction cleanup response: {error}"))?;
-        match body.get("code").and_then(Value::as_i64) {
-            None | Some(0) => Ok(()),
-            Some(code) => Err(format!(
-                "reaction cleanup returned code {code}: {}",
-                body.get("msg")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown error")
-            )),
-        }
+            .map(|_| ())
     }
 
     async fn delete_reaction(&self, message_id: &str, reaction_id: &str) {
@@ -1169,6 +1168,40 @@ impl<T> ConnectAdapter for FeishuAdapter<T>
 where
     T: OpenApiBinaryTransport + Clone + Send + Sync + 'static,
 {
+    fn supports_turn_cards(&self) -> bool {
+        true
+    }
+
+    async fn create_turn_card(&self, view: &super::adapter::TurnView) -> Result<String, String> {
+        self.card_api.create(view).await
+    }
+
+    async fn send_turn_card(
+        &self,
+        message_id: &str,
+        card_id: &str,
+        uuid: &str,
+    ) -> Result<String, String> {
+        self.card_api.send(message_id, card_id, uuid).await
+    }
+
+    async fn update_turn_card(
+        &self,
+        card_id: &str,
+        view: &super::adapter::TurnView,
+        sequence: u32,
+    ) -> Result<(), String> {
+        self.card_api.update(card_id, view, sequence).await
+    }
+
+    async fn replace_turn_card(
+        &self,
+        message_id: &str,
+        view: &super::adapter::TurnView,
+    ) -> Result<(), String> {
+        self.card_api.replace(message_id, view).await
+    }
+
     async fn mark_waiting(&self, message_id: &str) -> Option<String> {
         self.add_reaction(message_id, "OneSecond").await
     }
@@ -1187,15 +1220,7 @@ where
     }
 
     async fn reply_text(&self, message_id: &str, text: &str) -> Result<(), String> {
-        self.sender
-            .text_reply(MessageId(message_id.to_owned()), text.to_owned())
-            // Transient Feishu API hiccups should not silently drop the
-            // agent's answer.
-            .max_attempts(3)
-            .send()
-            .await
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        self.card_api.reply_text(message_id, text).await
     }
 
     async fn reply_card(&self, message_id: &str, spec: &CardSpec) -> Result<(), String> {
@@ -1207,43 +1232,157 @@ where
         let payload = json!({
             "msg_type": "interactive",
             "content": content,
+            "uuid": uuid::Uuid::new_v4().to_string(),
         });
-        let Ok(token) = self.openapi.tenant_access_token().await else {
-            return Err("failed to obtain tenant token for card send".into());
-        };
-        let Ok(url) = self
-            .openapi
-            .config()
-            .base_url()
-            .join(&format!("/open-apis/im/v1/messages/{message_id}/reply"))
-        else {
-            return Err("failed to build card send URL".into());
-        };
-        let response = reqwest::Client::new()
-            .post(url)
-            .bearer_auth(token)
-            .json(&payload)
-            .send()
+        self.card_api
+            .request(
+                reqwest::Method::POST,
+                &format!("/open-apis/im/v1/messages/{message_id}/reply"),
+                payload,
+            )
             .await
-            .map_err(|error| error.to_string())?;
-        let status = response.status();
-        let body: Value = response
-            .json()
-            .await
-            .map_err(|error| format!("invalid card send response (HTTP {status}): {error}"))?;
-        let code = body.get("code").and_then(Value::as_i64);
-        if status.is_success() && code.is_none_or(|code| code == 0) {
-            return Ok(());
+            .map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use lark_channel::lark_openapi::{
+        BinaryHttpResponse, BoxFuture, HttpRequest, HttpResponse, OpenApiTransport,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone, Default)]
+    struct TokenTransport(Arc<AtomicUsize>);
+
+    impl OpenApiTransport for TokenTransport {
+        fn send_json(
+            &self,
+            request: HttpRequest,
+        ) -> BoxFuture<'static, lark_channel::Result<HttpResponse>> {
+            let calls = self.0.clone();
+            Box::pin(async move {
+                assert_eq!(
+                    request.url.path(),
+                    "/open-apis/auth/v3/tenant_access_token/internal"
+                );
+                let index = calls.fetch_add(1, Ordering::SeqCst);
+                Ok(HttpResponse::json(
+                    200,
+                    json!({
+                        "code":0,"tenant_access_token":format!("token-{index}"),"expire":7200,
+                    }),
+                ))
+            })
         }
-        // The SDK's own error type drops the response body; going raw keeps
-        // Feishu's validation message (the actual reason a card was rejected)
-        // visible in the IM error reply and the logs.
-        eprintln!("[connect] card send rejected (HTTP {status}): payload={content} body={body}");
-        Err(format!(
-            "card send failed (HTTP {status}): {}",
-            body.get("msg")
-                .and_then(Value::as_str)
-                .unwrap_or(&body.to_string())
-        ))
+    }
+
+    impl OpenApiBinaryTransport for TokenTransport {
+        fn send_bytes(
+            &self,
+            _: HttpRequest,
+            _: usize,
+        ) -> BoxFuture<'static, lark_channel::Result<BinaryHttpResponse>> {
+            Box::pin(async { panic!("no inbound download in this test") })
+        }
+    }
+
+    #[tokio::test]
+    async fn adapter_reuses_refreshed_token_for_reactions_replies_and_cards() {
+        use axum::{
+            body::Bytes,
+            http::{HeaderMap, StatusCode, Uri},
+            routing::any,
+            Json, Router,
+        };
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let requests = captured.clone();
+        let app = Router::new().route(
+            "/{*path}",
+            any(move |uri: Uri, headers: HeaderMap, body: Bytes| {
+                let requests = requests.clone();
+                async move {
+                    let auth = headers["authorization"].to_str().unwrap().to_owned();
+                    let body: Value = if body.is_empty() {
+                        Value::Null
+                    } else {
+                        serde_json::from_slice(&body).unwrap()
+                    };
+                    requests
+                        .lock()
+                        .unwrap()
+                        .push((uri.path().to_owned(), auth.clone(), body));
+                    if auth == "Bearer token-0" {
+                        (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"code":99991663,"msg":"invalid token"})),
+                        )
+                    } else {
+                        assert_eq!(auth, "Bearer token-1");
+                        (
+                            StatusCode::OK,
+                            Json(json!({"code":0,"data":{
+                                "reaction_id":"receipt", "card_id":"card", "message_id":"reply"
+                            }})),
+                        )
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let transport = TokenTransport::default();
+        let openapi = OpenApiClient::new(ChannelConfig::new("app", "secret"), transport.clone());
+        let mut adapter = FeishuAdapter::new(openapi.clone(), transport.clone());
+        adapter.card_api = Arc::new(super::super::feishu_card::CardApi::new(
+            base,
+            "app",
+            Arc::new(super::super::feishu_auth::SdkTokens::new(
+                openapi,
+                transport.clone(),
+            )),
+        ));
+        let waiting = adapter.mark_waiting("parent").await;
+        assert_eq!(waiting.as_deref(), Some("receipt"));
+        let working = adapter.mark_working("parent", &waiting).await;
+        assert_eq!(working.as_deref(), Some("receipt"));
+        adapter.clear_status("parent", &working).await;
+        adapter.reply_text("parent", "Hello").await.unwrap();
+        adapter
+            .reply_card("parent", &CardSpec::Notice("Ready".into()))
+            .await
+            .unwrap();
+        adapter
+            .apply_action_result(
+                Some("callback"),
+                ActionResult::notice("Saved", NoticeLevel::Success),
+            )
+            .await
+            .unwrap();
+        let view = super::super::adapter::TurnView::default();
+        assert_eq!(adapter.create_turn_card(&view).await.unwrap(), "card");
+        assert_eq!(
+            adapter
+                .send_turn_card("parent", "card", "uuid")
+                .await
+                .unwrap(),
+            "reply"
+        );
+        adapter.update_turn_card("card", &view, 1).await.unwrap();
+        adapter.replace_turn_card("reply", &view).await.unwrap();
+        assert_eq!(transport.0.load(Ordering::SeqCst), 2);
+        let requests = captured.lock().unwrap();
+        assert_eq!(requests.len(), 12);
+        assert_eq!(requests[0].1, "Bearer token-0");
+        assert!(requests[1..]
+            .iter()
+            .all(|(_, auth, _)| auth == "Bearer token-1"));
+        assert_eq!(requests[5].2["msg_type"], "text");
+        assert!(requests[5].2["uuid"].is_string());
+        assert_eq!(requests[7].0, "/open-apis/interactive/v1/card/update");
+        assert_eq!(requests[7].2["token"], "callback");
+        server.abort();
     }
 }

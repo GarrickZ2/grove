@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use super::commands::CardSpec;
 use super::platform::PlatformDefinition;
+pub use super::progress::TurnView;
 use super::registration::RegistrationView;
 use crate::storage::connects::Connect;
 pub type AdapterRef = Arc<dyn ConnectAdapter>;
@@ -374,4 +375,31 @@ pub trait ConnectAdapter: Send + Sync + 'static {
     async fn clear_status(&self, message_id: &str, receipt: &Option<String>);
     async fn reply_text(&self, message_id: &str, text: &str) -> Result<(), String>;
     async fn reply_card(&self, message_id: &str, spec: &CardSpec) -> Result<(), String>;
+
+    fn supports_turn_cards(&self) -> bool {
+        false
+    }
+    async fn create_turn_card(&self, _view: &TurnView) -> Result<String, String> {
+        Err("Turn cards are unsupported".into())
+    }
+    async fn send_turn_card(
+        &self,
+        _message_id: &str,
+        _card_id: &str,
+        _uuid: &str,
+    ) -> Result<String, String> {
+        Err("Turn cards are unsupported".into())
+    }
+    async fn update_turn_card(
+        &self,
+        _card_id: &str,
+        _view: &TurnView,
+        _sequence: u32,
+    ) -> Result<(), String> {
+        Err("Turn cards are unsupported".into())
+    }
+    /// Independent fallback when CardKit cannot finalize an existing message.
+    async fn replace_turn_card(&self, _message_id: &str, _view: &TurnView) -> Result<(), String> {
+        Err("Turn cards are unsupported".into())
+    }
 }

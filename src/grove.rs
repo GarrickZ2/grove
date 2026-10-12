@@ -79,10 +79,15 @@ pub(crate) async fn ensure_session(
     task_id: &str,
     session_id: &str,
 ) -> Result<Session, String> {
-    crate::agent_graph::tools::ensure_target_handle(project_id, task_id, session_id)
+    let handle = crate::agent_graph::tools::ensure_target_handle(project_id, task_id, session_id)
         .await
-        .map(|handle| Session { handle })
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    // An existing handle can still be initializing (e.g. /config immediately
+    // after /new). Process registration alone does not make options available.
+    handle
+        .wait_until_ready(crate::agent_graph::tools::ACP_SESSION_READY_TIMEOUT)
+        .await?;
+    Ok(Session { handle })
 }
 
 pub(crate) fn snapshot(

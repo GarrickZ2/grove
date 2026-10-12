@@ -82,7 +82,7 @@ fn now() -> i64 {
 fn addons() -> Result<String, String> {
     let payload = json!({
         "preset": false,
-        "scopes": { "tenant": ["im:message", "im:message:send_as_bot", "im:message.reactions:write_only"] },
+        "scopes": { "tenant": ["im:message", "im:message:send_as_bot", "im:message.reactions:write_only", "cardkit:card:write"] },
         "events": { "items": { "tenant": ["im.message.receive_v1"] } }
     });
     let bytes = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;

@@ -30,17 +30,36 @@ function draftFromItem(item: ConnectItem, fieldKeys: string[]): ConnectInput {
 
 export function ConnectDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const [items, setItems] = useState<ConnectItem[]>([]);
-  const load = useCallback(async () => { setItems(await listConnects()); }, []);
+  const refreshRef = useRef({ active: false, request: 0 });
+  const load = useCallback(async () => {
+    const refresh = refreshRef.current;
+    if (!refresh.active) return;
+    const request = ++refresh.request;
+    const nextItems = await listConnects();
+    if (refresh.active && refreshRef.current === refresh && request === refresh.request) {
+      setItems(nextItems);
+    }
+  }, []);
   useEffect(() => {
     if (!isOpen) return;
-    let cancelled = false;
-    listConnects().then((nextItems) => {
-      if (!cancelled) setItems(nextItems);
-    }).catch(() => {
-      // The manager can still render its empty state; the next open retries.
-    });
-    return () => { cancelled = true; };
-  }, [isOpen]);
+    const refresh = { active: true, request: 0 };
+    refreshRef.current = refresh;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        await load();
+      } catch {
+        // Keep the last known state and retry after a transient API failure.
+      } finally {
+        if (refresh.active) timer = window.setTimeout(() => void poll(), 2000);
+      }
+    };
+    void poll();
+    return () => {
+      refresh.active = false;
+      window.clearTimeout(timer);
+    };
+  }, [isOpen, load]);
   return <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-6xl">
     <ConnectManager items={items} onItemsChange={load} onClose={onClose} />
   </DialogShell>;
