@@ -14,6 +14,7 @@ pub mod platform;
 mod progress;
 pub mod registration;
 mod service;
+mod weixin;
 
 pub use service::{
     create, current_view, delete, list_views, persist_authorized, update, verify,

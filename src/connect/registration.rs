@@ -185,6 +185,9 @@ async fn poll(
     let mut domain = initial_accounts_domain;
     let mut switched = requested_domain == "lark";
     loop {
+        if !FLOWS.lock().unwrap().contains_key(&id) {
+            return;
+        }
         if tokio::time::Instant::now() >= deadline {
             fail(&id, "QR code expired");
             return;

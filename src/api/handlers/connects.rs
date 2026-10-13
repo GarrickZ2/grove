@@ -100,9 +100,26 @@ pub async fn registration_status(
         .ok_or((StatusCode::NOT_FOUND, "registration flow not found".into()))
 }
 
+pub async fn submit_registration(
+    Path(id): Path<String>,
+    Json(input): Json<serde_json::Value>,
+) -> Result<Json<crate::connect::registration::RegistrationView>, (StatusCode, String)> {
+    crate::connect::adapter::submit_registration(&id, input)
+        .await
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))
+}
+
+pub async fn cancel_registration(Path(id): Path<String>) -> StatusCode {
+    crate::connect::adapter::finish_registration(&id);
+    StatusCode::NO_CONTENT
+}
+
 #[derive(Debug, Deserialize)]
 pub struct FinishRegistration {
     pub flow_id: String,
+    #[serde(default)]
+    pub connection_id: Option<String>,
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -136,6 +153,19 @@ pub async fn finish_registration(
         task_id: input.task_id,
         session_id: input.session_id,
     };
+    if let Some(id) = input.connection_id {
+        let result = reauthorize(&id, create, &user_open_id);
+        match result {
+            Ok(item) => {
+                crate::connect::adapter::finish_registration(&input.flow_id);
+                return Ok((StatusCode::OK, Json(connect::current_view(item))));
+            }
+            Err(error) => {
+                crate::connect::adapter::release_registration(&input.flow_id);
+                return Err(error);
+            }
+        }
+    }
     let item = match connect::persist_authorized(create) {
         Ok(item) => item,
         Err(error) => {
@@ -163,6 +193,49 @@ pub async fn finish_registration(
     crate::connect::adapter::apply_connection(item.clone());
     crate::connect::adapter::finish_registration(&input.flow_id);
     Ok((StatusCode::CREATED, Json(connect::current_view(item))))
+}
+
+fn reauthorize(
+    id: &str,
+    mut input: connects::ConnectInput,
+    user_id: &str,
+) -> Result<connects::Connect, (StatusCode, String)> {
+    let previous = connects::get(id)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "connect not found".into()))?;
+    if previous.platform != input.platform || previous.domain != input.domain {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Authorize the same platform as the existing connection".into(),
+        ));
+    }
+    if user_id.is_empty()
+        || previous
+            .bound_user_id
+            .as_deref()
+            .is_some_and(|owner| owner != user_id)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Authorize with the connection's original user".into(),
+        ));
+    }
+    input.name = previous.name;
+    input.enabled = previous.enabled;
+    input.project_id = previous.project_id;
+    input.task_id = previous.task_id;
+    input.session_id = previous.session_id;
+    crate::connect::adapter::validate_config(
+        &input.platform,
+        &input.domain,
+        &input.adapter_config,
+        true,
+    )
+    .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    // Bind the authorizer before starting the renewed transport.
+    connects::prebind_user(id, user_id)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    connect::update(id, input).map_err(connection_error)
 }
 
 fn provider_request(

@@ -58,7 +58,7 @@ export interface ConnectPlatform {
 export interface ConnectRegistration {
   id: string;
   platform: string;
-  state: 'waiting_for_scan' | 'authorized' | 'error';
+  state: 'waiting_for_scan' | 'waiting_for_input' | 'authorized' | 'error';
   verification_url: string;
   qr_svg: string;
   expires_at: number;
@@ -75,4 +75,6 @@ export const verifyConnectCredentials = (input: { platform: string; domain: stri
 export const listConnectPlatforms = () => apiClient.get<ConnectPlatform[]>('/api/v1/connect-platforms');
 export const beginConnectRegistration = (domain: string, platform = 'feishu') => apiClient.post<{ platform: string; domain: string }, ConnectRegistration>('/api/v1/connects/registration', { platform, domain });
 export const getConnectRegistration = (id: string) => apiClient.get<ConnectRegistration>(`/api/v1/connects/registration/${id}`);
-export const finishConnectRegistration = (input: { flow_id: string; name: string; enabled: boolean; project_id?: string; task_id?: string; session_id?: string }) => apiClient.post<typeof input, ConnectItem>('/api/v1/connects/registration/finish', input);
+export const submitConnectRegistration = (id: string, input: Record<string, unknown>) => apiClient.post<Record<string, unknown>, ConnectRegistration>(`/api/v1/connects/registration/${id}`, input);
+export const cancelConnectRegistration = (id: string) => apiClient.delete(`/api/v1/connects/registration/${id}`);
+export const finishConnectRegistration = (input: { flow_id: string; name: string; enabled: boolean; connection_id?: string; project_id?: string; task_id?: string; session_id?: string }) => apiClient.post<typeof input, ConnectItem>('/api/v1/connects/registration/finish', input);

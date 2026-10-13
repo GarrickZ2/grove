@@ -19,6 +19,7 @@ pub struct ConnectionStatus {
 /// Platform-specific setup and connection lifecycle. Core only selects an
 /// implementation by platform id and treats adapter_config as opaque JSON.
 pub trait Platform: Send + Sync {
+    fn definitions(&self) -> Vec<PlatformDefinition>;
     fn validate_config(&self, domain: &str, config: &Value, existing: bool) -> Result<(), String>;
     fn merge_config(
         &self,
@@ -35,6 +36,17 @@ pub trait Platform: Send + Sync {
         platform: &'a str,
         domain: &'a str,
     ) -> futures::future::BoxFuture<'a, Result<RegistrationView, String>>;
+    fn registration_status(&self, id: &str) -> Option<RegistrationView>;
+    fn claim_registration(&self, id: &str) -> Option<(String, Value, String, String)>;
+    fn release_registration(&self, id: &str);
+    fn finish_registration(&self, id: &str);
+    fn submit_registration<'a>(
+        &'a self,
+        _id: &'a str,
+        _input: Value,
+    ) -> futures::future::BoxFuture<'a, Result<RegistrationView, String>> {
+        Box::pin(async { Err("This authorization flow does not accept input".into()) })
+    }
     fn verify_config<'a>(
         &'a self,
         domain: &'a str,
@@ -45,16 +57,22 @@ pub trait Platform: Send + Sync {
 struct FeishuPlatform;
 
 static FEISHU_PLATFORM: FeishuPlatform = FeishuPlatform;
+static BUILTIN_PLATFORMS: &[&dyn Platform] = &[&FEISHU_PLATFORM, &super::weixin::PLATFORM];
 
 pub fn platform(id: &str) -> Option<&'static dyn Platform> {
-    match id {
-        "feishu" | "lark" => Some(&FEISHU_PLATFORM),
-        _ => None,
-    }
+    BUILTIN_PLATFORMS.iter().copied().find(|adapter| {
+        adapter
+            .definitions()
+            .iter()
+            .any(|definition| definition.available && definition.id == id)
+    })
 }
 
 pub fn definitions() -> Vec<PlatformDefinition> {
-    let mut definitions = super::platform::list();
+    let mut definitions: Vec<_> = BUILTIN_PLATFORMS
+        .iter()
+        .flat_map(|adapter| adapter.definitions())
+        .collect();
     let claimed = crate::plugins::connect_provider::declared_ids();
     definitions.retain(|definition| definition.available || !claimed.contains(&definition.id));
     definitions.extend(crate::plugins::connect_provider::definitions());
@@ -85,25 +103,50 @@ pub async fn begin_registration(
 }
 
 pub async fn registration_status(platform_flow_id: &str) -> Option<RegistrationView> {
-    if let Some(view) = super::registration::get(platform_flow_id) {
+    if let Some(view) = BUILTIN_PLATFORMS
+        .iter()
+        .find_map(|adapter| adapter.registration_status(platform_flow_id))
+    {
         return Some(view);
     }
     crate::plugins::connect_provider::registration_status(platform_flow_id).await
 }
 
 pub fn claim_registration(id: &str) -> Option<(String, Value, String, String)> {
-    super::registration::claim_credentials(id)
+    BUILTIN_PLATFORMS
+        .iter()
+        .find_map(|adapter| adapter.claim_registration(id))
         .or_else(|| crate::plugins::connect_provider::claim_registration(id))
 }
 
 pub fn release_registration(id: &str) {
-    super::registration::release_credentials(id);
+    if let Some(adapter) = BUILTIN_PLATFORMS
+        .iter()
+        .find(|adapter| adapter.registration_status(id).is_some())
+    {
+        adapter.release_registration(id);
+        return;
+    }
     crate::plugins::connect_provider::release_registration(id);
 }
 
 pub fn finish_registration(id: &str) {
-    super::registration::finish(id);
+    if let Some(adapter) = BUILTIN_PLATFORMS
+        .iter()
+        .find(|adapter| adapter.registration_status(id).is_some())
+    {
+        adapter.finish_registration(id);
+        return;
+    }
     crate::plugins::connect_provider::finish_registration(id);
+}
+
+pub async fn submit_registration(id: &str, input: Value) -> Result<RegistrationView, String> {
+    let adapter = BUILTIN_PLATFORMS
+        .iter()
+        .find(|adapter| adapter.registration_status(id).is_some())
+        .ok_or_else(|| "Authorization flow not found or does not accept input".to_owned())?;
+    adapter.submit_registration(id, input).await
 }
 
 pub fn start_connections() {
@@ -213,6 +256,24 @@ pub fn public_config(platform_id: &str, domain: &str, config: &Value) -> Value {
 }
 
 impl Platform for FeishuPlatform {
+    fn definitions(&self) -> Vec<PlatformDefinition> {
+        super::platform::list()
+    }
+
+    fn registration_status(&self, id: &str) -> Option<RegistrationView> {
+        super::registration::get(id)
+    }
+
+    fn claim_registration(&self, id: &str) -> Option<(String, Value, String, String)> {
+        super::registration::claim_credentials(id)
+    }
+
+    fn release_registration(&self, id: &str) {
+        super::registration::release_credentials(id);
+    }
+    fn finish_registration(&self, id: &str) {
+        super::registration::finish(id);
+    }
     fn validate_config(&self, domain: &str, config: &Value, existing: bool) -> Result<(), String> {
         super::feishu::validate_config(domain, config, existing)
     }

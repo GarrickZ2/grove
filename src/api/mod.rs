@@ -96,7 +96,9 @@ pub fn create_api_router() -> Router {
         )
         .route(
             "/connects/registration/{id}",
-            get(handlers::connects::registration_status),
+            get(handlers::connects::registration_status)
+                .post(handlers::connects::submit_registration)
+                .delete(handlers::connects::cancel_registration),
         )
         .route(
             "/connects/registration/finish",
