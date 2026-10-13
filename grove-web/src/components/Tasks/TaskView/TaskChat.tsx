@@ -27,6 +27,7 @@ import {
   Send,
   Loader2,
   CheckCircle2,
+  Check,
   Circle,
   CircleAlert,
   Brain,
@@ -100,6 +101,8 @@ import {
 import { renderGroveMetaEnvelope } from "./groveMetaRenderers";
 import { composerPresenceUpdate } from "./composerPresence";
 import { FormPill } from "./FormPill";
+import { PendingQueueAttachments } from "./PendingQueueAttachments";
+import { captureComposerDraft, restoreComposerDraft, type ComposerDraft } from "./pendingQueueComposer";
 import { ElicitationUrlPill } from "./ElicitationUrlPill";
 import {
   elicitationToSurvey,
@@ -574,6 +577,19 @@ type QueuedInput = {
 
 type PendingQueueRow = QueuedInput & { input?: PendingInput };
 
+type PendingQueueEdit = {
+  chatId: string;
+  id: string;
+  draft: ComposerDraft<Attachment>;
+  attemptId?: string;
+  timeout?: ReturnType<typeof setTimeout>;
+  gone?: boolean;
+  inputIds: string[];
+  localInputId?: string;
+  importCount?: number;
+  submitted?: { text: string; html: string; attachments: ServerEvent[] };
+};
+
 function inputLocation(input: PendingInput): "timeline" | "queue" {
   return input.mode === "queue_message" ? "queue" : "timeline";
 }
@@ -922,6 +938,7 @@ interface PerChatState {
    * preserves text plus any slash/file chips. Restored on chat switch so a
    * half-typed message isn't lost when the user peeks at another chat. */
   draftHtml: string;
+  draftAttachments?: Attachment[];
   /** Latest ACP usage_update for this chat (null when agent never reported). */
   contextUsage: {
     used: number;
@@ -3102,7 +3119,7 @@ export function TaskChat({
   const pendingAttemptsRef = useRef<Map<string, object>>(new Map());
   const startedInputIdsRef = useRef<Map<string, string[]>>(new Map());
   const discardedInputIdsRef = useRef<Set<string>>(new Set());
-  const pendingQueueEditRef = useRef<{ chatId: string; id: string } | null>(null);
+  const pendingQueueEditRef = useRef<PendingQueueEdit | null>(null);
   const pendingQueueResumesRef = useRef<Set<string>>(new Set());
   const sendingAttemptRef = useRef<Set<string>>(new Set());
   const savePendingInputState = useCallback(() => {
@@ -3287,34 +3304,10 @@ export function TaskChat({
   }, [pendingMessages]);
   const [showPendingQueue, setShowPendingQueue] = useState(true);
   const [editingPendingId, setEditingPendingId] = useState<string | null>(null);
-  const [editingPendingValue, setEditingPendingValue] = useState("");
-  const resumeEditedQueue = useCallback((chatId: string) => {
-    const ws = wsMapRef.current.get(chatId);
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "resume_queue" }));
-      pendingQueueResumesRef.current.delete(chatId);
-    } else {
-      // Restore our pause on the next connection, including after a reload.
-      pendingQueueResumesRef.current.add(chatId);
-    }
-    savePendingInputState();
-  }, [savePendingInputState]);
-  const finishPendingQueueEdit = useCallback(() => {
-    const edit = pendingQueueEditRef.current;
-    pendingQueueEditRef.current = null;
-    if (edit) resumeEditedQueue(edit.chatId);
-    setEditingPendingId(null);
-    setEditingPendingValue("");
-  }, [resumeEditedQueue]);
-  useEffect(() => {
-    const edit = pendingQueueEditRef.current;
-    if (edit && edit.chatId !== activeChatId) finishPendingQueueEdit();
-  }, [activeChatId, finishPendingQueueEdit]);
-  useEffect(() => () => {
-    const edit = pendingQueueEditRef.current;
-    pendingQueueEditRef.current = null;
-    if (edit) resumeEditedQueue(edit.chatId);
-  }, [resumeEditedQueue]);
+  const [isSavingPendingEdit, setIsSavingPendingEdit] = useState(false);
+  const [pendingEditError, setPendingEditError] = useState<string | null>(null);
+  const [pendingEditGone, setPendingEditGone] = useState(false);
+  const [pendingEditImporting, setPendingEditImporting] = useState(false);
   // Compact/Separate queue send mode — global flat localStorage key, not
   // scoped per-project/per-chat (product decision: one choice sticks everywhere).
   const [queueMode, setQueueMode] = useState<QueueSendMode>(() => loadQueueMode());
@@ -3557,6 +3550,70 @@ export function TaskChat({
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
+  const resumeEditedQueue = useCallback((chatId: string) => {
+    const ws = wsMapRef.current.get(chatId);
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "resume_queue" }));
+      pendingQueueResumesRef.current.delete(chatId);
+    } else {
+      pendingQueueResumesRef.current.add(chatId);
+    }
+    savePendingInputState();
+  }, [savePendingInputState]);
+  const finishPendingQueueEdit = useCallback((focus = true, resume = true) => {
+    const edit = pendingQueueEditRef.current;
+    if (!edit) return;
+    if (edit.timeout) clearTimeout(edit.timeout);
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    if (composerEmptyTimerRef.current) clearTimeout(composerEmptyTimerRef.current);
+    draftSaveTimerRef.current = null;
+    composerEmptyTimerRef.current = null;
+    pendingQueueEditRef.current = null;
+    // The queued message owns its original previews. Only release previews
+    // created while editing, and never revoke the parked draft's attachments.
+    if (getActiveChatId() === edit.chatId) {
+      attachmentsRef.current.forEach((attachment) => {
+        if (attachment.previewUrl?.startsWith("blob:") && !edit.draft.attachments.some((original) => original.previewUrl === attachment.previewUrl) && ![...pendingAttachmentsRef.current.values()].some((items) => items.some((retained) => retained.previewUrl === attachment.previewUrl))) URL.revokeObjectURL(attachment.previewUrl);
+      });
+    }
+    saveChatDraft(edit.chatId, edit.draft.html);
+    const cached = perChatStateRef.current.get(edit.chatId);
+    if (cached) {
+      cached.draftHtml = edit.draft.html;
+      cached.draftAttachments = edit.draft.attachments;
+    }
+    if (getActiveChatId() === edit.chatId) {
+      const el = editableRef.current;
+      if (el) restoreComposerDraft(el, edit.draft, focus);
+      attachmentsRef.current = edit.draft.attachments;
+      setAttachments(edit.draft.attachments);
+      setHasContent(!!el && (!!getPromptFromEditable(el) || edit.draft.attachments.length > 0));
+      setIsTerminalMode(edit.draft.terminalMode);
+      setIsInputExpanded(edit.draft.expanded);
+      setShowSlashMenu(false);
+      setShowFileMenu(false);
+    }
+    if (resume) resumeEditedQueue(edit.chatId);
+    setEditingPendingId(null);
+    setIsSavingPendingEdit(false);
+    setPendingEditError(null);
+    setPendingEditGone(false);
+    setPendingEditImporting(false);
+  }, [getActiveChatId, resumeEditedQueue]);
+  const failPendingQueueEdit = useCallback((message: string) => {
+    const edit = pendingQueueEditRef.current;
+    if (!edit) return;
+    if (edit.timeout) clearTimeout(edit.timeout);
+    edit.attemptId = undefined;
+    edit.timeout = undefined;
+    setIsSavingPendingEdit(false);
+    setPendingEditError(message);
+  }, []);
+  useEffect(() => {
+    const edit = pendingQueueEditRef.current;
+    if (edit && edit.chatId !== activeChatId) finishPendingQueueEdit(false);
+  }, [activeChatId, finishPendingQueueEdit]);
+  useEffect(() => () => { finishPendingQueueEdit(false); }, [finishPendingQueueEdit]);
   const touchSendHandledRef = useRef(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showPreviewComments, setShowPreviewComments] = useState(false);
@@ -3897,7 +3954,7 @@ export function TaskChat({
   const openMobileDetails = useCallback((panel: MobileComposerPanel) => {
     if (!activeChatId || mobileActionPanelOpen) return;
     const editable = editableRef.current;
-    if (editable) saveChatDraft(activeChatId, editable.innerHTML);
+    if (editable) saveChatDraft(activeChatId, pendingQueueEditRef.current?.draft.html ?? editable.innerHTML);
     setMobileDetails({ chatId: activeChatId, panel });
     setMobileComposerOpen(false);
     setShowSessionSettings(false);
@@ -3907,9 +3964,8 @@ export function TaskChat({
     editable?.blur();
   }, [activeChatId, mobileActionPanelOpen]);
   const closeMobileDetails = useCallback(() => {
-    finishPendingQueueEdit();
     setMobileDetails(null);
-  }, [finishPendingQueueEdit]);
+  }, []);
 
   // When a permission message appears, force the permission panel open and
   // close any rival panels. When it goes away, close the panel. Done via
@@ -4960,6 +5016,7 @@ export function TaskChat({
   /** Save current active chat state to cache */
   const saveCurrentChatState = useCallback(() => {
     if (!activeChatId) return;
+    finishPendingQueueEdit(false);
     perChatStateRef.current.set(activeChatId, {
       messages,
       readMemoryIds,
@@ -4989,11 +5046,13 @@ export function TaskChat({
       isRemoteSession,
       remoteOwnerName,
       draftHtml: editableRef.current?.innerHTML ?? "",
+      draftAttachments: attachmentsRef.current,
       contextUsage,
       pendingMessages,
     });
     saveChatDraft(activeChatId, editableRef.current?.innerHTML ?? "");
   }, [
+    finishPendingQueueEdit,
     activeChatId,
     messages,
     readMemoryIds,
@@ -5124,11 +5183,11 @@ export function TaskChat({
     // 重发 queue_update,只能靠本地缓存 — 若 cache miss(首次进入此 chat)
     // 才置空,等首条 queue_update 灌入。
     setPendingMessages(cached?.pendingMessages ?? []);
-    // Clear attachments on chat switch (revoke blob URLs to avoid leaks)
-    setAttachments((prev) => {
-      prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
-      return [];
-    });
+    // Drafts parked by pending-message editing retain their raw files and
+    // previews when switching chats; the cache now owns those references.
+    const restoredAttachments = cached?.draftAttachments ?? [];
+    attachmentsRef.current = restoredAttachments;
+    setAttachments(restoredAttachments);
     attachCountersRef.current =
       reservePendingAttachmentLabels(
         cached?.attachmentCounters ?? buildAttachmentCounters(restoredMessages),
@@ -5147,11 +5206,10 @@ export function TaskChat({
     const el = editableRef.current;
     if (el) {
       el.innerHTML = draftHtml;
-      // Refresh hasContent since we bypassed onInput; attachments were just
-      // cleared above, so drive the flag off the draft alone.
+      // Refresh hasContent since the draft and its attachments bypass onInput.
       const text = el.textContent?.trim() || "";
       const hasChips = el.querySelector("[data-command],[data-file]") !== null;
-      setHasContent(text.length > 0 || hasChips);
+      setHasContent(text.length > 0 || hasChips || restoredAttachments.length > 0);
     }
   }, [resolveMessages, updateBusy, updateHiddenMessageCount]);
 
@@ -5479,15 +5537,38 @@ export function TaskChat({
             if (discardedInputIdsRef.current.delete(data.id)) savePendingInputState();
             const edit = pendingQueueEditRef.current;
             if (edit?.chatId === chatId && edit.id === data.id) {
-              finishPendingQueueEdit();
-              console.warn("Your queued message was already sent to the agent before the edit landed.");
+              edit.gone = true;
+              setPendingEditGone(true);
+              failPendingQueueEdit("This message is no longer pending. Cancel to restore your draft.");
+            }
+          } else if (data?.type === "queue_edit_result") {
+            const edit = pendingQueueEditRef.current;
+            if (edit?.chatId === chatId && edit.id === data.id && edit.attemptId === data.edit_id) {
+              if (data.error) failPendingQueueEdit(data.error);
+              else {
+                const submitted = edit.submitted;
+                if (submitted) {
+                  edit.inputIds.forEach((id) => {
+                    pendingAttachmentsRef.current.get(id)?.forEach((attachment) => {
+                      if (attachment.previewUrl?.startsWith("blob:") && !edit.draft.attachments.some((original) => original.previewUrl === attachment.previewUrl)) URL.revokeObjectURL(attachment.previewUrl);
+                    });
+                    pendingAttachmentsRef.current.set(id, submitted.attachments.map(attachmentFromContent));
+                  });
+                  updatePendingInputs(chatId, (items) => items.map((input) => edit.inputIds.includes(input.id)
+                    ? { ...input, text: submitted.text, draftHtml: submitted.html, attachments: submitted.attachments }
+                    : input));
+                }
+                finishPendingQueueEdit();
+              }
             }
           }
           const runtime =
             historyRuntimeRef.current.get(chatId) ?? defaultChatHistoryRuntime();
           if (data?.type === "session_ready") {
             runtime.connected = true;
-            if (pendingQueueResumesRef.current.has(chatId) && pendingQueueEditRef.current?.chatId !== chatId) {
+            if (pendingQueueEditRef.current?.chatId === chatId) {
+              ws.send(JSON.stringify({ type: "pause_queue" }));
+            } else if (pendingQueueResumesRef.current.has(chatId)) {
               resumeEditedQueue(chatId);
             }
             // The session is actually usable — the backoff ladder is only
@@ -5584,7 +5665,7 @@ export function TaskChat({
           );
         }
         wsMapRef.current.delete(chatId);
-        if (pendingQueueEditRef.current?.chatId === chatId) finishPendingQueueEdit();
+        if (pendingQueueEditRef.current?.chatId === chatId) failPendingQueueEdit("Connection lost. Reconnect to save this edit.");
         lastWsMessageAtRef.current.delete(chatId);
         const runtime = historyRuntimeRef.current.get(chatId);
         if (runtime) {
@@ -5674,7 +5755,7 @@ export function TaskChat({
         }
       };
     },
-    [projectId, taskId, getActiveChatId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, reconcileInputQueue, savePendingInputState, finishPendingQueueEdit, resumeEditedQueue],
+    [projectId, taskId, getActiveChatId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, reconcileInputQueue, savePendingInputState, finishPendingQueueEdit, failPendingQueueEdit, resumeEditedQueue],
   );
 
 
@@ -5693,7 +5774,7 @@ export function TaskChat({
         if (!wsSessionEverReadyRef.current.get(chatId) || ws.readyState !== WebSocket.OPEN) return;
         if (now - (lastWsMessageAtRef.current.get(chatId) ?? now) < 45000) return;
         wsMapRef.current.delete(chatId);
-        if (pendingQueueEditRef.current?.chatId === chatId) finishPendingQueueEdit();
+        if (pendingQueueEditRef.current?.chatId === chatId) failPendingQueueEdit("Connection lost. Reconnect to save this edit.");
         lastWsMessageAtRef.current.delete(chatId);
         ws.close();
         const runtime = historyRuntimeRef.current.get(chatId);
@@ -5727,7 +5808,7 @@ export function TaskChat({
       document.removeEventListener("visibilitychange", inspect);
       window.removeEventListener("online", inspect);
     };
-  }, [getActiveChatId, updatePendingInputs, finishPendingQueueEdit]);
+  }, [getActiveChatId, updatePendingInputs, failPendingQueueEdit]);
 
   // A finished Run is a persisted, read-only transcript. Detach this view
   // from every live transport without killing the Agent-owned session.
@@ -6247,7 +6328,7 @@ export function TaskChat({
   useEffect(() => {
     const flush = () => {
       const chatId = getActiveChatId();
-      if (chatId) saveChatDraft(chatId, editableRef.current?.innerHTML ?? "");
+      if (chatId) saveChatDraft(chatId, pendingQueueEditRef.current?.chatId === chatId ? pendingQueueEditRef.current.draft.html : editableRef.current?.innerHTML ?? "");
     };
     const visHandler = () => {
       if (document.visibilityState === "hidden") flush();
@@ -6273,7 +6354,7 @@ export function TaskChat({
       if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
       if (composerEmptyTimerRef.current) clearTimeout(composerEmptyTimerRef.current);
       const chatId = getActiveChatId();
-      if (chatId) saveChatDraft(chatId, editableEl?.innerHTML ?? "");
+      if (chatId) saveChatDraft(chatId, pendingQueueEditRef.current?.chatId === chatId ? pendingQueueEditRef.current.draft.html : editableEl?.innerHTML ?? "");
     };
   }, [getActiveChatId]);
 
@@ -7362,9 +7443,7 @@ export function TaskChat({
         startedInputIdsRef.current.delete(chatId);
         timelineEndRef.current.delete(chatId);
         if (pendingQueueEditRef.current?.chatId === chatId) {
-          pendingQueueEditRef.current = null;
-          setEditingPendingId(null);
-          setEditingPendingValue("");
+          finishPendingQueueEdit(false, false);
         }
         pendingQueueResumesRef.current.delete(chatId);
         savePendingInputState();
@@ -7399,7 +7478,7 @@ export function TaskChat({
       }
       setShowChatMenu(false);
     },
-    [activeChatId, archivedChats, chats, connectChatWs, forgetMessages, projectId, restoreChatState, setActiveChatId, taskId, updatePendingInputs, updateLocalInputPlacements, savePendingInputState],
+    [activeChatId, archivedChats, chats, connectChatWs, forgetMessages, projectId, restoreChatState, setActiveChatId, taskId, updatePendingInputs, updateLocalInputPlacements, savePendingInputState, finishPendingQueueEdit],
   );
 
   // ─── Chat fork ─────────────────────────────────────────────────────────
@@ -7524,6 +7603,10 @@ export function TaskChat({
   /** Convert a File to an Attachment and add to state */
   const addFileAsAttachment = useCallback(
     async (file: File) => {
+      const chatId = getActiveChatId();
+      const edit = pendingQueueEditRef.current;
+      const canAttach = () => getActiveChatId() === chatId && pendingQueueEditRef.current === edit && !edit?.attemptId;
+      if (!canAttach()) return;
       if (!file.type.startsWith("image/") && !file.type.startsWith("audio/")) {
         // Defer upload until the prompt is actually sent
         attachCountersRef.current.resource += 1;
@@ -7543,9 +7626,25 @@ export function TaskChat({
         return;
       }
 
+      if (edit) {
+        edit.importCount = (edit.importCount ?? 0) + 1;
+        setPendingEditImporting(true);
+      }
+      let importFinished = false;
+      const finishImport = () => {
+        if (importFinished) return;
+        importFinished = true;
+        if (edit) {
+          edit.importCount = Math.max(0, (edit.importCount ?? 0) - 1);
+          if (pendingQueueEditRef.current === edit) setPendingEditImporting(edit.importCount > 0);
+        }
+      };
+
       if (file.type.startsWith("audio/")) {
         const reader = new FileReader();
         reader.onload = () => {
+          finishImport();
+          if (!canAttach()) return;
           const dataUrl = reader.result as string;
           const base64 = dataUrl.split(",")[1];
           attachCountersRef.current.audio += 1;
@@ -7555,6 +7654,8 @@ export function TaskChat({
             { type: "audio", data: base64, mimeType: file.type, name: file.name, label },
           ]);
         };
+        reader.onerror = finishImport;
+        reader.onabort = finishImport;
         reader.readAsDataURL(file);
         return;
       }
@@ -7564,6 +7665,7 @@ export function TaskChat({
       if (SUPPORTED_IMAGE_TYPES.has(file.type)) {
         // GIF: never re-encode via Canvas (would lose animation)
         if (file.type === "image/gif" && file.size > MAX_IMAGE_BYTES) {
+          finishImport();
           setMessages((prev) =>
             appendSystemMessage(prev, `GIF file is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Please compress and try again.`),
           );
@@ -7576,6 +7678,8 @@ export function TaskChat({
             const blob = await compressImageViaCanvas(file);
             const reader = new FileReader();
             reader.onload = () => {
+              finishImport();
+              if (!canAttach()) return;
               const dataUrl = reader.result as string;
               const base64 = dataUrl.split(",")[1];
               const previewUrl = URL.createObjectURL(blob);
@@ -7587,8 +7691,11 @@ export function TaskChat({
                 { type: "image", data: base64, mimeType: "image/jpeg", name: compressedName, label, previewUrl },
               ]);
             };
+            reader.onerror = finishImport;
+            reader.onabort = finishImport;
             reader.readAsDataURL(blob);
           } catch {
+            finishImport();
             setMessages((prev) =>
               appendSystemMessage(prev, `Failed to compress image (${file.name}). Please compress manually and try again.`),
             );
@@ -7607,6 +7714,8 @@ export function TaskChat({
             const blob = await compressImageViaCanvas(file);
             const reader = new FileReader();
             reader.onload = () => {
+              finishImport();
+              if (!canAttach()) return;
               const dataUrl = reader.result as string;
               const base64 = dataUrl.split(",")[1];
               const previewUrl = URL.createObjectURL(blob);
@@ -7618,8 +7727,11 @@ export function TaskChat({
                 { type: "image", data: base64, mimeType: "image/jpeg", name: resizedName, label, previewUrl },
               ]);
             };
+            reader.onerror = finishImport;
+            reader.onabort = finishImport;
             reader.readAsDataURL(blob);
           } catch {
+            finishImport();
             setMessages((prev) =>
               appendSystemMessage(prev, `Image is too large and resizing failed (${file.name}). Please resize it manually and try again.`),
             );
@@ -7630,6 +7742,8 @@ export function TaskChat({
         // Small supported image with acceptable dimensions: pass through directly
         const reader = new FileReader();
         reader.onload = () => {
+          finishImport();
+          if (!canAttach()) return;
           const dataUrl = reader.result as string;
           const base64 = dataUrl.split(",")[1];
           const previewUrl = URL.createObjectURL(file);
@@ -7640,6 +7754,8 @@ export function TaskChat({
             { type: "image", data: base64, mimeType: file.type, name: file.name, label, previewUrl },
           ]);
         };
+        reader.onerror = finishImport;
+        reader.onabort = finishImport;
         reader.readAsDataURL(file);
         return;
       }
@@ -7649,6 +7765,8 @@ export function TaskChat({
         const blob = await compressImageViaCanvas(file);
         const reader = new FileReader();
         reader.onload = () => {
+          finishImport();
+          if (!canAttach()) return;
           const dataUrl = reader.result as string;
           const base64 = dataUrl.split(",")[1];
           const previewUrl = URL.createObjectURL(blob);
@@ -7660,20 +7778,23 @@ export function TaskChat({
             { type: "image", data: base64, mimeType: "image/jpeg", name: convertedName, label, previewUrl },
           ]);
         };
+        reader.onerror = finishImport;
+        reader.onabort = finishImport;
         reader.readAsDataURL(blob);
       } catch {
+        finishImport();
         setMessages((prev) =>
           appendSystemMessage(prev, `Unsupported image format (${file.name}). Please convert to JPEG or PNG and try again.`),
         );
       }
     },
-    [],
+    [getActiveChatId],
   );
 
   const removeAttachment = useCallback((index: number) => {
     setAttachments((prev) => {
       const att = prev[index];
-      if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      if (att?.previewUrl && ![...pendingAttachmentsRef.current.values()].some((items) => items.some((original) => original.previewUrl === att.previewUrl))) URL.revokeObjectURL(att.previewUrl);
       // Labels are identifiers used by inline reference chips and restored
       // failed messages. Removing one attachment must not rename the others.
       return prev.filter((_, i) => i !== index);
@@ -7974,6 +8095,79 @@ export function TaskChat({
     }
   }, [projectId, taskId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, pendingInputMode, getActiveChatId, openInputQueue]);
 
+  const handleSavePendingEdit = useCallback(async () => {
+    const edit = pendingQueueEditRef.current;
+    const el = editableRef.current;
+    if (!edit || !el || edit.attemptId || edit.gone || edit.importCount) return;
+    const text = getPromptFromEditable(el);
+    const original = attachmentsRef.current;
+    if (!text && original.length === 0) return;
+    if (edit.localInputId) {
+      const input = pendingInputsRef.current.get(edit.chatId)?.find((item) => item.id === edit.localInputId);
+      if (!input) {
+        edit.gone = true;
+        setPendingEditGone(true);
+        failPendingQueueEdit("This message is no longer pending. Cancel to restore your draft.");
+        return;
+      }
+      pendingAttemptsRef.current.delete(input.id);
+      if (input.dispatched || input.serverAccepted) {
+        discardedInputIdsRef.current.add(input.id);
+        const ws = wsMapRef.current.get(edit.chatId);
+        if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "dequeue_message", id: input.id }));
+      }
+      pendingAttachmentsRef.current.get(input.id)?.forEach((attachment) => {
+        if (attachment.previewUrl?.startsWith("blob:") && !original.some((retained) => retained.previewUrl === attachment.previewUrl) && !edit.draft.attachments.some((retained) => retained.previewUrl === attachment.previewUrl)) URL.revokeObjectURL(attachment.previewUrl);
+      });
+      pendingAttachmentsRef.current.set(input.id, original);
+      updatePendingInputs(edit.chatId, (items) => items.map((item) => item.id === input.id
+        ? { ...item, text, draftHtml: el.innerHTML, attachments: original.map(attachmentToContent), status: "failed", cancelled: true, serverAccepted: false, serverQueued: false, dispatched: false, error: "Edited. Retry to send this message." }
+        : item));
+      finishPendingQueueEdit();
+      return;
+    }
+    const ws = wsMapRef.current.get(edit.chatId);
+    if (ws?.readyState !== WebSocket.OPEN) {
+      failPendingQueueEdit("Not connected. Reconnect to save this edit.");
+      return;
+    }
+    const attemptId = createClientMessageId();
+    edit.attemptId = attemptId;
+    const html = el.innerHTML;
+    const stillCurrent = () => pendingQueueEditRef.current === edit && edit.attemptId === attemptId;
+    setIsSavingPendingEdit(true);
+    setPendingEditError(null);
+    try {
+      const resolved = await Promise.all(original.map(async (attachment) => {
+        if (!attachment.pendingFile) {
+          if (attachment.type === "resource" && !attachment.uri) throw new Error("This file is no longer available. Attach it again.");
+          return attachment;
+        }
+        const file = attachment.pendingFile;
+        const data = await fileToBase64(file);
+        if (!stillCurrent()) return attachment;
+        const result = await uploadChatAttachment(projectId, taskId, edit.chatId, {
+          name: file.name,
+          mime_type: file.type || undefined,
+          data,
+        });
+        return { ...attachment, uri: result.uri, name: result.name, mimeType: result.mime_type ?? attachment.mimeType, size: result.size, pendingFile: undefined };
+      }));
+      if (!stillCurrent()) return;
+      if (wsMapRef.current.get(edit.chatId) !== ws || ws.readyState !== WebSocket.OPEN) throw new Error("Connection lost before the edit could be saved.");
+      attachmentsRef.current = resolved;
+      setAttachments(resolved);
+      edit.submitted = { text, html, attachments: resolved.map(attachmentToContent) };
+      ws.send(JSON.stringify({ type: "update_queued_message", id: edit.id, edit_id: attemptId, text, attachments: edit.submitted.attachments }));
+      // A lost acknowledgement must leave the edited content available for retry.
+      edit.timeout = setTimeout(() => {
+        if (stillCurrent()) failPendingQueueEdit("Save was not confirmed. Your edit is still here; reconnect or retry.");
+      }, 20000);
+    } catch (error) {
+      if (stillCurrent()) failPendingQueueEdit(error instanceof Error ? error.message : String(error));
+    }
+  }, [projectId, taskId, failPendingQueueEdit, finishPendingQueueEdit, updatePendingInputs]);
+
   const performSend = useCallback(async () => {
     const el = editableRef.current;
     if (!el) return;
@@ -8136,7 +8330,10 @@ export function TaskChat({
     el.innerHTML = "";
     clearChatDraft(activeChatId);
     const cached = perChatStateRef.current.get(activeChatId);
-    if (cached) cached.draftHtml = "";
+    if (cached) {
+      cached.draftHtml = "";
+      cached.draftAttachments = [];
+    }
     attachmentsRef.current = [];
     setAttachments([]);
     setHasContent(false);
@@ -8154,11 +8351,12 @@ export function TaskChat({
     if (!activeChatId || sendingAttemptRef.current.has(activeChatId)) return;
     sendingAttemptRef.current.add(activeChatId);
     try {
-      await performSend();
+      if (pendingQueueEditRef.current) await handleSavePendingEdit();
+      else await performSend();
     } finally {
       sendingAttemptRef.current.delete(activeChatId);
     }
-  }, [activeChatId, performSend]);
+  }, [activeChatId, performSend, handleSavePendingEdit]);
 
   // On touch browsers, blurring the contentEditable can collapse the mobile
   // composer before a later click event reaches the Send button. Handle the
@@ -8365,7 +8563,7 @@ export function TaskChat({
 
   /** Cancel current agent work — server auto-sends next queued message after Complete */
   const handleSendNow = useCallback(() => {
-    if (isCancelling) return;
+    if (isCancelling || pendingQueueEditRef.current) return;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     setIsCancelling(true);
     wsRef.current.send(JSON.stringify({ type: "cancel" }));
@@ -8383,63 +8581,80 @@ export function TaskChat({
     wsRef.current.send(JSON.stringify({ type: "cancel" }));
   }, [isCancelling]);
 
-  // 编辑排队消息期间暂停队列 auto-send,避免 agent 变 idle 时把队列里的旧文本
-  // 弹出发送,覆盖用户正在进行的编辑。save/cancel 都要 resume。
-  const handleEditPending = useCallback(
-    (msg: { id: string; text: string }) => {
-      const chatId = getActiveChatId();
-      const ws = chatId ? wsMapRef.current.get(chatId) : undefined;
-      if (!chatId || !msg.id || ws?.readyState !== WebSocket.OPEN) return;
-      if (pendingQueueEditRef.current) finishPendingQueueEdit();
-      pendingQueueEditRef.current = { chatId, id: msg.id };
-      pendingQueueResumesRef.current.add(chatId);
-      savePendingInputState();
-      setEditingPendingId(msg.id);
-      setEditingPendingValue(msg.text);
-      ws.send(JSON.stringify({ type: "pause_queue" }));
-    },
-    [getActiveChatId, finishPendingQueueEdit, savePendingInputState],
-  );
+  const handleEditPending = useCallback((msg: PendingQueueRow) => {
+    const chatId = getActiveChatId();
+    const ws = chatId ? wsMapRef.current.get(chatId) : undefined;
+    const el = editableRef.current;
+    if (!chatId || !msg.id || !el || ws?.readyState !== WebSocket.OPEN || pendingQueueEditRef.current?.attemptId) return;
+    if (pendingQueueEditRef.current) finishPendingQueueEdit(false);
+    const draft = captureComposerDraft(el, attachmentsRef.current, isTerminalMode, isInputExpanded);
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    if (composerEmptyTimerRef.current) clearTimeout(composerEmptyTimerRef.current);
+    const localInputId = msg.input && (msg.input.cancelled || !pendingMessages.some((queued) => queuedInputIds(queued).includes(msg.input!.id))) ? msg.input.id : undefined;
+    pendingQueueEditRef.current = { chatId, id: msg.id, draft, inputIds: queuedInputIds(msg), localInputId };
+    pendingQueueResumesRef.current.add(chatId);
+    savePendingInputState();
+    saveChatDraft(chatId, draft.html);
+    ws.send(JSON.stringify({ type: "pause_queue" }));
+    const restored = localInputId
+      ? [...(pendingAttachmentsRef.current.get(localInputId) ?? (msg.attachments ?? []).map(attachmentFromContent))]
+      : (msg.attachments ?? []).map(attachmentFromContent);
+    // Convert serialized content into new preview references. Editing must
+    // not take ownership of previews still owned by the queued message.
+    attachmentsRef.current = restored;
+    setAttachments(restored);
+    if (msg.input?.draftHtml && msg.input.text === msg.text) el.innerHTML = msg.input.draftHtml;
+    else el.textContent = msg.text;
+    restored.forEach((attachment) => {
+      const number = Number(attachment.label.match(/#(\d+)$/)?.[1] ?? 0);
+      attachCountersRef.current[attachment.type] = Math.max(attachCountersRef.current[attachment.type], number);
+    });
+    setEditingPendingId(msg.id);
+    setIsSavingPendingEdit(false);
+    setPendingEditError(null);
+    setPendingEditGone(false);
+    setPendingEditImporting(false);
+    setHasContent(!!getPromptFromEditable(el) || restored.length > 0);
+    setIsTerminalMode(false);
+    setShowSlashMenu(false);
+    setShowFileMenu(false);
+    setIsInputExpanded(false);
+    if (isPhoneLayout) flushSync(() => {
+      setMobileDetails(null);
+      setMobileComposerOpen(true);
+    });
+    el.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    selection?.selectAllChildren(el);
+    selection?.collapseToEnd();
+  }, [getActiveChatId, finishPendingQueueEdit, isTerminalMode, isInputExpanded, isPhoneLayout, savePendingInputState, pendingMessages]);
 
-  const handleSavePendingEdit = useCallback(() => {
-    const edit = pendingQueueEditRef.current;
-    if (!edit) return;
-    const ws = wsMapRef.current.get(edit.chatId);
-    if (ws?.readyState !== WebSocket.OPEN) return;
-    const trimmed = editingPendingValue.trim();
-    // Enter/Escape followed by blur must not submit this edit twice.
-    pendingQueueEditRef.current = null;
-    if (!trimmed) {
-      ws.send(
-        JSON.stringify({ type: "dequeue_message", id: edit.id }),
-      );
-    } else {
-      ws.send(
-        JSON.stringify({
-          type: "update_queued_message",
-          id: edit.id,
-          text: trimmed,
-        }),
-      );
-    }
-    resumeEditedQueue(edit.chatId);
-    setEditingPendingId(null);
-    setEditingPendingValue("");
-  }, [editingPendingValue, resumeEditedQueue]);
-
-  const handleCancelPendingEdit = finishPendingQueueEdit;
+  const handleCancelPendingEdit = useCallback(() => {
+    if (!pendingQueueEditRef.current?.attemptId) finishPendingQueueEdit();
+  }, [finishPendingQueueEdit]);
 
   const handleDeletePending = useCallback(
     (id: string) => {
+      if (pendingQueueEditRef.current?.id === id && pendingQueueEditRef.current.attemptId) return;
+      const edit = pendingQueueEditRef.current;
+      if (edit?.id === id && edit.localInputId) {
+        const input = pendingInputsRef.current.get(edit.chatId)?.find((item) => item.id === edit.localInputId);
+        if (input?.dispatched || input?.serverAccepted) discardedInputIdsRef.current.add(input.id);
+        const ws = wsMapRef.current.get(edit.chatId);
+        if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "dequeue_message", id }));
+        updatePendingInputs(edit.chatId, (items) => items.filter((item) => item.id !== edit.localInputId));
+        finishPendingQueueEdit();
+        return;
+      }
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       wsRef.current.send(JSON.stringify({ type: "dequeue_message", id }));
       if (pendingQueueEditRef.current?.id === id) finishPendingQueueEdit();
     },
-    [finishPendingQueueEdit],
+    [finishPendingQueueEdit, updatePendingInputs],
   );
 
   const handleClearPending = useCallback(() => {
-    if (!activeChatId) return;
+    if (!activeChatId || pendingQueueEditRef.current?.attemptId) return;
     const connected = wsRef.current?.readyState === WebSocket.OPEN;
     if (connected) wsRef.current!.send(JSON.stringify({ type: "clear_queue" }));
     finishPendingQueueEdit();
@@ -8476,9 +8691,9 @@ export function TaskChat({
         hasContent &&
         !showFileMenu &&
         !showSlashMenu &&
-        !isInputExpanded,
+        (!isInputExpanded || !!editingPendingId),
     },
-    [activeChatId, hasContent, showFileMenu, showSlashMenu, isInputExpanded, handleSend],
+    [activeChatId, hasContent, showFileMenu, showSlashMenu, isInputExpanded, editingPendingId, handleSend],
   );
   useCommand(
     "chat.send.alt",
@@ -8832,9 +9047,7 @@ export function TaskChat({
       // The reset deliberately discards the confirmed backend queue. Other
       // local attempts remain editable, but cannot keep waiting on that runtime.
       if (pendingQueueEditRef.current?.chatId === chatId) {
-        pendingQueueEditRef.current = null;
-        setEditingPendingId(null);
-        setEditingPendingValue("");
+        finishPendingQueueEdit(false, false);
       }
       pendingQueueResumesRef.current.delete(chatId);
       const removedIds = new Set<string>();
@@ -8890,7 +9103,7 @@ export function TaskChat({
     } finally {
       setIsReconnecting(false);
     }
-  }, [activeChatId, connectChatWs, getActiveChatId, isReconnecting, projectId, taskId, updateBusy, updatePendingInputs, updateLocalInputPlacements, savePendingInputState]);
+  }, [activeChatId, connectChatWs, getActiveChatId, isReconnecting, projectId, taskId, updateBusy, updatePendingInputs, updateLocalInputPlacements, savePendingInputState, finishPendingQueueEdit]);
 
   const handleReconnect = useCallback(() => {
     if (isReconnecting) return;
@@ -8943,7 +9156,7 @@ export function TaskChat({
     const flush = () => {
       draftLastFlushRef.current = Date.now();
       const chatId = getActiveChatId();
-      if (chatId) saveChatDraft(chatId, editableRef.current?.innerHTML ?? "");
+      if (chatId) saveChatDraft(chatId, pendingQueueEditRef.current?.chatId === chatId ? pendingQueueEditRef.current.draft.html : editableRef.current?.innerHTML ?? "");
     };
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     if (draftLastFlushRef.current === 0) {
@@ -8954,7 +9167,7 @@ export function TaskChat({
     draftSaveTimerRef.current = setTimeout(flush, delay);
     // Detect "!" typed into empty input → enter shell mode and clear the "!"
     const el = editableRef.current;
-    if (el && !isTerminalMode && !isBusy && el.textContent === "!") {
+    if (el && !pendingQueueEditRef.current && !isTerminalMode && !isBusy && el.textContent === "!") {
       el.innerHTML = "";
       setHasContent(false);
       setIsTerminalMode(true);
@@ -9476,6 +9689,7 @@ export function TaskChat({
   /** Delegated click handler for chip close buttons */
   const handleEditableMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (pendingQueueEditRef.current?.attemptId) return;
       const target = e.target as HTMLElement;
       if (target.dataset.chipClose || target.closest("[data-chip-close]")) {
         e.preventDefault();
@@ -9492,6 +9706,7 @@ export function TaskChat({
   /** Strip HTML on paste — upload copied files/images or insert plain text. */
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
+      if (pendingQueueEditRef.current?.attemptId) { e.preventDefault(); return; }
       const items = Array.from(e.clipboardData.items);
       // Finder/Explorer file copy commonly includes both a real File and a
       // text/plain filename. Handle the file payload first so the browser's
@@ -9639,6 +9854,7 @@ export function TaskChat({
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
+      if (pendingQueueEditRef.current?.attemptId) return;
 
       // Path drag from Review sidebar — insert a file chip at the drop point.
       const grovePath = e.dataTransfer.getData('application/x-grove-file-path');
@@ -9893,6 +10109,11 @@ export function TaskChat({
           return;
         }
       }
+      if (pendingQueueEditRef.current && e.key === "Escape") {
+        e.preventDefault();
+        handleCancelPendingEdit();
+        return;
+      }
       // Shift+Tab → permission cycle and Cmd+Opt+Backspace → clear queue
       // both moved to the keyboard catalog (chat.permission.cycle /
       // chat.pending.clear). KeyboardManager handles them in a window
@@ -9923,6 +10144,7 @@ export function TaskChat({
       fileSelectedIdx,
       insertFileAtCursor,
       autocompleteFileAtCursor,
+      handleCancelPendingEdit,
       checkContent,
     ],
   );
@@ -10433,11 +10655,13 @@ export function TaskChat({
           label: "Retry",
           icon: RotateCw,
           onClick: () => retryPendingInput(input),
+          disabled: !!editingPendingId,
         }, {
           id: "edit",
           label: "Edit",
           icon: Pencil,
-          onClick: () => editPendingInput(input),
+          onClick: () => queue ? handleEditPending({ id: input.id, text: input.text, attachments: input.attachments, input }) : editPendingInput(input),
+          disabled: !!editingPendingId,
         }]}
       />
     );
@@ -11474,7 +11698,7 @@ export function TaskChat({
                     mobileSheet={isPhoneLayout && !mobileActionPanelOpen}
                     title={mobileComposerPanelTitles[requestedMobilePanel ?? "pending"]}
                     onClose={closeMobileDetails}
-                    onSheetClosed={finishPendingQueueEdit}
+                    onSheetClosed={closeMobileDetails}
                     className={`mb-3 overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_92%,transparent)] shadow-[0_12px_32px_rgba(0,0,0,0.14)] backdrop-blur-md ${mobileActionPanelOpen ? `mobile-action-sheet mobile-action-sheet-${activeComposerPanel}` : ""}`}
                   >
                     <div className={`${mobileDetailsPanelOpen ? "mobile-composer-sheet-content" : "max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain"} ${activeComposerPanel === "previewComments" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
@@ -11641,53 +11865,34 @@ export function TaskChat({
                               <span className="w-4 shrink-0 text-right text-xs text-[var(--color-text-muted)]">
                                 {i + 1}
                               </span>
-                              {editingPendingId === msg.id && msg.id !== "" ? (
-                                <input
-                                  autoFocus
-                                  value={editingPendingValue}
-                                  onChange={(e) =>
-                                    setEditingPendingValue(e.target.value)
-                                  }
-                                  onKeyDown={(e) => {
-                                    if (
-                                      e.nativeEvent.isComposing ||
-                                      e.keyCode === 229
-                                    )
-                                      return;
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      handleSavePendingEdit();
-                                    }
-                                    if (e.key === "Escape")
-                                      handleCancelPendingEdit();
-                                  }}
-                                  onBlur={handleSavePendingEdit}
-                                  className="flex-1 min-w-0 rounded border border-[var(--color-highlight)] bg-[var(--color-bg-secondary)] px-2 py-0.5 text-sm text-[var(--color-text)] outline-none"
-                                />
-                              ) : (
-                                <>
+                              <>
+                                  <PendingQueueAttachments
+                                    attachments={msg.attachments ?? []}
+                                    onImageClick={setLightboxUrl}
+                                  />
                                   <span
                                     className={`flex-1 min-w-0 text-[var(--color-text)] ${isPhoneLayout ? "whitespace-pre-wrap break-words leading-5" : "truncate"}`}
                                     title={msg.input?.error ?? msg.text}
                                   >
-                                    {msg.text || "Attachments"}
+                                    {msg.text || (msg.attachments?.length === 1
+                                      ? msg.attachments[0].name || msg.attachments[0].label || "Attachment"
+                                      : msg.attachments?.every((attachment) => attachment.type === "image") && msg.attachments.length > 0
+                                        ? `${msg.attachments.length} images`
+                                        : `${msg.attachments?.length ?? 0} attachments`)}
                                   </span>
-                                  {(msg.attachments?.length ?? 0) > 0 && (
-                                    <span
-                                      className="inline-flex shrink-0 items-center gap-0.5 text-xs text-[var(--color-text-muted)]"
-                                      title={msg.attachments!.map((attachment) => attachment.name ?? attachment.label ?? "Attachment").join(", ")}
-                                    >
-                                      <Paperclip className="h-3 w-3" />
-                                      {msg.attachments!.length}
-                                    </span>
-                                  )}
                                   <div className="flex items-center gap-1 shrink-0">
-                                    {msg.input && (msg.input.status !== "accepted" || !msg.input.serverQueued) ? renderPendingInputActions(msg.input, true) : (
+                                    {editingPendingId === msg.id ? (
+                                      <>
+                                        <span className="rounded-full bg-[color-mix(in_srgb,var(--color-highlight)_12%,transparent)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-highlight)]">{isSavingPendingEdit ? "Saving…" : "Editing"}</span>
+                                        <button type="button" onClick={handleCancelPendingEdit} disabled={isSavingPendingEdit} className="rounded px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">Cancel</button>
+                                        <button type="button" onClick={() => handleDeletePending(msg.id)} disabled={isSavingPendingEdit || !isConnected} className="rounded px-1.5 py-0.5 text-xs text-[var(--color-error)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">Delete</button>
+                                      </>
+                                    ) : msg.input && (msg.input.status !== "accepted" || !msg.input.serverQueued) ? renderPendingInputActions(msg.input, true) : (
                                       <>
                                         {msg.id === pendingMessages[0]?.id && (
                                           <button
                                             onClick={() => handleSendNow()}
-                                            disabled={isCancelling}
+                                            disabled={isCancelling || !!editingPendingId}
                                             className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 disabled:cursor-not-allowed"
                                             title={isCancelling ? "Cancelling…" : "Send Now"}
                                           >
@@ -11701,7 +11906,7 @@ export function TaskChat({
                                         )}
                                         <button
                                           onClick={() => handleEditPending(msg)}
-                                          disabled={!isConnected || !msg.id}
+                                          disabled={!isConnected || !msg.id || !!editingPendingId}
                                           className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] disabled:opacity-50"
                                           title="Edit"
                                         >
@@ -11717,8 +11922,7 @@ export function TaskChat({
                                       </>
                                     )}
                                   </div>
-                                </>
-                              )}
+                              </>
                             </div>
                           ))}
                         </div>
@@ -12500,6 +12704,12 @@ export function TaskChat({
                   </div>
                 </div>
 
+                {editingPendingId && pendingEditError && (
+                  <div role="alert" className="mb-2 break-words px-3 text-xs text-[var(--color-error)]">
+                    {pendingEditError}
+                  </div>
+                )}
+
                 {attachments.length > 0 && (
                   <div className="mb-2 flex gap-2 flex-wrap select-none">
                     {attachments.map((att, i) => (
@@ -12534,6 +12744,7 @@ export function TaskChat({
                         </div>
                         <button
                           onClick={() => removeAttachment(i)}
+                          disabled={isSavingPendingEdit}
                           className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-error)] text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           &times;
@@ -12605,7 +12816,7 @@ export function TaskChat({
                     <div
                       ref={editableRef}
                       contentEditable={
-                        !isRemoteSession && !activePermissionMessage
+                        !isRemoteSession && !activePermissionMessage && !isSavingPendingEdit
                       }
                       suppressContentEditableWarning
                       onInput={handleInput}
@@ -12658,6 +12869,7 @@ export function TaskChat({
                       (promptCaps.image || promptCaps.audio) && (
                         <button
                           onClick={() => fileInputRef.current?.click()}
+                          disabled={isSavingPendingEdit}
                           className="h-9 w-9 flex items-center justify-center rounded-xl bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors shrink-0"
                           title="Attach file"
                         >
@@ -12784,7 +12996,21 @@ export function TaskChat({
                       />
                       </span>
                     )}
-                    {activePermissionMessage && isBusy ? (
+                    {editingPendingId ? (
+                      <span onPointerDown={handleSendButtonPointerDown} className="contents">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="h-9 w-9 !p-0 rounded-xl"
+                          onClick={handleSendButtonClick}
+                          disabled={!hasContent || !isConnected || isSavingPendingEdit || pendingEditImporting || pendingEditGone || !!activePermissionMessage}
+                          title={pendingEditImporting ? "Preparing attachments…" : "Save pending message (Enter)"}
+                          aria-label={isSavingPendingEdit ? "Saving pending message" : "Save pending message"}
+                        >
+                          {isSavingPendingEdit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                        </Button>
+                      </span>
+                    ) : activePermissionMessage && isBusy ? (
                       <Button
                         variant="secondary"
                         size="sm"

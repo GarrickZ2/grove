@@ -717,6 +717,12 @@ pub enum AcpUpdate {
     QueueMessageGone {
         id: String,
     },
+    /// Correlated acknowledgement for an in-place edit of a pending message.
+    QueueEditResult {
+        id: String,
+        edit_id: String,
+        error: Option<String>,
+    },
     /// Plan file 路径更新（Write 工具在 plan mode 下写入 .md 文件时触发）
     PlanFileUpdate {
         path: String,
@@ -9023,6 +9029,7 @@ impl AcpSessionHandle {
         id: &str,
         text: String,
         processed_text: String,
+        attachments: Option<Vec<ContentBlockData>>,
     ) -> (bool, Vec<QueuedMessage>) {
         let mut q = self.pending_queue.lock().unwrap();
         let mut found = false;
@@ -9030,6 +9037,9 @@ impl AcpSessionHandle {
             if m.id == id {
                 m.text = text;
                 m.processed_text = Some(processed_text);
+                if let Some(attachments) = attachments {
+                    m.attachments = attachments;
+                }
                 found = true;
                 break;
             }
@@ -9041,6 +9051,7 @@ impl AcpSessionHandle {
         &self,
         id: &str,
         text: String,
+        attachments: Option<Vec<ContentBlockData>>,
     ) -> crate::error::Result<(bool, Vec<QueuedMessage>)> {
         let sender = {
             let queue = self.pending_queue.lock().unwrap();
@@ -9059,7 +9070,7 @@ impl AcpSessionHandle {
             sender.as_deref(),
         )
         .await?;
-        Ok(self.update_queued_message_by_id(id, text, processed_text))
+        Ok(self.update_queued_message_by_id(id, text, processed_text, attachments))
     }
 
     /// 清空待执行队列，返回空队列
@@ -10910,6 +10921,7 @@ mod tests {
             &first_id,
             "first edited".to_string(),
             "context:first edited".to_string(),
+            None,
         );
         assert!(found);
         handle.resume_queue();
@@ -10938,6 +10950,101 @@ mod tests {
             Some("editable")
         );
         assert!(serialized.get("processed_text").is_none());
+    }
+
+    #[tokio::test]
+    async fn queued_edit_replaces_attachments_without_changing_identity_or_config() {
+        let key = format!("queue-edit-attachments-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        handle.pause_queue();
+        let attachment = |data: &str| ContentBlockData::Image {
+            data: data.into(),
+            mime_type: "image/png".into(),
+            uri: None,
+            label: Some("Image #1".into()),
+        };
+        let first = QueuedMessage::new("first".into(), vec![], None, false, None);
+        let first_id = first.id.clone();
+        let mut editing = QueuedMessage::new(
+            "original".into(),
+            vec![attachment("old")],
+            Some("user:test".into()),
+            true,
+            Some(
+                serde_json::from_value(serde_json::json!({
+                    "model": "original-model", "mode": "original-mode"
+                }))
+                .unwrap(),
+            ),
+        );
+        editing.message_ids = vec!["accepted-input".into()];
+        let id = editing.id.clone();
+        handle.queue_message(first);
+        handle.queue_message(editing);
+
+        let (found, messages) = handle.update_queued_message_by_id(
+            &id,
+            String::new(),
+            "processed attachment-only prompt".into(),
+            Some(vec![attachment("new")]),
+        );
+        assert!(found);
+        assert_eq!(messages[0].id, first_id);
+        assert_eq!(messages[1].id, id);
+        assert_eq!(messages[1].text, "");
+        assert_eq!(
+            messages[1].delivery_text(),
+            "processed attachment-only prompt"
+        );
+        assert_eq!(messages[1].message_ids, vec!["accepted-input"]);
+        assert_eq!(messages[1].sender.as_deref(), Some("user:test"));
+        assert!(messages[1].terminal);
+        assert_eq!(
+            messages[1].config.as_ref().unwrap().model.as_deref(),
+            Some("original-model")
+        );
+        assert_eq!(
+            messages[1].config.as_ref().unwrap().mode.as_deref(),
+            Some("original-mode")
+        );
+        assert!(
+            matches!(&messages[1].attachments[..], [ContentBlockData::Image { data, .. }] if data == "new")
+        );
+
+        // Legacy text-only clients preserve attachments; an explicit empty
+        // array from the full composer removes them.
+        let (_, preserved) =
+            handle.update_queued_message_by_id(&id, "text only".into(), "text only".into(), None);
+        assert_eq!(preserved[1].attachments.len(), 1);
+        let (_, cleared) = handle.update_queued_message_by_id(
+            &id,
+            "text only".into(),
+            "text only".into(),
+            Some(vec![]),
+        );
+        assert!(cleared[1].attachments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn queued_edit_cannot_replace_another_message_after_removal() {
+        let key = format!("queue-edit-missing-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        handle.pause_queue();
+        let message = QueuedMessage::new("keep this".into(), vec![], None, false, None);
+        let id = message.id.clone();
+        handle.queue_message(message);
+
+        let (found, messages) = handle.update_queued_message_by_id(
+            "removed-id",
+            "changed".into(),
+            "changed".into(),
+            Some(vec![]),
+        );
+
+        assert!(!found);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].id, id);
+        assert_eq!(messages[0].text, "keep this");
     }
 
     #[test]

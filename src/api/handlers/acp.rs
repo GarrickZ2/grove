@@ -89,6 +89,11 @@ enum ClientMessage {
     UpdateQueuedMessage {
         id: String,
         text: String,
+        /// Omitted by older clients, which edit text without changing attachments.
+        #[serde(default)]
+        attachments: Option<Vec<ContentBlockData>>,
+        #[serde(default)]
+        edit_id: Option<String>,
     },
     /// Clear all pending messages
     ClearQueue,
@@ -332,6 +337,12 @@ enum ServerMessage {
     /// 提示用户"消息已发送,无法编辑"。
     QueueMessageGone {
         id: String,
+    },
+    QueueEditResult {
+        id: String,
+        edit_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     PlanFileUpdate {
         path: String,
@@ -785,6 +796,9 @@ impl From<AcpUpdate> for ServerMessage {
             },
             AcpUpdate::QueueUpdate { messages } => ServerMessage::QueueUpdate { messages },
             AcpUpdate::QueueMessageGone { id } => ServerMessage::QueueMessageGone { id },
+            AcpUpdate::QueueEditResult { id, edit_id, error } => {
+                ServerMessage::QueueEditResult { id, edit_id, error }
+            }
             AcpUpdate::PlanFileUpdate { path, content } => {
                 ServerMessage::PlanFileUpdate { path, content }
             }
@@ -1400,18 +1414,42 @@ async fn handle_acp_ws(
                                     handle_for_input.emit(AcpUpdate::QueueMessageGone { id });
                                 }
                             }
-                            ClientMessage::UpdateQueuedMessage { id, text } => {
-                                let (found, messages) =
-                                    match handle_for_input.submit_queued_edit(&id, text).await {
-                                        Ok(result) => result,
-                                        Err(error) => {
+                            ClientMessage::UpdateQueuedMessage {
+                                id,
+                                text,
+                                attachments,
+                                edit_id,
+                            } => {
+                                let (found, messages) = match handle_for_input
+                                    .submit_queued_edit(&id, text, attachments)
+                                    .await
+                                {
+                                    Ok(result) => result,
+                                    Err(error) => {
+                                        if let Some(edit_id) = edit_id {
+                                            handle_for_input.emit(AcpUpdate::QueueEditResult {
+                                                id,
+                                                edit_id,
+                                                error: Some(error.to_string()),
+                                            });
+                                        } else {
                                             handle_for_input.emit(AcpUpdate::Error {
                                                 message: error.to_string(),
                                             });
-                                            continue;
                                         }
-                                    };
+                                        continue;
+                                    }
+                                };
                                 handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                                if let Some(edit_id) = edit_id {
+                                    handle_for_input.emit(AcpUpdate::QueueEditResult {
+                                        id: id.clone(),
+                                        edit_id,
+                                        error: (!found).then(|| {
+                                            "This message is no longer pending.".to_string()
+                                        }),
+                                    });
+                                }
                                 if !found {
                                     handle_for_input.emit(AcpUpdate::QueueMessageGone { id });
                                 }
@@ -2840,6 +2878,40 @@ pub async fn reconnect_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queued_edit_request_distinguishes_preserved_and_removed_attachments() {
+        let legacy: ClientMessage = serde_json::from_value(serde_json::json!({
+            "type": "update_queued_message", "id": "queued-id", "text": "edited"
+        }))
+        .unwrap();
+        assert!(matches!(
+            legacy,
+            ClientMessage::UpdateQueuedMessage {
+                attachments: None,
+                edit_id: None,
+                ..
+            }
+        ));
+
+        let full: ClientMessage = serde_json::from_value(serde_json::json!({
+            "type": "update_queued_message", "id": "queued-id", "text": "edited",
+            "attachments": [], "edit_id": "save-attempt"
+        }))
+        .unwrap();
+        assert!(
+            matches!(full, ClientMessage::UpdateQueuedMessage { attachments: Some(attachments), edit_id: Some(edit_id), .. } if attachments.is_empty() && edit_id == "save-attempt")
+        );
+        let response = ServerMessage::from(AcpUpdate::QueueEditResult {
+            id: "queued-id".into(),
+            edit_id: "save-attempt".into(),
+            error: None,
+        });
+        let value = serde_json::to_value(response).unwrap();
+        assert_eq!(value["type"], "queue_edit_result");
+        assert_eq!(value["edit_id"], "save-attempt");
+        assert!(value.get("error").is_none());
+    }
 
     #[test]
     fn recent_turn_start_preserves_whole_turn() {

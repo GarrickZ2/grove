@@ -240,6 +240,7 @@ pub async fn execute(agent: String, cwd: String) {
                     | AcpUpdate::PermissionResponse { .. }
                     | AcpUpdate::QueueUpdate { .. }
                     | AcpUpdate::QueueMessageGone { .. }
+                    | AcpUpdate::QueueEditResult { .. }
                     | AcpUpdate::PlanFileUpdate { .. }
                     | AcpUpdate::TerminalExecute { .. }
                     | AcpUpdate::TerminalChunk { .. }
