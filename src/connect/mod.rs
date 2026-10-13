@@ -7,6 +7,8 @@ pub(crate) mod core;
 mod feishu;
 mod feishu_auth;
 mod feishu_card;
+mod feishu_connection;
+mod feishu_transport;
 mod grove;
 pub mod platform;
 mod progress;

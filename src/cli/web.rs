@@ -29,8 +29,6 @@ fn build_frontend(project_dir: &Path) -> bool {
         return false;
     }
 
-    println!("Building frontend...");
-
     // Run npm install if node_modules doesn't exist
     let node_modules = grove_web_dir.join("node_modules");
     if !node_modules.exists() {
@@ -301,7 +299,6 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
 
     // Check if node_modules exists
     if !grove_web_dir.join("node_modules").exists() {
-        println!("Installing dependencies...");
         let status =
             Command::new(crate::check::resolve_program("npm").unwrap_or_else(|| "npm".into()))
                 .arg("install")
@@ -318,7 +315,6 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
 
     // Start Vite dev server in background
     let vite_port = 5173;
-    println!("Starting Vite dev server on port {}...", vite_port);
 
     let mut vite_process =
         Command::new(crate::check::resolve_program("npm").unwrap_or_else(|| "npm".into()))
@@ -336,11 +332,11 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
     // Open browser
     if !no_open {
         let url = format!("http://localhost:{}", vite_port);
-        println!("Opening browser: {}", url);
-        let _ = open::that(&url);
+        if let Err(error) = open::that(&url) {
+            eprintln!("Failed to open browser: {error}");
+        }
     }
 
-    println!("API server starting on port {}...", api_port);
     println!("\nDev mode URLs:");
     println!("  Frontend: http://localhost:{}", vite_port);
     println!("  API:      http://localhost:{}/api/v1", api_port);
@@ -449,8 +445,9 @@ async fn execute_remote_mode(port: u16, no_open: bool, base_url: String) {
 
     if !no_open {
         let url = format!("http://localhost:{}", actual_port);
-        println!("Opening browser: {}", url);
-        let _ = open::that(&url);
+        if let Err(error) = open::that(&url) {
+            eprintln!("Failed to open browser: {error}");
+        }
     }
 
     println!("\nPress Ctrl+C to stop");

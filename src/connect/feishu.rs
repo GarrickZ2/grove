@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 use lark_channel::card::{Card, CardElement};
 use lark_channel::lark_openapi::{
-    OpenApiBinaryTransport, OpenApiClient, ReqwestOpenApiTransport,
-    TokioTungsteniteWebSocketTransport, WebSocketEventAck,
+    OpenApiBinaryTransport, OpenApiClient, TokioTungsteniteWebSocketTransport, WebSocketEventAck,
 };
 use lark_channel::{
     ChannelConfig, ChannelEvent, Domain, EventLoop, EventLoopOptions, MediaDownloader,
@@ -14,6 +13,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::feishu_connection::{retry_credentials, ObservedConnector};
+use super::feishu_transport::{log_error, safe, DiagnosticTransport};
 use crate::storage::connects::Connect;
 
 use super::adapter::{
@@ -30,7 +31,15 @@ static CONNECTIONS: once_cell::sync::Lazy<Mutex<HashMap<String, tokio::task::Joi
 static STATUSES: once_cell::sync::Lazy<Mutex<HashMap<String, ConnectionStatus>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
 
-fn set_status(id: &str, state: &str, detail: Option<String>) {
+pub(super) fn set_status(id: &str, state: &str, detail: Option<String>) {
+    let detail = detail.map(|value| safe(&value));
+    if state == "error" {
+        log_error(
+            id,
+            "connection",
+            detail.as_deref().unwrap_or("Connection failed"),
+        );
+    }
     STATUSES.lock().unwrap().insert(
         id.to_owned(),
         ConnectionStatus {
@@ -216,10 +225,24 @@ pub fn start(connect: Connect) {
         } else {
             Domain::Feishu
         };
-        let transport = ReqwestOpenApiTransport::new();
+        let transport = match DiagnosticTransport::new(&connect.id) {
+            Ok(transport) => transport,
+            Err(error) => {
+                set_status(&connect.id, "error", Some(error));
+                return;
+            }
+        };
         let openapi = OpenApiClient::new(config, transport.clone());
-        if let Err(error) = openapi.tenant_access_token().await {
-            set_status(&connect.id, "error", Some(error.to_string()));
+        if let Err(error) = retry_credentials(&openapi, |detail| {
+            set_status(&connect.id, "connecting", Some(detail))
+        })
+        .await
+        {
+            set_status(
+                &connect.id,
+                "error",
+                Some(format!("Credential verification failed: {error}")),
+            );
             return;
         }
         let adapter = Arc::new(FeishuAdapter::new(openapi.clone(), transport));
@@ -232,8 +255,11 @@ pub fn start(connect: Connect) {
                 return;
             }
         };
+        let connector = ObservedConnector {
+            inner: connector,
+            id: connect.id.clone(),
+        };
         let mut event_loop = EventLoop::with_options(connector, options);
-        set_status(&connect.id, "online", None);
         let connection_id = connect.id.clone();
         let outcome = event_loop
             .run(move |event| {
@@ -302,11 +328,13 @@ pub async fn verify_config(domain: &str, value: &Value) -> Result<(), String> {
     } else {
         Domain::Feishu
     };
-    OpenApiClient::new(config, ReqwestOpenApiTransport::new())
-        .tenant_access_token()
-        .await
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    let client = OpenApiClient::new(config, DiagnosticTransport::new("credential-check")?);
+    retry_credentials(&client, |_| {}).await.map_err(|error| {
+        format!(
+            "Credential verification failed: {}",
+            safe(&error.to_string())
+        )
+    })
 }
 
 fn credentials(value: &Value) -> Result<(String, String), String> {

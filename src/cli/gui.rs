@@ -562,22 +562,6 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
     let actual_port = bound_port;
     let _ = GUI_PORT.set(actual_port);
 
-    if let Some(ref base_url) = remote_url {
-        println!(
-            "Grove GUI (remote mode): starting local proxy on http://localhost:{}",
-            actual_port
-        );
-        println!(
-            "Grove GUI (remote mode): connecting to remote backend -> {}",
-            base_url
-        );
-    } else {
-        println!(
-            "Grove GUI: Starting API server on http://localhost:{}",
-            actual_port
-        );
-    }
-
     // GUI-specific setup ends at listener binding/remote proxy selection.
     // Local backend initialization is shared with `grove web` so new startup
     // responsibilities cannot be added to one surface and omitted from the other.
@@ -615,7 +599,6 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Build and run Tauri application
-    println!("Grove GUI: Launching desktop window...");
 
     let target_url = format!("http://localhost:{}", actual_port);
     crate::hooks::set_active_base_url(format!("http://127.0.0.1:{}", actual_port));
@@ -807,8 +790,6 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
                 // remote tray_enabled value (including hiding it when false).
                 if let Err(e) = crate::tray::init(&app.handle().clone(), actual_port) {
                     eprintln!("[Grove] failed to initialize remote menubar tray: {}", e);
-                } else {
-                    eprintln!("[Grove] remote menubar tray initialized");
                 }
             } else {
                 let cfg = crate::storage::config::load_config();
@@ -903,8 +884,6 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             let _ = (app_handle, event);
         }
     });
-
-    println!("Grove GUI closed.");
 
     // Abort the server task when Tauri exits and check for panic
     if let Some(handle) = server_handle {

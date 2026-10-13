@@ -404,6 +404,10 @@ async fn spawn(
             }
         }
     }
+    if super::runtime::is_node_command(&command) {
+        // Keep stderr errors; do not emit Node's normal process warnings.
+        cmd.env("NODE_NO_WARNINGS", "1");
+    }
 
     let mut child = cmd
         .spawn()

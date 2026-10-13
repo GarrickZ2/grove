@@ -1714,7 +1714,6 @@ pub async fn bind_with_fallback(
         match tokio::net::TcpListener::bind(&addr).await {
             Ok(listener) => return Ok((listener, port)),
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && offset + 1 < max_attempts => {
-                eprintln!("Port {} is in use, trying {}...", port, port + 1);
                 continue;
             }
             Err(e) => return Err(e),
@@ -1885,16 +1884,12 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
                 std::io::Error::other(format!("agent registry initialization failed: {}", e))
             })?
     };
-    let seeded = tokio::task::spawn_blocking(move || -> crate::error::Result<usize> {
+    tokio::task::spawn_blocking(move || -> crate::error::Result<usize> {
         crate::storage::installed_agents::reconcile_registry_state(&startup_registry)
     })
     .await
     .map_err(|e| std::io::Error::other(format!("agent onboarding task failed: {}", e)))?
     .map_err(|e| std::io::Error::other(format!("agent onboarding reconciliation failed: {}", e)))?;
-    eprintln!(
-        "[startup] onboarding agents reconciled ({} Npx channel(s) added)",
-        seeded
-    );
 
     // Defaults are derived only after both managed and PATH channels have
     // converged, so first-run config cannot observe an empty database.
@@ -2113,8 +2108,9 @@ pub async fn start_server(
         let url = format!("http://localhost:{}", actual_port);
         tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-            println!("Opening browser: {}", url);
-            let _ = open::that(&url);
+            if let Err(error) = open::that(&url) {
+                eprintln!("Failed to open browser: {error}");
+            }
         });
     }
 
@@ -2126,11 +2122,9 @@ pub async fn start_server(
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             tokio::signal::ctrl_c().await.ok();
-            println!("\nShutting down... (press Ctrl-C again to force exit)");
             shutdown_file_watchers();
             tokio::spawn(async {
                 tokio::signal::ctrl_c().await.ok();
-                eprintln!("Forced exit.");
                 // Process::exit skips Drop — flush FileWatcher buffers
                 // explicitly so second-Ctrl-C doesn't lose pending writes.
                 shutdown_file_watchers();
