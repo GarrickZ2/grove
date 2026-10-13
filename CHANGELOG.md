@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.9] - 2026-10-13
+
+### Added
+
+- **WeChat Connect** — Authorize personal WeChat with a QR code and use private messages to select targets, configure sessions, and respond to permission requests and forms.
+- **Feishu turn progress cards** — Show live agent progress in one card per turn, then replace it with the final answer.
+- **Remembered sign-in and login devices** — Stay signed in across visits and manage authorized devices from settings.
+- **Pending message controls** — Track delivery and queue messages immediately; preview and edit complete pending messages, including attachments.
+- **Collapsible file change summaries** — Collapse long change summaries in chat to keep conversations easier to read.
+
+### Fixed
+
+- **Mobile navigation and composer** — Preserve workspace and task navigation across refreshes, improve mobile project tabs and message input, and restore remote dashboard actions.
+- **Agent catalog persistence** — Keep uninstalled agents removed and refresh marketplace, settings, and session pickers after catalog changes.
+- **Agent icon themes** — Adapt monochrome agent artwork to light and dark themes while preserving colored icons.
+- **Plugin asset authorization** — Refresh plugin asset sessions after authorization changes.
+- **Windows taskbar icon** — Display Grove's application icon explicitly in the taskbar.
+- **Blitz window controls** — Keep interactive controls outside draggable window regions.
+- **Connection diagnostics** — Report connection and startup errors without routine diagnostic noise.
+
 ## [0.12.8] - 2026-10-03
 
 ### Improved
