@@ -1,3 +1,4 @@
+import { isIosClient } from "../../utils/platform";
 import { GripVertical } from "lucide-react";
 import type { DragEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -8,7 +9,7 @@ export interface TaskFileDragLocation {
   path: string;
 }
 
-const isTauriDesktop = typeof window !== "undefined" && (
+const isTauriDesktop = !isIosClient && typeof window !== "undefined" && (
   "__TAURI__" in window || "__TAURI_INTERNALS__" in window
 );
 

@@ -1,3 +1,4 @@
+import { publishIosChatEvent } from "../../../ios/chatActivity";
 import {
   useState,
   useEffect,
@@ -5482,6 +5483,7 @@ export function TaskChat({
         try {
           const data = JSON.parse(event.data);
           if (data?.type === "heartbeat") return;
+          publishIosChatEvent(projectId, taskId, chatId, data, chatsRef.current.find(c => c.id === chatId)?.title);
           if (data?.type === "input_accepted" && typeof data.client_message_id === "string") {
             updatePendingInputs(chatId, (items) => items.map((item) =>
               item.id === data.client_message_id
@@ -5767,12 +5769,14 @@ export function TaskChat({
   // heartbeats prove the full path still delivers messages; replace stale
   // sockets without touching the underlying ACP session.
   useEffect(() => {
-    const inspect = () => {
-      if (document.visibilityState !== "visible") return;
+    const inspect = (event?: Event) => {
+      const recovered = event?.type === "grove:transport-ready";
+      if (finishedRef.current || (!recovered && document.visibilityState !== "visible")) return;
       const now = Date.now();
       wsMapRef.current.forEach((ws, chatId) => {
-        if (!wsSessionEverReadyRef.current.get(chatId) || ws.readyState !== WebSocket.OPEN) return;
-        if (now - (lastWsMessageAtRef.current.get(chatId) ?? now) < 45000) return;
+        if (!recovered && (!wsSessionEverReadyRef.current.get(chatId) || ws.readyState !== WebSocket.OPEN)) return;
+        if (!recovered && now - (lastWsMessageAtRef.current.get(chatId) ?? now) < 45000) return;
+        cancelPendingReconnectRef.current(chatId);
         wsMapRef.current.delete(chatId);
         if (pendingQueueEditRef.current?.chatId === chatId) failPendingQueueEdit("Connection lost. Reconnect to save this edit.");
         lastWsMessageAtRef.current.delete(chatId);
@@ -5795,18 +5799,29 @@ export function TaskChat({
           setIsConnected(false);
           onDisconnectedPropRef.current?.();
         }
-        void connectChatWsRef.current(chatId).then(() => {
+        void connectChatWsRef.current(chatId, false, recovered).then(() => {
           if (chatId === getActiveChatId()) wsRef.current = wsMapRef.current.get(chatId) ?? null;
         });
       });
+      // Previously failed/closed sockets are absent from the map. A native
+      // recovery reattaches the active chat without restarting its ACP owner.
+      const active = getActiveChatId();
+      if (recovered && active && !wsMapRef.current.has(active)) {
+        cancelPendingReconnectRef.current(active);
+        void connectChatWsRef.current(active, false, true).then(() => {
+          if (active === getActiveChatId()) wsRef.current = wsMapRef.current.get(active) ?? null;
+        });
+      }
     };
     const timer = window.setInterval(inspect, 5000);
     document.addEventListener("visibilitychange", inspect);
     window.addEventListener("online", inspect);
+    window.addEventListener("grove:transport-ready", inspect);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", inspect);
       window.removeEventListener("online", inspect);
+      window.removeEventListener("grove:transport-ready", inspect);
     };
   }, [getActiveChatId, updatePendingInputs, failPendingQueueEdit]);
 

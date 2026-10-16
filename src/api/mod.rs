@@ -1058,6 +1058,10 @@ pub fn create_api_router() -> Router {
         .route("/radio/stop", post(handlers::walkie_talkie::stop_radio))
         .route("/radio/status", get(handlers::walkie_talkie::radio_status))
         .route(
+            "/radio/activity",
+            get(handlers::walkie_talkie::get_activity_snapshot),
+        )
+        .route(
             "/walkie-talkie/ws",
             get(handlers::walkie_talkie::ws_handler),
         )

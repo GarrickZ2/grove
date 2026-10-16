@@ -1,3 +1,4 @@
+import { isIosClient } from "./platform";
 /**
  * Open an external URL.
  *
@@ -13,7 +14,7 @@ type TauriInternals = {
 
 function getTauriInternals(): TauriInternals | null {
   const w = window as Window & { __TAURI_INTERNALS__?: TauriInternals };
-  return w.__TAURI_INTERNALS__ ?? null;
+  return isIosClient ? null : w.__TAURI_INTERNALS__ ?? null;
 }
 
 export function openExternalUrl(url: string): void {

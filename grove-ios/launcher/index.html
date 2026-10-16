@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Grove · Servers</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px -apple-system, BlinkMacSystemFont, sans-serif; --bg:#f5f5f7; --card:#fff; --text:#17191d; --muted:#686e78; --border:#dedfe4; --accent:#087f5b; background:var(--bg); color:var(--text); }
+    @media (prefers-color-scheme: dark) { :root { --bg:#101114; --card:#1b1d22; --text:#f3f4f6; --muted:#a0a5b0; --border:#32353d; --accent:#64d9a5; } }
+    * { box-sizing:border-box; }
+    body { margin:0; padding: max(20px, env(safe-area-inset-top)) max(22px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(22px, env(safe-area-inset-left)); }
+    main { max-width:480px; margin:0 auto; }
+    header { display:flex; align-items:center; justify-content:space-between; min-height:44px; }
+    .brand { font-weight:700; letter-spacing:-.04em; font-size:22px; }
+    h1 { margin:38px 0 8px; font-size:32px; letter-spacing:-.04em; }
+    p { color:var(--muted); line-height:1.55; margin:0 0 24px; font-size:14px; }
+    button, input { font:inherit; }
+    button, a { -webkit-tap-highlight-color:transparent; }
+    button { cursor:pointer; color:inherit; }
+    a { color:var(--accent); text-decoration:none; padding:12px 0 12px 12px; }
+    #servers { display:grid; gap:10px; }
+    .server { display:flex; align-items:center; gap:14px; width:100%; text-align:left; border:1px solid var(--border); border-radius:16px; background:var(--card); padding:18px 16px; min-height:80px; }
+    .server.current { border-color:var(--accent); }
+    .symbol { width:40px; height:40px; border-radius:12px; background:var(--bg); display:grid; place-items:center; color:var(--accent); flex:none; }
+    .detail { min-width:0; flex:1; }
+    .detail strong { display:block; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .address { display:block; color:var(--muted); margin-top:5px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .status { color:var(--accent); font-size:12px; }
+    #add { width:100%; border:1px dashed var(--border); background:transparent; border-radius:16px; min-height:56px; color:var(--accent); margin:14px 0; }
+    form { margin-top:20px; padding:20px; background:var(--card); border:1px solid var(--border); border-radius:18px; }
+    h2 { margin:0 0 22px; font-size:18px; }
+    label { display:block; font-size:13px; margin:16px 0 8px; color:var(--muted); }
+    input { width:100%; padding:13px 12px; min-height:48px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--text); }
+    input:focus-visible, button:focus-visible, a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+    .primary { width:100%; margin-top:20px; border:0; padding:14px; border-radius:10px; background:var(--accent); color:var(--bg); font-weight:600; }
+    button:disabled { opacity:.55; cursor:wait; }
+    #error { color:#d95353; margin-top:18px; }
+    .hint { margin-top:24px; font-size:12px; }
+    [hidden] { display:none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <header><span class="brand">Grove</span><a id="back" href="/" hidden>Done</a></header>
+    <h1>Your servers</h1>
+    <p>Choose a workspace to continue. Each server keeps its own sign-in.</p>
+    <div id="servers" aria-label="Saved servers"></div>
+    <button id="add" type="button" aria-expanded="false">＋ Add server</button>
+    <form id="connect" hidden>
+      <h2>Add a server</h2>
+      <label for="name">Name</label>
+      <input id="name" autocomplete="off" maxlength="80" placeholder="Home Mac, Work…">
+      <label for="server">Server address</label>
+      <input id="server" type="url" inputmode="url" autocomplete="url" autocapitalize="off" spellcheck="false" placeholder="http://192.168.1.10:3001" required>
+      <button class="primary" type="submit">Save &amp; connect</button>
+      <button id="save" type="button" style="width:100%;min-height:44px;margin-top:8px;border:0;background:transparent;color:var(--muted)">Save for later</button>
+    </form>
+    <p id="error" role="alert"></p>
+    <a id="sign-out" href="/?ios-sign-out=1" hidden style="display:block;margin-top:20px;padding:12px 0;font-size:13px;color:var(--muted)">Sign out of this server</a>
+    <p class="hint">Run Grove Mobile on your computer. Connecting to another server does not sign you out of this one.</p>
+  </main>
+  <script id="configuration" type="application/json">__CONFIGURATION__</script>
+  <script>
+    const config = JSON.parse(document.getElementById('configuration').textContent);
+    const form = document.getElementById('connect');
+    const input = document.getElementById('server');
+    const name = document.getElementById('name');
+    const error = document.getElementById('error');
+    const add = document.getElementById('add');
+    let busy = false;
+    input.value = config.servers.length ? '' : (config.server || '');
+    document.getElementById('back').hidden = !config.current;
+    document.getElementById('sign-out').hidden = !config.current;
+    function showForm(show) { form.hidden = !show; add.setAttribute('aria-expanded', String(show)); }
+    showForm(!config.servers.length);
+    add.addEventListener('click', () => { showForm(form.hidden); if (!form.hidden) name.focus(); });
+    async function connect(server, label, button, saveOnly = false) {
+      if (busy) return;
+      busy = true;
+      const original = button.textContent;
+      button.textContent = saveOnly ? 'Saving…' : 'Connecting…';
+      document.querySelectorAll('button').forEach(b => b.disabled = true);
+      error.textContent = '';
+      try {
+        const response = await fetch('/_grove/connect', {
+          method:'POST', headers:{'Content-Type':'application/json', 'X-Grove-Setup':config.token},
+          body:JSON.stringify({server, name:label, save_only:saveOnly}),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Could not connect.');
+        // Navigate to the server's own origin: credentials, drafts and UI state
+        // remain scoped to that server. Never clear another server's storage.
+        location.replace(saveOnly ? "/_grove/" : result.location);
+      } catch (e) {
+        error.textContent = e.message || 'Connection failed. Please try again.';
+        button.textContent = original;
+        document.querySelectorAll('button').forEach(b => b.disabled = false);
+        busy = false;
+        renderServers();
+      }
+    }
+    function renderServers() {
+      const list = document.getElementById('servers');
+      list.replaceChildren();
+      for (const profile of config.servers) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'server' + (profile.id === config.current ? ' current' : '');
+        const symbol = document.createElement('span'); symbol.className = 'symbol'; symbol.textContent = '▤'; symbol.setAttribute('aria-hidden','true');
+        const detail = document.createElement('span'); detail.className = 'detail';
+        const title = document.createElement('strong'); title.textContent = profile.name;
+        const address = document.createElement('span'); address.className = 'address'; address.textContent = profile.server;
+        detail.append(title, address);
+        const status = document.createElement('span'); status.className = 'status'; status.textContent = profile.id === config.current ? 'Current' : '›';
+        button.append(symbol, detail, status);
+        button.addEventListener('click', () => {
+          if (profile.id === config.current) location.replace('/');
+          else connect(profile.server, profile.name, button);
+        });
+        list.append(button);
+      }
+    }
+    renderServers();
+    document.getElementById('save').addEventListener('click', (event) => {
+      if (form.reportValidity()) connect(input.value.trim(), name.value.trim(), event.currentTarget, true);
+    });
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      connect(input.value.trim(), name.value.trim(), form.querySelector('button'));
+    });
+  </script>
+</body>
+</html>

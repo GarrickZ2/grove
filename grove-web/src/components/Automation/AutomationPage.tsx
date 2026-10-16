@@ -111,6 +111,7 @@ export function AutomationPage({
     try {
       const data = await listAutomations(projectId);
       setAutomations(data);
+      setErrorMsg(null);
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -120,6 +121,9 @@ export function AutomationPage({
 
   useEffect(() => {
     void Promise.resolve().then(refresh);
+    const recovered = () => { void refresh(); };
+    window.addEventListener("grove:transport-ready", recovered);
+    return () => window.removeEventListener("grove:transport-ready", recovered);
   }, [refresh]);
 
   async function handleSubmit(input: AutomationUpsert) {

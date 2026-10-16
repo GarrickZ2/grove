@@ -26,6 +26,7 @@ function onVisible(): void {
 export function subscribeAgentCatalog(listener: () => void): () => void {
   if (listeners.size === 0) {
     window.addEventListener("focus", invalidateAgentCatalog);
+    window.addEventListener("grove:transport-ready", invalidateAgentCatalog);
     document.addEventListener("visibilitychange", onVisible);
   }
   listeners.add(listener);
@@ -33,6 +34,7 @@ export function subscribeAgentCatalog(listener: () => void): () => void {
     listeners.delete(listener);
     if (listeners.size === 0) {
       window.removeEventListener("focus", invalidateAgentCatalog);
+      window.removeEventListener("grove:transport-ready", invalidateAgentCatalog);
       document.removeEventListener("visibilitychange", onVisible);
     }
   };

@@ -1,3 +1,4 @@
+import { isIosClient } from "../../utils/platform";
 import { Bell } from "lucide-react";
 import { useProject, useNotifications } from "../../context";
 
@@ -6,7 +7,7 @@ interface MobileHeaderProps {
   onNotificationOpen: () => void;
 }
 
-const isTauri = typeof window !== "undefined" && (
+const isTauri = !isIosClient && typeof window !== "undefined" && (
   "__TAURI__" in window ||
   "__TAURI_INTERNALS__" in window
 );

@@ -420,6 +420,14 @@ fn main() -> io::Result<()> {
                 std::process::exit(1);
             }
         }
+        Commands::Device {
+            command: cli::DeviceCommand::Ios,
+        } => {
+            if let Err(error) = cli::ios::execute() {
+                eprintln!("iOS download: {error}");
+                std::process::exit(1);
+            }
+        }
         Commands::Hooks { level } => {
             cli::hooks::execute(level);
         }

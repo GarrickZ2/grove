@@ -1,3 +1,4 @@
+import { isIosClient } from "../../utils/platform";
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MacOSSidebarIcon } from "./MobileHeader";
@@ -8,7 +9,7 @@ interface MobileDrawerProps {
   children: React.ReactNode;
 }
 
-const isTauri = typeof window !== "undefined" && (
+const isTauri = !isIosClient && typeof window !== "undefined" && (
   "__TAURI__" in window ||
   "__TAURI_INTERNALS__" in window
 );

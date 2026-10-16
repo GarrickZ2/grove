@@ -1,3 +1,4 @@
+import { isIosClient } from "../../utils/platform";
 import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
@@ -1205,7 +1206,7 @@ env_vars = [
   "GROVE_PROJECT"
 ]`;
 
-  const isTauriGui = !!((window as Window & {
+  const isTauriGui = !isIosClient && !!((window as Window & {
     __TAURI__?: unknown;
     __TAURI_INTERNALS__?: unknown;
   }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);

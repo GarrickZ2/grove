@@ -1,3 +1,4 @@
+import { waitForIosTransport } from '../ios/transport';
 // API client base configuration
 // Priority:
 //   1. window.__GROVE_API_BASE__ — injected by `grove web --remote-url` into index.html
@@ -238,6 +239,7 @@ export async function getSignedHeaders(
   method: string,
   path: string,
 ): Promise<Record<string, string>> {
+  await waitForIosTransport();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -285,6 +287,7 @@ async function getAuthOnlyHeaders(
 
 /** Append HMAC signature as query params to a WebSocket URL (async). */
 export async function appendHmacToUrl(url: string): Promise<string> {
+  await waitForIosTransport();
   // Radio server mode (phone pages): there is no HMAC secret — auth is a
   // session Bearer token. WebSocket connections can't set headers, so the
   // token rides as a `?token=` query param (the radio_server auth middleware

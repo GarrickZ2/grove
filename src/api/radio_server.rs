@@ -158,6 +158,10 @@ fn create_radio_router(expected_token: Arc<String>) -> Router {
             get(super::handlers::walkie_talkie::radio_events_ws_handler),
         )
         .route(
+            "/api/v1/radio/activity",
+            get(super::handlers::walkie_talkie::get_activity_snapshot),
+        )
+        .route(
             "/api/v1/tray/chats",
             get(super::handlers::walkie_talkie::get_tray_chats),
         )

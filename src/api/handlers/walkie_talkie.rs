@@ -1065,6 +1065,11 @@ pub async fn get_tray_boot() -> axum::response::Json<serde_json::Value> {
     axum::response::Json(serde_json::json!({ "boot_id": BOOT_ID.clone() }))
 }
 
+/// GET /api/v1/radio/activity — authoritative runtime state, never the tray mirror.
+pub async fn get_activity_snapshot() -> axum::response::Json<serde_json::Value> {
+    axum::response::Json(serde_json::json!({ "chats": crate::acp::snapshot_active_chats() }))
+}
+
 /// GET /api/v1/tray/chats — Seed state for a freshly connected phone. Returns
 /// the desktop tray's mirrored panel (full Running / NEEDS YOU / Done with
 /// durations + responses) when available, otherwise falls back to the
@@ -1254,6 +1259,10 @@ async fn handle_radio_events_ws(socket: WebSocket) {
 
     use futures::{SinkExt, StreamExt};
 
+    // Subscribe first, then snapshot: events during snapshot creation stay queued.
+    let snapshot = serde_json::json!({"type": "activity_snapshot", "chats": crate::acp::snapshot_active_chats()});
+    let _ = ws_tx.send(Message::Text(snapshot.to_string().into())).await;
+
     // Send current Radio client count immediately on connect
     let count_event = RadioEvent::ClientCount {
         count: radio_client_count(),
@@ -1281,6 +1290,12 @@ async fn handle_radio_events_ws(socket: WebSocket) {
             maybe_msg = ws_rx.next() => {
                 match maybe_msg {
                     Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Text(text))) if text == "activity_snapshot" => {
+                        let snapshot = serde_json::json!({"type":"activity_snapshot", "chats":crate::acp::snapshot_active_chats()});
+                        if ws_tx.send(Message::Text(snapshot.to_string().into())).await.is_err() { break; }
+                    }
+                    Some(Ok(Message::Text(text))) if text == "activity_heartbeat"
+                        && ws_tx.send(Message::Text(r#"{"type":"activity_heartbeat"}"#.into())).await.is_err() => break,
                     _ => {}
                 }
             }

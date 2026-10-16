@@ -1,3 +1,4 @@
+import { isIosClient } from "./utils/platform"
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
@@ -12,6 +13,11 @@ import {
   reportClientError,
   setClientAppVersion,
 } from './errors/clientErrorReport'
+
+if (isIosClient) {
+  document.documentElement.dataset.groveIos = 'true'
+
+}
 
 installGlobalErrorHandlers()
 void getVersion()
@@ -33,7 +39,7 @@ void initUserKeymap()
 installExternalLinkInterceptor()
 installGlobalDragDropInterceptor()
 
-if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+if (!isIosClient && typeof window !== "undefined" && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch((err) => {
       console.warn("[main] service worker registration failed", err);

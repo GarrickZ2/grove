@@ -1,3 +1,4 @@
+import { isIosClient } from "../../utils/platform";
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, ChevronRight, Laptop, Radio, Plus, Folder } from "lucide-react";
@@ -39,7 +40,7 @@ interface DragInfo {
   groupId: string;           // always present — MAIN_GROUP_ID, LOCAL_GROUP_ID, or custom UUID
 }
 
-const isTauri = typeof window !== "undefined" && (
+const isTauri = !isIosClient && typeof window !== "undefined" && (
   "__TAURI__" in window ||
   "__TAURI_INTERNALS__" in window
 );

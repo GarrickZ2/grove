@@ -1,0 +1,11 @@
+{
+  "name": "grove-ios",
+  "private": true,
+  "version": "0.12.9",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.2"
+  }
+}

@@ -1,0 +1,39 @@
+targets:
+  grove-ios_iOS:
+    sources:
+      - path: ../../native/ActivityAttributes.swift
+      - path: ../../native/ActivityBridge.swift
+      - path: ../../native/TransportLifecycle.swift
+    settings:
+      base:
+        SWIFT_VERSION: '5.0'
+    info:
+      properties:
+        NSSupportsLiveActivities: true
+        CFBundleURLTypes:
+          - CFBundleURLName: Grove Activity
+            CFBundleURLSchemes: [grove]
+    dependencies:
+      - target: GroveActivity
+        embed: true
+  GroveActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: '16.2'
+    sources:
+      - path: ../../native/ActivityAttributes.swift
+      - path: ../../native/GroveLiveActivity.swift
+      - path: ../../native/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_NAME: GroveActivity
+        SWIFT_VERSION: '5.0'
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        TARGETED_DEVICE_FAMILY: '1,2'
+    info:
+      path: GroveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: Grove
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

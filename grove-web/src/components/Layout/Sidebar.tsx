@@ -1,3 +1,5 @@
+import { IosServerMenu } from "./IosServerMenu";
+import { isIosClient } from "../../utils/platform";
 import { useState, useRef, useEffect, useMemo, useCallback, createElement } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -130,7 +132,7 @@ interface SidebarProps {
   sidebarPlugins?: Plugin[];
 }
 
-const isTauri = typeof window !== "undefined" && (
+const isTauri = !isIosClient && typeof window !== "undefined" && (
   "__TAURI__" in window ||
   "__TAURI_INTERNALS__" in window
 );
@@ -429,11 +431,12 @@ export function Sidebar({
           ) : (
             <LogoBrand
               mode={tasksMode}
-              onToggle={() => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}
+              onToggle={drawerMode ? undefined : () => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}
+              subtitle={drawerMode && isIosClient ? (window as Window & { __GROVE_IOS_SERVER__?: { name?: string } }).__GROVE_IOS_SERVER__?.name : undefined}
             />
           )}
         </div>
-
+        {drawerMode && isIosClient && <IosServerMenu />}
       </div>
 
       {/* Project Selector */}

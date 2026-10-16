@@ -53,6 +53,22 @@ web-build: ## Build web frontend (PERF=1 wires in perf monitor)
 web-dev: ## Start vite dev server (proxy /api to localhost:3001)
 	cd $(WEB_DIR) && pnpm run dev
 
+.PHONY: ios-ipa
+ios-ipa: ## Build a local unsigned iPhone IPA (macOS + Xcode)
+	bash scripts/build-ios.sh
+
+.PHONY: ios-download
+ios-download: ## Download the latest released IPA to Downloads
+	cargo run -- device ios
+
+.PHONY: ios-test
+.PHONY: ios-xcode
+ios-xcode: ## Open Xcode with the Tauri build service running
+	bash scripts/open-ios-xcode.sh
+
+ios-test: ## Test the standalone iOS HTTP/WebSocket transport
+	cargo test --manifest-path grove-ios/Cargo.toml --no-default-features
+
 .PHONY: web-lint
 web-lint: ## Run eslint on grove-web — mirrors .github/workflows/ci.yml eslint job
 	cd $(WEB_DIR) && pnpm eslint src/ --max-warnings 0

@@ -1,9 +1,10 @@
+import { isIosClient } from "../utils/platform";
 import { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { CustomThemeConfig } from "../api/config";
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const isTauri = !isIosClient && typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 // Theme definitions matching TUI themes
 export interface ThemeColors {

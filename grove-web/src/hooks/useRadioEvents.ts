@@ -1,9 +1,12 @@
+import { isIosClient } from "../utils/platform";
 import { useEffect, useRef, useState } from "react";
 import type { RadioEvent, TargetMode, NodeStatus } from "../api/walkieTalkie";
 import { getApiHost, appendHmacToUrl } from "../api/client";
 import { invalidateAgentCatalog } from "../api/agentCatalogChanges";
 
 export interface RadioEventCallbacks {
+  onEvent?: (event: unknown) => void;
+  onDisconnected?: () => void;
   onFocusTask?: (projectId: string, taskId: string, target?: TargetMode) => void;
   onFocusTarget?: (projectId: string, taskId: string, target: TargetMode) => void;
   onTerminalInput?: (projectId: string, taskId: string, text: string) => void;
@@ -82,6 +85,7 @@ function notifyClientCount() {
 }
 
 function dispatch(event: RadioEvent) {
+  for (const s of subscribers) s.current.onEvent?.(event);
   switch (event.type) {
     case "agents_changed":
       invalidateAgentCatalog();
@@ -169,7 +173,14 @@ async function openSharedWs() {
     for (const s of subscribers) s.current.onConnected?.();
   };
 
+  // A server reply proves that the event connection is alive, not merely OPEN.
+  let lastReceived = Date.now();
+  const heartbeat = isIosClient ? setInterval(() => {
+    if (Date.now() - lastReceived > 60000) { ws.close(); return; }
+    if (ws.readyState === WebSocket.OPEN) ws.send('activity_heartbeat');
+  }, 25000) : null;
   ws.onmessage = (event) => {
+    lastReceived = Date.now();
     try {
       const data: RadioEvent = JSON.parse(event.data);
       dispatch(data);
@@ -179,6 +190,8 @@ async function openSharedWs() {
   };
 
   ws.onclose = () => {
+    if (heartbeat) clearInterval(heartbeat);
+    for (const s of subscribers) s.current.onDisconnected?.();
     sharedWs = null;
     radioClientCount = 0;
     notifyClientCount();
@@ -229,6 +242,7 @@ export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: 
 
   useEffect(() => {
     subscribers.add(callbacksRef);
+    if (isIosClient && callbacksRef.current.onEvent && sharedWs?.readyState === WebSocket.OPEN) sharedWs.send("activity_snapshot");
     const listener = (n: number) => setRadioClients(n);
     clientCountListeners.add(listener);
     void openSharedWs();
@@ -241,4 +255,9 @@ export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: 
   }, []);
 
   return { radioClients };
+}
+
+/** Revalidate native activity state after foregrounding; never renew cached state. */
+export function refreshRadioActivity() {
+  if (sharedWs?.readyState === WebSocket.OPEN) sharedWs.send('activity_snapshot');
 }

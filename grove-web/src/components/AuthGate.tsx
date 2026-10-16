@@ -1,3 +1,4 @@
+import { isIosClient } from "../utils/platform";
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import {
   extractSkFromUrl, extractPageFromUrl, extractRadioTokenFromUrl,
@@ -6,7 +7,7 @@ import {
 } from '../api/client';
 import {
   AuthRequestError, canTrustDevice, canUseTrustedDeviceCookie, getAuthInfo,
-  getAuthSession, loginDevice, subscribeToLogout, type AuthInfo,
+  getAuthSession, loginDevice, logoutDevice, subscribeToLogout, type AuthInfo,
 } from '../api/auth';
 import { hmacSha256Hex } from '../api/hmac';
 import { handRemoteAuthToShell } from '../utils/tauriShell';
@@ -18,7 +19,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [authState, setAuthState] = useState<AuthState>('loading');
   const [info, setInfo] = useState<AuthInfo | null>(null);
   const [skInput, setSkInput] = useState('');
-  const [trusted, setTrusted] = useState(false);
+  const [trusted, setTrusted] = useState(isIosClient);
   const [error, setError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
   const initializing = useRef(false);
@@ -40,6 +41,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
     setAuthState('loading');
     setError(null);
     try {
+      if (isIosClient && new URLSearchParams(window.location.search).has('ios-sign-out')) {
+        if (!getDeviceId()) restoreRememberedDeviceSession();
+        if (getDeviceId()) await logoutDevice();
+        else clearDeviceSession();
+        window.location.replace('/_grove/');
+        return;
+      }
       const hashSk = extractSkFromUrl();
       const hashPage = extractPageFromUrl();
       const hashToken = (hashSk || hashPage) ? extractRadioTokenFromUrl() : null;
@@ -57,6 +65,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
       const authInfo = await getAuthInfo();
       setInfo(authInfo);
+      if (isIosClient) setTrusted(canTrustDevice(authInfo));
       if (authInfo.remote || authInfo.required) (window as unknown as Record<string, unknown>).__GROVE_REMOTE__ = true;
       if (!authInfo.required) { setAuthState('authenticated'); return; }
 
@@ -169,7 +178,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (authState === 'loading') return (
     <div className="flex min-h-dvh items-center justify-center bg-[#0a0a0a]">
-      <div role="status" aria-label="Connecting" className="w-8 h-8 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" />
+      <div className="flex flex-col items-center gap-6">
+        <div role="status" aria-label="Connecting" className="w-8 h-8 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" />
+        {isIosClient && <a href="/_grove/" className="text-sm text-[#aaa] py-3">Switch server</a>}
+      </div>
     </div>
   );
   if (authState === 'authenticated') return <>{children}</>;
@@ -202,6 +214,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             </button>
           </form>
         )}
+        {isIosClient && <a href="/_grove/" className="mt-5 block py-3 text-center text-sm text-[#aaa]">Switch or add server</a>}
       </div>
     </div>
   );

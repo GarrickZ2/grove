@@ -1,3 +1,4 @@
+import { isIosClient } from "../../utils/platform";
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useEffect, useId, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -39,7 +40,7 @@ type TauriInternals = {
 
 function getTauriInternals(): TauriInternals | null {
   const w = window as Window & { __TAURI_INTERNALS__?: TauriInternals };
-  return w.__TAURI_INTERNALS__ ?? null;
+  return isIosClient ? null : w.__TAURI_INTERNALS__ ?? null;
 }
 
 function fallbackDownloadViaAnchor(url: string, suggestedName?: string) {

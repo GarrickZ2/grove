@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key>
+  <string>Grove</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Connect to Grove running on your computer to view tasks and chat with agents.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Use the microphone for Grove voice input.</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key><true/>
+  </dict>
+</dict>
+</plist>

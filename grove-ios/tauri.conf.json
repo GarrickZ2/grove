@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Grove",
+  "version": "0.12.9",
+  "identifier": "com.grove-rs.grove",
+  "build": {
+    "frontendDist": "launcher"
+  },
+  "app": {
+    "windows": [],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "icon": ["../src-tauri/icons/128x128.png"],
+    "iOS": {
+      "minimumSystemVersion": "15.0",
+      "infoPlist": "Info.plist"
+    }
+  }
+}

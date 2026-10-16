@@ -4,6 +4,7 @@ pub mod acp;
 pub mod diff;
 pub mod fp;
 pub mod hooks;
+pub mod ios;
 pub mod mcp;
 pub mod mcp_bridge;
 pub mod migrate;
@@ -31,6 +32,11 @@ pub enum Commands {
     Tui,
     /// Check for a new Grove release now and install it without prompting
     Upgrade,
+    /// Download Grove apps for your devices
+    Device {
+        #[command(subcommand)]
+        command: DeviceCommand,
+    },
     /// Send hook notifications
     Hooks {
         #[command(subcommand)]
@@ -226,4 +232,10 @@ impl LastLaunch {
             },
         }
     }
+}
+
+#[derive(Subcommand)]
+pub enum DeviceCommand {
+    /// Download the latest released iOS IPA to Downloads (install it with your preferred tool)
+    Ios,
 }

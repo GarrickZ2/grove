@@ -1,3 +1,5 @@
+import { IosLiveActivity } from "./ios/IosLiveActivity";
+import { isIosClient } from "./utils/platform";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
@@ -51,7 +53,7 @@ import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette"
 
 export type TasksMode = "zen" | "blitz";
 
-const isTauriShellForTrafficLights = typeof window !== "undefined" && (
+const isTauriShellForTrafficLights = !isIosClient && typeof window !== "undefined" && (
   "__TAURI__" in window ||
   "__TAURI_INTERNALS__" in window
 );
@@ -83,7 +85,7 @@ function registerGlobalShortcut(
     __TAURI__?: unknown;
     __TAURI_INTERNALS__?: unknown;
   }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
-  if (!isTauri || !displayShortcut) return () => {};
+  if (isIosClient || !isTauri || !displayShortcut) return () => {};
 
   const tauriShortcut = displayShortcut
     .split("+")
@@ -151,7 +153,9 @@ function AppContent() {
   const [restoredNavigation] = useState(readNavigationState);
   const [activeItem, setActiveItem] = useState(restoredNavigation?.page ?? "dashboard");
   const [connectOpen, setConnectOpen] = useState(false);
-  const [tasksMode, setTasksMode] = useState<TasksMode>(restoredNavigation?.tasksMode ?? "zen");
+  const { isMobile } = useIsMobile();
+  const [preferredTasksMode, setTasksMode] = useState<TasksMode>(restoredNavigation?.tasksMode ?? "zen");
+  const tasksMode: TasksMode = isMobile ? "zen" : preferredTasksMode;
   // Ref mirror of tasksMode for use inside stable callbacks (e.g. the
   // tray:navigate listener) that capture the initial closure and would
   // otherwise see a stale mode. Sync via effect — refs cannot be
@@ -336,7 +340,6 @@ function AppContent() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [mobileNotifOpen, setMobileNotifOpen] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
-  const { isMobile } = useIsMobile();
   const {
     open: openCommandPalette,
     toggle: toggleCommandPalette,
@@ -763,6 +766,10 @@ function AppContent() {
     setWorkEverVisited(true);
   }
 
+  useEffect(() => {
+    if (isIosClient) window.dispatchEvent(new Event("grove:activity-open"));
+  }, [projects]);
+
   // Tray popover navigation. Rust emits `tray:navigate` with a route and
   // optional project/task/chat ids. Listener is registered ONCE; refs
   // hold the latest projects + selectProject so re-mounts don't drop
@@ -899,11 +906,30 @@ function AppContent() {
       if (detail) applyNavigate(detail);
     };
     window.addEventListener("grove:navigate", onWindowNavigate);
+    const onActivityOpen = () => {
+      const nativeWindow = window as Window & { __GROVE_ACTIVITY_NAV__?: NavigatePayload & { origin?: string } };
+      let pending = nativeWindow.__GROVE_ACTIVITY_NAV__;
+      const url = new URL(window.location.href);
+      if (!pending && url.searchParams.has("grove_activity")) {
+        try { pending = JSON.parse(url.searchParams.get("grove_activity")!); } catch { /* ignore invalid links */ }
+      }
+      if (!pending || pending.origin !== window.location.origin) return;
+      if (pending.project_id && !projectsRef.current.some(p => p.id === pending.project_id)) return;
+      delete nativeWindow.__GROVE_ACTIVITY_NAV__;
+      url.searchParams.delete("grove_activity");
+      window.history.replaceState(null, "", url);
+      applyNavigate(pending);
+    };
+    window.addEventListener("grove:activity-open", onActivityOpen);
+
+    onActivityOpen();
 
     return () => {
       cancelled = true;
       if (unlistenFn) unlistenFn();
       window.removeEventListener("grove:navigate", onWindowNavigate);
+      window.removeEventListener("grove:activity-open", onActivityOpen);
+
     };
   }, []);
 
@@ -962,8 +988,8 @@ function AppContent() {
 
   // Register global commands for the command palette
   const toggleMode = useCallback(() => {
-    setTasksMode((prev) => (prev === "zen" ? "blitz" : "zen"));
-  }, []);
+    if (!isMobile) setTasksMode((prev) => (prev === "zen" ? "blitz" : "zen"));
+  }, [isMobile]);
   const toggleSidebar = useCallback(() => {
     // Mod+B: binary expanded ⇄ collapsed. If currently in island mode,
     // first leave the island — Mod+B shouldn't drop you into collapsed
@@ -1017,7 +1043,7 @@ function AppContent() {
   // Native window controls (Tauri GUI only; no-op in the browser Web IDE,
   // gated by `enabled: isTauriShell` so they don't surface as dead commands).
   const isTauriShell =
-    typeof window !== "undefined" &&
+    !isIosClient && typeof window !== "undefined" &&
     !!(
       (window as Window & { __TAURI__?: unknown }).__TAURI__ ||
       (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
@@ -1168,8 +1194,8 @@ function AppContent() {
   useCommand(
     "mode.blitz.activate",
     () => setTasksMode("blitz"),
-    { enabled: () => tasksMode !== "blitz" },
-    [tasksMode],
+    { enabled: () => !isMobile && tasksMode !== "blitz" },
+    [isMobile, tasksMode],
   );
 
   // Help / Settings
@@ -1734,6 +1760,7 @@ function App() {
                       <OptionalPerfProfiler id="App">
                         <GlobalAgentVoiceRuntime />
                         <AppContent />
+                        {isIosClient && <IosLiveActivity />}
                       </OptionalPerfProfiler>
                     </PreviewCommentProvider>
                   </CommandPaletteProvider>

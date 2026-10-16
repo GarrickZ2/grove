@@ -6,25 +6,27 @@ import { GroveWordmark } from "./GroveWordmark";
 
 interface LogoBrandProps {
   mode: TasksMode;
-  onToggle: () => void;
+  onToggle?: () => void;
+  subtitle?: string;
 }
 
-export function LogoBrand({ mode, onToggle }: LogoBrandProps) {
+export function LogoBrand({ mode, onToggle, subtitle }: LogoBrandProps) {
+  const Root = onToggle ? "button" : "div";
   const isBlitz = mode === "blitz";
 
   const isRemote = typeof window !== "undefined" && !!(window as unknown as Record<string, unknown>).__GROVE_REMOTE__;
 
   return (
-    <button
+    <Root
       onClick={onToggle}
-      className="flex items-center gap-1 group cursor-pointer"
-      title={`Switch to ${isBlitz ? "Zen" : "Blitz"} mode`}
+      className={`flex min-w-0 items-center gap-1 group ${onToggle ? "cursor-pointer" : ""}`}
+      title={onToggle ? `Switch to ${isBlitz ? "Zen" : "Blitz"} mode` : undefined}
     >
       <div className="relative flex-shrink-0">
         <GroveIcon size={35} shimmer background className="rounded-xl" />
       </div>
 
-      <div className="flex flex-col items-start -space-y-0.5">
+      <div className="flex min-w-0 flex-col items-start -space-y-0.5">
         {/* GROVE title — vectorized wordmark */}
         <div className="flex items-center gap-1.5">
           <GroveWordmark height={16} />
@@ -36,7 +38,8 @@ export function LogoBrand({ mode, onToggle }: LogoBrandProps) {
         </div>
 
         {/* Mode label — different personality & transition */}
-        <AnimatePresence mode="wait">
+        {subtitle && <span className="block max-w-full truncate text-[10px] leading-4 text-[var(--color-text-muted)]">{subtitle}</span>}
+        {onToggle && <AnimatePresence mode="wait">
           {isBlitz ? (
             <motion.div
               key="blitz"
@@ -69,8 +72,8 @@ export function LogoBrand({ mode, onToggle }: LogoBrandProps) {
               </span>
             </motion.div>
           )}
-        </AnimatePresence>
+        </AnimatePresence>}
       </div>
-    </button>
+    </Root>
   );
 }

@@ -1,3 +1,4 @@
+import { isIosClient } from "./platform";
 // Thin, guarded wrappers around the Tauri shell.
 //
 // Everything no-ops outside Tauri (browser surface) so callers stay
@@ -6,7 +7,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export const isTauriShell: boolean =
-  typeof window !== "undefined" &&
+  !isIosClient && typeof window !== "undefined" &&
   ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
 
 /** Invoke a Tauri command; resolves to null outside Tauri or on error. */
@@ -37,7 +38,7 @@ export function isRemoteMode(): Promise<boolean> {
  * Remote GUI defers this until after authentication because its config lives
  * on the remote backend. No-op in an ordinary browser. */
 export function configureDesktopTray(enabled: boolean): void {
-  if (typeof window === "undefined") return;
+  if (isIosClient || typeof window === "undefined") return;
   try {
     // Call invoke directly instead of relying on the global-marker heuristic:
     // custom External webviews can have a working Tauri IPC bridge before the

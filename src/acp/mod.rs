@@ -9510,7 +9510,11 @@ pub fn snapshot_active_chats() -> Vec<crate::radio::ChatSnapshot> {
             .map(|(t, a)| (Some(t.clone()), Some(a.clone())))
             .unwrap_or((None, None));
 
-        let status = handle.derive_node_status();
+        let status = match &*handle.readiness.borrow() {
+            SessionReadiness::Starting => "connecting",
+            SessionReadiness::Failed(_) => "disconnected",
+            SessionReadiness::Ready => handle.derive_node_status(),
+        };
         let permission = if status == "permission_required" {
             handle
                 .last_permission_info

@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/* Native iOS fills the viewport. The shell and bottom controls apply their
+   own safe-area padding once; never subtract safe areas from root height. */
+html[data-grove-ios="true"],
+html[data-grove-ios="true"] body,
+html[data-grove-ios="true"] #root {
+  height: 100%;
+  overflow: hidden;
+}
+html[data-grove-ios="true"] #root .h-dvh,
+html[data-grove-ios="true"] #root .h-screen {
+  height: var(--grove-app-height, 100dvh);
+}
+html[data-grove-ios="true"] #root .min-h-dvh {
+  min-height: var(--grove-app-height, 100dvh);
+}
+
 /* Default theme colors (Dark) - will be overridden by ThemeContext */
 :root {
   --color-bg: #0a0a0b;
