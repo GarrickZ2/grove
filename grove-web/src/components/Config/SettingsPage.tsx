@@ -71,6 +71,14 @@ import { useKeyboardScope } from "../../keyboard";
 import { loadChatHistoryPreferences, saveChatHistoryPreferences } from "../Tasks/TaskView/chatHistoryPreferences";
 import { LoginDevicesPanel } from "./LoginDevicesPanel";
 
+// Keep the last successful snapshot across Settings navigation. Every mount
+// still refreshes it; background refreshes must not unmount an open picker.
+let lastAgentSnapshot: {
+  baseAgents: BaseAgent[];
+  customAgents: CustomAgentServer[];
+  terminalLaunchableIds: Set<string>;
+} | undefined;
+
 interface SettingsPageProps {
   config: {
     agent: { command: string };
@@ -255,14 +263,14 @@ export function SettingsPage({ config }: SettingsPageProps) {
 
   // ACP / Custom agents state
   const [acpAgent, setAcpAgent] = useState(""); // Chat mode agent — populated from config.acp.agent_command after load
-  const [customAgents, setCustomAgents] = useState<CustomAgentServer[]>([]);
+  const [customAgents, setCustomAgents] = useState<CustomAgentServer[]>(() => lastAgentSnapshot?.customAgents ?? []);
   const [showCustomAgentModal, setShowCustomAgentModal] = useState(false);
   const [showCustomAgentsModal, setShowCustomAgentsModal] = useState(false);
   const [showMarketplaceModal, setShowMarketplaceModal] = useState(false);
   const [customAgentPersonas, setCustomAgentPersonas] = useState<CustomAgentPersona[]>([]);
   const [customAgentPersonasLoading, setCustomAgentPersonasLoading] = useState(false);
-  const [baseAgents, setBaseAgents] = useState<BaseAgent[]>([]);
-  const [baseAgentsLoading, setBaseAgentsLoading] = useState(true);
+  const [baseAgents, setBaseAgents] = useState<BaseAgent[]>(() => lastAgentSnapshot?.baseAgents ?? []);
+  const [baseAgentsLoading, setBaseAgentsLoading] = useState(() => !lastAgentSnapshot);
   const [chatRenderWindowLimit, setChatRenderWindowLimit] = useState(0);
   const [chatRenderWindowTrigger, setChatRenderWindowTrigger] = useState(1500);
   const [chatRenderWindowLimitDraft, setChatRenderWindowLimitDraft] = useState("0");
@@ -272,7 +280,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [chatHistoryIncludeMedia, setChatHistoryIncludeMedia] = useState(true);
   const [chatHistoryIncludeToolDetails, setChatHistoryIncludeToolDetails] = useState(true);
   // Agent command availability: command name → exists on PATH
-  const [commandAvailability, setCommandAvailability] = useState<Record<string, boolean>>({});
+  const [commandAvailability, setCommandAvailability] = useState<Record<string, boolean>>((): Record<string, boolean> => lastAgentSnapshot ? { __marketplace_loaded__: true } : {});
 
   // Mode state
   const [terminalMultiplexer, setTerminalMultiplexer] = useState("tmux");
@@ -622,11 +630,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // Terminal-capable installed agent ids (canonical form). Populated from
   // marketplace data; replaces the old PATH-probe via `checkCommands`.
   const [terminalLaunchableIds, setTerminalLaunchableIds] = useState<Set<string>>(
-    new Set(),
+    () => lastAgentSnapshot?.terminalLaunchableIds ?? new Set(),
   );
 
   const loadBaseAgents = useCallback(async () => {
-    setBaseAgentsLoading(true);
     try {
       const [resp, cfg] = await Promise.all([listMarketplace(), getConfig()]);
       setCustomAgents(cfg.acp?.custom_agents ?? []);
@@ -639,31 +646,34 @@ export function SettingsPage({ config }: SettingsPageProps) {
             a.install_state === "auto-detected") &&
           !(a.installed?.hidden ?? false),
       );
-      setBaseAgents(
-        launchable.map((a) => ({
+      const snapshot = {
+        baseAgents: launchable.map((a) => ({
           id: a.id,
           display_name: a.name,
           icon_id: a.id,
           icon_url: a.icon_url,
           available: true,
         })),
-      );
-      setTerminalLaunchableIds(
-        new Set(
+        customAgents: cfg.acp?.custom_agents ?? [],
+        terminalLaunchableIds: new Set(
           launchable
             .filter((a) => a.supports_terminal_launch)
             .map((a) => a.id),
         ),
-      );
+      };
+      lastAgentSnapshot = snapshot;
+      setBaseAgents(snapshot.baseAgents);
+      setTerminalLaunchableIds(snapshot.terminalLaunchableIds);
       // Trigger downstream `hasAvailability` gating that watches a non-empty
       // commandAvailability map. Marker entry stands in for the old probe map.
       setCommandAvailability({ __marketplace_loaded__: true });
-    } catch {
-      setBaseAgents([]);
-      setTerminalLaunchableIds(new Set());
+    } catch (error) {
+      // A transient refresh failure must not erase the last usable catalog.
+      console.error("Failed to refresh Settings agents:", error);
       setCommandAvailability({ __marketplace_loaded__: true });
+    } finally {
+      setBaseAgentsLoading(false);
     }
-    setBaseAgentsLoading(false);
   }, []);
 
   // Save config to API (called automatically)
@@ -1436,7 +1446,7 @@ env_vars = [
           icon={Bot}
           iconColor={
             baseAgentsLoading
-              ? "var(--color-text-muted)"
+              ? "#a855f7"
               : isChatAvailable
                 ? "#a855f7"
                 : "var(--color-warning)"
@@ -1625,7 +1635,7 @@ env_vars = [
           icon={Terminal}
           iconColor={
             baseAgentsLoading
-              ? "var(--color-text-muted)"
+              ? "#0ea5e9"
               : isTerminalAvailable
                 ? "#0ea5e9"
                 : "var(--color-warning)"
