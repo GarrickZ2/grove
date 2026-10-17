@@ -548,6 +548,10 @@ pub fn create_studio_task(
     )
 }
 
+const STUDIO_RESPONSE_GUIDANCE: &str = "## Responses and File Deliverables\n\n\
+For greetings, ordinary questions, explanations, and discussion, answer directly in chat. Do not create a file just to record a conversational reply.\n\n\
+Create or update files when the user requests a saved artifact or when file changes are necessary to complete the requested task. Put final file deliverables in `output/`; this directory rule does not require every response to produce a file.\n\n";
+
 /// Replace a Studio task's generated agent contract with the current version.
 ///
 /// This is shared by task creation and legacy Memory migration so existing
@@ -556,7 +560,7 @@ pub fn create_studio_task(
 /// symlinks.
 pub fn write_studio_task_contract(task_dir: &std::path::Path, task_name: &str) -> Result<()> {
     let agents_md = format!(
-        "<!-- grove-studio-task-contract:v2 -->\n\
+        "<!-- grove-studio-task-contract:v3 -->\n\
          # Studio Task: {task_name}\n\
          This is an isolated Grove Studio task workspace. Follow this file contract and the user-authored guidance in `instructions.md`.\n\n\
          ## Directory Structure\n\
@@ -564,32 +568,32 @@ pub fn write_studio_task_contract(task_dir: &std::path::Path, task_name: &str) -
          ```\n\
          ./\n\
          ├── input/           # User-provided material files. Browse when looking for task inputs.\n\
-         ├── output/          # Final deliverables shown to the user. Write results here.\n\
+         ├── output/          # Final file deliverables, when the task calls for them.\n\
          ├── internal/        # Your private workspace. Store intermediate files and working data here.\n\
          ├── scripts/         # Place any scripts you create or use here.\n\
          ├── resource/        # Read-only shared project resources (symlink). Do not modify.\n\
          ├── instructions.md  # Read-only project-level instructions (symlink). Read this first.\n\
          └── AGENTS.md        # This file.\n\
          ```\n\
-         ## Getting Started\n\
+         {STUDIO_RESPONSE_GUIDANCE}## Getting Started\n\
          \n\
          1. Read `instructions.md` for project-level context and guidelines.\n\
          2. Browse `input/` and `resource/` for any material the user references.\n\
-         3. Write final results and deliverables to `output/`.\n\
+         3. If the task requires file deliverables, save them in `output/`; otherwise respond in chat.\n\
          4. Use `internal/` for intermediate files, scratch work, and working data.\n\
          5. Place any scripts in `scripts/`.\n\n\
          ## Rules\n\
          \n\
          - ALWAYS read `instructions.md` before starting work.\n\
          - Browse `input/` and `resource/` when you need material relevant to your task — do not bulk-read all files upfront.\n\
-         - ALWAYS write final results and deliverables to `output/`.\n\
+         - When creating final file deliverables, write them to `output/`. Do not turn ordinary chat replies into files.\n\
          - Use `internal/` for intermediate files and working data — keep `output/` for finished work only.\n\
          - ALWAYS place scripts in `scripts/`.\n\
          - NEVER modify files in `resource/` — it is a read-only symlink to the project vault.\n\
          - NEVER modify files in `input/` unless the user explicitly asks you to.\n\
          - NEVER modify `instructions.md` — it is a read-only symlink.\n\
          - Keep `output/` organized. Use subdirectories if you produce many files.\n\n\
-         ## Output Defaults\n\
+         ## File Format Defaults\n\
          \n\
          - **Documentation**: Write in Markdown format.\n\
          - **Diagrams**: Use [Mermaid](https://mermaid.js.org/) for flowcharts and sequence diagrams; use [D2](https://d2lang.com/) for architecture and system diagrams.\n\
