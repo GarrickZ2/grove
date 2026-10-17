@@ -101,6 +101,13 @@ interface RefetchDiffOptions {
   silent?: boolean;
 }
 
+function diffLoadErrorMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+  return 'Failed to load diff';
+}
+
 import { getPreviewRenderer } from './previewRenderers';
 
 
@@ -1026,13 +1033,13 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     }
     if (caught !== null) {
       if (fetchGenRef.current !== gen) return;
-      const msg = caught instanceof Error ? caught.message : 'Failed to load diff';
-      setError(msg);
+      setError(diffLoadErrorMessage(caught));
       if (fetchGenRef.current === gen && !silent) setLoading(false);
       return;
     }
     if (fetchGenRef.current !== gen) return; // stale — a newer fetch is running
     if (data) {
+      setError(null);
       setDiffData(data);
       if (!keepSelection) {
         setSelectedFile(null);
@@ -1364,8 +1371,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       }
       if (caught !== null) {
         if (!cancelled) {
-          const msg = caught instanceof Error ? caught.message : 'Failed to load diff';
-          setError(msg);
+          setError(diffLoadErrorMessage(caught));
         }
       } else if (loaded) {
         let reviewComments: ReviewCommentEntry[] = [];
@@ -2013,6 +2019,10 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       <div className={`diff-review-page ${isEmbedded ? 'embedded' : ''}`}>
         <div className="diff-center-message">
           <span style={{ color: 'var(--color-error)', fontSize: 14 }}>{error}</span>
+          <button type="button" onClick={handleRefresh} disabled={refreshing} className="diff-toolbar-btn">
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Retrying…' : 'Retry'}
+          </button>
         </div>
       </div>
     );

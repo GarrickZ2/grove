@@ -504,13 +504,16 @@ pub fn is_merged(repo_path: &str, branch: &str, target: &str) -> Result<bool> {
 /// 基于最新 origin/master 创建 —— 此时 `target..HEAD` 会把远端领先的
 /// commits 全部算进来，commit 列表和 diff 都被撑爆。当本地 target 是
 /// `origin/<target>` 的祖先（落后或相等）时改用远端 ref；本地更新或已
-/// 分叉时维持本地 target。无 origin / ref 不存在时原样返回。
+/// 分叉时维持本地 target。本地 target 不存在而远端 ref 存在时也使用远端。
+/// 无可用远端 ref 时原样返回，让调用方报告比较错误。
 pub fn effective_review_base(worktree_path: &str, target: &str) -> String {
     if target.is_empty() || target.starts_with("origin/") {
         return target.to_string();
     }
     let remote_ref = format!("origin/{}", target);
-    if ref_is_ancestor(worktree_path, target, &remote_ref).unwrap_or(false) {
+    if (!branch_exists(worktree_path, target) && branch_exists(worktree_path, &remote_ref))
+        || ref_is_ancestor(worktree_path, target, &remote_ref).unwrap_or(false)
+    {
         remote_ref
     } else {
         target.to_string()
@@ -1534,6 +1537,34 @@ mod tests {
         // 已是远端 ref：原样返回
         assert_eq!(effective_review_base(&path, "origin/main"), "origin/main");
         assert_eq!(effective_review_base(&path, ""), "");
+        assert_eq!(effective_review_base(&path, "missing"), "missing");
+    }
+
+    #[test]
+    fn test_review_diff_with_only_remote_target() {
+        let (_dir, path) = init_test_repo();
+        commit_file(&path, "a.txt");
+        git_cmd(&path, &["update-ref", "refs/remotes/origin/main", "HEAD"]).unwrap();
+        git_cmd(&path, &["checkout", "-b", "task"]).unwrap();
+        git_cmd(&path, &["branch", "-D", "main"]).unwrap();
+        commit_file(&path, "committed.txt");
+        std::fs::write(std::path::Path::new(&path).join("a.txt"), "x\ny\n").unwrap();
+
+        assert!(!branch_exists(&path, "main"));
+        assert!(diff_stat(&path, "main").is_err());
+        let base = effective_review_base(&path, "main");
+        assert_eq!(base, "origin/main");
+        let entries = diff_stat(&path, &base).unwrap();
+        assert!(entries
+            .iter()
+            .any(|entry| entry.path == "a.txt" && entry.additions == 1));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.path == "committed.txt" && entry.additions == 1));
+        assert_eq!(log_target_to_head(&path, &base, 100).unwrap().len(), 1);
+        let range = diff_stat_range(&path, &base, "HEAD").unwrap();
+        assert_eq!(range.len(), 1);
+        assert_eq!(range[0].path, "committed.txt");
     }
 
     #[test]

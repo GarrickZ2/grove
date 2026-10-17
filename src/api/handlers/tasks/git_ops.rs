@@ -226,34 +226,40 @@ pub async fn rebase_to_task(
     }))
 }
 
+fn review_diff_entries(
+    worktree_path: &str,
+    target: &str,
+    query: &DiffQuery,
+) -> Result<Vec<git::DiffStatEntry>, (StatusCode, Json<ApiError>)> {
+    let base = query
+        .from_ref
+        .clone()
+        .unwrap_or_else(|| git::effective_review_base(worktree_path, target));
+    let result = match query.to_ref.as_deref() {
+        Some(to_ref) => git::diff_stat_range(worktree_path, &base, to_ref),
+        None => git::diff_stat(worktree_path, &base),
+    };
+    result.map_err(|error| ApiError::internal(format!("Failed to load diff: {error}")))
+}
+
 /// GET /api/v1/projects/{id}/tasks/{taskId}/diff
 pub async fn get_diff(
     Path((id, task_id)): Path<(String, String)>,
     Query(query): Query<DiffQuery>,
-) -> Result<Json<DiffResponse>, StatusCode> {
-    let (_project, project_key) = find_project_by_id(&id)?;
+) -> Result<Json<DiffResponse>, (StatusCode, Json<ApiError>)> {
+    let (_project, project_key) = find_project_by_id(&id)
+        .map_err(|status| ApiError::map_status(status, "Failed to load project"))?;
 
     let task = tasks::get_task(&project_key, &task_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|error| ApiError::internal(format!("Failed to load task: {error}")))?
         .or_else(|| {
             tasks::get_archived_task(&project_key, &task_id)
                 .ok()
                 .flatten()
         })
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or_else(|| ApiError::not_found("Task not found"))?;
 
-    let diff_entries = if let Some(to_ref) = query.to_ref.as_deref() {
-        let default_base = git::effective_review_base(&task.worktree_path, &task.target);
-        let from = query.from_ref.as_deref().unwrap_or(&default_base);
-        git::diff_stat_range(&task.worktree_path, from, to_ref).unwrap_or_default()
-    } else {
-        let base = query
-            .from_ref
-            .as_deref()
-            .map(str::to_string)
-            .unwrap_or_else(|| git::effective_review_base(&task.worktree_path, &task.target));
-        git::diff_stat(&task.worktree_path, &base).unwrap_or_default()
-    };
+    let diff_entries = review_diff_entries(&task.worktree_path, &task.target, &query)?;
 
     let mut total_additions = 0u32;
     let mut total_deletions = 0u32;
@@ -376,4 +382,70 @@ pub async fn get_single_file_diff(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(result).into_response())
+}
+
+#[cfg(test)]
+mod review_diff_tests {
+    use super::*;
+
+    fn init_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        git::git_cmd(path, &["init", "-b", "main"]).unwrap();
+        git::git_cmd(path, &["config", "user.email", "test@example.com"]).unwrap();
+        git::git_cmd(path, &["config", "user.name", "test"]).unwrap();
+        git::git_cmd(path, &["commit", "--allow-empty", "-m", "initial"]).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn invalid_refs_return_json_errors_instead_of_empty_changes() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        for to_ref in [None, Some("HEAD".to_owned())] {
+            let query = DiffQuery {
+                from_ref: None,
+                to_ref,
+            };
+            let error = review_diff_entries(path, "missing-target", &query).unwrap_err();
+            let response = error.into_response();
+            assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let message = body["error"].as_str().unwrap();
+            assert!(message.contains("Failed to load diff"));
+            assert!(message.contains("missing-target"));
+        }
+    }
+
+    #[test]
+    fn remote_only_target_loads_changes_and_preserves_explicit_ref_errors() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        git::git_cmd(path, &["update-ref", "refs/remotes/origin/main", "HEAD"]).unwrap();
+        git::git_cmd(path, &["checkout", "-b", "task"]).unwrap();
+        git::git_cmd(path, &["branch", "-D", "main"]).unwrap();
+        let mut query = DiffQuery {
+            from_ref: None,
+            to_ref: None,
+        };
+        assert!(review_diff_entries(path, "main", &query)
+            .unwrap()
+            .is_empty());
+
+        std::fs::write(dir.path().join("new.txt"), "new content\n").unwrap();
+        git::git_cmd(path, &["add", "new.txt"]).unwrap();
+        let entries = review_diff_entries(path, "main", &query).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "new.txt");
+        assert_eq!(entries[0].additions, 1);
+
+        query.from_ref = Some("main".to_owned());
+        assert!(review_diff_entries(path, "main", &query).is_err());
+        query.from_ref = None;
+        query.to_ref = Some("missing-version".to_owned());
+        assert!(review_diff_entries(path, "main", &query).is_err());
+    }
 }
