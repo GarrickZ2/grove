@@ -3,6 +3,9 @@ use async_trait::async_trait;
 use lark_channel::lark_openapi::{OpenApiClient, OpenApiTransport};
 use tokio::sync::Mutex;
 
+// async_trait emits #[must_use] on boxed futures; Clippy 1.99 treats the
+// future's own #[must_use] as sufficient.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub(super) trait TenantTokens: Send + Sync {
     async fn token(&self) -> Result<String, String>;
