@@ -8,7 +8,9 @@
 pub mod adapter;
 mod adapter_terminal;
 mod compaction;
+mod subagents;
 pub use compaction::CompactionUpdateData;
+pub use subagents::SubagentUpdateData;
 mod terminal_auth;
 mod tool_identity;
 pub use terminal_auth::AuthMethodKind;
@@ -98,6 +100,8 @@ enum SessionReadiness {
 /// ACP 会话句柄 — 外部持有，用于查询状态和发送操作
 pub struct AcpSessionHandle {
     pub key: String,
+    subagents: Mutex<subagents::SubagentRegistry>,
+    subagent_connection: Mutex<Option<acp::ConnectionTo<acp::Agent>>>,
     pub update_tx: broadcast::Sender<AcpUpdate>,
     cmd_tx: mpsc::Sender<AcpCommand>,
     /// Out-of-band shutdown signal for the whole ACP transport/process.
@@ -424,6 +428,25 @@ impl From<ElicitationValueData> for acp::ElicitationContentValue {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AcpUpdate {
+    SubagentUpdate {
+        #[serde(flatten)]
+        update: SubagentUpdateData,
+    },
+    SubagentEvent {
+        session_id: String,
+        event: Box<AcpUpdate>,
+    },
+    SessionMessage {
+        id: String,
+        sender: Option<String>,
+        recipient: Option<String>,
+        #[serde(
+            default,
+            skip_serializing_if = "agent_client_protocol::schema::MaybeUndefined::is_undefined"
+        )]
+        content: agent_client_protocol::schema::MaybeUndefined<Vec<ContentBlockData>>,
+        append: bool,
+    },
     /// Agent 初始化完成
     SessionReady {
         session_id: String,
@@ -2157,22 +2180,41 @@ async fn handle_request_permission(
     args: acp::RequestPermissionRequest,
     cancellation: acp::RequestCancellation,
     origin: Option<TurnOrigin>,
+    child_cancel: tokio_util::sync::CancellationToken,
 ) -> acp::Result<acp::RequestPermissionResponse> {
+    state
+        .handle
+        .validate_session(&args.session_id.to_string())?;
     let _guard = tokio::select! {
         guard = state.handle.permission_lock.lock() => guard,
+        _ = child_cancel.cancelled() => return Ok(acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled)),
         _ = cancellation.cancelled() => return Err(acp::Error::request_cancelled()),
     };
-    if state
-        .handle
-        .cancel_requested
-        .load(std::sync::atomic::Ordering::Relaxed)
+    if !state.handle.is_subagent(&args.session_id.to_string())
+        && state
+            .handle
+            .cancel_requested
+            .load(std::sync::atomic::Ordering::Relaxed)
     {
         return Ok(acp::RequestPermissionResponse::new(
             acp::RequestPermissionOutcome::Cancelled,
         ));
     }
 
-    let request_id = args.tool_call.tool_call_id.to_string();
+    if child_cancel.is_cancelled() {
+        return Ok(acp::RequestPermissionResponse::new(
+            acp::RequestPermissionOutcome::Cancelled,
+        ));
+    }
+    let child_title = state.handle.child_title(&args.session_id.to_string());
+    let request_id = if child_title.is_some() {
+        format!("child-permission-{}", uuid::Uuid::new_v4())
+    } else {
+        args.tool_call.tool_call_id.to_string()
+    };
+    state
+        .handle
+        .own_child_request(&request_id, &args.session_id.to_string());
     let title = args.tool_call.fields.title.clone().unwrap_or_default();
     let title = match args.tool_call.fields.name.as_deref() {
         Some(name) if title.is_empty() => name.to_string(),
@@ -2184,6 +2226,9 @@ async fn handle_request_permission(
     // "bash". Falls back gracefully if raw_input is missing or not the
     // shape we expect.
     let desc = enrich_permission_description(&title, &args.tool_call.fields.raw_input);
+    let desc = child_title
+        .map(|name| format!("{name} · {desc}"))
+        .unwrap_or(desc);
     let options: Vec<PermOptionData> = args
         .options
         .iter()
@@ -2230,6 +2275,7 @@ async fn handle_request_permission(
     }
 
     tokio::select! {
+        biased;
         result = rx => match result {
             Ok(option_id) => Ok(acp::RequestPermissionResponse::new(
                 acp::RequestPermissionOutcome::Selected(
@@ -2240,6 +2286,10 @@ async fn handle_request_permission(
                 acp::RequestPermissionOutcome::Cancelled,
             )),
         },
+        _ = child_cancel.cancelled() => {
+            state.handle.cancel_pending_permission(&request_id);
+            Ok(acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled))
+        }
         _ = cancellation.cancelled() => {
             state.handle.cancel_pending_permission(&request_id);
             Err(acp::Error::request_cancelled())
@@ -2253,6 +2303,11 @@ fn elicitation_scope_matches_handle(
 ) -> bool {
     match scope {
         acp::ElicitationScope::Request(_) => true,
+        acp::ElicitationScope::Session(scope)
+            if handle.is_subagent(&scope.session_id.to_string()) =>
+        {
+            true
+        }
         acp::ElicitationScope::Session(scope) => handle
             .agent_info
             .read()
@@ -2473,6 +2528,7 @@ async fn handle_create_elicitation(
     request: acp::CreateElicitationRequest,
     cancellation: acp::RequestCancellation,
     origin: Option<TurnOrigin>,
+    child_cancel: tokio_util::sync::CancellationToken,
 ) -> acp::Result<acp::CreateElicitationResponse> {
     match &request.mode {
         acp::ElicitationMode::Other(_) => {
@@ -2530,18 +2586,41 @@ async fn handle_create_elicitation(
         }
     }
 
+    let source_session = match request.scope() {
+        acp::ElicitationScope::Session(scope) => Some(scope.session_id.to_string()),
+        _ => None,
+    };
     let _guard = tokio::select! {
         guard = state.handle.elicitation_lock.lock() => guard,
+        _ = child_cancel.cancelled() => return Ok(acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel)),
         _ = cancellation.cancelled() => return Err(acp::Error::request_cancelled()),
     };
+    if child_cancel.is_cancelled() {
+        return Ok(acp::CreateElicitationResponse::new(
+            acp::ElicitationAction::Cancel,
+        ));
+    }
     let request_id = format!("elicitation-{}", uuid::Uuid::new_v4());
-    let agent_name = state
-        .handle
-        .agent_info
-        .read()
-        .ok()
-        .and_then(|info| info.as_ref().map(|(_, name, _)| name.clone()))
-        .unwrap_or_else(|| state.configured_agent_name.clone());
+    if let Some(session) = &source_session {
+        state.handle.own_child_request(&request_id, session);
+        if let acp::ElicitationMode::Url(url) = &request.mode {
+            state
+                .handle
+                .own_child_request(&url.elicitation_id.to_string(), session);
+        }
+    }
+    let agent_name = source_session
+        .as_deref()
+        .and_then(|id| state.handle.child_title(id))
+        .unwrap_or_else(|| {
+            state
+                .handle
+                .agent_info
+                .read()
+                .ok()
+                .and_then(|info| info.as_ref().map(|(_, name, _)| name.clone()))
+                .unwrap_or_else(|| state.configured_agent_name.clone())
+        });
     let snapshot = ElicitationRequestSnapshot {
         request_id: request_id.clone(),
         agent_name,
@@ -2575,10 +2654,15 @@ async fn handle_create_elicitation(
     }
 
     tokio::select! {
+        biased;
         result = rx => match result {
             Ok(response) => build_elicitation_response(&request, response),
             Err(_) => Ok(acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel)),
         },
+        _ = child_cancel.cancelled() => {
+            state.handle.cancel_pending_elicitation(&request_id);
+            Ok(acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel))
+        }
         _ = cancellation.cancelled() => {
             state.handle.cancel_pending_elicitation(&request_id);
             Err(acp::Error::request_cancelled())
@@ -2610,6 +2694,9 @@ async fn handle_create_terminal(
     state: &AcpClientState,
     args: acp::CreateTerminalRequest,
 ) -> acp::Result<acp::CreateTerminalResponse> {
+    state
+        .handle
+        .validate_session(&args.session_id.to_string())?;
     let id = format!(
         "term_{}",
         std::time::SystemTime::now()
@@ -2669,6 +2756,9 @@ async fn handle_create_terminal(
         .unwrap()
         .insert(id.clone(), term_state);
 
+    state
+        .handle
+        .own_child_request(&id, &args.session_id.to_string());
     let term_id = id.clone();
     let handle = Arc::clone(&state.handle);
     // handler 要求 Send,而 drive_terminal 的 future 也是 Send;用 tokio::spawn
@@ -2762,10 +2852,22 @@ async fn handle_session_notification(
     // known, never apply another Session's updates to its chat state. During
     // session/new or session/load the response may not have supplied the ID
     // yet, so notifications received in that short window remain accepted.
+    if state.handle.is_subagent(&args.session_id.to_string()) {
+        return state.handle_child_notification(args);
+    }
     if !session_notification_targets_handle(&state.handle, &args.session_id) {
         return Ok(());
     }
     match args.update {
+        acp::SessionUpdate::SubagentUpdate(update) => state
+            .handle
+            .register_subagent(&args.session_id.to_string(), update),
+        acp::SessionUpdate::SessionMessage(message) => {
+            state.handle.emit(subagents::session_message(message))
+        }
+        acp::SessionUpdate::SessionMessageChunk(chunk) => {
+            state.handle.emit(subagents::session_message_chunk(chunk))
+        }
         acp::SessionUpdate::AgentMessageChunk(chunk) => {
             if let acp::ContentBlock::Text(text) = &chunk.content {
                 if let Ok(mut buf) = state.handle.last_assistant_text.lock() {
@@ -4096,6 +4198,7 @@ fn grove_client_capabilities() -> acp::ClientCapabilities {
 
 fn grove_client_capabilities_for_transport(local: bool) -> acp::ClientCapabilities {
     acp::ClientCapabilities::default()
+        .subagents(acp::SubagentCapabilities::new())
         .auth(acp::AuthCapabilities::new().terminal(local))
         .terminal(true)
         .elicitation(
@@ -4589,6 +4692,8 @@ pub async fn get_or_start_session(
 
                 let handle = Arc::new(AcpSessionHandle {
                     key: key.clone(),
+                    subagents: Mutex::default(),
+                    subagent_connection: Mutex::default(),
                     update_tx: update_tx.clone(),
                     cmd_tx,
                     shutdown_tx,
@@ -4871,6 +4976,7 @@ async fn run_acp_connection(
     config: AcpStartConfig,
     cmd_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<AcpCommand>>>,
 ) -> crate::error::Result<bool> {
+    *handle.subagents.lock().unwrap() = subagents::SubagentRegistry::default();
     let agent_name_for_log = config.agent_name.clone();
     let mut restart_rx = handle.terminal_auth_restart.subscribe();
     // 根据 agent_type 分支获取 reader/writer（使用 trait object 统一类型）
@@ -5048,6 +5154,7 @@ async fn run_acp_connection(
         agent_terminals: Mutex::default(),
     });
 
+    let reader = subagents::adapt_reader(reader, state.adapter.supports_subagents_legacy());
     let transport = acp::ByteStreams::new(writer, reader);
 
     // 每个 handler 闭包通过 Arc::clone 捕获一份 state。SDK 要求 handler 的 F
@@ -5082,10 +5189,19 @@ async fn run_acp_connection(
                     // starts; reading the active turn inside it would then
                     // route the request to the newer turn.
                     let origin = state.handle.active_turn_origin();
+                    let child_cancel = state.handle.child_cancellation(&req.session_id.to_string());
                     let state = Arc::clone(&state);
                     cx.spawn(async move {
                         let cancellation = responder.cancellation();
-                        match handle_request_permission(&state, req, cancellation, origin).await {
+                        match handle_request_permission(
+                            &state,
+                            req,
+                            cancellation,
+                            origin,
+                            child_cancel,
+                        )
+                        .await
+                        {
                             Ok(r) => responder.respond(r),
                             Err(e) => responder.respond_with_error(e),
                         }
@@ -5102,10 +5218,23 @@ async fn run_acp_connection(
                     // See the permission handler above: attribution belongs
                     // to request ingress, not to the eventual UI emission.
                     let origin = state.handle.active_turn_origin();
+                    let child_cancel = match request.scope() {
+                        acp::ElicitationScope::Session(scope) => state
+                            .handle
+                            .child_cancellation(&scope.session_id.to_string()),
+                        _ => Default::default(),
+                    };
                     let state = Arc::clone(&state);
                     cx.spawn(async move {
                         let cancellation = responder.cancellation();
-                        match handle_create_elicitation(&state, request, cancellation, origin).await
+                        match handle_create_elicitation(
+                            &state,
+                            request,
+                            cancellation,
+                            origin,
+                            child_cancel,
+                        )
+                        .await
                         {
                             Ok(response) => responder.respond(response),
                             Err(error) => responder.respond_with_error(error),
@@ -5184,8 +5313,11 @@ async fn run_acp_connection(
         .connect_with(
             transport,
             move |conn: acp::ConnectionTo<acp::Agent>| async move {
+                *handle.subagent_connection.lock().unwrap() = Some(conn.clone());
                 let mut cmd_rx = cmd_rx.lock().await;
-                drive_session(handle, config, &mut cmd_rx, conn).await
+                let result = drive_session(handle.clone(), config, &mut cmd_rx, conn).await;
+                *handle.subagent_connection.lock().unwrap() = None;
+                result
             },
         );
     tokio::pin!(connection);
@@ -5194,6 +5326,9 @@ async fn run_acp_connection(
         _ = shutdown_rx.wait_for(|requested| *requested) => Ok(false),
         _ = restart_rx.changed() => Ok(true),
     };
+
+    *state.handle.subagent_connection.lock().unwrap() = None;
+    state.handle.end_subagents();
 
     // Diagnostics: if the agent subprocess had already exited by the time
     // the ACP I/O loop ended, that's very likely *why* it ended (crash /
@@ -5337,6 +5472,9 @@ async fn drive_session(
             true.into(),
         )]));
     }
+
+    adapter::resolve_adapter(&config.agent_name, &config.agent_command)
+        .configure_client_capabilities(&mut client_capabilities);
 
     // 初始化连接
     let init_resp = conn
@@ -7746,6 +7884,17 @@ impl AcpSessionHandle {
         let Some(chat_id) = self.chat_id.as_ref() else {
             return;
         };
+        let update = match update {
+            AcpUpdate::SubagentEvent { event, .. }
+                if matches!(
+                    event.as_ref(),
+                    AcpUpdate::PermissionRequest { .. } | AcpUpdate::ElicitationRequest { .. }
+                ) =>
+            {
+                event.as_ref()
+            }
+            _ => update,
+        };
         let (message_ids, event, terminal) = match update {
             AcpUpdate::PromptStarted { message_ids } => {
                 *self.active_turn_message_ids.lock().unwrap() = message_ids.clone();
@@ -8211,6 +8360,7 @@ impl AcpSessionHandle {
         origin: Option<TurnOrigin>,
         bypass_replay_suppression: bool,
     ) {
+        update = self.scope_subagent_event(update);
         // load_session 期间抑制大部分 emit；保留 available_commands 以恢复 slash
         // commands，保留 session_ready 让前端就绪(suppress 现在保持到首个用户
         // prompt，session_ready 在 cmd loop 之前发，必须放行)。
@@ -8233,6 +8383,37 @@ impl AcpSessionHandle {
             )
         {
             return;
+        }
+
+        // Keep a concise operational record of child interactions. The actual
+        // form schema/answers remain transient, and history cannot reopen an
+        // already answered or expired form.
+        if let AcpUpdate::SubagentEvent { session_id, event } = &update {
+            let notice = match event.as_ref() {
+                AcpUpdate::ElicitationRequest { snapshot } => {
+                    Some(("Input requested", Some(snapshot.request.message.clone())))
+                }
+                AcpUpdate::ElicitationResolved { action, .. } => Some((
+                    match action.as_str() {
+                        "accept" => "Input accepted",
+                        "decline" => "Input declined",
+                        _ => "Input cancelled",
+                    },
+                    None,
+                )),
+                AcpUpdate::ElicitationComplete { .. } => Some(("Input completed", None)),
+                _ => None,
+            };
+            if let Some((title, description)) = notice {
+                self.emit_child(
+                    session_id,
+                    AcpUpdate::SessionNotice {
+                        severity: "info".into(),
+                        title: title.into(),
+                        description,
+                    },
+                );
+            }
         }
 
         if let Some(ref chat_id) = self.chat_id {
@@ -8483,7 +8664,14 @@ impl AcpSessionHandle {
         if let Some(ref chat_id) = self.chat_id {
             use crate::radio::PermissionInfo;
             let (next_status, permission): (Option<&'static str>, Option<PermissionInfo>) =
-                match &update {
+                match match &update {
+                    AcpUpdate::SubagentEvent { event, .. }
+                        if matches!(event.as_ref(), AcpUpdate::PermissionRequest { .. }) =>
+                    {
+                        event.as_ref()
+                    }
+                    _ => &update,
+                } {
                     AcpUpdate::SessionReady { .. } => (Some(self.derive_node_status()), None),
                     AcpUpdate::Busy { value: true } => (Some("busy"), None),
                     AcpUpdate::Busy { value: false } => (Some(self.derive_node_status()), None),
@@ -8678,7 +8866,16 @@ impl AcpSessionHandle {
         self.publish_turn_radio_event(&update, origin.as_ref());
 
         // broadcast
+        let session_ready = matches!(&update, AcpUpdate::SessionReady { .. });
         let _ = self.update_tx.send(update);
+        if session_ready {
+            // session/load suppresses transcript replay, but its final child
+            // activity/capability snapshots must follow SessionReady so the
+            // frontend can distinguish live children from historical records.
+            for snapshot in self.subagent_snapshots() {
+                self.emit_unsuppressed(snapshot);
+            }
+        }
 
         if should_compact {
             if let Some(ref chat_id) = self.chat_id {
@@ -9011,7 +9208,18 @@ impl AcpSessionHandle {
         self.cancel_requested
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        if let Some((id, sender)) = self.pending_permission.lock().unwrap().take() {
+        let root_permission = {
+            let mut pending = self.pending_permission.lock().unwrap();
+            if pending
+                .as_ref()
+                .is_some_and(|(id, _)| !self.subagents.lock().unwrap().owners.contains_key(id))
+            {
+                pending.take()
+            } else {
+                None
+            }
+        };
+        if let Some((id, sender)) = root_permission {
             drop(sender);
             if let Ok(mut slot) = self.last_permission_info.lock() {
                 *slot = None;
@@ -9022,7 +9230,22 @@ impl AcpSessionHandle {
             });
         }
 
-        if let Some(pending) = self.pending_elicitation.lock().unwrap().take() {
+        let root_elicitation = {
+            let mut pending = self.pending_elicitation.lock().unwrap();
+            if pending.as_ref().is_some_and(|pending| {
+                !self
+                    .subagents
+                    .lock()
+                    .unwrap()
+                    .owners
+                    .contains_key(&pending.snapshot.request_id)
+            }) {
+                pending.take()
+            } else {
+                None
+            }
+        };
+        if let Some(pending) = root_elicitation {
             let request_id = pending.snapshot.request_id;
             drop(pending.response_tx);
             self.emit(AcpUpdate::ElicitationResolved {
@@ -9823,6 +10046,8 @@ pub fn new_handle_for_test(
 
     let handle = Arc::new(AcpSessionHandle {
         key: key.to_string(),
+        subagents: Mutex::default(),
+        subagent_connection: Mutex::default(),
         update_tx: update_tx.clone(),
         cmd_tx,
         shutdown_tx,

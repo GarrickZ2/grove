@@ -15,36 +15,43 @@ pub struct CompactionUpdateData {
     pub metadata: MaybeUndefined<serde_json::Value>,
 }
 
+pub(super) fn compaction_update(update: acp::CompactionUpdate) -> AcpUpdate {
+    let status = match update.status {
+        acp::CompactionStatus::InProgress => "in_progress".to_owned(),
+        acp::CompactionStatus::Completed => "completed".to_owned(),
+        acp::CompactionStatus::Failed => "failed".to_owned(),
+        acp::CompactionStatus::Cancelled => "cancelled".to_owned(),
+        acp::CompactionStatus::Other(status) => status,
+        _ => "unknown".to_owned(),
+    };
+    AcpUpdate::CompactionUpdate {
+        update: CompactionUpdateData {
+            id: update.compaction_id.to_string(),
+            status,
+            summary: update
+                .summary
+                .map_value(|blocks| blocks.iter().filter_map(content_block_to_data).collect()),
+            error: update.error,
+            metadata: update.meta.map_value(serde_json::Value::Object),
+        },
+    }
+}
+
+pub(super) fn compaction_chunk(chunk: acp::CompactionSummaryChunk) -> Option<AcpUpdate> {
+    content_block_to_data(&chunk.content).map(|content| AcpUpdate::CompactionSummaryChunk {
+        id: chunk.compaction_id.to_string(),
+        content,
+        metadata: chunk.meta.map(serde_json::Value::Object),
+    })
+}
+
 impl AcpClientState {
     pub(super) fn handle_compaction_update(&self, update: acp::CompactionUpdate) {
-        let status = match update.status {
-            acp::CompactionStatus::InProgress => "in_progress".to_owned(),
-            acp::CompactionStatus::Completed => "completed".to_owned(),
-            acp::CompactionStatus::Failed => "failed".to_owned(),
-            acp::CompactionStatus::Cancelled => "cancelled".to_owned(),
-            acp::CompactionStatus::Other(status) => status,
-            _ => "unknown".to_owned(),
-        };
-        self.handle.emit(AcpUpdate::CompactionUpdate {
-            update: CompactionUpdateData {
-                id: update.compaction_id.to_string(),
-                status,
-                summary: update
-                    .summary
-                    .map_value(|blocks| blocks.iter().filter_map(content_block_to_data).collect()),
-                error: update.error,
-                metadata: update.meta.map_value(serde_json::Value::Object),
-            },
-        });
+        self.handle.emit(compaction_update(update));
     }
-
     pub(super) fn handle_compaction_summary_chunk(&self, chunk: acp::CompactionSummaryChunk) {
-        if let Some(content) = content_block_to_data(&chunk.content) {
-            self.handle.emit(AcpUpdate::CompactionSummaryChunk {
-                id: chunk.compaction_id.to_string(),
-                content,
-                metadata: chunk.meta.map(serde_json::Value::Object),
-            });
+        if let Some(event) = compaction_chunk(chunk) {
+            self.handle.emit(event);
         }
     }
 }

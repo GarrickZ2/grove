@@ -1,9 +1,10 @@
 import type { ComponentType } from "react";
-import { BookOpen, Brain, CircleAlert, Database, ListPlus, ListTodo, MessageSquarePlus } from "lucide-react";
+import { BookOpen, Brain, CircleAlert, Database, ListPlus, ListTodo, MessageSquarePlus, UsersRound } from "lucide-react";
 import { contextHealthColor, quotaBatteryIcon, quotaHealthColor } from "./quotaColors";
 import type { MobileComposerPanel } from "./mobileComposerPanels";
 
 interface MobileComposerStatusProps {
+  subagentCount?: number;
   pendingCount: number;
   failedCount: number;
   completedTodos: number;
@@ -29,12 +30,13 @@ interface StatusItem {
 
 /** Compact status controls shown inside the expanded phone composer. */
 export function MobileComposerStatus({
-  pendingCount, failedCount, completedTodos, totalTodos, quotaPercent,
+  subagentCount = 0, pendingCount, failedCount, completedTodos, totalTodos, quotaPercent,
   quotaOutdated, contextPercent, memoryCount, hasPlan, commentCount,
   activePanel, disabled, onOpen,
 }: MobileComposerStatusProps) {
   const QuotaIcon = quotaBatteryIcon(quotaPercent ?? 0);
   const items: StatusItem[] = [
+    ...(subagentCount > 0 ? [{ panel: "subagents" as const, Icon: UsersRound, label: `Subagents ${subagentCount}`, detail: `${subagentCount} subagents` }] : []),
     ...(pendingCount > 0 ? [{ panel: "pending" as const, Icon: failedCount > 0 ? CircleAlert : ListPlus, label: `Pending ${pendingCount}`, detail: `${pendingCount} pending messages${failedCount > 0 ? `, ${failedCount} failed to send` : ""}`, color: failedCount > 0 ? "var(--color-error)" : undefined }] : []),
     ...(totalTodos > 0 ? [{ panel: "todo" as const, Icon: ListTodo, label: `Todo ${completedTodos}/${totalTodos}`, detail: `${completedTodos} of ${totalTodos} todos completed` }] : []),
     ...(quotaPercent !== null ? [{ panel: "quota" as const, Icon: QuotaIcon, label: `${quotaPercent}%`, detail: `Agent quota: ${quotaPercent}% remaining${quotaOutdated ? ". Data may be outdated" : ""}`, color: quotaHealthColor(quotaPercent) }] : []),

@@ -1,3 +1,7 @@
+import { SubagentsPanel } from "./SubagentsPanel";
+import { SubagentAvatar } from "./SubagentAvatar";
+import { SubagentCard } from "./SubagentCard";
+import { flattenSubagentMessages, mapSubagentMessages, reduceSubagentEvent, resetSubagentActivity, type SubagentMessage, type SessionExchangeMessage } from "./subagents";
 import { CompactionDivider } from "./CompactionDivider";
 import { applyCompactionEvent, compactionSearchText, type CompactionMessage } from "./compactionReducer";
 import { SessionNotice } from "./SessionNotice";
@@ -508,7 +512,10 @@ type ElicitationMessage = {
   error?: string;
 };
 
-type ChatMessage =
+export type ChatMessage =
+  | SubagentMessage
+  | SessionExchangeMessage
+  | { type: "child_plan"; entries: { content: string; status: string }[] }
   | {
       type: "user";
       content: string;
@@ -555,7 +562,7 @@ type ChatMessage =
       errorMessage?: string;
     };
 
-type ServerEvent = {
+export type ServerEvent = {
   type: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
@@ -1349,7 +1356,7 @@ function buildRenderItems(messages: ChatMessage[], isBusy = false): RenderItem[]
         message.type === "assistant" &&
         message.blocks?.some((block) => block.type !== "text"),
     );
-    if (hasStructuredAssistantContent || turnEntries.some((message) => message.type === "session_notice" || message.type === "compaction")) {
+    if (hasStructuredAssistantContent || turnEntries.some((message) => message.type === "session_notice" || message.type === "compaction" || message.type === "subagent" || message.type === "session_exchange")) {
       items.push(...buildSequentialRenderItems(turnEntries, userIndex + 1));
       cursor = nextUserIndex;
       continue;
@@ -1444,6 +1451,12 @@ function extractRenderItemText(item: RenderItem): string {
   if (item.kind === "single") {
     const m = item.message;
     switch (m.type) {
+      case "subagent":
+        return [m.title, m.description, ...buildSequentialRenderItems(m.messages).map(extractRenderItemText)].filter(Boolean).join("\n");
+      case "session_exchange":
+        return m.blocks.map((block) => block.type === "text" ? block.text : "").join("\n");
+      case "child_plan":
+        return m.entries.map((entry) => entry.content).join("\n");
       case "user":
         return [m.sender ?? "", m.content].filter(Boolean).join("\n");
       case "assistant":
@@ -1506,6 +1519,12 @@ function getAutoScrollTailSignature(messages: ChatMessage[]): string {
   return tail
     .map((message) => {
       switch (message.type) {
+        case "subagent":
+          return `subagent:${message.sessionId}:${message.state?.state}:${getAutoScrollTailSignature(message.messages)}`;
+        case "session_exchange":
+          return `exchange:${message.id}:${JSON.stringify(message.blocks)}`;
+        case "child_plan":
+          return `plan:${JSON.stringify(message.entries)}`;
         case "assistant":
           return `assistant:${message.complete ? 1 : 0}:${message.content.length}:${message.blocks?.length ?? 0}`;
         case "thinking":
@@ -1741,7 +1760,12 @@ function pruneChatViewMessages(
     return { messages, hiddenMessageCount, pruned: false };
   }
 
-  const removeCount = messages.length - settings.limit;
+  let removeCount = messages.length - settings.limit;
+  const activeChild = messages.findIndex((message) => message.type === "subagent" && (
+    message.state?.state === "running" || message.state?.state === "requires_action"
+    || flattenSubagentMessages(message.messages).some((entry) => (entry.type === "permission" || entry.type === "elicitation") && !entry.resolved)
+  ));
+  if (activeChild >= 0) removeCount = Math.min(removeCount, activeChild);
   if (removeCount <= 0) {
     return { messages, hiddenMessageCount, pruned: false };
   }
@@ -2397,7 +2421,21 @@ function reduceHistoryMessages(
   messages: ChatMessage[],
   msg: ServerEvent,
 ): ChatMessage[] {
+  if (["permission_response", "elicitation_resolved", "elicitation_validation_error", "elicitation_complete"].includes(msg.type)) {
+    messages = messages.map((message) => message.type === "subagent" ? { ...message, messages: reduceHistoryMessages(message.messages, msg) } : message);
+  }
   switch (msg.type) {
+    case "session_ready":
+      return resetSubagentActivity(messages);
+    case "subagent_update":
+    case "subagent_event":
+    case "session_message":
+      return reduceSubagentEvent(messages, msg, reduceHistoryMessages);
+    case "plan_update": {
+      const entry: ChatMessage = { type: "child_plan", entries: msg.entries ?? [] };
+      const index = messages.findIndex((message) => message.type === "child_plan");
+      return index < 0 ? [...messages, entry] : messages.map((message, i) => i === index ? entry : message);
+    }
     case "compaction_update":
     case "compaction_summary_chunk":
       return applyCompactionEvent(messages, msg);
@@ -2426,7 +2464,7 @@ function reduceHistoryMessages(
           };
           return updated;
         }
-        if (m.type === "user" || m.type === "tool" || m.type === "session_notice" || m.type === "compaction") break;
+        if (m.type === "user" || m.type === "tool" || m.type === "session_notice" || m.type === "compaction" || m.type === "subagent" || m.type === "session_exchange") break;
       }
       if (!msg.text?.trim()) return prev;
       return [
@@ -2457,7 +2495,7 @@ function reduceHistoryMessages(
           };
           return updated;
         }
-        if (m.type === "user" || m.type === "tool" || m.type === "session_notice" || m.type === "compaction") break;
+        if (m.type === "user" || m.type === "tool" || m.type === "session_notice" || m.type === "compaction" || m.type === "subagent" || m.type === "session_exchange") break;
       }
       return [
         ...prev,
@@ -2477,7 +2515,7 @@ function reduceHistoryMessages(
           updated[i] = { ...m, content: m.content + msg.text };
           return updated;
         }
-        if (m.type === "user" || m.type === "assistant" || m.type === "session_notice" || m.type === "compaction") break;
+        if (m.type === "user" || m.type === "assistant" || m.type === "session_notice" || m.type === "compaction" || m.type === "subagent" || m.type === "session_exchange") break;
       }
       return [
         ...messages,
@@ -3321,6 +3359,8 @@ export function TaskChat({
     }
   }, [pendingMessages]);
   const [showPendingQueue, setShowPendingQueue] = useState(true);
+  const [showSubagents, setShowSubagents] = useState(false);
+  const [subagentSelection, setSubagentSelection] = useState<{ chatId: string | null; id?: string }>({ chatId: null });
   const [editingPendingId, setEditingPendingId] = useState<string | null>(null);
   const [isSavingPendingEdit, setIsSavingPendingEdit] = useState(false);
   const [pendingEditError, setPendingEditError] = useState<string | null>(null);
@@ -3885,7 +3925,7 @@ export function TaskChat({
   const hasMemoryPanel = readMemoryIds.length > 0;
   const activePermissionMessage = useMemo(
     () =>
-      [...messages]
+      flattenSubagentMessages(messages)
         .reverse()
         .find(
           (m): m is PermissionMessage => m.type === "permission" && !m.resolved,
@@ -3896,7 +3936,7 @@ export function TaskChat({
    * `ask_form` tool or native ACP elicitation. Both use the same panel. */
   type SurveyMsg = Extract<ChatMessage, { type: "ask_form" | "elicitation" }>;
   const activeSurveyMessage = useMemo(
-    () => [...messages]
+    () => flattenSubagentMessages(messages)
       .reverse()
       .find((message): message is SurveyMsg =>
         (message.type === "ask_form" || message.type === "elicitation") && !message.resolved,
@@ -3930,6 +3970,9 @@ export function TaskChat({
     [previewCommentDrafts, projectId, taskId],
   );
   const hasPreviewCommentsPanel = taskPreviewCommentDrafts.length > 0;
+  const subagents = useMemo(() => flattenSubagentMessages(messages).filter((message): message is SubagentMessage => message.type === "subagent"), [messages]);
+  const hasSubagentsPanel = subagents.length > 0;
+  const selectedSubagentId = subagentSelection.chatId === activeChatId ? subagentSelection.id : undefined;
   const [mobileDetails, setMobileDetails] = useState<{ chatId: string; panel: MobileComposerPanel } | null>(null);
   // A details sheet belongs to the Session where it was explicitly opened.
   if (mobileDetails && (!isPhoneLayout || mobileDetails.chatId !== activeChatId)) setMobileDetails(null);
@@ -3943,6 +3986,8 @@ export function TaskChat({
           ? "ask_form"
           : isPhoneLayout
             ? requestedMobilePanel
+          : showSubagents && hasSubagentsPanel && subagentSelection.chatId === activeChatId
+            ? "subagents"
           : showMemoryPanel && hasMemoryPanel
             ? "memory"
             : showPlan && hasTodoPanel
@@ -3983,7 +4028,19 @@ export function TaskChat({
   }, [activeChatId, mobileActionPanelOpen]);
   const closeMobileDetails = useCallback(() => {
     setMobileDetails(null);
+    setShowSubagents(false);
   }, []);
+
+  const openSubagentPanel = useCallback((id?: string) => {
+    setSubagentSelection((previous) => ({ chatId: activeChatId ?? null, id: id ?? (previous.chatId === activeChatId ? previous.id : undefined) }));
+    setShowSubagents(true);
+    setShowPendingQueue(false);
+    setShowMemoryPanel(false);
+    setShowPlan(false);
+    setShowPlanFile(false);
+    setShowPreviewComments(false);
+    if (isPhoneLayout) openMobileDetails("subagents");
+  }, [activeChatId, isPhoneLayout, openMobileDetails]);
 
   // When a permission message appears, force the permission panel open and
   // close any rival panels. When it goes away, close the panel. Done via
@@ -4000,6 +4057,7 @@ export function TaskChat({
       setShowPlan(false);
       setShowPlanFile(false);
       setShowPendingQueue(false);
+      setShowSubagents(false);
       setShowPreviewComments(false);
       setShowMemoryPanel(false);
     } else {
@@ -4018,6 +4076,7 @@ export function TaskChat({
       setShowPlan(false);
       setShowPlanFile(false);
       setShowPendingQueue(false);
+      setShowSubagents(false);
       setShowPreviewComments(false);
       setShowMemoryPanel(false);
     } else {
@@ -4037,6 +4096,7 @@ export function TaskChat({
       setShowPlan(false);
       setShowPlanFile(false);
       setShowPendingQueue(false);
+      setShowSubagents(false);
       setShowPreviewComments(false);
       setShowMemoryPanel(false);
     } else {
@@ -6406,6 +6466,7 @@ export function TaskChat({
           }
           break;
         case "session_ready":
+          setMessages((prev) => resetSubagentActivity(prev));
           setIsConnected(true);
           setConnectPhase(null);
           setConnectPhaseStartedAt(null);
@@ -6583,6 +6644,18 @@ export function TaskChat({
               .catch(() => {});
           }
           break;
+        case "subagent_update":
+        case "session_message":
+        case "subagent_event":
+          if (msg.type === "subagent_event" && msg.event?.type === "permission_request") {
+            setShowPermissionPanel(true);
+            setShowPlan(false);
+            setShowPlanFile(false);
+            setShowPendingQueue(false);
+            setShowSubagents(false);
+          }
+          setMessages((prev) => reduceHistoryMessages(prev, msg));
+          break;
         case "compaction_update":
         case "compaction_summary_chunk":
         case "session_notice":
@@ -6594,6 +6667,7 @@ export function TaskChat({
           setShowPlan(false);
           setShowPlanFile(false);
           setShowPendingQueue(false);
+          setShowSubagents(false);
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           break;
         case "permission_response":
@@ -6815,6 +6889,7 @@ export function TaskChat({
             setShowPlanFile(true);
             setShowPlan(false);
             setShowPendingQueue(false);
+            setShowSubagents(false);
           } else {
             readFile(msg.path)
               .then((res) => {
@@ -6822,6 +6897,7 @@ export function TaskChat({
                 setShowPlanFile(true);
                 setShowPlan(false);
                 setShowPendingQueue(false);
+                setShowSubagents(false);
               })
               .catch(() => {});
           }
@@ -6918,6 +6994,7 @@ export function TaskChat({
           break;
         }
         case "session_ready":
+          state.messages = resetSubagentActivity(state.messages);
           state.isConnected = true;
           if (msg.uses_config_options || (Array.isArray(msg.config_options) && msg.config_options.length > 0)) {
             applyConfigOptionsToCachedState(state, msg.config_options ?? []);
@@ -7071,6 +7148,9 @@ export function TaskChat({
         case "thought_chunk":
         case "tool_call_update":
         case "terminal_output_update":
+        case "subagent_update":
+        case "subagent_event":
+        case "session_message":
         case "compaction_update":
         case "compaction_summary_chunk":
         case "session_notice":
@@ -8914,7 +8994,7 @@ export function TaskChat({
   );
 
   const clearElicitationError = useCallback((id: string) => {
-    setMessages((prev) => prev.map((message) =>
+    setMessages((prev) => mapSubagentMessages(prev, (message) =>
       message.type === "elicitation" && message.id === id
         ? { ...message, error: undefined }
         : message,
@@ -10754,6 +10834,8 @@ export function TaskChat({
             isStudio={isStudioProject}
             resolveSender={resolveSender}
             onPermissionResponse={handlePermissionResponse}
+            onOpenSubagent={openSubagentPanel}
+            subagentConnected={isConnected}
             onFileClick={onNavigateToFile}
             onImageClick={setLightboxUrl}
             onMermaidClick={setLightboxSvg}
@@ -10868,6 +10950,7 @@ export function TaskChat({
 
   const mobileStatus = isPhoneLayout ? (
     <MobileComposerStatus
+      subagentCount={subagents.length}
       pendingCount={pendingQueueRows.length}
       failedCount={pendingQueueRows.filter((row) => row.input?.status === "failed").length}
       completedTodos={planEntries.filter((entry) => entry.status === "completed").length}
@@ -11754,7 +11837,7 @@ export function TaskChat({
                     onSheetClosed={closeMobileDetails}
                     className={`mb-3 overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_92%,transparent)] shadow-[0_12px_32px_rgba(0,0,0,0.14)] backdrop-blur-md ${mobileActionPanelOpen ? `mobile-action-sheet mobile-action-sheet-${activeComposerPanel}` : ""}`}
                   >
-                    <div className={`${mobileDetailsPanelOpen ? "mobile-composer-sheet-content" : "max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain"} ${activeComposerPanel === "previewComments" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
+                    <div className={`${mobileDetailsPanelOpen ? "mobile-composer-sheet-content" : activeComposerPanel === "subagents" && selectedSubagentId ? "max-h-[min(560px,58vh)] overflow-y-auto overscroll-contain" : "max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain"} ${activeComposerPanel === "previewComments" || activeComposerPanel === "subagents" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
                       {activeComposerPanel === "quota" && (
                         agentQuota ? <AgentQuotaCard usage={agentQuota} refreshing={quotaRefreshing} onRefresh={refreshAgentQuota} /> : <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">Quota data is unavailable.</p>
                       )}
@@ -11871,6 +11954,22 @@ export function TaskChat({
                             sketchContext={isStudioProject ? { projectId, taskId: taskId } : undefined}
                           />
                         </div>
+                      )}
+
+                      {activeComposerPanel === "subagents" && (
+                        <SubagentsPanel
+                          agents={subagents} selectedId={selectedSubagentId} connected={isConnected}
+                          onSelect={(id) => setSubagentSelection({ chatId: activeChatId ?? null, id })}
+                          onClose={() => { setShowSubagents(false); closeMobileDetails(); }}
+                          onCancel={isRemoteSession ? undefined : (sessionId) => { if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: "cancel_subagent", session_id: sessionId })); }}
+                          onOpenRequest={(kind) => { closeMobileDetails(); setShowSubagents(false); setShowPermissionPanel(kind === "permission"); setShowFormPanel(kind === "elicitation"); }}
+                          renderActivity={(agent) => (
+                            <MessageItem message={agent} index={0} isBusy={isBusy} subagentDetail subagentConnected={isConnected} onOpenSubagent={openSubagentPanel}
+                              agentLabel={agentLabel} projectId={projectId} taskId={taskId} activeChatId={activeChatId ?? undefined}
+                              previewCommentDrafts={[]} onAddPreviewComment={addPreviewCommentDraft} onUpdatePreviewComment={updatePreviewCommentDraft} onRemovePreviewComment={removePreviewCommentDraft}
+                              isStudio={isStudioProject} onPermissionResponse={handlePermissionResponse} onFileClick={onNavigateToFile} onImageClick={setLightboxUrl} onMermaidClick={setLightboxSvg} onD2Click={setLightboxSvg} onInsertReference={insertAttachmentReference} />
+                          )}
+                        />
                       )}
 
                       {activeComposerPanel === "pending" && (
@@ -12578,6 +12677,7 @@ export function TaskChat({
                             setShowPlan(false);
                             setShowPlanFile(false);
                             setShowPendingQueue(false);
+                            setShowSubagents(false);
                             setShowPreviewComments(false);
                           }
                         }}
@@ -12603,6 +12703,7 @@ export function TaskChat({
                             setShowFormPanel(false);
                             setShowPlanFile(false);
                             setShowPendingQueue(false);
+                            setShowSubagents(false);
                             setShowPreviewComments(false);
                             setShowMemoryPanel(false);
                           }
@@ -12634,6 +12735,7 @@ export function TaskChat({
                             setShowFormPanel(false);
                             setShowPlan(false);
                             setShowPendingQueue(false);
+                            setShowSubagents(false);
                             setShowPreviewComments(false);
                             setShowMemoryPanel(false);
                           }
@@ -12648,12 +12750,21 @@ export function TaskChat({
                         <span className="chatbox-header-pill-label">Plan</span>
                       </button>
                     )}
+                    {hasSubagentsPanel && (
+                      <button type="button" aria-label={`Subagents · ${subagents.length}`} aria-expanded={activeComposerPanel === "subagents"}
+                        onClick={() => { if (activeComposerPanel === "subagents") { setShowSubagents(false); closeMobileDetails(); } else { openSubagentPanel(); } }}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] transition-colors ${activeComposerPanel === "subagents" ? "bg-[color-mix(in_srgb,var(--color-highlight)_14%,transparent)] text-[var(--color-highlight)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                        <span className="flex -space-x-1">{subagents.slice(0, 3).map((agent) => <SubagentAvatar key={agent.sessionId} sessionId={agent.sessionId} size={16} />)}</span>
+                        <span className="chatbox-header-pill-label">Subagents</span><span className="tabular-nums opacity-65">{subagents.length}</span>
+                      </button>
+                    )}
                     {hasPendingPanel && (
                       <button
                         onClick={() => {
                           const next = !showPendingQueue;
                           setShowPendingQueue(next);
                           if (next) {
+                            setShowSubagents(false);
                             setShowPermissionPanel(false);
                             setShowFormPanel(false);
                             setShowPlan(false);
@@ -12681,6 +12792,7 @@ export function TaskChat({
                             setShowPlan(false);
                             setShowPlanFile(false);
                             setShowPendingQueue(false);
+                            setShowSubagents(false);
                             setShowPreviewComments(false);
                             setShowMemoryPanel(false);
                           }
@@ -12711,6 +12823,7 @@ export function TaskChat({
                             setShowPlan(false);
                             setShowPlanFile(false);
                             setShowPendingQueue(false);
+                            setShowSubagents(false);
                             setShowPreviewComments(false);
                             setShowMemoryPanel(false);
                           }
@@ -12744,6 +12857,7 @@ export function TaskChat({
                             setShowPlan(false);
                             setShowPlanFile(false);
                             setShowPendingQueue(false);
+                            setShowSubagents(false);
                             setShowMemoryPanel(false);
                           }
                         }}
@@ -14096,6 +14210,9 @@ const MessageItem = memo(function MessageItem({
   onRemovePreviewComment,
   isStudio,
   onPermissionResponse,
+  subagentConnected = false,
+  subagentDetail = false,
+  onOpenSubagent,
   onFileClick,
   onImageClick,
   onMermaidClick,
@@ -14120,6 +14237,9 @@ const MessageItem = memo(function MessageItem({
   onRemovePreviewComment: ReturnType<typeof usePreviewComments>["removeDraft"];
   isStudio: boolean;
   onPermissionResponse?: (optionId: string, requestId: string) => void;
+  subagentConnected?: boolean;
+  subagentDetail?: boolean;
+  onOpenSubagent?: (sessionId: string) => void;
   onFileClick?: (filePath: string, line?: number) => Promise<boolean>;
   onImageClick?: (url: string) => void;
   onMermaidClick?: (svg: string) => void;
@@ -14400,6 +14520,16 @@ const MessageItem = memo(function MessageItem({
         </div>
       );
     }
+    case "subagent":
+      return subagentDetail ? (
+        <SubagentActivity key={message.sessionId} message={message} onFileClick={onFileClick} renderMessage={(child, childIndex) => (
+          <MessageItem message={child} index={childIndex} isBusy={subagentConnected && message.state?.state === "running"} agentLabel={message.title || "Subagent"} projectId={projectId} taskId={taskId} activeChatId={activeChatId} previewCommentDrafts={[]} onAddPreviewComment={onAddPreviewComment} onUpdatePreviewComment={onUpdatePreviewComment} onRemovePreviewComment={onRemovePreviewComment} isStudio={isStudio} onPermissionResponse={onPermissionResponse} subagentConnected={subagentConnected} onOpenSubagent={onOpenSubagent} onFileClick={onFileClick} onImageClick={onImageClick} onMermaidClick={onMermaidClick} onD2Click={onD2Click} onInsertReference={onInsertReference} />
+        )} />
+      ) : <SubagentCard message={message} connected={subagentConnected} onOpen={onOpenSubagent} />;
+    case "session_exchange":
+      return <div className="space-y-2 border-l-2 border-[var(--color-border)] pl-3 text-sm"><p className="text-xs text-[var(--color-text-muted)]">Agent communication</p><AgentContentBlocks blocks={message.blocks} onImageClick={onImageClick} renderText={(text) => <MarkdownRenderer content={text} onFileClick={onFileClick} resolveImageUrl={resolveImageUrl} />} /></div>;
+    case "child_plan":
+      return <ul className="space-y-1 text-sm">{message.entries.map((entry, i) => <li key={i} className="flex gap-2"><span className="text-[var(--color-text-muted)]">{entry.status === "completed" ? "✓" : entry.status === "in_progress" ? "◐" : "○"}</span><span>{entry.content}</span></li>)}</ul>;
     case "thinking":
       if (message.complete) return null;
       return (
@@ -14629,6 +14759,20 @@ function renderActionKindIcon(
     default:
       return <Wrench className={className} />;
   }
+}
+
+function SubagentActivity({ message, renderMessage, onFileClick }: {
+  message: SubagentMessage;
+  renderMessage: (message: ChatMessage, index: number) => ReactNode;
+  onFileClick?: (path: string, line?: number) => Promise<boolean>;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const items = buildSequentialRenderItems(message.messages);
+  return <div className="space-y-4 pt-1">{items.map((item, index) => {
+    const key = `${message.sessionId}-${index}`;
+    return item.kind === "tool-section" ? <ToolSectionView key={key} sectionId={key} tools={item.tools} expanded={expanded.has(key)} forceExpanded={false} sectionFinished={index < items.length - 1 || message.state?.state !== "running"} onToggleSection={(id) => setExpanded((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onFileClick={onFileClick} />
+      : item.kind === "single" ? <div key={key}>{renderMessage(item.message, item.index)}</div> : null;
+  })}</div>;
 }
 
 function getToolNavMode(message: ToolMessage): "diff" | "full" {

@@ -137,7 +137,14 @@ pub async fn execute(agent: String, cwd: String) {
 
         // 读取流式响应直到 Complete 或 Error
         loop {
-            match update_rx.recv().await {
+            let update = match update_rx.recv().await {
+                Ok(AcpUpdate::SubagentEvent { session_id, event }) => {
+                    eprintln!("[Subagent {session_id}]");
+                    Ok(*event)
+                }
+                other => other,
+            };
+            match update {
                 Ok(AcpUpdate::MessageChunk { text }) => {
                     print!("{}", text);
                     io::stdout().flush().ok();
@@ -275,7 +282,10 @@ pub async fn execute(agent: String, cwd: String) {
                 }
                 Ok(AcpUpdate::AuthLoggedOut) => continue,
                 Ok(
-                    AcpUpdate::Busy { .. }
+                    AcpUpdate::SubagentUpdate { .. }
+                    | AcpUpdate::SubagentEvent { .. }
+                    | AcpUpdate::SessionMessage { .. }
+                    | AcpUpdate::Busy { .. }
                     | AcpUpdate::PromptStarted { .. }
                     | AcpUpdate::InputAccepted { .. }
                     | AcpUpdate::InputRejected { .. }

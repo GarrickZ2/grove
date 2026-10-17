@@ -133,6 +133,7 @@ fn truncate_tool_output(output: &mut [ToolCallContentData]) {
 /// before serialization, then apply the same history limit as legacy tools.
 fn prepare_update_for_storage(update: &mut AcpUpdate) {
     match update {
+        AcpUpdate::SubagentEvent { event, .. } => prepare_update_for_storage(event),
         AcpUpdate::ToolCallUpdate { content, .. } => truncate_tool_content(content),
         AcpUpdate::ToolCallV1 {
             content,
@@ -217,6 +218,9 @@ pub fn history_file_path(project: &str, task_id: &str, chat_id: &str) -> PathBuf
 
 /// 判断事件是否应该持久化
 pub fn should_persist(update: &AcpUpdate) -> bool {
+    if let AcpUpdate::SubagentEvent { event, .. } = update {
+        return should_persist(event);
+    }
     // Grove deliberately retains SessionNotice as a local operational record
     // alongside the timeline. This does not make it model conversation content
     // or ask the Agent to replay these transient protocol notices.
@@ -512,6 +516,10 @@ pub fn cancel_unresolved_events(project: &str, task_id: &str, chat_id: &str) -> 
 pub fn unresolved_permission_ids(history: &[AcpUpdate]) -> Vec<String> {
     let mut unresolved: Vec<String> = Vec::new();
     for event in history {
+        let event = match event {
+            AcpUpdate::SubagentEvent { event, .. } => event.as_ref(),
+            _ => event,
+        };
         match event {
             AcpUpdate::PermissionRequest { id, .. } => unresolved.push(id.clone()),
             AcpUpdate::PermissionResponse { id, .. } => {

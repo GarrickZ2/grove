@@ -45,6 +45,9 @@ enum ClientMessage {
         config: Option<QueuedConfig>,
     },
     Cancel,
+    CancelSubagent {
+        session_id: String,
+    },
     /// Explicitly kill the ACP session
     Kill,
     /// Respond to a permission request. `id` is the request id (ACP tool_call_id)
@@ -144,6 +147,24 @@ enum ClientMessage {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ServerMessage {
+    SubagentUpdate {
+        #[serde(flatten)]
+        update: crate::acp::SubagentUpdateData,
+    },
+    SubagentEvent {
+        session_id: String,
+        event: Box<ServerMessage>,
+    },
+    SessionMessage {
+        id: String,
+        sender: Option<String>,
+        recipient: Option<String>,
+        #[serde(
+            skip_serializing_if = "agent_client_protocol::schema::MaybeUndefined::is_undefined"
+        )]
+        content: agent_client_protocol::schema::MaybeUndefined<Vec<ContentBlockData>>,
+        append: bool,
+    },
     SessionReady {
         session_id: String,
         agent_name: String,
@@ -493,6 +514,24 @@ pub struct UploadAttachmentResponse {
 impl From<AcpUpdate> for ServerMessage {
     fn from(update: AcpUpdate) -> Self {
         match update {
+            AcpUpdate::SubagentUpdate { update } => Self::SubagentUpdate { update },
+            AcpUpdate::SubagentEvent { session_id, event } => Self::SubagentEvent {
+                session_id,
+                event: Box::new((*event).into()),
+            },
+            AcpUpdate::SessionMessage {
+                id,
+                sender,
+                recipient,
+                content,
+                append,
+            } => Self::SessionMessage {
+                id,
+                sender,
+                recipient,
+                content,
+                append,
+            },
             AcpUpdate::SessionReady {
                 session_id,
                 agent_name,
@@ -1212,8 +1251,15 @@ async fn handle_acp_ws(
     if let Some(snapshot) = handle.pending_elicitation_snapshot() {
         elicitation_snapshots.push(snapshot);
     }
+    for event in handle.subagent_snapshots() {
+        if let Ok(json) = serde_json::to_string(&ServerMessage::from(event)) {
+            let _ = ws_sender.send(Message::Text(json.into())).await;
+        }
+    }
     for snapshot in elicitation_snapshots {
-        let msg = ServerMessage::ElicitationRequest { snapshot };
+        let msg = ServerMessage::from(
+            handle.scope_subagent_event(AcpUpdate::ElicitationRequest { snapshot }),
+        );
         if let Ok(json) = serde_json::to_string(&msg) {
             let _ = ws_sender.send(Message::Text(json.into())).await;
         }
@@ -1357,6 +1403,16 @@ async fn handle_acp_ws(
                                 {
                                     handle_for_input.emit(AcpUpdate::Error {
                                         message: e.to_string(),
+                                    });
+                                }
+                            }
+                            ClientMessage::CancelSubagent { session_id } => {
+                                if let Err(message) = handle_for_input.cancel_subagent(&session_id)
+                                {
+                                    handle_for_input.emit(AcpUpdate::SessionNotice {
+                                        severity: "warning".into(),
+                                        title: message,
+                                        description: None,
                                     });
                                 }
                             }
@@ -2751,7 +2807,37 @@ fn history_start_for_recent_turns(history: &[AcpUpdate], turns: usize) -> (usize
     if starts.len() <= turns {
         (0, 0)
     } else {
-        (starts[starts.len() - turns], starts.len() - turns)
+        let mut start = starts[starts.len() - turns];
+        // A reusable child may still be active after its original turn. Include
+        // its announcement and earlier transcript so child events never orphan.
+        let mut referenced = std::collections::HashSet::new();
+        for event in &history[start..] {
+            match event {
+                AcpUpdate::SubagentEvent { session_id, .. } => {
+                    referenced.insert(session_id.clone());
+                }
+                AcpUpdate::SubagentUpdate { update } => {
+                    referenced.insert(update.session_id.clone());
+                    referenced.insert(update.parent_session_id.clone());
+                }
+                _ => {}
+            }
+        }
+        for (index, event) in history[..start].iter().enumerate().rev() {
+            if let AcpUpdate::SubagentUpdate { update } = event {
+                if referenced.contains(&update.session_id) {
+                    start = index;
+                    referenced.insert(update.parent_session_id.clone());
+                }
+            }
+        }
+        start = starts
+            .iter()
+            .copied()
+            .rev()
+            .find(|index| *index <= start)
+            .unwrap_or(0);
+        (start, starts.iter().filter(|index| **index < start).count())
     }
 }
 
@@ -2944,6 +3030,40 @@ pub async fn reconnect_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subagent_wire_uses_the_same_tool_schema_inside_the_child_envelope() {
+        let update: AcpUpdate = serde_json::from_value(serde_json::json!({
+            "type": "subagent_event", "session_id": "child",
+            "event": { "type": "tool_call_update_v1", "id": "shared-tool-id", "status": "completed" }
+        })).unwrap();
+        let wire = serde_json::to_value(ServerMessage::from(update)).unwrap();
+        assert_eq!(wire["type"], "subagent_event");
+        assert_eq!(wire["session_id"], "child");
+        assert_eq!(wire["event"]["type"], "tool_call_update");
+        assert_eq!(wire["event"]["id"], "shared-tool-id");
+    }
+
+    #[test]
+    fn recent_history_keeps_the_announcement_of_a_child_still_working_in_a_later_turn() {
+        let parse = |value| serde_json::from_value::<AcpUpdate>(value).unwrap();
+        let history = vec![
+            parse(serde_json::json!({"type":"user_message","text":"First task"})),
+            parse(
+                serde_json::json!({"type":"subagent_update","session_id":"child","parent_session_id":"root","state":{"state":"running"}}),
+            ),
+            parse(serde_json::json!({"type":"user_message","text":"Continue"})),
+            parse(
+                serde_json::json!({"type":"subagent_event","session_id":"child","event":{"type":"message_chunk","text":"Still working"}}),
+            ),
+        ];
+        assert_eq!(history_start_for_recent_turns(&history, 1), (0, 0));
+        let without_child_activity = &history[..3];
+        assert_eq!(
+            history_start_for_recent_turns(without_child_activity, 1),
+            (2, 1)
+        );
+    }
 
     #[test]
     fn queued_edit_request_distinguishes_preserved_and_removed_attachments() {

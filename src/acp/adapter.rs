@@ -22,6 +22,13 @@ pub trait AgentContentAdapter: Send + Sync {
     /// Implementations may apply agent-specific cleanup (e.g. stripping tags).
     fn tool_call_content_to_text(&self, tc: &acp::ToolCallContent) -> String;
 
+    /// Apply agent-specific negotiation without changing the client identity.
+    fn configure_client_capabilities(&self, _capabilities: &mut acp::ClientCapabilities) {}
+
+    fn supports_subagents_legacy(&self) -> bool {
+        false
+    }
+
     fn supports_terminal_metadata(&self) -> bool {
         false
     }
@@ -50,6 +57,9 @@ impl AgentContentAdapter for DefaultAdapter {
 pub struct ClaudeAdapter;
 
 impl AgentContentAdapter for ClaudeAdapter {
+    fn supports_subagents_legacy(&self) -> bool {
+        true
+    }
     fn supports_terminal_metadata(&self) -> bool {
         true
     }
@@ -68,6 +78,27 @@ impl AgentContentAdapter for ClaudeAdapter {
 pub struct CodexAdapter;
 
 impl AgentContentAdapter for CodexAdapter {
+    fn configure_client_capabilities(&self, capabilities: &mut acp::ClientCapabilities) {
+        // codex-acp 2.2.2's bundled SDK strips the unstable top-level
+        // `subagents` field before its own capability check. Its documented
+        // extension is the surviving negotiation path. Advertise only native
+        // child sessions, not unrelated AIR features. Claude must retain the
+        // standard path because this namespace selects its older draft.
+        let meta = capabilities.meta.get_or_insert_with(Default::default);
+        meta.insert(
+            "jetbrains".into(),
+            serde_json::json!({
+                "air": { "version": 1, "capabilities": ["nativeSubagentSessions"] }
+            }),
+        );
+        // This extension also selects Codex's alternate tool renderer. Keep
+        // its output chunk channel explicit so command output cannot disappear.
+        meta.insert("terminal_output_delta".into(), true.into());
+    }
+
+    fn supports_subagents_legacy(&self) -> bool {
+        true
+    }
     fn supports_terminal_metadata(&self) -> bool {
         true
     }
@@ -191,6 +222,37 @@ pub fn resolve_adapter(agent_name: &str, agent_command: &str) -> Box<dyn AgentCo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_negotiation_survives_the_legacy_sdk_without_switching_claude_to_air() {
+        let base = crate::acp::grove_client_capabilities();
+        for (name, command, legacy) in [
+            ("codex", "codex-acp", true),
+            ("@agentclientprotocol/codex-acp", "npx", true),
+            ("custom", "/bin/codex-acp", true),
+            ("claude", "claude-agent-acp", false),
+            ("other", "other", false),
+        ] {
+            let mut capabilities = base.clone();
+            capabilities.meta = Some(acp::Meta::from_iter([(
+                "terminal_output".into(),
+                true.into(),
+            )]));
+            resolve_adapter(name, command).configure_client_capabilities(&mut capabilities);
+            let wire = serde_json::to_value(capabilities).unwrap();
+            assert!(wire["subagents"].is_object());
+            assert_eq!(wire["_meta"]["terminal_output"], true);
+            if legacy {
+                assert_eq!(
+                    wire["_meta"]["jetbrains"]["air"]["capabilities"],
+                    serde_json::json!(["nativeSubagentSessions"])
+                );
+                assert_eq!(wire["_meta"]["terminal_output_delta"], true);
+            } else {
+                assert!(wire["_meta"].get("jetbrains").is_none());
+            }
+        }
+    }
 
     #[test]
     fn test_strip_system_reminders_basic() {
