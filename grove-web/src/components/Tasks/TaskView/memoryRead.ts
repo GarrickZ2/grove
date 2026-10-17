@@ -1,6 +1,8 @@
+import { isGroveMemoryReadName } from "./toolCallIdentity";
 import type { ToolCallMessage } from "./toolCallReducer";
 
 function isMemoryReadTool(message: ToolCallMessage): boolean {
+  if (message.name) return isGroveMemoryReadName(message.name);
   const toolName = message.input
     ?.find((field) => field.label.trim().toLowerCase() === "tool")
     ?.value.trim()

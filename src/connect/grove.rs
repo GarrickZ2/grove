@@ -859,10 +859,15 @@ pub async fn handle_turn_event(
                 }
             }
         }
-        TurnEvent::ToolChanged { id, title, status } => {
+        TurnEvent::ToolChanged {
+            id,
+            name,
+            title,
+            status,
+        } => {
             if let Some((_, route)) = routes(&message_ids).pop() {
                 if let Some(progress) = route.progress {
-                    progress.tool(&id, title.as_deref(), status.as_deref());
+                    progress.named_tool(&id, name.as_deref(), title.as_deref(), status.as_deref());
                 }
             }
         }

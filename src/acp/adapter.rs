@@ -11,6 +11,8 @@ mod acp {
     pub use agent_client_protocol::schema::v1::*;
 }
 
+use super::adapter_terminal::parse_terminal_meta;
+pub use super::adapter_terminal::AgentTerminalEvent;
 use super::content_block_to_text;
 
 /// Trait for agent-specific tool call content conversion.
@@ -19,6 +21,15 @@ pub trait AgentContentAdapter: Send + Sync {
     ///
     /// Implementations may apply agent-specific cleanup (e.g. stripping tags).
     fn tool_call_content_to_text(&self, tc: &acp::ToolCallContent) -> String;
+
+    fn supports_terminal_metadata(&self) -> bool {
+        false
+    }
+
+    /// Decode only metadata conventions understood by this agent adapter.
+    fn terminal_events(&self, _meta: Option<&acp::Meta>) -> Vec<AgentTerminalEvent> {
+        Vec::new()
+    }
 }
 
 /// Default adapter — direct conversion without any agent-specific processing.
@@ -39,9 +50,34 @@ impl AgentContentAdapter for DefaultAdapter {
 pub struct ClaudeAdapter;
 
 impl AgentContentAdapter for ClaudeAdapter {
+    fn supports_terminal_metadata(&self) -> bool {
+        true
+    }
+
+    fn terminal_events(&self, meta: Option<&acp::Meta>) -> Vec<AgentTerminalEvent> {
+        parse_terminal_meta(meta)
+    }
+
     fn tool_call_content_to_text(&self, tc: &acp::ToolCallContent) -> String {
         let raw = DefaultAdapter.tool_call_content_to_text(tc);
         strip_system_reminders(&raw)
+    }
+}
+
+/// Codex keeps command execution agent-side and streams Zed terminal metadata.
+pub struct CodexAdapter;
+
+impl AgentContentAdapter for CodexAdapter {
+    fn supports_terminal_metadata(&self) -> bool {
+        true
+    }
+
+    fn tool_call_content_to_text(&self, tc: &acp::ToolCallContent) -> String {
+        DefaultAdapter.tool_call_content_to_text(tc)
+    }
+
+    fn terminal_events(&self, meta: Option<&acp::Meta>) -> Vec<AgentTerminalEvent> {
+        parse_terminal_meta(meta)
     }
 }
 
@@ -128,12 +164,26 @@ fn strip_system_reminders(text: &str) -> String {
 /// Resolve the appropriate adapter based on the agent name, falling back to
 /// command-string matching for custom agents whose id isn't a known builtin.
 pub fn resolve_adapter(agent_name: &str, agent_command: &str) -> Box<dyn AgentContentAdapter> {
-    if agent_name == "claude" {
+    if matches!(
+        agent_name,
+        "claude"
+            | "claude-acp"
+            | "claude-agent-acp"
+            | "claude-code-acp"
+            | "@agentclientprotocol/claude-agent-acp"
+    ) {
         return Box::new(ClaudeAdapter);
     }
     let cmd_tail = agent_command.rsplit('/').next().unwrap_or(agent_command);
     if cmd_tail.contains("claude-code-acp") || cmd_tail.contains("claude-agent-acp") {
         return Box::new(ClaudeAdapter);
+    }
+    if matches!(
+        agent_name,
+        "codex" | "codex-acp" | "@agentclientprotocol/codex-acp" | "@zed-industries/codex-acp"
+    ) || cmd_tail.contains("codex-acp")
+    {
+        return Box::new(CodexAdapter);
     }
     Box::new(DefaultAdapter)
 }

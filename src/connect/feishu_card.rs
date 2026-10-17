@@ -348,6 +348,7 @@ mod tests {
         TurnView {
             tools: vec![TurnTool {
                 id: "read".into(),
+                name: None,
                 title: "Read notes".into(),
                 status: "in_progress".into(),
             }],
@@ -615,6 +616,7 @@ mod tests {
             text: "old commentary".into(),
             tools: vec![TurnTool {
                 id: "t".into(),
+                name: None,
                 title: "old tool".into(),
                 status: "completed".into(),
             }],
@@ -667,6 +669,7 @@ mod tests {
             tools: (0..32)
                 .map(|n| TurnTool {
                     id: n.to_string(),
+                    name: None,
                     title: "中🙂\\".repeat(200),
                     status: "completed".into(),
                 })

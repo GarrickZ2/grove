@@ -1,3 +1,8 @@
+import { CompactionDivider } from "./CompactionDivider";
+import { applyCompactionEvent, compactionSearchText, type CompactionMessage } from "./compactionReducer";
+import { SessionNotice } from "./SessionNotice";
+import { appendSessionNotice, sessionNoticeFromEvent, type SessionNoticeMessage } from "./sessionNotices";
+import { toolDisplayName, toolVerb, isEditTool, classifyActionKind, isBackgroundAction, type ActionKind } from "./toolCallIdentity";
 import { AuthRequiredPanel, type AuthMethodOption } from "./AuthRequiredPanel";
 import { publishIosChatEvent } from "../../../ios/chatActivity";
 import {
@@ -533,6 +538,8 @@ type ChatMessage =
   | AskFormMessage
   | ElicitationMessage
   | { type: "system"; content: string }
+  | SessionNoticeMessage
+  | CompactionMessage
   | PermissionMessage
   | { type: "terminal_output"; chunks: string[]; exitCode?: number | null }
   | {
@@ -1171,7 +1178,7 @@ type ConversationTurn = {
 };
 
 function conversationToolLabel(tool: ToolMessage): string {
-  switch (normalizeToolVerb(tool.title)) {
+  switch (toolVerb(tool)) {
     case "read":
     case "search":
     case "list":
@@ -1334,15 +1341,15 @@ function buildRenderItems(messages: ChatMessage[], isBusy = false): RenderItem[]
       continue;
     }
 
-    // Rich ACP content must retain its exact position relative to text and
-    // tools. The compact WorkSummary intentionally rearranges process items,
-    // so keep these uncommon turns in the sequential renderer.
+    // Rich ACP content and operational notices must retain their exact
+    // position relative to text and tools. The compact WorkSummary rearranges
+    // process items, so keep these turns in the sequential renderer.
     const hasStructuredAssistantContent = turnEntries.some(
       (message) =>
         message.type === "assistant" &&
         message.blocks?.some((block) => block.type !== "text"),
     );
-    if (hasStructuredAssistantContent) {
+    if (hasStructuredAssistantContent || turnEntries.some((message) => message.type === "session_notice" || message.type === "compaction")) {
       items.push(...buildSequentialRenderItems(turnEntries, userIndex + 1));
       cursor = nextUserIndex;
       continue;
@@ -1443,6 +1450,10 @@ function extractRenderItemText(item: RenderItem): string {
       case "thinking":
       case "system":
         return m.content;
+      case "compaction":
+        return compactionSearchText(m);
+      case "session_notice":
+        return [m.severity, m.title, m.description].filter(Boolean).join("\n");
       case "tool":
         return [m.title, m.content ?? ""].filter(Boolean).join("\n");
       case "ask_form":
@@ -1477,14 +1488,14 @@ function extractRenderItemText(item: RenderItem): string {
     item.kind === "file-change-summary"
   ) {
     return item.tools
-      .map((t) => [t.message.title, t.message.content ?? ""].filter(Boolean).join("\n"))
+      .map((t) => [t.message.title, t.message.name, t.message.content ?? ""].filter(Boolean).join("\n"))
       .join("\n");
   }
   return item.items
     .filter(({ message }) => message.type !== "thinking")
     .map(({ message }) =>
       message.type === "tool"
-        ? [message.title, message.content ?? ""].filter(Boolean).join("\n")
+        ? [message.title, message.name, message.content ?? ""].filter(Boolean).join("\n")
         : message.content,
     )
     .join("\n");
@@ -1500,7 +1511,7 @@ function getAutoScrollTailSignature(messages: ChatMessage[]): string {
         case "thinking":
           return `thinking:${message.complete ? 1 : 0}:${message.content.length}`;
         case "tool":
-          return `tool:${message.id}:${message.status}:${(message.content ?? "").length}:${
+          return `tool:${message.id}:${message.name ?? ""}:${message.kind ?? ""}:${message.status}:${(message.content ?? "").length}:${
             message.output?.reduce(
               (size, item) => size + (item.type === "terminal" ? (item.output?.length ?? 0) : 0),
               0,
@@ -1510,6 +1521,10 @@ function getAutoScrollTailSignature(messages: ChatMessage[]): string {
           return `ask_form:${message.id}:${message.resolved ? 1 : 0}`;
         case "elicitation":
           return `elicitation:${message.id}:${message.snapshot.opened ? 1 : 0}:${message.resolved ?? ""}`;
+        case "compaction":
+          return `compaction:${message.id}:${message.status}:${compactionSearchText(message)}`;
+        case "session_notice":
+          return `session_notice:${message.severity}:${message.title}:${message.description ?? ""}`;
         case "system":
           return `system:${message.content.length}`;
         case "permission":
@@ -2383,6 +2398,13 @@ function reduceHistoryMessages(
   msg: ServerEvent,
 ): ChatMessage[] {
   switch (msg.type) {
+    case "compaction_update":
+    case "compaction_summary_chunk":
+      return applyCompactionEvent(messages, msg);
+    case "session_notice": {
+      const notice = sessionNoticeFromEvent(msg);
+      return notice ? appendSessionNotice(messages, notice) : messages;
+    }
     case "message_chunk": {
       // OpenCode (and possibly others) emit trailing `session_update.AgentMessageChunk`
       // events AFTER `PromptResponse` has already resolved — so the chunk arrives
@@ -2404,7 +2426,7 @@ function reduceHistoryMessages(
           };
           return updated;
         }
-        if (m.type === "user" || m.type === "tool") break;
+        if (m.type === "user" || m.type === "tool" || m.type === "session_notice" || m.type === "compaction") break;
       }
       if (!msg.text?.trim()) return prev;
       return [
@@ -2435,7 +2457,7 @@ function reduceHistoryMessages(
           };
           return updated;
         }
-        if (m.type === "user" || m.type === "tool") break;
+        if (m.type === "user" || m.type === "tool" || m.type === "session_notice" || m.type === "compaction") break;
       }
       return [
         ...prev,
@@ -2455,7 +2477,7 @@ function reduceHistoryMessages(
           updated[i] = { ...m, content: m.content + msg.text };
           return updated;
         }
-        if (m.type === "user" || m.type === "assistant") break;
+        if (m.type === "user" || m.type === "assistant" || m.type === "session_notice" || m.type === "compaction") break;
       }
       return [
         ...messages,
@@ -6561,6 +6583,9 @@ export function TaskChat({
               .catch(() => {});
           }
           break;
+        case "compaction_update":
+        case "compaction_summary_chunk":
+        case "session_notice":
         case "terminal_output_update":
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           break;
@@ -7046,6 +7071,9 @@ export function TaskChat({
         case "thought_chunk":
         case "tool_call_update":
         case "terminal_output_update":
+        case "compaction_update":
+        case "compaction_summary_chunk":
+        case "session_notice":
         case "permission_request":
         case "permission_response":
         case "ask_form":
@@ -14392,6 +14420,20 @@ const MessageItem = memo(function MessageItem({
       // Rendered in the composer panel (chip + expandable panel above the
       // input), not inline in the message stream.
       return null;
+    case "compaction":
+      return (
+        <CompactionDivider message={message}>
+          <AgentContentBlocks
+            blocks={message.summary}
+            onImageClick={onImageClick}
+            renderText={(text) => (
+              <MarkdownRenderer content={text} onFileClick={onFileClick} resolveImageUrl={resolveImageUrl} onImageClick={onImageClick} onMermaidClick={onMermaidClick} onD2Click={onD2Click} sketchContext={sketchContext} />
+            )}
+          />
+        </CompactionDivider>
+      );
+    case "session_notice":
+      return <SessionNotice message={message} />;
     case "system": {
       const displayContent =
         message.content === "$$CONNECTED$$"
@@ -14554,195 +14596,6 @@ function PermissionCard({
   );
 }
 
-function normalizeToolVerb(title: string): string {
-  const lower = title.toLowerCase();
-  if (lower.startsWith("read")) return "read";
-  if (lower.startsWith("edit") || lower.startsWith("write")) return "edit";
-  if (
-    lower.startsWith("run") ||
-    lower === "terminal" ||
-    lower === "exec_command" ||
-    lower === "write_stdin"
-  )
-    return "run";
-  if (
-    lower.startsWith("search") ||
-    lower === "grep" ||
-    lower.startsWith("find") ||
-    lower === "glob" ||
-    lower === "toolsearch"
-  )
-    return "search";
-  if (lower.startsWith("list") || lower.startsWith("ls")) return "list";
-  if (lower.startsWith("task") || lower.startsWith("update_plan"))
-    return "plan";
-  if (lower.includes("permission")) return "permission";
-  return "other";
-}
-
-function isEditTool(message: ToolMessage): boolean {
-  return message.kind === "edit" || normalizeToolVerb(message.title) === "edit";
-}
-
-/**
- * Finer-grained kind specifically for Action chip rendering.
- * Determines the icon + label-extraction strategy per tool.
- */
-type ActionKind =
-  | "bash"
-  | "bash_output"
-  | "skill"
-  | "todo"
-  | "mcp"
-  | "permission"
-  | "read"
-  | "edit"
-  | "delete"
-  | "move"
-  | "search"
-  | "fetch"
-  | "switch_mode"
-  | "generic";
-
-function classifyActionKind(message: ToolMessage): ActionKind {
-  const lower = message.title.toLowerCase().trim();
-  // 注：不匹配 "terminal"（会被 isBackgroundAction 先剔掉，走不到这里）。
-  if (lower === "bash" || lower.startsWith("run ")) return "bash";
-  if (lower === "bash_output") return "bash_output";
-  if (lower === "skill" || lower === "skill_use") return "skill";
-  if (
-    lower === "todo_write" ||
-    lower === "todowrite" ||
-    lower === "update_plan"
-  )
-    return "todo";
-  if (lower.startsWith("mcp__") || lower.startsWith("mcp_")) return "mcp";
-  if (lower.includes("permission")) return "permission";
-  if (message.kind === "execute") return "bash";
-  if (message.kind === "think") return "todo";
-  if (
-    message.kind === "read" ||
-    message.kind === "edit" ||
-    message.kind === "delete" ||
-    message.kind === "move" ||
-    message.kind === "search" ||
-    message.kind === "fetch" ||
-    message.kind === "switch_mode"
-  ) {
-    return message.kind;
-  }
-  return "generic";
-}
-
-/**
- * Extract a short, informative label for a non-Edit action chip.
- * Falls back to tool title when nothing better is derivable.
- */
-function extractActionChipLabel(
-  message: ToolMessage,
-  kind: ActionKind,
-): string {
-  const content = message.content ?? "";
-  const locations = message.locations ?? [];
-  const firstLoc = locations[0];
-
-  const firstNonEmptyLine = (text: string): string => {
-    for (const raw of text.split("\n")) {
-      const line = raw.trim();
-      if (line) return line;
-    }
-    return "";
-  };
-
-  switch (kind) {
-    case "bash":
-    case "bash_output": {
-      const command = message.input?.find(
-        (field) => field.label === "Command",
-      )?.value;
-      const firstCmd = command ? firstNonEmptyLine(command) : "";
-      if (firstCmd) return firstCmd;
-
-      // 2. Fallback to content typically starts with the command or its output.
-      // If it looks like a shell command (starts with a letter and no obvious
-      // error/usage prefix), surface its first line. Otherwise fall back to
-      // the tool title so we at least say "bash".
-      const first = firstNonEmptyLine(content);
-      if (!first) return extractRawActionLabel(message);
-      // Heuristic: if first line starts with a known error/usage marker, or doesn't look like a command
-      // (e.g., starts with JSON opening curly/bracket), fall back to title so we don't mislabel.
-      if (
-        /^(error|usage|traceback|panic|command not found)/i.test(first) ||
-        /^[{[]/.test(first)
-      ) {
-        return extractRawActionLabel(message);
-      }
-      return first;
-    }
-    case "skill": {
-      // Skill content usually opens with either YAML frontmatter
-      // (--- name: xxx ---) or a JSON-ish `"name": "..."` snippet.
-      const fm = /^---\s*[\s\S]*?\bname:\s*([^\n]+)/.exec(content);
-      if (fm) return `skill · ${fm[1].trim().replace(/["']/g, "")}`;
-      const json = /"name"\s*:\s*"([^"]+)"/.exec(content);
-      if (json) return `skill · ${json[1]}`;
-      const firstHeading = /^#\s+(.+)$/m.exec(content);
-      if (firstHeading) return `skill · ${firstHeading[1]}`;
-      return "skill";
-    }
-    case "todo": {
-      // Content is usually JSON with a todos array; extract counts.
-      try {
-        const parsed = JSON.parse(content);
-        const todos = Array.isArray(parsed)
-          ? parsed
-          : Array.isArray(parsed?.todos)
-            ? parsed.todos
-            : Array.isArray(parsed?.entries)
-              ? parsed.entries
-              : null;
-        if (todos && todos.length > 0) {
-          const inProgress = todos.find(
-            (t: { status?: string }) => t?.status === "in_progress",
-          );
-          const active = inProgress?.content ?? inProgress?.title ?? null;
-          return active
-            ? `${todos.length} todos · ${String(active).slice(0, 40)}`
-            : `${todos.length} todos`;
-        }
-      } catch {
-        /* fall through */
-      }
-      return extractRawActionLabel(message);
-    }
-    case "mcp": {
-      // Title like "mcp__grove__grove_list_projects" → "grove · list_projects"
-      const t = message.title;
-      const parts = t.split("__").filter(Boolean);
-      if (parts.length >= 3 && parts[0].toLowerCase() === "mcp") {
-        const server = parts[1];
-        const fn = parts.slice(2).join("_");
-        // Strip redundant `<server>_` prefix if backend double-namespaces it.
-        const fnPretty = fn.startsWith(`${server}_`)
-          ? fn.slice(server.length + 1)
-          : fn;
-        return `${server} · ${fnPretty}`;
-      }
-      return t;
-    }
-    case "permission":
-      return "Permission request";
-    case "generic":
-    default: {
-      if (firstLoc?.path) {
-        const base = firstLoc.path.split("/").pop() || firstLoc.path;
-        return base;
-      }
-      return extractRawActionLabel(message);
-    }
-  }
-}
-
 function renderActionKindIcon(
   kind: ActionKind,
   className = "h-3 w-3 shrink-0",
@@ -14776,22 +14629,6 @@ function renderActionKindIcon(
     default:
       return <Wrench className={className} />;
   }
-}
-
-function isBackgroundAction(message: ToolMessage): boolean {
-  const verb = normalizeToolVerb(message.title);
-  // Generic "Terminal" events often lack the actual command text and only provide
-  // broad shell output. Treat them as background exploration instead of a primary
-  // action so the UI does not surface a low-signal "Terminal" action chip.
-  return (
-    message.kind === "read" ||
-    message.kind === "search" ||
-    message.kind === "fetch" ||
-    verb === "read" ||
-    verb === "search" ||
-    verb === "list" ||
-    message.title.toLowerCase() === "terminal"
-  );
 }
 
 function getToolNavMode(message: ToolMessage): "diff" | "full" {
@@ -14859,7 +14696,7 @@ function isDirectoryLocation(
   if (location.line != null) return false;
   if (location.path.endsWith("/")) return true;
   if (isEditTool(message)) return false;
-  const verb = normalizeToolVerb(message.title);
+  const verb = toolVerb(message);
   if (verb === "read") return false;
   if (looksLikeFileLabel(label)) return false;
   return verb === "search" || verb === "list" || verb === "run";
@@ -14944,15 +14781,6 @@ function truncateChipLabel(label: string, maxLength = 64): string {
   return `${singleLine.slice(0, maxLength - 1)}…`;
 }
 
-function extractRawActionLabel(message: ToolMessage): string {
-  const title = message.title.replace(/^Run\s+/i, "");
-  const verb = normalizeToolVerb(message.title);
-  if (verb === "run") return title;
-  if (verb === "permission") return "Permission request";
-  if (verb === "plan") return "Plan update";
-  return title;
-}
-
 /** Strip outermost code fence wrapper (```lang\n...\n```) if present */
 function stripWrappingFence(raw: string): string {
   const lines = raw.split("\n");
@@ -14971,12 +14799,12 @@ function extractFailureReason(tools: ToolSectionItem[]): string | null {
     const m = tool.message;
     if (m.status !== "error" && m.status !== "failed") continue;
     const content = m.content?.trim();
-    if (!content) return `Failed during ${extractRawActionLabel(m)}`;
+    if (!content) return `Failed during ${toolDisplayName(m)}`;
     const stripped = stripWrappingFence(content)
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-    if (!stripped) return `Failed during ${extractRawActionLabel(m)}`;
+    if (!stripped) return `Failed during ${toolDisplayName(m)}`;
     return stripped.slice(0, 180);
   }
   return null;
@@ -15020,7 +14848,7 @@ function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean
   else if (allCancelled) title = "Actions cancelled";
   else if (partialFailed) title = "Completed with errors";
   else if (
-    tools.some((t) => normalizeToolVerb(t.message.title) === "permission")
+    tools.some((t) => toolVerb(t.message) === "permission")
   )
     title = "Waiting for permission";
   else if (edits.length > 0)
@@ -15090,9 +14918,10 @@ function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean
 
   const buildChipItem = (tool: ToolSectionItem): ActionChipItem => {
     const kind = classifyActionKind(tool.message);
-    const derived = extractActionChipLabel(tool.message, kind);
+    const derived = toolDisplayName(tool.message);
     return {
       key: tool.message.id,
+      name: tool.message.name,
       kind,
       label: truncateChipLabel(stripAnsi(derived)),
       content: tool.message.content ?? "",
@@ -15100,7 +14929,7 @@ function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean
       status: tool.message.status,
       input: tool.message.input,
       output: tool.message.output,
-      hoverText: toolCallHoverText(tool.message.title, tool.message.input),
+      hoverText: toolCallHoverText(tool.message.title, tool.message.input, tool.message.name),
     };
   };
   const actionItems = foregroundActions.map(buildChipItem);
@@ -15111,7 +14940,7 @@ function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean
   const inspectionActionItems = backgroundActions
     .filter(
       (t) =>
-        hasReadableToolInput(t.message.input) ||
+        Boolean(t.message.name) || hasReadableToolInput(t.message.input) ||
         hasReadableToolOutput(t.message.output, t.message.content ?? ""),
     )
     .map(buildChipItem);
@@ -15201,6 +15030,7 @@ function getStatusChipClasses(status: string, muted = false): string {
 
 type ActionChipItem = {
   key: string;
+  name?: string;
   kind: ActionKind;
   label: string;
   content: string;
@@ -15360,6 +15190,11 @@ function ToolContentBlocks({ content }: { content: ToolCallContentData[] }) {
               </code>
               {hasSnapshot && <span className="shrink-0">{exitLabel}</span>}
             </div>
+            {!hasSnapshot && (
+              <div className="px-2.5 py-2 text-[var(--color-text-muted)]">
+                Terminal output is unavailable.
+              </div>
+            )}
             {hasSnapshot && (
               <div>
                 {item.truncated && (
@@ -15403,7 +15238,7 @@ function ActionChip({
   const status = normalizedToolStatus(item.status);
   const hasOutput = hasReadableToolOutput(item.output, item.content);
   const hasInput = hasReadableToolInput(item.input);
-  const hasDetails = hasOutput || hasInput;
+  const hasDetails = hasOutput || hasInput || Boolean(item.name);
   const hasLocation = item.locations.length > 0;
   // Prefer details when the tool exposes a request or response. Running tools
   // often have input before they have output; treating those as expandable
@@ -15873,7 +15708,7 @@ const ToolSectionView = memo(function ToolSectionView({
                       const hasDiff = item.diff.trim().length > 0;
                       const hasToolDetails = Boolean(
                         tool &&
-                          (hasReadableToolInput(tool.input) ||
+                          (Boolean(tool.name) || hasReadableToolInput(tool.input) ||
                             hasReadableToolOutput(tool.output, tool.content ?? "")),
                       );
                       const canExpand = hasDiff || hasToolDetails;

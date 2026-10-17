@@ -57,4 +57,26 @@ describe("shouldShowGenericThinking", () => {
   it("shows the fallback while waiting for the first Agent content", () => {
     expect(shouldShowGenericThinking(true, [{ type: "user" }])).toBe(true);
   });
+
+  it("uses the compaction indicator even when another event follows it", () => {
+    expect(shouldShowGenericThinking(true, [
+      { type: "user" },
+      { type: "compaction", status: "in_progress" },
+      { type: "session_notice" },
+    ])).toBe(false);
+  });
+
+  it.each(["completed", "failed", "cancelled"])("allows normal waiting after compaction is %s", (status) => {
+    expect(shouldShowGenericThinking(true, [
+      { type: "user" },
+      { type: "compaction", status },
+    ])).toBe(true);
+  });
+
+  it("ignores stale in-progress compactions from previous turns", () => {
+    expect(shouldShowGenericThinking(true, [
+      { type: "compaction", status: "in_progress" },
+      { type: "user" },
+    ])).toBe(true);
+  });
 });

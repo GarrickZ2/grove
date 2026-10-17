@@ -67,6 +67,20 @@ pub async fn execute(agent: String, cwd: String) {
                 );
                 break;
             }
+            Ok(AcpUpdate::SessionNotice {
+                severity,
+                title,
+                description,
+            }) => {
+                eprintln!(
+                    "[{}] {}{}",
+                    severity,
+                    title,
+                    description
+                        .map(|value| format!("\n{}", value))
+                        .unwrap_or_default()
+                );
+            }
             Ok(AcpUpdate::Error { message }) => {
                 eprintln!("Error: {}", message);
                 std::process::exit(1);
@@ -167,7 +181,16 @@ pub async fn execute(agent: String, cwd: String) {
                 Ok(AcpUpdate::ToolCall { id: _, title, .. }) => {
                     eprintln!("\x1b[36m[Tool: {}]\x1b[0m", title);
                 }
-                Ok(AcpUpdate::ToolCallV1 { title, status, .. }) => {
+                Ok(AcpUpdate::ToolCallV1 {
+                    title,
+                    name,
+                    status,
+                    ..
+                }) => {
+                    let title = name
+                        .filter(|name| name != &title)
+                        .map(|name| format!("{title} [{name}]"))
+                        .unwrap_or(title);
                     eprintln!("\x1b[36m[Tool: {} — {}]\x1b[0m", title, status);
                 }
                 Ok(AcpUpdate::ToolCallUpdate {
@@ -183,11 +206,15 @@ pub async fn execute(agent: String, cwd: String) {
                     }
                 }
                 Ok(AcpUpdate::ToolCallUpdateV1 {
+                    name,
                     status,
                     display_content,
                     ..
                 }) => {
                     let status = status.as_deref().unwrap_or("updated");
+                    let status = name
+                        .map(|name| format!("{name} — {status}"))
+                        .unwrap_or_else(|| status.to_string());
                     if let Some(content) = display_content {
                         eprintln!("\x1b[36m  {} — {}\x1b[0m", status, content);
                     } else {
@@ -200,6 +227,31 @@ pub async fn execute(agent: String, cwd: String) {
                 Ok(AcpUpdate::Complete { .. }) => {
                     println!(); // 换行
                     break;
+                }
+                Ok(AcpUpdate::CompactionUpdate { update }) => {
+                    eprintln!("[Compaction] {}", update.status);
+                    if let Some(error) = update.error.value() {
+                        eprintln!("{}", error);
+                    }
+                }
+                Ok(AcpUpdate::CompactionSummaryChunk { content, .. }) => {
+                    if let crate::acp::ContentBlockData::Text { text } = content {
+                        eprint!("{}", text);
+                    }
+                }
+                Ok(AcpUpdate::SessionNotice {
+                    severity,
+                    title,
+                    description,
+                }) => {
+                    eprintln!(
+                        "[{}] {}{}",
+                        severity,
+                        title,
+                        description
+                            .map(|value| format!("\n{}", value))
+                            .unwrap_or_default()
+                    );
                 }
                 Ok(AcpUpdate::Error { message }) => {
                     eprintln!("\x1b[31mError: {}\x1b[0m", message);

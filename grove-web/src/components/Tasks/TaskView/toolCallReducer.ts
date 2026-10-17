@@ -78,14 +78,17 @@ export function hasReadableToolOutput(
 export function toolCallHoverText(
   title: string,
   input: ToolCallInputData[] | undefined,
+  name?: string,
 ): string {
   const command = input?.find((field) => field.label.toLowerCase() === "command")?.value.trim();
+  if (name) return [...new Set([name, title, command].filter(Boolean))].join("\n");
   return command || title;
 }
 
 export type ToolCallMessage = {
   type: "tool";
   id: string;
+  name?: string;
   title: string;
   status: string;
   content?: string;
@@ -245,6 +248,7 @@ export function applyToolCallCreated(
   return {
     type: "tool",
     id: String(event.id),
+    name: typeof event.name === "string" ? event.name : previous?.name,
     title: typeof event.title === "string" ? event.title : previous?.title ?? String(event.id),
     kind: typeof event.kind === "string" ? event.kind : previous?.kind,
     status: normalizedStatus(event.status, previous?.status ?? "running"),
@@ -279,6 +283,7 @@ export function applyToolCallUpdated(
   return {
     type: "tool",
     id: String(event.id),
+    name: typeof event.name === "string" ? event.name : previous?.name,
     title: typeof event.title === "string" ? event.title : previous?.title ?? String(event.id),
     kind: typeof event.kind === "string" ? event.kind : previous?.kind,
     status: normalizedStatus(event.status, previous?.status ?? "pending"),

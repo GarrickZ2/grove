@@ -176,6 +176,8 @@ pub enum TurnEvent {
     },
     ToolChanged {
         id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         title: Option<String>,
         status: Option<String>,
     },

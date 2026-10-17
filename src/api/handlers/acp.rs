@@ -206,6 +206,8 @@ enum ServerMessage {
     },
     ToolCall {
         id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         title: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         kind: Option<String>,
@@ -222,6 +224,8 @@ enum ServerMessage {
     },
     ToolCallUpdate {
         id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -292,6 +296,22 @@ enum ServerMessage {
     },
     Error {
         message: String,
+    },
+    CompactionUpdate {
+        #[serde(flatten)]
+        update: crate::acp::CompactionUpdateData,
+    },
+    CompactionSummaryChunk {
+        id: String,
+        content: ContentBlockData,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<serde_json::Value>,
+    },
+    SessionNotice {
+        severity: String,
+        title: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
     },
     UserMessage {
         text: String,
@@ -580,6 +600,7 @@ impl From<AcpUpdate> for ServerMessage {
                 ..
             } => ServerMessage::ToolCall {
                 id,
+                name: None,
                 title,
                 kind: None,
                 status: None,
@@ -599,6 +620,7 @@ impl From<AcpUpdate> for ServerMessage {
                 raw_input,
             } => ServerMessage::ToolCallUpdate {
                 id,
+                name: None,
                 title: None,
                 kind: None,
                 status,
@@ -616,6 +638,7 @@ impl From<AcpUpdate> for ServerMessage {
             },
             AcpUpdate::ToolCallV1 {
                 id,
+                name,
                 title,
                 kind,
                 status,
@@ -640,6 +663,7 @@ impl From<AcpUpdate> for ServerMessage {
                 };
                 ServerMessage::ToolCall {
                     id,
+                    name,
                     title,
                     kind: Some(kind),
                     status: Some(status),
@@ -654,6 +678,7 @@ impl From<AcpUpdate> for ServerMessage {
             }
             AcpUpdate::ToolCallUpdateV1 {
                 id,
+                name,
                 title,
                 kind,
                 status,
@@ -678,6 +703,7 @@ impl From<AcpUpdate> for ServerMessage {
                 });
                 ServerMessage::ToolCallUpdate {
                     id,
+                    name,
                     title,
                     kind,
                     status: status.unwrap_or_default(),
@@ -750,6 +776,25 @@ impl From<AcpUpdate> for ServerMessage {
             },
             AcpUpdate::Busy { value } => ServerMessage::Busy { value },
             AcpUpdate::Error { message } => ServerMessage::Error { message },
+            AcpUpdate::CompactionUpdate { update } => ServerMessage::CompactionUpdate { update },
+            AcpUpdate::CompactionSummaryChunk {
+                id,
+                content,
+                metadata,
+            } => ServerMessage::CompactionSummaryChunk {
+                id,
+                content,
+                metadata,
+            },
+            AcpUpdate::SessionNotice {
+                severity,
+                title,
+                description,
+            } => ServerMessage::SessionNotice {
+                severity,
+                title,
+                description,
+            },
             AcpUpdate::UserMessage {
                 text,
                 client_message_id,
@@ -2559,6 +2604,7 @@ struct HistoryContext {
 fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
     let mut context = HistoryContext::default();
     let mut tools: HashMap<String, (String, Vec<ToolCallInputData>, String)> = HashMap::new();
+    let mut tool_names: HashMap<String, String> = HashMap::new();
     let mut tool_order = Vec::new();
     for (index, update) in history.iter().enumerate() {
         if let AcpUpdate::UserMessage { attachments, .. } = update {
@@ -2605,11 +2651,15 @@ fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
         match ServerMessage::from(update.clone()) {
             ServerMessage::ToolCall {
                 id,
+                name,
                 title,
                 input,
                 status,
                 ..
             } => {
+                if let Some(name) = name {
+                    tool_names.insert(id.clone(), name);
+                }
                 if !tools.contains_key(&id) {
                     tool_order.push(id.clone());
                 }
@@ -2617,11 +2667,15 @@ fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
             }
             ServerMessage::ToolCallUpdate {
                 id,
+                name,
                 title,
                 input,
                 status,
                 ..
             } => {
+                if let Some(name) = name {
+                    tool_names.insert(id.clone(), name);
+                }
                 if !tools.contains_key(&id) {
                     tool_order.push(id.clone());
                 }
@@ -2651,8 +2705,13 @@ fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
             .iter()
             .find(|field| field.label.trim().eq_ignore_ascii_case("tool"))
             .map(|field| field.value.trim());
-        let memory_read = tool_name.is_some_and(|name| name.eq_ignore_ascii_case("memory_read"))
-            || title.trim().to_ascii_lowercase().ends_with("memory_read");
+        let memory_read = match tool_names.get(&id) {
+            Some(name) => acp::is_grove_memory_read_name(name),
+            None => {
+                tool_name.is_some_and(|name| name.eq_ignore_ascii_case("memory_read"))
+                    || title.trim().to_ascii_lowercase().ends_with("memory_read")
+            }
+        };
         if !memory_read {
             continue;
         }
@@ -2981,6 +3040,20 @@ mod tests {
     }
 
     #[test]
+    fn session_notices_keep_their_fields_on_the_websocket_and_history_wire() {
+        let event = AcpUpdate::SessionNotice {
+            severity: "_custom".into(),
+            title: "Model rerouted".into(),
+            description: Some("Continuing with another model".into()),
+        };
+        let message = serde_json::to_value(ServerMessage::from(event)).unwrap();
+        assert_eq!(message["type"], "session_notice");
+        assert_eq!(message["severity"], "_custom");
+        assert_eq!(message["title"], "Model rerouted");
+        assert_eq!(message["description"], "Continuing with another model");
+    }
+
+    #[test]
     fn truncated_history_context_preserves_prior_ui_state() {
         let history = vec![
             AcpUpdate::UserMessage {
@@ -3008,7 +3081,8 @@ mod tests {
             },
             AcpUpdate::ToolCallV1 {
                 id: "read-1".into(),
-                title: "memory_read".into(),
+                name: Some("mcp__grove_agent__memory_read".into()),
+                title: "正在读取项目记忆".into(),
                 kind: "read".into(),
                 status: "completed".into(),
                 content: None,
@@ -3074,6 +3148,7 @@ mod tests {
     fn v1_tool_update_maps_to_wire_replacement_semantics() {
         let message = ServerMessage::from(AcpUpdate::ToolCallUpdateV1 {
             id: "tool-1".to_string(),
+            name: None,
             title: None,
             kind: None,
             status: None,
@@ -3100,6 +3175,7 @@ mod tests {
         let created: AcpUpdate = serde_json::from_value(serde_json::json!({
             "type": "tool_call_v1",
             "id": "search-1",
+            "name": "web_search",
             "title": "Searching the Web",
             "kind": "fetch",
             "status": "pending",
@@ -3110,12 +3186,14 @@ mod tests {
         }))
         .unwrap();
         let created = serde_json::to_value(ServerMessage::from(created)).unwrap();
+        assert_eq!(created["name"], "web_search");
         assert_eq!(created["input"][0]["label"], "Query");
         assert_eq!(created["input"][0]["value"], "guardrail architecture");
         assert_eq!(created["output"], serde_json::json!([]));
 
         let updated: AcpUpdate = serde_json::from_value(serde_json::json!({
             "type": "tool_call_update_v1",
+            "name": "web_search_v2",
             "id": "search-1",
             "title": "Searching for: guardrail architecture",
             "status": "completed",
@@ -3127,6 +3205,7 @@ mod tests {
         }))
         .unwrap();
         let updated = serde_json::to_value(ServerMessage::from(updated)).unwrap();
+        assert_eq!(updated["name"], "web_search_v2");
         assert_eq!(updated["input"][0]["label"], "Query");
         assert_eq!(updated["output"][0]["content"]["text"], "Useful result");
     }

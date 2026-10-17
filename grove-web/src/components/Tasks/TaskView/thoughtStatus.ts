@@ -17,6 +17,7 @@ export function extractThoughtStatus(content: string): string {
 type TranscriptStatusMessage = {
   type: string;
   complete?: boolean;
+  status?: string;
 };
 
 /**
@@ -28,6 +29,15 @@ export function shouldShowGenericThinking(
   messages: readonly TranscriptStatusMessage[],
 ): boolean {
   if (!isBusy) return false;
+  // Compaction has its own visible progress indicator. Ignore unfinished
+  // records from older turns when deciding the current turn's fallback.
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.type === "user") break;
+    if (message.type === "compaction" && message.status === "in_progress") {
+      return false;
+    }
+  }
   if (messages.some((message) => message.type === "thinking" && !message.complete)) {
     return false;
   }

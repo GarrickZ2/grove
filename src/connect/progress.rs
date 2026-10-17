@@ -15,6 +15,7 @@ const MAX_BLOCKS: usize = 32;
 #[derive(Clone, Debug)]
 pub struct TurnTool {
     pub id: String,
+    pub name: Option<String>,
     pub title: String,
     pub status: String,
 }
@@ -98,7 +99,18 @@ impl TurnProgress {
         });
     }
 
+    #[cfg(test)]
     pub fn tool(&self, id: &str, title: Option<&str>, status: Option<&str>) {
+        self.named_tool(id, None, title, status);
+    }
+
+    pub fn named_tool(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        title: Option<&str>,
+        status: Option<&str>,
+    ) {
         self.0.send_modify(|view| {
             if view.final_output.is_some() {
                 return;
@@ -110,6 +122,7 @@ impl TurnProgress {
                     }
                     view.tools.push(TurnTool {
                         id: id.to_owned(),
+                        name: name.map(|name| name.chars().take(200).collect()),
                         title: title.chars().take(200).collect(),
                         status: "in_progress".into(),
                     });
@@ -130,6 +143,9 @@ impl TurnProgress {
                 }
             }
             if let Some(tool) = view.tools.iter_mut().find(|tool| tool.id == id) {
+                if let Some(name) = name {
+                    tool.name = Some(name.chars().take(200).collect());
+                }
                 if let Some(title) = title {
                     tool.title = title.chars().take(200).collect();
                 }
@@ -259,6 +275,20 @@ mod tests {
         Arc,
     };
     use tokio::sync::mpsc;
+
+    #[test]
+    fn tool_name_updates_preserve_identity_without_adding_progress_steps() {
+        let (tx, _rx) = watch::channel(TurnView::default());
+        let progress = TurnProgress(tx);
+        progress.named_tool("tool", Some("read_file"), Some("读取文件"), Some("pending"));
+        progress.named_tool("tool", None, Some("读取配置"), Some("in_progress"));
+        progress.named_tool("tool", Some("read_many_files"), None, Some("completed"));
+        let view = progress.0.borrow();
+        assert_eq!(view.tools.len(), 1);
+        assert_eq!(view.tools[0].name.as_deref(), Some("read_many_files"));
+        assert_eq!(view.tools[0].title, "读取配置");
+        assert!(matches!(&view.blocks[0], TurnBlock::Tools { count: 1, .. }));
+    }
 
     #[test]
     fn commentary_survives_tools_and_tool_updates_do_not_increment_group_counts() {

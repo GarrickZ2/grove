@@ -217,6 +217,9 @@ pub fn history_file_path(project: &str, task_id: &str, chat_id: &str) -> PathBuf
 
 /// 判断事件是否应该持久化
 pub fn should_persist(update: &AcpUpdate) -> bool {
+    // Grove deliberately retains SessionNotice as a local operational record
+    // alongside the timeline. This does not make it model conversation content
+    // or ask the Agent to replay these transient protocol notices.
     // Live terminal snapshots can arrive once per 4 KiB read. Keep them on the
     // WebSocket/broadcast path, but persist only the final cumulative snapshot
     // to avoid synchronous history writes for every output chunk. The initial
@@ -906,6 +909,7 @@ mod tests {
         let events = vec![
             AcpUpdate::ToolCallV1 {
                 id: "tool-v1".to_string(),
+                name: Some("read_file".into()),
                 title: "Read".to_string(),
                 kind: "read".to_string(),
                 status: "in_progress".to_string(),
@@ -923,6 +927,7 @@ mod tests {
             },
             AcpUpdate::ToolCallUpdateV1 {
                 id: "tool-v1".to_string(),
+                name: Some("read_many_files".into()),
                 title: None,
                 kind: None,
                 status: Some("completed".to_string()),
@@ -938,6 +943,20 @@ mod tests {
 
         let compacted = compact_events(events);
         assert_eq!(compacted.len(), 2);
+        assert_eq!(
+            serde_json::to_value(&compacted[0]).unwrap()["name"],
+            "read_file"
+        );
+        assert_eq!(
+            serde_json::to_value(&compacted[1]).unwrap()["name"],
+            "read_many_files"
+        );
+        let restored: Vec<AcpUpdate> =
+            serde_json::from_value(serde_json::to_value(&compacted).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&restored[1]).unwrap()["name"],
+            "read_many_files"
+        );
         assert!(matches!(
             &compacted[1],
             AcpUpdate::ToolCallUpdateV1 {
@@ -1490,6 +1509,7 @@ mod tests {
     fn prepare_storage_migrates_legacy_v1_fields_before_serialization() {
         let mut update = AcpUpdate::ToolCallV1 {
             id: "t1".into(),
+            name: None,
             title: "Set title".into(),
             kind: "mcp".into(),
             status: "completed".into(),
@@ -1524,6 +1544,7 @@ mod tests {
     fn prepare_storage_truncates_structured_v1_output() {
         let mut update = AcpUpdate::ToolCallUpdateV1 {
             id: "t1".into(),
+            name: None,
             title: None,
             kind: None,
             status: Some("completed".into()),

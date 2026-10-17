@@ -6,9 +6,15 @@
 #![allow(dead_code)] // Public API — used by CLI now, Web frontend later
 
 pub mod adapter;
+mod adapter_terminal;
+mod compaction;
+pub use compaction::CompactionUpdateData;
 mod terminal_auth;
+mod tool_identity;
 pub use terminal_auth::AuthMethodKind;
 use terminal_auth::{TerminalAuthLaunch, TerminalAuthState};
+pub(crate) use tool_identity::is_grove_memory_read_name;
+use tool_identity::ToolIdentity;
 
 // The SDK versions protocol schemas explicitly. Grove currently negotiates ACP v1,
 // so keep its schema and runtime types behind one local namespace.
@@ -537,6 +543,8 @@ pub enum AcpUpdate {
     /// old string-delta history remains readable without changing its semantics.
     ToolCallV1 {
         id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         title: String,
         kind: String,
         status: String,
@@ -557,6 +565,8 @@ pub enum AcpUpdate {
     /// collection values replace the previous snapshot, including empty clears.
     ToolCallUpdateV1 {
         id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         title: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -651,6 +661,24 @@ pub enum AcpUpdate {
     /// 错误
     Error {
         message: String,
+    },
+    CompactionUpdate {
+        #[serde(flatten)]
+        update: CompactionUpdateData,
+    },
+    CompactionSummaryChunk {
+        id: String,
+        content: ContentBlockData,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        metadata: Option<serde_json::Value>,
+    },
+    /// Locally retained operational record; never model conversation content.
+    /// ACP notices have no agent-managed identity or acknowledgement lifecycle.
+    SessionNotice {
+        severity: String,
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
     },
     /// agent 通过 -32000 AuthRequired 通知 client 需要登录。`methods` 来自
     /// initialize 响应里的 auth_methods 全集 — 前端把每个渲染成一个按钮,
@@ -2065,8 +2093,10 @@ struct AcpClientState {
     /// 文件快照缓存：tool_call_id → (abs_path, old_content_or_none)
     /// 用于 Write/Edit 工具调用时生成 diff（agent 不提供 content 时的 fallback）
     file_snapshots: Mutex<HashMap<String, (PathBuf, Option<String>)>>,
-    /// Write 工具的 tool_call_id → file_path（用于 PlanFileUpdate 检测）
+    /// 文件编辑工具的 tool_call_id → file_path（用于 PlanFileUpdate 检测）
     write_tool_paths: Mutex<HashMap<String, String>>,
+    tool_identities: Mutex<HashMap<String, ToolIdentity>>,
+    agent_terminals: Mutex<adapter_terminal::AgentTerminalCache>,
 }
 
 /// Build a richer permission description by extracting the most useful
@@ -2144,6 +2174,11 @@ async fn handle_request_permission(
 
     let request_id = args.tool_call.tool_call_id.to_string();
     let title = args.tool_call.fields.title.clone().unwrap_or_default();
+    let title = match args.tool_call.fields.name.as_deref() {
+        Some(name) if title.is_empty() => name.to_string(),
+        Some(name) if name != title => format!("{title} [{name}]"),
+        _ => title,
+    };
     // Enrich the description with the actual command / file path from
     // raw_input so the tray popover shows "bash · ls -la" instead of just
     // "bash". Falls back gracefully if raw_input is missing or not the
@@ -2779,21 +2814,6 @@ async fn handle_session_notification(
                     active.insert(tool_call_id.clone());
                 }
             }
-            {
-                let mut watches = state.handle.short_tool_watches.lock().unwrap();
-                if terminal {
-                    watches.remove(&tool_call_id);
-                } else if is_short_memory_tool(&tool_call.title) {
-                    watches.entry(tool_call_id.clone()).or_insert_with(|| {
-                        let started_at = std::time::Instant::now();
-                        ShortToolWatch {
-                            title: tool_call.title.clone(),
-                            started_at,
-                            deadline: started_at + SHORT_MEMORY_TOOL_TIMEOUT,
-                        }
-                    });
-                }
-            }
             // 标记：此处出现了 tool_call，下一段 agent 文本应另起段落。
             state
                 .handle
@@ -2809,14 +2829,33 @@ async fn handle_session_notification(
             // top-level locations empty. Preserve those paths before the
             // content-only start event is followed by a status-only update.
             let locations = merge_diff_locations(explicit_locations.clone(), &tool_call.content);
+            state.observe_tool_identity(
+                &tool_call_id,
+                tool_call.name.as_deref(),
+                Some(&tool_call.title),
+                Some(&tool_call.kind),
+                Some(locations.clone()),
+            );
             let output = tool_output_to_data(
                 state.adapter.as_ref(),
                 &tool_call.content,
                 tool_call.raw_output.as_ref(),
                 Some(&state.terminals),
             );
+            let output = {
+                let mut cache = state.agent_terminals.lock().unwrap();
+                cache.reset(&tool_call_id);
+                cache
+                    .normalize(
+                        &tool_call_id,
+                        Some(output),
+                        state.adapter.terminal_events(tool_call.meta.as_ref()),
+                    )
+                    .unwrap_or_default()
+            };
             state.handle.emit(AcpUpdate::ToolCallV1 {
                 id: tool_call_id.clone(),
+                name: tool_call.name.clone(),
                 title: tool_call.title.clone(),
                 kind: tool_kind_name(&tool_call.kind).to_string(),
                 status: tool_status_name(&tool_call.status).to_string(),
@@ -2832,37 +2871,9 @@ async fn handle_session_notification(
                 timestamp: Some(Utc::now()),
             });
 
-            // 记录 Write 工具的 tool_call_id → file_path(用于 PlanFileUpdate 检测)。
-            // 路径可能在第二个 ToolCall 事件才出现,所以每次有 locations 时更新。
-            if tool_call.title.starts_with("Write") {
-                if let Some((path, _)) = locations.first() {
-                    state
-                        .write_tool_paths
-                        .lock()
-                        .unwrap()
-                        .insert(tool_call.tool_call_id.to_string(), path.clone());
-                } else {
-                    state
-                        .write_tool_paths
-                        .lock()
-                        .unwrap()
-                        .entry(tool_call.tool_call_id.to_string())
-                        .or_default();
-                }
-            }
-
-            // 缓存 Write/Edit 文件快照(locations 在第二个 ToolCall 事件才有路径)
-            let title = &tool_call.title;
-            if title.starts_with("Write") || title.starts_with("Edit") {
-                if let Some((path, _)) = locations.first() {
-                    let id_str = tool_call.tool_call_id.to_string();
-                    let mut snapshots = state.file_snapshots.lock().unwrap();
-                    snapshots.entry(id_str).or_insert_with(|| {
-                        let abs_path = PathBuf::from(path);
-                        let old_content = std::fs::read_to_string(&abs_path).ok();
-                        (abs_path, old_content)
-                    });
-                }
+            if terminal {
+                state.write_tool_paths.lock().unwrap().remove(&tool_call_id);
+                state.file_snapshots.lock().unwrap().remove(&tool_call_id);
             }
         }
         acp::SessionUpdate::ToolCallUpdate(update) => {
@@ -2906,6 +2917,15 @@ async fn handle_session_notification(
             let locations = merge_diff_locations(
                 explicit_locations,
                 update.fields.content.as_deref().unwrap_or_default(),
+            );
+
+            state.observe_tool_identity(
+                &tool_call_id,
+                update.fields.name.as_deref(),
+                update.fields.title.as_deref(),
+                update.fields.kind.as_ref(),
+                (update.fields.locations.is_some() || !locations.is_empty())
+                    .then(|| locations.clone()),
             );
 
             // 如果 ACP 没提供 content 且状态为 completed,从文件快照生成 diff
@@ -2972,26 +2992,75 @@ async fn handle_session_notification(
                 fallback_tool_content
             };
 
-            // ToolCallUpdate 中也可能带 locations(路径可能只在中间的 update 出现),
-            // 及时更新 write_tool_paths 以便 completed 时能拿到正确路径
-            if !locations.is_empty() {
-                let tc_id = update.tool_call_id.to_string();
-                let mut paths = state.write_tool_paths.lock().unwrap();
-                if let Some(existing) = paths.get_mut(&tc_id) {
-                    if existing.is_empty() {
-                        if let Some((p, _)) = locations.first() {
-                            *existing = p.clone();
-                        }
-                    }
+            let explicit_output = output.is_some();
+            let terminal_events = state.adapter.terminal_events(update.meta.as_ref());
+            let has_terminal_events = !terminal_events.is_empty();
+            let finished = update.fields.status.as_ref().is_some_and(|status| {
+                matches!(
+                    status,
+                    acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed
+                )
+            });
+            let (output, terminal_updates) = {
+                let mut cache = state.agent_terminals.lock().unwrap();
+                let linked = cache.contains(&tool_call_id);
+                let normalized = cache.normalize(&tool_call_id, output, terminal_events);
+                // Stream through the existing transient snapshot channel. Only
+                // completion persists the full output, avoiding one cumulative
+                // history write per chunk from a verbose command.
+                let terminal_updates = if has_terminal_events {
+                    normalized
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|item| match item {
+                            ToolCallContentData::Terminal {
+                                terminal_id,
+                                output: Some(output),
+                                truncated,
+                                exit_status,
+                            } => Some(AcpUpdate::TerminalOutputUpdate {
+                                terminal_id: terminal_id.clone(),
+                                output: output.clone(),
+                                truncated: *truncated,
+                                exit_status: exit_status.clone(),
+                            }),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                let output = if finished {
+                    normalized.or_else(|| cache.snapshot(&tool_call_id))
+                } else if explicit_output || !linked {
+                    normalized
+                } else {
+                    None
+                };
+                (output, terminal_updates)
+            };
+            let metadata_only = has_terminal_events
+                && output.is_none()
+                && update.fields.status.is_none()
+                && update.fields.name.is_none()
+                && update.fields.title.is_none()
+                && update.fields.kind.is_none()
+                && update.fields.locations.is_none()
+                && update.fields.raw_input.is_none();
+            if metadata_only {
+                for event in terminal_updates {
+                    state.handle.emit(event);
                 }
+                return Ok(());
             }
-
             let display_content = match output.as_deref() {
                 Some(output) => tool_output_display_text(output),
                 None => content,
             };
             state.handle.emit(AcpUpdate::ToolCallUpdateV1 {
                 id: tool_call_id,
+                name: update.fields.name.clone(),
                 title: update.fields.title.clone(),
                 kind: update
                     .fields
@@ -3023,7 +3092,11 @@ async fn handle_session_notification(
                 legacy_content: None,
             });
 
-            // 检测 Plan File:Write 工具 completed 且在 plan mode 下写入 .md 文件
+            for event in terminal_updates {
+                state.handle.emit(event);
+            }
+
+            // 检测 Plan File:文件编辑 completed 且在 plan mode 下修改 .md 文件
             if is_completed {
                 let tc_id = update.tool_call_id.to_string();
                 let write_path = state.write_tool_paths.lock().unwrap().remove(&tc_id);
@@ -3116,6 +3189,31 @@ async fn handle_session_notification(
         }
         acp::SessionUpdate::ConfigOptionUpdate(update) => {
             replace_config_snapshot(&state.handle, update.config_options.clone());
+        }
+        acp::SessionUpdate::CompactionUpdate(update) => state.handle_compaction_update(update),
+        acp::SessionUpdate::CompactionSummaryChunk(chunk) => {
+            state.handle_compaction_summary_chunk(chunk)
+        }
+        acp::SessionUpdate::Notice(notice) => {
+            if !notice.title.trim().is_empty() {
+                // Preserve the boundary between text before and after a notice.
+                state
+                    .handle
+                    .pending_text_separator
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                let severity = match notice.severity {
+                    acp::NoticeSeverity::Info => "info".to_owned(),
+                    acp::NoticeSeverity::Warning => "warning".to_owned(),
+                    acp::NoticeSeverity::Error => "error".to_owned(),
+                    acp::NoticeSeverity::Other(value) => value,
+                    _ => "unknown".to_owned(),
+                };
+                state.handle.emit(AcpUpdate::SessionNotice {
+                    severity,
+                    title: notice.title,
+                    description: notice.description,
+                });
+            }
         }
         acp::SessionUpdate::UsageUpdate(u) => {
             let cost = u.cost.as_ref().map(|c| UsageCost {
@@ -4006,10 +4104,13 @@ fn grove_client_capabilities_for_transport(local: bool) -> acp::ClientCapabiliti
                 .url(acp::ElicitationUrlCapabilities::new()),
         )
         .session(
-            acp::ClientSessionCapabilities::new().config_options(
-                acp::SessionConfigOptionsCapabilities::new()
-                    .boolean(acp::BooleanConfigOptionCapabilities::new()),
-            ),
+            acp::ClientSessionCapabilities::new()
+                .notices(acp::NoticeCapabilities::new())
+                .compaction(acp::CompactionCapabilities::new())
+                .config_options(
+                    acp::SessionConfigOptionsCapabilities::new()
+                        .boolean(acp::BooleanConfigOptionCapabilities::new()),
+                ),
         )
 }
 
@@ -4943,6 +5044,8 @@ async fn run_acp_connection(
         adapter,
         file_snapshots: Mutex::new(HashMap::new()),
         write_tool_paths: Mutex::new(HashMap::new()),
+        tool_identities: Mutex::new(HashMap::new()),
+        agent_terminals: Mutex::default(),
     });
 
     let transport = acp::ByteStreams::new(writer, reader);
@@ -5224,13 +5327,22 @@ async fn drive_session(
         .and_then(|_| config.env_vars.get("GROVE_MCP_TOKEN"))
         .map(String::as_str);
 
+    let mut client_capabilities =
+        grove_client_capabilities_for_transport(config.agent_type != "remote");
+    if adapter::resolve_adapter(&config.agent_name, &config.agent_command)
+        .supports_terminal_metadata()
+    {
+        client_capabilities = client_capabilities.meta(acp::Meta::from_iter([(
+            "terminal_output".into(),
+            true.into(),
+        )]));
+    }
+
     // 初始化连接
     let init_resp = conn
         .send_request(
             acp::InitializeRequest::new(acp::ProtocolVersion::V1)
-                .client_capabilities(grove_client_capabilities_for_transport(
-                    config.agent_type != "remote",
-                ))
+                .client_capabilities(client_capabilities)
                 .client_info(
                     acp::Implementation::new("grove", env!("CARGO_PKG_VERSION")).title("Grove"),
                 ),
@@ -7656,6 +7768,7 @@ impl AcpSessionHandle {
                     ids,
                     TurnEvent::ToolChanged {
                         id: id.clone(),
+                        name: None,
                         title: Some(title.clone()),
                         status: Some("in_progress".into()),
                     },
@@ -7663,7 +7776,11 @@ impl AcpSessionHandle {
                 )
             }
             AcpUpdate::ToolCallV1 {
-                id, title, status, ..
+                id,
+                name,
+                title,
+                status,
+                ..
             } => {
                 self.last_turn_reply.lock().unwrap().clear();
                 let Some(ids) = self.active_turn_ids() else {
@@ -7673,6 +7790,7 @@ impl AcpSessionHandle {
                     ids,
                     TurnEvent::ToolChanged {
                         id: id.clone(),
+                        name: name.clone(),
                         title: Some(title.clone()),
                         status: Some(status.clone()),
                     },
@@ -7687,6 +7805,7 @@ impl AcpSessionHandle {
                     ids,
                     TurnEvent::ToolChanged {
                         id: id.clone(),
+                        name: None,
                         title: None,
                         status: Some(status.clone()),
                     },
@@ -7694,7 +7813,11 @@ impl AcpSessionHandle {
                 )
             }
             AcpUpdate::ToolCallUpdateV1 {
-                id, title, status, ..
+                id,
+                name,
+                title,
+                status,
+                ..
             } => {
                 let Some(ids) = self.active_turn_ids() else {
                     return;
@@ -7703,6 +7826,7 @@ impl AcpSessionHandle {
                     ids,
                     TurnEvent::ToolChanged {
                         id: id.clone(),
+                        name: name.clone(),
                         title: title.clone(),
                         status: status.clone(),
                     },
@@ -11210,7 +11334,7 @@ mod tests {
         ));
     }
 
-    fn client_state_for_test(
+    pub(super) fn client_state_for_test(
         handle: Arc<AcpSessionHandle>,
         terminals: Arc<Mutex<HashMap<String, TerminalState>>>,
     ) -> Arc<AcpClientState> {
@@ -11225,6 +11349,8 @@ mod tests {
             adapter: adapter::resolve_adapter("test", "test"),
             file_snapshots: Mutex::new(HashMap::new()),
             write_tool_paths: Mutex::new(HashMap::new()),
+            tool_identities: Mutex::new(HashMap::new()),
+            agent_terminals: Mutex::default(),
         })
     }
 
@@ -11998,6 +12124,7 @@ mod tests {
     fn v1_tool_update_serialization_preserves_empty_replacements_and_omissions() {
         let update = AcpUpdate::ToolCallUpdateV1 {
             id: "tool-1".to_string(),
+            name: None,
             title: None,
             kind: None,
             status: None,
@@ -12412,9 +12539,71 @@ mod tests {
             serde_json::to_value(grove_client_capabilities()).expect("serialize capabilities");
 
         assert_eq!(capabilities["terminal"], true);
+        assert!(capabilities["session"]["notices"].is_object());
         assert!(capabilities["session"]["configOptions"]["boolean"].is_object());
         assert!(capabilities["elicitation"]["form"].is_object());
         assert!(capabilities["elicitation"]["url"].is_object());
+    }
+
+    #[tokio::test]
+    async fn session_notices_remain_ordered_local_records_without_changing_turn_state() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _dir_guard = ReadinessGroveDirGuard;
+        let key = format!("notice-test-{}", uuid::Uuid::new_v4());
+        let (handle, mut updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        *handle.agent_info.write().unwrap() =
+            Some(("session-test".into(), "Agent".into(), "1".into()));
+        handle
+            .is_busy
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let state = client_state_for_test(handle.clone(), Arc::new(Mutex::new(HashMap::new())));
+        handle.emit(AcpUpdate::MessageChunk {
+            text: "before".into(),
+        });
+        for severity in ["info", "warning", "error", "_custom", "_custom"] {
+            let update = serde_json::from_value(serde_json::json!({
+                "sessionUpdate":"notice", "severity":severity, "title":"Operational notice", "description":null
+            })).unwrap();
+            handle_session_notification(
+                &state,
+                acp::SessionNotification::new("session-test", update),
+            )
+            .await
+            .unwrap();
+        }
+        handle.emit(AcpUpdate::MessageChunk {
+            text: "after".into(),
+        });
+        let event: acp::SessionUpdate = serde_json::from_value(serde_json::json!({"sessionUpdate":"notice", "severity":"error", "title":"Wrong session"})).unwrap();
+        handle_session_notification(
+            &state,
+            acp::SessionNotification::new("other-session", event),
+        )
+        .await
+        .unwrap();
+        assert!(handle.is_busy.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(handle.last_assistant_text.lock().unwrap().is_empty());
+        let live = std::iter::from_fn(|| updates.try_recv().ok()).collect::<Vec<_>>();
+        assert_eq!(
+            live.iter()
+                .filter(|event| matches!(event, AcpUpdate::SessionNotice { .. }))
+                .count(),
+            5
+        );
+        crate::storage::chat_history::compact_history("project", "task", "chat");
+        let restored = crate::storage::chat_history::load_history("project", "task", "chat");
+        assert!(matches!(&restored[0], AcpUpdate::MessageChunk { text } if text == "before"));
+        for (event, expected) in restored[1..6]
+            .iter()
+            .zip(["info", "warning", "error", "_custom", "_custom"])
+        {
+            assert!(
+                matches!(event, AcpUpdate::SessionNotice { severity, description: None, .. } if severity == expected)
+            );
+        }
+        assert!(matches!(&restored[6], AcpUpdate::MessageChunk { text } if text == "after"));
     }
 
     #[test]
