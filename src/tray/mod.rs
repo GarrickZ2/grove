@@ -99,7 +99,7 @@ pub fn tray_resolve_permission(
 /// on the Tasks page.
 #[tauri::command]
 pub fn tray_open_main(app: AppHandle) -> Result<(), String> {
-    surface_main(&app);
+    surface_main(&app)?;
     let payload = NavigatePayload {
         route: "tasks".into(),
         project_id: None,
@@ -115,7 +115,7 @@ pub fn tray_open_main(app: AppHandle) -> Result<(), String> {
 /// the header ⚙ button.
 #[tauri::command]
 pub fn tray_open_settings(app: AppHandle) -> Result<(), String> {
-    surface_main(&app);
+    surface_main(&app)?;
     let payload = NavigatePayload {
         route: "settings".into(),
         project_id: None,
@@ -136,7 +136,7 @@ pub fn tray_open_task(
     task_id: String,
     chat_id: Option<String>,
 ) -> Result<(), String> {
-    surface_main(&app);
+    surface_main(&app)?;
     let payload = NavigatePayload {
         route: "tasks".into(),
         project_id: Some(project_id),
@@ -262,19 +262,24 @@ pub fn toggle_tray_popover_visibility(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn surface_main(app: &AppHandle) {
+fn surface_main(app: &AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Grove main window is unavailable".to_string())?;
     if !is_popover_pinned() {
         if let Some(popover) = app.get_webview_window(POPOVER_LABEL) {
             let _ = popover.hide();
         }
     }
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.unminimize();
-        let _ = win.show();
-        let _ = win.set_focus();
-        #[cfg(target_os = "macos")]
-        activate_app_macos();
-    }
+    win.unminimize()
+        .map_err(|error| format!("Failed to restore Grove window: {error}"))?;
+    win.show()
+        .map_err(|error| format!("Failed to show Grove window: {error}"))?;
+    win.set_focus()
+        .map_err(|error| format!("Failed to focus Grove window: {error}"))?;
+    #[cfg(target_os = "macos")]
+    activate_app_macos();
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -534,10 +539,8 @@ pub fn init(app: &AppHandle, port: u16) -> tauri::Result<()> {
         .on_menu_event(move |_app, event: MenuEvent| match event.id().as_ref() {
             "tray-show" => show_popover_at(&app_for_menu, None),
             "tray-open-main" => {
-                if let Some(win) = app_for_menu.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
+                if let Err(error) = surface_main(&app_for_menu) {
+                    eprintln!("[tray] failed to open main window: {error}");
                 }
                 hide_popover(&app_for_menu);
             }

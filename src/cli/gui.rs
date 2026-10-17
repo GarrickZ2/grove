@@ -799,6 +799,11 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
                     }
                 }
             }
+            // Hide the Windows window menu after all startup windows exist.
+            // Keep the menu installed so native Reload/DevTools accelerators
+            // still work. This does not affect the tray's context menu.
+            #[cfg(target_os = "windows")]
+            app.hide_menu()?;
             Ok(())
         })
         .build(tauri::generate_context!());
@@ -815,6 +820,8 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
     // window instead of terminating the process, so clicking the Dock
     // icon can bring it back. Quit still works via Cmd+Q / Dock → Quit,
     // which Tauri delivers as RunEvent::ExitRequested.
+    // On Windows, closing the main window minimizes it so its taskbar entry
+    // and webview survive. Explicit Quit still exits the application.
     tauri_app.run(|app_handle, event| {
         use tauri::Manager;
 
@@ -846,6 +853,15 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
                 if let Some(win) = app_handle.get_webview_window("tray-popover") {
                     api.prevent_close();
                     let _ = win.hide();
+                }
+            }
+            #[cfg(target_os = "windows")]
+            if label == "main" {
+                api.prevent_close();
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    if let Err(error) = window.minimize() {
+                        eprintln!("[Grove] failed to minimize main window on close: {error}");
+                    }
                 }
             }
         }

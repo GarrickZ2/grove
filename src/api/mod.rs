@@ -1087,6 +1087,7 @@ pub fn create_api_router() -> Router {
         // Tray popover restart detection: fetched on every radio-WS (re)connect;
         // a changed boot id retires stale Running / NEEDS YOU cards.
         .route("/tray/boot", get(handlers::walkie_talkie::get_tray_boot))
+        .route("/tray/chats", get(handlers::walkie_talkie::get_tray_chats))
         // Desktop tray mirrors its accumulated panel state here so a phone that
         // connects later seeds the full Running / NEEDS YOU / Done view.
         .route(
