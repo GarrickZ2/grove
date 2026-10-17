@@ -1106,6 +1106,8 @@ interface ChatHistoryResponse {
     read_memory_ids: string[];
     plan_entries?: Array<{ content: string; priority?: string; status: string }>;
     plan_file_path?: string;
+    plan_documents?: unknown[];
+    native_plans_seen?: boolean;
   };
   session: SessionMetadata | null;
 }

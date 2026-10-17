@@ -106,7 +106,7 @@ tar = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # ACP (Agent Client Protocol)
-agent-client-protocol = { version = "3.4.0", features = ["unstable_end_turn_token_usage", "unstable_session_fork", "unstable_subagents", "unstable_session_system_prompt"] }
+agent-client-protocol = { version = "3.4.0", features = ["unstable_end_turn_token_usage", "unstable_session_fork", "unstable_subagents", "unstable_session_system_prompt", "unstable_plan_operations"] }
 regex = "1"
 tokio-util = { version = "0.7", features = ["compat", "io"] }
 async-trait = "0.1"

@@ -1,3 +1,5 @@
+import { reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
+import { PlanDocumentsPanel, type PlanMarkdownOptions } from "./PlanDocumentsPanel";
 import { buildRenderItems, buildSequentialRenderItems, type RenderItem, type WorkSummaryItem, type ToolSectionItem } from "./chatRenderItems";
 import { SubagentsPanel } from "./SubagentsPanel";
 import { SubagentAvatar } from "./SubagentAvatar";
@@ -514,6 +516,7 @@ type ElicitationMessage = {
 };
 
 export type ChatMessage =
+  | PlanDocumentMessage
   | SubagentMessage
   | SessionExchangeMessage
   | { type: "child_plan"; entries: { content: string; status: string }[] }
@@ -1257,6 +1260,8 @@ function extractRenderItemText(item: RenderItem): string {
         return [m.title, m.description, ...buildSequentialRenderItems(m.messages).map(extractRenderItemText)].filter(Boolean).join("\n");
       case "session_exchange":
         return m.blocks.map((block) => block.type === "text" ? block.text : "").join("\n");
+      case "plan_document":
+        return m.plan.type === "markdown" ? m.plan.content : m.plan.type === "file" ? m.plan.uri : m.plan.entries.map((entry) => entry.content).join("\n");
       case "child_plan":
         return m.entries.map((entry) => entry.content).join("\n");
       case "user":
@@ -1573,8 +1578,8 @@ function pruneChatViewMessages(
   }
 
   return {
-    messages: messages.slice(removeCount),
-    hiddenMessageCount: hiddenMessageCount + removeCount,
+    messages: [...messages.slice(0, removeCount).filter((message) => message.type === "plan_document"), ...messages.slice(removeCount)],
+    hiddenMessageCount: hiddenMessageCount + removeCount - messages.slice(0, removeCount).filter((message) => message.type === "plan_document").length,
     pruned: true,
   };
 }
@@ -2233,6 +2238,9 @@ function reduceHistoryMessages(
     case "subagent_event":
     case "session_message":
       return reduceSubagentEvent(messages, msg, reduceHistoryMessages);
+    case "plan_document_update":
+    case "plan_document_removed":
+      return reducePlanDocumentEvent(messages, msg);
     case "plan_update": {
       const entry: ChatMessage = { type: "child_plan", entries: msg.entries ?? [] };
       const index = messages.findIndex((message) => message.type === "child_plan");
@@ -3672,7 +3680,8 @@ export function TaskChat({
     [planEntries],
   );
   const hasTodoPanel = planEntries.length > 0;
-  const hasPlanPanel = !!planFileContent;
+  const nativePlans = useMemo(() => sessionPlanDocuments(messages), [messages]);
+  const hasPlanPanel = !!planFileContent || nativePlans.length > 0;
   const hasPendingPanel = pendingQueueRows.length > 0;
   // Memory evidence is chat-scoped, not render-window-scoped. History load
   // seeds this from the full transcript before old messages are pruned; live
@@ -5839,6 +5848,9 @@ export function TaskChat({
       }
       {
         let msgs: ChatMessage[] = [];
+        for (const plan of res.context?.plan_documents ?? []) {
+          msgs = reducePlanDocumentEvent(msgs, { type: "plan_document_update", plan });
+        }
         const historicalInputIds = new Set(
           [...res.events, ...runtime.bufferedEvents]
             .flatMap((event) => event.type === "prompt_started"
@@ -5860,10 +5872,15 @@ export function TaskChat({
         let historicalPlanFile: { path: string; content?: string } | null = res.context?.plan_file_path
           ? { path: res.context.plan_file_path }
           : null;
+        let historicalNativePlansSeen = !!res.context?.native_plans_seen;
+        if (historicalNativePlansSeen || sessionPlanDocuments(msgs).length > 0) historicalPlanFile = null;
         for (const evt of res.events) {
           msgs = reduceHistoryMessages(msgs, evt);
           if (evt.type === "plan_update") {
             historicalPlanEntries = normalizePlanEntries(evt.entries);
+          } else if (evt.type === "plan_document_update" || evt.type === "plan_document_removed") {
+            historicalNativePlansSeen = true;
+            historicalPlanFile = null;
           } else if (evt.type === "plan_file_update" && typeof evt.path === "string") {
             historicalPlanFile = { path: evt.path, content: evt.content };
           }
@@ -5884,6 +5901,13 @@ export function TaskChat({
         // Reduce buffered message events into msgs locally (avoids React batching concerns)
         for (const evt of buffered) {
           msgs = reduceHistoryMessages(msgs, evt);
+          if (evt.type === "plan_document_update" || evt.type === "plan_document_removed") {
+            historicalNativePlansSeen = true;
+            historicalPlanFile = null;
+          }
+        }
+        if (historicalNativePlansSeen && !historicalPlanFile) {
+          setPlanFileContent(""); setPlanFilePath(""); planFilePathRef.current = "";
         }
         // Older saved pending inputs did not record a transcript position.
         // Anchor those once history has loaded, before later sends arrive.
@@ -5925,7 +5949,7 @@ export function TaskChat({
           } else {
             const path = historicalPlanFile.path;
             void readFile(path).then((result) => {
-              if (chatId === getActiveChatId() && runtime.generation === generation) {
+              if (chatId === getActiveChatId() && runtime.generation === generation && planFilePathRef.current === path) {
                 setPlanFileContent(result.content);
               }
             }).catch(() => {});
@@ -6441,8 +6465,12 @@ export function TaskChat({
             planFileToolIdsRef.current.has(msg.id)
           ) {
             planFileToolIdsRef.current.delete(msg.id);
-            readFile(planFilePathRef.current)
-              .then((res) => setPlanFileContent(res.content))
+            const path = planFilePathRef.current;
+            const planChatId = getActiveChatId();
+            readFile(path)
+              .then((res) => {
+                if (planFilePathRef.current === path && getActiveChatId() === planChatId) setPlanFileContent(res.content);
+              })
               .catch(() => {});
           }
           break;
@@ -6456,6 +6484,13 @@ export function TaskChat({
             setShowPendingQueue(false);
             setShowSubagents(false);
           }
+          setMessages((prev) => reduceHistoryMessages(prev, msg));
+          break;
+        case "plan_document_update":
+        case "plan_document_removed":
+          setPlanFileContent("");
+          setPlanFilePath("");
+          planFilePathRef.current = "";
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           break;
         case "compaction_update":
@@ -6683,7 +6718,8 @@ export function TaskChat({
           setShowPlan((current) => nextPlanVisibility(current, entries));
           break;
         }
-        case "plan_file_update":
+        case "plan_file_update": {
+          const planChatId = getActiveChatId();
           setPlanFilePath(msg.path);
           planFilePathRef.current = msg.path;
           if (msg.content) {
@@ -6695,6 +6731,7 @@ export function TaskChat({
           } else {
             readFile(msg.path)
               .then((res) => {
+                if (planFilePathRef.current !== msg.path || getActiveChatId() !== planChatId) return;
                 setPlanFileContent(res.content);
                 setShowPlanFile(true);
                 setShowPlan(false);
@@ -6704,6 +6741,7 @@ export function TaskChat({
               .catch(() => {});
           }
           break;
+        }
         case "available_commands":
           setSlashCommands(msg.commands ?? []);
           break;
@@ -6953,6 +6991,8 @@ export function TaskChat({
         case "subagent_update":
         case "subagent_event":
         case "session_message":
+        case "plan_document_update":
+        case "plan_document_removed":
         case "compaction_update":
         case "compaction_summary_chunk":
         case "session_notice":
@@ -6970,6 +7010,10 @@ export function TaskChat({
         case "terminal_complete":
           messagesChanged = true;
           state.messages = reduceHistoryMessages(state.messages, msg);
+          if (msg.type === "plan_document_update" || msg.type === "plan_document_removed") {
+            state.planFilePath = "";
+            state.planFileContent = "";
+          }
           state.readMemoryIds = [
             ...new Set([
               ...(state.readMemoryIds ?? []),
@@ -10637,7 +10681,7 @@ export function TaskChat({
             resolveSender={resolveSender}
             onPermissionResponse={handlePermissionResponse}
             onOpenSubagent={openSubagentPanel}
-            subagentConnected={isConnected}
+            subagentConnected={isConnected} planFilesLocal={!isRemoteSession}
             onFileClick={onNavigateToFile}
             onImageClick={setLightboxUrl}
             onMermaidClick={setLightboxSvg}
@@ -11725,7 +11769,9 @@ export function TaskChat({
                         </div>
                       )}
 
-                      {activeComposerPanel === "plan" && (
+                      {activeComposerPanel === "plan" && (nativePlans.length > 0 ? (
+                        <PlanDocumentsPanel key={activeChatId} plans={nativePlans} allowLocalFiles={!isRemoteSession} onFileClick={onNavigateToFile} fileContext={{ projectId, taskId }} markdownProps={{ onImageClick: setLightboxUrl, onMermaidClick: setLightboxSvg, onD2Click: setLightboxSvg, sketchContext: isStudioProject ? { projectId, taskId } : undefined }} />
+                      ) : (
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
@@ -11756,7 +11802,7 @@ export function TaskChat({
                             sketchContext={isStudioProject ? { projectId, taskId: taskId } : undefined}
                           />
                         </div>
-                      )}
+                      ))}
 
                       {activeComposerPanel === "subagents" && (
                         <SubagentsPanel
@@ -11766,7 +11812,7 @@ export function TaskChat({
                           onCancel={isRemoteSession ? undefined : (sessionId) => { if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: "cancel_subagent", session_id: sessionId })); }}
                           onOpenRequest={(kind) => { closeMobileDetails(); setShowSubagents(false); setShowPermissionPanel(kind === "permission"); setShowFormPanel(kind === "elicitation"); }}
                           renderActivity={(agent) => (
-                            <MessageItem message={agent} index={0} isBusy={isBusy} subagentDetail subagentConnected={isConnected} onOpenSubagent={openSubagentPanel}
+                            <MessageItem message={agent} index={0} isBusy={isBusy} subagentDetail subagentConnected={isConnected} planFilesLocal={!isRemoteSession} onOpenSubagent={openSubagentPanel}
                               agentLabel={agentLabel} projectId={projectId} taskId={taskId} activeChatId={activeChatId ?? undefined}
                               previewCommentDrafts={[]} onAddPreviewComment={addPreviewCommentDraft} onUpdatePreviewComment={updatePreviewCommentDraft} onRemovePreviewComment={removePreviewCommentDraft}
                               isStudio={isStudioProject} onPermissionResponse={handlePermissionResponse} onFileClick={onNavigateToFile} onImageClick={setLightboxUrl} onMermaidClick={setLightboxSvg} onD2Click={setLightboxSvg} onInsertReference={insertAttachmentReference} />
@@ -14014,6 +14060,7 @@ const MessageItem = memo(function MessageItem({
   onPermissionResponse,
   subagentConnected = false,
   subagentDetail = false,
+  planFilesLocal = false,
   onOpenSubagent,
   onFileClick,
   onImageClick,
@@ -14041,6 +14088,7 @@ const MessageItem = memo(function MessageItem({
   onPermissionResponse?: (optionId: string, requestId: string) => void;
   subagentConnected?: boolean;
   subagentDetail?: boolean;
+  planFilesLocal?: boolean;
   onOpenSubagent?: (sessionId: string) => void;
   onFileClick?: (filePath: string, line?: number) => Promise<boolean>;
   onImageClick?: (url: string) => void;
@@ -14324,12 +14372,14 @@ const MessageItem = memo(function MessageItem({
     }
     case "subagent":
       return subagentDetail ? (
-        <SubagentActivity key={message.sessionId} message={message} onFileClick={onFileClick} renderMessage={(child, childIndex) => (
-          <MessageItem message={child} index={childIndex} isBusy={subagentConnected && message.state?.state === "running"} agentLabel={message.title || "Subagent"} projectId={projectId} taskId={taskId} activeChatId={activeChatId} previewCommentDrafts={[]} onAddPreviewComment={onAddPreviewComment} onUpdatePreviewComment={onUpdatePreviewComment} onRemovePreviewComment={onRemovePreviewComment} isStudio={isStudio} onPermissionResponse={onPermissionResponse} subagentConnected={subagentConnected} onOpenSubagent={onOpenSubagent} onFileClick={onFileClick} onImageClick={onImageClick} onMermaidClick={onMermaidClick} onD2Click={onD2Click} onInsertReference={onInsertReference} />
+        <SubagentActivity key={message.sessionId} message={message} allowLocalFiles={planFilesLocal} fileContext={projectId && taskId ? { projectId, taskId } : undefined} markdownProps={{ onImageClick, onMermaidClick, onD2Click, sketchContext: isStudio && projectId && taskId ? { projectId, taskId } : undefined }} onFileClick={onFileClick} renderMessage={(child, childIndex) => (
+          <MessageItem message={child} index={childIndex} isBusy={subagentConnected && message.state?.state === "running"} agentLabel={message.title || "Subagent"} projectId={projectId} taskId={taskId} activeChatId={activeChatId} previewCommentDrafts={[]} onAddPreviewComment={onAddPreviewComment} onUpdatePreviewComment={onUpdatePreviewComment} onRemovePreviewComment={onRemovePreviewComment} isStudio={isStudio} onPermissionResponse={onPermissionResponse} subagentConnected={subagentConnected} planFilesLocal={planFilesLocal} onOpenSubagent={onOpenSubagent} onFileClick={onFileClick} onImageClick={onImageClick} onMermaidClick={onMermaidClick} onD2Click={onD2Click} onInsertReference={onInsertReference} />
         )} />
       ) : <SubagentCard message={message} connected={subagentConnected} onOpen={onOpenSubagent} />;
     case "session_exchange":
       return <div className="space-y-2 border-l-2 border-[var(--color-border)] pl-3 text-sm"><p className="text-xs text-[var(--color-text-muted)]">Agent communication</p><AgentContentBlocks blocks={message.blocks} onImageClick={onImageClick} renderText={(text) => <MarkdownRenderer content={text} onFileClick={onFileClick} resolveImageUrl={resolveImageUrl} />} /></div>;
+    case "plan_document":
+      return null;
     case "child_plan":
       return <ul className="space-y-1 text-sm">{message.entries.map((entry, i) => <li key={i} className="flex gap-2"><span className="text-[var(--color-text-muted)]">{entry.status === "completed" ? "✓" : entry.status === "in_progress" ? "◐" : "○"}</span><span>{entry.content}</span></li>)}</ul>;
     case "thinking":
@@ -14563,14 +14613,17 @@ function renderActionKindIcon(
   }
 }
 
-function SubagentActivity({ message, renderMessage, onFileClick }: {
+function SubagentActivity({ message, renderMessage, onFileClick, allowLocalFiles, markdownProps, fileContext }: {
   message: SubagentMessage;
+  allowLocalFiles: boolean;
+  markdownProps?: PlanMarkdownOptions;
+  fileContext?: { projectId: string; taskId: string };
   renderMessage: (message: ChatMessage, index: number) => ReactNode;
   onFileClick?: (path: string, line?: number) => Promise<boolean>;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const items = buildSequentialRenderItems(message.messages);
-  return <div className="space-y-4 pt-1">{items.map((item, index) => {
+  return <div className="space-y-4 pt-1"><PlanDocumentsPanel plans={sessionPlanDocuments(message.messages)} allowLocalFiles={allowLocalFiles} onFileClick={onFileClick} markdownProps={markdownProps} fileContext={fileContext} />{items.map((item, index) => {
     const key = `${message.sessionId}-${index}`;
     return item.kind === "tool-section" ? <ToolSectionView key={key} sectionId={key} tools={item.tools} expanded={expanded.has(key)} forceExpanded={false} sectionFinished={index < items.length - 1 || message.state?.state !== "running"} onToggleSection={(id) => setExpanded((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onFileClick={onFileClick} />
       : item.kind === "single" ? <div key={key}>{renderMessage(item.message, item.index)}</div> : null;

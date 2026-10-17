@@ -428,6 +428,15 @@ impl AcpClientState {
                     legacy_content: None,
                 }
             }
+            acp::SessionUpdate::PlanUpdate(update) => {
+                let Some(plan) = plans::convert(update.plan) else {
+                    return Ok(());
+                };
+                AcpUpdate::PlanDocumentUpdate { plan }
+            }
+            acp::SessionUpdate::PlanRemoved(update) => AcpUpdate::PlanDocumentRemoved {
+                plan_id: update.plan_id.to_string(),
+            },
             acp::SessionUpdate::Plan(plan) => AcpUpdate::PlanUpdate {
                 entries: plan
                     .entries

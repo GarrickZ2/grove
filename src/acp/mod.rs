@@ -8,6 +8,8 @@
 pub mod adapter;
 mod adapter_terminal;
 mod compaction;
+mod plans;
+pub use plans::PlanDocument;
 mod subagents;
 pub use compaction::CompactionUpdateData;
 pub use subagents::SubagentUpdateData;
@@ -757,6 +759,12 @@ pub enum AcpUpdate {
     /// Agent Plan 更新（结构化 TODO 列表）
     PlanUpdate {
         entries: Vec<PlanEntryData>,
+    },
+    PlanDocumentUpdate {
+        plan: PlanDocument,
+    },
+    PlanDocumentRemoved {
+        plan_id: String,
     },
     /// 可用 Slash Commands 更新
     AvailableCommands {
@@ -2135,6 +2143,7 @@ struct AcpClientState {
     write_tool_paths: Mutex<HashMap<String, String>>,
     tool_identities: Mutex<HashMap<String, ToolIdentity>>,
     agent_terminals: Mutex<adapter_terminal::AgentTerminalCache>,
+    native_plans_seen: std::sync::atomic::AtomicBool,
 }
 
 /// Build a richer permission description by extracting the most useful
@@ -3217,7 +3226,12 @@ async fn handle_session_notification(
             if is_completed {
                 let tc_id = update.tool_call_id.to_string();
                 let write_path = state.write_tool_paths.lock().unwrap().remove(&tc_id);
-                if let Some(path) = write_path.filter(|p| !p.is_empty()) {
+                if let Some(path) = write_path.filter(|p| {
+                    !p.is_empty()
+                        && !state
+                            .native_plans_seen
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                }) {
                     if path.ends_with(".md") {
                         let mode = state.handle.current_mode_id.lock().unwrap().clone();
                         if mode
@@ -3276,6 +3290,22 @@ async fn handle_session_notification(
                 *state.handle.current_mode_id.lock().unwrap() = Some(mode_id.clone());
                 state.handle.emit(AcpUpdate::ModeChanged { mode_id });
             }
+        }
+        acp::SessionUpdate::PlanUpdate(update) => {
+            if let Some(plan) = plans::convert(update.plan) {
+                state
+                    .native_plans_seen
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                state.handle.emit(AcpUpdate::PlanDocumentUpdate { plan });
+            }
+        }
+        acp::SessionUpdate::PlanRemoved(update) => {
+            state
+                .native_plans_seen
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            state.handle.emit(AcpUpdate::PlanDocumentRemoved {
+                plan_id: update.plan_id.to_string(),
+            });
         }
         acp::SessionUpdate::Plan(plan) => {
             let entries: Vec<PlanEntryData> = plan
@@ -4214,6 +4244,7 @@ fn grove_client_capabilities() -> acp::ClientCapabilities {
 fn grove_client_capabilities_for_transport(local: bool) -> acp::ClientCapabilities {
     acp::ClientCapabilities::default()
         .subagents(acp::SubagentCapabilities::new())
+        .plan(acp::PlanCapabilities::new())
         .auth(acp::AuthCapabilities::new().terminal(local))
         .terminal(true)
         .elicitation(
@@ -5167,6 +5198,7 @@ async fn run_acp_connection(
         write_tool_paths: Mutex::new(HashMap::new()),
         tool_identities: Mutex::new(HashMap::new()),
         agent_terminals: Mutex::default(),
+        native_plans_seen: std::sync::atomic::AtomicBool::new(false),
     });
 
     let reader = subagents::adapt_reader(reader, state.adapter.supports_subagents_legacy());
@@ -5479,6 +5511,11 @@ async fn drive_session(
 
     let mut client_capabilities =
         grove_client_capabilities_for_transport(config.agent_type != "remote");
+    // CLI and background consumers do not render native plan documents. Let
+    // Agents retain their existing text fallback on those connections.
+    if config.chat_id.is_none() {
+        client_capabilities.plan = None;
+    }
     if adapter::resolve_adapter(&config.agent_name, &config.agent_command)
         .supports_terminal_metadata()
     {
@@ -11676,6 +11713,7 @@ mod tests {
             write_tool_paths: Mutex::new(HashMap::new()),
             tool_identities: Mutex::new(HashMap::new()),
             agent_terminals: Mutex::default(),
+            native_plans_seen: std::sync::atomic::AtomicBool::new(false),
         })
     }
 

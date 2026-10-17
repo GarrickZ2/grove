@@ -297,6 +297,8 @@ pub async fn execute(agent: String, cwd: String) {
                     | AcpUpdate::ThoughtLevelsUpdate { .. }
                     | AcpUpdate::ConfigOptionsUpdate { .. }
                     | AcpUpdate::ConfigOptionError { .. }
+                    | AcpUpdate::PlanDocumentUpdate { .. }
+                    | AcpUpdate::PlanDocumentRemoved { .. }
                     | AcpUpdate::PlanUpdate { .. }
                     | AcpUpdate::AvailableCommands { .. }
                     | AcpUpdate::PermissionResponse { .. }

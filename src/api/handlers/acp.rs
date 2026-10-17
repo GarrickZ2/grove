@@ -367,6 +367,12 @@ enum ServerMessage {
     PlanUpdate {
         entries: Vec<PlanEntryMsg>,
     },
+    PlanDocumentUpdate {
+        plan: acp::PlanDocument,
+    },
+    PlanDocumentRemoved {
+        plan_id: String,
+    },
     AvailableCommands {
         commands: Vec<CommandMsg>,
     },
@@ -861,6 +867,10 @@ impl From<AcpUpdate> for ServerMessage {
                 current,
                 config_id,
             },
+            AcpUpdate::PlanDocumentUpdate { plan } => ServerMessage::PlanDocumentUpdate { plan },
+            AcpUpdate::PlanDocumentRemoved { plan_id } => {
+                ServerMessage::PlanDocumentRemoved { plan_id }
+            }
             AcpUpdate::PlanUpdate { entries } => ServerMessage::PlanUpdate {
                 entries: entries
                     .into_iter()
@@ -2655,6 +2665,8 @@ struct HistoryContext {
     plan_entries: Option<Vec<PlanEntryMsg>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     plan_file_path: Option<String>,
+    plan_documents: Vec<acp::PlanDocument>,
+    native_plans_seen: bool,
 }
 
 fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
@@ -2688,6 +2700,24 @@ fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
                             })
                             .collect(),
                     );
+                }
+                AcpUpdate::PlanDocumentUpdate { plan } => {
+                    context.native_plans_seen = true;
+                    context.plan_file_path = None;
+                    if let Some(previous) = context
+                        .plan_documents
+                        .iter_mut()
+                        .find(|item| item.id() == plan.id())
+                    {
+                        *previous = plan.clone();
+                    } else {
+                        context.plan_documents.push(plan.clone());
+                    }
+                }
+                AcpUpdate::PlanDocumentRemoved { plan_id } => {
+                    context.native_plans_seen = true;
+                    context.plan_file_path = None;
+                    context.plan_documents.retain(|plan| plan.id() != plan_id);
                 }
                 AcpUpdate::PlanFileUpdate { path, .. } => {
                     context.plan_file_path = Some(path.clone())
@@ -3171,6 +3201,49 @@ mod tests {
         assert_eq!(message["severity"], "_custom");
         assert_eq!(message["title"], "Model rerouted");
         assert_eq!(message["description"], "Continuing with another model");
+    }
+
+    #[test]
+    fn native_plan_history_context_replays_updates_and_removals_by_id() {
+        let plan = |id: &str, content: &str| AcpUpdate::PlanDocumentUpdate {
+            plan: acp::PlanDocument::Markdown {
+                plan_id: id.into(),
+                content: content.into(),
+            },
+        };
+        let events = vec![
+            plan("a", "old"),
+            plan("b", "other"),
+            plan("a", "latest"),
+            AcpUpdate::SubagentEvent {
+                session_id: "child".into(),
+                event: Box::new(plan("a", "child")),
+            },
+            AcpUpdate::PlanDocumentRemoved {
+                plan_id: "b".into(),
+            },
+        ];
+        let context = history_context(&events, events.len());
+        assert_eq!(context.plan_documents.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&context.plan_documents[0]).unwrap()["content"],
+            "latest"
+        );
+        let wire = serde_json::to_value(ServerMessage::from(events[2].clone())).unwrap();
+        assert_eq!(wire["type"], "plan_document_update");
+        assert_eq!(wire["plan"]["plan_id"], "a");
+        let removed = vec![
+            AcpUpdate::PlanFileUpdate {
+                path: "/old/plan.md".into(),
+                content: None,
+            },
+            AcpUpdate::PlanDocumentRemoved {
+                plan_id: "old".into(),
+            },
+        ];
+        let context = history_context(&removed, removed.len());
+        assert!(context.native_plans_seen);
+        assert!(context.plan_file_path.is_none());
     }
 
     #[test]

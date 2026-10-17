@@ -39,6 +39,7 @@ export function buildSequentialRenderItems(
 
   messages.forEach((msg, offset) => {
     const i = startIndex + offset;
+    if (msg.type === "plan_document") return;
     if (msg.type === "thinking" && msg.complete) {
       // Keep completed reasoning in history but out of the transcript.
       flush();
@@ -173,7 +174,8 @@ function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number)
           ({ message }) =>
             message.type !== "assistant" &&
             message.type !== "thinking" &&
-            message.type !== "tool",
+            message.type !== "tool" &&
+            message.type !== "plan_document",
         );
       passthrough.forEach(({ message, index }) =>
         items.push({ kind: "single", message, index }),
