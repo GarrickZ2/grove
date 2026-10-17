@@ -1415,6 +1415,21 @@ fn build_working_session_instruction(
     instruction
 }
 
+/// Native session instructions replace only the legacy bootstrap delivery.
+/// Live instruction updates still use session/prompt: ACP has no live setter.
+fn client_system_prompt(
+    supported: bool,
+    instruction: Option<(&str, String)>,
+) -> Option<acp::SystemPrompt> {
+    if !supported {
+        return None;
+    }
+    instruction.map(|(_, text)| {
+        acp::SystemPrompt::new(vec![acp::ContentBlock::Text(acp::TextContent::new(text))])
+            .mode(acp::SystemPromptMode::Append)
+    })
+}
+
 fn session_bootstrap_instruction(
     config: &AcpStartConfig,
     agent_runtime_available: bool,
@@ -5543,6 +5558,20 @@ async fn drive_session(
     } else {
         Vec::new()
     };
+    let supports_system_prompt = init_resp
+        .agent_capabilities
+        .session_capabilities
+        .system_prompt
+        .is_some();
+    let agent_runtime_available = agent_graph_token
+        .and_then(crate::api::handlers::agent_graph_mcp::build_mcp_url)
+        .is_some();
+    let system_prompt = client_system_prompt(
+        supports_system_prompt,
+        supports_system_prompt
+            .then(|| session_bootstrap_instruction(&config, agent_runtime_available))
+            .flatten(),
+    );
     let supports_mcp_http = init_resp.agent_capabilities.mcp_capabilities.http;
 
     // Fork 能力(`unstable_session_fork`):agent 在 capabilities 里声明 fork=Some(_)
@@ -5877,7 +5906,8 @@ async fn drive_session(
                     .send_request(
                         acp::NewSessionRequest::new(&config.working_dir)
                             .additional_directories(additional_directories.clone())
-                            .mcp_servers(mcp_servers.clone()),
+                            .mcp_servers(mcp_servers.clone())
+                            .system_prompt(system_prompt.clone()),
                     )
                     .block_task()
                     .await
@@ -6075,11 +6105,14 @@ async fn drive_session(
                 }
                 }
             }
-            let agent_runtime_available = agent_graph_token
-                .and_then(crate::api::handlers::agent_graph_mcp::build_mcp_url)
-                .is_some();
-            pending_session_bootstrap =
-                session_bootstrap_instruction(&config, agent_runtime_available);
+            // A successful native lifecycle request already delivered these
+            // instructions. Keep the old first-prompt bootstrap only when the
+            // Agent did not advertise Client System Prompt support.
+            pending_session_bootstrap = if supports_system_prompt {
+                None
+            } else {
+                session_bootstrap_instruction(&config, agent_runtime_available)
+            };
             sid
         }};
     }
@@ -6109,7 +6142,8 @@ async fn drive_session(
                             &config.working_dir,
                         )
                         .additional_directories(Vec::<PathBuf>::new())
-                        .mcp_servers(mcp_servers.clone()),
+                        .mcp_servers(mcp_servers.clone())
+                        .system_prompt(system_prompt.clone()),
                     )
                     .block_task()
                     .await
@@ -6160,7 +6194,8 @@ async fn drive_session(
                             &config.working_dir,
                         )
                         .additional_directories(additional_directories.clone())
-                        .mcp_servers(mcp_servers.clone()),
+                        .mcp_servers(mcp_servers.clone())
+                        .system_prompt(system_prompt.clone()),
                     )
                     .block_task()
                     .await
@@ -6202,7 +6237,8 @@ async fn drive_session(
                                 &config.working_dir,
                             )
                             .additional_directories(additional_directories.clone())
-                            .mcp_servers(mcp_servers.clone()),
+                            .mcp_servers(mcp_servers.clone())
+                            .system_prompt(system_prompt.clone()),
                         )
                         .block_task()
                         .await
@@ -6267,7 +6303,8 @@ async fn drive_session(
                             &config.working_dir,
                         )
                         .additional_directories(additional_directories.clone())
-                        .mcp_servers(mcp_servers.clone()),
+                        .mcp_servers(mcp_servers.clone())
+                        .system_prompt(system_prompt.clone()),
                     )
                     .block_task()
                     .await
@@ -7481,7 +7518,8 @@ async fn drive_session(
                                 .send_request(
                                     acp::ForkSessionRequest::new(session_id_arc.clone(), cwd)
                                         .additional_directories(fork_directories)
-                                        .mcp_servers(mcp_servers),
+                                        .mcp_servers(mcp_servers)
+                                        .system_prompt(system_prompt.clone()),
                                 )
                                 .block_task()
                                 .await
@@ -11346,6 +11384,68 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[test]
+    fn client_system_prompt_capability_gates_all_lifecycle_wire_payloads() {
+        let instruction =
+            "<grove-instructions>\nUse Grove tools.\n</grove-instructions>\n\nPersona: 审查员";
+        for (advertised, declaration) in [
+            (false, serde_json::json!({})),
+            (
+                false,
+                serde_json::json!({"sessionCapabilities": {"systemPrompt": null}}),
+            ),
+            (
+                true,
+                serde_json::json!({"sessionCapabilities": {"systemPrompt": {}}}),
+            ),
+            (
+                true,
+                serde_json::json!({"sessionCapabilities": {"systemPrompt": {"mode": {"override": {}}}}}),
+            ),
+        ] {
+            let capabilities: acp::AgentCapabilities = serde_json::from_value(declaration).unwrap();
+            let prompt = client_system_prompt(
+                capabilities.session_capabilities.system_prompt.is_some(),
+                Some(("working_session", instruction.to_string())),
+            );
+            let requests = [
+                serde_json::to_value(
+                    acp::NewSessionRequest::new("/workspace").system_prompt(prompt.clone()),
+                )
+                .unwrap(),
+                serde_json::to_value(
+                    acp::LoadSessionRequest::new(acp::SessionId::new("saved"), "/workspace")
+                        .system_prompt(prompt.clone()),
+                )
+                .unwrap(),
+                serde_json::to_value(
+                    acp::ResumeSessionRequest::new(acp::SessionId::new("saved"), "/workspace")
+                        .system_prompt(prompt.clone()),
+                )
+                .unwrap(),
+                serde_json::to_value(
+                    acp::ForkSessionRequest::new(acp::SessionId::new("saved"), "/workspace")
+                        .system_prompt(prompt.clone()),
+                )
+                .unwrap(),
+            ];
+            for request in requests {
+                if advertised {
+                    assert_eq!(
+                        request["systemPrompt"],
+                        serde_json::json!({
+                            "mode": "append",
+                            "content": [{"type": "text", "text": instruction}],
+                        })
+                    );
+                } else {
+                    assert!(request.get("systemPrompt").is_none());
+                }
+            }
+        }
+        assert!(client_system_prompt(true, None).is_none());
     }
 
     #[tokio::test]
