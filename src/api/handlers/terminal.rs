@@ -333,6 +333,29 @@ pub(crate) async fn handle_pty_terminal(
     rows: u16,
     activity_session: Option<(String, String, String)>,
 ) {
+    let _ = bridge_pty_terminal(socket, cmd, cols, rows, activity_session, false).await;
+}
+
+/// Authentication needs the actual child exit status; socket closure is failure.
+/// Ordinary terminals keep their existing disconnect semantics.
+pub(crate) async fn bridge_pty_terminal(
+    socket: WebSocket,
+    cmd: CommandBuilder,
+    cols: u16,
+    rows: u16,
+    activity_session: Option<(String, String, String)>,
+    capture_exit: bool,
+) -> Result<(), String> {
+    // Revocation can cancel this future before the usual cleanup path runs.
+    struct ChildGuard(Arc<std::sync::Mutex<Box<dyn portable_pty::Child + Send + Sync>>>);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            if let Ok(mut child) = self.0.lock() {
+                let _ = child.kill();
+            }
+        }
+    }
+
     // Create PTY in blocking context
     let pty_result = tokio::task::spawn_blocking(move || {
         let pty_system = native_pty_system();
@@ -344,7 +367,9 @@ pub(crate) async fn handle_pty_terminal(
         })?;
 
         // Spawn the command
-        let child = pair.slave.spawn_command(cmd)?;
+        let child = ChildGuard(Arc::new(std::sync::Mutex::new(
+            pair.slave.spawn_command(cmd)?,
+        )));
 
         // Get reader from PTY master
         let reader = pair.master.try_clone_reader()?;
@@ -356,34 +381,24 @@ pub(crate) async fn handle_pty_terminal(
     })
     .await;
 
-    let (master, reader, writer, child) = match pty_result {
+    let (master, reader, writer, child_guard) = match pty_result {
         Ok(Ok(result)) => result,
         Ok(Err(e)) => {
-            eprintln!("Failed to setup PTY: {}", e);
-            return;
+            eprintln!("Failed to start terminal: {e}");
+            return Err(format!("Failed to start terminal: {e}"));
         }
         Err(e) => {
-            eprintln!("Task failed: {}", e);
-            return;
+            eprintln!("Failed to start terminal: {e}");
+            return Err(format!("Failed to start terminal: {e}"));
         }
     };
-
-    // Revocation can cancel this future before the usual cleanup path runs.
-    struct ChildGuard(Arc<std::sync::Mutex<Box<dyn portable_pty::Child + Send + Sync>>>);
-    impl Drop for ChildGuard {
-        fn drop(&mut self) {
-            if let Ok(mut child) = self.0.lock() {
-                let _ = child.kill();
-            }
-        }
-    }
 
     // Wrap in Arc for sharing
     let master = Arc::new(std::sync::Mutex::new(master));
     let reader = Arc::new(std::sync::Mutex::new(reader));
     let writer = Arc::new(std::sync::Mutex::new(writer));
-    let child = Arc::new(std::sync::Mutex::new(child));
-    let _child_guard = ChildGuard(child.clone());
+    let child = child_guard.0.clone();
+    let _child_guard = child_guard;
 
     // Create channels for communication
     let (pty_tx, mut pty_rx) = mpsc::channel::<String>(100);
@@ -421,8 +436,13 @@ pub(crate) async fn handle_pty_terminal(
     let mut pty_to_ws = tokio::spawn(async move {
         while let Some(data) = pty_rx.recv().await {
             if ws_sender.send(Message::Text(data.into())).await.is_err() {
-                break;
+                return;
             }
+        }
+        // Authentication succeeds only on process exit, even if stdout was
+        // closed earlier. Keep this task alive so EOF cannot win the select.
+        if capture_exit {
+            std::future::pending::<()>().await;
         }
     });
 
@@ -494,34 +514,39 @@ pub(crate) async fn handle_pty_terminal(
         pty_writer_task.abort_handle(),
     ]);
 
-    // Wait for any task to complete, detect panics
-    tokio::select! {
-        result = &mut pty_reader_task => {
-            if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] PTY reader task panicked"); } }
-        },
-        result = &mut pty_to_ws => {
-            if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] PTY-to-WS task panicked"); } }
-        },
-        result = &mut pty_writer_task => {
-            if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] PTY writer task panicked"); } }
-        },
-        result = &mut ws_to_pty => {
-            if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] WS-to-PTY task panicked"); } }
-        },
-    }
+    let wait_for_exit = async {
+        loop {
+            let status = child
+                .lock()
+                .map_err(|_| "Terminal process lock failed".to_string())?
+                .try_wait()
+                .map_err(|error| format!("Failed to read terminal exit status: {error}"))?;
+            if let Some(status) = status {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("Terminal sign-in failed: {status}"))
+                };
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    };
+    tokio::pin!(wait_for_exit);
+    let result = tokio::select! {
+        result = &mut wait_for_exit, if capture_exit => result,
+        _ = &mut pty_reader_task, if !capture_exit => Ok(()),
+        _ = &mut pty_to_ws => Err("Terminal output disconnected".into()),
+        _ = &mut pty_writer_task => Err("Terminal input disconnected".into()),
+        _ = &mut ws_to_pty => Err("Terminal sign-in was cancelled or disconnected".into()),
+    };
 
-    // One side finished; tear down the rest so the WebSocket actually closes
-    // instead of lingering with detached background tasks.
     pty_to_ws.abort();
     ws_to_pty.abort();
     pty_writer_task.abort();
-
-    // Cleanup: kill the child process
-    // Note: For tmux attach, killing this process just detaches from the session
-    // The tmux session itself continues running
     if let Ok(mut child) = child.lock() {
         let _ = child.kill();
-    };
+    }
+    result
 }
 
 #[derive(Debug, Deserialize)]

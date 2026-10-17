@@ -1,3 +1,4 @@
+import { AuthRequiredPanel, type AuthMethodOption } from "./AuthRequiredPanel";
 import { publishIosChatEvent } from "../../../ios/chatActivity";
 import {
   useState,
@@ -539,7 +540,7 @@ type ChatMessage =
       // 的 auth_methods 全集 — 每一个渲染成一个登录按钮,用户点哪个就用哪种。
       // 空数组 = agent 没声明任何方法,显示手动登录提示。
       type: "auth_required";
-      methods: { id: string; name: string; description?: string }[];
+      methods: AuthMethodOption[];
       agentName: string | null;
       status: "idle" | "in_progress" | "succeeded" | "failed";
       // 用户点击的按钮 id;in_progress / succeeded 时用来高亮和显示文案。
@@ -676,12 +677,6 @@ interface PromptCaps {
   image: boolean;
   audio: boolean;
   embeddedContext: boolean;
-}
-
-interface AuthMethodOption {
-  id: string;
-  name: string;
-  description?: string;
 }
 
 function apiErrorMessage(error: unknown): string {
@@ -6672,9 +6667,9 @@ export function TaskChat({
         }
         case "auth_required": {
           // 推一条 banner 消息:对每个 auth method 渲染一个登录按钮,
-          // 点击后发 authenticate(method_id),后端会自动重试暂存的 prompt
-          // (见 acp::run_acp_session 的 Authenticate 分支)。
-          const methods: { id: string; name: string; description?: string }[] =
+          // Agent methods use authenticate; terminal methods open their PTY.
+          // Both flows retry the pending request after successful login.
+          const methods: AuthMethodOption[] =
             Array.isArray(msg.methods) ? msg.methods : [];
           setMessages((prev) => [
             ...prev,
@@ -6950,7 +6945,7 @@ export function TaskChat({
           }
           break;
         case "auth_required": {
-          const methods: { id: string; name: string; description?: string }[] =
+          const methods: AuthMethodOption[] =
             Array.isArray(msg.methods) ? msg.methods : [];
           state.messages = [
             ...state.messages,
@@ -8928,11 +8923,14 @@ export function TaskChat({
             : m,
         ),
       );
-      wsRef.current.send(
-        JSON.stringify({ type: "authenticate", method_id: methodId }),
-      );
+      const method = activeAuthMessage?.methods.find((method) => method.id === methodId);
+      if (method?.type !== "terminal") {
+        wsRef.current.send(
+          JSON.stringify({ type: "authenticate", method_id: methodId }),
+        );
+      }
     },
-    [],
+    [activeAuthMessage],
   );
 
   /** Retry an auth-gated request after the user signs in through the Agent's
@@ -8969,12 +8967,24 @@ export function TaskChat({
         },
       ]);
       setShowAuthPanel(true);
-      wsRef.current.send(
-        JSON.stringify({ type: "authenticate", method_id: method.id }),
-      );
+      if (method.type !== "terminal") {
+        wsRef.current.send(
+          JSON.stringify({ type: "authenticate", method_id: method.id }),
+        );
+      }
     },
     [agentLabel, authMethods],
   );
+
+  const handleAuthTerminalEnd = useCallback((index: number, error?: string) => {
+    setMessages((previous) =>
+      previous.map((message, i) =>
+        i === index && message.type === "auth_required" && message.status === "in_progress"
+          ? { ...message, status: "failed", errorMessage: error ?? "Terminal sign-in cancelled" }
+          : message,
+      ),
+    );
+  }, []);
 
   const handleLogout = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -12111,6 +12121,10 @@ export function TaskChat({
                           agentLabel={agentLabel}
                           onAuthLogin={handleAuthLogin}
                           onAuthRetry={handleAuthRetry}
+                          projectId={projectId}
+                          taskId={taskId}
+                          chatId={activeChatId ?? undefined}
+                          onTerminalEnd={handleAuthTerminalEnd}
                         />
                       )}
 
@@ -14439,114 +14453,6 @@ const MessageItem = memo(function MessageItem({
 });
 
 /** Permission request card with action buttons */
-/** AuthRequired panel — 渲染在 composerPanel 区域(对齐 PermissionRequest)。
- * 暗色 tertiary 背景、warning 左强调条、标题 + 描述 + ghost 风格选项按钮。
- * in_progress / succeeded 期间整组按钮 disable;每个 method 单独一行,
- * 含可选 description 二行注释。 */
-function AuthRequiredPanel({
-  message,
-  index,
-  agentLabel,
-  onAuthLogin,
-  onAuthRetry,
-}: {
-  message: Extract<ChatMessage, { type: "auth_required" }>;
-  index: number;
-  agentLabel?: string;
-  onAuthLogin?: (index: number, methodId: string) => void;
-  onAuthRetry?: (index: number) => void;
-}) {
-  const agentDisplay = message.agentName || agentLabel || "Agent";
-  const hasMethods = message.methods.length > 0;
-  const activeMethod = message.activeMethodId
-    ? message.methods.find((m) => m.id === message.activeMethodId)
-    : undefined;
-  let title: string;
-  let description: string;
-  if (message.status === "succeeded") {
-    title = "Login successful";
-    description = "Retrying your request...";
-  } else if (message.status === "in_progress") {
-    title = "Authenticating";
-    description = activeMethod
-      ? `Complete the ${activeMethod.name} sign-in flow. The session will resume automatically once finished.`
-      : "Checking whether the external sign-in completed...";
-  } else if (message.status === "failed") {
-    title = "Login failed";
-    description =
-      message.errorMessage ?? "Please choose an option below to try again.";
-  } else if (!hasMethods) {
-    title = "Authentication required";
-    description = `${agentDisplay} did not advertise a login method. Sign in with the agent's CLI, then retry the request.`;
-  } else {
-    title = "Authentication required";
-    description = `${agentDisplay} needs you to sign in before continuing. Pick a login method below.`;
-  }
-  const buttonsDisabled =
-    message.status === "in_progress" || message.status === "succeeded";
-
-  return (
-    <div className="space-y-3 relative">
-      <div className="flex items-start gap-2">
-        <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--color-warning)] mt-0.5" />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-[var(--color-text)]">
-            {title}
-          </div>
-          <p className="mt-0.5 text-xs text-[var(--color-text-muted)] break-all whitespace-pre-wrap leading-relaxed">
-            {description}
-          </p>
-        </div>
-      </div>
-      {hasMethods && (
-        <div className="space-y-2">
-          {message.methods.map((method) => {
-            const isActive = method.id === message.activeMethodId;
-            const showSpinner = isActive && message.status === "in_progress";
-            const showCheck = isActive && message.status === "succeeded";
-            return (
-              <button
-                key={method.id}
-                type="button"
-                disabled={buttonsDisabled}
-                onClick={() => onAuthLogin?.(index, method.id)}
-                className="flex w-full items-center justify-between rounded-xl border border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)] px-3 py-2.5 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)]"
-              >
-                <span className="flex-1 min-w-0 pr-2">
-                  <span className="block text-sm font-medium text-[var(--color-text)]">
-                    {method.name}
-                  </span>
-                  {method.description && (
-                    <span className="mt-0.5 block text-[11px] text-[var(--color-text-muted)] leading-snug">
-                      {method.description}
-                    </span>
-                  )}
-                </span>
-                {showCheck ? (
-                  <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--color-success)]" />
-                ) : showSpinner ? (
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--color-warning)]" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-warning)]" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {!hasMethods && (
-        <button
-          type="button"
-          disabled={buttonsDisabled}
-          onClick={() => onAuthRetry?.(index)}
-          className="flex w-full items-center justify-center rounded-xl border border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)] px-3 py-2.5 text-sm font-medium text-[var(--color-text)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {message.status === "in_progress" ? "Retrying..." : "Retry"}
-        </button>
-      )}
-    </div>
-  );
-}
 
 function PermissionCard({
   message,

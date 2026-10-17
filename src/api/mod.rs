@@ -350,6 +350,10 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/agent-pty",
             get(handlers::agent_pty::agent_pty_handler),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/chats/{chatId}/auth-terminal/{methodId}",
+            get(handlers::auth_terminal::ws_handler),
+        )
         // Agent marketplace — unified view of ACP registry + supplement + probe.
         .route(
             "/agents/marketplace",
@@ -1398,6 +1402,10 @@ pub fn create_proxy_router(remote: String) -> Router {
         )
         .route(
             "/api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/agent-pty",
+            any(ws_proxy_handler),
+        )
+        .route(
+            "/api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/auth-terminal/{methodId}",
             any(ws_proxy_handler),
         )
         .route(

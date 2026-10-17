@@ -952,6 +952,8 @@ mod tests {
     #[test]
     fn authentication_state_is_transient() {
         let methods = vec![crate::acp::AuthMethodInfo {
+            kind: crate::acp::AuthMethodKind::Agent,
+            terminal: None,
             id: "agent-login".to_string(),
             name: "Agent login".to_string(),
             description: None,

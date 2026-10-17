@@ -84,6 +84,7 @@ interface XTerminalProps {
   onConnected?: () => void;
   /** Called when terminal is disconnected */
   onDisconnected?: () => void;
+  onConnectionError?: () => void;
   /**
    * Unique instance ID for caching (e.g. FlexLayout tab node id).
    * When provided, terminal survives unmount and can be reattached.
@@ -98,6 +99,7 @@ export function XTerminal({
   wsUrl,
   onConnected,
   onDisconnected,
+  onConnectionError,
   instanceId,
 }: XTerminalProps) {
   "use no memo";
@@ -141,6 +143,7 @@ export function XTerminal({
   // Store callbacks in refs to avoid re-render issues
   const onConnectedRef = useRef(onConnected);
   const onDisconnectedRef = useRef(onDisconnected);
+  const onConnectionErrorRef = useRef(onConnectionError);
 
   // Sync prop/context values into refs in effects (cannot mutate refs during
   // render). Refs are only consumed by async ws/event callbacks that run
@@ -154,6 +157,10 @@ export function XTerminal({
   useEffect(() => {
     onDisconnectedRef.current = onDisconnected;
   }, [onDisconnected]);
+
+  useEffect(() => {
+    onConnectionErrorRef.current = onConnectionError;
+  }, [onConnectionError]);
 
   // Memoize connection key to detect when we need to reconnect
   const connectionKey = useMemo(() => {
@@ -497,6 +504,7 @@ export function XTerminal({
       ws.onerror = (error) => {
         console.error("WebSocket error:", error);
         terminal.writeln("\x1b[31mWebSocket error\x1b[0m");
+        if (!cancelled) onConnectionErrorRef.current?.();
       };
     };
     connect();

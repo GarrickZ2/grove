@@ -6,8 +6,11 @@
 #![allow(dead_code)] // Public API — used by CLI now, Web frontend later
 
 pub mod adapter;
+mod terminal_auth;
+pub use terminal_auth::AuthMethodKind;
+use terminal_auth::{TerminalAuthLaunch, TerminalAuthState};
 
-// SDK 2.0 versions protocol schemas explicitly. Grove currently negotiates ACP v1,
+// The SDK versions protocol schemas explicitly. Grove currently negotiates ACP v1,
 // so keep its schema and runtime types behind one local namespace.
 #[allow(clippy::module_inception)]
 mod acp {
@@ -220,8 +223,10 @@ pub struct AcpSessionHandle {
     /// answered with the protocol-level `cancelled` outcome.
     cancel_requested: std::sync::atomic::AtomicBool,
     /// agent 在 initialize 响应里声明的登录方法。空 = 未声明 / 不需要。
-    /// 收到 `AuthRequired (-32000)` 时,client 用这里的第一个 id 走 `authenticate`。
+    /// 用户选择后按类型进入 ACP 登录或独立终端登录流程。
     pub auth_methods: Mutex<Vec<AuthMethodInfo>>,
+    terminal_auth: Mutex<TerminalAuthState>,
+    terminal_auth_restart: tokio::sync::watch::Sender<u64>,
     /// agent 是否在 initialize 响应里声明了 `auth.logout` 能力。
     /// 前端据此显示 Logout，后端调用前仍会再次校验。
     pub logout_capable: std::sync::atomic::AtomicBool,
@@ -834,18 +839,40 @@ pub struct CommandInfo {
 }
 
 /// 从 ACP InitializeResponse.auth_methods 提取的登录方法描述。
-/// 仅捕获 `AuthMethod::Agent` 变体的字段(`unstable_auth_methods` 未开启时
-/// EnvVar / Terminal 变体在反序列化阶段会被 `VecSkipError` 自动跳过)。
+/// Preserve the discriminator; terminal methods never go through `authenticate`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AuthMethodInfo {
+    #[serde(rename = "type", default)]
+    pub kind: AuthMethodKind,
+    #[serde(skip)]
+    pub(crate) terminal: Option<acp::AuthMethodTerminal>,
     pub id: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
 
+fn auth_method_info(method: &acp::AuthMethod, local: bool) -> Option<AuthMethodInfo> {
+    let (kind, terminal) = match method {
+        acp::AuthMethod::Agent(_) => (AuthMethodKind::Agent, None),
+        acp::AuthMethod::Terminal(method) if local => {
+            (AuthMethodKind::Terminal, Some(method.clone()))
+        }
+        _ => return None,
+    };
+    Some(AuthMethodInfo {
+        kind,
+        terminal,
+        id: method.id().to_string(),
+        name: method.name().to_string(),
+        description: method.description().map(str::to_string),
+    })
+}
+
 fn is_advertised_auth_method(methods: &[AuthMethodInfo], method_id: &str) -> bool {
-    methods.iter().any(|method| method.id == method_id)
+    methods
+        .iter()
+        .any(|method| method.id == method_id && method.kind == AuthMethodKind::Agent)
 }
 
 /// Agent 的 Prompt 能力声明（从 ACP InitializeResponse 提取）
@@ -1375,6 +1402,7 @@ fn session_bootstrap_instruction(
     None
 }
 
+#[derive(Clone)]
 pub struct AcpStartConfig {
     pub agent_command: String,
     /// Agent logical name — used for adapter routing.
@@ -3965,7 +3993,12 @@ fn config_request_value(
 }
 
 fn grove_client_capabilities() -> acp::ClientCapabilities {
+    grove_client_capabilities_for_transport(false)
+}
+
+fn grove_client_capabilities_for_transport(local: bool) -> acp::ClientCapabilities {
     acp::ClientCapabilities::default()
+        .auth(acp::AuthCapabilities::new().terminal(local))
         .terminal(true)
         .elicitation(
             acp::ElicitationCapabilities::new()
@@ -4419,8 +4452,12 @@ pub async fn get_or_start_session(
     // second concurrent caller would then start a parallel ACP subprocess,
     // exactly the TOCTOU the claim was added to prevent.
     let starting_key_for_thread = key.clone();
+    #[cfg(test)]
+    let test_grove_dir = crate::storage::grove_dir();
 
     std::thread::spawn(move || {
+        #[cfg(test)]
+        crate::storage::set_grove_dir_override(Some(test_grove_dir));
         // RAII: release the spawn claim at thread exit (covers normal exit
         // AND panic). Concurrent retries between insertion and thread exit
         // are short-circuited by the ACP_SESSIONS.read() check at the top
@@ -4498,6 +4535,8 @@ pub async fn get_or_start_session(
                     short_tool_watches: Mutex::new(HashMap::new()),
                     cancel_requested: std::sync::atomic::AtomicBool::new(false),
                     auth_methods: Mutex::new(Vec::new()),
+                    terminal_auth: Mutex::new(TerminalAuthState::default()),
+                    terminal_auth_restart: tokio::sync::watch::channel(0).0,
                     logout_capable: std::sync::atomic::AtomicBool::new(false),
                     pending_auth_retry: Mutex::new(None),
                     middleware_dispatched_retries: Mutex::new(std::collections::HashSet::new()),
@@ -4676,10 +4715,6 @@ async fn run_acp_session(
     mut config: AcpStartConfig,
     cmd_rx: mpsc::Receiver<AcpCommand>,
 ) -> crate::error::Result<()> {
-    // Cloned up front since `config` is moved into the `connect_with` closure
-    // below; used only for the post-mortem exit-status log at the end.
-    let agent_name_for_log = config.agent_name.clone();
-
     // 提前生成 agent_graph MCP token —— 在 spawn 子进程之前注册并塞进 env。
     // 这样 `grove mcp-bridge`（agent 自己孩子的孩子，比如 Trae 不接受 ACP 注入
     // 的 MCP 时由用户在 Trae mcp 配置里指向我们）只要从 env 读 GROVE_MCP_TOKEN
@@ -4711,6 +4746,32 @@ async fn run_acp_session(
     }
     let _early_token_guard = EarlyTokenGuard(agent_graph_token.clone());
 
+    let cmd_rx = Arc::new(tokio::sync::Mutex::new(cmd_rx));
+    loop {
+        match run_acp_connection(handle.clone(), config.clone(), cmd_rx.clone()).await {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(error) => {
+                if handle.terminal_auth.lock().unwrap().reconnecting {
+                    handle.emit(AcpUpdate::AuthFailed {
+                        message: format!(
+                            "Sign-in finished, but reconnecting the Agent failed: {error}"
+                        ),
+                    });
+                }
+                return Err(error);
+            }
+        }
+    }
+}
+
+async fn run_acp_connection(
+    handle: Arc<AcpSessionHandle>,
+    config: AcpStartConfig,
+    cmd_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<AcpCommand>>>,
+) -> crate::error::Result<bool> {
+    let agent_name_for_log = config.agent_name.clone();
+    let mut restart_rx = handle.terminal_auth_restart.subscribe();
     // 根据 agent_type 分支获取 reader/writer（使用 trait object 统一类型）
     let mut child: Option<tokio::process::Child>;
     // ByteStreams 要求 Send + 'static;grove 的子进程 pipe 和 DuplexStream 都满足。
@@ -4786,6 +4847,12 @@ async fn run_acp_session(
                 config.agent_command
             ))
         })?;
+        handle.terminal_auth.lock().unwrap().launch = Some(TerminalAuthLaunch {
+            program: resolved.clone(),
+            args: config.agent_args.clone(),
+            env: config.env_vars.clone(),
+            cwd: config.working_dir.clone(),
+        });
         let mut proc = tokio::process::Command::new(&resolved)
             .args(&config.agent_args)
             .current_dir(&config.working_dir)
@@ -5011,13 +5078,18 @@ async fn run_acp_session(
             },
             agent_client_protocol::on_receive_request!(),
         )
-        .connect_with(transport, move |conn: acp::ConnectionTo<acp::Agent>| {
-            drive_session(handle, config, cmd_rx, conn)
-        });
+        .connect_with(
+            transport,
+            move |conn: acp::ConnectionTo<acp::Agent>| async move {
+                let mut cmd_rx = cmd_rx.lock().await;
+                drive_session(handle, config, &mut cmd_rx, conn).await
+            },
+        );
     tokio::pin!(connection);
     let result = tokio::select! {
-        result = &mut connection => result,
-        _ = shutdown_rx.wait_for(|requested| *requested) => Ok(()),
+        result = &mut connection => result.map(|()| false),
+        _ = shutdown_rx.wait_for(|requested| *requested) => Ok(false),
+        _ = restart_rx.changed() => Ok(true),
     };
 
     // Diagnostics: if the agent subprocess had already exited by the time
@@ -5069,7 +5141,7 @@ fn validate_v1_protocol_version(version: acp::ProtocolVersion) -> acp::Result<()
 async fn drive_session(
     handle: Arc<AcpSessionHandle>,
     config: AcpStartConfig,
-    mut cmd_rx: mpsc::Receiver<AcpCommand>,
+    cmd_rx: &mut mpsc::Receiver<AcpCommand>,
     conn: acp::ConnectionTo<acp::Agent>,
 ) -> acp::Result<(), acp::Error> {
     /// Lowercase fuzzy-match a free-text query against `(id, name)` pairs.
@@ -5156,7 +5228,9 @@ async fn drive_session(
     let init_resp = conn
         .send_request(
             acp::InitializeRequest::new(acp::ProtocolVersion::V1)
-                .client_capabilities(grove_client_capabilities())
+                .client_capabilities(grove_client_capabilities_for_transport(
+                    config.agent_type != "remote",
+                ))
                 .client_info(
                     acp::Implementation::new("grove", env!("CARGO_PKG_VERSION")).title("Grove"),
                 ),
@@ -5166,22 +5240,15 @@ async fn drive_session(
 
     validate_v1_protocol_version(init_resp.protocol_version)?;
 
-    // 缓存 agent 声明的登录方法 — 后续收到 -32000 AuthRequired 时取第一个走
-    // authenticate。`unstable_auth_methods` feature 未启用,所以这里只会拿到
-    // `AuthMethod::Agent` 变体(EnvVar / Terminal 在反序列化阶段已被过滤)。
+    // Retain terminal launch descriptors only for local agents. Remote transports
+    // cannot reproduce the Agent invocation in its execution environment.
     {
-        let methods: Vec<AuthMethodInfo> = init_resp
+        let methods = init_resp
             .auth_methods
             .iter()
-            .map(|m| AuthMethodInfo {
-                id: m.id().to_string(),
-                name: m.name().to_string(),
-                description: m.description().map(|s| s.to_string()),
-            })
+            .filter_map(|method| auth_method_info(method, config.agent_type != "remote"))
             .collect();
-        if let Ok(mut slot) = handle.auth_methods.lock() {
-            *slot = methods;
-        }
+        *handle.auth_methods.lock().unwrap() = methods;
     }
 
     let logout_capable = init_resp.agent_capabilities.auth.logout.is_some();
@@ -5317,6 +5384,13 @@ async fn drive_session(
     /// request that failed. This is shared by new/resume/load.
     macro_rules! await_authentication {
         () => {{
+            // A login process can exit successfully while the restarted Agent
+            // still rejects access. Release the reconnect gate so the user can
+            // select a terminal method again rather than becoming stuck.
+            let terminal_login_rejected = {
+                let mut state = handle.terminal_auth.lock().unwrap();
+                std::mem::take(&mut state.reconnecting)
+            };
             let methods = handle
                 .auth_methods
                 .lock()
@@ -5332,6 +5406,12 @@ async fn drive_session(
                 methods: methods.clone(),
                 agent_name: Some(agent_name.clone()),
             });
+
+            if terminal_login_rejected {
+                handle.emit(AcpUpdate::AuthFailed {
+                    message: "The Agent still requires authentication after terminal sign-in. Please try again.".into(),
+                });
+            }
 
             let mut next_method_id: Option<String> = None;
             'auth_wait: loop {
@@ -5771,20 +5851,29 @@ async fn drive_session(
                 config.mcp_server_policy,
             )
             .map_err(to_acp_err)?;
-            let resp = conn
-                .send_request(
-                    acp::LoadSessionRequest::new(
-                        acp::SessionId::new(&*saved_id),
-                        &config.working_dir,
+            let resp = loop {
+                match conn
+                    .send_request(
+                        acp::LoadSessionRequest::new(
+                            acp::SessionId::new(&*saved_id),
+                            &config.working_dir,
+                        )
+                        .additional_directories(Vec::<PathBuf>::new())
+                        .mcp_servers(mcp_servers.clone()),
                     )
-                    .additional_directories(Vec::<PathBuf>::new())
-                    .mcp_servers(mcp_servers),
-                )
-                .block_task()
-                .await
-                .map_err(|error| {
-                    acp::Error::internal_error().data(format!("Import session failed: {error}"))
-                })?;
+                    .block_task()
+                    .await
+                {
+                    Ok(response) => break response,
+                    Err(error) if is_auth_required_error(&error) => {
+                        await_authentication!();
+                    }
+                    Err(error) => {
+                        return Err(acp::Error::internal_error()
+                            .data(format!("Import session failed: {error}")))
+                    }
+                }
+            };
             uses_config_options = resp.config_options.is_some();
             config_options = resp.config_options.clone().unwrap_or_default();
             (available_modes, current_mode_id, _, mode_descriptions) =
@@ -6141,6 +6230,8 @@ async fn drive_session(
         logout_capable,
     });
 
+    handle.finish_terminal_auth_reconnect();
+
     // 处理命令循环
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
@@ -6153,6 +6244,23 @@ async fn drive_session(
                 terminal,
                 config: prompt_config,
             } => {
+                if handle.terminal_auth_in_progress() {
+                    let mut queued = QueuedMessage::new(
+                        source_text,
+                        attachments,
+                        sender,
+                        terminal,
+                        prompt_config,
+                    )
+                    .with_processed_text(text);
+                    queued.message_ids = message_ids;
+                    handle.pending_queue.lock().unwrap().push(queued);
+                    handle.emit(AcpUpdate::Busy { value: false });
+                    handle.emit(AcpUpdate::QueueUpdate {
+                        messages: handle.get_queue(),
+                    });
+                    continue;
+                }
                 let already_dispatched = handle.take_middleware_dispatched_retry(&message_ids);
                 if !already_dispatched {
                     text = match crate::plugins::prompt_middleware::run(
@@ -8699,6 +8807,11 @@ impl AcpSessionHandle {
     /// 触发 ACP `authenticate(method_id)`。协议要求 method_id 必须来自 Agent
     /// 在 initialize 响应中声明的 authMethods。
     pub async fn authenticate(&self, method_id: String) -> crate::error::Result<()> {
+        if self.terminal_auth_in_progress() {
+            return Err(crate::error::GroveError::Session(
+                "Terminal sign-in is in progress".into(),
+            ));
+        }
         let advertised = self
             .auth_methods
             .lock()
@@ -9635,6 +9748,8 @@ pub fn new_handle_for_test(
         short_tool_watches: Mutex::new(HashMap::new()),
         cancel_requested: std::sync::atomic::AtomicBool::new(false),
         auth_methods: Mutex::new(Vec::new()),
+        terminal_auth: Mutex::new(TerminalAuthState::default()),
+        terminal_auth_restart: tokio::sync::watch::channel(0).0,
         logout_capable: std::sync::atomic::AtomicBool::new(false),
         pending_auth_retry: Mutex::new(None),
         middleware_dispatched_retries: Mutex::new(std::collections::HashSet::new()),
@@ -11734,6 +11849,8 @@ mod tests {
     #[test]
     fn authentication_accepts_only_advertised_method_ids() {
         let methods = vec![AuthMethodInfo {
+            kind: AuthMethodKind::Agent,
+            terminal: None,
             id: "agent-login".to_string(),
             name: "Agent login".to_string(),
             description: None,

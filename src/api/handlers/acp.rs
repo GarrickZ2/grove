@@ -395,6 +395,8 @@ enum ServerMessage {
 
 #[derive(Debug, Serialize, Clone)]
 struct AuthMethodMsg {
+    #[serde(rename = "type")]
+    kind: acp::AuthMethodKind,
     id: String,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -524,6 +526,7 @@ impl From<AcpUpdate> for ServerMessage {
                 auth_methods: auth_methods
                     .into_iter()
                     .map(|method| AuthMethodMsg {
+                        kind: method.kind,
                         id: method.id,
                         name: method.name,
                         description: method.description,
@@ -830,6 +833,7 @@ impl From<AcpUpdate> for ServerMessage {
                 methods: methods
                     .into_iter()
                     .map(|m| AuthMethodMsg {
+                        kind: m.kind,
                         id: m.id,
                         name: m.name,
                         description: m.description,
@@ -967,6 +971,7 @@ async fn handle_acp_ws(
                     .methods
                     .into_iter()
                     .map(|m| AuthMethodMsg {
+                        kind: m.kind,
                         id: m.id,
                         name: m.name,
                         description: m.description,
@@ -1038,6 +1043,7 @@ async fn handle_acp_ws(
                             methods
                                 .iter()
                                 .map(|method| AuthMethodMsg {
+                                    kind: method.kind,
                                     id: method.id.clone(),
                                     name: method.name.clone(),
                                     description: method.description.clone(),
@@ -1084,6 +1090,7 @@ async fn handle_acp_ws(
                             methods
                                 .iter()
                                 .map(|method| AuthMethodMsg {
+                                    kind: method.kind,
                                     id: method.id.clone(),
                                     name: method.name.clone(),
                                     description: method.description.clone(),

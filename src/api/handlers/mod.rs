@@ -6,6 +6,7 @@ pub mod agent_pty;
 pub mod agent_usage;
 pub mod ai;
 pub mod ai_stream;
+pub mod auth_terminal;
 pub mod automations;
 pub mod common;
 pub mod config;
