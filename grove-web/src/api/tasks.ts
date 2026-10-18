@@ -1101,6 +1101,7 @@ interface ChatHistoryResponse {
   events: any[];
   total: number;
   omitted_turns?: number;
+  runtime?: { active: boolean; busy: boolean | null };
   context?: {
     attachment_counts: { image: number; audio: number; resource: number };
     read_memory_ids: string[];

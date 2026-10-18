@@ -2647,6 +2647,13 @@ pub(crate) struct HistoryResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     context: Option<HistoryContext>,
     session: Option<acp::SessionMetadata>,
+    runtime: HistoryRuntime,
+}
+
+#[derive(Serialize)]
+struct HistoryRuntime {
+    active: bool,
+    busy: Option<bool>,
 }
 
 #[derive(Default, Serialize)]
@@ -2932,6 +2939,22 @@ pub async fn get_chat_history(
 ) -> Result<Json<HistoryResponse>, AcpError> {
     let (project_key, _, _) = resolve_project_key(&project_id)?;
 
+    let session_key = format!("{project_key}:{task_id}:{chat_id}");
+    let runtime = match acp::discover_session(&project_key, &task_id, &chat_id, &session_key) {
+        Some(acp::SessionAccess::Local(handle)) => HistoryRuntime {
+            active: true,
+            busy: Some(handle.is_busy.load(std::sync::atomic::Ordering::Relaxed)),
+        },
+        // A different Grove process can still be running the compaction.
+        Some(acp::SessionAccess::Remote { .. }) => HistoryRuntime {
+            active: true,
+            busy: None,
+        },
+        None => HistoryRuntime {
+            active: false,
+            busy: Some(false),
+        },
+    };
     let history = chat_history::load_history(&project_key, &task_id, &chat_id);
     let total = history.len();
     let offset = params.offset.unwrap_or(0).min(total);
@@ -2963,6 +2986,7 @@ pub async fn get_chat_history(
         omitted_turns,
         context,
         session,
+        runtime,
     }))
 }
 

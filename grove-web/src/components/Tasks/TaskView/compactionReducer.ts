@@ -1,4 +1,5 @@
 import { appendTextContentBlock, type AgentContentBlock } from "./agentContentBlocks";
+import type { ChatMessage } from "./TaskChat";
 
 export type CompactionMessage = {
   type: "compaction";
@@ -8,6 +9,23 @@ export type CompactionMessage = {
   error?: string;
   metadata?: unknown;
 };
+
+/** A turn ending only closes its own compaction; child work can outlive it.
+ * A confirmed runtime exit also closes descendants. Transport loss alone does neither. */
+export function interruptCompactions(messages: ChatMessage[], includeSubagents = false): ChatMessage[] {
+  return messages.map((message) => {
+    if (includeSubagents && message.type === "subagent") {
+      return { ...message, messages: interruptCompactions(message.messages, true) };
+    }
+    return message.type === "compaction" && message.status === "in_progress"
+      ? { ...message, status: "interrupted" } : message;
+  });
+}
+
+export function reconcileCompactionActivity(messages: ChatMessage[], runtime: { active: boolean; busy: boolean | null }): ChatMessage[] {
+  return !runtime.active ? interruptCompactions(messages, true)
+    : runtime.busy === false ? interruptCompactions(messages) : messages;
+}
 
 /** First sighting fixes placement. Later updates, even after completion, patch
  * that same entity and never interrupt text that was received after it. */

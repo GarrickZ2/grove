@@ -6,7 +6,7 @@ import { SubagentAvatar } from "./SubagentAvatar";
 import { SubagentCard } from "./SubagentCard";
 import { flattenSubagentMessages, mapSubagentMessages, reduceSubagentEvent, resetSubagentActivity, type SubagentMessage, type SessionExchangeMessage } from "./subagents";
 import { CompactionDivider } from "./CompactionDivider";
-import { applyCompactionEvent, compactionSearchText, type CompactionMessage } from "./compactionReducer";
+import { applyCompactionEvent, compactionSearchText, interruptCompactions, reconcileCompactionActivity, type CompactionMessage } from "./compactionReducer";
 import { SessionNotice } from "./SessionNotice";
 import { appendSessionNotice, sessionNoticeFromEvent, type SessionNoticeMessage } from "./sessionNotices";
 import { toolDisplayName, toolVerb, isEditTool, classifyActionKind, isBackgroundAction, type ActionKind } from "./toolCallIdentity";
@@ -2241,6 +2241,10 @@ function reduceHistoryMessages(
     case "plan_document_update":
     case "plan_document_removed":
       return reducePlanDocumentEvent(messages, msg);
+    case "session_ended":
+      return interruptCompactions(messages, true);
+    case "busy":
+      return msg.value === false ? interruptCompactions(messages) : messages;
     case "compaction_update":
     case "compaction_summary_chunk":
       return applyCompactionEvent(messages, msg);
@@ -2447,7 +2451,7 @@ function reduceHistoryMessages(
         typeof msg.id === "string" ? msg.id : undefined,
       );
     case "complete": {
-      const completed = completeThinking(messages);
+      const completed = completeThinking(interruptCompactions(messages));
       const usage: TurnUsageData | undefined = msg.usage
         ? {
             inputTokens: Number(msg.usage.input_tokens) || 0,
@@ -5880,6 +5884,9 @@ export function TaskChat({
             historicalPlanFile = { path: evt.path, content: evt.content };
           }
         }
+        // The backend snapshot distinguishes an ended runtime from a temporary
+        // socket disconnect. Apply it before newer buffered events restore activity.
+        if (res.runtime) msgs = reconcileCompactionActivity(msgs, res.runtime);
         // Drain buffered WS events that arrived during HTTP load
         const buffered = isReadOnlyHistory ? [] : runtime.bufferedEvents;
         runtime.bufferedEvents = [];
@@ -6549,7 +6556,7 @@ export function TaskChat({
           }
           updateBusy(msg.value);
           if (!msg.value) {
-            setMessages((prev) => pruneActiveChatMessages(prev));
+            setMessages((prev) => pruneActiveChatMessages(reduceHistoryMessages(prev, msg)));
             onChatBecameIdle?.();
           }
           break;
@@ -6781,6 +6788,7 @@ export function TaskChat({
           );
           break;
         case "session_ended":
+          setMessages((prev) => reduceHistoryMessages(prev, msg));
           setIsConnected(false);
           setConnectPhase(null);
           setConnectPhaseStartedAt(null);
@@ -7055,7 +7063,7 @@ export function TaskChat({
           );
           if (!msg.value) {
             const pruned = pruneChatViewMessages(
-              state.messages,
+              reduceHistoryMessages(state.messages, msg),
               state.hiddenMessageCount,
               chatRenderWindowSettings,
             );
@@ -7087,6 +7095,8 @@ export function TaskChat({
           messagesChanged = true;
           break;
         case "session_ended":
+          state.messages = reduceHistoryMessages(state.messages, msg);
+          messagesChanged = true;
           state.isConnected = false;
           break;
       }
@@ -7153,6 +7163,10 @@ export function TaskChat({
         for (const evt of res.events) {
           handleServerMessageRef.current(evt);
         }
+      }
+      if (res.runtime) {
+        const snapshot = res.runtime;
+        setMessages((previous) => reconcileCompactionActivity(previous, snapshot));
       }
       runtime.historyTotal = res.total;
       // If session is gone, auto-exit read-only mode

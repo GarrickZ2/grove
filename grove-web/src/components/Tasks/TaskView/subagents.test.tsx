@@ -34,6 +34,13 @@ describe("subagent timeline", () => {
     ]);
   });
 
+  it("stops a child's unfinished compaction when that child becomes idle", () => {
+    let messages = reduce([], announce("a", { state: { state: "running" } }));
+    getChild(messages, "a").messages.push({ type: "compaction", id: "c", status: "in_progress", summary: [] });
+    messages = reduce(messages, announce("a", { state: { state: "idle" } }));
+    expect(getChild(messages, "a").messages[0]).toMatchObject({ status: "interrupted" });
+  });
+
   it("keeps delegation at its position and child work out of parent text", () => {
     let messages: ChatMessage[] = [{ type: "assistant", content: "Before", complete: false }];
     messages = reduce(messages, announce("a", { title: "Review", state: { state: "running" } }));

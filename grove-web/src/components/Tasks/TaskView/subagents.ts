@@ -1,5 +1,6 @@
 import type { ChatMessage, ServerEvent } from "./TaskChat";
 import { appendTextContentBlock, type AgentContentBlock } from "./agentContentBlocks";
+import { interruptCompactions } from "./compactionReducer";
 
 export interface SubagentMessage {
   type: "subagent";
@@ -72,6 +73,9 @@ export function reduceSubagentEvent(messages: ChatMessage[], event: ServerEvent,
       }
       if (next.state?.state && next.state.state !== "running" && next.state.state !== "requires_action") {
         next.messages = next.messages.map((message) => message.type === "assistant" || message.type === "thinking" ? { ...message, complete: true } : message);
+      }
+      if (["idle", "_completed", "_failed", "_cancelled"].includes(next.state?.state ?? "")) {
+        next.messages = interruptCompactions(next.messages);
       }
       return next;
     };

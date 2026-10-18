@@ -6,7 +6,7 @@ export function CompactionDivider({ message, children }: { message: CompactionMe
   const active = message.status === "in_progress";
   const failed = message.status === "failed";
   const label = active ? "Compacting" : message.status === "completed" ? "Compacted"
-    : failed ? "Compaction failed" : message.status === "cancelled" ? "Compaction cancelled" : `Compaction · ${message.status}`;
+    : failed ? "Compaction failed" : message.status === "cancelled" ? "Compaction cancelled" : message.status === "interrupted" ? "Compaction interrupted" : `Compaction · ${message.status}`;
   const Icon = active ? Loader2 : failed ? AlertCircle : message.status === "completed" ? Check : Minus;
   const hasDetails = message.summary.length > 0 || Boolean(message.error);
   const divider = (
