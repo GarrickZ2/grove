@@ -2241,11 +2241,6 @@ function reduceHistoryMessages(
     case "plan_document_update":
     case "plan_document_removed":
       return reducePlanDocumentEvent(messages, msg);
-    case "plan_update": {
-      const entry: ChatMessage = { type: "child_plan", entries: msg.entries ?? [] };
-      const index = messages.findIndex((message) => message.type === "child_plan");
-      return index < 0 ? [...messages, entry] : messages.map((message, i) => i === index ? entry : message);
-    }
     case "compaction_update":
     case "compaction_summary_chunk":
       return applyCompactionEvent(messages, msg);

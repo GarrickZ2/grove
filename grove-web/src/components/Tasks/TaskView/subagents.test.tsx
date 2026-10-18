@@ -21,6 +21,19 @@ function getChild(messages: ChatMessage[], sessionId: string): SubagentMessage {
 }
 
 describe("subagent timeline", () => {
+  it("keeps root Todos out of the transcript and restores each child's own Todo", () => {
+    const todo = (content: string): ServerEvent => ({ type: "plan_update", entries: [{ content, status: "pending" }] });
+    const events = [announce("a"), announce("b", {}, "a"), todo("Root"), scoped("a", todo("Parent child")), scoped("b", todo("Nested child")), todo("Root changed"), scoped("a", todo("Updated child"))];
+    const messages = events.reduce(reduce, [] as ChatMessage[]);
+    expect(messages.map((message) => message.type)).toEqual(["subagent"]);
+    expect(getChild(messages, "a").messages.filter((message) => message.type === "child_plan")).toEqual([
+      { type: "child_plan", entries: [{ content: "Updated child", status: "pending" }] },
+    ]);
+    expect(getChild(messages, "b").messages).toEqual([
+      { type: "child_plan", entries: [{ content: "Nested child", status: "pending" }] },
+    ]);
+  });
+
   it("keeps delegation at its position and child work out of parent text", () => {
     let messages: ChatMessage[] = [{ type: "assistant", content: "Before", complete: false }];
     messages = reduce(messages, announce("a", { title: "Review", state: { state: "running" } }));

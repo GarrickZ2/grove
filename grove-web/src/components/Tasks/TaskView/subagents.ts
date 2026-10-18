@@ -52,7 +52,16 @@ function updateChild(messages: ChatMessage[], id: string, update: (child: Subage
 export function reduceSubagentEvent(messages: ChatMessage[], event: ServerEvent, reduce: (messages: ChatMessage[], event: ServerEvent) => ChatMessage[]): ChatMessage[] {
   if (event.type === "subagent_event") {
     if (typeof event.session_id !== "string" || !event.event || event.event.type === "subagent_event") return messages;
-    return updateChild(messages, event.session_id, (child) => ({ ...child, messages: reduce(child.messages, event.event) }));
+    return updateChild(messages, event.session_id, (child) => {
+      // Only child Todos belong in the activity transcript. Root Todos are
+      // restored separately into the composer panel by TaskChat.
+      if (event.event.type === "plan_update") {
+        const entry: ChatMessage = { type: "child_plan", entries: event.event.entries ?? [] };
+        const index = child.messages.findIndex((message) => message.type === "child_plan");
+        return { ...child, messages: index < 0 ? [...child.messages, entry] : child.messages.map((message, i) => i === index ? entry : message) };
+      }
+      return { ...child, messages: reduce(child.messages, event.event) };
+    });
   }
   if (event.type === "subagent_update") {
     if (typeof event.session_id !== "string" || typeof event.parent_session_id !== "string" || event.session_id === event.parent_session_id) return messages;
