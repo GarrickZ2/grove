@@ -102,6 +102,8 @@ enum SessionReadiness {
 /// ACP 会话句柄 — 外部持有，用于查询状态和发送操作
 pub struct AcpSessionHandle {
     pub key: String,
+    // Local transport PID and spawn time; absent for remote connections.
+    resource_process: Mutex<Option<(u32, u64)>>,
     subagents: Mutex<subagents::SubagentRegistry>,
     subagent_connection: Mutex<Option<acp::ConnectionTo<acp::Agent>>>,
     pub update_tx: broadcast::Sender<AcpUpdate>,
@@ -2750,6 +2752,10 @@ async fn handle_create_terminal(
     for env_var in &args.env {
         cmd.env(&env_var.name, &env_var.value);
     }
+    // These terminals are spawned by the Grove host, not the agent process.
+    // Preserve task ownership so resource accounting includes their tools/builds.
+    cmd.env("GROVE_PROJECT_KEY", &state.project_key)
+        .env("GROVE_TASK_ID", &state.task_id);
 
     let child = cmd.spawn().map_err(|e| {
         acp::Error::internal_error().data(format!("Failed to spawn '{}': {}", shell_cmd, e))
@@ -4738,6 +4744,7 @@ pub async fn get_or_start_session(
 
                 let handle = Arc::new(AcpSessionHandle {
                     key: key.clone(),
+                    resource_process: Mutex::new(None),
                     subagents: Mutex::default(),
                     subagent_connection: Mutex::default(),
                     update_tx: update_tx.clone(),
@@ -5022,6 +5029,7 @@ async fn run_acp_connection(
     config: AcpStartConfig,
     cmd_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<AcpCommand>>>,
 ) -> crate::error::Result<bool> {
+    let _resource_process_guard = ResourceProcessGuard(handle.clone());
     *handle.subagents.lock().unwrap() = subagents::SubagentRegistry::default();
     let agent_name_for_log = config.agent_name.clone();
     let mut restart_rx = handle.terminal_auth_restart.subscribe();
@@ -5125,6 +5133,9 @@ async fn run_acp_connection(
             })?;
 
         // Redirect agent stderr to log file instead of inheriting parent's stderr
+        *handle.resource_process.lock().unwrap() = proc
+            .id()
+            .map(|pid| (pid, chrono::Utc::now().timestamp() as u64));
         if let Some(stderr) = proc.stderr.take() {
             let log_path = config
                 .artifact_dir
@@ -9972,6 +9983,46 @@ pub fn get_session_handle(key: &str) -> Option<Arc<AcpSessionHandle>> {
         .and_then(|sessions| sessions.get(key).cloned())
 }
 
+struct ResourceProcessGuard(Arc<AcpSessionHandle>);
+
+impl Drop for ResourceProcessGuard {
+    fn drop(&mut self) {
+        if let Ok(mut process) = self.0.resource_process.lock() {
+            *process = None;
+        }
+    }
+}
+
+pub(crate) struct ResourceProcessSession {
+    pub pid: u32,
+    pub spawned_at: u64,
+    pub project: String,
+    pub task: String,
+    pub chat: Option<String>,
+    pub agent: String,
+}
+
+/// Read-only process provenance, independent of OS executable names and argv.
+pub(crate) fn resource_process_sessions() -> Vec<ResourceProcessSession> {
+    let Ok(sessions) = ACP_SESSIONS.read() else {
+        return vec![];
+    };
+    sessions
+        .values()
+        .filter_map(|handle| {
+            let (pid, spawned_at) = (*handle.resource_process.lock().ok()?)?;
+            Some(ResourceProcessSession {
+                pid,
+                spawned_at,
+                project: handle.project_key.clone(),
+                task: handle.task_id.clone(),
+                chat: handle.chat_id.clone(),
+                agent: handle.configured_agent_id.clone(),
+            })
+        })
+        .collect()
+}
+
 /// 检查 ACP 会话是否存在
 pub fn session_exists(key: &str) -> bool {
     ACP_SESSIONS
@@ -10121,6 +10172,7 @@ pub fn new_handle_for_test(
 
     let handle = Arc::new(AcpSessionHandle {
         key: key.to_string(),
+        resource_process: Mutex::new(None),
         subagents: Mutex::default(),
         subagent_connection: Mutex::default(),
         update_tx: update_tx.clone(),
@@ -10990,6 +11042,34 @@ async fn drain_stderr_to_file(stderr: tokio::process::ChildStderr, path: PathBuf
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn resource_process_registration_tracks_session_and_clears_on_exit() {
+        let (handle, _, _session_guard) = super::new_handle_for_test(
+            "resource-process-test",
+            "resource-project",
+            "resource-task",
+            "resource-chat",
+        );
+        assert!(!super::resource_process_sessions()
+            .iter()
+            .any(|session| session.project == "resource-project"));
+        let process_guard = super::ResourceProcessGuard(handle.clone());
+        *handle.resource_process.lock().unwrap() = Some((987654, 123));
+        let sessions = super::resource_process_sessions();
+        let session = sessions
+            .iter()
+            .find(|session| session.project == "resource-project")
+            .unwrap();
+        assert_eq!(session.pid, 987654);
+        assert_eq!(session.spawned_at, 123);
+        assert_eq!(session.task, "resource-task");
+        assert_eq!(session.chat.as_deref(), Some("resource-chat"));
+        drop(process_guard);
+        assert!(!super::resource_process_sessions()
+            .iter()
+            .any(|session| session.project == "resource-project"));
+    }
+
     use super::*;
 
     struct ReadinessGroveDirGuard;
@@ -12000,6 +12080,52 @@ mod tests {
         .await
         .unwrap();
         assert!(!terminals.lock().unwrap().contains_key(&terminal_id));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminal_create_tags_host_spawned_tools_with_task_ownership() {
+        let key = format!("terminal-resource-owner-test-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        let terminals = Arc::new(Mutex::new(HashMap::new()));
+        let state = client_state_for_test(handle, Arc::clone(&terminals));
+        let created = handle_create_terminal(
+            &state,
+            acp::CreateTerminalRequest::new(
+                "session-test",
+                "printf '%s/%s' \"$GROVE_PROJECT_KEY\" \"$GROVE_TASK_ID\"",
+            ),
+        )
+        .await
+        .unwrap();
+        let terminal_id = created.terminal_id.to_string();
+        let mut exit_rx = terminals
+            .lock()
+            .unwrap()
+            .get(&terminal_id)
+            .unwrap()
+            .exit_tx
+            .subscribe();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            exit_rx.wait_for(|status| status.is_some()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let output = handle_terminal_output(
+            &state,
+            acp::TerminalOutputRequest::new("session-test", terminal_id.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.output, "project/task");
+        handle_release_terminal(
+            &state,
+            acp::ReleaseTerminalRequest::new("session-test", terminal_id),
+        )
+        .await
+        .unwrap();
     }
 
     #[cfg(unix)]

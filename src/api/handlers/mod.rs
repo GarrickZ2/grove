@@ -29,6 +29,7 @@ pub mod perf;
 pub mod plugins;
 pub mod projects;
 pub mod render;
+pub mod resource_monitor;
 pub mod skills;
 pub mod statistics;
 pub mod stats;

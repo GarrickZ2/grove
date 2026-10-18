@@ -12,6 +12,7 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -39,7 +40,7 @@ pub async fn ws_handler(ws: WebSocketUpgrade, Query(query): Query<TerminalQuery>
     let cols = query.cols.unwrap_or(80);
     let rows = query.rows.unwrap_or(24);
 
-    ws.on_upgrade(move |socket| handle_shell_terminal(socket, cwd, cols, rows))
+    ws.on_upgrade(move |socket| handle_shell_terminal(socket, cwd, cols, rows, HashMap::new()))
 }
 
 /// WebSocket upgrade handler for task terminal (tmux session)
@@ -77,7 +78,13 @@ pub async fn task_terminal_handler(
         // Direct mode: spawn a plain shell in the task's worktree (no multiplexer)
         state::ensure_task_active(&project_key, &task.id, &task.worktree_path);
 
-        Ok(ws.on_upgrade(move |socket| handle_shell_terminal(socket, working_dir, cols, rows)))
+        let env =
+            super::acp::build_grove_env(&project_key, &project.path, &project.name, &task, None);
+        Ok(
+            ws.on_upgrade(move |socket| {
+                handle_shell_terminal(socket, working_dir, cols, rows, env)
+            }),
+        )
     } else {
         // Multiplexer mode: use shared create_task_session
         let session_info = create_task_session(&project_key, &task, &project.path)
@@ -191,10 +198,20 @@ pub(crate) fn apply_terminal_env_defaults(cmd: &mut CommandBuilder) {
 }
 
 /// Handle the WebSocket connection for a simple shell terminal
-async fn handle_shell_terminal(socket: WebSocket, cwd: String, cols: u16, rows: u16) {
+async fn handle_shell_terminal(
+    socket: WebSocket,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+    env: HashMap<String, String>,
+) {
     let (shell, args) = pick_default_shell();
 
     let mut cmd = CommandBuilder::new(&shell);
+    // Direct task terminals need the same ownership tags as ACP/tmux tasks.
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
     for arg in &args {
         cmd.arg(arg);
     }

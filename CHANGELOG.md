@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.10] - 2026-10-18
+
+### Added
+
+- **Resource Monitor** — Inspect Grove-managed CPU, memory, and storage in Settings with interactive charts and drilldown. Track agents by session, roll up child processes, and include worktrees and grouped database files in storage usage.
+- **Native iOS client** — Connect to saved Grove servers with authenticated HTTP and WebSocket transport, and recover connections when returning to the foreground.
+- **Terminal authentication** — Sign in to supported agents from Grove and retry the connection after authentication.
+- **Session activity** — Show agent notices and context compaction in chat history, and inspect native subagent activity in a dedicated panel with supported interaction controls.
+- **Native plan operations** — Display structured agent plans and restore their updates from conversation history.
+
+### Improved
+
+- **ACP integration** — Upgrade to Rust SDK 3.4.0 and Schema 1.12.0, including stable elicitation, original tool names, and Codex terminal output extensions.
+- **Client system prompts** — Append Grove instructions through the native client system prompt capability when supported, while preserving the existing fallback.
+- **Work summaries** — Keep routine work collapsed while leaving notices and subagent activity visible in the conversation.
+- **Settings** — Use consistent icon backgrounds, distinct colors, and concise section descriptions.
+
+### Fixed
+
+- **Todo history** — Restore main-session Todos to the Todo panel without duplicating them in the chat transcript.
+- **Interrupted compaction** — Stop stale compaction indicators after cancellation or runtime exit while retaining summaries and preserving active work during reconnects.
+- **iOS connection recovery** — Keep the current server usable when an inactive server's local listener cannot recover.
+- **Agent configuration pickers** — Preserve the last loaded agent choices while refreshing the catalog.
+- **Code review diffs** — Surface diff failures and support comparison targets that only exist on the remote.
+- **Windows window and tray** — Preserve the desktop window and restore access from the tray.
+- **Studio replies** — Avoid creating output documents for conversational replies unless a deliverable is requested.
+
 ## [0.12.9] - 2026-10-13
 
 ### Added

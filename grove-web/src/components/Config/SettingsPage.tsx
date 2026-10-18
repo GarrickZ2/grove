@@ -34,6 +34,7 @@ import {
   ChevronRight,
   Clock,
   MonitorSmartphone,
+  Activity,
 } from "lucide-react";
 import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal, VSCodeIcon } from "../ui";
 import type { ComboboxOption } from "../ui";
@@ -71,6 +72,7 @@ import { formatShortcut } from "../AI/utils";
 import { useKeyboardScope } from "../../keyboard";
 import { loadChatHistoryPreferences, saveChatHistoryPreferences } from "../Tasks/TaskView/chatHistoryPreferences";
 import { LoginDevicesPanel } from "./LoginDevicesPanel";
+import { ResourceMonitor } from "./ResourceMonitor";
 
 // Keep the last successful snapshot across Settings navigation. Every mount
 // still refreshes it; background refreshes must not unmount an open picker.
@@ -116,8 +118,8 @@ function Section({
         className="w-full flex items-center gap-4 p-4 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-colors select-none"
       >
         <div
-          className="w-9 h-9 rounded-lg flex items-center justify-center"
-          style={{ backgroundColor: `${iconColor}15` }}
+          className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center"
+          style={{ backgroundColor: `color-mix(in srgb, ${iconColor} 10%, transparent)` }}
         >
           <Icon className="w-4 h-4" style={{ color: iconColor }} />
         </div>
@@ -243,6 +245,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     mcp: false,
     browserControl: false,
     shortcuts: false,
+    resources: false,
   });
 
   // Environment state
@@ -1436,22 +1439,16 @@ env_vars = [
         {/* Agent Section */}
         <Section
           id="chat"
-          title="Agent"
+          title="Agents"
           description={
             baseAgentsLoading
               ? "Loading…"
               : isChatAvailable
                 ? "Ready"
-                : "Need Setup"
+                : "Setup required"
           }
           icon={Bot}
-          iconColor={
-            baseAgentsLoading
-              ? "#a855f7"
-              : isChatAvailable
-                ? "#a855f7"
-                : "var(--color-warning)"
-          }
+          iconColor="#a855f7"
           isOpen={openSections.chat}
           onToggle={() => toggleSection("chat")}
         >
@@ -1629,18 +1626,12 @@ env_vars = [
           title="Terminal"
           description={
             baseAgentsLoading ? "Loading…"
-              : !isTerminalAvailable ? "Need Setup"
+              : !isTerminalAvailable ? "Setup required"
               : webTerminalMode === "direct" ? "Direct"
               : `${dependencyInfo[terminalMultiplexer]?.name || terminalMultiplexer}`
           }
           icon={Terminal}
-          iconColor={
-            baseAgentsLoading
-              ? "#0ea5e9"
-              : isTerminalAvailable
-                ? "#0ea5e9"
-                : "var(--color-warning)"
-          }
+          iconColor="#0ea5e9"
           isOpen={openSections.terminal}
           onToggle={() => toggleSection("terminal")}
         >
@@ -1813,9 +1804,9 @@ env_vars = [
         <Section
           id="browserControl"
           title="Browser Control"
-          description="AI browser automation with dynamic Chrome Companion extension"
+          description="Browser automation"
           icon={Globe}
-          iconColor="#10b981"
+          iconColor="#22a447"
           isOpen={openSections.browserControl}
           onToggle={() => toggleSection("browserControl")}
         >
@@ -1922,7 +1913,7 @@ env_vars = [
         <Section
           id="appearance"
           title="Appearance"
-          description={`Mode: ${mode === "auto" ? "Auto" : mode === "light" ? "Light" : "Dark"} | Theme: ${theme.name}`}
+          description={`${mode === "auto" ? "Auto" : mode === "light" ? "Light" : "Dark"} · ${theme.name}`}
           icon={Palette}
           iconColor="#ec4899"
           isOpen={openSections.appearance}
@@ -2119,7 +2110,7 @@ env_vars = [
         <Section
           id="devtools"
           title="General"
-          description="Default IDE and terminal application"
+          description="Default applications"
           icon={Wrench}
           iconColor="#64748b"
           isOpen={openSections.devtools}
@@ -2227,9 +2218,9 @@ env_vars = [
         <Section
           id="shortcuts"
           title="Keyboard Shortcuts"
-          description="Customize the binding, scope, and conditions for any command"
+          description="Key bindings"
           icon={Keyboard}
-          iconColor="#a855f7"
+          iconColor="#b38a13"
           isOpen={openSections.shortcuts}
           onToggle={() => toggleSection("shortcuts")}
         >
@@ -2240,7 +2231,7 @@ env_vars = [
         <Section
           id="autolink"
           title="AutoLink"
-          description={`${autoLinkPatterns.length} patterns configured`}
+          description={`${autoLinkPatterns.length} ${autoLinkPatterns.length === 1 ? "pattern" : "patterns"}`}
           icon={Link}
           iconColor="#6366f1"
           isOpen={openSections.autolink}
@@ -2366,9 +2357,9 @@ env_vars = [
             <Section
               id="layout"
               title="Terminal Layout"
-              description="Default pane layout for new tasks"
+              description="Default task layout"
               icon={LayoutGrid}
-              iconColor="var(--color-info)"
+              iconColor="#a67855"
               isOpen={openSections.layout}
               onToggle={() => toggleSection("layout")}
             >
@@ -2541,10 +2532,10 @@ env_vars = [
         {/* Hooks Section */}
         <Section
           id="hooks"
-          title="Notification"
-          description="ACP Chat notification settings"
+          title="Notifications"
+          description="Chat alerts and sounds"
           icon={Bell}
-          iconColor="var(--color-warning)"
+          iconColor="#f97316"
           isOpen={openSections.hooks}
           onToggle={() => toggleSection("hooks")}
         >
@@ -2684,10 +2675,10 @@ env_vars = [
         {/* Code Repo Indexing Section */}
         <Section
           id="indexing"
-          title="Code Repo Indexing"
-          description="Index source code so cmd+click navigates to definitions"
+          title="Code Indexing"
+          description="Code navigation"
           icon={Code}
-          iconColor="var(--color-info)"
+          iconColor="#3b82f6"
           isOpen={openSections.indexing ?? false}
           onToggle={() => toggleSection("indexing")}
         >
@@ -2802,9 +2793,9 @@ env_vars = [
         <Section
           id="mcp"
           title="MCP Server"
-          description="AI agent integration via MCP protocol"
+          description="Agent integration"
           icon={Plug}
-          iconColor="#14b8a6"
+          iconColor="#06a4b5"
           isOpen={openSections.mcp}
           onToggle={() => toggleSection("mcp")}
         >
@@ -2892,10 +2883,16 @@ env_vars = [
           </div>
         </Section>
 
-        <Section id="devices" title="Login devices" description="Trusted devices and active sign-ins"
-          icon={MonitorSmartphone} iconColor="var(--color-highlight)" isOpen={!!openSections.devices}
+        <Section id="devices" title="Login Devices" description="Devices and sign-ins"
+          icon={MonitorSmartphone} iconColor="#e05270" isOpen={!!openSections.devices}
           onToggle={() => setOpenSections(previous => ({ ...previous, devices: !previous.devices }))}>
           <LoginDevicesPanel />
+        </Section>
+
+        <Section id="resources" title="Resource Monitor" description="CPU, memory and storage"
+          icon={Activity} iconColor="#0d9488" isOpen={!!openSections.resources}
+          onToggle={() => toggleSection("resources")}>
+          <ResourceMonitor />
         </Section>
       </div>
 

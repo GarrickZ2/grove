@@ -133,6 +133,23 @@ pub fn create_api_router() -> Router {
             delete(handlers::keymap::remove_override),
         )
         .route("/keymap/disabled", put(handlers::keymap::set_disabled))
+        // On-demand resource monitoring, available in production builds.
+        .route(
+            "/resources/processes",
+            get(handlers::resource_monitor::processes::snapshot),
+        )
+        .route(
+            "/resources/storage",
+            get(handlers::resource_monitor::storage::status),
+        )
+        .route(
+            "/resources/storage/refresh",
+            post(handlers::resource_monitor::storage::refresh),
+        )
+        .route(
+            "/resources/storage/children",
+            get(handlers::resource_monitor::storage::children),
+        )
         // Environment API
         .route("/env/check", get(handlers::env::check_all))
         .route("/env/check/{name}", get(handlers::env::check_one))

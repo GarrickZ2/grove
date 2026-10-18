@@ -1,6 +1,6 @@
 [package]
 name = "grove-rs"
-version = "0.12.9"
+version = "0.12.10"
 edition = "2021"
 description = "A Kanban-style TUI for parallel AI coding. Manage Git worktrees as tasks, run multiple agents in isolated tmux sessions, get notified via hooks."
 license = "MIT"
@@ -44,9 +44,9 @@ path = "src/main.rs"
 [features]
 default = []
 gui = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-plugin-global-shortcut", "dep:tauri-build", "dep:rfd", "dep:tauri-plugin-updater", "dep:tauri-plugin-deep-link", "dep:tauri-plugin-drag"]
-# Enables /api/v1/perf/sysinfo (process RSS + CPU%) for the perf-build
-# frontend. Off by default — release ships without sysinfo dep or handler.
-perf-monitor = ["dep:sysinfo", "dep:tracing", "dep:tracing-subscriber"]
+# Enables developer-only tracing and the perf panel. Resource Monitor uses
+# sysinfo independently in normal builds, sampling only while requested.
+perf-monitor = ["dep:tracing", "dep:tracing-subscriber"]
 
 [dependencies]
 ratatui = "0.29"
@@ -122,7 +122,7 @@ tauri-plugin-updater = { version = "2", optional = true }
 tauri-plugin-deep-link = { version = "2.0.0-rc", optional = true }
 tauri-plugin-drag = { version = "2.1.1", optional = true }
 rfd = { version = "0.15", optional = true }
-sysinfo = { version = "0.32", optional = true }
+sysinfo = "0.32"
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["registry"] }
 rusqlite = { version = "0.34", features = ["bundled"] }

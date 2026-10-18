@@ -6,7 +6,8 @@
 //!
 //! Compiled in only when the `perf-monitor` cargo feature is on (gated
 //! at the `mod` declaration in `handlers/mod.rs`). Release builds omit
-//! the dep, the route, and any sampling overhead entirely.
+//! this route and its sampling overhead. The production Resource Monitor uses
+//! sysinfo separately and samples only when requested.
 
 use axum::Json;
 use once_cell::sync::Lazy;
