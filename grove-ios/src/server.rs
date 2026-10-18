@@ -74,6 +74,45 @@ struct LocalListener {
 }
 
 impl LocalListener {
+    async fn restart(&mut self, address: SocketAddr) -> Result<(), String> {
+        let mut last_error = String::new();
+        for attempt in 0..5 {
+            match tokio::net::TcpListener::bind(address).await {
+                Ok(listener) => {
+                    let (stop, _) = watch::channel(false);
+                    self.task = Some(spawn_listener(
+                        listener,
+                        self.state.clone(),
+                        stop.subscribe(),
+                    ));
+                    self.stop = stop;
+                    last_error.clear();
+                    break;
+                }
+                Err(error) => {
+                    last_error = error.to_string();
+                    crate::lifecycle::record("bind_retry", address.port());
+                    tokio::time::sleep(Duration::from_millis(100 * (attempt + 1))).await;
+                }
+            }
+        }
+        if !last_error.is_empty() {
+            return Err(format!("local port {}: {last_error}", address.port()));
+        }
+        // Probe the local listener independently of upstream connectivity/auth.
+        let response = reqwest::Client::new()
+            .get(format!("http://{address}/_grove/health"))
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .map_err(|error| format!("local port {}: {error}", address.port()))?;
+        if response.status() != StatusCode::NO_CONTENT {
+            return Err(format!("local port {} failed health check", address.port()));
+        }
+        crate::lifecycle::record("listener_ready", address.port());
+        Ok(())
+    }
+
     async fn stop(&mut self) {
         self.stop.send_replace(true);
         if let Some(mut task) = self.task.take() {
@@ -118,44 +157,25 @@ impl ClientTransport {
             crate::lifecycle::record("listeners_stopped", 0);
             return Ok(());
         }
+        let active_origin = self.manager.active_origin.read().unwrap().clone();
+        let active_origin = if active_origin.is_empty() {
+            format!("http://{}", self.address)
+        } else {
+            active_origin
+        };
+        let mut active_error = None;
         for (address, entry) in listeners.iter_mut() {
-            let mut last_error = String::new();
-            for attempt in 0..5 {
-                match tokio::net::TcpListener::bind(*address).await {
-                    Ok(listener) => {
-                        let (stop, _) = watch::channel(false);
-                        entry.task = Some(spawn_listener(
-                            listener,
-                            entry.state.clone(),
-                            stop.subscribe(),
-                        ));
-                        entry.stop = stop;
-                        last_error.clear();
-                        break;
-                    }
-                    Err(error) => {
-                        last_error = error.to_string();
-                        crate::lifecycle::record("bind_retry", address.port());
-                        tokio::time::sleep(Duration::from_millis(100 * (attempt + 1))).await;
-                    }
+            if let Err(error) = entry.restart(*address).await {
+                entry.stop().await;
+                crate::lifecycle::record("listener_recovery_failed", address.port());
+                if entry.state.origin == active_origin {
+                    active_error = Some(error);
                 }
             }
-            if !last_error.is_empty() {
-                return Err(format!("local port {}: {last_error}", address.port()));
-            }
-            // Probe the local listener, independently of upstream connectivity/auth.
-            let response = reqwest::Client::new()
-                .get(format!("http://{address}/_grove/health"))
-                .timeout(Duration::from_secs(2))
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            if response.status() != StatusCode::NO_CONTENT {
-                return Err(format!("local port {} failed health check", address.port()));
-            }
-            crate::lifecycle::record("listener_ready", address.port());
         }
-        Ok(())
+        // An old profile must not hold the current webview behind the global
+        // readiness gate. Still try every listener so it can recover on retry.
+        active_error.map_or(Ok(()), Err)
     }
     /// Reopen only a saved profile; deep links never authorize arbitrary hosts.
     pub async fn activity_target(&self, link: &Url) -> Option<Url> {
@@ -871,6 +891,64 @@ mod tests {
         );
         transport.set_foreground(false).await.unwrap();
         remote_task.abort();
+    }
+
+    #[tokio::test]
+    async fn inactive_listener_failure_does_not_block_active_profile_and_can_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let transport = start(dir.path().join("server.txt")).await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut state = transport
+            .manager
+            .listeners
+            .lock()
+            .await
+            .get(&transport.address)
+            .unwrap()
+            .state
+            .clone();
+        state.origin = format!("http://{address}");
+        serve_listener(listener, state).await;
+        // Select the second profile, so recovery must use active_origin rather
+        // than assuming that the launcher's transport.address is always active.
+        *transport.manager.active_origin.write().unwrap() = format!("http://{address}");
+        transport.set_foreground(false).await.unwrap();
+        let occupied = tokio::net::TcpListener::bind(transport.address)
+            .await
+            .unwrap();
+        transport.set_foreground(true).await.unwrap();
+        assert_eq!(
+            reqwest::get(format!("http://{address}/_grove/health"))
+                .await
+                .unwrap()
+                .status(),
+            204
+        );
+        drop(occupied);
+        transport.set_foreground(true).await.unwrap();
+        for recovered in [address, transport.address] {
+            assert_eq!(
+                reqwest::get(format!("http://{recovered}/_grove/health"))
+                    .await
+                    .unwrap()
+                    .status(),
+                204
+            );
+        }
+        // The same conflict must still fail if it belongs to the current page.
+        transport.set_foreground(false).await.unwrap();
+        let occupied = tokio::net::TcpListener::bind(address).await.unwrap();
+        assert!(transport.set_foreground(true).await.is_err());
+        drop(occupied);
+        assert_eq!(
+            reqwest::get(format!("http://{}/_grove/health", transport.address))
+                .await
+                .unwrap()
+                .status(),
+            204
+        );
+        transport.set_foreground(false).await.unwrap();
     }
 
     #[tokio::test]
