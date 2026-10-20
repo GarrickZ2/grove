@@ -19,6 +19,7 @@ pub struct ProcessNode {
     pub detail: String,
     pub cpu_percent: Option<f32>,
     pub memory_bytes: u64,
+    pub memory_unavailable_count: usize,
     pub children: Vec<ProcessNode>,
 }
 
@@ -28,8 +29,43 @@ pub struct ProcessSnapshot {
     pub logical_cpus: usize,
     pub cpu_percent: Option<f32>,
     pub memory_bytes: u64,
+    pub memory_unavailable_count: usize,
     pub process_count: usize,
+    pub memory_basis: MemoryBasis,
     pub groups: Vec<ProcessNode>,
+}
+
+// A process footprint is an OS charge, not the host's current physical RAM use.
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryBasis {
+    PhysicalFootprint,
+    RssSum,
+}
+
+fn memory_basis() -> MemoryBasis {
+    if cfg!(target_os = "macos") {
+        MemoryBasis::PhysicalFootprint
+    } else {
+        MemoryBasis::RssSum
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn process_memory(pid: u32, _rss: u64) -> Option<u64> {
+    let pid = i32::try_from(pid).ok()?;
+    let mut usage = std::mem::MaybeUninit::<libc::rusage_info_v0>::zeroed();
+    // SAFETY: V0 specifies this exact writable buffer layout. libproc writes
+    // it synchronously and the buffer is read only after a successful call.
+    let result =
+        unsafe { libc::proc_pid_rusage(pid, libc::RUSAGE_INFO_V0, usage.as_mut_ptr().cast()) };
+    // Never mix RSS into a footprint sum when a process exits or access fails.
+    (result == 0).then(|| unsafe { usage.assume_init() }.ri_phys_footprint)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_memory(_pid: u32, rss: u64) -> Option<u64> {
+    Some(rss)
 }
 
 #[derive(Default)]
@@ -49,7 +85,7 @@ struct Process {
     started: u64,
     name: String,
     cpu: f32,
-    memory: u64,
+    memory: Option<u64>,
     task: Owner,
     session: Option<SessionLabel>,
 }
@@ -201,12 +237,18 @@ fn group(id: String, name: String, kind: &'static str, detail: String) -> Proces
         detail,
         cpu_percent: None,
         memory_bytes: 0,
+        memory_unavailable_count: 0,
         children: vec![],
     }
 }
 
 fn totals(node: &mut ProcessNode, ready: bool) {
     node.memory_bytes = node.children.iter().map(|n| n.memory_bytes).sum();
+    node.memory_unavailable_count = node
+        .children
+        .iter()
+        .map(|n| n.memory_unavailable_count)
+        .sum();
     node.cpu_percent = ready.then(|| node.children.iter().filter_map(|n| n.cpu_percent).sum());
 }
 
@@ -269,7 +311,11 @@ fn rollup_processes(
             }
             (row, 0)
         });
-        row.memory_bytes = row.memory_bytes.saturating_add(process.memory);
+        if let Some(memory) = process.memory {
+            row.memory_bytes = row.memory_bytes.saturating_add(memory);
+        } else {
+            row.memory_unavailable_count += 1;
+        }
         if ready
             && previous.contains_key(&(process.pid, process.started))
             && process.cpu.is_finite()
@@ -337,7 +383,7 @@ fn sample() -> Result<ProcessSnapshot, StatusCode> {
         .into_iter()
         .map(|session| (session.pid, session))
         .collect();
-    let processes: Vec<_> = sampler
+    let mut processes: Vec<_> = sampler
         .system
         .processes()
         .iter()
@@ -364,13 +410,19 @@ fn sample() -> Result<ProcessSnapshot, StatusCode> {
                 started: p.start_time(),
                 name: p.name().to_string_lossy().into_owned(),
                 cpu: p.cpu_usage() / cpu_count as f32,
-                memory: p.memory(),
+                memory: Some(p.memory()),
                 task,
                 session,
             }
         })
         .collect();
     let attribution = owners(&processes, std::process::id(), &sampler.owners);
+    // Query only attributed processes; unrelated processes do not affect totals.
+    for process in &mut processes {
+        if attribution.contains_key(&process.pid) {
+            process.memory = process_memory(process.pid, process.memory.unwrap_or(0));
+        }
+    }
     let mut project_groups: HashMap<String, HashMap<String, Vec<ProcessNode>>> = HashMap::new();
     let mut shared = group(
         "shared".into(),
@@ -422,6 +474,8 @@ fn sample() -> Result<ProcessSnapshot, StatusCode> {
         cpu_percent: ready.then(|| groups.iter().filter_map(|g| g.cpu_percent).sum()),
         memory_bytes: groups.iter().map(|g| g.memory_bytes).sum(),
         process_count: attribution.len(),
+        memory_basis: memory_basis(),
+        memory_unavailable_count: groups.iter().map(|g| g.memory_unavailable_count).sum(),
         groups,
     };
     sampler.owners = processes
@@ -448,6 +502,58 @@ pub async fn snapshot() -> Result<Json<ProcessSnapshot>, StatusCode> {
 mod tests {
     use super::super::{Project, Task};
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_reads_footprint_and_never_substitutes_rss_on_failure() {
+        // A deliberately impossible RSS value must not contaminate the native charge.
+        let memory = process_memory(std::process::id(), u64::MAX).unwrap();
+        assert!(memory > 0 && memory < u64::MAX);
+        assert_eq!(process_memory(u32::MAX, 1234), None);
+        assert_eq!(process_memory(i32::MAX as u32, 1234), None);
+        assert_eq!(
+            serde_json::to_value(memory_basis()).unwrap(),
+            "physical_footprint"
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn other_platforms_explicitly_report_rss_sum() {
+        assert_eq!(process_memory(1, 1234), Some(1234));
+        assert_eq!(serde_json::to_value(memory_basis()).unwrap(), "rss_sum");
+    }
+
+    #[test]
+    fn memory_rollups_preserve_missing_samples_and_do_not_cap_at_host_ram() {
+        let owner = Some(("p".into(), "t".into()));
+        let mut processes = vec![
+            process(2, None, owner),
+            process(3, Some(2), None),
+            process(4, Some(3), None),
+            process(5, Some(2), None),
+            process(9, None, None), // unavailable unrelated process is excluded
+        ];
+        // Footprint can include compressed/swapped charges beyond installed RAM.
+        processes[0].memory = Some(40 * 1024_u64.pow(3));
+        processes[1].memory = Some(2 * 1024_u64.pow(3));
+        processes[2].memory = None;
+        processes[3].memory = Some(0); // a successful zero is not a read failure
+        processes[4].memory = None;
+        let attribution = owners(&processes, 1, &HashMap::new());
+        let rows = rollup_processes(&processes, &attribution, &HashMap::new(), false);
+        assert_eq!(rows.len(), 1);
+        let mut task = group("t".into(), "Task".into(), "task", String::new());
+        task.children = rows.into_iter().map(|(_, node)| node).collect();
+        totals(&mut task, false);
+        let mut project = group("p".into(), "Project".into(), "project", String::new());
+        project.children.push(task);
+        totals(&mut project, false);
+        assert_eq!(project.memory_bytes, 42 * 1024_u64.pow(3));
+        assert_eq!(project.memory_unavailable_count, 1);
+        assert_eq!(project.children[0].memory_unavailable_count, 1);
+        assert_eq!(project.children[0].children[0].memory_unavailable_count, 1);
+    }
 
     #[test]
     fn requires_a_known_project_and_task_for_environment_attribution() {
@@ -497,7 +603,7 @@ mod tests {
             started: 100,
             name: "agent".into(),
             cpu: 0.0,
-            memory: 0,
+            memory: Some(0),
             session: None,
         }
     }
@@ -581,7 +687,7 @@ mod tests {
         ];
         for process in &mut processes {
             process.cpu = process.pid as f32;
-            process.memory = u64::from(process.pid) * 100;
+            process.memory = Some(u64::from(process.pid) * 100);
         }
         processes.reverse(); // OS enumeration need not put parents first.
         let attribution = owners(&processes, 1, &HashMap::new());
@@ -630,7 +736,7 @@ mod tests {
             process(5, Some(4), task),
         ];
         for process in &mut processes {
-            process.memory = 100;
+            process.memory = Some(100);
         }
         let attribution = owners(&processes, 1, &HashMap::new());
         let rows: HashMap<_, _> =

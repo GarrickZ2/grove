@@ -81,9 +81,29 @@ fn now() -> i64 {
 }
 fn addons() -> Result<String, String> {
     let payload = json!({
+        // Declare the messaging set explicitly rather than inheriting the
+        // platform's default template (which can include unrelated scopes).
         "preset": false,
-        "scopes": { "tenant": ["im:message", "im:message:send_as_bot", "im:message.reactions:write_only", "cardkit:card:write"] },
-        "events": { "items": { "tenant": ["im.message.receive_v1"] } }
+        "scopes": { "tenant": [
+            // Reading/sending messages does not replace the receive-event scopes.
+            "im:message",
+            "im:message:readonly",
+            "im:message:send_as_bot",
+            "im:message:update",
+            "im:message.p2p_msg:readonly",
+            // Reserve explicit mentions only; the adapter still handles P2P.
+            "im:message.group_at_msg:readonly",
+            // Attachments, progress reactions, and conversation diagnostics.
+            "im:resource",
+            "im:message.reactions:read",
+            "im:message.reactions:write_only",
+            "im:chat:read",
+            "cardkit:card:read",
+            "cardkit:card:write"
+        ] },
+        "events": { "items": { "tenant": ["im.message.receive_v1"] } },
+        // Card creation permission alone does not subscribe button/form callbacks.
+        "callbacks": { "items": ["card.action.trigger"] }
     });
     let bytes = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -305,6 +325,84 @@ pub fn finish(id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
+
+    fn decoded_addons() -> serde_json::Value {
+        let encoded = addons().unwrap();
+        let compressed = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .unwrap();
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(compressed.as_slice())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn qr_registration_includes_message_delivery_media_and_card_interactions() {
+        // Verify the compressed payload actually sent in the QR URL. A valid
+        // token/WebSocket alone does not prove that incoming events can arrive.
+        let payload = decoded_addons();
+        let scopes = payload["scopes"]["tenant"].as_array().unwrap();
+        for scope in [
+            "im:message.p2p_msg:readonly",
+            "im:message.group_at_msg:readonly",
+            "im:message:readonly",
+            "im:message:send_as_bot",
+            "im:message:update",
+            "im:resource",
+            "im:message.reactions:read",
+            "im:message.reactions:write_only",
+            "im:chat:read",
+            "cardkit:card:read",
+            "cardkit:card:write",
+        ] {
+            assert!(scopes.contains(&json!(scope)), "missing scope: {scope}");
+        }
+        assert_eq!(
+            payload["events"]["items"]["tenant"],
+            json!(["im.message.receive_v1"])
+        );
+        assert_eq!(
+            payload["callbacks"]["items"],
+            json!(["card.action.trigger"])
+        );
+    }
+
+    #[test]
+    fn qr_registration_does_not_inherit_unreviewed_or_user_permissions() {
+        let payload = decoded_addons();
+        // Keep the template explicit: do not inherit unrelated default scopes.
+        assert_eq!(payload["preset"], false);
+        assert!(payload["scopes"]["user"]
+            .as_array()
+            .is_none_or(|scopes| scopes.is_empty()));
+        let scopes = payload["scopes"]["tenant"].as_array().unwrap();
+        let unique: std::collections::HashSet<_> =
+            scopes.iter().map(|scope| scope.as_str().unwrap()).collect();
+        assert_eq!(scopes.len(), unique.len());
+        for scope in unique {
+            assert!(
+                matches!(
+                    scope,
+                    "im:message"
+                        | "im:message:readonly"
+                        | "im:message:send_as_bot"
+                        | "im:message:update"
+                        | "im:message.p2p_msg:readonly"
+                        | "im:message.group_at_msg:readonly"
+                        | "im:message.reactions:read"
+                        | "im:message.reactions:write_only"
+                        | "im:resource"
+                        | "im:chat:read"
+                        | "cardkit:card:read"
+                        | "cardkit:card:write"
+                ),
+                "unexpected permission outside the reviewed messaging set: {scope}"
+            );
+        }
+    }
 
     #[test]
     fn authorized_credentials_have_one_finish_owner() {

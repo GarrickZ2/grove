@@ -7,6 +7,7 @@ export interface ProcessNode {
   detail: string;
   cpu_percent: number | null;
   memory_bytes: number;
+  memory_unavailable_count: number;
   children: ProcessNode[];
 }
 
@@ -15,7 +16,9 @@ export interface ProcessSnapshot {
   logical_cpus: number;
   cpu_percent: number | null;
   memory_bytes: number;
+  memory_unavailable_count: number;
   process_count: number;
+  memory_basis: 'physical_footprint' | 'rss_sum';
   groups: ProcessNode[];
 }
 

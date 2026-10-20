@@ -25,7 +25,7 @@ describe('Resource Monitor', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    vi.mocked(getResourceProcesses).mockResolvedValue({ sampled_at: '2026-10-18T00:00:00Z', logical_cpus: 8, cpu_percent: 12.5, memory_bytes: 1024 ** 3, process_count: 2, groups: [{ id: 'project:p', name: 'Example project', kind: 'project', detail: '', cpu_percent: 12.5, memory_bytes: 1024 ** 3, children: [{ id: 'task:p:t', name: 'Example task', kind: 'task', detail: '', cpu_percent: 12.5, memory_bytes: 1024 ** 3, children: [] }] }] });
+    vi.mocked(getResourceProcesses).mockResolvedValue({ sampled_at: '2026-10-18T00:00:00Z', logical_cpus: 8, memory_basis: 'physical_footprint' as const, cpu_percent: 12.5, memory_unavailable_count: 0, memory_bytes: 1024 ** 3, process_count: 2, groups: [{ id: 'project:p', name: 'Example project', kind: 'project', detail: '', cpu_percent: 12.5, memory_unavailable_count: 0, memory_bytes: 1024 ** 3, children: [{ id: 'task:p:t', name: 'Example task', kind: 'task', detail: '', cpu_percent: 12.5, memory_unavailable_count: 0, memory_bytes: 1024 ** 3, children: [] }] }] });
     vi.mocked(getResourceStorage).mockResolvedValue(snapshot());
     vi.mocked(refreshResourceStorage).mockResolvedValue({ ...snapshot(), scanning: true });
     vi.mocked(getStorageChildren).mockImplementation(async (_scan, id) => {
@@ -51,13 +51,53 @@ describe('Resource Monitor', () => {
   }
   async function click(label: string) { await act(async () => button(label).click()); }
 
+  it('labels macOS footprint and explains why it is not installed RAM usage', async () => {
+    const sample = await vi.mocked(getResourceProcesses)();
+    vi.mocked(getResourceProcesses).mockResolvedValue({ ...sample, memory_bytes: 40 * 1024 ** 3 });
+    await render();
+    const card = [...container.querySelectorAll('button[aria-pressed]')].find(button => button.textContent?.startsWith('Memory footprint'))!;
+    expect(card.textContent).toContain('40 GiB');
+    expect(card.textContent).toContain('includes compressed / swapped');
+    await act(async () => (card as HTMLButtonElement).click());
+    expect(container.textContent).toContain('not current physical RAM usage');
+    expect(container.textContent).toContain('may exceed installed RAM');
+    expect(container.textContent).not.toContain('Resident memory');
+  });
+
+  it('labels RSS explicitly on other platforms', async () => {
+    const sample = await vi.mocked(getResourceProcesses)();
+    vi.mocked(getResourceProcesses).mockResolvedValue({ ...sample, memory_basis: 'rss_sum' });
+    await render();
+    const card = [...container.querySelectorAll('button[aria-pressed]')].find(button => button.textContent?.startsWith('Memory (RSS sum)'))!;
+    expect(card.textContent).toContain('Shared pages may be counted repeatedly');
+    await act(async () => (card as HTMLButtonElement).click());
+    expect(container.textContent).toContain('not host RAM usage');
+  });
+
+  it('marks incomplete footprint totals and unavailable rows instead of displaying zero', async () => {
+    const sample = await vi.mocked(getResourceProcesses)();
+    const missing: ProcessNode = { id: 'missing', name: 'Unreadable agent', kind: 'process', detail: 'PID 999', cpu_percent: 0, memory_bytes: 0, memory_unavailable_count: 1, children: [] };
+    vi.mocked(getResourceProcesses).mockResolvedValue({ ...sample, memory_unavailable_count: 1, groups: [...sample.groups, missing] });
+    await render();
+    const card = [...container.querySelectorAll('button[aria-pressed]')].find(button => button.textContent?.startsWith('Memory footprint'))!;
+    expect(card.textContent).toContain('1 GiB (partial)');
+    await act(async () => (card as HTMLButtonElement).click());
+    expect(container.textContent).toContain('Memory unavailable for 1 process;');
+    expect(button('Expand Unreadable agent').parentElement?.textContent).toContain('Unavailable');
+    vi.mocked(getResourceProcesses).mockResolvedValue({ ...sample, memory_bytes: 0, memory_unavailable_count: 1, groups: [missing] });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(card.textContent).toContain('Unavailable');
+    expect(card.textContent).not.toContain('0 B');
+    expect(button('Expand Unreadable agent').parentElement?.textContent).toContain('Share unavailable');
+  });
+
   it('updates every ten seconds without reordering rows or chart segments until explicitly sorted', async () => {
-    const agent = (id: string, value: number): ProcessNode => ({ id, name: 'Codex', kind: 'process', detail: `Session ${id} · PID ${id}`, cpu_percent: value, memory_bytes: value * 1024, children: [] });
-    const sample = (a: number, b: number, shared: number) => ({ sampled_at: `${a}-${b}`, logical_cpus: 8, cpu_percent: a + b + shared, memory_bytes: (a + b + shared) * 1024, process_count: 3, groups: [
-      { id: 'project:p', name: 'Project', kind: 'project' as const, detail: '', cpu_percent: a + b, memory_bytes: (a + b) * 1024, children: [
-        { id: 'task:t', name: 'Task', kind: 'task' as const, detail: '', cpu_percent: a + b, memory_bytes: (a + b) * 1024, children: [agent('a', a), agent('b', b)] },
+    const agent = (id: string, value: number): ProcessNode => ({ id, name: 'Codex', kind: 'process', detail: `Session ${id} · PID ${id}`, cpu_percent: value, memory_unavailable_count: 0, memory_bytes: value * 1024, children: [] });
+    const sample = (a: number, b: number, shared: number) => ({ sampled_at: `${a}-${b}`, logical_cpus: 8, memory_basis: 'physical_footprint' as const, cpu_percent: a + b + shared, memory_unavailable_count: 0, memory_bytes: (a + b + shared) * 1024, process_count: 3, groups: [
+      { id: 'project:p', name: 'Project', kind: 'project' as const, detail: '', cpu_percent: a + b, memory_unavailable_count: 0, memory_bytes: (a + b) * 1024, children: [
+        { id: 'task:t', name: 'Task', kind: 'task' as const, detail: '', cpu_percent: a + b, memory_unavailable_count: 0, memory_bytes: (a + b) * 1024, children: [agent('a', a), agent('b', b)] },
       ] },
-      { id: 'shared', name: 'Grove runtime', kind: 'shared' as const, detail: '', cpu_percent: shared, memory_bytes: shared * 1024, children: [] },
+      { id: 'shared', name: 'Grove runtime', kind: 'shared' as const, detail: '', cpu_percent: shared, memory_unavailable_count: 0, memory_bytes: shared * 1024, children: [] },
     ] });
     vi.mocked(getResourceProcesses).mockResolvedValue(sample(9, 1, 1));
     await render();

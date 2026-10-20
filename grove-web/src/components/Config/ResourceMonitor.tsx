@@ -5,7 +5,7 @@ import { useTheme } from '../../context';
 import { getResourceProcesses, getResourceStorage, getStorageChildren, refreshResourceStorage, type ProcessNode, type ProcessSnapshot, type StorageNode, type StoragePage, type StorageStatus } from '../../api/resourceMonitor';
 
 type Metric = 'cpu' | 'memory' | 'storage';
-type Sample = { at: string; cpu: number | null; memory: number };
+type Sample = { at: string; cpu: number | null; memory: number | null };
 const muted = 'text-[var(--color-text-muted)]';
 const surface = 'rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]';
 const control = 'rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors';
@@ -14,6 +14,13 @@ function bytes(value: number): string {
   if (value === 0) return '0 B';
   const unit = Math.min(Math.floor(Math.log(value) / Math.log(1024)), 4);
   return `${(value / 1024 ** unit).toLocaleString(undefined, { maximumFractionDigits: unit === 0 ? 0 : 1 })} ${['B', 'KiB', 'MiB', 'GiB', 'TiB'][unit]}`;
+}
+
+function memoryValue(value: number, unavailable = 0): string {
+  return unavailable ? value > 0 ? `${bytes(value)} (partial)` : 'Unavailable' : bytes(value);
+}
+function memoryLabel(processes: ProcessSnapshot | null): string {
+  return processes?.memory_basis === 'physical_footprint' ? 'Memory footprint' : 'Memory (RSS sum)';
 }
 
 function percent(value: number): string { return `${value.toFixed(1)}%`; }
@@ -72,7 +79,7 @@ function MetricCard({ active, onClick, label, value, subtitle, icon, children }:
 }
 
 function UsageRow({ name, detail, kind, value, share, color, depth, expandable, expanded, onToggle, onDrill, note }: {
-  name: string; detail: string; kind: string; value: string; share: number; color: string; depth: number; expandable: boolean; expanded: boolean; onToggle: () => void; onDrill?: () => void; note?: string;
+  name: string; detail: string; kind: string; value: string; share: number | null; color: string; depth: number; expandable: boolean; expanded: boolean; onToggle: () => void; onDrill?: () => void; note?: string;
 }) {
   const Icon = kind === 'process' ? Activity : kind === 'file' || kind === 'symlink' ? File : kind === 'shared' || kind === 'database' ? Database : kind === 'task' ? Layers : Folder;
   return <div className="group flex min-w-0 items-center gap-2 border-b border-[var(--color-border)]/60 py-2.5 pr-3 hover:bg-[var(--color-bg-secondary)]" style={{ paddingLeft: 8 + Math.min(depth, 8) * 16 }}>
@@ -81,8 +88,8 @@ function UsageRow({ name, detail, kind, value, share, color, depth, expandable, 
       <Icon size={15} className="shrink-0" style={{ color }} />
       <span className="min-w-0"><span className="block truncate text-xs font-medium" title={name}>{name}</span><span className={`block truncate text-[10px] ${muted}`} title={detail}>{note || detail || kind}</span></span>
     </button>
-    <div className="w-20 shrink-0 text-right sm:w-28"><div className="text-xs font-medium tabular-nums">{value}</div><div className={`text-[10px] tabular-nums ${muted}`}>{percent(share)} of total</div></div>
-    <div className="hidden h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-[var(--color-border)] sm:block"><div className="h-full rounded-full transition-[width]" style={{ width: `${Math.min(100, share)}%`, backgroundColor: color }} /></div>
+    <div className="w-20 shrink-0 text-right sm:w-28"><div className="text-xs font-medium tabular-nums">{value}</div><div className={`text-[10px] tabular-nums ${muted}`}>{share === null ? 'Share unavailable' : `${percent(share)} of total`}</div></div>
+    <div className="hidden h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-[var(--color-border)] sm:block"><div className="h-full rounded-full transition-[width]" style={{ width: `${Math.min(100, share ?? 0)}%`, backgroundColor: color }} /></div>
   </div>;
 }
 
@@ -92,7 +99,7 @@ function ProcessBranch({ node, metric, total, color, depth, query, onDrill }: { 
   const value = valueOf(node, metric);
   const children = node.children;
   return <>
-    <UsageRow name={node.name} detail={node.detail} kind={node.kind} value={metric === 'cpu' ? node.cpu_percent === null ? 'Sampling…' : percent(value) : bytes(value)} share={total > 0 ? value / total * 100 : 0} color={color} depth={depth} expandable={children.length > 0} expanded={expanded} onToggle={() => setExpanded(!expanded)} onDrill={() => { if (children.length) onDrill([node]); }} />
+    <UsageRow name={node.name} detail={node.detail} kind={node.kind} value={metric === 'cpu' ? node.cpu_percent === null ? 'Sampling…' : percent(value) : memoryValue(value, node.memory_unavailable_count)} share={metric === 'memory' && node.memory_unavailable_count > 0 && value === 0 ? null : total > 0 ? value / total * 100 : 0} color={color} depth={depth} expandable={children.length > 0} expanded={expanded} onToggle={() => setExpanded(!expanded)} onDrill={() => { if (children.length) onDrill([node]); }} />
     {expanded && children.map(child => <ProcessBranch key={child.id} node={child} metric={metric} total={total} color={color} depth={depth + 1} query={query} onDrill={nodes => onDrill([node, ...nodes])} />)}
   </>;
 }
@@ -245,12 +252,12 @@ function ResourceExplorer({ metric, processes, storage, palette, refreshing, onR
   const detailTotal = detailScope?.value ?? total;
   const detailTrail = selection?.hasChildren ? [...trail, selection] : trail;
   const details = selection?.process ? selection.process.children.length ? selection.process.children : [selection.process] : processNodes;
-  const format = metric === 'cpu' ? percent : bytes;
+  const format = (value: number, unavailable = 0) => metric === 'cpu' ? percent(value) : metric === 'memory' ? memoryValue(value, unavailable) : bytes(value);
   const top = groups.slice(0, 5);
   // The directory endpoint is paginated. The remainder includes children that
   // haven't been fetched, so the ring still accounts for the entire scope.
   const rest = Math.max(0, total - top.reduce((sum, group) => sum + group.value, 0));
-  const chart = rest > 0 ? [...top, { key: 'other', name: 'Other groups', value: rest, color: 'var(--color-text-muted)', hasChildren: false }] : top;
+  const chart = rest > 0 ? [...top, { key: 'other', name: 'Other groups', value: rest, color: 'var(--color-text-muted)', hasChildren: false, process: undefined }] : top;
   const arcs = chart.map((group, index) => ({ ...group,
     offset: total ? chart.slice(0, index).reduce((sum, previous) => sum + previous.value, 0) / total * 100 : 0,
     share: total ? group.value / total * 100 : 0,
@@ -291,13 +298,13 @@ function ResourceExplorer({ metric, processes, storage, palette, refreshing, onR
                     onClick={() => { if (group.key !== 'other') select(group.key); }} onDoubleClick={() => enter(group)}
                     onKeyDown={event => { if (event.key === 'Escape') setHovered(null); if (group.key !== 'other' && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); if (event.key === 'Enter' && event.shiftKey) enter(group); else select(group.key); } }} />)}
                 </svg>
-                <div className="pointer-events-none absolute inset-4 flex flex-col items-center justify-center"><span className={`max-w-full truncate px-1 text-[10px] ${muted}`} title={scopeName}>{scopeName}</span><span className="mt-1 text-lg font-semibold tabular-nums">{format(total)}</span></div>
+                <div className="pointer-events-none absolute inset-4 flex flex-col items-center justify-center"><span className={`max-w-full truncate px-1 text-[10px] ${muted}`} title={scopeName}>{scopeName}</span><span className="mt-1 text-lg font-semibold tabular-nums">{format(total, scope?.process?.memory_unavailable_count ?? processes?.memory_unavailable_count)}</span></div>
               </div>
               <p className={`max-w-36 text-xs sm:mt-3 sm:text-center ${muted}`}>{largest && total > 0 ? <><span className="font-medium text-[var(--color-text)]">{largest.name}</span> leads at {percent(largest.value / total * 100)}</> : 'No measurable usage in this sample'}</p>
             </div>
             <div className="min-w-0 flex-1 space-y-1">{chart.map(group => <div key={group.key} className={`flex items-center rounded-lg ${selection?.key === group.key ? 'bg-[var(--color-bg-tertiary)]' : ''}`}>
               <button type="button" aria-label={`Select ${group.name}`} disabled={group.key === 'other'} aria-pressed={selection?.key === group.key} onClick={() => select(group.key)} onDoubleClick={() => enter(group)} className="flex min-w-0 flex-1 select-none items-center gap-2 rounded-lg p-2 text-left transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:cursor-default">
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: group.color }} /><span className="min-w-0 flex-1 truncate text-xs" title={group.name}>{group.name}</span><span className="text-xs font-medium tabular-nums">{format(group.value)}</span><span className={`w-12 text-right text-[10px] tabular-nums ${muted}`}>{percent(total > 0 ? group.value / total * 100 : 0)}</span>
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: group.color }} /><span className="min-w-0 flex-1 truncate text-xs" title={group.name}>{group.name}</span><span className="text-xs font-medium tabular-nums">{format(group.value, group.process?.memory_unavailable_count)}</span><span className={`w-12 text-right text-[10px] tabular-nums ${muted}`}>{metric === 'memory' && group.process?.memory_unavailable_count && group.value === 0 ? '—' : percent(total > 0 ? group.value / total * 100 : 0)}</span>
               </button>
               {group.hasChildren ? <button type="button" aria-label={`Explore ${group.name}`} title={`Explore ${group.name}`} onClick={() => enter(group)} className="rounded-lg p-2 hover:bg-[var(--color-bg-tertiary)]"><ChevronRight size={14} /></button> : <span className="w-[30px]" />}
             </div>)}</div>
@@ -306,7 +313,7 @@ function ResourceExplorer({ metric, processes, storage, palette, refreshing, onR
 
     {!loading && hovered && hoveredGroup && <ChartTooltip id={tooltipId} x={hovered.x} y={hovered.y}>
       <div className="flex items-start gap-2"><span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: hoveredGroup.color }} /><span className="break-words font-medium">{hoveredGroup.name}</span></div>
-      <div className="mt-3 flex items-baseline justify-between gap-3"><span className={muted}>{metric === 'cpu' ? 'CPU' : metric === 'memory' ? 'Memory' : 'Storage'}</span><span className="text-sm font-semibold tabular-nums">{format(hoveredGroup.value)}</span></div>
+      <div className="mt-3 flex items-baseline justify-between gap-3"><span className={muted}>{metric === 'cpu' ? 'CPU' : metric === 'memory' ? memoryLabel(processes) : 'Storage'}</span><span className="text-sm font-semibold tabular-nums">{format(hoveredGroup.value, hoveredGroup.process?.memory_unavailable_count)}</span></div>
       {'process' in hoveredGroup && hoveredGroup.process?.detail && <p className={`mt-2 break-words ${muted}`}>{hoveredGroup.process.detail}</p>}
       <div className={`mt-1 flex justify-between gap-3 ${muted}`}><span className="min-w-0 break-words">Share of {scopeName}</span><span className="shrink-0 tabular-nums">{percent(hoveredGroup.share)}</span></div>
     </ChartTooltip>}
@@ -351,7 +358,7 @@ export function ResourceMonitor() {
           const data = await getResourceProcesses(controller.signal);
           if (controller.signal.aborted) return;
           setProcesses(data); setProcessError(null);
-          setSamples(previous => previous.at(-1)?.at === data.sampled_at ? previous : [...previous.slice(-59), { at: data.sampled_at, cpu: data.cpu_percent, memory: data.memory_bytes }]);
+          setSamples(previous => previous.at(-1)?.at === data.sampled_at ? previous : [...previous.slice(-59), { at: data.sampled_at, cpu: data.cpu_percent, memory: data.memory_unavailable_count ? null : data.memory_bytes }]);
         }
       } catch (error) { if (!controller.signal.aborted) setProcessError(message(error)); }
       if (!controller.signal.aborted) processTimer = setTimeout(pollProcesses, 10000);
@@ -390,7 +397,7 @@ export function ResourceMonitor() {
     </div>
     <div className="grid grid-cols-3 gap-2 sm:gap-3">
       <MetricCard active={metric === 'cpu'} onClick={() => chooseMetric('cpu')} label="CPU" icon={<Cpu size={15} />} value={processes?.cpu_percent == null ? '—' : percent(processes.cpu_percent)} subtitle={processes?.cpu_percent == null ? 'Collecting samples' : `Across ${processes.logical_cpus} logical cores`}><Sparkline values={samples.flatMap(s => s.cpu === null ? [] : [s.cpu])} color="var(--color-highlight)" /></MetricCard>
-      <MetricCard active={metric === 'memory'} onClick={() => chooseMetric('memory')} label="Memory" icon={<MemoryStick size={15} />} value={processes ? bytes(processes.memory_bytes) : '—'} subtitle="Resident memory · RSS"><Sparkline values={samples.map(s => s.memory)} color="var(--color-info)" /></MetricCard>
+      <MetricCard active={metric === 'memory'} onClick={() => chooseMetric('memory')} label={processes ? memoryLabel(processes) : 'Memory'} icon={<MemoryStick size={15} />} value={processes ? memoryValue(processes.memory_bytes, processes.memory_unavailable_count) : '—'} subtitle={processes?.memory_basis === 'physical_footprint' ? 'Process charges · includes compressed / swapped' : 'Shared pages may be counted repeatedly'}><Sparkline values={samples.flatMap(s => s.memory === null ? [] : [s.memory])} color="var(--color-info)" /></MetricCard>
       <MetricCard active={metric === 'storage'} onClick={() => chooseMetric('storage')} label="Storage" icon={<HardDrive size={15} />} value={storage?.root ? bytes(storage.root.bytes) : '—'} subtitle={storage?.scanning ? 'Scanning .grove…' : 'All files in .grove'}><div className="mt-3 flex h-9 items-center"><div className="flex h-2 w-full overflow-hidden rounded-full bg-[var(--color-border)]">{storage?.groups.map(g => <span key={g.id} style={{ width: `${storage.root?.bytes ? g.bytes / storage.root.bytes * 100 : 0}%`, backgroundColor: groupColor(storageKey(g), palette) }} />)}</div></div></MetricCard>
     </div>
 
@@ -398,6 +405,6 @@ export function ResourceMonitor() {
 
     <ResourceExplorer key={metric} metric={metric} processes={processes} storage={storage} palette={palette}
       refreshing={refreshing} onRefresh={() => void refreshStorage()} processError={processError} storageError={storageError} />
-    <p className={`text-[10px] leading-relaxed ${muted}`}>{metric === 'storage' ? <>{storage?.scanned_at ? `Scanned ${new Date(storage.scanned_at).toLocaleString()}. ` : ''}{storage?.root?.files.toLocaleString() ?? 'All'} file entries · {storage?.size_basis === 'allocated' ? 'Allocated file bytes' : 'Logical file sizes'} · worktrees included. Hard links count once; symbolic-link targets and original repositories outside .grove are excluded. Filesystem metadata and shared copy-on-write blocks may differ from disk free space.{!!storage?.read_errors && ` ${storage.read_errors} entries could not be read; totals are partial.`}</> : <>Local Grove runtime, recognized task processes and their descendants. CPU is a share of the host’s total capacity; new processes need two samples. Memory sums RSS, so shared pages can appear in multiple processes. Remote agents and processes the OS cannot attribute are unavailable.{processes && ` Sampled ${new Date(processes.sampled_at).toLocaleTimeString()}.`}</>}</p>
+    <p className={`text-[10px] leading-relaxed ${muted}`}>{metric === 'storage' ? <>{storage?.scanned_at ? `Scanned ${new Date(storage.scanned_at).toLocaleString()}. ` : ''}{storage?.root?.files.toLocaleString() ?? 'All'} file entries · {storage?.size_basis === 'allocated' ? 'Allocated file bytes' : 'Logical file sizes'} · worktrees included. Hard links count once; symbolic-link targets and original repositories outside .grove are excluded. Filesystem metadata and shared copy-on-write blocks may differ from disk free space.{!!storage?.read_errors && ` ${storage.read_errors} entries could not be read; totals are partial.`}</> : <>Local Grove runtime, recognized task processes and their descendants. CPU is a share of the host’s total capacity; new processes need two samples. {processes?.memory_basis === 'physical_footprint' ? 'Memory footprint sums macOS process charges, including compressed and swapped memory; it is not current physical RAM usage and may exceed installed RAM.' : 'Memory is a sum of process RSS, not host RAM usage. Shared pages can be counted repeatedly, so the sum may exceed installed RAM.'}{!!processes?.memory_unavailable_count && ` Memory unavailable for ${processes.memory_unavailable_count} ${processes.memory_unavailable_count === 1 ? 'process' : 'processes'}; totals and shares include measured processes only.`} Remote agents and processes the OS cannot attribute are unavailable.{processes && ` Sampled ${new Date(processes.sampled_at).toLocaleTimeString()}.`}</>}</p>
   </div>;
 }
