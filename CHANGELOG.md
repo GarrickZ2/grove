@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.11] - 2026-10-21
+
+### Added
+
+- **Task mentions** — Mention active tasks directly from Coding and Studio projects, with task names and icons in the composer.
+
+### Improved
+
+- **Idle agent runtimes** — Reclaim idle agent processes when their sessions can be restored safely, and reconnect on demand while protecting active work and pending interactions.
+
+### Fixed
+
+- **Project mention picker** — Refresh project choices while keeping cached results available, keep the project root selectable during loading, and prevent loading rows from being selected.
+- **Mobile request authentication** — Sign the serialized URL so tasks with Chinese names and other encoded paths work with trusted-device and passkey connections.
+- **Recent chat history** — Keep Memory, Todo, plans, and subagent activity within the selected turns; avoid stale subagent cards on reconnect while retaining active work and pending interactions.
+- **Resource Monitor memory** — Use process footprint on macOS, identify each platform's memory measurement, and indicate incomplete readings.
+- **Feishu QR connections** — Request the messaging permissions and card interaction subscriptions needed during QR authorization.
+
 ## [0.12.10] - 2026-10-18
 
 ### Added

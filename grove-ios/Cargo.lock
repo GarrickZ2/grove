@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "grove-ios"
-version = "0.12.10"
+version = "0.12.11"
 dependencies = [
  "axum",
  "futures-util",
