@@ -227,7 +227,11 @@ async function signRequest(
   const deviceId = sessionStorage.getItem(DEVICE_SIGNING_KEY) ? getDeviceId() : null;
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const nonce = generateNonce();
-  const canonical = canonicalPath(path);
+  // Match fetch's URL serialization before signing: Unicode and spaces are
+  // percent-encoded on the wire, while existing escapes remain unchanged.
+  // Keep query bytes intact (URLSearchParams would re-encode them).
+  const url = new URL(path, window.location.origin);
+  const canonical = canonicalPath(url.pathname + url.search);
   const message = `${timestamp}|${nonce}|${method}|${canonical}`;
   const signature = await hmacSha256Hex(sk, message);
   if (!signature) return null;

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
+import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiClient, clearSecretKey, setSecretKey } from "./client";
+import { apiClient, appendHmacToUrl, clearSecretKey, setDeviceSession, setSecretKey } from "./client";
 
 describe("ApiClient JSON responses", () => {
   afterEach(() => {
@@ -70,5 +71,102 @@ describe("ApiClient JSON responses", () => {
         cache: "no-store",
       }),
     );
+  });
+});
+
+describe("request signatures match transmitted URLs", () => {
+  const key = "b".repeat(64);
+  const deviceId = "a".repeat(64);
+  const encodedTask = encodeURIComponent("智能化建设");
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    sessionStorage.clear();
+  });
+
+  function signature(timestamp: string, nonce: string, method: string, path: string) {
+    // Independent HMAC implementation; do not reuse the client's canonicalizer.
+    return createHmac("sha256", key).update(`${timestamp}|${nonce}|${method}|${path}`).digest("hex");
+  }
+
+  const cases: { name: string; path: string; wirePath: string; canonical?: string }[] = [
+    ...["linked-projects", "commits", "diff", "stats"].map(endpoint => ({
+      name: `Chinese task ${endpoint}`,
+      path: `/api/v1/projects/demo/tasks/智能化建设/${endpoint}`,
+      wirePath: `/api/v1/projects/demo/tasks/${encodedTask}/${endpoint}`,
+    })),
+    {
+      name: "English task",
+      path: "/api/v1/projects/demo/tasks/knowledge-base/linked-projects",
+      wirePath: "/api/v1/projects/demo/tasks/knowledge-base/linked-projects",
+    },
+    {
+      name: "already encoded task",
+      path: `/api/v1/projects/demo/tasks/${encodedTask}/linked-projects`,
+      wirePath: `/api/v1/projects/demo/tasks/${encodedTask}/linked-projects`,
+    },
+    {
+      name: "Chinese query with spaces and existing escapes",
+      path: "/api/v1/search?z=智能 建设&a=%2Fdocs%2f&z=ok",
+      wirePath: `/api/v1/search?z=${encodeURIComponent("智能 建设")}&a=%2Fdocs%2f&z=ok`,
+      canonical: `/api/v1/search?a=%2Fdocs%2f&z=${encodeURIComponent("智能 建设")}&z=ok`,
+    },
+  ];
+
+  describe.each(["device", "master"] as const)("%s credentials", credential => {
+    it.each(cases)("signs $name using the transmitted path", async ({ path, wirePath, canonical }) => {
+      if (credential === "device") setDeviceSession(deviceId, key);
+      else setSecretKey(key);
+      const fetchMock = vi.fn().mockResolvedValue(new Response("{}", {
+        headers: { "content-type": "application/json" },
+      }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await apiClient.get(path);
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const transmitted = new URL(url, window.location.origin);
+      expect(transmitted.pathname + transmitted.search).toBe(wirePath);
+      const headers = new Headers(init.headers);
+      expect(headers.get("X-Device-Id")).toBe(credential === "device" ? deviceId : null);
+      expect(headers.get("X-Signature")).toBe(signature(
+        headers.get("X-Timestamp")!, headers.get("X-Nonce")!, init.method!, canonical ?? wirePath,
+      ));
+    });
+
+    it("preserves WebSocket signatures for Chinese paths and query parameters", async () => {
+      if (credential === "device") setDeviceSession(deviceId, key);
+      else setSecretKey(key);
+      const url = new URL(await appendHmacToUrl(
+        "ws://localhost/api/v1/projects/demo/tasks/智能化建设/ws?session_id=中文 会话",
+      ));
+      const query = credential === "device"
+        ? `device_id=${deviceId}&session_id=${encodeURIComponent("中文")}+${encodeURIComponent("会话")}`
+        : `session_id=${encodeURIComponent("中文 会话")}`;
+      expect(url.pathname).toBe(`/api/v1/projects/demo/tasks/${encodedTask}/ws`);
+      expect(url.searchParams.get("device_id")).toBe(credential === "device" ? deviceId : null);
+      expect(url.searchParams.get("sig")).toBe(signature(
+        url.searchParams.get("ts")!, url.searchParams.get("nonce")!, "GET", `${url.pathname}?${query}`,
+      ));
+    });
+  });
+
+  it("signs FormData uploads through the auth-only header path", async () => {
+    setDeviceSession(deviceId, key);
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", {
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiClient.postFormData("/api/v1/projects/demo/tasks/智能化建设/upload", new FormData());
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const transmitted = new URL(url, window.location.origin);
+    const headers = new Headers(init.headers);
+    expect(headers.has("Content-Type")).toBe(false);
+    expect(headers.get("X-Device-Id")).toBe(deviceId);
+    expect(headers.get("X-Signature")).toBe(signature(
+      headers.get("X-Timestamp")!, headers.get("X-Nonce")!, "POST", transmitted.pathname,
+    ));
   });
 });
