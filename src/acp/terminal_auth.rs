@@ -21,7 +21,7 @@ pub(crate) struct TerminalAuthLaunch {
 #[derive(Default)]
 pub(super) struct TerminalAuthState {
     pub launch: Option<TerminalAuthLaunch>,
-    active: Option<String>,
+    pub(super) active: Option<String>,
     pub reconnecting: bool,
 }
 
@@ -31,6 +31,7 @@ pub(crate) struct TerminalAuthAttempt {
     handle: Arc<AcpSessionHandle>,
     id: String,
     pub launch: TerminalAuthLaunch,
+    _activity: ActivityGuard,
 }
 
 impl TerminalAuthAttempt {
@@ -85,6 +86,7 @@ impl AcpSessionHandle {
         self: &Arc<Self>,
         method_id: &str,
     ) -> std::result::Result<TerminalAuthAttempt, String> {
+        let activity = self.begin_activity().map_err(|error| error.to_string())?;
         let method = self
             .auth_methods
             .lock()
@@ -121,6 +123,7 @@ impl AcpSessionHandle {
             handle: self.clone(),
             id,
             launch,
+            _activity: activity,
         })
     }
 

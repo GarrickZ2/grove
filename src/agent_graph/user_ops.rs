@@ -287,7 +287,7 @@ pub async fn user_send_message(
     // running, start it synchronously and wait for SessionReady. Without
     // this, user-side direct send would fail on disconnected nodes that
     // an AI peer could still talk to via grove_agent_send — confusing.
-    let handle =
+    let (handle, _activity) =
         crate::agent_graph::tools::ensure_target_handle(project_key, task_id, target_chat_id)
             .await
             .map_err(|e| e.code().to_string())?;

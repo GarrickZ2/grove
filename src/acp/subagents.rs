@@ -33,6 +33,20 @@ pub(super) struct SubagentRegistry {
     pub(super) owners: HashMap<String, String>,
 }
 
+impl SubagentRegistry {
+    pub(super) fn has_active_children(&self) -> bool {
+        self.children
+            .values()
+            .any(|child| match &child.snapshot.state {
+                MaybeUndefined::Value(state) => !matches!(
+                    state["state"].as_str(),
+                    Some("idle" | "_completed" | "_failed" | "_cancelled")
+                ),
+                _ => true,
+            })
+    }
+}
+
 impl AcpSessionHandle {
     pub(super) fn is_subagent(&self, id: &str) -> bool {
         self.subagents.lock().unwrap().children.contains_key(id)

@@ -177,18 +177,19 @@ pub async fn run_with_payload(
     }
 
     // 3. Ensure the ACP subprocess is up ---------------------------------
-    let handle = match ensure_target_handle(&automation.project, &task_id, &chat_id).await {
-        Ok(h) => h,
-        Err(e) => {
-            return fail(
-                &run_id,
-                "spawn_acp",
-                &format!("ensure session: {e}"),
-                Some(&task_id),
-                Some(&chat_id),
-            );
-        }
-    };
+    let (handle, _activity) =
+        match ensure_target_handle(&automation.project, &task_id, &chat_id).await {
+            Ok(h) => h,
+            Err(e) => {
+                return fail(
+                    &run_id,
+                    "spawn_acp",
+                    &format!("ensure session: {e}"),
+                    Some(&task_id),
+                    Some(&chat_id),
+                );
+            }
+        };
 
     // 4. Subscribe BEFORE handing the prompt to ACP. The agent could emit
     //    UserMessage + Complete within microseconds for a short prompt; if

@@ -8,6 +8,8 @@
 pub mod adapter;
 mod adapter_terminal;
 mod compaction;
+mod idle;
+pub(crate) use idle::ActivityGuard;
 mod plans;
 pub use plans::PlanDocument;
 mod subagents;
@@ -104,6 +106,7 @@ pub struct AcpSessionHandle {
     pub key: String,
     // Local transport PID and spawn time; absent for remote connections.
     resource_process: Mutex<Option<(u32, u64)>>,
+    idle: Arc<Mutex<idle::IdleState>>,
     subagents: Mutex<subagents::SubagentRegistry>,
     subagent_connection: Mutex<Option<acp::ConnectionTo<acp::Agent>>>,
     pub update_tx: broadcast::Sender<AcpUpdate>,
@@ -2723,6 +2726,10 @@ async fn handle_create_terminal(
     state
         .handle
         .validate_session(&args.session_id.to_string())?;
+    let activity = state
+        .handle
+        .begin_activity()
+        .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
     let id = format!(
         "term_{}",
         std::time::SystemTime::now()
@@ -2794,6 +2801,7 @@ async fn handle_create_terminal(
     // handler 要求 Send,而 drive_terminal 的 future 也是 Send;用 tokio::spawn
     // 而不是 spawn_local 避免对 LocalSet 的隐式依赖。
     tokio::spawn(async move {
+        let _activity = activity;
         drive_terminal(handle, term_id, runtime, exit_tx, child, kill_rx).await;
     });
 
@@ -4676,11 +4684,16 @@ pub async fn get_or_start_session(
     // briefly, and retry — by then the winner has either finished registering
     // (cache hit on retry) or failed (claim released, retrying caller wins).
     loop {
-        if let Ok(sessions) = ACP_SESSIONS.read() {
-            if let Some(handle) = sessions.get(&key) {
+        let existing = get_session_handle(&key);
+        if let Some(handle) = existing {
+            if !handle.is_retiring() {
                 let rx = handle.subscribe();
-                return Ok((handle.clone(), rx));
+                return Ok((handle, rx));
             }
+            // Wait for full cleanup (including owner socket files) before
+            // starting the replacement. Never hand out a retiring runtime.
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            continue;
         }
         let claimed = {
             let mut starting = STARTING_SESSIONS.lock().unwrap();
@@ -4745,6 +4758,7 @@ pub async fn get_or_start_session(
                 let handle = Arc::new(AcpSessionHandle {
                     key: key.clone(),
                     resource_process: Mutex::new(None),
+                    idle: Arc::default(),
                     subagents: Mutex::default(),
                     subagent_connection: Mutex::default(),
                     update_tx: update_tx.clone(),
@@ -5411,7 +5425,16 @@ async fn run_acp_connection(
         }
     }
 
-    // kill_on_drop 会清理子进程
+    // For idle retirement, wait for the owned child to exit before removing
+    // the registry entry and allowing a new caller to start its replacement.
+    if state.handle.is_retiring() {
+        if let Some(ref mut child) = child {
+            if let Err(error) = child.kill().await {
+                eprintln!("[ACP] Failed to reap idle Agent process: {}", error);
+            }
+        }
+    }
+    // kill_on_drop remains the fallback for other exit paths.
     drop(child);
 
     result.map_err(|e| crate::error::GroveError::Session(e.to_string()))
@@ -5596,6 +5619,7 @@ async fn drive_session(
         .session_capabilities
         .resume
         .is_some();
+    handle.set_session_restore_capabilities(supports_load, supports_resume);
     let additional_directories_capable = init_resp
         .agent_capabilities
         .session_capabilities
@@ -6568,7 +6592,7 @@ async fn drive_session(
     handle.finish_terminal_auth_reconnect();
 
     // 处理命令循环
-    while let Some(cmd) = cmd_rx.recv().await {
+    while let Some(cmd) = handle.next_command(cmd_rx).await {
         match cmd {
             AcpCommand::Prompt {
                 message_ids,
@@ -8446,6 +8470,9 @@ impl AcpSessionHandle {
         origin: Option<TurnOrigin>,
         bypass_replay_suppression: bool,
     ) {
+        // ACP business output, including output with no attached browser.
+        // Transport heartbeats are generated separately by the WS handler.
+        self.record_activity();
         update = self.scope_subagent_event(update);
         // load_session 期间抑制大部分 emit；保留 available_commands 以恢复 slash
         // commands，保留 session_ready 让前端就绪(suppress 现在保持到首个用户
@@ -9057,6 +9084,7 @@ impl AcpSessionHandle {
         terminal: bool,
         config: Option<QueuedConfig>,
     ) -> crate::error::Result<()> {
+        let _activity = self.begin_activity()?;
         let source_text = text.clone();
         let text = match crate::plugins::prompt_middleware::run(
             crate::plugins::prompt_middleware::Phase::Submit,
@@ -9116,6 +9144,7 @@ impl AcpSessionHandle {
         &self,
         prompt: PreparedTextPrompt,
     ) -> crate::error::Result<String> {
+        let _activity = self.begin_activity()?;
         let PreparedTextPrompt {
             id,
             text,
@@ -9171,6 +9200,7 @@ impl AcpSessionHandle {
     }
 
     pub async fn set_mode(&self, mode_id: String) -> crate::error::Result<()> {
+        let _activity = self.begin_activity()?;
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         self.cmd_tx
             .send(AcpCommand::SetMode {
@@ -9193,6 +9223,7 @@ impl AcpSessionHandle {
         config_id: String,
         value: ConfigOptionValue,
     ) -> crate::error::Result<()> {
+        let _activity = self.begin_activity()?;
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         self.cmd_tx
             .send(AcpCommand::SetConfigOption {
@@ -9214,6 +9245,7 @@ impl AcpSessionHandle {
     /// 触发 ACP `authenticate(method_id)`。协议要求 method_id 必须来自 Agent
     /// 在 initialize 响应中声明的 authMethods。
     pub async fn authenticate(&self, method_id: String) -> crate::error::Result<()> {
+        let _activity = self.begin_activity()?;
         if self.terminal_auth_in_progress() {
             return Err(crate::error::GroveError::Session(
                 "Terminal sign-in is in progress".into(),
@@ -9238,6 +9270,7 @@ impl AcpSessionHandle {
 
     /// Agent 未声明认证方法时，允许用户在外部 CLI 登录后重试原请求。
     pub async fn retry_authentication(&self) -> crate::error::Result<()> {
+        let _activity = self.begin_activity()?;
         let can_retry = self
             .pending_auth
             .lock()
@@ -9260,6 +9293,7 @@ impl AcpSessionHandle {
 
     /// 调用 ACP v1 `logout`。协议能力未声明时拒绝发送请求。
     pub async fn logout(&self) -> crate::error::Result<()> {
+        let _activity = self.begin_activity()?;
         if !self
             .logout_capable
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -9284,6 +9318,7 @@ impl AcpSessionHandle {
 
     /// 取消当前处理
     pub async fn cancel(&self) -> crate::error::Result<()> {
+        let _activity = self.begin_activity()?;
         self.cmd_tx
             .send(AcpCommand::Cancel)
             .await
@@ -9377,6 +9412,7 @@ impl AcpSessionHandle {
     /// 成功返回 fork 后的 acp session_id;调用方据此创建新 chat 行,
     /// 用户首次打开新 chat 时走 `load_session(new_id)` 复活。
     pub async fn fork_session(&self, cwd: PathBuf) -> crate::error::Result<String> {
+        let _activity = self.begin_activity()?;
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         self.cmd_tx
             .send(AcpCommand::ForkSession {
@@ -9396,6 +9432,7 @@ impl AcpSessionHandle {
 
     /// 通过 ACP v1 `session/delete` 删掉当前 session。
     pub async fn delete_session(&self) -> crate::error::Result<()> {
+        let _activity = self.begin_activity()?;
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         self.cmd_tx
             .send(AcpCommand::DeleteSession { reply: reply_tx })
@@ -9427,6 +9464,7 @@ impl AcpSessionHandle {
         &self,
         cursor: Option<String>,
     ) -> crate::error::Result<SessionListPage> {
+        let _activity = self.begin_activity()?;
         if !self
             .import_capable
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -9515,6 +9553,7 @@ impl AcpSessionHandle {
         &self,
         mut msg: QueuedMessage,
     ) -> crate::error::Result<Vec<QueuedMessage>> {
+        let _activity = self.begin_activity()?;
         let processed_text = crate::plugins::prompt_middleware::run(
             crate::plugins::prompt_middleware::Phase::Submit,
             &self.project_key,
@@ -9599,6 +9638,7 @@ impl AcpSessionHandle {
         text: String,
         attachments: Option<Vec<ContentBlockData>>,
     ) -> crate::error::Result<(bool, Vec<QueuedMessage>)> {
+        let _activity = self.begin_activity()?;
         let sender = {
             let queue = self.pending_queue.lock().unwrap();
             let Some(message) = queue.iter().find(|message| message.id == id) else {
@@ -9884,6 +9924,9 @@ impl AcpSessionHandle {
 
     /// 用户直接执行终端命令（Shell 模式，不经过 AI agent）
     pub fn execute_terminal(self: &Arc<Self>, command: String) {
+        let Ok(activity) = self.begin_activity() else {
+            return;
+        };
         // 先终止已有的终端命令（如果有）
         self.kill_terminal();
         // 记录到 history
@@ -9897,6 +9940,7 @@ impl AcpSessionHandle {
         *self.terminal_kill_tx.lock().unwrap() = Some(kill_tx);
 
         tokio::spawn(async move {
+            let _activity = activity;
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
             let mut cmd = tokio::process::Command::new(&shell);
             cmd.arg("-l").arg("-i").arg("-c").arg(&command);
@@ -10173,6 +10217,7 @@ pub fn new_handle_for_test(
     let handle = Arc::new(AcpSessionHandle {
         key: key.to_string(),
         resource_process: Mutex::new(None),
+        idle: Arc::default(),
         subagents: Mutex::default(),
         subagent_connection: Mutex::default(),
         update_tx: update_tx.clone(),

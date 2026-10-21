@@ -856,7 +856,8 @@ async fn deliver_to_session(
     // Synchronous spawn-on-demand: if the target session isn't running, start
     // it and wait for SessionReady before delivering. Errors here mean the
     // message was NOT queued — the caller MUST treat that as a failure.
-    let target_handle = ensure_target_handle(project_key, task_id, target_chat_id).await?;
+    let (target_handle, _activity) =
+        ensure_target_handle(project_key, task_id, target_chat_id).await?;
 
     // Validate the config against the target session's advertised available_*
     // lists BEFORE applying anything. Without this check the AI could pass a
@@ -1007,8 +1008,8 @@ async fn deliver_to_session(
 }
 
 /// 用户在图上点 "remind" 时的投递入口。已经组装好 grove-meta envelope，
-/// 这里负责 spawn-on-demand + busy 判断 + CAS 并发。语义上与 deliver_to_session
-/// 几乎相同，但消息已经是 envelope，sender 标记成 "user:remind"。
+/// 仅向存活且空闲的 Agent 投递；自动提醒也复用这里，因此不能唤醒已回收的 Agent。
+/// 消息已经是 envelope，sender 标记成 "user:remind"。
 pub async fn deliver_user_remind(
     project_key: &str,
     task_id: &str,
@@ -1021,6 +1022,9 @@ pub async fn deliver_user_remind(
     if target_handle.derive_node_status() != "idle" {
         return Err("target_not_idle".to_string());
     }
+    let _activity = target_handle
+        .begin_activity()
+        .map_err(|_| "target_not_idle".to_string())?;
 
     let claimed = target_handle
         .is_busy
@@ -1066,17 +1070,38 @@ pub async fn deliver_user_remind(
 /// agent subprocess for that chat record and waiting for `SessionReady` (with
 /// timeout). Mirrors `grove_agent_spawn`'s startup flow but operates on an
 /// existing chat row rather than creating one.
+/// The returned activity guard must live through preparation and submission.
+/// It atomically excludes idle retirement before callers touch busy/queue state.
 ///
 /// Errors map cleanly to MCP error codes so the calling AI knows whether the
-/// message reached the target's queue (`Ok(handle)` followed by successful
+/// message reached the target's queue (`Ok((handle, guard))` followed by successful
 /// `deliver_to_session`) or never made it (any error from this function).
 pub(crate) async fn ensure_target_handle(
+    project_key: &str,
+    task_id: &str,
+    target_chat_id: &str,
+) -> AgentGraphResult<(Arc<AcpSessionHandle>, acp::ActivityGuard)> {
+    loop {
+        let handle = find_or_start_target_handle(project_key, task_id, target_chat_id).await?;
+        if let Ok(activity) = handle.begin_activity() {
+            return Ok((handle, activity));
+        }
+        // Retirement won after lookup. Nothing has been submitted, so retry
+        // against the replacement. Never replay a possibly delivered prompt.
+        // Wait for the owner to remove its registry entry/socket before startup.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+async fn find_or_start_target_handle(
     project_key: &str,
     task_id: &str,
     target_chat_id: &str,
 ) -> AgentGraphResult<Arc<AcpSessionHandle>> {
     let session_key = format!("{}:{}:{}", project_key, task_id, target_chat_id);
     if let Some(h) = acp::get_session_handle(&session_key) {
+        // The caller reserves activity atomically with retirement. A separate
+        // is_retiring check here would leave a lookup-to-admission race.
         return Ok(h);
     }
 

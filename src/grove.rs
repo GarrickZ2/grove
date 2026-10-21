@@ -59,6 +59,7 @@ pub(crate) struct SessionSnapshot {
 #[derive(Clone)]
 pub(crate) struct Session {
     handle: Arc<acp::AcpSessionHandle>,
+    _activity: Option<Arc<acp::ActivityGuard>>,
 }
 
 pub(crate) struct PreparedPrompt {
@@ -71,7 +72,10 @@ pub(crate) fn session(project_id: &str, task_id: &str, session_id: &str) -> Opti
         return None;
     }
     let key = format!("{project_id}:{task_id}:{session_id}");
-    acp::get_session_handle(&key).map(|handle| Session { handle })
+    acp::get_session_handle(&key).map(|handle| Session {
+        handle,
+        _activity: None,
+    })
 }
 
 pub(crate) async fn ensure_session(
@@ -79,15 +83,17 @@ pub(crate) async fn ensure_session(
     task_id: &str,
     session_id: &str,
 ) -> Result<Session, String> {
-    let handle = crate::agent_graph::tools::ensure_target_handle(project_id, task_id, session_id)
-        .await
-        .map_err(|error| error.to_string())?;
-    // An existing handle can still be initializing (e.g. /config immediately
-    // after /new). Process registration alone does not make options available.
+    let (handle, activity) =
+        crate::agent_graph::tools::ensure_target_handle(project_id, task_id, session_id)
+            .await
+            .map_err(|error| error.to_string())?;
     handle
         .wait_until_ready(crate::agent_graph::tools::ACP_SESSION_READY_TIMEOUT)
         .await?;
-    Ok(Session { handle })
+    Ok(Session {
+        handle,
+        _activity: Some(Arc::new(activity)),
+    })
 }
 
 pub(crate) fn snapshot(

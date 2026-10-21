@@ -1,3 +1,4 @@
+import { BackgroundChatConnections, trackChatSocketSends, watchBackgroundChatConnections } from "./backgroundChatConnections";
 import { reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
 import { PlanDocumentsPanel, type PlanMarkdownOptions } from "./PlanDocumentsPanel";
 import { buildRenderItems, buildSequentialRenderItems, type RenderItem, type WorkSummaryItem, type ToolSectionItem } from "./chatRenderItems";
@@ -2726,6 +2727,10 @@ export function TaskChat({
   const runtimeBusyRef = useRef<Map<string, boolean>>(new Map());
   // Per-chat WebSocket connections
   const wsMapRef = useRef<Map<string, WebSocket>>(new Map());
+  const [backgroundConnections] = useState(() => new BackgroundChatConnections(
+    `grove:background-chats:${projectId}:${taskId}`, window.sessionStorage,
+  ));
+
   // A Refresh opts this chat into attach-only WS connections until the user
   // explicitly chooses the runtime-restarting Reconnect action.
   const attachOnlyChatsRef = useRef<Set<string>>(new Set());
@@ -5311,7 +5316,9 @@ export function TaskChat({
   /** Connect a WebSocket for a given chat ID (idempotent) */
   const connectChatWs = useCallback(
     async (chatId: string, importing = false, attachOnly = false) => {
-      if (finishedRef.current) return;
+      if (finishedRef.current || !backgroundConnections.canConnect(chatId)) return;
+      const connectionTicket = backgroundConnections.ticket();
+      backgroundConnections.track(chatId, Date.now());
       if (wsMapRef.current.has(chatId)) return; // Already connected
       if (connectingRef.current.has(chatId)) return; // Connection already in-flight
       // Terminal-mode chats have no ACP WebSocket — they speak PTY only.
@@ -5346,11 +5353,12 @@ export function TaskChat({
       }
       // The Run may have reached its terminal state while URL signing was in
       // flight. A finished view must never create a late live attachment.
-      if (finishedRef.current) return;
+      if (finishedRef.current || !backgroundConnections.canFinishConnect(chatId, connectionTicket)) return;
       // Re-check after async gap: another call may have connected while we awaited
       if (wsMapRef.current.has(chatId)) return;
 
       const ws = new WebSocket(url);
+      trackChatSocketSends(ws, () => backgroundConnections.recordActivity(chatId, Date.now()));
       wsMapRef.current.set(chatId, ws);
       lastWsMessageAtRef.current.set(chatId, Date.now());
       // This connection starts unproven; only a session_ready flips it.
@@ -5370,6 +5378,7 @@ export function TaskChat({
         try {
           const data = JSON.parse(event.data);
           if (data?.type === "heartbeat") return;
+          backgroundConnections.recordActivity(chatId, Date.now());
           publishIosChatEvent(projectId, taskId, chatId, data, chatsRef.current.find(c => c.id === chatId)?.title);
           if (data?.type === "input_accepted" && typeof data.client_message_id === "string") {
             updatePendingInputs(chatId, (items) => items.map((item) =>
@@ -5585,7 +5594,7 @@ export function TaskChat({
         }
         // Auto-reconnect after unexpected close (e.g., session killed by Take Control).
         // Skip if this was an intentional close (unmount, chat switch, etc.)
-        if (intentionalCloseRef.current.has(chatId)) {
+        if (intentionalCloseRef.current.has(chatId) || !backgroundConnections.canConnect(chatId)) {
           intentionalCloseRef.current.delete(chatId);
           cancelPendingReconnectRef.current(chatId);
         } else if (!wsSessionEverReadyRef.current.get(chatId)) {
@@ -5644,13 +5653,53 @@ export function TaskChat({
         }
       };
     },
-    [projectId, taskId, getActiveChatId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, reconcileInputQueue, savePendingInputState, finishPendingQueueEdit, failPendingQueueEdit, resumeEditedQueue],
+    [backgroundConnections, projectId, taskId, getActiveChatId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, reconcileInputQueue, savePendingInputState, finishPendingQueueEdit, failPendingQueueEdit, resumeEditedQueue],
   );
 
 
   useEffect(() => {
     connectChatWsRef.current = connectChatWs;
   }, [connectChatWs]);
+
+  // Observe the visible session, independent of composer keyboard focus.
+  // Hidden keep-alive panels and hidden browser tabs release their sockets,
+  // while split panels that remain visible continue protecting their runtime.
+  useEffect(() => watchBackgroundChatConnections({
+    connections: backgroundConnections,
+    root: taskChatRootRef.current,
+    getActiveChatId,
+    disabled: () => finishedRef.current || collapsed,
+    // Do not detach in the middle of a local upload/send or queue edit.
+    canRelease: (chatId) => !pendingInputsRef.current.get(chatId)?.some((input) => input.status === "sending")
+      && !(pendingQueueEditRef.current?.chatId === chatId && pendingQueueEditRef.current.attemptId),
+    onResume: (chatId) => {
+      // Only returning to a visible session clears intentional release.
+      attachOnlyChatsRef.current.delete(chatId);
+      void connectChatWsRef.current(chatId).then(() => {
+        if (chatId === getActiveChatId()) wsRef.current = wsMapRef.current.get(chatId) ?? null;
+      });
+    },
+    onRelease: (chatId) => {
+      cancelPendingReconnectRef.current(chatId);
+      const ws = wsMapRef.current.get(chatId);
+      wsMapRef.current.delete(chatId);
+      lastWsMessageAtRef.current.delete(chatId);
+      ws?.close(1000, "background_idle");
+      const runtime = historyRuntimeRef.current.get(chatId);
+      if (runtime) {
+        runtime.connected = false;
+        runtime.loaded = false;
+        runtime.needsResync = true;
+      }
+      const cached = perChatStateRef.current.get(chatId);
+      if (cached) cached.isConnected = false;
+      if (chatId === getActiveChatId()) {
+        wsRef.current = null;
+        setIsConnected(false);
+        onDisconnectedPropRef.current?.();
+      }
+    },
+  }), [activeChatId, backgroundConnections, collapsed, getActiveChatId]);
 
   // Browser readyState can remain OPEN after an unclean network drop. Server
   // heartbeats prove the full path still delivers messages; replace stale
@@ -6211,11 +6260,15 @@ export function TaskChat({
   // otherwise an in-flight backoff timer fires after unmount and creates a
   // zombie WS that calls setState on a gone component.
   useEffect(() => {
+    backgroundConnections.mount();
     const wsMap = wsMapRef.current;
     const intentional = intentionalCloseRef.current;
     const timers = reconnectTimerRef.current;
     const attempts = reconnectAttemptRef.current;
+    const connecting = connectingRef.current;
     return () => {
+      backgroundConnections.unmount();
+      connecting.clear();
       timers.forEach((t) => clearTimeout(t));
       timers.clear();
       attempts.clear();
@@ -6223,7 +6276,7 @@ export function TaskChat({
       wsMap.forEach((ws) => ws.close());
       wsMap.clear();
     };
-  }, []);
+  }, [backgroundConnections]);
 
   // Clear the global active-chat pointer when this TaskChat unmounts. The
   // per-change sync is already handled by useActiveChatId.setActiveChatId
@@ -7197,6 +7250,7 @@ export function TaskChat({
       setActiveChatId(chatId);
       writeLastActiveTab("chat", projectId, taskId, chatId);
       restoreChatState(chatId);
+      if (backgroundConnections.observe(chatId)) attachOnlyChatsRef.current.delete(chatId);
       setShowChatMenu(false);
       const archived = archivedChats.some((chat) => chat.id === chatId);
       if (!archived) {
@@ -7208,7 +7262,7 @@ export function TaskChat({
         updateBusy(false);
       }
     },
-    [activeChatId, archivedChats, canManageSessions, fixedChatId, projectId, taskId, saveCurrentChatState, restoreChatState, connectChatWs, setActiveChatId, updateBusy],
+    [backgroundConnections, activeChatId, archivedChats, canManageSessions, fixedChatId, projectId, taskId, saveCurrentChatState, restoreChatState, connectChatWs, setActiveChatId, updateBusy],
   );
   useEffect(() => {
     switchChatRef.current = switchChat;
@@ -9014,6 +9068,7 @@ export function TaskChat({
   const performReconnect = useCallback(async () => {
     if (!activeChatId || isReconnecting) return;
     const chatId = activeChatId;
+    backgroundConnections.observe(chatId);
     attachOnlyChatsRef.current.delete(chatId);
     const existingWs = wsMapRef.current.get(chatId);
     setIsReconnecting(true);
@@ -9091,7 +9146,7 @@ export function TaskChat({
     } finally {
       setIsReconnecting(false);
     }
-  }, [activeChatId, connectChatWs, getActiveChatId, isReconnecting, projectId, taskId, updateBusy, updatePendingInputs, updateLocalInputPlacements, savePendingInputState, finishPendingQueueEdit]);
+  }, [backgroundConnections, activeChatId, connectChatWs, getActiveChatId, isReconnecting, projectId, taskId, updateBusy, updatePendingInputs, updateLocalInputPlacements, savePendingInputState, finishPendingQueueEdit]);
 
   const handleReconnect = useCallback(() => {
     if (isReconnecting) return;

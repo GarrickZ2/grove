@@ -952,7 +952,8 @@ async fn handle_acp_ws(
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Check if we're reattaching to an existing session
-    let is_existing = acp::session_exists(&session_key);
+    let initial_handle = acp::get_session_handle(&session_key);
+    let is_existing = initial_handle.is_some();
     if attach_only && !is_existing {
         let msg = ServerMessage::Error {
             message: "No live ACP session to refresh. Use Reconnect to start it again.".into(),
@@ -1024,32 +1025,52 @@ async fn handle_acp_ws(
     let history_chat_id = config.chat_id.clone();
 
     // Get or start ACP session (thread managed by acp module)
-    let session = if attach_only {
-        acp::get_session_handle(&session_key)
-            .map(|handle| {
-                let rx = handle.subscribe();
-                (handle, rx)
-            })
-            .ok_or_else(|| {
-                crate::error::GroveError::Session(
-                    "No live ACP session to refresh. Use Reconnect to start it again.".into(),
-                )
-            })
-    } else {
-        acp::get_or_start_session(session_key, config).await
-    };
-    let (handle, mut update_rx) = match session {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = ServerMessage::Error {
-                message: format!("Failed to start ACP session: {}", e),
-            };
-            if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = ws_sender.send(Message::Text(json.into())).await;
+    let (handle, mut update_rx, _observer) = loop {
+        let session = if attach_only {
+            acp::get_session_handle(&session_key)
+                .map(|handle| {
+                    let rx = handle.subscribe();
+                    (handle, rx)
+                })
+                .ok_or_else(|| {
+                    crate::error::GroveError::Session(
+                        "No live ACP session to refresh. Use Reconnect to start it again.".into(),
+                    )
+                })
+        } else {
+            acp::get_or_start_session(session_key.clone(), config.clone()).await
+        };
+        let attached = match session {
+            Ok((handle, rx)) => match handle.attach_observer() {
+                Ok(observer) => Ok((handle, rx, observer)),
+                Err(_) if !attach_only => {
+                    // Retirement won admission. Wait for cleanup before the
+                    // normal single-flight start path restores this session.
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    continue;
+                }
+                Err(error) => Err(error),
+            },
+            Err(error) => Err(error),
+        };
+        match attached {
+            Ok(attached) => break attached,
+            Err(e) => {
+                let msg = ServerMessage::Error {
+                    message: format!("Failed to start ACP session: {}", e),
+                };
+                if let Ok(json) = serde_json::to_string(&msg) {
+                    let _ = ws_sender.send(Message::Text(json.into())).await;
+                }
+                return;
             }
-            return;
         }
     };
+
+    // A retiring owner may have been replaced while we awaited admission.
+    let is_existing = initial_handle
+        .as_ref()
+        .is_some_and(|existing| std::sync::Arc::ptr_eq(existing, &handle));
 
     // For existing sessions, construct SessionReady from metadata so frontend can interact.
     // History is already loaded via HTTP.
@@ -1361,6 +1382,7 @@ async fn handle_acp_ws(
             match msg {
                 Ok(Message::Text(text)) => {
                     if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
+                        handle_for_input.record_activity();
                         match client_msg {
                             ClientMessage::Prompt {
                                 text,
