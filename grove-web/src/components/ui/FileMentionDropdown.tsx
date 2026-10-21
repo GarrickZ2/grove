@@ -19,6 +19,7 @@ import {
   Briefcase,
   Globe,
   Palette,
+  ListTodo,
 } from "lucide-react";
 import type { FilteredMentionItem, MentionItem } from "../../utils/fileMention";
 import { agentIconComponent } from "../../utils/agentIcon";
@@ -286,11 +287,13 @@ const MentionRow = memo(function MentionRow({
   return (
     <button
       ref={ref}
+      disabled={item.disabled}
+      aria-disabled={item.disabled || undefined}
       onMouseDown={(e) => e.preventDefault()}
-      onClick={() => onSelect(item.path, item.isDir, item.displayName, item.category)}
-      onMouseEnter={() => onMouseEnter(index)}
+      onClick={() => { if (!item.disabled) onSelect(item.path, item.isDir, item.displayName, item.category); }}
+      onMouseEnter={() => { if (!item.disabled) onMouseEnter(index); }}
       className={`w-full text-left px-3 py-2 flex items-center gap-2.5 transition-colors ${
-        isSelected
+        item.disabled ? "cursor-default opacity-60" : isSelected
           ? "bg-[var(--color-bg-tertiary)]"
           : "hover:bg-[var(--color-bg-secondary)]"
       }`}
@@ -320,6 +323,8 @@ const MentionRow = memo(function MentionRow({
             className: "w-3 h-3 shrink-0",
           })}
         </div>
+      ) : item.category === "Task" ? (
+        <ListTodo className="w-3.5 h-3.5 shrink-0 text-[var(--color-highlight)]" />
       ) : resolvedFavicon ? (
         <img
           src={resolvedFavicon}

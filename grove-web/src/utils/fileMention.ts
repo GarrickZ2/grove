@@ -16,6 +16,8 @@ export type MentionKind =
 export interface MentionItem {
   path: string;
   isDir: boolean;
+  /** Status rows are visible but cannot be selected or inserted. */
+  disabled?: boolean;
   /**
    * Friendly label shown to the user. Defaults to `path`. For Studio-categorized
    * items this is the human-readable name (filename without prefix, sketch name,
@@ -59,6 +61,15 @@ export interface MentionItem {
 export interface FilteredMentionItem extends MentionItem {
   score: number;
   indices: number[];
+}
+
+/** Keyboard navigation skips status rows, including when all rows are disabled. */
+export function nextMentionIndex(items: MentionItem[], current: number, direction: 1 | -1): number {
+  for (let step = 1; step <= items.length; step++) {
+    const index = ((current + direction * step) % items.length + items.length) % items.length;
+    if (!items[index].disabled) return index;
+  }
+  return current;
 }
 
 /** Fuzzy match a query against a target string using optimal non-greedy matching and filename priority */
