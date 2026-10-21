@@ -2690,6 +2690,8 @@ struct HistoryAttachmentCounts {
 struct HistoryContext {
     attachment_counts: HistoryAttachmentCounts,
     read_memory_ids: Vec<String>,
+    // Retained as empty compatibility fields. Plans now come exclusively from
+    // the returned event window, including updates/removals within those turns.
     #[serde(skip_serializing_if = "Option::is_none")]
     plan_entries: Option<Vec<PlanEntryMsg>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2703,6 +2705,7 @@ fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
     let mut tools: HashMap<String, (String, Vec<ToolCallInputData>, String)> = HashMap::new();
     let mut tool_names: HashMap<String, String> = HashMap::new();
     let mut tool_order = Vec::new();
+    let mut visible_tools = std::collections::HashSet::new();
     for (index, update) in history.iter().enumerate() {
         if let AcpUpdate::UserMessage { attachments, .. } = update {
             for attachment in attachments {
@@ -2714,44 +2717,6 @@ fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
                     }
                     ContentBlockData::Text { .. } => {}
                 }
-            }
-        }
-        if index < start {
-            match update {
-                AcpUpdate::PlanUpdate { entries } => {
-                    context.plan_entries = Some(
-                        entries
-                            .iter()
-                            .map(|entry| PlanEntryMsg {
-                                content: entry.content.clone(),
-                                priority: entry.priority.clone(),
-                                status: entry.status.clone(),
-                            })
-                            .collect(),
-                    );
-                }
-                AcpUpdate::PlanDocumentUpdate { plan } => {
-                    context.native_plans_seen = true;
-                    context.plan_file_path = None;
-                    if let Some(previous) = context
-                        .plan_documents
-                        .iter_mut()
-                        .find(|item| item.id() == plan.id())
-                    {
-                        *previous = plan.clone();
-                    } else {
-                        context.plan_documents.push(plan.clone());
-                    }
-                }
-                AcpUpdate::PlanDocumentRemoved { plan_id } => {
-                    context.native_plans_seen = true;
-                    context.plan_file_path = None;
-                    context.plan_documents.retain(|plan| plan.id() != plan_id);
-                }
-                AcpUpdate::PlanFileUpdate { path, .. } => {
-                    context.plan_file_path = Some(path.clone())
-                }
-                _ => {}
             }
         }
         if !matches!(
@@ -2772,6 +2737,9 @@ fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
                 status,
                 ..
             } => {
+                if index >= start {
+                    visible_tools.insert(id.clone());
+                }
                 if let Some(name) = name {
                     tool_names.insert(id.clone(), name);
                 }
@@ -2788,6 +2756,9 @@ fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
                 status,
                 ..
             } => {
+                if index >= start {
+                    visible_tools.insert(id.clone());
+                }
                 if let Some(name) = name {
                     tool_names.insert(id.clone(), name);
                 }
@@ -2810,6 +2781,9 @@ fn history_context(history: &[AcpUpdate], start: usize) -> HistoryContext {
     }
     let mut seen = std::collections::HashSet::new();
     for id in tool_order {
+        if !visible_tools.contains(&id) {
+            continue;
+        }
         let Some((title, input, status)) = tools.get(&id) else {
             continue;
         };
@@ -2866,38 +2840,96 @@ fn history_start_for_recent_turns(history: &[AcpUpdate], turns: usize) -> (usize
     if starts.len() <= turns {
         (0, 0)
     } else {
-        let mut start = starts[starts.len() - turns];
-        // A reusable child may still be active after its original turn. Include
-        // its announcement and earlier transcript so child events never orphan.
-        let mut referenced = std::collections::HashSet::new();
-        for event in &history[start..] {
-            match event {
-                AcpUpdate::SubagentEvent { session_id, .. } => {
-                    referenced.insert(session_id.clone());
-                }
-                AcpUpdate::SubagentUpdate { update } => {
-                    referenced.insert(update.session_id.clone());
-                    referenced.insert(update.parent_session_id.clone());
-                }
-                _ => {}
-            }
-        }
-        for (index, event) in history[..start].iter().enumerate().rev() {
-            if let AcpUpdate::SubagentUpdate { update } = event {
-                if referenced.contains(&update.session_id) {
-                    start = index;
-                    referenced.insert(update.parent_session_id.clone());
-                }
-            }
-        }
-        start = starts
-            .iter()
-            .copied()
-            .rev()
-            .find(|index| *index <= start)
-            .unwrap_or(0);
-        (start, starts.iter().filter(|index| **index < start).count())
+        (starts[starts.len() - turns], starts.len() - turns)
     }
+}
+
+/// Keep the turn boundary strict. Seed only the metadata needed to attribute
+/// activity inside the window, immediately before that activity, never old text.
+fn history_window(
+    history: &[AcpUpdate],
+    start: usize,
+    pending_permission: Option<&str>,
+) -> Vec<AcpUpdate> {
+    use agent_client_protocol::schema::MaybeUndefined;
+    let mut children: HashMap<String, acp::SubagentUpdateData> = HashMap::new();
+    let mut visible = std::collections::HashSet::new();
+    let mut events = Vec::new();
+    fn ensure_child(
+        id: &str,
+        children: &HashMap<String, acp::SubagentUpdateData>,
+        visible: &mut std::collections::HashSet<String>,
+        events: &mut Vec<AcpUpdate>,
+    ) {
+        let Some(child) = children.get(id) else {
+            return;
+        };
+        if !visible.insert(id.to_owned()) {
+            return;
+        }
+        ensure_child(&child.parent_session_id, children, visible, events);
+        let mut update = child.clone();
+        update.snapshot = false;
+        events.push(AcpUpdate::SubagentUpdate { update });
+    }
+    for (index, event) in history.iter().enumerate() {
+        let mut repeated_state = false;
+        if let AcpUpdate::SubagentUpdate { update } = event {
+            let existed = children.contains_key(&update.session_id);
+            let previous = children
+                .entry(update.session_id.clone())
+                .or_insert_with(|| update.clone());
+            let before = previous.clone();
+            macro_rules! patch {
+                ($field:ident) => {
+                    if !matches!(update.$field, MaybeUndefined::Undefined) {
+                        previous.$field = update.$field.clone();
+                    }
+                };
+            }
+            patch!(title);
+            patch!(description);
+            patch!(capabilities);
+            patch!(state);
+            repeated_state = existed && *previous == before;
+        }
+        if index < start {
+            continue;
+        }
+        match event {
+            AcpUpdate::SubagentUpdate { update } if !update.snapshot => {
+                if !visible.contains(&update.session_id) {
+                    // Older versions persisted reconnect snapshots without a
+                    // marker. Repeating unchanged metadata is not new activity.
+                    // A later child event will seed its identity when needed.
+                    if repeated_state {
+                        continue;
+                    }
+                    ensure_child(&update.session_id, &children, &mut visible, &mut events);
+                    continue;
+                }
+            }
+            AcpUpdate::SubagentEvent { session_id, .. } => {
+                ensure_child(session_id, &children, &mut visible, &mut events);
+            }
+            _ => {}
+        }
+        events.push(event.clone());
+    }
+    // A live permission may predate the selected turns. Keep just its request
+    // and child identity so limiting history cannot strand a waiting Agent.
+    if let Some(id) = pending_permission {
+        if let Some(event) = history[..start].iter().rev().find(|event| {
+            let request = match event { AcpUpdate::SubagentEvent { event, .. } => event.as_ref(), _ => event };
+            matches!(request, AcpUpdate::PermissionRequest { id: request_id, .. } if request_id == id)
+        }) {
+            if let AcpUpdate::SubagentEvent { session_id, .. } = event {
+                ensure_child(session_id, &children, &mut visible, &mut events);
+            }
+            events.push(event.clone());
+        }
+    }
+    events
 }
 
 fn trim_history_payload(
@@ -2962,7 +2994,12 @@ pub async fn get_chat_history(
     let (project_key, _, _) = resolve_project_key(&project_id)?;
 
     let session_key = format!("{project_key}:{task_id}:{chat_id}");
-    let runtime = match acp::discover_session(&project_key, &task_id, &chat_id, &session_key) {
+    let access = acp::discover_session(&project_key, &task_id, &chat_id, &session_key);
+    let pending_permission = match &access {
+        Some(acp::SessionAccess::Local(handle)) => handle.pending_permission_id(),
+        _ => None,
+    };
+    let runtime = match access {
         Some(acp::SessionAccess::Local(handle)) => HistoryRuntime {
             active: true,
             busy: Some(handle.is_busy.load(std::sync::atomic::Ordering::Relaxed)),
@@ -2985,9 +3022,19 @@ pub async fn get_chat_history(
     } else {
         (offset, 0)
     };
-    let events: Vec<serde_json::Value> = history[start..]
-        .iter()
-        .cloned()
+    // Incremental polling also needs identity for a previously omitted child
+    // that resumes activity; reducers upsert the metadata without moving cards.
+    let window = history_window(
+        &history,
+        start,
+        if offset == 0 {
+            pending_permission.as_deref()
+        } else {
+            None
+        },
+    );
+    let events: Vec<serde_json::Value> = window
+        .into_iter()
         .map(|update| {
             let mut value = serde_json::to_value(ServerMessage::from(update)).unwrap_or_default();
             trim_history_payload(
@@ -3121,24 +3168,131 @@ mod tests {
     }
 
     #[test]
-    fn recent_history_keeps_the_announcement_of_a_child_still_working_in_a_later_turn() {
+    fn recent_history_keeps_strict_turns_and_attributes_child_activity() {
         let parse = |value| serde_json::from_value::<AcpUpdate>(value).unwrap();
         let history = vec![
             parse(serde_json::json!({"type":"user_message","text":"First task"})),
             parse(
-                serde_json::json!({"type":"subagent_update","session_id":"child","parent_session_id":"root","state":{"state":"running"}}),
+                serde_json::json!({"type":"subagent_update","session_id":"child","parent_session_id":"root","title":"Reviewer","state":{"state":"running"}}),
             ),
             parse(serde_json::json!({"type":"user_message","text":"Continue"})),
             parse(
                 serde_json::json!({"type":"subagent_event","session_id":"child","event":{"type":"message_chunk","text":"Still working"}}),
             ),
         ];
-        assert_eq!(history_start_for_recent_turns(&history, 1), (0, 0));
+        assert_eq!(history_start_for_recent_turns(&history, 1), (2, 1));
+        let window = history_window(&history, 2, None);
+        assert_eq!(window.len(), 3);
+        assert!(matches!(&window[0], AcpUpdate::UserMessage { text, .. } if text == "Continue"));
+        assert!(
+            matches!(&window[1], AcpUpdate::SubagentUpdate { update } if matches!(&update.title, agent_client_protocol::schema::MaybeUndefined::Value(title) if title == "Reviewer"))
+        );
+        assert!(matches!(&window[2], AcpUpdate::SubagentEvent { .. }));
         let without_child_activity = &history[..3];
+        assert_eq!(history_window(without_child_activity, 2, None).len(), 1);
         assert_eq!(
             history_start_for_recent_turns(without_child_activity, 1),
             (2, 1)
         );
+    }
+
+    #[test]
+    fn recent_history_ignores_legacy_repeated_child_snapshots() {
+        let parse = |value| serde_json::from_value::<AcpUpdate>(value).unwrap();
+        let child = parse(
+            serde_json::json!({"type":"subagent_update","session_id":"old","parent_session_id":"root","title":"Architecture visual","state":{"state":"_completed"}}),
+        );
+        let mut history = vec![
+            parse(serde_json::json!({"type":"user_message","text":"Old"})),
+            child.clone(),
+            parse(
+                serde_json::json!({"type":"subagent_event","session_id":"old","event":{"type":"message_chunk","text":"Old result"}}),
+            ),
+            parse(serde_json::json!({"type":"user_message","text":"Recent"})),
+            child,
+        ];
+        assert_eq!(history_window(&history, 3, None).len(), 1);
+        // A reused child with actual current activity must still be attributed.
+        history.push(parse(serde_json::json!({"type":"subagent_event","session_id":"old","event":{"type":"message_chunk","text":"Recent result"}})));
+        let window = history_window(&history, 3, None);
+        assert_eq!(window.len(), 3);
+        assert!(
+            matches!(&window[1], AcpUpdate::SubagentUpdate { update } if update.session_id == "old")
+        );
+        assert!(matches!(&window[2], AcpUpdate::SubagentEvent { .. }));
+    }
+
+    #[test]
+    fn recent_history_seeds_nested_identity_without_old_child_transcripts() {
+        let parse = |value| serde_json::from_value::<AcpUpdate>(value).unwrap();
+        let history = vec![
+            parse(serde_json::json!({"type":"user_message","text":"Old"})),
+            parse(
+                serde_json::json!({"type":"subagent_update","session_id":"a","parent_session_id":"root","title":"Parent"}),
+            ),
+            parse(
+                serde_json::json!({"type":"subagent_update","session_id":"b","parent_session_id":"a","title":"Reviewer","description":"Review code"}),
+            ),
+            parse(
+                serde_json::json!({"type":"subagent_event","session_id":"b","event":{"type":"message_chunk","text":"Old result"}}),
+            ),
+            parse(serde_json::json!({"type":"user_message","text":"New"})),
+            parse(serde_json::json!({"type":"message_chunk","text":"Before current activity"})),
+            parse(
+                serde_json::json!({"type":"subagent_update","session_id":"b","parent_session_id":"a","state":{"state":"_completed"}}),
+            ),
+            parse(
+                serde_json::json!({"type":"subagent_event","session_id":"b","event":{"type":"message_chunk","text":"Current result"}}),
+            ),
+        ];
+        let (start, omitted) = history_start_for_recent_turns(&history, 1);
+        assert_eq!((start, omitted), (4, 1));
+        let window = history_window(&history, start, None);
+        let wire: Vec<_> = window
+            .into_iter()
+            .map(|event| serde_json::to_value(ServerMessage::from(event)).unwrap())
+            .collect();
+        assert_eq!(wire.len(), 5);
+        assert_eq!(wire[1]["text"], "Before current activity");
+        assert_eq!(wire[2]["session_id"], "a");
+        assert_eq!(wire[3]["title"], "Reviewer");
+        assert_eq!(wire[3]["description"], "Review code");
+        assert_eq!(wire[3]["state"]["state"], "_completed");
+        assert_eq!(wire[4]["event"]["text"], "Current result");
+        assert!(!serde_json::to_string(&wire).unwrap().contains("Old result"));
+        // The same projection attributes a resumed child in an incremental poll.
+        let incremental = history_window(&history, 7, None);
+        assert_eq!(incremental.len(), 3);
+        assert!(matches!(&incremental[2], AcpUpdate::SubagentEvent { .. }));
+    }
+
+    #[test]
+    fn recent_history_keeps_only_the_live_permission_outside_the_window() {
+        let parse = |value| serde_json::from_value::<AcpUpdate>(value).unwrap();
+        let history = vec![
+            parse(serde_json::json!({"type":"user_message","text":"Old"})),
+            parse(
+                serde_json::json!({"type":"subagent_update","session_id":"a","parent_session_id":"root","title":"Reviewer"}),
+            ),
+            parse(
+                serde_json::json!({"type":"subagent_event","session_id":"a","event":{"type":"permission_request","id":"pending","description":"Approve","options":[]}}),
+            ),
+            parse(serde_json::json!({"type":"user_message","text":"New"})),
+        ];
+        assert_eq!(history_window(&history, 3, None).len(), 1);
+        let window = history_window(&history, 3, Some("pending"));
+        assert_eq!(window.len(), 3);
+        assert!(
+            matches!(&window[1], AcpUpdate::SubagentUpdate { update } if update.session_id == "a")
+        );
+        assert!(
+            matches!(&window[2], AcpUpdate::SubagentEvent { event, .. } if matches!(event.as_ref(), AcpUpdate::PermissionRequest { id, .. } if id == "pending"))
+        );
+        assert_eq!(
+            history_window(&history, 0, Some("pending")).len(),
+            history.len()
+        );
+        assert_eq!(history_window(&history, 3, Some("resolved")).len(), 1);
     }
 
     #[test]
@@ -3250,7 +3404,7 @@ mod tests {
     }
 
     #[test]
-    fn native_plan_history_context_replays_updates_and_removals_by_id() {
+    fn history_context_does_not_restore_plans_from_omitted_turns() {
         let plan = |id: &str, content: &str| AcpUpdate::PlanDocumentUpdate {
             plan: acp::PlanDocument::Markdown {
                 plan_id: id.into(),
@@ -3270,11 +3424,10 @@ mod tests {
             },
         ];
         let context = history_context(&events, events.len());
-        assert_eq!(context.plan_documents.len(), 1);
-        assert_eq!(
-            serde_json::to_value(&context.plan_documents[0]).unwrap()["content"],
-            "latest"
-        );
+        assert!(context.plan_documents.is_empty());
+        assert!(!context.native_plans_seen);
+        // In-window plans still replay through the ordinary event stream.
+        assert_eq!(history_window(&events, 0, None).len(), events.len());
         let wire = serde_json::to_value(ServerMessage::from(events[2].clone())).unwrap();
         assert_eq!(wire["type"], "plan_document_update");
         assert_eq!(wire["plan"]["plan_id"], "a");
@@ -3288,12 +3441,12 @@ mod tests {
             },
         ];
         let context = history_context(&removed, removed.len());
-        assert!(context.native_plans_seen);
+        assert!(!context.native_plans_seen);
         assert!(context.plan_file_path.is_none());
     }
 
     #[test]
-    fn truncated_history_context_preserves_prior_ui_state() {
+    fn truncated_history_context_limits_memory_and_plans_but_preserves_attachment_numbers() {
         let history = vec![
             AcpUpdate::UserMessage {
                 text: "old".into(),
@@ -3347,9 +3500,27 @@ mod tests {
         assert_eq!(omitted, 1);
         let context = history_context(&history, start);
         assert_eq!(context.attachment_counts.image, 1);
-        assert_eq!(context.read_memory_ids, ["mem-123"]);
-        assert_eq!(context.plan_entries.unwrap()[0].content, "First step");
-        assert_eq!(context.plan_file_path.as_deref(), Some("plan.md"));
+        assert!(context.read_memory_ids.is_empty());
+        assert!(context.plan_entries.is_none());
+        assert!(context.plan_file_path.is_none());
+        assert_eq!(history_context(&history, 0).read_memory_ids, ["mem-123"]);
+        // A memory tool that completes within the window retains its identity
+        // even when its input arrived earlier and tool details are omitted.
+        let mut with_completion = history.clone();
+        with_completion.push(
+            serde_json::from_value(serde_json::json!({
+                "type": "tool_call_update_v1", "id": "read-1", "status": "completed"
+            }))
+            .unwrap(),
+        );
+        assert_eq!(
+            history_context(&with_completion, start).read_memory_ids,
+            ["mem-123"]
+        );
+        let mut trimmed = serde_json::to_value(ServerMessage::from(history[3].clone())).unwrap();
+        trim_history_payload(&mut trimmed, false, false);
+        assert!(trimmed.get("input").is_none());
+        assert_eq!(history_context(&history, 3).read_memory_ids, ["mem-123"]);
     }
 
     #[test]

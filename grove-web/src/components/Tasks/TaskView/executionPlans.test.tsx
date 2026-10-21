@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { ChatMessage, ServerEvent } from "./TaskChat";
-import { reducePlanDocumentEvent, sessionPlanDocuments, planFilePath, type PlanDocument } from "./executionPlans";
+import { historyComposerPlans, reducePlanDocumentEvent, sessionPlanDocuments, planFilePath, type PlanDocument } from "./executionPlans";
 import { reduceSubagentEvent } from "./subagents";
 import { buildRenderItems } from "./chatRenderItems";
 import { PlanDocumentsPanel } from "./PlanDocumentsPanel";
@@ -14,6 +14,21 @@ const markdown = (id: string, content: string): PlanDocument => ({ type: "markdo
 const reduce = (messages: ChatMessage[], event: ServerEvent): ChatMessage[] => event.type === "subagent_event" || event.type === "subagent_update" ? reduceSubagentEvent(messages, event, reduce) : reducePlanDocumentEvent(messages, event);
 
 describe("native execution plans", () => {
+  it("replaces composer plans with only the loaded turns and buffered live events", () => {
+    const old = [{ type: "plan_update", entries: [{ content: "Old todo", status: "pending" }] }, { type: "plan_file_update", path: "/old.md", content: "Old plan" }];
+    expect(historyComposerPlans(old).entries).toHaveLength(1);
+    expect(historyComposerPlans([{ type: "user_message", text: "Recent turn" }])).toEqual({ entries: [], file: null });
+    const current = historyComposerPlans([
+      { type: "plan_update", entries: [{ content: "Current todo", status: "pending" }] },
+      { type: "subagent_event", session_id: "child", event: old[0] },
+      { type: "plan_file_update", path: "/current.md", content: "Current plan" },
+    ]);
+    expect(current.entries.map((entry) => entry.content)).toEqual(["Current todo"]);
+    expect(current.file).toEqual({ path: "/current.md", content: "Current plan" });
+    expect(historyComposerPlans([...old, update(markdown("native", "New native plan"))]).file).toBeNull();
+    expect(historyComposerPlans([...old, { type: "plan_update", entries: [] }]).entries).toEqual([]);
+  });
+
   it("keeps IDs and scopes independent, replaces snapshots, and replays removals", () => {
     let messages: ChatMessage[] = [];
     const events = [update(markdown("a", "first")), update(markdown("b", "other")), update(markdown("a", "")), { type: "subagent_update", session_id: "child", parent_session_id: "root" }, { type: "subagent_event", session_id: "child", event: update(markdown("a", "child")) }, { type: "plan_document_removed", plan_id: "b" }];

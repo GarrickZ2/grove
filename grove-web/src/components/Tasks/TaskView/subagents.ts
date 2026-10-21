@@ -82,6 +82,9 @@ export function reduceSubagentEvent(messages: ChatMessage[], event: ServerEvent,
     if (flattenSubagentMessages(messages).some((message) => message.type === "subagent" && message.sessionId === event.session_id)) {
       return updateChild(messages, event.session_id, patch);
     }
+    // A reconnect snapshot can update a visible card, but cannot move an old
+    // finished/idle child into the current turn. Active work keeps its controls.
+    if (event.snapshot && !["running", "requires_action"].includes(event.state?.state)) return messages;
     // Split parent text at delegation, preserving chronology during streaming.
     const before = messages.map((message) => (message.type === "assistant" || message.type === "thinking") ? { ...message, complete: true } : message);
     const child = patch({ type: "subagent", sessionId: event.session_id, parentSessionId: event.parent_session_id, messages: [] });

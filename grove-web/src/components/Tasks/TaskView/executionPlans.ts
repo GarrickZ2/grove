@@ -1,4 +1,4 @@
-import type { ChatMessage } from "./TaskChat";
+import type { ChatMessage, ServerEvent } from "./TaskChat";
 import { normalizePlanEntries, type PlanEntry } from "./planEntries";
 
 export type PlanDocument =
@@ -47,4 +47,16 @@ export function planDocumentTitle(plan: PlanDocument, index: number): string {
   if (plan.type === "file") return (planFilePath(plan.uri) ?? plan.uri).split("/").pop() || `Plan ${index + 1}`;
   if (plan.type === "markdown") return plan.content.match(/^#{1,6}\s+(.+)/m)?.[1]?.trim() || `Plan ${index + 1}`;
   return `Plan ${index + 1}`;
+}
+
+/** Replace composer plans from the loaded window, never merge with older UI state. */
+export function historyComposerPlans(events: readonly ServerEvent[]) {
+  let entries: PlanEntry[] = [];
+  let file: { path: string; content?: string } | null = null;
+  for (const event of events) {
+    if (event.type === "plan_update") entries = normalizePlanEntries(event.entries);
+    else if (event.type === "plan_file_update" && typeof event.path === "string") file = { path: event.path, content: event.content };
+    else if (event.type === "plan_document_update" || event.type === "plan_document_removed") file = null;
+  }
+  return { entries, file };
 }

@@ -1,5 +1,5 @@
 import { BackgroundChatConnections, trackChatSocketSends, watchBackgroundChatConnections } from "./backgroundChatConnections";
-import { reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
+import { historyComposerPlans, reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
 import { PlanDocumentsPanel, type PlanMarkdownOptions } from "./PlanDocumentsPanel";
 import { buildRenderItems, buildSequentialRenderItems, type RenderItem, type WorkSummaryItem, type ToolSectionItem } from "./chatRenderItems";
 import { SubagentsPanel } from "./SubagentsPanel";
@@ -3157,8 +3157,7 @@ export function TaskChat({
       setHistoryPreferences(loadChatHistoryPreferences(appConfig?.acp));
       const chatId = getActiveChatId();
       if (chatId) {
-        const runtime = historyRuntimeRef.current.get(chatId);
-        if (runtime) {
+        for (const runtime of historyRuntimeRef.current.values()) {
           runtime.generation += 1;
           runtime.loadingGeneration = null;
           runtime.bufferedEvents = [];
@@ -3582,9 +3581,8 @@ export function TaskChat({
   const nativePlans = useMemo(() => sessionPlanDocuments(messages), [messages]);
   const hasPlanPanel = !!planFileContent || nativePlans.length > 0;
   const hasPendingPanel = pendingQueueRows.length > 0;
-  // Memory evidence is chat-scoped, not render-window-scoped. History load
-  // seeds this from the full transcript before old messages are pruned; live
-  // ToolCalls then accumulate into it without removing earlier reads.
+  // Memory evidence belongs to the loaded turns plus subsequent live activity.
+  // Hydration replaces it; optional render pruning must not erase loaded reads.
   const [readMemoryIds, setReadMemoryIds] = useState<string[]>([]);
   useEffect(() => {
     const observed = collectReadMemoryIds(messages);
@@ -3684,9 +3682,13 @@ export function TaskChat({
   const hasSubagentsPanel = subagents.length > 0;
   const selectedSubagentId = subagentSelection.chatId === activeChatId ? subagentSelection.id : undefined;
   const [mobileDetails, setMobileDetails] = useState<{ chatId: string; panel: MobileComposerPanel } | null>(null);
-  // A details sheet belongs to the Session where it was explicitly opened.
-  if (mobileDetails && (!isPhoneLayout || mobileDetails.chatId !== activeChatId)) setMobileDetails(null);
-  const requestedMobilePanel = mobileDetails && mobileDetails.chatId === activeChatId ? mobileDetails.panel : null;
+  // A details sheet belongs to its Session and the currently loaded history.
+  const missingHistoryPanel = (mobileDetails?.panel === "memory" && !hasMemoryPanel)
+    || (mobileDetails?.panel === "subagents" && !hasSubagentsPanel)
+    || (mobileDetails?.panel === "todo" && !hasTodoPanel)
+    || (mobileDetails?.panel === "plan" && !hasPlanPanel);
+  if (mobileDetails && (!isPhoneLayout || mobileDetails.chatId !== activeChatId || missingHistoryPanel)) setMobileDetails(null);
+  const requestedMobilePanel = mobileDetails && mobileDetails.chatId === activeChatId && !missingHistoryPanel ? mobileDetails.panel : null;
   const activeComposerPanel =
     showAuthPanel && activeAuthMessage
       ? "auth"
@@ -5710,9 +5712,6 @@ export function TaskChat({
       }
       {
         let msgs: ChatMessage[] = [];
-        for (const plan of res.context?.plan_documents ?? []) {
-          msgs = reducePlanDocumentEvent(msgs, { type: "plan_document_update", plan });
-        }
         const historicalInputIds = new Set(
           [...res.events, ...runtime.bufferedEvents]
             .flatMap((event) => event.type === "prompt_started"
@@ -5728,24 +5727,8 @@ export function TaskChat({
           updateLocalInputPlacements(chatId, (items) => items.filter((item) => !historicalInputIds.has(item.id)));
           updatePendingInputs(chatId, (items) => items.filter((item) => !historicalInputIds.has(item.id)));
         }
-        let historicalPlanEntries: PlanEntry[] | null = res.context?.plan_entries
-          ? normalizePlanEntries(res.context.plan_entries)
-          : null;
-        let historicalPlanFile: { path: string; content?: string } | null = res.context?.plan_file_path
-          ? { path: res.context.plan_file_path }
-          : null;
-        let historicalNativePlansSeen = !!res.context?.native_plans_seen;
-        if (historicalNativePlansSeen || sessionPlanDocuments(msgs).length > 0) historicalPlanFile = null;
         for (const evt of res.events) {
           msgs = reduceHistoryMessages(msgs, evt);
-          if (evt.type === "plan_update") {
-            historicalPlanEntries = normalizePlanEntries(evt.entries);
-          } else if (evt.type === "plan_document_update" || evt.type === "plan_document_removed") {
-            historicalNativePlansSeen = true;
-            historicalPlanFile = null;
-          } else if (evt.type === "plan_file_update" && typeof evt.path === "string") {
-            historicalPlanFile = { path: evt.path, content: evt.content };
-          }
         }
         // The backend snapshot distinguishes an ended runtime from a temporary
         // socket disconnect. Apply it before newer buffered events restore activity.
@@ -5766,14 +5749,11 @@ export function TaskChat({
         // Reduce buffered message events into msgs locally (avoids React batching concerns)
         for (const evt of buffered) {
           msgs = reduceHistoryMessages(msgs, evt);
-          if (evt.type === "plan_document_update" || evt.type === "plan_document_removed") {
-            historicalNativePlansSeen = true;
-            historicalPlanFile = null;
-          }
         }
-        if (historicalNativePlansSeen && !historicalPlanFile) {
-          setPlanFileContent(""); setPlanFilePath(""); planFilePathRef.current = "";
-        }
+        const { entries: historicalPlanEntries, file: historicalPlanFile } = historyComposerPlans([...res.events, ...buffered]);
+        // Replace composer state on every hydration, including an empty window.
+        // Otherwise changing Recent turns leaves the previous chat-wide pills.
+        setPlanFileContent(""); setPlanFilePath(""); planFilePathRef.current = "";
         // Older saved pending inputs did not record a transcript position.
         // Anchor those once history has loaded, before later sends arrive.
         const pending = pendingInputsRef.current.get(chatId) ?? [];
@@ -5783,8 +5763,8 @@ export function TaskChat({
           ...pending.filter((input) => inputLocation(input) === "timeline" && !items.some((item) => item.id === input.id))
             .map((input) => ({ id: input.id, position })),
         ]);
-        // Capture the complete History evidence before applying the optional
-        // render window. A visual optimization must not erase Memory usage.
+        // Keep evidence from the loaded turns before optional render pruning.
+        // Replace prior history evidence when the load range changes.
         setReadMemoryIds([...new Set([...(res.context?.read_memory_ids ?? []), ...collectReadMemoryIds(msgs)])]);
         const historyCounters = buildAttachmentCounters(msgs);
         const attachmentCounters = {
@@ -5800,12 +5780,9 @@ export function TaskChat({
         msgs = prunedHistory.messages;
         setMessages(msgs);
         updateHiddenMessageCount(prunedHistory.hiddenMessageCount);
-        if (historicalPlanEntries) {
-          setPlanEntries(historicalPlanEntries);
-          // Restored history exposes the Todo pill without unexpectedly
-          // opening the composer panel on every app launch.
-          setShowPlan(false);
-        }
+        setPlanEntries(historicalPlanEntries);
+        // Restored history exposes the Todo pill without opening its panel.
+        setShowPlan(false);
         if (historicalPlanFile) {
           setPlanFilePath(historicalPlanFile.path);
           planFilePathRef.current = historicalPlanFile.path;

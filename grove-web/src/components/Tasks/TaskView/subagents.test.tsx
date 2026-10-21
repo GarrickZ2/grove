@@ -21,6 +21,40 @@ function getChild(messages: ChatMessage[], sessionId: string): SubagentMessage {
 }
 
 describe("subagent timeline", () => {
+  it("does not append out-of-window completed or idle reconnect snapshots", () => {
+    const messages: ChatMessage[] = [{ type: "assistant", content: "Recent answer", complete: true }];
+    for (const state of ["_completed", "_failed", "_cancelled", "idle", "unknown"]) {
+      expect(reduce(messages, announce("old", { snapshot: true, title: "Old task", state: { state } }))).toBe(messages);
+    }
+  });
+
+  it("updates visible snapshots in place and preserves their in-window transcript", () => {
+    let messages = reduce([], announce("child", { title: "Review", state: { state: "running" } }));
+    messages = reduce(messages, scoped("child", { type: "message_chunk", text: "Recent work" }));
+    messages = reduce(messages, { type: "message_chunk", text: "Parent answer" });
+    messages = reduce(messages, announce("child", { snapshot: true, state: { state: "_completed" } }));
+    expect(messages.map((message) => message.type)).toEqual(["subagent", "assistant"]);
+    expect(getChild(messages, "child").messages).toEqual([{ type: "assistant", content: "Recent work", complete: true }]);
+    expect(subagentStatus(getChild(messages, "child"), true)).toBe("Completed");
+  });
+
+  it("retains active and waiting children outside the history window", () => {
+    for (const state of ["running", "requires_action"]) {
+      let messages = reduce([], announce("active", { snapshot: true, title: "Active task", state: { state }, capabilities: { cancel: {} } }));
+      messages = reduce(messages, scoped("active", { type: "permission_request", id: "p", description: "Approval" }));
+      expect(getChild(messages, "active").capabilities?.cancel).toEqual({});
+      expect(subagentStatus(getChild(messages, "active"), true)).toBe("Needs your input");
+      expect(getChild(messages, "active").messages[0]).toMatchObject({ type: "permission", id: "p" });
+    }
+  });
+
+  it("allows a new live delegation after ignoring its old idle snapshot", () => {
+    let messages = reduce([], announce("reused", { snapshot: true, state: { state: "idle" } }));
+    messages = reduce(messages, announce("reused", { title: "New job", state: { state: "running" } }));
+    expect(getChild(messages, "reused").title).toBe("New job");
+    expect(messages).toHaveLength(1);
+  });
+
   it("keeps root Todos out of the transcript and restores each child's own Todo", () => {
     const todo = (content: string): ServerEvent => ({ type: "plan_update", entries: [{ content, status: "pending" }] });
     const events = [announce("a"), announce("b", {}, "a"), todo("Root"), scoped("a", todo("Parent child")), scoped("b", todo("Nested child")), todo("Root changed"), scoped("a", todo("Updated child"))];

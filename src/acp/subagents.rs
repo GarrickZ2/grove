@@ -4,10 +4,13 @@ use agent_client_protocol::schema::MaybeUndefined;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SubagentUpdateData {
     pub session_id: String,
     pub parent_session_id: String,
+    /// Transport reconciliation, not a new delegation in the transcript.
+    #[serde(default)]
+    pub snapshot: bool,
     #[serde(default, skip_serializing_if = "MaybeUndefined::is_undefined")]
     pub title: MaybeUndefined<String>,
     #[serde(default, skip_serializing_if = "MaybeUndefined::is_undefined")]
@@ -117,6 +120,7 @@ impl AcpSessionHandle {
                 snapshot: SubagentUpdateData {
                     session_id: id.clone(),
                     parent_session_id: parent.to_owned(),
+                    snapshot: false,
                     title: MaybeUndefined::Undefined,
                     description: MaybeUndefined::Undefined,
                     capabilities: MaybeUndefined::Undefined,
@@ -136,6 +140,7 @@ impl AcpSessionHandle {
         let data = SubagentUpdateData {
             session_id: id,
             parent_session_id: parent.to_owned(),
+            snapshot: false,
             title: update.title,
             description: update.description,
             capabilities: update
@@ -156,27 +161,55 @@ impl AcpSessionHandle {
         patch!(description);
         patch!(capabilities);
         patch!(state);
+        // A reusable child can re-enter a truncated history window. Carry its
+        // identity on live updates even when the Agent sends only a state patch.
+        let data = child.snapshot.clone();
         drop(registry);
         self.emit(AcpUpdate::SubagentUpdate { update: data });
     }
 
     pub(crate) fn subagent_snapshots(&self) -> Vec<AcpUpdate> {
+        let mut pending = Vec::new();
+        if let Some((id, _)) = self.pending_permission.lock().unwrap().as_ref() {
+            pending.push(id.clone());
+        }
+        if let Some(request) = self.pending_elicitation_snapshot() {
+            pending.push(request.request_id);
+        }
+        pending.extend(
+            self.active_url_elicitation_snapshots()
+                .into_iter()
+                .map(|request| request.request_id),
+        );
         let registry = self.subagents.lock().unwrap();
+        let needs_input: std::collections::HashSet<_> = pending
+            .iter()
+            .filter_map(|id| registry.owners.get(id))
+            .cloned()
+            .collect();
         let mut snapshots = Vec::new();
-        fn visit(parent: &str, registry: &SubagentRegistry, snapshots: &mut Vec<AcpUpdate>) {
+        fn visit(
+            parent: &str,
+            registry: &SubagentRegistry,
+            needs_input: &std::collections::HashSet<String>,
+            snapshots: &mut Vec<AcpUpdate>,
+        ) {
             for child in registry
                 .children
                 .values()
                 .filter(|child| child.parent == parent)
             {
-                snapshots.push(AcpUpdate::SubagentUpdate {
-                    update: child.snapshot.clone(),
-                });
-                visit(&child.snapshot.session_id, registry, snapshots);
+                let mut update = child.snapshot.clone();
+                update.snapshot = true;
+                if needs_input.contains(&update.session_id) {
+                    update.state = MaybeUndefined::Value(json!({"state": "requires_action"}));
+                }
+                snapshots.push(AcpUpdate::SubagentUpdate { update });
+                visit(&child.snapshot.session_id, registry, needs_input, snapshots);
             }
         }
         if let Some(root) = self.root_session_id() {
-            visit(&root, &registry, &mut snapshots);
+            visit(&root, &registry, &needs_input, &mut snapshots);
         }
         snapshots
     }
@@ -251,7 +284,9 @@ impl AcpSessionHandle {
                     if !known {
                         child.snapshot.state = MaybeUndefined::Value(json!({"state":"unknown"}));
                     }
-                    child.snapshot.clone()
+                    let mut update = child.snapshot.clone();
+                    update.snapshot = true;
+                    update
                 })
                 .collect::<Vec<_>>()
         };
@@ -706,8 +741,22 @@ mod tests {
             .unwrap_err()
             .contains("does not support"));
         assert!(handle.validate_session("foreign").is_err());
+        // Live requests override a stale idle child snapshot and retain its UI entry.
+        let (response, _receiver) = tokio::sync::oneshot::channel();
+        *handle.pending_permission.lock().unwrap() = Some(("permission-a".into(), response));
+        handle.own_child_request("permission-a", "a");
+        assert!(handle.subagent_snapshots().iter().any(|event| matches!(event,
+            AcpUpdate::SubagentUpdate { update } if update.session_id == "a"
+                && matches!(&update.state, MaybeUndefined::Value(state) if state["state"] == "requires_action"))));
+        handle.pending_permission.lock().unwrap().take();
         handle.end_subagents();
         let snapshots = handle.subagent_snapshots();
+        assert!(snapshots
+            .iter()
+            .all(|event| matches!(event, AcpUpdate::SubagentUpdate { update } if update.snapshot)));
+        assert!(snapshots
+            .iter()
+            .all(|event| !crate::storage::chat_history::should_persist(event)));
         assert!(
             matches!(&snapshots[0], AcpUpdate::SubagentUpdate { update } if update.session_id == "a" && matches!(&update.state, MaybeUndefined::Value(state) if state["state"] == "idle"))
         );

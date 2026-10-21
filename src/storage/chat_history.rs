@@ -218,6 +218,10 @@ pub fn history_file_path(project: &str, task_id: &str, chat_id: &str) -> PathBuf
 
 /// 判断事件是否应该持久化
 pub fn should_persist(update: &AcpUpdate) -> bool {
+    // Reconnecting must not turn old child state into new timeline activity.
+    if matches!(update, AcpUpdate::SubagentUpdate { update } if update.snapshot) {
+        return false;
+    }
     if let AcpUpdate::SubagentEvent { event, .. } = update {
         return should_persist(event);
     }
