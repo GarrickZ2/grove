@@ -1,3 +1,4 @@
+import { compactConversationText } from "./conversationPreview";
 import { BackgroundChatConnections, trackChatSocketSends, watchBackgroundChatConnections } from "./backgroundChatConnections";
 import { historyComposerPlans, reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
 import { PlanDocumentsPanel, type PlanMarkdownOptions } from "./PlanDocumentsPanel";
@@ -1187,12 +1188,6 @@ function conversationToolLabel(tool: ToolMessage): string {
     default:
       return "Action";
   }
-}
-
-function compactConversationText(value: string, limit = 220): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  if (!compact) return "";
-  return compact.length > limit ? `${compact.slice(0, limit - 1)}…` : compact;
 }
 
 /**
@@ -2696,6 +2691,9 @@ export function TaskChat({
   const { resolveMessages, forgetMessages, updateMessages } =
     useLiveSessionMessages(activeChatId, messages);
   const [hiddenMessageCount, setHiddenMessageCount] = useState(0);
+  // Only show the history limit after the server actually omitted turns.
+  // Keep the loaded limit per session so switching to a new chat clears it.
+  const [limitedHistoryTurnsByChat, setLimitedHistoryTurnsByChat] = useState<Record<string, number>>({});
   const hiddenMessageCountRef = useRef(0);
   const [hasContent, setHasContent] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
@@ -5739,6 +5737,10 @@ export function TaskChat({
         runtime.loadingGeneration = null;
         runtime.loaded = true;
         runtime.historyTotal = res.total;
+        setLimitedHistoryTurnsByChat((previous) => ({
+          ...previous,
+          [chatId]: (res.omitted_turns ?? 0) > 0 ? historyPreferences.recentTurns : 0,
+        }));
         runtime.syncRequested = false;
         if (
           runtime.connected &&
@@ -10568,7 +10570,7 @@ export function TaskChat({
   // their content without unmounting Virtuoso's measured boundary elements.
   const virtuosoContext: TaskChatVirtuosoContext = {
     hiddenMessageCount,
-    limitedHistoryTurns: historyPreferences.recentTurns,
+    limitedHistoryTurns: activeChatId ? limitedHistoryTurnsByChat[activeChatId] ?? 0 : 0,
     inputAreaHeight: transcriptFooterState.inputAreaHeight,
     showThinking: transcriptFooterState.showThinking,
   };
