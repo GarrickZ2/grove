@@ -1,5 +1,8 @@
-import { useComposerInteractionBoundary } from "./useComposerInteractionBoundary";
+import { chatConnectionLabels, chatConnectionStatusAfterClose, MAX_CHAT_RECONNECT_ATTEMPTS, type ChatConnectionStatus } from "./chatConnectionStatus";
+import { watchChatConnection, withConnectionDeadline } from "./chatConnectionAttempt";
+import { resolveAuthenticationMessages } from "./authenticationState";
 import { compactConversationText } from "./conversationPreview";
+import { useComposerInteractionBoundary } from "./useComposerInteractionBoundary";
 import { BackgroundChatConnections, trackChatSocketSends, watchBackgroundChatConnections } from "./backgroundChatConnections";
 import { historyComposerPlans, reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
 import { PlanDocumentsPanel, type PlanMarkdownOptions } from "./PlanDocumentsPanel";
@@ -2681,6 +2684,17 @@ export function TaskChat({
 
   // ─── Active chat's live state ─────────────────────────────────────────
   const [isConnected, setIsConnected] = useState(false);
+  // Keep status per session and update it from live events, not history replay.
+  const [chatConnectionStatuses, setChatConnectionStatuses] = useState<Record<string, ChatConnectionStatus>>({});
+  const [connectionErrors, setConnectionErrors] = useState<Record<string, string>>({});
+  const [connectionStages, setConnectionStages] = useState<Record<string, string>>({});
+  const setChatConnectionStatus = useCallback((chatId: string, status: ChatConnectionStatus | ((current: ChatConnectionStatus) => ChatConnectionStatus)) => {
+    setChatConnectionStatuses((previous) => {
+      const current = previous[chatId] ?? "disconnected";
+      const next = typeof status === "function" ? status(current) : status;
+      return current === next ? previous : { ...previous, [chatId]: next };
+    });
+  }, []);
   // Pre-spawn UI hint pushed by backend when an agent is being installed via
   // npx for the first time (~30s on cold cache). Cleared on session_ready or
   // when backend sends phase: "ready". Purely cosmetic — the actual spawn
@@ -3564,6 +3578,18 @@ export function TaskChat({
   // Terminal-mode chat: agent CLI runs under a PTY (no ACP). Messages area
   // becomes xterm.js; chatbox input writes to PTY stdin instead of session/prompt.
   const isTerminalLaunchMode = activeChat?.launch_mode === "terminal";
+  const connectionStatus = activeChatId ? chatConnectionStatuses[activeChatId] ?? "disconnected" : "disconnected";
+  const connectionPending = connectionStatus === "connecting" || connectionStatus === "reconnecting";
+  const connectionLabel = connectionPending && activeChatId && connectionStages[activeChatId]
+    ? `${chatConnectionLabels[connectionStatus]} · ${connectionStages[activeChatId]}`
+    : chatConnectionLabels[connectionStatus];
+  const connectionDotClass = isViewingArchived || connectionStatus === "disconnected"
+    ? "bg-[var(--color-text-muted)]"
+    : connectionStatus === "connected"
+      ? "bg-[var(--color-success)]"
+      : connectionStatus === "failed"
+        ? "bg-[var(--color-error)]"
+        : "bg-[var(--color-warning)]";
   const agentPtyWsUrl = useMemo(() => {
     if (!isTerminalLaunchMode || !activeChatId) return null;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -5155,31 +5181,45 @@ export function TaskChat({
         return;
       }
       if (chat.launch_mode === "terminal") {
+        setChatConnectionStatus(chatId, (current) => current === "disconnected" ? "connecting" : current);
         connectingRef.current.delete(chatId);
         return;
       }
       connectingRef.current.add(chatId);
+      setConnectionErrors((previous) => ({ ...previous, [chatId]: "" }));
+      setChatConnectionStatus(chatId, (current) => current === "reconnecting" ? current : "connecting");
+      if (chatId === getActiveChatId()) {
+        setConnectPhase(null);
+        setConnectPhaseStartedAt(null);
+      }
 
       const host = getApiHost();
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const onlyExisting = attachOnly || attachOnlyChatsRef.current.has(chatId);
       const query = [importing ? "import=true" : "", onlyExisting ? "attach_only=true" : ""]
         .filter(Boolean).join("&");
-      let url: string;
+      let ws: WebSocket;
       try {
-        url = await appendHmacToUrl(
+        const url = await withConnectionDeadline(() => appendHmacToUrl(
           `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/ws${query ? `?${query}` : ""}`,
-        );
+        ), 15000, "Timed out preparing the connection. Use Reconnect to retry.");
+        // Never create a late attachment after this view finishes or releases.
+        if (finishedRef.current || !backgroundConnections.canFinishConnect(chatId, connectionTicket)) {
+          setChatConnectionStatus(chatId, "disconnected");
+          return;
+        }
+        if (wsMapRef.current.has(chatId)) return;
+        ws = new WebSocket(url);
+      } catch (error) {
+        setChatConnectionStatus(chatId, "failed");
+        setConnectionErrors((previous) => ({ ...previous, [chatId]: apiErrorMessage(error) }));
+        if (chatId === getActiveChatId()) {
+          setMessages((previous) => appendSystemMessage(previous, `Connection failed: ${apiErrorMessage(error)}`));
+        }
+        return;
       } finally {
         connectingRef.current.delete(chatId);
       }
-      // The Run may have reached its terminal state while URL signing was in
-      // flight. A finished view must never create a late live attachment.
-      if (finishedRef.current || !backgroundConnections.canFinishConnect(chatId, connectionTicket)) return;
-      // Re-check after async gap: another call may have connected while we awaited
-      if (wsMapRef.current.has(chatId)) return;
-
-      const ws = new WebSocket(url);
       trackChatSocketSends(ws, () => backgroundConnections.recordActivity(chatId, Date.now()));
       wsMapRef.current.set(chatId, ws);
       lastWsMessageAtRef.current.set(chatId, Date.now());
@@ -5285,6 +5325,8 @@ export function TaskChat({
           const runtime =
             historyRuntimeRef.current.get(chatId) ?? defaultChatHistoryRuntime();
           if (data?.type === "session_ready") {
+            setChatConnectionStatus(chatId, "connected");
+            setConnectionErrors((previous) => ({ ...previous, [chatId]: "" }));
             runtime.connected = true;
             if (pendingQueueEditRef.current?.chatId === chatId) {
               ws.send(JSON.stringify({ type: "pause_queue" }));
@@ -5314,7 +5356,11 @@ export function TaskChat({
               setHistorySyncVersion((version) => version + 1);
             }
           } else if (data?.type === "session_ended") {
+            setChatConnectionStatus(chatId, (current) => current === "failed" ? current : "disconnected");
             runtime.connected = false;
+          } else if (data?.type === "error" && !wsSessionEverReadyRef.current.get(chatId)) {
+            setChatConnectionStatus(chatId, "failed");
+            setConnectionErrors((previous) => ({ ...previous, [chatId]: data.message || "Agent connection failed." }));
           }
           historyRuntimeRef.current.set(chatId, runtime);
           if (data?.type === "agent_voice_audio") {
@@ -5384,6 +5430,15 @@ export function TaskChat({
             `[grove ws] chat ${chatId} closed: code=${event.code} reason=${event.reason || "(none)"} wasClean=${event.wasClean}`,
           );
         }
+        const closeState = {
+          intentional: intentionalCloseRef.current.has(chatId) || !backgroundConnections.canConnect(chatId),
+          wasReady: wsSessionEverReadyRef.current.get(chatId) ?? false,
+          attempt: reconnectAttemptRef.current.get(chatId) ?? 0,
+        };
+        setChatConnectionStatus(chatId, (current) => chatConnectionStatusAfterClose(current, closeState));
+        if (!closeState.intentional && !closeState.wasReady) {
+          setConnectionErrors((previous) => ({ ...previous, [chatId]: previous[chatId] || `Connection closed before the Agent became ready (code ${event.code}${event.reason ? `: ${event.reason}` : ""}). Use Reconnect to retry.` }));
+        }
         wsMapRef.current.delete(chatId);
         if (pendingQueueEditRef.current?.chatId === chatId) failPendingQueueEdit("Connection lost. Reconnect to save this edit.");
         lastWsMessageAtRef.current.delete(chatId);
@@ -5439,8 +5494,7 @@ export function TaskChat({
           // attempts to avoid hammering the agent on permanent failures (stale
           // saved_id, agent crashed). User can manually retry by re-opening the chat.
           const attempt = reconnectAttemptRef.current.get(chatId) ?? 0;
-          const WS_MAX_RECONNECT_ATTEMPTS = 5;
-          if (attempt >= WS_MAX_RECONNECT_ATTEMPTS) {
+          if (attempt >= MAX_CHAT_RECONNECT_ATTEMPTS) {
             if (chatId === getActiveChatId()) {
               setMessages((prev) =>
                 appendSystemMessage(
@@ -5469,13 +5523,25 @@ export function TaskChat({
       };
 
       ws.onerror = (event) => {
+        if (wsMapRef.current.get(chatId) !== ws) return;
+        if (!wsSessionEverReadyRef.current.get(chatId)) setChatConnectionStatus(chatId, "failed");
         console.warn(`[grove ws] chat ${chatId} error`, event);
         if (chatId === getActiveChatId()) {
           setMessages((prev) => appendSystemMessage(prev, "Connection error."));
         }
       };
+      watchChatConnection(ws, (message) => {
+        if (wsMapRef.current.get(chatId) !== ws) return;
+        setChatConnectionStatus(chatId, "failed");
+        setConnectionErrors((previous) => ({ ...previous, [chatId]: message }));
+        const runtime = historyRuntimeRef.current.get(chatId);
+        if (runtime) runtime.connected = false;
+        if (chatId === getActiveChatId()) setIsConnected(false);
+      }, (phase) => {
+        if (wsMapRef.current.get(chatId) === ws) setConnectionStages((previous) => ({ ...previous, [chatId]: phase }));
+      });
     },
-    [backgroundConnections, projectId, taskId, getActiveChatId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, reconcileInputQueue, savePendingInputState, finishPendingQueueEdit, failPendingQueueEdit, resumeEditedQueue],
+    [backgroundConnections, projectId, taskId, getActiveChatId, setChatConnectionStatus, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, reconcileInputQueue, savePendingInputState, finishPendingQueueEdit, failPendingQueueEdit, resumeEditedQueue],
   );
 
 
@@ -5502,6 +5568,7 @@ export function TaskChat({
       });
     },
     onRelease: (chatId) => {
+      setChatConnectionStatus(chatId, "disconnected");
       cancelPendingReconnectRef.current(chatId);
       const ws = wsMapRef.current.get(chatId);
       wsMapRef.current.delete(chatId);
@@ -5521,7 +5588,7 @@ export function TaskChat({
         onDisconnectedPropRef.current?.();
       }
     },
-  }), [activeChatId, backgroundConnections, collapsed, getActiveChatId]);
+  }), [activeChatId, backgroundConnections, collapsed, getActiveChatId, setChatConnectionStatus]);
 
   // Browser readyState can remain OPEN after an unclean network drop. Server
   // heartbeats prove the full path still delivers messages; replace stale
@@ -5535,6 +5602,7 @@ export function TaskChat({
         if (!recovered && (!wsSessionEverReadyRef.current.get(chatId) || ws.readyState !== WebSocket.OPEN)) return;
         if (!recovered && now - (lastWsMessageAtRef.current.get(chatId) ?? now) < 45000) return;
         cancelPendingReconnectRef.current(chatId);
+        setChatConnectionStatus(chatId, "reconnecting");
         wsMapRef.current.delete(chatId);
         if (pendingQueueEditRef.current?.chatId === chatId) failPendingQueueEdit("Connection lost. Reconnect to save this edit.");
         lastWsMessageAtRef.current.delete(chatId);
@@ -5581,7 +5649,7 @@ export function TaskChat({
       window.removeEventListener("online", inspect);
       window.removeEventListener("grove:transport-ready", inspect);
     };
-  }, [getActiveChatId, updatePendingInputs, failPendingQueueEdit]);
+  }, [getActiveChatId, updatePendingInputs, failPendingQueueEdit, setChatConnectionStatus]);
 
   // A finished Run is a persisted, read-only transcript. Detach this view
   // from every live transport without killing the Agent-owned session.
@@ -5598,6 +5666,7 @@ export function TaskChat({
     intentionalCloseRef.current.clear();
     wsRef.current = null;
     setIsConnected(false);
+    setChatConnectionStatuses({});
     setConnectPhase(null);
     setConnectPhaseStartedAt(null);
     updateBusy(false);
@@ -5694,15 +5763,21 @@ export function TaskChat({
       }
       let res: Awaited<ReturnType<typeof getChatHistory>>;
       try {
-        res = await getChatHistory(projectId, taskId, chatId, 0, {
+        res = await withConnectionDeadline(() => getChatHistory(projectId, taskId, chatId, 0, {
           recentTurns: historyPreferences.recentTurns,
           includeMedia: historyPreferences.includeMedia,
           includeToolDetails: historyPreferences.includeToolDetails,
-        });
-      } catch {
+        }), 20000, "Timed out loading conversation history.");
+      } catch (error) {
         if (generation === runtime.generation) {
           runtime.loadingGeneration = null;
-          runtime.bufferedEvents = [];
+          const buffered = runtime.bufferedEvents.splice(0);
+          if (chatId === getActiveChatId()) {
+            setMessages((previous) => appendSystemMessage(previous, `History could not be loaded: ${apiErrorMessage(error)}`));
+            for (const event of buffered) handleServerMessageRef.current(event);
+          } else {
+            for (const event of buffered) handleServerMessageForCacheRef.current(chatId, event);
+          }
         }
         return;
       }
@@ -6477,17 +6552,7 @@ export function TaskChat({
           break;
         }
         case "auth_succeeded": {
-          // 把所有 idle / in_progress 的 auth_required 都标 succeeded。
-          // 之前的 `i === prev.length-1` 兜底在尾部不是 auth 时静默漏掉,
-          // 导致登录已成功但 banner 仍以 idle 残留。
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.type === "auth_required" &&
-              (m.status === "idle" || m.status === "in_progress")
-                ? { ...m, status: "succeeded" }
-                : m,
-            ),
-          );
+          setMessages(resolveAuthenticationMessages);
           break;
         }
         case "auth_failed": {
@@ -6764,12 +6829,7 @@ export function TaskChat({
           break;
         }
         case "auth_succeeded":
-          state.messages = state.messages.map((message) =>
-            message.type === "auth_required" &&
-            (message.status === "idle" || message.status === "in_progress")
-              ? { ...message, status: "succeeded" }
-              : message,
-          );
+          state.messages = resolveAuthenticationMessages(state.messages);
           messagesChanged = true;
           break;
         case "auth_failed": {
@@ -8873,6 +8933,7 @@ export function TaskChat({
     attachOnlyChatsRef.current.delete(chatId);
     const existingWs = wsMapRef.current.get(chatId);
     setIsReconnecting(true);
+    setChatConnectionStatus(chatId, "reconnecting");
     setReconnectConfirmOpen(false);
     cancelPendingReconnectRef.current(chatId);
     intentionalCloseRef.current.add(chatId);
@@ -8887,7 +8948,8 @@ export function TaskChat({
     historyRuntimeRef.current.set(chatId, runtime);
 
     try {
-      await reconnectChat(projectId, taskId, chatId);
+      await withConnectionDeadline((signal) => reconnectChat(projectId, taskId, chatId, signal), 15000,
+        "Timed out stopping the previous Agent session. Use Reconnect to retry.");
       // The reset deliberately discards the confirmed backend queue. Other
       // local attempts remain editable, but cannot keep waiting on that runtime.
       if (pendingQueueEditRef.current?.chatId === chatId) {
@@ -8931,13 +8993,16 @@ export function TaskChat({
         }
       }
 
+      setChatConnectionStatus(chatId, "reconnecting");
       await connectChatWs(chatId);
       if (getActiveChatId() === chatId) {
         wsRef.current = wsMapRef.current.get(chatId) ?? null;
       }
     } catch (error) {
       intentionalCloseRef.current.delete(chatId);
-      const message = `Reconnect failed: ${error instanceof Error ? error.message : String(error)}`;
+      setChatConnectionStatus(chatId, "failed");
+      const message = `Reconnect failed: ${apiErrorMessage(error)}`;
+      setConnectionErrors((previous) => ({ ...previous, [chatId]: message }));
       if (getActiveChatId() === chatId) {
         setMessages((prev) => appendSystemMessage(prev, message));
       } else {
@@ -8947,7 +9012,7 @@ export function TaskChat({
     } finally {
       setIsReconnecting(false);
     }
-  }, [backgroundConnections, activeChatId, connectChatWs, getActiveChatId, isReconnecting, projectId, taskId, updateBusy, updatePendingInputs, updateLocalInputPlacements, savePendingInputState, finishPendingQueueEdit]);
+  }, [backgroundConnections, activeChatId, connectChatWs, getActiveChatId, isReconnecting, projectId, taskId, updateBusy, updatePendingInputs, updateLocalInputPlacements, savePendingInputState, finishPendingQueueEdit, setChatConnectionStatus]);
 
   const handleReconnect = useCallback(() => {
     if (isReconnecting) return;
@@ -10929,16 +10994,14 @@ export function TaskChat({
 
             <div className="flex shrink-0 items-center gap-1.5 select-none">
               <div
-                className={`w-2.5 h-2.5 rounded-full ${isViewingArchived ? "bg-[var(--color-text-muted)]" : isConnected ? "bg-[var(--color-success)] animate-pulse" : "bg-[var(--color-warning)]"}`}
+                className={`w-2.5 h-2.5 rounded-full ${connectionDotClass} ${!isViewingArchived && connectionStatus === "connected" ? "animate-pulse" : ""}`}
               />
               <span className="text-xs text-[var(--color-text-muted)]">
                 {isViewingArchived
                   ? "Archived"
-                  : isConnected
-                  ? "Connected"
-                  : connectPhase === "downloading" && connectPhaseStartedAt
+                  : connectionPending && connectPhase === "downloading" && connectPhaseStartedAt
                     ? <DownloadingLabel startedAt={connectPhaseStartedAt} />
-                    : "Connecting..."}
+                    : connectionLabel}
               </span>
               {onToggleFullscreen && (
                 <button
@@ -11026,16 +11089,14 @@ export function TaskChat({
                 </div>
                 <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
                   <span
-                    className={`h-1.5 w-1.5 rounded-full ${isViewingArchived ? "bg-[var(--color-text-muted)]" : isConnected ? "bg-[var(--color-success)]" : "bg-[var(--color-warning)]"}`}
+                    className={`h-1.5 w-1.5 rounded-full ${connectionDotClass}`}
                   />
                   <span>
                     {isViewingArchived
                       ? "Archived"
-                      : isConnected
-                      ? "Connected"
-                      : connectPhase === "downloading" && connectPhaseStartedAt
+                      : connectionPending && connectPhase === "downloading" && connectPhaseStartedAt
                         ? <DownloadingLabel startedAt={connectPhaseStartedAt} compact />
-                        : "Connecting..."}
+                        : connectionLabel}
                   </span>
                 </div>
               </div>
@@ -11267,6 +11328,12 @@ export function TaskChat({
           onWheelCapture={handleChatWheelCapture}
           onPointerDownCapture={handleChatPointerDownCapture}
         >
+          {activeChatId && !isReadOnlyHistory && !isTerminalLaunchMode && connectionErrors[activeChatId] && (
+            <div role="alert" className="absolute inset-x-3 top-2 z-20 flex items-start gap-3 rounded-lg border border-[var(--color-error)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-error)]">
+              <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{connectionErrors[activeChatId]}</span>
+              <button type="button" className="shrink-0 underline disabled:opacity-50" disabled={isReconnecting} onClick={handleReconnect}>Reconnect</button>
+            </div>
+          )}
           <ConversationMinimap
             turns={conversationTurns}
             activeMessageIndex={minimapActiveMessageIndex}
@@ -11289,8 +11356,18 @@ export function TaskChat({
                 // Drive the chat header's connection pill from the PTY WS
                 // status — there's no ACP WS in this mode so the original
                 // ACP-driven `isConnected` would be stuck on "Connecting…".
-                onConnected={() => setIsConnected(true)}
-                onDisconnected={() => setIsConnected(false)}
+                onConnected={() => {
+                  setIsConnected(true);
+                  if (activeChatId) setChatConnectionStatus(activeChatId, "connected");
+                }}
+                onDisconnected={() => {
+                  setIsConnected(false);
+                  if (activeChatId) setChatConnectionStatus(activeChatId, (current) => current === "connected" ? "disconnected" : "failed");
+                }}
+                onConnectionError={() => {
+                  setIsConnected(false);
+                  if (activeChatId) setChatConnectionStatus(activeChatId, "failed");
+                }}
               />
             </div>
           ) : (
@@ -11513,7 +11590,7 @@ export function TaskChat({
                     onSheetClosed={closeMobileDetails}
                     className={`mb-3 overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_92%,transparent)] shadow-[0_12px_32px_rgba(0,0,0,0.14)] backdrop-blur-md ${mobileActionPanelOpen ? `mobile-action-sheet mobile-action-sheet-${activeComposerPanel}` : ""}`}
                   >
-                    <div className={`${mobileDetailsPanelOpen ? "mobile-composer-sheet-content" : activeComposerPanel === "subagents" && selectedSubagentId ? "max-h-[min(560px,58vh)] overflow-y-auto overscroll-contain" : "max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain"} ${activeComposerPanel === "previewComments" || activeComposerPanel === "subagents" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
+                    <div className={`${activeComposerPanel === "permission" ? "flex max-h-[min(360px,48vh)] flex-col overflow-hidden" : mobileDetailsPanelOpen ? "mobile-composer-sheet-content" : activeComposerPanel === "subagents" && selectedSubagentId ? "max-h-[min(560px,58vh)] overflow-y-auto overscroll-contain" : "max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain"} ${activeComposerPanel === "previewComments" || activeComposerPanel === "subagents" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
                       {activeComposerPanel === "quota" && (
                         agentQuota ? <AgentQuotaCard usage={agentQuota} refreshing={quotaRefreshing} onRefresh={refreshAgentQuota} /> : <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">Quota data is unavailable.</p>
                       )}
@@ -11935,34 +12012,36 @@ export function TaskChat({
 
                       {activeComposerPanel === "permission" &&
                         activePermissionMessage && (
-                          <div className={`space-y-3 ${isPhoneLayout ? "mobile-permission-content" : ""}`}>
-                            {isPhoneLayout ? (
-                              <>
-                                <div className="flex items-center gap-2">
-                                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--color-warning)_14%,transparent)] text-[var(--color-warning)]">
-                                    <ShieldCheck className="h-4 w-4" />
-                                  </span>
-                                  <div className="min-w-0">
-                                    <div className="text-sm font-semibold text-[var(--color-text)]">Permission required</div>
-                                    <div className="text-xs text-[var(--color-text-muted)]">Review this Agent action to continue</div>
+                          <div className={`flex min-h-0 flex-col gap-3 ${isPhoneLayout ? "mobile-permission-content" : ""}`}>
+                            <div className="min-h-0 overflow-y-auto overscroll-contain" role="region" aria-label="Permission request details" tabIndex={0}>
+                              {isPhoneLayout ? (
+                                <>
+                                  <div className="flex items-center gap-2">
+                                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--color-warning)_14%,transparent)] text-[var(--color-warning)]">
+                                      <ShieldCheck className="h-4 w-4" />
+                                    </span>
+                                    <div className="min-w-0">
+                                      <div className="text-sm font-semibold text-[var(--color-text)]">Permission required</div>
+                                      <div className="text-xs text-[var(--color-text-muted)]">Review this Agent action to continue</div>
+                                    </div>
                                   </div>
-                                </div>
-                                <details className="mobile-permission-details rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
-                                  <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-text-secondary)]">Request details</summary>
-                                  <div className="mt-2 max-h-36 overflow-y-auto whitespace-pre-wrap break-all border-t border-[var(--color-border)] pt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                                  <details className="mobile-permission-details rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
+                                    <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-text-secondary)]">Request details</summary>
+                                    <div className="mt-2 max-h-36 overflow-y-auto whitespace-pre-wrap break-all border-t border-[var(--color-border)] pt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                                      {activePermissionMessage.description}
+                                    </div>
+                                  </details>
+                                </>
+                              ) : (
+                                <div className="flex items-start gap-2">
+                                  <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--color-warning)] mt-0.5" />
+                                  <span className="text-sm font-medium text-[var(--color-text)] break-all whitespace-pre-wrap min-w-0">
                                     {activePermissionMessage.description}
-                                  </div>
-                                </details>
-                              </>
-                            ) : (
-                              <div className="flex items-start gap-2">
-                                <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--color-warning)] mt-0.5" />
-                                <span className="text-sm font-medium text-[var(--color-text)] break-all whitespace-pre-wrap min-w-0">
-                                  {activePermissionMessage.description}
-                                </span>
-                              </div>
-                            )}
-                            <div className="space-y-2">
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="shrink-0 space-y-2 border-t border-[var(--color-border)] pt-3">
                               {activePermissionMessage.options.map((opt) => (
                                 <button
                                   key={opt.option_id}

@@ -1,4 +1,5 @@
 import { AlertTriangle, ChevronRight, Loader2, ShieldCheck } from "lucide-react";
+import { useRef } from "react";
 import { Button } from "../../ui";
 import { XTerminal } from "../TaskDetail/XTerminal";
 
@@ -15,6 +16,17 @@ export interface AuthRequiredState {
   status: "idle" | "in_progress" | "succeeded" | "failed";
   activeMethodId?: string;
   errorMessage?: string;
+}
+
+function SignInTerminal({ wsUrl, onOpenFailure }: { wsUrl: string; onOpenFailure: () => void }) {
+  const opened = useRef(false);
+  return <XTerminal
+    wsUrl={wsUrl}
+    onConnected={() => { opened.current = true; }}
+    // After opening, PTY exit and Agent reinitialization decide the outcome.
+    // A terminal transport close/error is not an authentication failure.
+    onConnectionError={() => { if (!opened.current) onOpenFailure(); }}
+  />;
 }
 
 /** AuthRequired panel — 渲染在 composerPanel 区域(对齐 PermissionRequest)。
@@ -92,9 +104,10 @@ export function AuthRequiredPanel({
       {terminalUrl && (
         <div className="space-y-2">
           <div className="h-72 overflow-hidden rounded-lg border border-[var(--color-border)]">
-            <XTerminal
+            <SignInTerminal
+              key={terminalUrl}
               wsUrl={terminalUrl}
-              onConnectionError={() => onTerminalEnd(index, "Could not open the sign-in terminal. Please retry.")}
+              onOpenFailure={() => onTerminalEnd(index, "Could not open the sign-in terminal. Please retry.")}
             />
           </div>
           <Button variant="ghost" size="sm" onClick={() => onTerminalEnd(index)}>

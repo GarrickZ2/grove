@@ -4,9 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthRequiredPanel, type AuthRequiredState } from "./AuthRequiredPanel";
 
 vi.mock("../TaskDetail/XTerminal", () => ({
-  XTerminal: ({ wsUrl, onConnectionError }: { wsUrl: string; onConnectionError: () => void }) => (
+  XTerminal: ({ wsUrl, onConnectionError, onConnected }: { wsUrl: string; onConnectionError: () => void; onConnected: () => void }) => <>
     <button data-terminal-url={wsUrl} onClick={onConnectionError}>Simulate connection error</button>
-  ),
+    <button data-terminal-open onClick={onConnected}>Open terminal</button>
+  </>,
 }));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -35,6 +36,10 @@ describe("terminal authentication panel", () => {
       expect(terminal.dataset.terminalUrl).toContain("/projects/project/tasks/task/chats/chat/auth-terminal/terminal%2Fid");
       await act(async () => terminal.click());
       expect(onEnd).toHaveBeenCalledWith(3, expect.stringContaining("Could not open"));
+      onEnd.mockClear();
+      await act(async () => host.querySelector<HTMLButtonElement>("[data-terminal-open]")!.click());
+      await act(async () => terminal.click());
+      expect(onEnd).not.toHaveBeenCalled(); // post-open transport error is not a login result
       await act(async () => (Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Cancel sign-in")!).click());
       expect(onEnd).toHaveBeenCalledWith(3);
       await render({ ...state, status: "failed", errorMessage: "Cancelled" });

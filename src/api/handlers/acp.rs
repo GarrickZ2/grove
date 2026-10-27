@@ -3120,17 +3120,20 @@ pub async fn reconnect_chat(
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
     match acp::discover_session(&project_key, &task_id, &chat_id, &session_key) {
         Some(acp::SessionAccess::Local(handle)) => {
-            handle
-                .kill()
-                .await
-                .map_err(|e| AcpError::Internal(format!("Failed to stop ACP session: {}", e)))?;
+            // The command loop may be blocked in initialize/load/prompt.
+            // Cancel the transport directly rather than queueing Kill behind it.
+            handle.request_shutdown();
         }
         Some(acp::SessionAccess::Remote { sock_path, .. }) => {
-            acp::send_socket_command(&sock_path, &acp::SocketCommand::Kill)
-                .await
-                .map_err(|e| {
-                    AcpError::Internal(format!("Failed to stop remote ACP session: {}", e))
-                })?;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                acp::send_socket_command(&sock_path, &acp::SocketCommand::Kill),
+            )
+            .await
+            .map_err(|_| {
+                AcpError::Internal("Timed out requesting the previous ACP session to stop".into())
+            })?
+            .map_err(|e| AcpError::Internal(format!("Failed to stop remote ACP session: {}", e)))?;
         }
         None => {}
     }

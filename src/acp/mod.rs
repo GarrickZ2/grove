@@ -4941,7 +4941,8 @@ pub async fn get_or_start_session(
                         crate::error::GroveError::Session(message) => message.clone(),
                         other => other.to_string(),
                     };
-                    handle.emit(AcpUpdate::Error { message });
+                    // This is a live lifecycle failure, never replayed output.
+                    handle.emit_unsuppressed(AcpUpdate::Error { message });
                 }
                 handle.emit(AcpUpdate::SessionEnded);
 
@@ -5045,6 +5046,33 @@ async fn run_acp_session(
                 return Err(error);
             }
         }
+    }
+}
+
+async fn await_startup_response<T>(
+    phase: &str,
+    deadline: std::time::Duration,
+    future: impl std::future::Future<Output = acp::Result<T>>,
+) -> acp::Result<T> {
+    tokio::time::timeout(deadline, future).await.map_err(|_| {
+        acp::Error::internal_error().data(format!(
+            "Agent connection timed out during {phase} after {} seconds. Use Reconnect to retry.",
+            deadline.as_secs()
+        ))
+    })?
+}
+
+fn missing_saved_session(error: &acp::Error) -> bool {
+    // Resource-not-found is an ACP error code. Codex currently wraps its
+    // missing on-disk rollout in an internal error instead.
+    i32::from(error.code) == -32002 || error.to_string().contains("no rollout found for thread id")
+}
+
+fn chat_history_is_empty(project: &str, task: &str, chat: &str) -> bool {
+    // A parse/read failure must never be mistaken for an empty conversation.
+    match std::fs::metadata(chat_dir(project, task, chat).join("history.jsonl")) {
+        Ok(meta) => meta.len() == 0,
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
     }
 }
 
@@ -5572,9 +5600,21 @@ async fn drive_session(
     adapter::resolve_adapter(&config.agent_name, &config.agent_command)
         .configure_client_capabilities(&mut client_capabilities);
 
+    // Bound startup RPCs only. Human sign-in and normal prompt execution
+    // intentionally have no such deadline.
+    macro_rules! startup_request {
+        ($phase:expr, $future:expr) => {{
+            handle.emit(AcpUpdate::ConnectPhase {
+                phase: $phase.into(),
+            });
+            await_startup_response($phase, std::time::Duration::from_secs(60), $future).await
+        }};
+    }
+
     // 初始化连接
-    let init_resp = conn
-        .send_request(
+    let init_resp = startup_request!(
+        "initialize",
+        conn.send_request(
             acp::InitializeRequest::new(acp::ProtocolVersion::V1)
                 .client_capabilities(client_capabilities)
                 .client_info(
@@ -5582,7 +5622,7 @@ async fn drive_session(
                 ),
         )
         .block_task()
-        .await?;
+    )?;
 
     validate_v1_protocol_version(init_resp.protocol_version)?;
 
@@ -5984,15 +6024,14 @@ async fn drive_session(
             // 登录期间到达的 prompt 会进入可见队列，其他 session action 会得到
             // 明确回复，避免共享 command channel 中的命令被静默丢弃。
             let resp = loop {
-                match conn
+                match startup_request!("session/new", conn
                     .send_request(
                         acp::NewSessionRequest::new(&config.working_dir)
                             .additional_directories(additional_directories.clone())
                             .mcp_servers(mcp_servers.clone())
                             .system_prompt(system_prompt.clone()),
                     )
-                    .block_task()
-                    .await
+                    .block_task())
                 {
                     Ok(r) => break r,
                     Err(e) if is_auth_required_error(&e) => {
@@ -6063,14 +6102,13 @@ async fn drive_session(
                             else {
                                 continue;
                             };
-                            if let Ok(response) = conn
+                            if let Ok(response) = startup_request!("session/set_config_option", conn
                                 .send_request(acp::SetSessionConfigOptionRequest::new(
                                     sid_arc.clone(),
                                     acp::SessionConfigId::new(config_id),
                                     request_value,
                                 ))
-                                .block_task()
-                                .await
+                                .block_task())
                             {
                                 accept_config_response!(response);
                                 persona_mode_config_id = extract_config_select(
@@ -6085,24 +6123,22 @@ async fn drive_session(
                     }
                     crate::agent_config::AgentConfigSelection::Modes { mode_id, .. } => {
                         if let Some(config_id) = persona_mode_config_id.clone() {
-                            if let Ok(response) = conn
+                            if let Ok(response) = startup_request!("session/set_config_option", conn
                                 .send_request(acp::SetSessionConfigOptionRequest::new(
                                     sid_arc.clone(),
                                     acp::SessionConfigId::new(config_id),
                                     acp::SessionConfigValueId::new(mode_id.clone()),
                                 ))
-                                .block_task()
-                                .await
+                                .block_task())
                             {
                                 accept_config_response!(response);
                             }
-                        } else if conn
+                        } else if startup_request!("session/set_mode", conn
                             .send_request(acp::SetSessionModeRequest::new(
                                 sid_arc.clone(),
                                 acp::SessionModeId::new(mode_id.clone()),
                             ))
-                            .block_task()
-                            .await
+                            .block_task())
                             .is_ok()
                         {
                             current_mode_id = Some(mode_id.clone());
@@ -6121,14 +6157,13 @@ async fn drive_session(
                         fuzzy_pick_id(query, &available_models),
                         model_config_id.as_ref(),
                     ) {
-                        if let Ok(response) = conn
+                        if let Ok(response) = startup_request!("session/set_config_option", conn
                             .send_request(acp::SetSessionConfigOptionRequest::new(
                                 sid_arc.clone(),
                                 acp::SessionConfigId::new(config_id.clone()),
                                 acp::SessionConfigValueId::new(id),
                             ))
-                            .block_task()
-                            .await
+                            .block_task())
                         {
                             accept_config_response!(response);
                             persona_mode_config_id = extract_config_select(
@@ -6143,24 +6178,22 @@ async fn drive_session(
                 if let Some(query) = p.mode.as_deref() {
                     if let Some(id) = fuzzy_pick_id(query, &available_modes) {
                         if let Some(config_id) = persona_mode_config_id.clone() {
-                            if let Ok(response) = conn
+                            if let Ok(response) = startup_request!("session/set_config_option", conn
                                 .send_request(acp::SetSessionConfigOptionRequest::new(
                                     sid_arc.clone(),
                                     acp::SessionConfigId::new(config_id),
                                     acp::SessionConfigValueId::new(id),
                                 ))
-                                .block_task()
-                                .await
+                                .block_task())
                             {
                                 accept_config_response!(response);
                             }
-                        } else if conn
+                        } else if startup_request!("session/set_mode", conn
                             .send_request(acp::SetSessionModeRequest::new(
                                 sid_arc.clone(),
                                 acp::SessionModeId::new(id.clone()),
                             ))
-                            .block_task()
-                            .await
+                            .block_task())
                             .is_ok()
                         {
                             current_mode_id = Some(id);
@@ -6172,14 +6205,13 @@ async fn drive_session(
                         fuzzy_pick_id(query, &available_thought_levels),
                         thought_level_config_id.clone(),
                     ) {
-                        if let Ok(response) = conn
+                        if let Ok(response) = startup_request!("session/set_config_option", conn
                             .send_request(acp::SetSessionConfigOptionRequest::new(
                                 sid_arc.clone(),
                                 acp::SessionConfigId::new(cfg_id),
                                 acp::SessionConfigValueId::new(value_id),
                             ))
-                            .block_task()
-                            .await
+                            .block_task())
                         {
                             accept_config_response!(response);
                         }
@@ -6199,105 +6231,58 @@ async fn drive_session(
         }};
     }
 
-    let session_id = match (
-        saved_id,
-        supports_resume,
-        supports_load,
-        config.import_session,
-    ) {
-        // Import is the only path that intentionally exposes session/load replay.
-        // It is selected by an ephemeral flag on this WebSocket connection only.
-        (Some(saved_id), _, true, true) => {
-            let mcp_servers = build_mcp_servers(
-                &config.env_vars,
-                agent_graph_token,
-                supports_mcp_http,
-                &config.additional_mcp_servers,
-                config.mcp_server_policy,
-            )
-            .await
-            .map_err(to_acp_err)?;
-            let resp = loop {
-                match conn
-                    .send_request(
-                        acp::LoadSessionRequest::new(
-                            acp::SessionId::new(&*saved_id),
-                            &config.working_dir,
+    // Empty sessions may never have been persisted by the Agent (Codex, for
+    // example, creates its rollout only after the first prompt). A stale ID
+    // alone must not make such a Chat permanently unusable. Never replace an
+    // imported session or one with an existing Grove conversation this way.
+    let can_recreate_empty = !config.import_session
+        && config
+            .chat_id
+            .as_ref()
+            .is_some_and(|cid| chat_history_is_empty(&config.project_key, &config.task_id, cid));
+    let session_id = 'restore: {
+        match (
+            saved_id,
+            supports_resume,
+            supports_load,
+            config.import_session,
+        ) {
+            // Import is the only path that intentionally exposes session/load replay.
+            // It is selected by an ephemeral flag on this WebSocket connection only.
+            (Some(saved_id), _, true, true) => {
+                let mcp_servers = build_mcp_servers(
+                    &config.env_vars,
+                    agent_graph_token,
+                    supports_mcp_http,
+                    &config.additional_mcp_servers,
+                    config.mcp_server_policy,
+                )
+                .await
+                .map_err(to_acp_err)?;
+                let resp = loop {
+                    match startup_request!(
+                        "session/load",
+                        conn.send_request(
+                            acp::LoadSessionRequest::new(
+                                acp::SessionId::new(&*saved_id),
+                                &config.working_dir,
+                            )
+                            .additional_directories(Vec::<PathBuf>::new())
+                            .mcp_servers(mcp_servers.clone())
+                            .system_prompt(system_prompt.clone()),
                         )
-                        .additional_directories(Vec::<PathBuf>::new())
-                        .mcp_servers(mcp_servers.clone())
-                        .system_prompt(system_prompt.clone()),
-                    )
-                    .block_task()
-                    .await
-                {
-                    Ok(response) => break response,
-                    Err(error) if is_auth_required_error(&error) => {
-                        await_authentication!();
+                        .block_task()
+                    ) {
+                        Ok(response) => break response,
+                        Err(error) if is_auth_required_error(&error) => {
+                            await_authentication!();
+                        }
+                        Err(error) => {
+                            return Err(acp::Error::internal_error()
+                                .data(format!("Import session failed: {error}")))
+                        }
                     }
-                    Err(error) => {
-                        return Err(acp::Error::internal_error()
-                            .data(format!("Import session failed: {error}")))
-                    }
-                }
-            };
-            uses_config_options = resp.config_options.is_some();
-            config_options = resp.config_options.clone().unwrap_or_default();
-            (available_modes, current_mode_id, _, mode_descriptions) =
-                extract_modes(&resp.modes, &config_options, uses_config_options);
-            (available_models, current_model_id, model_config_id) = extract_models(&config_options);
-            (
-                available_thought_levels,
-                current_thought_level_id,
-                thought_level_config_id,
-            ) = extract_thought_level(&config_options);
-            saved_id
-        }
-        // Prefer resume because it does not replay history. Some agents expose
-        // both lifecycle methods but only keep resumable resources in memory;
-        // after an agent restart, resume can return Resource not found while
-        // session/load can still restore the persisted session. Fall back to
-        // load in that case, suppressing its replay because Grove's local
-        // history remains the display source of truth.
-        (Some(saved_id), true, supports_load, false) => {
-            let mcp_servers = build_mcp_servers(
-                &config.env_vars,
-                agent_graph_token,
-                supports_mcp_http,
-                &config.additional_mcp_servers,
-                config.mcp_server_policy,
-            )
-            .await
-            .map_err(to_acp_err)?;
-            let mut resume_failure = None;
-            let resume_response = loop {
-                match conn
-                    .send_request(
-                        acp::ResumeSessionRequest::new(
-                            acp::SessionId::new(&*saved_id),
-                            &config.working_dir,
-                        )
-                        .additional_directories(additional_directories.clone())
-                        .mcp_servers(mcp_servers.clone())
-                        .system_prompt(system_prompt.clone()),
-                    )
-                    .block_task()
-                    .await
-                {
-                    Ok(resp) => break Some(resp),
-                    Err(error) if is_auth_required_error(&error) => {
-                        await_authentication!();
-                    }
-                    Err(error) => {
-                        resume_failure = Some(error);
-                        break None;
-                    }
-                }
-            };
-            if let Ok(mut slot) = handle.pending_auth.lock() {
-                *slot = None;
-            }
-            if let Some(resp) = resume_response {
+                };
                 uses_config_options = resp.config_options.is_some();
                 config_options = resp.config_options.clone().unwrap_or_default();
                 (available_modes, current_mode_id, _, mode_descriptions) =
@@ -6309,13 +6294,150 @@ async fn drive_session(
                     current_thought_level_id,
                     thought_level_config_id,
                 ) = extract_thought_level(&config_options);
-            } else if supports_load {
+                saved_id
+            }
+            // Prefer resume because it does not replay history. Some agents expose
+            // both lifecycle methods but only keep resumable resources in memory;
+            // after an agent restart, resume can return Resource not found while
+            // session/load can still restore the persisted session. Fall back to
+            // load in that case, suppressing its replay because Grove's local
+            // history remains the display source of truth.
+            (Some(saved_id), true, supports_load, false) => {
+                let mcp_servers = build_mcp_servers(
+                    &config.env_vars,
+                    agent_graph_token,
+                    supports_mcp_http,
+                    &config.additional_mcp_servers,
+                    config.mcp_server_policy,
+                )
+                .await
+                .map_err(to_acp_err)?;
+                let mut resume_failure = None;
+                let resume_response = loop {
+                    match startup_request!(
+                        "session/resume",
+                        conn.send_request(
+                            acp::ResumeSessionRequest::new(
+                                acp::SessionId::new(&*saved_id),
+                                &config.working_dir,
+                            )
+                            .additional_directories(additional_directories.clone())
+                            .mcp_servers(mcp_servers.clone())
+                            .system_prompt(system_prompt.clone()),
+                        )
+                        .block_task()
+                    ) {
+                        Ok(resp) => break Some(resp),
+                        Err(error) if is_auth_required_error(&error) => {
+                            await_authentication!();
+                        }
+                        Err(error) => {
+                            resume_failure = Some(error);
+                            break None;
+                        }
+                    }
+                };
+                if let Ok(mut slot) = handle.pending_auth.lock() {
+                    *slot = None;
+                }
+                if let Some(resp) = resume_response {
+                    uses_config_options = resp.config_options.is_some();
+                    config_options = resp.config_options.clone().unwrap_or_default();
+                    (available_modes, current_mode_id, _, mode_descriptions) =
+                        extract_modes(&resp.modes, &config_options, uses_config_options);
+                    (available_models, current_model_id, model_config_id) =
+                        extract_models(&config_options);
+                    (
+                        available_thought_levels,
+                        current_thought_level_id,
+                        thought_level_config_id,
+                    ) = extract_thought_level(&config_options);
+                } else if supports_load {
+                    handle
+                        .suppress_emit
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    let load_response = loop {
+                        match startup_request!(
+                            "session/load",
+                            conn.send_request(
+                                acp::LoadSessionRequest::new(
+                                    acp::SessionId::new(&*saved_id),
+                                    &config.working_dir,
+                                )
+                                .additional_directories(additional_directories.clone())
+                                .mcp_servers(mcp_servers.clone())
+                                .system_prompt(system_prompt.clone()),
+                            )
+                            .block_task()
+                        ) {
+                            Ok(resp) => break resp,
+                            Err(error) if is_auth_required_error(&error) => {
+                                await_authentication!();
+                            }
+                            Err(load_error) => {
+                                if can_recreate_empty && missing_saved_session(&load_error) {
+                                    handle
+                                        .suppress_emit
+                                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                                    break 'restore create_new_session!(true);
+                                }
+                                return Err(acp::Error::internal_error().data(format!(
+                                    "Resume session failed: {}; load fallback failed: {}",
+                                    resume_failure.expect("missing resume failure"),
+                                    load_error
+                                )));
+                            }
+                        }
+                    };
+                    if let Ok(mut slot) = handle.pending_auth.lock() {
+                        *slot = None;
+                    }
+                    uses_config_options = load_response.config_options.is_some();
+                    config_options = load_response.config_options.clone().unwrap_or_default();
+                    (available_modes, current_mode_id, _, mode_descriptions) =
+                        extract_modes(&load_response.modes, &config_options, uses_config_options);
+                    (available_models, current_model_id, model_config_id) =
+                        extract_models(&config_options);
+                    (
+                        available_thought_levels,
+                        current_thought_level_id,
+                        thought_level_config_id,
+                    ) = extract_thought_level(&config_options);
+                } else {
+                    if can_recreate_empty
+                        && resume_failure.as_ref().is_some_and(missing_saved_session)
+                    {
+                        break 'restore create_new_session!(true);
+                    }
+                    return Err(acp::Error::internal_error().data(format!(
+                        "Resume session failed: {}",
+                        resume_failure.expect("missing resume failure")
+                    )));
+                }
+                saved_id
+            }
+            // Load 路线:agent 不支持 resume 但支持 load_session。agent 会 replay 历史
+            // (Grove 统一从磁盘回放),所以抑制其回放 emit。关键:很多 agent 的
+            // replay 在 LoadSessionResponse **之后**才异步流式发出,固定时间窗口抓不住
+            // → suppress 保持 true,直到 cmd loop 收到首个用户 prompt 才解除(见 Prompt
+            // arm)。恢复 session 后、用户发新消息前,agent 主动 emit 的只可能是 replay。
+            (Some(saved_id), false, true, false) => {
                 handle
                     .suppress_emit
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                let load_response = loop {
-                    match conn
-                        .send_request(
+                let mcp_servers = build_mcp_servers(
+                    &config.env_vars,
+                    agent_graph_token,
+                    supports_mcp_http,
+                    &config.additional_mcp_servers,
+                    config.mcp_server_policy,
+                )
+                .await
+                .map_err(to_acp_err)?;
+                let resp = loop {
+                    match startup_request!(
+                        "session/load",
+                        conn.send_request(
                             acp::LoadSessionRequest::new(
                                 acp::SessionId::new(&*saved_id),
                                 &config.working_dir,
@@ -6325,28 +6447,30 @@ async fn drive_session(
                             .system_prompt(system_prompt.clone()),
                         )
                         .block_task()
-                        .await
-                    {
+                    ) {
                         Ok(resp) => break resp,
                         Err(error) if is_auth_required_error(&error) => {
                             await_authentication!();
                         }
-                        Err(load_error) => {
-                            return Err(acp::Error::internal_error().data(format!(
-                                "Resume session failed: {}; load fallback failed: {}",
-                                resume_failure.expect("missing resume failure"),
-                                load_error
-                            )));
+                        Err(error) => {
+                            if can_recreate_empty && missing_saved_session(&error) {
+                                handle
+                                    .suppress_emit
+                                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                                break 'restore create_new_session!(true);
+                            }
+                            return Err(acp::Error::internal_error()
+                                .data(format!("Load session failed: {}", error)));
                         }
                     }
                 };
                 if let Ok(mut slot) = handle.pending_auth.lock() {
                     *slot = None;
                 }
-                uses_config_options = load_response.config_options.is_some();
-                config_options = load_response.config_options.clone().unwrap_or_default();
+                uses_config_options = resp.config_options.is_some();
+                config_options = resp.config_options.clone().unwrap_or_default();
                 (available_modes, current_mode_id, _, mode_descriptions) =
-                    extract_modes(&load_response.modes, &config_options, uses_config_options);
+                    extract_modes(&resp.modes, &config_options, uses_config_options);
                 (available_models, current_model_id, model_config_id) =
                     extract_models(&config_options);
                 (
@@ -6354,84 +6478,22 @@ async fn drive_session(
                     current_thought_level_id,
                     thought_level_config_id,
                 ) = extract_thought_level(&config_options);
-            } else {
-                return Err(acp::Error::internal_error().data(format!(
-                    "Resume session failed: {}",
-                    resume_failure.expect("missing resume failure")
-                )));
+                saved_id
             }
-            saved_id
-        }
-        // Load 路线:agent 不支持 resume 但支持 load_session。agent 会 replay 历史
-        // (Grove 统一从磁盘回放),所以抑制其回放 emit。关键:很多 agent 的
-        // replay 在 LoadSessionResponse **之后**才异步流式发出,固定时间窗口抓不住
-        // → suppress 保持 true,直到 cmd loop 收到首个用户 prompt 才解除(见 Prompt
-        // arm)。恢复 session 后、用户发新消息前,agent 主动 emit 的只可能是 replay。
-        (Some(saved_id), false, true, false) => {
-            handle
-                .suppress_emit
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            let mcp_servers = build_mcp_servers(
-                &config.env_vars,
-                agent_graph_token,
-                supports_mcp_http,
-                &config.additional_mcp_servers,
-                config.mcp_server_policy,
-            )
-            .await
-            .map_err(to_acp_err)?;
-            let resp = loop {
-                match conn
-                    .send_request(
-                        acp::LoadSessionRequest::new(
-                            acp::SessionId::new(&*saved_id),
-                            &config.working_dir,
-                        )
-                        .additional_directories(additional_directories.clone())
-                        .mcp_servers(mcp_servers.clone())
-                        .system_prompt(system_prompt.clone()),
-                    )
-                    .block_task()
-                    .await
-                {
-                    Ok(resp) => break resp,
-                    Err(error) if is_auth_required_error(&error) => {
-                        await_authentication!();
-                    }
-                    Err(error) => {
-                        return Err(acp::Error::internal_error()
-                            .data(format!("Load session failed: {}", error)));
-                    }
-                }
-            };
-            if let Ok(mut slot) = handle.pending_auth.lock() {
-                *slot = None;
+            // Existing Grove history remains the source of truth even when the
+            // Agent cannot restore its own session. Start a fresh Agent session,
+            // but never erase the user's locally persisted conversation.
+            (Some(_), _, false, true) => {
+                return Err(acp::Error::internal_error()
+                    .data("Agent does not support session/load required for import"));
             }
-            uses_config_options = resp.config_options.is_some();
-            config_options = resp.config_options.clone().unwrap_or_default();
-            (available_modes, current_mode_id, _, mode_descriptions) =
-                extract_modes(&resp.modes, &config_options, uses_config_options);
-            (available_models, current_model_id, model_config_id) = extract_models(&config_options);
-            (
-                available_thought_levels,
-                current_thought_level_id,
-                thought_level_config_id,
-            ) = extract_thought_level(&config_options);
-            saved_id
+            (Some(_), false, false, false) => create_new_session!(true),
+            // A genuinely new chat starts from an empty local history.
+            (None, _, _, true) => {
+                return Err(acp::Error::internal_error().data("Imported session id is missing"));
+            }
+            (None, _, _, false) => create_new_session!(false),
         }
-        // Existing Grove history remains the source of truth even when the
-        // Agent cannot restore its own session. Start a fresh Agent session,
-        // but never erase the user's locally persisted conversation.
-        (Some(_), _, false, true) => {
-            return Err(acp::Error::internal_error()
-                .data("Agent does not support session/load required for import"));
-        }
-        (Some(_), false, false, false) => create_new_session!(true),
-        // A genuinely new chat starts from an empty local history.
-        (None, _, _, true) => {
-            return Err(acp::Error::internal_error().data("Imported session id is missing"));
-        }
-        (None, _, _, false) => create_new_session!(false),
     };
 
     let session_id_arc = acp::SessionId::new(&*session_id);
@@ -6463,14 +6525,15 @@ async fn drive_session(
                             continue;
                         }
                     };
-                    let result = conn
-                        .send_request(acp::SetSessionConfigOptionRequest::new(
+                    let result = startup_request!(
+                        "session/set_config_option",
+                        conn.send_request(acp::SetSessionConfigOptionRequest::new(
                             session_id_arc.clone(),
                             acp::SessionConfigId::new(config_id.clone()),
                             request_value,
                         ))
                         .block_task()
-                        .await;
+                    );
                     match result {
                     Ok(response) => {
                         config_options = response.config_options;
@@ -6497,13 +6560,14 @@ async fn drive_session(
                 current_mode_id.as_deref(),
                 &available_modes,
             ) {
-                let result = conn
-                    .send_request(acp::SetSessionModeRequest::new(
+                let result = startup_request!(
+                    "session/set_mode",
+                    conn.send_request(acp::SetSessionModeRequest::new(
                         session_id_arc.clone(),
                         acp::SessionModeId::new(saved_mode.clone()),
                     ))
                     .block_task()
-                    .await;
+                );
                 match result {
                     Ok(_) => current_mode_id = Some(saved_mode.clone()),
                     Err(error) => handle.emit(AcpUpdate::ConfigOptionError {
@@ -8499,6 +8563,9 @@ impl AcpSessionHandle {
             && !matches!(
                 update,
                 AcpUpdate::AvailableCommands { .. }
+                    | AcpUpdate::SessionEnded
+                    | AcpUpdate::ConnectPhase { .. }
+                    | AcpUpdate::ConfigOptionError { .. }
                     | AcpUpdate::SessionReady { .. }
                     | AcpUpdate::ConfigOptionsUpdate { .. }
                     | AcpUpdate::ModeChanged { .. }
@@ -10564,12 +10631,10 @@ async fn dispatch_socket_command(handle: &AcpSessionHandle, cmd: SocketCommand) 
                 }
             }
         }
-        SocketCommand::Kill => match handle.kill().await {
-            Ok(()) => SocketResponse::Ok,
-            Err(e) => SocketResponse::Error {
-                message: e.to_string(),
-            },
-        },
+        SocketCommand::Kill => {
+            handle.request_shutdown();
+            SocketResponse::Ok
+        }
     }
 }
 
@@ -11137,6 +11202,90 @@ mod tests {
         fn drop(&mut self) {
             crate::storage::set_grove_dir_override(None);
         }
+    }
+
+    #[tokio::test]
+    async fn reconnect_replay_suppression_preserves_failure_and_end_events() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _dir_guard = ReadinessGroveDirGuard;
+        let key = format!("restore-failure-{}", uuid::Uuid::new_v4());
+        let (handle, mut updates, _guard) = new_handle_for_test(&key, "project", &key, "chat");
+        handle.readiness.send_replace(SessionReadiness::Starting);
+        handle
+            .suppress_emit
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        handle.emit(AcpUpdate::MessageChunk {
+            text: "replayed old text".into(),
+        });
+        assert!(updates.try_recv().is_err());
+        handle.emit_unsuppressed(AcpUpdate::Error {
+            message: "Load session failed: Resource not found".into(),
+        });
+        assert!(
+            matches!(updates.try_recv().unwrap(), AcpUpdate::Error { message } if message.contains("Resource not found"))
+        );
+        assert!(handle
+            .wait_until_ready(std::time::Duration::ZERO)
+            .await
+            .unwrap_err()
+            .contains("Resource not found"));
+        handle.emit(AcpUpdate::SessionEnded);
+        assert!(matches!(
+            updates.try_recv().unwrap(),
+            AcpUpdate::SessionEnded
+        ));
+    }
+
+    #[tokio::test]
+    async fn reconnect_empty_check_never_treats_unreadable_or_invalid_history_as_empty() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _dir_guard = ReadinessGroveDirGuard;
+        assert!(chat_history_is_empty("project", "task", "chat"));
+        let path = chat_dir("project", "task", "chat").join("history.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "").unwrap();
+        assert!(chat_history_is_empty("project", "task", "chat"));
+        std::fs::write(&path, "unparseable history must be preserved").unwrap();
+        assert!(!chat_history_is_empty("project", "task", "chat"));
+        assert!(missing_saved_session(&acp::Error::resource_not_found(None)));
+        assert!(missing_saved_session(
+            &acp::Error::internal_error().data("no rollout found for thread id abc")
+        ));
+        assert!(!missing_saved_session(
+            &acp::Error::internal_error().data("network unavailable")
+        ));
+    }
+
+    #[tokio::test]
+    async fn reconnect_startup_deadline_names_the_stalled_rpc_and_preserves_agent_errors() {
+        let error = await_startup_response::<()>(
+            "session/load",
+            std::time::Duration::from_millis(1),
+            futures::future::pending(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("session/load"));
+        let error = await_startup_response::<()>(
+            "session/resume",
+            std::time::Duration::from_secs(1),
+            async { Err(acp::Error::resource_not_found(None)) },
+        )
+        .await
+        .unwrap_err();
+        assert!(missing_saved_session(&error));
+        assert_eq!(
+            await_startup_response("session/new", std::time::Duration::from_secs(1), async {
+                Ok("ready")
+            })
+            .await
+            .unwrap(),
+            "ready"
+        );
     }
 
     #[tokio::test]

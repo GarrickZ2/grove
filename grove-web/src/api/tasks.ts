@@ -1170,10 +1170,11 @@ export async function takeControl(
 export async function reconnectChat(
   projectId: string,
   taskId: string,
-  chatId: string
+  chatId: string,
+  signal?: AbortSignal,
 ): Promise<ReconnectChatResponse> {
   return apiClient.post<undefined, ReconnectChatResponse>(
-    `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/reconnect`
+    `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/reconnect`, undefined, signal,
   );
 }
 

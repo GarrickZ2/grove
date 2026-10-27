@@ -498,11 +498,12 @@ class ApiClient {
     return undefined as R;
   }
 
-  async post<T, R>(path: string, data?: T): Promise<R> {
+  async post<T, R>(path: string, data?: T, signal?: AbortSignal): Promise<R> {
     const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: await getSignedHeaders('POST', path),
       body: data ? JSON.stringify(data) : undefined,
+      signal,
     });
 
     if (!response.ok) {
