@@ -515,6 +515,11 @@ pub struct UploadAttachmentRequest {
     data: String,
 }
 
+// Allow a 100 MiB file plus base64 expansion and JSON metadata.
+pub const CHAT_ATTACHMENT_MAX_BYTES: usize = 100 * 1024 * 1024;
+pub const CHAT_ATTACHMENT_BODY_LIMIT: usize =
+    CHAT_ATTACHMENT_MAX_BYTES.div_ceil(3) * 4 + 1024 * 1024;
+
 #[derive(Debug, Serialize)]
 pub struct UploadAttachmentResponse {
     r#type: String,
@@ -1755,6 +1760,7 @@ fn restored_available_commands_message(
 /// Error type for ACP handler
 pub enum AcpError {
     BadRequest(String),
+    PayloadTooLarge(String),
     NotFound(String),
     Internal(String),
 }
@@ -1763,6 +1769,7 @@ impl IntoResponse for AcpError {
     fn into_response(self) -> Response {
         match self {
             AcpError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
+            AcpError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg).into_response(),
             AcpError::NotFound(msg) => (StatusCode::NOT_FOUND, msg).into_response(),
             AcpError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
         }
@@ -2448,8 +2455,26 @@ pub async fn fork_chat(
 /// For Studio projects, files are stored in the task's input/ directory instead of chat attachments.
 pub async fn upload_chat_attachment(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
-    Json(body): Json<UploadAttachmentRequest>,
+    body: Result<Json<UploadAttachmentRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<UploadAttachmentResponse>, AcpError> {
+    let Json(body) = body.map_err(|error| {
+        if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            AcpError::PayloadTooLarge(
+                "Attachment is too large. Maximum file size is 100 MiB.".into(),
+            )
+        } else {
+            AcpError::BadRequest(error.body_text())
+        }
+    })?;
+    // Base64 is padded to groups of four; account for padding before checking
+    // the decoded size so clients cannot bypass the file limit.
+    let padding = body.data.bytes().rev().take_while(|&b| b == b'=').count();
+    let decoded_size = body.data.len().saturating_add(3) / 4 * 3;
+    if decoded_size.saturating_sub(padding) > CHAT_ATTACHMENT_MAX_BYTES {
+        return Err(AcpError::PayloadTooLarge(
+            "Attachment is too large. Maximum file size is 100 MiB.".into(),
+        ));
+    }
     let (project_key, _, _) = resolve_project_key(&project_id)?;
 
     let _ = tasks::get_chat_session(&project_key, &task_id, &chat_id)

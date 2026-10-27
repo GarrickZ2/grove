@@ -350,7 +350,9 @@ pub fn create_api_router() -> Router {
         )
         .route(
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/attachments",
-            post(handlers::acp::upload_chat_attachment),
+            post(handlers::acp::upload_chat_attachment).layer(DefaultBodyLimit::max(
+                handlers::acp::CHAT_ATTACHMENT_BODY_LIMIT,
+            )),
         )
         .route(
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/import-sessions",
@@ -1598,7 +1600,7 @@ async fn http_proxy_handler(
             axum_resp
         }
         Err(e) => {
-            eprintln!("Proxy HTTP error to {}: {}", remote_target, e);
+            eprintln!("Proxy HTTP error to {}: {:?}", remote_target, e);
             (StatusCode::BAD_GATEWAY, format!("Proxy error: {}", e)).into_response()
         }
     }
@@ -2207,6 +2209,26 @@ pub async fn start_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn chat_attachment_accepts_requests_larger_than_default_body_limit() {
+        let body =
+            serde_json::json!({ "name": "test.mp4", "data": "A".repeat(2_400_000) }).to_string();
+        let response = create_api_router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/projects/nonexistent-upload-test/tasks/task/chats/chat/attachments")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // The request reached the handler; the project intentionally does not exist.
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+    }
 
     #[test]
     fn cache_control_for_sw_js_is_no_cache() {

@@ -1040,6 +1040,9 @@ function defaultPerChatState(): PerChatState {
 }
 
 function fileToBase64(file: File): Promise<string> {
+  if (file.size > 100 * 1024 * 1024) {
+    return Promise.reject(new Error("Attachment is too large. Maximum file size is 100 MiB."));
+  }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -2924,9 +2927,9 @@ export function TaskChat({
     const timer = window.setInterval(() => {
       const now = Date.now();
       pendingInputsRef.current.forEach((items, chatId) => {
-        if (items.some((item) => item.status === "sending" && !item.serverAccepted && now - item.sentAt > 20000)) {
+        if (items.some((item) => item.status === "sending" && item.dispatched && !item.serverAccepted && now - item.sentAt > 20000)) {
           updatePendingInputs(chatId, (current) => current.map((item) =>
-            item.status === "sending" && !item.serverAccepted && now - item.sentAt > 20000
+            item.status === "sending" && item.dispatched && !item.serverAccepted && now - item.sentAt > 20000
               ? { ...item, status: "failed", error: "Delivery confirmation timed out." }
               : item,
           ));
@@ -7848,7 +7851,7 @@ export function TaskChat({
       const location = mode === "queue_message" ? "queue" : "timeline";
       if (location === "queue" && chatId === getActiveChatId()) openInputQueue();
       updatePendingInputs(chatId, (items) => items.map((item) => item.id === id
-        ? { ...item, attachments: contentAttachments, mode, dispatched: true }
+        ? { ...item, attachments: contentAttachments, mode, dispatched: true, sentAt: Date.now() }
         : item));
       updateLocalInputPlacements(chatId, (items) => location === "queue"
         ? items.filter((item) => item.id !== id)
