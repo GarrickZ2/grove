@@ -3272,7 +3272,10 @@ fn extract_last_message(events: &[acp::AcpUpdate]) -> Option<String> {
         let text: String = events[prev_complete_pos..complete_pos]
             .iter()
             .filter_map(|e| match e {
-                acp::AcpUpdate::MessageChunk { text } => Some(text.as_str()),
+                acp::AcpUpdate::MessageChunk {
+                    message_id: _,
+                    text,
+                } => Some(text.as_str()),
                 _ => None,
             })
             .collect();
@@ -3287,7 +3290,10 @@ fn extract_last_message(events: &[acp::AcpUpdate]) -> Option<String> {
     let text: String = events[start..]
         .iter()
         .filter_map(|e| match e {
-            acp::AcpUpdate::MessageChunk { text } => Some(text.as_str()),
+            acp::AcpUpdate::MessageChunk {
+                message_id: _,
+                text,
+            } => Some(text.as_str()),
             _ => None,
         })
         .collect();

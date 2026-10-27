@@ -11,6 +11,7 @@ mod compaction;
 mod idle;
 pub(crate) use idle::ActivityGuard;
 mod plans;
+mod session_info;
 pub use plans::PlanDocument;
 mod subagents;
 pub use compaction::CompactionUpdateData;
@@ -533,15 +534,21 @@ pub enum AcpUpdate {
     },
     /// Agent 消息文本片段
     MessageChunk {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
         text: String,
     },
     /// Agent 消息中的结构化内容片段。Text 继续使用 MessageChunk 兼容旧历史；
     /// Image / Audio / ResourceLink / EmbeddedResource 保留完整 payload。
     MessageContentChunk {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
         content: ContentBlockData,
     },
     /// Agent 思考过程片段
     ThoughtChunk {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
         text: String,
     },
     /// 工具调用开始
@@ -731,6 +738,8 @@ pub enum AcpUpdate {
     AuthLoggedOut,
     /// 用户消息（load_session 回放时由 agent 发送）
     UserMessage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         client_message_id: Option<String>,
@@ -2934,11 +2943,13 @@ async fn handle_session_notification(
                 }
                 state.handle.emit(AcpUpdate::MessageChunk {
                     text: text.text.clone(),
+                    message_id: chunk.message_id.map(|id| id.to_string()),
                 });
             } else if let Some(content) = content_block_to_data(&chunk.content) {
-                state
-                    .handle
-                    .emit(AcpUpdate::MessageContentChunk { content });
+                state.handle.emit(AcpUpdate::MessageContentChunk {
+                    content,
+                    message_id: chunk.message_id.map(|id| id.to_string()),
+                });
             }
         }
         acp::SessionUpdate::AgentThoughtChunk(chunk) => {
@@ -2947,7 +2958,10 @@ async fn handle_session_notification(
             // chunks as a "thinking" pulse without actual reasoning content.
             // Skip them so the UI doesn't create an empty Thought bubble.
             if !text.is_empty() {
-                state.handle.emit(AcpUpdate::ThoughtChunk { text });
+                state.handle.emit(AcpUpdate::ThoughtChunk {
+                    text,
+                    message_id: chunk.message_id.map(|id| id.to_string()),
+                });
             }
         }
         acp::SessionUpdate::ToolCall(tool_call) => {
@@ -3294,6 +3308,7 @@ async fn handle_session_notification(
                 let (text, attachments) = content_block_to_user_message(&chunk.content);
                 state.handle.emit(AcpUpdate::UserMessage {
                     text,
+                    message_id: chunk.message_id.map(|id| id.to_string()),
                     client_message_id: None,
                     attachments,
                     sender: None,
@@ -3385,6 +3400,9 @@ async fn handle_session_notification(
                     description: notice.description,
                 });
             }
+        }
+        acp::SessionUpdate::SessionInfoUpdate(update) => {
+            state.handle.apply_session_info(update)?;
         }
         acp::SessionUpdate::UsageUpdate(u) => {
             let cost = u.cost.as_ref().map(|c| UsageCost {
@@ -7020,6 +7038,7 @@ async fn drive_session(
                     message_ids: message_ids.clone(),
                 });
                 handle.emit(AcpUpdate::UserMessage {
+                    message_id: None,
                     text: wire_text.clone(),
                     client_message_id: (message_ids.len() == 1).then(|| message_ids[0].clone()),
                     attachments: attachments.clone(),
@@ -8090,7 +8109,10 @@ impl AcpSessionHandle {
                 self.last_turn_reply.lock().unwrap().clear();
                 (message_ids.clone(), TurnEvent::Started, false)
             }
-            AcpUpdate::MessageChunk { text } => {
+            AcpUpdate::MessageChunk {
+                message_id: _,
+                text,
+            } => {
                 self.last_turn_reply.lock().unwrap().push_str(text);
                 let Some(ids) = self.active_turn_ids() else {
                     return;
@@ -10386,6 +10408,7 @@ pub fn new_handle_for_test(
                         message_ids: message_ids.clone(),
                     });
                     handle_for_loop.emit(AcpUpdate::UserMessage {
+                        message_id: None,
                         text,
                         client_message_id: (message_ids.len() == 1).then(|| message_ids[0].clone()),
                         attachments,
@@ -11217,6 +11240,7 @@ mod tests {
             .suppress_emit
             .store(true, std::sync::atomic::Ordering::Relaxed);
         handle.emit(AcpUpdate::MessageChunk {
+            message_id: None,
             text: "replayed old text".into(),
         });
         assert!(updates.try_recv().is_err());
@@ -11386,6 +11410,7 @@ mod tests {
                 message_ids: ids.clone(),
             },
             AcpUpdate::MessageChunk {
+                message_id: None,
                 text: "I will search".into(),
             },
             AcpUpdate::ToolCall {
@@ -11403,6 +11428,7 @@ mod tests {
                 raw_input: None,
             },
             AcpUpdate::MessageChunk {
+                message_id: None,
                 text: "Final answer".into(),
             },
             AcpUpdate::PromptCompleted {
@@ -11482,6 +11508,7 @@ mod tests {
             .suppress_emit
             .store(true, std::sync::atomic::Ordering::Release);
         handle.emit(AcpUpdate::MessageChunk {
+            message_id: None,
             text: "replay".into(),
         });
         handle.emit(AcpUpdate::Error {
@@ -13258,6 +13285,7 @@ mod tests {
             .store(true, std::sync::atomic::Ordering::Relaxed);
         let state = client_state_for_test(handle.clone(), Arc::new(Mutex::new(HashMap::new())));
         handle.emit(AcpUpdate::MessageChunk {
+            message_id: None,
             text: "before".into(),
         });
         for severity in ["info", "warning", "error", "_custom", "_custom"] {
@@ -13272,6 +13300,7 @@ mod tests {
             .unwrap();
         }
         handle.emit(AcpUpdate::MessageChunk {
+            message_id: None,
             text: "after".into(),
         });
         let event: acp::SessionUpdate = serde_json::from_value(serde_json::json!({"sessionUpdate":"notice", "severity":"error", "title":"Wrong session"})).unwrap();
@@ -13292,7 +13321,7 @@ mod tests {
         );
         crate::storage::chat_history::compact_history("project", "task", "chat");
         let restored = crate::storage::chat_history::load_history("project", "task", "chat");
-        assert!(matches!(&restored[0], AcpUpdate::MessageChunk { text } if text == "before"));
+        assert!(matches!(&restored[0], AcpUpdate::MessageChunk { text, .. } if text == "before"));
         for (event, expected) in restored[1..6]
             .iter()
             .zip(["info", "warning", "error", "_custom", "_custom"])
@@ -13301,7 +13330,7 @@ mod tests {
                 matches!(event, AcpUpdate::SessionNotice { severity, description: None, .. } if severity == expected)
             );
         }
-        assert!(matches!(&restored[6], AcpUpdate::MessageChunk { text } if text == "after"));
+        assert!(matches!(&restored[6], AcpUpdate::MessageChunk { text, .. } if text == "after"));
     }
 
     #[test]

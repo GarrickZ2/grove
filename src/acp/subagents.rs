@@ -97,6 +97,25 @@ impl AcpSessionHandle {
             .map(|child| child.title.clone().unwrap_or_else(|| "Subagent".to_owned()))
     }
 
+    pub(super) fn apply_child_session_info(&self, session: &str, update: acp::SessionInfoUpdate) {
+        if update.title.is_undefined() {
+            return;
+        }
+        let parent = self
+            .subagents
+            .lock()
+            .unwrap()
+            .children
+            .get(session)
+            .map(|child| child.parent.clone());
+        if let Some(parent) = parent {
+            self.register_subagent(
+                &parent,
+                acp::SubagentUpdate::new(session.to_owned()).title(update.title),
+            );
+        }
+    }
+
     pub(super) fn register_subagent(&self, parent: &str, update: acp::SubagentUpdate) {
         let id = update.session_id.to_string();
         if id == parent || self.root_session_id().as_deref() == Some(&id) {
@@ -333,9 +352,15 @@ impl AcpClientState {
             acp::SessionUpdate::SessionMessageChunk(chunk) => session_message_chunk(chunk),
             acp::SessionUpdate::AgentMessageChunk(chunk) => {
                 if let acp::ContentBlock::Text(text) = chunk.content {
-                    AcpUpdate::MessageChunk { text: text.text }
+                    AcpUpdate::MessageChunk {
+                        text: text.text,
+                        message_id: chunk.message_id.map(|id| id.to_string()),
+                    }
                 } else if let Some(content) = content_block_to_data(&chunk.content) {
-                    AcpUpdate::MessageContentChunk { content }
+                    AcpUpdate::MessageContentChunk {
+                        content,
+                        message_id: chunk.message_id.map(|id| id.to_string()),
+                    }
                 } else {
                     return Ok(());
                 }
@@ -344,6 +369,7 @@ impl AcpClientState {
                 let (text, attachments) = content_block_to_user_message(&chunk.content);
                 AcpUpdate::UserMessage {
                     text,
+                    message_id: chunk.message_id.map(|id| id.to_string()),
                     attachments,
                     client_message_id: None,
                     sender: None,
@@ -352,6 +378,7 @@ impl AcpClientState {
             }
             acp::SessionUpdate::AgentThoughtChunk(chunk) => AcpUpdate::ThoughtChunk {
                 text: content_block_to_text(&chunk.content),
+                message_id: chunk.message_id.map(|id| id.to_string()),
             },
             acp::SessionUpdate::ToolCall(call) => {
                 let key = format!("{}:{}", session.len(), session) + &call.tool_call_id.to_string();
@@ -476,6 +503,10 @@ impl AcpClientState {
                     legacy_raw_output: None,
                     legacy_content: None,
                 }
+            }
+            acp::SessionUpdate::SessionInfoUpdate(update) => {
+                self.handle.apply_child_session_info(&session, update);
+                return Ok(());
             }
             acp::SessionUpdate::PlanUpdate(update) => {
                 let Some(plan) = plans::convert(update.plan) else {

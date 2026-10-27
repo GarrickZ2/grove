@@ -90,6 +90,7 @@ mod tests {
             .store(true, std::sync::atomic::Ordering::Relaxed);
         let state = client_state_for_test(handle.clone(), Arc::new(Mutex::new(HashMap::new())));
         handle.emit(AcpUpdate::MessageChunk {
+            message_id: None,
             text: "before".into(),
         });
         let wire = [
@@ -110,6 +111,7 @@ mod tests {
             .unwrap();
         }
         handle.emit(AcpUpdate::MessageChunk {
+            message_id: None,
             text: "after".into(),
         });
         assert!(handle.is_busy.load(std::sync::atomic::Ordering::Relaxed));

@@ -686,7 +686,10 @@ async fn wait_for_handler_completion(
                     awarn!("mark_run_waiting for {}: {error}", latest.id);
                 }
             }
-            AcpUpdate::MessageChunk { text } => response.push_str(&text),
+            AcpUpdate::MessageChunk {
+                message_id: _,
+                text,
+            } => response.push_str(&text),
             AcpUpdate::Complete { .. } => {
                 match handler.completion_requested(consumer::RuntimeContext {
                     automation: &automation,
@@ -915,7 +918,10 @@ async fn wait_for_completion(
                             awarn!("mark_run_waiting for {run_id}: {e}");
                         }
                     }
-                    AcpUpdate::MessageChunk { text } if started => {
+                    AcpUpdate::MessageChunk {
+                        message_id: _,
+                        text,
+                    } if started => {
                         response.push_str(&text);
                     }
                     AcpUpdate::Complete { .. } if started && !turn_failed => {

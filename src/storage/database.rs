@@ -846,8 +846,14 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN cost_currency TEXT;");
     let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN automation_run_id TEXT;");
     let _ = conn.execute_batch("ALTER TABLE session ADD COLUMN archived_at TEXT;");
-    let _ = conn.execute_batch("ALTER TABLE session ADD COLUMN updated_at TEXT;");
-    conn.execute_batch("UPDATE session SET updated_at = created_at WHERE updated_at IS NULL;")?;
+    if conn
+        .execute_batch("ALTER TABLE session ADD COLUMN updated_at TEXT;")
+        .is_ok()
+    {
+        // Backfill legacy sessions once. NULL can later be an explicit ACP
+        // metadata clear and must survive reconnects and process restarts.
+        conn.execute_batch("UPDATE session SET updated_at = created_at WHERE updated_at IS NULL;")?;
+    }
     add_column_if_missing(
         conn,
         "connects",
@@ -2723,6 +2729,52 @@ pub fn migrate_v20_fix_empty_slots() -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn v1_session_timestamp_migration_backfills_once_and_preserves_clears() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("grove.db");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (
+                session_id TEXT PRIMARY KEY, project TEXT NOT NULL, task_id TEXT NOT NULL,
+                title TEXT NOT NULL, agent TEXT NOT NULL, acp_session_id TEXT, duty TEXT,
+                created_at TEXT NOT NULL, launch_mode TEXT NOT NULL DEFAULT 'acp', archived_at TEXT
+             );
+             INSERT INTO session (session_id, project, task_id, title, agent, created_at)
+             VALUES ('chat', 'project', 'task', 'Title', 'test', '2026-10-27T08:00:00Z');",
+        )
+        .unwrap();
+        drop(conn);
+        let conn = super::open_at(&path).unwrap();
+        let timestamp = || {
+            conn.query_row(
+                "SELECT updated_at FROM session WHERE session_id = 'chat'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(timestamp().as_deref(), Some("2026-10-27T08:00:00Z"));
+        conn.execute(
+            "UPDATE session SET updated_at = NULL WHERE session_id = 'chat'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(timestamp(), None);
+        drop(conn);
+        let reopened = super::open_at(&path).unwrap();
+        assert_eq!(
+            reopened
+                .query_row(
+                    "SELECT updated_at FROM session WHERE session_id = 'chat'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0)
+                )
+                .unwrap(),
+            None
+        );
+    }
+
     use super::*;
 
     // Shared with other DB-touching test modules via `test_lock` above.

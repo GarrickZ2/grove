@@ -393,6 +393,7 @@ mod tests {
         let (handle, _updates, _guard) = fixture();
         age(&handle);
         handle.emit(AcpUpdate::MessageChunk {
+            message_id: None,
             text: "still working".into(),
         });
         assert!(!handle.try_retire_idle(Instant::now()));

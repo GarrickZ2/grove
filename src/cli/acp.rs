@@ -145,11 +145,17 @@ pub async fn execute(agent: String, cwd: String) {
                 other => other,
             };
             match update {
-                Ok(AcpUpdate::MessageChunk { text }) => {
+                Ok(AcpUpdate::MessageChunk {
+                    message_id: _,
+                    text,
+                }) => {
                     print!("{}", text);
                     io::stdout().flush().ok();
                 }
-                Ok(AcpUpdate::MessageContentChunk { content }) => {
+                Ok(AcpUpdate::MessageContentChunk {
+                    message_id: _,
+                    content,
+                }) => {
                     match content {
                         ContentBlockData::Image { mime_type, uri, .. } => {
                             println!("\n[Image: {}]", uri.as_deref().unwrap_or(&mime_type))
@@ -180,7 +186,10 @@ pub async fn execute(agent: String, cwd: String) {
                     }
                     io::stdout().flush().ok();
                 }
-                Ok(AcpUpdate::ThoughtChunk { text }) => {
+                Ok(AcpUpdate::ThoughtChunk {
+                    message_id: _,
+                    text,
+                }) => {
                     // 灰色打印思考过程
                     eprint!("\x1b[90m{}\x1b[0m", text);
                     io::stderr().flush().ok();

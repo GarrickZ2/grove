@@ -1340,6 +1340,7 @@ mod tests {
     #[test]
     fn chat_events_map_to_the_five_state_machine() {
         let user_message = crate::acp::AcpUpdate::UserMessage {
+            message_id: None,
             text: "continue".to_string(),
             client_message_id: None,
             attachments: Vec::new(),

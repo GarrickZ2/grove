@@ -653,7 +653,9 @@ fn merge_locations(existing: &mut Vec<(String, Option<u32>)>, new_locs: &[(Strin
 pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
     let mut result: Vec<AcpUpdate> = Vec::new();
     let mut msg_buf = String::new();
+    let mut msg_id: Option<String> = None;
     let mut thought_buf = String::new();
+    let mut thought_id: Option<String> = None;
     let mut terminal_buf = String::new();
     // tool_call 合并：按 id 跟踪，保持插入顺序
     let mut tool_order: Vec<String> = Vec::new();
@@ -661,19 +663,21 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
         std::collections::HashMap::new();
 
     /// Flush accumulated message chunks
-    fn flush_messages(buf: &mut String, result: &mut Vec<AcpUpdate>) {
-        if !buf.is_empty() {
+    fn flush_messages(buf: &mut String, id: &mut Option<String>, result: &mut Vec<AcpUpdate>) {
+        if !buf.is_empty() || id.is_some() {
             result.push(AcpUpdate::MessageChunk {
                 text: std::mem::take(buf),
+                message_id: id.take(),
             });
         }
     }
 
     /// Flush accumulated thought chunks
-    fn flush_thoughts(buf: &mut String, result: &mut Vec<AcpUpdate>) {
-        if !buf.is_empty() {
+    fn flush_thoughts(buf: &mut String, id: &mut Option<String>, result: &mut Vec<AcpUpdate>) {
+        if !buf.is_empty() || id.is_some() {
             result.push(AcpUpdate::ThoughtChunk {
                 text: std::mem::take(buf),
+                message_id: id.take(),
             });
         }
     }
@@ -715,21 +719,29 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
 
     for event in events {
         match &event {
-            AcpUpdate::MessageChunk { text } => {
-                flush_thoughts(&mut thought_buf, &mut result);
+            AcpUpdate::MessageChunk { text, message_id } => {
+                if &msg_id != message_id {
+                    flush_messages(&mut msg_buf, &mut msg_id, &mut result);
+                }
+                msg_id = message_id.clone();
+                flush_thoughts(&mut thought_buf, &mut thought_id, &mut result);
                 flush_tools(&mut tool_order, &mut tool_map, &mut result);
                 flush_terminal(&mut terminal_buf, &mut result);
                 msg_buf.push_str(text);
             }
-            AcpUpdate::ThoughtChunk { text } => {
-                flush_messages(&mut msg_buf, &mut result);
+            AcpUpdate::ThoughtChunk { text, message_id } => {
+                if &thought_id != message_id {
+                    flush_thoughts(&mut thought_buf, &mut thought_id, &mut result);
+                }
+                thought_id = message_id.clone();
+                flush_messages(&mut msg_buf, &mut msg_id, &mut result);
                 flush_tools(&mut tool_order, &mut tool_map, &mut result);
                 flush_terminal(&mut terminal_buf, &mut result);
                 thought_buf.push_str(text);
             }
             AcpUpdate::TerminalChunk { output } => {
-                flush_messages(&mut msg_buf, &mut result);
-                flush_thoughts(&mut thought_buf, &mut result);
+                flush_messages(&mut msg_buf, &mut msg_id, &mut result);
+                flush_thoughts(&mut thought_buf, &mut thought_id, &mut result);
                 flush_tools(&mut tool_order, &mut tool_map, &mut result);
                 terminal_buf.push_str(output);
             }
@@ -740,8 +752,8 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
                 timestamp,
                 raw_input,
             } => {
-                flush_messages(&mut msg_buf, &mut result);
-                flush_thoughts(&mut thought_buf, &mut result);
+                flush_messages(&mut msg_buf, &mut msg_id, &mut result);
+                flush_thoughts(&mut thought_buf, &mut thought_id, &mut result);
                 flush_terminal(&mut terminal_buf, &mut result);
                 if let Some(state) = tool_map.get_mut(id) {
                     // 后续 ToolCall（同 id）更新 title/locations，timestamp 保留第一次的值
@@ -816,8 +828,8 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
                     }
                 } else {
                     // Orphan ToolCallUpdate（没有对应的 ToolCall），直接保留
-                    flush_messages(&mut msg_buf, &mut result);
-                    flush_thoughts(&mut thought_buf, &mut result);
+                    flush_messages(&mut msg_buf, &mut msg_id, &mut result);
+                    flush_thoughts(&mut thought_buf, &mut thought_id, &mut result);
                     flush_tools(&mut tool_order, &mut tool_map, &mut result);
                     flush_terminal(&mut terminal_buf, &mut result);
                     result.push(event);
@@ -825,8 +837,8 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
             }
             _ => {
                 // 其他事件：flush 所有 buffer，原样保留
-                flush_messages(&mut msg_buf, &mut result);
-                flush_thoughts(&mut thought_buf, &mut result);
+                flush_messages(&mut msg_buf, &mut msg_id, &mut result);
+                flush_thoughts(&mut thought_buf, &mut thought_id, &mut result);
                 flush_tools(&mut tool_order, &mut tool_map, &mut result);
                 flush_terminal(&mut terminal_buf, &mut result);
                 result.push(event);
@@ -835,8 +847,8 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
     }
 
     // Flush 尾部
-    flush_messages(&mut msg_buf, &mut result);
-    flush_thoughts(&mut thought_buf, &mut result);
+    flush_messages(&mut msg_buf, &mut msg_id, &mut result);
+    flush_thoughts(&mut thought_buf, &mut thought_id, &mut result);
     flush_tools(&mut tool_order, &mut tool_map, &mut result);
     flush_terminal(&mut terminal_buf, &mut result);
 
@@ -852,6 +864,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("history.jsonl");
         let event = AcpUpdate::UserMessage {
+            message_id: None,
             text: "retry me".into(),
             client_message_id: Some("browser-message-1".into()),
             attachments: vec![],
@@ -878,6 +891,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("history.jsonl");
         let first = AcpUpdate::UserMessage {
+            message_id: None,
             text: "first prompt".to_string(),
             client_message_id: None,
             attachments: Vec::new(),
@@ -885,6 +899,7 @@ mod tests {
             terminal: false,
         };
         let second = AcpUpdate::MessageChunk {
+            message_id: None,
             text: "x".repeat(256),
         };
         let third = AcpUpdate::Complete {
@@ -1110,9 +1125,11 @@ mod tests {
     fn test_compact_merges_message_chunks() {
         let events = vec![
             AcpUpdate::MessageChunk {
+                message_id: None,
                 text: "Hello ".into(),
             },
             AcpUpdate::MessageChunk {
+                message_id: None,
                 text: "World".into(),
             },
             AcpUpdate::Complete {
@@ -1126,7 +1143,10 @@ mod tests {
         let result = compact_events(events);
         assert_eq!(result.len(), 2);
         match &result[0] {
-            AcpUpdate::MessageChunk { text } => assert_eq!(text, "Hello World"),
+            AcpUpdate::MessageChunk {
+                message_id: _,
+                text,
+            } => assert_eq!(text, "Hello World"),
             _ => panic!("Expected MessageChunk"),
         }
     }
@@ -1135,9 +1155,11 @@ mod tests {
     fn test_compact_preserves_structured_message_order() {
         let events = vec![
             AcpUpdate::MessageChunk {
+                message_id: None,
                 text: "before".into(),
             },
             AcpUpdate::MessageContentChunk {
+                message_id: None,
                 content: crate::acp::ContentBlockData::Image {
                     data: "image-data".into(),
                     mime_type: "image/png".into(),
@@ -1146,6 +1168,7 @@ mod tests {
                 },
             },
             AcpUpdate::MessageChunk {
+                message_id: None,
                 text: "after".into(),
             },
         ];
@@ -1154,17 +1177,18 @@ mod tests {
         assert_eq!(result.len(), 3);
         assert!(matches!(
             &result[0],
-            AcpUpdate::MessageChunk { text } if text == "before"
+            AcpUpdate::MessageChunk { text, .. } if text == "before"
         ));
         assert!(matches!(
             &result[1],
             AcpUpdate::MessageContentChunk {
+                message_id: _,
                 content: crate::acp::ContentBlockData::Image { .. }
             }
         ));
         assert!(matches!(
             &result[2],
-            AcpUpdate::MessageChunk { text } if text == "after"
+            AcpUpdate::MessageChunk { text, .. } if text == "after"
         ));
     }
 
@@ -1172,9 +1196,11 @@ mod tests {
     fn test_compact_merges_thought_chunks() {
         let events = vec![
             AcpUpdate::ThoughtChunk {
+                message_id: None,
                 text: "Think ".into(),
             },
             AcpUpdate::ThoughtChunk {
+                message_id: None,
                 text: "deep".into(),
             },
             AcpUpdate::Complete {
@@ -1188,7 +1214,10 @@ mod tests {
         let result = compact_events(events);
         assert_eq!(result.len(), 2);
         match &result[0] {
-            AcpUpdate::ThoughtChunk { text } => assert_eq!(text, "Think deep"),
+            AcpUpdate::ThoughtChunk {
+                message_id: _,
+                text,
+            } => assert_eq!(text, "Think deep"),
             _ => panic!("Expected ThoughtChunk"),
         }
     }
@@ -1253,10 +1282,22 @@ mod tests {
     #[test]
     fn test_compact_mixed_sequence() {
         let events = vec![
-            AcpUpdate::ThoughtChunk { text: "t1".into() },
-            AcpUpdate::ThoughtChunk { text: "t2".into() },
-            AcpUpdate::MessageChunk { text: "m1".into() },
-            AcpUpdate::MessageChunk { text: "m2".into() },
+            AcpUpdate::ThoughtChunk {
+                message_id: None,
+                text: "t1".into(),
+            },
+            AcpUpdate::ThoughtChunk {
+                message_id: None,
+                text: "t2".into(),
+            },
+            AcpUpdate::MessageChunk {
+                message_id: None,
+                text: "m1".into(),
+            },
+            AcpUpdate::MessageChunk {
+                message_id: None,
+                text: "m2".into(),
+            },
             AcpUpdate::ToolCall {
                 id: "tool1".into(),
                 title: "Write x".into(),
@@ -1271,7 +1312,10 @@ mod tests {
                 locations: vec![],
                 raw_input: None,
             },
-            AcpUpdate::MessageChunk { text: "m3".into() },
+            AcpUpdate::MessageChunk {
+                message_id: None,
+                text: "m3".into(),
+            },
             AcpUpdate::Complete {
                 usage: None,
                 start_ts: None,
@@ -1284,15 +1328,24 @@ mod tests {
         // ThoughtChunk("t1t2") + MessageChunk("m1m2") + ToolCall + ToolCallUpdate + MessageChunk("m3") + Complete
         assert_eq!(result.len(), 6);
         match &result[0] {
-            AcpUpdate::ThoughtChunk { text } => assert_eq!(text, "t1t2"),
+            AcpUpdate::ThoughtChunk {
+                message_id: _,
+                text,
+            } => assert_eq!(text, "t1t2"),
             _ => panic!("Expected ThoughtChunk"),
         }
         match &result[1] {
-            AcpUpdate::MessageChunk { text } => assert_eq!(text, "m1m2"),
+            AcpUpdate::MessageChunk {
+                message_id: _,
+                text,
+            } => assert_eq!(text, "m1m2"),
             _ => panic!("Expected MessageChunk"),
         }
         match &result[4] {
-            AcpUpdate::MessageChunk { text } => assert_eq!(text, "m3"),
+            AcpUpdate::MessageChunk {
+                message_id: _,
+                text,
+            } => assert_eq!(text, "m3"),
             _ => panic!("Expected MessageChunk"),
         }
     }
@@ -1301,13 +1354,17 @@ mod tests {
     fn test_compact_preserves_user_message() {
         let events = vec![
             AcpUpdate::UserMessage {
+                message_id: None,
                 text: "hello".into(),
                 client_message_id: None,
                 attachments: vec![],
                 sender: None,
                 terminal: false,
             },
-            AcpUpdate::MessageChunk { text: "hi".into() },
+            AcpUpdate::MessageChunk {
+                message_id: None,
+                text: "hi".into(),
+            },
             AcpUpdate::Complete {
                 usage: None,
                 start_ts: None,

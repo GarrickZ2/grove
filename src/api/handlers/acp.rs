@@ -217,12 +217,18 @@ enum ServerMessage {
         message: String,
     },
     MessageChunk {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
         text: String,
     },
     MessageContentChunk {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
         content: ContentBlockData,
     },
     ThoughtChunk {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
         text: String,
     },
     ToolCall {
@@ -335,6 +341,8 @@ enum ServerMessage {
         description: Option<String>,
     },
     UserMessage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         client_message_id: Option<String>,
@@ -632,11 +640,19 @@ impl From<AcpUpdate> for ServerMessage {
                 message_ids,
                 message,
             },
-            AcpUpdate::MessageChunk { text } => ServerMessage::MessageChunk { text },
-            AcpUpdate::MessageContentChunk { content } => {
-                ServerMessage::MessageContentChunk { content }
+            AcpUpdate::MessageChunk { text, message_id } => {
+                ServerMessage::MessageChunk { text, message_id }
             }
-            AcpUpdate::ThoughtChunk { text } => ServerMessage::ThoughtChunk { text },
+            AcpUpdate::MessageContentChunk {
+                content,
+                message_id,
+            } => ServerMessage::MessageContentChunk {
+                content,
+                message_id,
+            },
+            AcpUpdate::ThoughtChunk { text, message_id } => {
+                ServerMessage::ThoughtChunk { text, message_id }
+            }
             AcpUpdate::ToolCall {
                 id,
                 title,
@@ -842,12 +858,14 @@ impl From<AcpUpdate> for ServerMessage {
             },
             AcpUpdate::UserMessage {
                 text,
+                message_id,
                 client_message_id,
                 attachments,
                 sender,
                 terminal,
             } => ServerMessage::UserMessage {
                 text,
+                message_id,
                 client_message_id,
                 attachments,
                 sender,
@@ -2830,11 +2848,17 @@ fn history_start_for_recent_turns(history: &[AcpUpdate], turns: usize) -> (usize
     if turns == 0 {
         return (0, 0);
     }
+    let mut seen_message_ids = std::collections::HashSet::new();
     let starts: Vec<usize> = history
         .iter()
         .enumerate()
-        .filter_map(|(index, update)| {
-            matches!(update, AcpUpdate::UserMessage { .. }).then_some(index)
+        .filter_map(|(index, update)| match update {
+            AcpUpdate::UserMessage {
+                message_id: Some(id),
+                ..
+            } => seen_message_ids.insert(id).then_some(index),
+            AcpUpdate::UserMessage { .. } => Some(index),
+            _ => None,
         })
         .collect();
     if starts.len() <= turns {
@@ -3333,8 +3357,49 @@ mod tests {
     }
 
     #[test]
+    fn v1_agent_message_ids_reach_websocket_clients_without_replacing_local_ids() {
+        for event in [
+            serde_json::json!({"type":"message_chunk","message_id":"a","text":"answer"}),
+            serde_json::json!({"type":"thought_chunk","message_id":"a","text":"reason"}),
+            serde_json::json!({"type":"message_content_chunk","message_id":"a","content":{"type":"image","data":"pixels","mime_type":"image/png"}}),
+            serde_json::json!({"type":"user_message","message_id":"a","client_message_id":"local","text":"prompt"}),
+        ] {
+            let update: AcpUpdate = serde_json::from_value(event.clone()).unwrap();
+            let wire = serde_json::to_value(ServerMessage::from(update)).unwrap();
+            assert_eq!(wire["message_id"], "a");
+            assert_eq!(wire["type"], event["type"]);
+            if event["type"] == "user_message" {
+                assert_eq!(wire["client_message_id"], "local");
+            }
+        }
+        let legacy: AcpUpdate =
+            serde_json::from_value(serde_json::json!({"type":"message_chunk","text":"legacy"}))
+                .unwrap();
+        assert!(serde_json::to_value(ServerMessage::from(legacy))
+            .unwrap()
+            .get("message_id")
+            .is_none());
+    }
+
+    #[test]
+    fn v1_recent_history_starts_at_the_first_chunk_of_a_user_message() {
+        let history = [
+            serde_json::json!({"type":"user_message","message_id":"old","text":"old"}),
+            serde_json::json!({"type":"user_message","message_id":"new","text":"first"}),
+            serde_json::json!({"type":"user_message","message_id":"new","text":" second"}),
+            serde_json::json!({"type":"message_chunk","message_id":"answer","text":"reply"}),
+        ]
+        .into_iter()
+        .map(|value| serde_json::from_value(value).unwrap())
+        .collect::<Vec<AcpUpdate>>();
+        assert_eq!(history_start_for_recent_turns(&history, 1), (1, 1));
+        assert_eq!(history_start_for_recent_turns(&history, 2), (0, 0));
+    }
+
+    #[test]
     fn recent_turn_start_preserves_whole_turn() {
         let user = |text: &str| AcpUpdate::UserMessage {
+            message_id: None,
             text: text.into(),
             client_message_id: None,
             attachments: Vec::new(),
@@ -3344,10 +3409,12 @@ mod tests {
         let history = vec![
             user("one"),
             AcpUpdate::MessageChunk {
+                message_id: None,
                 text: "first".into(),
             },
             user("two"),
             AcpUpdate::MessageChunk {
+                message_id: None,
                 text: "second".into(),
             },
         ];
@@ -3452,6 +3519,7 @@ mod tests {
     fn truncated_history_context_limits_memory_and_plans_but_preserves_attachment_numbers() {
         let history = vec![
             AcpUpdate::UserMessage {
+                message_id: None,
                 text: "old".into(),
                 client_message_id: None,
                 attachments: vec![ContentBlockData::Image {
@@ -3492,6 +3560,7 @@ mod tests {
                 timestamp: None,
             },
             AcpUpdate::UserMessage {
+                message_id: None,
                 text: "new".into(),
                 client_message_id: None,
                 attachments: vec![],

@@ -740,6 +740,38 @@ pub fn update_chat_title(project: &str, task_id: &str, chat_id: &str, title: &st
     Ok(())
 }
 
+/// Apply Agent metadata without treating a rename as new conversation activity.
+/// `None` leaves a field alone; an empty title or `Some(None)` clears it.
+pub fn update_chat_session_info(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+    title: Option<&str>,
+    updated_at: Option<Option<DateTime<Utc>>>,
+) -> Result<bool> {
+    let timestamp = updated_at
+        .as_ref()
+        .and_then(|value| value.map(|dt| dt.to_rfc3339()));
+    let conn = crate::storage::database::connection();
+    let changed = conn.execute(
+        "UPDATE session SET
+            title = CASE WHEN ?1 THEN ?2 ELSE title END,
+            updated_at = CASE WHEN ?3 THEN ?4 ELSE updated_at END
+         WHERE project = ?5 AND task_id = ?6 AND session_id = ?7
+           AND ((?1 AND title IS NOT ?2) OR (?3 AND updated_at IS NOT ?4))",
+        params![
+            title.is_some(),
+            title,
+            updated_at.is_some(),
+            timestamp,
+            project,
+            task_id,
+            chat_id
+        ],
+    )?;
+    Ok(changed > 0)
+}
+
 /// 更新 ChatSession 的 ACP session ID
 pub fn update_chat_acp_session_id(
     project: &str,

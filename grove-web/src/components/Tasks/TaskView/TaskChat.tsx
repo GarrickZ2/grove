@@ -1,3 +1,4 @@
+import { reduceMessageChunk, reduceUserMessage } from "./messageChunks";
 import { chatConnectionLabels, chatConnectionStatusAfterClose, MAX_CHAT_RECONNECT_ATTEMPTS, type ChatConnectionStatus } from "./chatConnectionStatus";
 import { watchChatConnection, withConnectionDeadline } from "./chatConnectionAttempt";
 import { resolveAuthenticationMessages } from "./authenticationState";
@@ -219,8 +220,6 @@ import {
   resolveRestoredBusy,
 } from "./sessionListState";
 import {
-  appendStructuredContentBlock,
-  appendTextContentBlock,
   type AgentContentBlock,
 } from "./agentContentBlocks";
 import {
@@ -533,9 +532,11 @@ export type ChatMessage =
       attachments?: Attachment[];
       terminal?: boolean;
       clientMessageId?: string;
+      messageId?: string;
     }
   | {
       type: "assistant";
+      messageId?: string;
       content: string;
       complete: boolean;
       /** Ordered ACP content blocks. Absent for legacy text-only cached state. */
@@ -550,7 +551,7 @@ export type ChatMessage =
       /** Wall-clock seconds when the prompt response arrived. */
       endTs?: number;
     }
-  | { type: "thinking"; content: string; collapsed: boolean; complete: boolean }
+  | { type: "thinking"; messageId?: string; content: string; collapsed: boolean; complete: boolean }
   | ToolMessage
   | AskFormMessage
   | ElicitationMessage
@@ -2148,90 +2149,10 @@ function reduceHistoryMessages(
       const notice = sessionNoticeFromEvent(msg);
       return notice ? appendSessionNotice(messages, notice) : messages;
     }
-    case "message_chunk": {
-      // OpenCode (and possibly others) emit trailing `session_update.AgentMessageChunk`
-      // events AFTER `PromptResponse` has already resolved — so the chunk arrives
-      // when the assistant bubble is already `complete=true`. Appending to whichever
-      // assistant is most recent (regardless of complete flag), as long as no
-      // user/tool boundary intervenes, merges that orphan tail back into the
-      // bubble it belongs to. Without this, the tail creates a new bubble that
-      // then incorrectly inherits the NEXT turn's usage from the complete-handler
-      // mapper (which targets all `!complete` assistants).
-      const prev = completeThinking(messages);
-      for (let i = prev.length - 1; i >= 0; i -= 1) {
-        const m = prev[i];
-        if (m.type === "assistant") {
-          const updated = [...prev];
-          updated[i] = {
-            ...m,
-            content: m.content + msg.text,
-            blocks: appendTextContentBlock(m.blocks, m.content, msg.text),
-          };
-          return updated;
-        }
-        if (m.type === "user" || m.type === "tool" || m.type === "session_notice" || m.type === "compaction" || m.type === "subagent" || m.type === "session_exchange") break;
-      }
-      if (!msg.text?.trim()) return prev;
-      return [
-        ...prev,
-        {
-          type: "assistant",
-          content: msg.text,
-          complete: false,
-          blocks: [{ type: "text", text: msg.text }],
-        },
-      ];
-    }
-    case "message_content_chunk": {
-      const content = msg.content as AgentContentBlock | undefined;
-      if (!content || content.type === "text") return messages;
-      const prev = completeThinking(messages);
-      for (let i = prev.length - 1; i >= 0; i -= 1) {
-        const m = prev[i];
-        if (m.type === "assistant") {
-          const updated = [...prev];
-          updated[i] = {
-            ...m,
-            blocks: appendStructuredContentBlock(
-              m.blocks,
-              m.content,
-              content,
-            ),
-          };
-          return updated;
-        }
-        if (m.type === "user" || m.type === "tool" || m.type === "session_notice" || m.type === "compaction" || m.type === "subagent" || m.type === "session_exchange") break;
-      }
-      return [
-        ...prev,
-        {
-          type: "assistant",
-          content: "",
-          complete: false,
-          blocks: [content],
-        },
-      ];
-    }
-    case "thought_chunk": {
-      for (let i = messages.length - 1; i >= 0; i -= 1) {
-        const m = messages[i];
-        if (m.type === "thinking") {
-          const updated = [...messages];
-          updated[i] = { ...m, content: m.content + msg.text };
-          return updated;
-        }
-        if (m.type === "user" || m.type === "assistant" || m.type === "session_notice" || m.type === "compaction" || m.type === "subagent" || m.type === "session_exchange") break;
-      }
-      return [
-        ...messages,
-        {
-          type: "thinking",
-          content: msg.text,
-          collapsed: false,
-          complete: false,
-        },
-      ];
-    }
+    case "message_chunk":
+    case "message_content_chunk":
+    case "thought_chunk":
+      return reduceMessageChunk(messages, msg);
     case "tool_call": {
       const prev = completeThinking(messages);
       if (prev.some((m) => m.type === "tool" && m.id === msg.id)) {
@@ -2372,35 +2293,7 @@ function reduceHistoryMessages(
         : completedTurn;
     }
     case "user_message":
-      {
-        const incomingAttachments: Attachment[] = msg.attachments?.map(attachmentFromContent) ?? [];
-        const previous = messages[messages.length - 1];
-        if (previous?.type === "user" && !previous.terminal && !msg.terminal &&
-            (typeof msg.client_message_id !== "string" || previous.clientMessageId === msg.client_message_id)) {
-          return [
-            ...messages.slice(0, -1),
-            {
-              ...previous,
-              content: `${previous.content}${msg.text ?? ""}`,
-              attachments: [
-                ...(previous.attachments ?? []),
-                ...incomingAttachments,
-              ],
-            },
-          ];
-        }
-        return [
-          ...messages,
-          {
-          type: "user",
-          content: msg.text,
-          terminal: !!msg.terminal,
-          sender: msg.sender || undefined,
-          clientMessageId: typeof msg.client_message_id === "string" ? msg.client_message_id : undefined,
-            attachments: incomingAttachments,
-          },
-        ];
-      }
+      return reduceUserMessage(messages, msg, msg.attachments?.map(attachmentFromContent) ?? []);
     case "terminal_execute":
       return [
         ...messages,
@@ -4069,7 +3962,7 @@ export function TaskChat({
       const chatId = sender.slice("agent:".length);
       const chat = chats.find((c) => c.id === chatId);
       if (chat) {
-        return { label: chat.title, Icon: getChatIcon(chat.agent) };
+        return { label: chat.title || "Untitled chat", Icon: getChatIcon(chat.agent) };
       }
     }
     if (sender === "connect") {
@@ -10843,7 +10736,7 @@ export function TaskChat({
                                 <ChatIcon className="h-3.5 w-3.5" />
                               </div>
                               <div className="min-w-0 flex-1">
-                                <div className="truncate">{chat.title}</div>
+                                <div className="truncate">{chat.title || "Untitled chat"}</div>
                               </div>
                               {hasUnreadCompletion && (
                                 <span
@@ -10902,7 +10795,7 @@ export function TaskChat({
                                   <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-65">
                                     <ChatIcon className="h-3.5 w-3.5" />
                                   </div>
-                                  <div className="min-w-0 flex-1 truncate">{chat.title}</div>
+                                  <div className="min-w-0 flex-1 truncate">{chat.title || "Untitled chat"}</div>
                                   {!isMobile && <button
                                     type="button"
                                     onClick={(event) => {
@@ -11077,7 +10970,7 @@ export function TaskChat({
                     />
                   ) : (
                     <OverflowTitle
-                      text={activeChat?.title ?? "Chats"}
+                      text={activeChat ? activeChat.title || "Untitled chat" : "Chats"}
                       className="text-[13px] font-medium text-[var(--color-text)]"
                     />
                   )}
@@ -11184,7 +11077,7 @@ export function TaskChat({
                           });
                         }}
                         className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                        title={chat.title}
+                        title={chat.title || "Untitled chat"}
                       >
                         <div
                           className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border ${isRunning ? "taskchat-session-running" : ""} ${
@@ -11207,7 +11100,7 @@ export function TaskChat({
                             />
                           ) : (
                             <OverflowTitle
-                              text={chat.title}
+                              text={chat.title || "Untitled chat"}
                               className={`text-[12px] leading-5 ${isActive ? "font-medium text-[var(--color-text)]" : ""}`}
                             />
                           )}
@@ -11274,13 +11167,13 @@ export function TaskChat({
                             type="button"
                             onClick={() => switchChat(chat.id)}
                             className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                            title={`${chat.title} · Archived`}
+                            title={`${chat.title || "Untitled chat"} · Archived`}
                           >
                             <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] opacity-65">
                               <ChatIcon className="h-3 w-3" />
                             </div>
                             <OverflowTitle
-                              text={chat.title}
+                              text={chat.title || "Untitled chat"}
                               className={`text-[12px] leading-5 ${isActive ? "font-medium text-[var(--color-text)]" : ""}`}
                             />
                           </button>
