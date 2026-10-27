@@ -1,3 +1,4 @@
+import { useComposerInteractionBoundary } from "./useComposerInteractionBoundary";
 import { compactConversationText } from "./conversationPreview";
 import { BackgroundChatConnections, trackChatSocketSends, watchBackgroundChatConnections } from "./backgroundChatConnections";
 import { historyComposerPlans, reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
@@ -3314,6 +3315,14 @@ export function TaskChat({
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
+  const closeMobileComposer = useCallback(() => {
+    editableRef.current?.blur();
+    setMobileComposerOpen(false);
+  }, []);
+  const markComposerInteraction = useComposerInteractionBoundary(
+    isPhoneLayout && mobileComposerOpen,
+    closeMobileComposer,
+  );
   const resumeEditedQueue = useCallback((chatId: string) => {
     const ws = wsMapRef.current.get(chatId);
     if (ws?.readyState === WebSocket.OPEN) {
@@ -3729,7 +3738,6 @@ export function TaskChat({
     const editable = editableRef.current;
     if (editable) saveChatDraft(activeChatId, pendingQueueEditRef.current?.draft.html ?? editable.innerHTML);
     setMobileDetails({ chatId: activeChatId, panel });
-    setMobileComposerOpen(false);
     setShowSessionSettings(false);
     setShowAgentVoiceMenu(false);
     setShowSlashMenu(false);
@@ -9790,6 +9798,7 @@ export function TaskChat({
       // Shell mode: Escape → exit shell mode
       if (isTerminalMode && e.key === "Escape") {
         e.preventDefault();
+        if (isPhoneLayout) setMobileComposerOpen(false);
         const el = editableRef.current;
         if (el) {
           // Strip highlight spans, keep plain text
@@ -9803,6 +9812,7 @@ export function TaskChat({
       // Expanded input: Escape → collapse
       if (isInputExpanded && e.key === "Escape") {
         e.preventDefault();
+        if (isPhoneLayout) setMobileComposerOpen(false);
         setIsInputExpanded(false);
         editableRef.current?.blur();
         return;
@@ -9917,6 +9927,7 @@ export function TaskChat({
       // Plain input: Escape → blur editor
       if (e.key === "Escape") {
         e.preventDefault();
+        if (isPhoneLayout) setMobileComposerOpen(false);
         editableRef.current?.blur();
         if (typeof window !== "undefined") {
           window.getSelection()?.removeAllRanges();
@@ -9929,6 +9940,7 @@ export function TaskChat({
     },
     [
       isTerminalMode,
+      isPhoneLayout,
       isInputExpanded,
       showSlashMenu,
       filteredSlashCommands,
@@ -11382,6 +11394,8 @@ export function TaskChat({
           ) : (
           <div
             ref={inputAreaRef}
+            onPointerDownCapture={markComposerInteraction}
+            onFocusCapture={markComposerInteraction}
             className={`task-chat-input-area pointer-events-none absolute inset-x-0 z-10 px-3 pt-2 ${showMobileComposerPill ? "pb-2" : "pb-4"}`}
             style={{
               bottom: showMobileComposerPill
@@ -12658,21 +12672,7 @@ export function TaskChat({
                       onKeyDown={handleKeyDown}
                       onMouseDown={handleEditableMouseDown}
                       onFocus={() => setIsInputFocused(true)}
-                      onBlur={() => {
-                        setIsInputFocused(false);
-                        if (isPhoneLayout) {
-                          requestAnimationFrame(() => {
-                            const focused = document.activeElement as HTMLElement | null;
-                            const focusStayedInComposer =
-                              !!focused && chatboxContainerRef.current?.contains(focused);
-                            const focusMovedToSettings =
-                              !!focused?.closest("[data-session-settings-menu]");
-                            if (!focusStayedInComposer && !focusMovedToSettings) {
-                              setMobileComposerOpen(false);
-                            }
-                          });
-                        }
-                      }}
+                      onBlur={() => setIsInputFocused(false)}
                       onPaste={handlePaste}
                       onCompositionStart={() => {
                         composingRef.current = true;
