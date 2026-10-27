@@ -304,7 +304,12 @@ fn main() -> io::Result<()> {
         Some(cmd) => (cmd, false),
         None => {
             // 无子命令：重放上次启动模式，默认 TUI
-            let config = storage::config::load_config();
+            let mut config = storage::config::load_config();
+            // Remote clients take their destination explicitly from the CLI,
+            // never from a local launch preference left by an older release.
+            config.last_launch = config
+                .last_launch
+                .filter(|launch| launch.to_command().needs_local_storage());
 
             // AppBundle 环境下，始终强制进入 GUI 模式
             // （忽略 last_launch 中可能存的 Web/Tui，仅保留上次记录的 GUI 端口）
@@ -373,11 +378,7 @@ fn main() -> io::Result<()> {
     }
 
     // Ensure storage is migrated and DB initialized for UI commands
-    let needs_storage = matches!(
-        command,
-        Commands::Tui | Commands::Web { .. } | Commands::Mobile { .. } | Commands::Gui { .. }
-    );
-    if needs_storage {
+    if command.needs_local_storage() {
         // Check for updates at CLI startup and prompt user to auto-update
         let config = storage::config::load_config();
         let update_info = update::check_for_updates(

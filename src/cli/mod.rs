@@ -148,6 +148,23 @@ pub enum Commands {
 }
 
 impl Commands {
+    /// Remote clients use the server's config and must not initialize local state.
+    pub fn needs_local_storage(&self) -> bool {
+        matches!(
+            self,
+            Self::Tui
+                | Self::Mobile { .. }
+                | Self::Web {
+                    remote_url: None,
+                    ..
+                }
+                | Self::Gui {
+                    remote_url: None,
+                    ..
+                }
+        )
+    }
+
     /// 将启动模式命令转换为 `LastLaunch`（非启动模式命令返回 None）
     pub fn to_last_launch(&self) -> Option<LastLaunch> {
         match self {
@@ -156,12 +173,12 @@ impl Commands {
                 port,
                 no_open,
                 dev,
-                remote_url,
+                remote_url: None,
             } => Some(LastLaunch::Web {
                 port: *port,
                 no_open: *no_open,
                 dev: *dev,
-                remote_url: remote_url.clone(),
+                remote_url: None,
             }),
             Commands::Mobile {
                 port,
@@ -182,9 +199,12 @@ impl Commands {
                 public: *public,
                 private: *private,
             }),
-            Commands::Gui { port, remote_url } => Some(LastLaunch::Gui {
+            Commands::Gui {
+                port,
+                remote_url: None,
+            } => Some(LastLaunch::Gui {
                 port: *port,
-                remote_url: remote_url.clone(),
+                remote_url: None,
             }),
             _ => None,
         }
@@ -238,4 +258,33 @@ impl LastLaunch {
 pub enum DeviceCommand {
     /// Download the latest released iOS IPA to Downloads (install it with your preferred tool)
     Ios,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_clients_skip_local_startup_and_launch_persistence() {
+        for args in [
+            vec!["grove", "gui", "--remote-url", "http://remote:3001"],
+            vec!["grove", "web", "--remote-url", "http://remote:3001"],
+        ] {
+            let command = Cli::try_parse_from(args).unwrap().command.unwrap();
+            assert!(!command.needs_local_storage());
+            assert!(command.to_last_launch().is_none());
+        }
+    }
+
+    #[test]
+    fn local_surfaces_keep_local_startup_and_launch_persistence() {
+        for surface in ["tui", "gui", "web", "mobile"] {
+            let command = Cli::try_parse_from(["grove", surface])
+                .unwrap()
+                .command
+                .unwrap();
+            assert!(command.needs_local_storage());
+            assert!(command.to_last_launch().is_some());
+        }
+    }
 }

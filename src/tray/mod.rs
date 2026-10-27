@@ -419,6 +419,25 @@ fn compute_popover_position(app: &AppHandle, anchor: Option<(f64, f64)>) -> Opti
 
 // ─── Theme-adaptive icons ──────────────────────────────────────────────────
 
+/// Remote shells start with defaults until the frontend loads the server's
+/// preferences. Keep the local loader lazy so remote mode never reads config.
+fn shell_theme_config(
+    remote: bool,
+    load_local: impl FnOnce() -> crate::storage::config::ThemeConfig,
+) -> crate::storage::config::ThemeConfig {
+    if remote {
+        crate::storage::config::ThemeConfig::default()
+    } else {
+        load_local()
+    }
+}
+
+fn initial_theme_config() -> crate::storage::config::ThemeConfig {
+    shell_theme_config(crate::cli::gui::is_remote_mode(), || {
+        crate::storage::config::load_config().theme
+    })
+}
+
 /// Switch the tray icon. Safe to call at any point after `init()`.
 pub fn update_tray_icon(app: &AppHandle, is_light: bool, style: &str) {
     if let Some(tray) = app.tray_by_id("grove-tray") {
@@ -486,7 +505,7 @@ pub fn tray_update_theme_icons(
     is_light: bool,
     icon_style: Option<String>,
 ) -> Result<(), String> {
-    let style = icon_style.unwrap_or_else(|| crate::storage::config::load_config().theme.app_icon);
+    let style = icon_style.unwrap_or_else(|| initial_theme_config().app_icon);
     let png = crate::app_icons::png(&style, is_light)
         .ok_or_else(|| format!("Unknown application icon: {style}"))?
         .into_owned();
@@ -527,8 +546,9 @@ pub fn init(app: &AppHandle, port: u16) -> tauri::Result<()> {
         ],
     )?;
 
-    let style = crate::storage::config::load_config().theme.app_icon;
-    let is_light = resolve_current_theme_is_light();
+    let theme_config = initial_theme_config();
+    let is_light = resolve_theme_is_light(&theme_config);
+    let style = theme_config.app_icon;
     let bytes = crate::app_icons::tray_png(&style, is_light);
     let icon = Image::from_bytes(bytes.as_deref().unwrap_or(TRAY_ICON_BYTES))?;
     let app_for_menu = app.clone();
@@ -596,12 +616,11 @@ pub fn set_enabled(app: &AppHandle, port: u16, enabled: bool) -> tauri::Result<(
     Ok(())
 }
 
-/// Resolve whether the current saved config produces a light theme.
-fn resolve_current_theme_is_light() -> bool {
-    let config = crate::storage::config::load_config();
-    let theme_id = match config.theme.mode.as_str() {
-        "light" => config.theme.light_theme.clone(),
-        "dark" => config.theme.dark_theme.clone(),
+/// Resolve the supplied theme without consulting local backend config.
+fn resolve_theme_is_light(config: &crate::storage::config::ThemeConfig) -> bool {
+    let theme_id = match config.mode.as_str() {
+        "light" => config.light_theme.clone(),
+        "dark" => config.dark_theme.clone(),
         _ => {
             // auto — ask the system (approximate: default to dark if unknown)
             #[cfg(not(windows))]
@@ -609,9 +628,9 @@ fn resolve_current_theme_is_light() -> bool {
             #[cfg(windows)]
             let dark = false;
             if dark {
-                config.theme.dark_theme.clone()
+                config.dark_theme.clone()
             } else {
-                config.theme.light_theme.clone()
+                config.light_theme.clone()
             }
         }
     };
@@ -620,7 +639,6 @@ fn resolve_current_theme_is_light() -> bool {
         theme_id.as_str(),
         "light" | "solarized-light" | "github-light"
     ) || config
-        .theme
         .custom_themes
         .iter()
         .any(|t| t.id == theme_id && t.is_light)
@@ -628,8 +646,23 @@ fn resolve_current_theme_is_light() -> bool {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use super::dock_image_from_png;
+    use super::{dock_image_from_png, shell_theme_config};
     use objc2::{msg_send, rc::autoreleasepool, runtime::Bool};
+
+    #[test]
+    fn remote_shell_uses_classic_without_reading_local_config() {
+        let theme = shell_theme_config(true, || panic!("remote shell read local config"));
+        assert_eq!(theme.app_icon, "classic");
+    }
+
+    #[test]
+    fn local_shell_still_uses_saved_icon() {
+        let theme = shell_theme_config(false, || crate::storage::config::ThemeConfig {
+            app_icon: "moss".into(),
+            ..Default::default()
+        });
+        assert_eq!(theme.app_icon, "moss");
+    }
 
     #[test]
     fn every_icon_loads_through_native_appkit() {

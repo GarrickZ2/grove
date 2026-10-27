@@ -73,6 +73,19 @@ describe("application icon preferences", () => {
     expect(current.appIcon).toBe("terrarium");
   });
 
+  it("keeps the default icon while waiting, then applies the backend preference", async () => {
+    let respond!: (value: unknown) => void;
+    api.get.mockReturnValueOnce(new Promise((resolve) => { respond = resolve; }));
+    await render();
+    expect(current.appIcon).toBe("classic");
+    expect(favicon.getAttribute("href")).toBeNull();
+    expect(api.patch).not.toHaveBeenCalled();
+
+    await act(async () => respond({ theme: { ...saved, app_icon: "orbit" } }));
+    expect(current.appIcon).toBe("orbit");
+    expect(favicon.getAttribute("href")).toBe("/app-icons/orbit-light.svg");
+  });
+
   it("automatically follows the resolved interface theme without separate appearance controls", async () => {
     await render();
     await act(async () => button("Orbit application icon").click());

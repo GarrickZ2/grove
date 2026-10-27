@@ -383,11 +383,23 @@ pub fn load_hooks_with_cleanup(project_path: &str) -> HooksFile {
 
 // === Notification utilities (shared by CLI hooks and ACP) ===
 
+/// Native notification assets are client runtime files, never backend config.
+/// Remote GUI keeps them separate from the local server's persistent directory.
+fn notification_runtime_dir() -> PathBuf {
+    #[cfg(feature = "gui")]
+    if crate::cli::gui::is_remote_mode() {
+        return std::env::temp_dir().join(format!("grove-remote-{}", std::process::id()));
+    }
+    crate::storage::grove_dir()
+}
+
 pub static ACTIVE_BASE_URL: once_cell::sync::OnceCell<String> = once_cell::sync::OnceCell::new();
 
 #[cfg(feature = "gui")]
 pub fn set_active_base_url(url: String) {
-    record_server_base_url(url);
+    // GUI clients need a process-local callback target. Only a local backend
+    // advertises itself to other processes through record_server_base_url.
+    let _ = ACTIVE_BASE_URL.set(url);
 }
 
 /// Record the running server's loopback base URL so same-machine CLIs (the
@@ -574,7 +586,7 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 #[cfg(target_os = "windows")]
 fn log_notify_error(msg: &str) {
     use std::io::Write;
-    let log_dir = crate::storage::grove_dir().join("logs");
+    let log_dir = notification_runtime_dir().join("logs");
     if fs::create_dir_all(&log_dir).is_err() {
         return;
     }
@@ -643,7 +655,7 @@ static NOTIFY_ICON_PNG: &[u8] = include_bytes!("../src-tauri/icons/icon.png");
 fn ensure_notification_icon() -> Option<PathBuf> {
     use sha2::{Digest, Sha256};
 
-    let icon_dir = crate::storage::grove_dir().join("icons");
+    let icon_dir = notification_runtime_dir().join("icons");
     let icon_path = icon_dir.join("icon.png");
     let sentinel_path = icon_dir.join("icon.png.sha256");
 
@@ -772,15 +784,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let chatId = userInfo["chatId"] as? String ?? ""
         let approveOpt = userInfo["approveOpt"] as? String ?? "allow"
         let denyOpt = userInfo["denyOpt"] as? String ?? "deny"
-        var baseUrl = userInfo["baseUrl"] as? String ?? "http://127.0.0.1:3001"
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        let endpointFile = homeDir.appendingPathComponent(".grove").appendingPathComponent("gui_endpoint")
-        if let savedEndpoint = try? String(contentsOf: endpointFile, encoding: .utf8) {
-            let trimmed = savedEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                baseUrl = trimmed
-            }
-        }
+        // The notification belongs to the client that sent it. Consulting a
+        // shared local endpoint could route a remote action to the local GUI.
+        let baseUrl = userInfo["baseUrl"] as? String ?? "http://127.0.0.1:3001"
 
         func encode(_ s: String) -> String {
             s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? s
@@ -823,7 +829,7 @@ app.run()
 pub fn ensure_grove_app() -> PathBuf {
     use sha2::{Digest, Sha256};
 
-    let grove_dir = crate::storage::grove_dir();
+    let grove_dir = notification_runtime_dir();
     let app_dir = grove_dir.join("Grove.app").join("Contents");
     let macos_dir = app_dir.join("MacOS");
     let res_dir = app_dir.join("Resources");

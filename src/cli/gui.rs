@@ -407,30 +407,40 @@ pub fn try_daemonize(port: u16, remote_url: Option<&str>) -> bool {
         Err(_) => return false, // cannot determine exe path, run in foreground
     };
 
-    // Build log path: ~/.grove/gui.log
-    let log_path = dirs::home_dir()
-        .map(|h| h.join(".grove").join("gui.log"))
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/grove-gui.log"));
+    // Remote clients must not touch the local backend's directory or log.
+    let log_path = remote_url.is_none().then(|| {
+        dirs::home_dir()
+            .map(|h| h.join(".grove").join("gui.log"))
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/grove-gui.log"))
+    });
 
-    let log_file = match std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&log_path)
-    {
-        Ok(f) => f,
-        Err(_) => return false, // can't open log, run in foreground
-    };
-    let stderr_file = match log_file.try_clone() {
-        Ok(f) => f,
-        Err(_) => match std::fs::OpenOptions::new()
+    let (stdout, stderr) = if let Some(log_path) = &log_path {
+        let log_file = match std::fs::OpenOptions::new()
             .create(true)
-            .append(true)
-            .open(&log_path)
+            .write(true)
+            .truncate(true)
+            .open(log_path)
         {
             Ok(f) => f,
-            Err(_) => return false, // can't open stderr log, run in foreground
-        },
+            Err(_) => return false, // can't open log, run in foreground
+        };
+        let stderr_file = match log_file.try_clone() {
+            Ok(f) => f,
+            Err(_) => match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+            {
+                Ok(f) => f,
+                Err(_) => return false, // can't open stderr log, run in foreground
+            },
+        };
+        (
+            std::process::Stdio::from(log_file),
+            std::process::Stdio::from(stderr_file),
+        )
+    } else {
+        (std::process::Stdio::null(), std::process::Stdio::null())
     };
 
     let mut cmd = std::process::Command::new(&exe);
@@ -442,8 +452,8 @@ pub fn try_daemonize(port: u16, remote_url: Option<&str>) -> bool {
     cmd.args(&args)
         .env(DAEMON_ENV, "1")
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::from(log_file))
-        .stderr(std::process::Stdio::from(stderr_file));
+        .stdout(stdout)
+        .stderr(stderr);
 
     // Start a new process group so the child is not killed when the terminal closes
     #[cfg(unix)]
@@ -463,7 +473,9 @@ pub fn try_daemonize(port: u16, remote_url: Option<&str>) -> bool {
     match child {
         Ok(c) => {
             println!("Grove GUI launched in background (pid: {})", c.id());
-            println!("Logs: {}", log_path.display());
+            if let Some(log_path) = log_path {
+                println!("Logs: {}", log_path.display());
+            }
             true // parent should exit
         }
         Err(e) => {
@@ -528,11 +540,13 @@ fn expand_path_for_app_bundle() {
 
 /// Execute the GUI desktop application
 pub async fn execute(port: u16, remote_url: Option<String>) {
-    // Expand PATH before anything else so dependency checks work correctly (macOS only)
-    #[cfg(target_os = "macos")]
-    expand_path_for_app_bundle();
-
     let is_remote = remote_url.is_some();
+    // Only local agents need the user's shell environment.
+    #[cfg(target_os = "macos")]
+    if !is_remote {
+        expand_path_for_app_bundle();
+    }
+
     let remote_url_clone = remote_url.clone();
     REMOTE_MODE.store(is_remote, Ordering::Relaxed);
 
@@ -601,7 +615,12 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
     // Build and run Tauri application
 
     let target_url = format!("http://localhost:{}", actual_port);
-    crate::hooks::set_active_base_url(format!("http://127.0.0.1:{}", actual_port));
+    let callback_url = format!("http://127.0.0.1:{}", actual_port);
+    if is_remote {
+        crate::hooks::set_active_base_url(callback_url);
+    } else {
+        crate::hooks::record_server_base_url(callback_url);
+    }
 
     let tauri_app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
