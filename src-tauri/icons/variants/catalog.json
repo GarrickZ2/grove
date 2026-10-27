@@ -1,0 +1,14 @@
+[
+  {"id":"classic","name":"Classic","description":"The original Grove, in full color."},
+  {"id":"canopy","name":"Canopy","description":"Many branches. One living canopy."},
+  {"id":"orbit","name":"Orbit","description":"A little gravity for your ideas."},
+  {"id":"prism","name":"Prism","description":"Layers of context, a new perspective."},
+  {"id":"constellation","name":"Constellation","description":"Small connections, brighter together."},
+  {"id":"moss","name":"Moss","description":"Your quietly curious garden companion."},
+  {"id":"terrarium","name":"Terrarium","description":"A tiny world with room to grow."},
+  {"id":"origami","name":"Origami","description":"An idea, unfolding into a Grove."},
+  {"id":"pixel","name":"Pixel Grove","description":"A pocket forest from another era."},
+  {"id":"bamboo","name":"Bamboo","description":"Stay rooted. Keep growing."},
+  {"id":"firefly","name":"Firefly","description":"A small spark to guide the next idea."},
+  {"id":"treehouse","name":"Treehouse","description":"A quiet place to build something new."}
+]

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+        <title>Grove · Orbit · dark</title>
+        <defs>
+          <linearGradient id="bg" x2=".8" y2="1"><stop stop-color="#182847"/><stop offset="1" stop-color="#0c162b"/></linearGradient>
+          <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b4f5b0"/><stop offset="1" stop-color="#3dbfa0"/></linearGradient>
+        </defs>
+        <rect x="48" y="52" width="416" height="416" rx="94" fill="#000" opacity=".3"/>
+        <rect x="48" y="48" width="416" height="416" rx="94" fill="url(#bg)"/>
+        <rect x="49" y="49" width="414" height="414" rx="93" fill="none" stroke="#fff" stroke-opacity=".1" stroke-width="2"/>
+
+      <circle cx="256" cy="256" r="72" fill="url(#green)"/>
+      <circle cx="234" cy="233" r="17" fill="#e4ffe9" opacity=".65"/>
+      <g fill="none" stroke="#9bbaff" stroke-width="10">
+        <ellipse cx="256" cy="256" rx="150" ry="58" transform="rotate(-32 256 256)"/>
+        <ellipse cx="256" cy="256" rx="148" ry="59" transform="rotate(51 256 256)" opacity=".52"/>
+      </g>
+      <path d="M196 202c-22 18-31 48-24 72" stroke="#bdffdc" stroke-width="7" stroke-linecap="round" opacity=".3" fill="none"/>
+      <circle cx="383" cy="183" r="18" fill="#ffe29b"/>
+      <circle cx="180" cy="133" r="12" fill="#bdaaff"/>
+      <circle cx="157" cy="323" r="15" fill="#6ce7b0"/>
+      </svg>

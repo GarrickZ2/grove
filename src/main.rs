@@ -5,6 +5,7 @@ mod agent_usage;
 mod api;
 #[cfg(not(windows))]
 mod app;
+mod app_icons;
 #[cfg(not(windows))]
 mod async_ops_state;
 mod automation;

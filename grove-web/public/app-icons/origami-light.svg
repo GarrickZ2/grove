@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+        <title>Grove · Origami · light</title>
+        <defs>
+          <linearGradient id="bg" x2=".8" y2="1"><stop stop-color="#fff6e8"/><stop offset="1" stop-color="#eee1ca"/></linearGradient>
+          <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#78d29b"/><stop offset="1" stop-color="#199b7a"/></linearGradient>
+        </defs>
+        <rect x="48" y="52" width="416" height="416" rx="94" fill="#000" opacity=".08"/>
+        <rect x="48" y="48" width="416" height="416" rx="94" fill="url(#bg)"/>
+        <rect x="49" y="49" width="414" height="414" rx="93" fill="none" stroke="#fff" stroke-opacity=".85" stroke-width="2"/>
+
+      <path d="m150 159 180-39 49 82-158-10-32 106 155 11-73 72-149-55Z" fill="url(#green)"/>
+      <path d="m150 159 71 33-32 106-67 28Z" fill="#1d7f6c"/>
+      <path d="m150 159 180-39-41 61-68 11Z" fill="#a1d582"/>
+      <path d="m330 120 49 82-90-21Z" fill="#d7eab9"/>
+      <path d="m189 298 155 11-73 72Z" fill="#3cba8c"/>
+      <path d="m344 309-73 72 17-63Z" fill="#1b7d67"/>
+      <path d="m263 249 116-47-35 107-46-39Z" fill="#e6aa3b"/>
+      <path d="m298 270 81-68-35 107Z" fill="#cc9036"/>
+      </svg>

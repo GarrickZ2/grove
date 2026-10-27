@@ -60,6 +60,7 @@ import { LayoutEditor, type CustomLayoutConfig, type PaneType, type LayoutNode, 
 import { CustomAgentsModal } from "./CustomAgentsModal";
 import { MarketplaceModal } from "./MarketplaceModal";
 import { CustomThemeDialog } from "./CustomThemeDialog";
+import { AppIconSettings } from "./AppIconSettings";
 import { InstallExtensionDialog } from "./InstallExtensionDialog";
 import { ShortcutSettingsPanel } from "./ShortcutSettingsPanel";
 import {
@@ -2103,6 +2104,7 @@ env_vars = [
                 </div>
               </div>
             )}
+            <AppIconSettings />
           </div>
         </Section>
 

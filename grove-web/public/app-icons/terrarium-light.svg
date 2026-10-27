@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+        <title>Grove · Terrarium · light</title>
+        <defs>
+          <linearGradient id="bg" x2=".8" y2="1"><stop stop-color="#f6f2ff"/><stop offset="1" stop-color="#e6def5"/></linearGradient>
+          <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#78d29b"/><stop offset="1" stop-color="#199b7a"/></linearGradient>
+        </defs>
+        <rect x="48" y="52" width="416" height="416" rx="94" fill="#000" opacity=".08"/>
+        <rect x="48" y="48" width="416" height="416" rx="94" fill="url(#bg)"/>
+        <rect x="49" y="49" width="414" height="414" rx="93" fill="none" stroke="#fff" stroke-opacity=".85" stroke-width="2"/>
+
+      <path d="M137 344V228a119 119 0 0 1 238 0v116Z" fill="#fff" opacity=".65"/>
+      <path d="M137 344V228a119 119 0 0 1 238 0v116" stroke="#b0bdd3" stroke-width="10" fill="none"/>
+      <circle cx="305" cy="189" r="25" fill="#e6aa3b"/>
+      <path d="M155 341q100-77 202 0Z" fill="#a3c9a3"/>
+      <path d="m191 233-39 77h78Z" fill="#2fae79"/>
+      <path d="m256 194-53 119h106Z" fill="url(#green)"/>
+      <path d="m320 251-32 66h65Z" fill="#78b07c"/>
+      <path d="M191 304v33m65-34v35m64-28v27" stroke="#15654c" stroke-width="9" stroke-linecap="round"/>
+      <path d="M129 345h254v24a14 14 0 0 1-14 14H143a14 14 0 0 1-14-14Z" fill="#a297c3"/>
+      <path d="M161 219q2-44 35-66" stroke="#fff" opacity=".5" stroke-width="7" fill="none" stroke-linecap="round"/>
+      </svg>

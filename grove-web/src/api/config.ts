@@ -31,6 +31,7 @@ export interface ThemeConfig {
   light_theme: string;
   dark_theme: string;
   custom_themes: CustomThemeConfig[];
+  app_icon?: string;
 }
 
 export interface LayoutConfig {

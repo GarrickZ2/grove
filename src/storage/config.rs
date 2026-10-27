@@ -698,6 +698,10 @@ fn default_dark_theme() -> String {
     "dark".to_string()
 }
 
+fn default_app_icon() -> String {
+    "classic".to_string()
+}
+
 /// 主题配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeConfig {
@@ -711,6 +715,8 @@ pub struct ThemeConfig {
     pub dark_theme: String,
     #[serde(default)]
     pub custom_themes: Vec<CustomThemeConfig>,
+    #[serde(default = "default_app_icon")]
+    pub app_icon: String,
 }
 
 /// 更新检查配置
@@ -769,6 +775,7 @@ impl Default for ThemeConfig {
             light_theme: default_light_theme(),
             dark_theme: default_dark_theme(),
             custom_themes: vec![],
+            app_icon: default_app_icon(),
         }
     }
 }

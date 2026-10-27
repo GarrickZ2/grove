@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+        <title>Grove · Treehouse · light</title>
+        <defs>
+          <linearGradient id="bg" x2=".8" y2="1"><stop stop-color="#fff5e8"/><stop offset="1" stop-color="#e9e8d4"/></linearGradient>
+          <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#78d29b"/><stop offset="1" stop-color="#199b7a"/></linearGradient>
+        </defs>
+        <rect x="48" y="52" width="416" height="416" rx="94" fill="#000" opacity=".08"/>
+        <rect x="48" y="48" width="416" height="416" rx="94" fill="url(#bg)"/>
+        <rect x="49" y="49" width="414" height="414" rx="93" fill="none" stroke="#fff" stroke-opacity=".85" stroke-width="2"/>
+
+      <ellipse cx="256" cy="389" rx="111" ry="13" fill="#15654c" opacity=".10"/>
+      <path d="M256 373V241m0 57-70-62m70 35 73-70" fill="none" stroke="#15654c" stroke-width="23" stroke-linecap="round"/>
+      <path d="M173 260c-62-1-77-59-38-86-4-49 59-78 99-52 35-43 103-28 113 18 56 3 70 67 23 94-44 34-151 42-197 26" fill="url(#green)"/>
+      <path d="M182 246h148v87H182Z" fill="#e5bc7b"/>
+      <path d="m164 249 92-79 92 79" fill="#528c7a" stroke="#15654c" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="233" y="271" width="45" height="62" rx="8" fill="#15654c"/>
+      <rect x="195" y="270" width="25" height="28" rx="5" fill="#e6aa3b"/>
+      <path d="M172 336h169m-47 9v36m24-36v36m-24-23h24m-24 15h24" fill="none" stroke="#15654c" stroke-width="8" stroke-linecap="round"/>
+      <circle cx="366" cy="120" r="16" fill="#e6aa3b"/>
+      </svg>

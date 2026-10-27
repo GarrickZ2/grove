@@ -59,7 +59,6 @@ fn record_navigate(payload: NavigatePayload) {
 }
 
 const TRAY_ICON_BYTES: &[u8] = include_bytes!("../../src-tauri/icons/32x32.png");
-const TRAY_ICON_LIGHT_BYTES: &[u8] = include_bytes!("../../src-tauri/icons/32x32-light.png");
 const POPOVER_LABEL: &str = "tray-popover";
 const POPOVER_WIDTH: f64 = 400.0;
 const POPOVER_HEIGHT: f64 = 580.0;
@@ -421,92 +420,92 @@ fn compute_popover_position(app: &AppHandle, anchor: Option<(f64, f64)>) -> Opti
 // ─── Theme-adaptive icons ──────────────────────────────────────────────────
 
 /// Switch the tray icon. Safe to call at any point after `init()`.
-pub fn update_tray_icon(app: &AppHandle, is_light: bool) {
+pub fn update_tray_icon(app: &AppHandle, is_light: bool, style: &str) {
     if let Some(tray) = app.tray_by_id("grove-tray") {
-        let bytes = if is_light {
-            TRAY_ICON_LIGHT_BYTES
-        } else {
-            TRAY_ICON_BYTES
+        let Some(bytes) = crate::app_icons::tray_png(style, is_light) else {
+            return;
         };
-        if let Ok(icon) = Image::from_bytes(bytes) {
+        if let Ok(icon) = Image::from_bytes(&bytes) {
             let _ = tray.set_icon(Some(icon));
         }
     }
 }
 
-/// Switch the macOS Dock icon by loading the pre-built `.icns` file.
-///
-/// The icns files are generated from the SVG source (with proper 10 %
-/// macOS padding) via Swift + iconutil, so every Retina resolution is
-/// included and the squircle padding matches system icons exactly.
-/// Must NOT be called during `applicationDidFinishLaunching`.
+/// Load the exact AppKit image used by the Dock update, also exercised by tests.
 #[cfg(target_os = "macos")]
-fn set_dock_icon(is_light: bool) {
+fn dock_image_from_png(bytes: &[u8]) -> Option<objc2::rc::Retained<objc2::runtime::AnyObject>> {
     use objc2::msg_send;
+    use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject};
-    use std::ffi::CString;
-
-    let bytes: &[u8] = if is_light {
-        include_bytes!("../../src-tauri/icons/icon-light.icns")
-    } else {
-        include_bytes!("../../src-tauri/icons/icon.icns")
-    };
-
-    let tmp = if is_light {
-        "/tmp/.grove_dock_light.icns"
-    } else {
-        "/tmp/.grove_dock_dark.icns"
-    };
-    if std::fs::write(tmp, bytes).is_err() {
-        return;
-    }
-    let Ok(cpath) = CString::new(tmp) else { return };
 
     unsafe {
-        // Build NSString path
-        let Some(str_cls) = AnyClass::get("NSString") else {
-            return;
-        };
-        let path_obj: *mut AnyObject = msg_send![str_cls, alloc];
-        let path_obj: *mut AnyObject = msg_send![path_obj, initWithUTF8String: cpath.as_ptr()];
-        if path_obj.is_null() {
-            return;
+        let data_cls = AnyClass::get("NSData")?;
+        let image_cls = AnyClass::get("NSImage")?;
+        // NSData expects `const void *` (^v). A raw u8 pointer encodes as
+        // char* (*) in objc2 and panics during debug message verification.
+        let data: *mut AnyObject = msg_send![data_cls,
+            dataWithBytes: bytes.as_ptr().cast::<std::ffi::c_void>(),
+            length: bytes.len()
+        ];
+        if data.is_null() {
+            return None;
         }
-
-        // NSImage initWithContentsOfFile:
-        let Some(img_cls) = AnyClass::get("NSImage") else {
-            let _: () = msg_send![path_obj, release];
-            return;
-        };
-        let img: *mut AnyObject = msg_send![img_cls, alloc];
-        let img: *mut AnyObject = msg_send![img, initWithContentsOfFile: path_obj];
-        let _: () = msg_send![path_obj, release];
-
-        if img.is_null() {
-            return;
-        }
-
-        // [NSApp setApplicationIconImage:]
-        let Some(app_cls) = AnyClass::get("NSApplication") else {
-            let _: () = msg_send![img, release];
-            return;
-        };
-        let ns_app: *mut AnyObject = msg_send![app_cls, sharedApplication];
-        if !ns_app.is_null() {
-            let _: () = msg_send![ns_app, setApplicationIconImage: img];
-        }
-        let _: () = msg_send![img, release];
+        let image: *mut AnyObject = msg_send![image_cls, alloc];
+        let image: *mut AnyObject = msg_send![image, initWithData: data];
+        Retained::from_raw(image)
     }
 }
 
-/// Tauri command: update both tray icon and Dock icon.
-/// Called by the frontend when the resolved theme changes.
-/// Runs in a Tauri worker thread — safe to call post-init.
+/// Update the application-wide macOS icon from the SVG-derived PNG.
+/// AppKit work is dispatched to the main thread by the command below.
+#[cfg(target_os = "macos")]
+fn set_dock_icon(bytes: &[u8]) {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+
+    let Some(image) = dock_image_from_png(bytes) else {
+        eprintln!("[icon] Could not load the Dock icon through AppKit");
+        return;
+    };
+    let Some(app_cls) = AnyClass::get("NSApplication") else {
+        return;
+    };
+    unsafe {
+        let ns_app: *mut AnyObject = msg_send![app_cls, sharedApplication];
+        if !ns_app.is_null() {
+            let _: () = msg_send![ns_app, setApplicationIconImage: &*image];
+        }
+    }
+}
+
+/// Apply the same selected design and resolved theme to application and tray.
+/// Optional arguments preserve compatibility with existing frontend callers.
 #[tauri::command]
-pub fn tray_update_theme_icons(app: AppHandle, is_light: bool) {
-    update_tray_icon(&app, is_light);
-    #[cfg(target_os = "macos")]
-    set_dock_icon(is_light);
+pub fn tray_update_theme_icons(
+    app: AppHandle,
+    is_light: bool,
+    icon_style: Option<String>,
+) -> Result<(), String> {
+    let style = icon_style.unwrap_or_else(|| crate::storage::config::load_config().theme.app_icon);
+    let png = crate::app_icons::png(&style, is_light)
+        .ok_or_else(|| format!("Unknown application icon: {style}"))?
+        .into_owned();
+    update_tray_icon(&app, is_light, &style);
+    #[cfg(not(target_os = "macos"))]
+    let windows = app.webview_windows();
+    app.run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        set_dock_icon(&png);
+        #[cfg(not(target_os = "macos"))]
+        if let Ok(icon) = Image::from_bytes(&png) {
+            for window in windows.values() {
+                if let Err(error) = window.set_icon(icon.clone()) {
+                    eprintln!("[icon] Could not update window icon: {error}");
+                }
+            }
+        }
+    })
+    .map_err(|error| error.to_string())
 }
 
 // ─── Init ──────────────────────────────────────────────────────────────────
@@ -528,7 +527,10 @@ pub fn init(app: &AppHandle, port: u16) -> tauri::Result<()> {
         ],
     )?;
 
-    let icon = Image::from_bytes(TRAY_ICON_BYTES)?;
+    let style = crate::storage::config::load_config().theme.app_icon;
+    let is_light = resolve_current_theme_is_light();
+    let bytes = crate::app_icons::tray_png(&style, is_light);
+    let icon = Image::from_bytes(bytes.as_deref().unwrap_or(TRAY_ICON_BYTES))?;
     let app_for_menu = app.clone();
     let app_for_click = app.clone();
     let _tray = TrayIconBuilder::with_id("grove-tray")
@@ -574,11 +576,6 @@ pub fn init(app: &AppHandle, port: u16) -> tauri::Result<()> {
     if let Err(e) = ensure_popover(app, port) {
         eprintln!("[tray] failed to create popover window: {}", e);
     }
-
-    // Set the tray icon for the current theme at startup.
-    // Dock icon is set later via tray_update_theme_icons command (post-init).
-    let is_light = resolve_current_theme_is_light();
-    update_tray_icon(app, is_light);
 
     Ok(())
 }
@@ -627,4 +624,29 @@ fn resolve_current_theme_is_light() -> bool {
         .custom_themes
         .iter()
         .any(|t| t.id == theme_id && t.is_light)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::dock_image_from_png;
+    use objc2::{msg_send, rc::autoreleasepool, runtime::Bool};
+
+    #[test]
+    fn every_icon_loads_through_native_appkit() {
+        autoreleasepool(|_| {
+            for design in crate::app_icons::DESIGNS.iter() {
+                for is_light in [true, false] {
+                    let png = crate::app_icons::png(&design.id, is_light).unwrap();
+                    let image = dock_image_from_png(&png).expect("AppKit decodes the Dock icon");
+                    let valid: Bool = unsafe { msg_send![&*image, isValid] };
+                    assert!(valid.as_bool(), "invalid native image: {}", design.id);
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn invalid_dock_image_is_rejected_without_panicking() {
+        autoreleasepool(|_| assert!(dock_image_from_png(b"not an image").is_none()));
+    }
 }

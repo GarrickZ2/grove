@@ -1,3 +1,4 @@
+import { APP_APPEARANCE_CHANGED_EVENT } from "../data/appIcons";
 import { isIosClient } from "../utils/platform";
 import { useEffect, useRef, useState } from "react";
 import type { RadioEvent, TargetMode, NodeStatus } from "../api/walkieTalkie";
@@ -87,6 +88,9 @@ function notifyClientCount() {
 function dispatch(event: RadioEvent) {
   for (const s of subscribers) s.current.onEvent?.(event);
   switch (event.type) {
+    case "theme_changed":
+      window.dispatchEvent(new Event(APP_APPEARANCE_CHANGED_EVENT));
+      break;
     case "agents_changed":
       invalidateAgentCatalog();
       break;

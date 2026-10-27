@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+        <title>Grove · Firefly · dark</title>
+        <defs>
+          <linearGradient id="bg" x2=".8" y2="1"><stop stop-color="#252747"/><stop offset="1" stop-color="#12182c"/></linearGradient>
+          <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b4f5b0"/><stop offset="1" stop-color="#3dbfa0"/></linearGradient>
+        </defs>
+        <rect x="48" y="52" width="416" height="416" rx="94" fill="#000" opacity=".3"/>
+        <rect x="48" y="48" width="416" height="416" rx="94" fill="url(#bg)"/>
+        <rect x="49" y="49" width="414" height="414" rx="93" fill="none" stroke="#fff" stroke-opacity=".1" stroke-width="2"/>
+
+      <circle cx="258" cy="296" r="96" fill="#ffe29b" opacity=".09"/>
+      <circle cx="258" cy="296" r="69" fill="#ffe29b" opacity=".12"/>
+      <path d="M245 224c-75-86-130-51-105 2 18 34 61 45 105 32m25-34c75-86 130-51 105 2-18 34-61 45-105 32" fill="#9cb7f5" opacity=".75"/>
+      <path d="m243 183-17-27m44 27 17-27" fill="none" stroke="#bdffdc" stroke-width="9" stroke-linecap="round"/>
+      <rect x="226" y="198" width="64" height="126" rx="32" fill="#bdffdc"/>
+      <path d="M226 271h64v23a32 32 0 0 1-64 0Z" fill="#ffe29b"/>
+      <path d="M216 354q40 26 84 0" fill="none" stroke="#ffe29b" stroke-width="7" stroke-linecap="round" opacity=".5"/>
+      <g fill="#ffe29b"><circle cx="141" cy="318" r="10"/><circle cx="364" cy="144" r="9"/><path d="m159 126 4 13 13 4-13 4-4 13-4-13-13-4 13-4Z"/></g>
+      </svg>

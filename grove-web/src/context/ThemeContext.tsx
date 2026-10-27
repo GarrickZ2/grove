@@ -2,7 +2,8 @@ import { isIosClient } from "../utils/platform";
 import { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import { apiClient } from "../api/client";
-import type { CustomThemeConfig } from "../api/config";
+import type { ThemeConfig } from "../api/config";
+import { APP_APPEARANCE_CHANGED_EVENT, normalizeAppIconStyle, appIconAssetUrl } from "../data/appIcons";
 
 const isTauri = !isIosClient && typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -367,6 +368,8 @@ interface ThemeContextType {
   darkThemeId: string;
   customThemes: Theme[];
   themes: Theme[]; // All available themes (built-in + custom)
+  appIcon: string;
+  setApplicationIcon: (style: string) => Promise<void>;
   setAppearance: (params: { mode?: ThemeMode; lightThemeId?: string; darkThemeId?: string; customThemes?: Theme[] }) => Promise<void>;
 }
 
@@ -383,16 +386,24 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [darkThemeId, setDarkThemeId] = useState("dark");
   const [customThemes, setCustomThemes] = useState<Theme[]>([]);
   const [systemIsDark, setSystemIsDark] = useState<boolean>(getSystemIsDark);
+  const [appIcon, setAppIcon] = useState("classic");
+  const [iconConfigLoaded, setIconConfigLoaded] = useState(false);
+  const themeLoadGeneration = useRef(0);
 
   const allThemes = useMemo(() => [...builtInThemes, ...customThemes], [customThemes]);
 
   // Load theme from backend config on mount and on focus regain.
   useEffect(() => {
+    let disposed = false;
     const loadTheme = async () => {
+      const generation = ++themeLoadGeneration.current;
       try {
-        const config = await apiClient.get<{ theme?: { mode: string; light_theme: string; dark_theme: string; custom_themes?: CustomThemeConfig[] } }>("/api/v1/config");
+        const config = await apiClient.get<{ theme?: Partial<ThemeConfig> }>("/api/v1/config");
+        if (disposed || generation !== themeLoadGeneration.current) return;
         const t = config.theme;
         if (t) {
+          setAppIcon(normalizeAppIconStyle(t.app_icon));
+          setIconConfigLoaded(true);
           if (t.mode) setMode(t.mode as ThemeMode);
           if (t.light_theme) setLightThemeId(t.light_theme);
           if (t.dark_theme) setDarkThemeId(t.dark_theme);
@@ -428,7 +439,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
     loadTheme();
     window.addEventListener("focus", loadTheme);
-    return () => window.removeEventListener("focus", loadTheme);
+    window.addEventListener(APP_APPEARANCE_CHANGED_EVENT, loadTheme);
+    return () => {
+      window.removeEventListener("focus", loadTheme);
+      window.removeEventListener(APP_APPEARANCE_CHANGED_EVENT, loadTheme);
+      disposed = true;
+    };
   }, []);
 
   // Listen for system theme changes
@@ -468,17 +484,35 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--color-error", colors.error);
     root.style.setProperty("--color-info", colors.info);
 
+  }, [theme]);
+
+  useEffect(() => {
+    if (!iconConfigLoaded) return;
+    const iconIsLight = theme.isLight;
     const faviconEl = document.querySelector<HTMLLinkElement>("link[rel~='icon'][type='image/svg+xml']");
     if (faviconEl) {
-      faviconEl.href = theme.isLight ? "/favicon-light.svg" : "/favicon.svg";
+      faviconEl.href = appIcon === "classic"
+        ? (iconIsLight ? "/favicon-light.svg" : "/favicon.svg")
+        : appIconAssetUrl(appIcon, iconIsLight);
     }
-
     if (isTauri) {
-      import("@tauri-apps/api/core").then(({ invoke }) => {
-        invoke("tray_update_theme_icons", { isLight: theme.isLight }).catch(() => {});
-      });
+      import("@tauri-apps/api/core").then(({ invoke }) =>
+        invoke("tray_update_theme_icons", { isLight: theme.isLight, iconStyle: appIcon }),
+      ).catch((error) => console.error("Failed to apply application icon:", error));
     }
-  }, [theme]);
+  }, [theme.isLight, appIcon, iconConfigLoaded]);
+
+  // Publish only confirmed server preferences. Failed writes leave the current
+  // selection intact, and cannot abort an unrelated color-theme save.
+  const setApplicationIcon = useCallback(async (style: string) => {
+    themeLoadGeneration.current++;
+    const config = await apiClient.patch<{ theme: { app_icon: string } }, { theme: ThemeConfig }>(
+      "/api/v1/config", { theme: { app_icon: style } },
+    );
+    themeLoadGeneration.current++;
+    setAppIcon(normalizeAppIconStyle(config.theme.app_icon));
+    setIconConfigLoaded(true);
+  }, []);
 
   // Abort in-flight setAppearance PATCH before sending a new one. Rapid mode
   // toggles (A→B→A within 100ms) would otherwise produce overlapping requests
@@ -539,8 +573,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // render. Without this, the 5 internal useState + system theme listener +
   // focus event listener churn the value identity multiple times per second.
   const contextValue = useMemo(
-    () => ({ theme, mode, lightThemeId, darkThemeId, customThemes, themes: allThemes, setAppearance }),
-    [theme, mode, lightThemeId, darkThemeId, customThemes, allThemes, setAppearance],
+    () => ({ theme, mode, lightThemeId, darkThemeId, customThemes, themes: allThemes, setAppearance, appIcon, setApplicationIcon }),
+    [theme, mode, lightThemeId, darkThemeId, customThemes, allThemes, setAppearance, appIcon, setApplicationIcon],
   );
 
   return (

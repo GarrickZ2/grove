@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+        <title>Grove · Pixel Grove · light</title>
+        <defs>
+          <linearGradient id="bg" x2=".8" y2="1"><stop stop-color="#eff5ff"/><stop offset="1" stop-color="#dce8ee"/></linearGradient>
+          <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#78d29b"/><stop offset="1" stop-color="#199b7a"/></linearGradient>
+        </defs>
+        <rect x="48" y="52" width="416" height="416" rx="94" fill="#000" opacity=".08"/>
+        <rect x="48" y="48" width="416" height="416" rx="94" fill="url(#bg)"/>
+        <rect x="49" y="49" width="414" height="414" rx="93" fill="none" stroke="#fff" stroke-opacity=".85" stroke-width="2"/>
+
+      <g shape-rendering="crispEdges">
+        <path d="M136 348h240v32H136Z" fill="#8aad78"/>
+        <path d="M160 220h32v-32h32v-32h64v32h32v32h32v64h-48v32h-96v-32h-48Z" fill="#2fae79"/>
+        <path d="M160 252h48v32h96v-32h48v32h-48v32h-96v-32h-48Z" fill="#168866"/>
+        <path d="M240 284h32v64h-32Z" fill="#aa7b50"/>
+        <path d="M208 188h32v-16h32v32h-32v16h-32Z" fill="#99d67a"/>
+        <path d="M112 124h16v-16h16v16h16v16h-16v16h-16v-16h-16Z" fill="#e6aa3b"/>
+        <path d="M352 160h32v32h-32Zm-16 160h16v16h-16ZM176 332h16v16h-16Z" fill="#7298bf"/>
+      </g>
+      </svg>

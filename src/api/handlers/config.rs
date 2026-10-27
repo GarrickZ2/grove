@@ -89,6 +89,7 @@ pub struct ThemeConfigDto {
     pub light_theme: String,
     pub dark_theme: String,
     pub custom_themes: Vec<config::CustomThemeConfig>,
+    pub app_icon: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -148,6 +149,7 @@ impl From<&Config> for ConfigResponse {
                 light_theme: config.theme.light_theme.clone(),
                 dark_theme: config.theme.dark_theme.clone(),
                 custom_themes: config.theme.custom_themes.clone(),
+                app_icon: config.theme.app_icon.clone(),
             },
             layout: LayoutConfigDto {
                 default: config.layout.default.clone(),
@@ -294,6 +296,7 @@ pub struct ThemeConfigPatch {
     pub light_theme: Option<String>,
     pub dark_theme: Option<String>,
     pub custom_themes: Option<Vec<config::CustomThemeConfig>>,
+    pub app_icon: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -338,6 +341,17 @@ pub async fn patch_config(
     // Apply theme patch
     let mut theme_changed = false;
     if let Some(theme_patch) = patch.theme {
+        if theme_patch
+            .app_icon
+            .as_deref()
+            .is_some_and(|style| !crate::app_icons::is_valid_style(style))
+        {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        if let Some(style) = theme_patch.app_icon {
+            theme_changed |= config.theme.app_icon != style;
+            config.theme.app_icon = style;
+        }
         if let Some(name) = theme_patch.name {
             if config.theme.name != name {
                 theme_changed = true;

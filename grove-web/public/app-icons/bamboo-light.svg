@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+        <title>Grove · Bamboo · light</title>
+        <defs>
+          <linearGradient id="bg" x2=".8" y2="1"><stop stop-color="#f2f6e7"/><stop offset="1" stop-color="#dce9cf"/></linearGradient>
+          <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#78d29b"/><stop offset="1" stop-color="#199b7a"/></linearGradient>
+        </defs>
+        <rect x="48" y="52" width="416" height="416" rx="94" fill="#000" opacity=".08"/>
+        <rect x="48" y="48" width="416" height="416" rx="94" fill="url(#bg)"/>
+        <rect x="49" y="49" width="414" height="414" rx="93" fill="none" stroke="#fff" stroke-opacity=".85" stroke-width="2"/>
+
+      <ellipse cx="256" cy="386" rx="110" ry="13" fill="#15654c" opacity=".10"/>
+      <g fill="none" stroke-linecap="round">
+        <path d="m184 370-8-180m83 180V132m74 238 11-164" stroke="#2fae79" stroke-width="24"/>
+        <path d="m174 246 15-1m-12 66 15-1m59-113h16m-16 78h16m-16 64h16m64-81 16 1m-20 68 16 1" stroke="#15654c" stroke-width="6" opacity=".45"/>
+      </g>
+      <path d="M255 208c-57-5-91-38-91-77 50 1 83 28 91 77" fill="url(#green)"/>
+      <path d="M262 251c12-56 44-83 88-81-6 48-34 76-88 81" fill="#a0c878"/>
+      <path d="M181 294c-49-5-73-27-76-60 38-1 64 20 76 60m151 38c5-42 26-67 60-70-1 36-22 61-60 70" fill="#2fae79"/>
+      <circle cx="350" cy="132" r="16" fill="#e6aa3b"/>
+      </svg>
