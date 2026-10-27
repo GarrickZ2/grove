@@ -147,7 +147,7 @@ export function LoginDevicesPanel() {
         </div>
       )}
       <DialogShell isOpen={!!editing} onClose={() => { if (!busy) setEditing(null); }}>
-        <form onSubmit={rename} className="p-5 space-y-4">
+        <form onSubmit={rename} className="p-5 space-y-4 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
           <div className="flex items-center justify-between">
             <h2 className="font-medium text-[var(--color-text)]">Device name</h2>
             <button type="button" aria-label="Close" onClick={() => setEditing(null)} disabled={busy}><X className="h-4 w-4" /></button>
