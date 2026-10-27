@@ -7,19 +7,25 @@ import { getPreviewRenderer } from "../../Review/previewRenderers";
 function rewriteHtmlUrls(html: string, projectId: string, taskId: string, parentDir: string): string {
   const apiBase = `/api/v1/projects/${projectId}/tasks/${taskId}/file/raw?path=`;
   return html.replace(
-    /(src|href)\s*=\s*(['"])([^'"]+)\2/gi,
-    (match, attr, quote, url) => {
-      const trimmedUrl = url.trim();
-      if (
-        /^(https?:\/\/|\/\/|data:|blob:|mailto:|tel:|#)/i.test(trimmedUrl) ||
-        trimmedUrl.startsWith('/')
-      ) {
-        return match;
-      }
-      const resolvedPath = parentDir + trimmedUrl;
-      const rewrittenUrl = apiBase + encodeURIComponent(resolvedPath);
-      return `${attr}=${quote}${rewrittenUrl}${quote}`;
-    }
+    /<[a-z][^>]*>/gi,
+    (tag) => tag.replace(
+      /(src|href)\s*=\s*(['"])([^'"]+)\2/gi,
+      (match, attr, quote, url) => {
+        // File links are handled by the shared preview navigation bridge.
+        // Keep their original reference so it resolves against the source file.
+        if (attr.toLowerCase() === 'href' && /^<(a|area)\s/i.test(tag)) return match;
+        const trimmedUrl = url.trim();
+        if (
+          /^(https?:\/\/|\/\/|data:|blob:|mailto:|tel:|#)/i.test(trimmedUrl) ||
+          trimmedUrl.startsWith('/')
+        ) {
+          return match;
+        }
+        const resolvedPath = parentDir + trimmedUrl;
+        const rewrittenUrl = apiBase + encodeURIComponent(resolvedPath);
+        return `${attr}=${quote}${rewrittenUrl}${quote}`;
+      },
+    ),
   );
 }
 import { FileTree } from "./FileTree";

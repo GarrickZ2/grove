@@ -92,10 +92,15 @@ export function resolveFileReference(
   const resolved = resolveRelativeFilePath(location.path, reference);
   if (!resolved) return reference;
 
-  const encodedPath = encodeURIComponent(resolved.path);
-  const suffix = resolved.suffix.startsWith("?")
-    ? `&${resolved.suffix.slice(1)}`
-    : resolved.suffix;
+  return fileLocationUrl({ ...location, path: resolved.path }, resolved.suffix);
+}
+
+/** Raw URL for a known file, without interpreting its filename as a reference. */
+export function fileLocationUrl(location: FileLocation, referenceSuffix = ''): string {
+  const encodedPath = encodeURIComponent(location.path);
+  const suffix = referenceSuffix.startsWith("?")
+    ? `&${referenceSuffix.slice(1)}`
+    : referenceSuffix;
   switch (location.root.kind) {
     case "task":
       return `/api/v1/projects/${location.projectId}/tasks/${location.root.taskId}/files/raw?path=${encodedPath}${suffix}`;

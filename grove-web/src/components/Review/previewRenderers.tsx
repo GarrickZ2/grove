@@ -6,6 +6,7 @@ import { highlightCode as highlightLocal, detectLanguage as detectLanguageLocal 
 import type { DataTable } from './dataTableParsers';
 import type { FileLocation } from '../ui/fileLocation';
 import { useAuthenticatedFileUrl } from '../../hooks/useAuthenticatedFileUrl';
+import { injectHtmlFileNavigation, HTML_FILE_NAVIGATION_MESSAGE } from './htmlFileNavigation';
 
 // AG Grid Community + papaparse together weigh ~300 kB gzipped. The data-table
 // preview only renders when the user opens a .csv / .tsv / .jsonl artifact, so
@@ -59,6 +60,9 @@ export interface RenderFullProps {
   sketchContext?: { projectId: string; taskId: string };
   /** Storage namespace and path of the file currently being previewed. */
   location?: FileLocation;
+  /** File-relative HTML links are opened by the owning preview. */
+  onNavigateFile?: (reference: string) => void;
+  htmlFragment?: string;
 }
 
 export interface PreviewRenderer {
@@ -207,8 +211,8 @@ const htmlRenderer: PreviewRenderer = {
   match: (path) => /\.(html?|htm)$/i.test(path),
   contentType: 'text',
   layout: 'fill',
-  renderFull: ({ content, previewComment }) => (
-    <HtmlPreviewFrame content={content} previewComment={previewComment} />
+  renderFull: ({ content, previewComment, onNavigateFile, htmlFragment }) => (
+    <HtmlPreviewFrame content={content} previewComment={previewComment} onNavigateFile={onNavigateFile} fragment={htmlFragment} />
   ),
   supportsDiffSegments: false,
 };
@@ -408,9 +412,13 @@ function syncPreviewCommentState(
 function HtmlPreviewFrame({
   content,
   previewComment,
+  onNavigateFile,
+  fragment,
 }: {
   content: string;
   previewComment?: RenderFullProps["previewComment"];
+  onNavigateFile?: RenderFullProps['onNavigateFile'];
+  fragment?: string;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const frameId = useId();
@@ -421,7 +429,22 @@ function HtmlPreviewFrame({
   const previewSrcDoc = previewComment
     ? buildHtmlPreviewSrcdoc(content, previewComment.previewId)
     : injectPreviewBase(content);
-  const srcDoc = injectHtmlPreviewFitBridge(previewSrcDoc, frameId);
+  const srcDoc = injectHtmlFileNavigation(
+    injectHtmlPreviewFitBridge(previewSrcDoc, frameId), frameId, Boolean(onNavigateFile), fragment,
+  );
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const source = frameRef.current?.contentWindow;
+      if (!source || event.source !== source) return;
+      const data = event.data;
+      if (data?.type === HTML_FILE_NAVIGATION_MESSAGE && data.frameId === frameId && typeof data.reference === 'string') {
+        onNavigateFile?.(data.reference);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [frameId, onNavigateFile]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
