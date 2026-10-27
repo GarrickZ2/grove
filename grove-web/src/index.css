@@ -782,6 +782,18 @@ body.grove-resizing {
   -webkit-app-region: no-drag;
 }
 
+@container (max-width: 640px) {
+  .island-toolbar { padding-inline: 8px; gap: 4px; }
+  .island-action { padding-inline: 6px; }
+  .island-search-shortcut { display: none; }
+}
+
+@container (max-width: 480px) {
+  .island-project { padding-inline: 6px; gap: 4px; }
+  .island-project > span { display: none; }
+  .island-project > svg { display: none; }
+}
+
 /* Subtle breathing animation for the resting pill — signals
    interactivity without being noisy. ~6s loop, 2% opacity delta.
 

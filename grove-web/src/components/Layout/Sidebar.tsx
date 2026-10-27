@@ -29,6 +29,8 @@ import {
 import type { Plugin } from "../../api/plugins";
 import { PluginIcon } from "../Plugins/PluginIcon";
 import { ProjectSelector } from "./ProjectSelector";
+import { IslandNavigation } from "./IslandNavigation";
+import { useIslandInteraction } from "./useIslandInteraction";
 import { NotificationPopover } from "./NotificationPopover";
 import { formatTimeAgo, getLevelIcon } from "../../utils/notificationFormat";
 import { LogoBrand } from "./LogoBrand";
@@ -174,7 +176,8 @@ export function Sidebar({
   );
 
   // ── Dynamic Island (mode === "island") state ────────────────────────────
-  const [islandHovered, setIslandHovered] = useState(false);
+  const isIsland = !drawerMode && mode === "island";
+  const { surfaceRef, isOpen: islandOpen, enter, leave, pin, close: closeIsland } = useIslandInteraction(isIsland);
   // Hover detection is suppressed for the first ~500ms after entering island
   // mode. Without this, the spring animation from the expanded sidebar to
   // the pill position causes the cursor to repeatedly cross the moving
@@ -183,10 +186,9 @@ export function Sidebar({
   // settles, hover detection kicks in.
   //
   // Ref (not state) because we only need a synchronous flag for the mouse
-  // handlers to read; the rendered output only depends on `islandHovered`.
+  // handlers to read; the rendered output only depends on `islandOpen`.
   // Using state would also trigger a needless extra render.
   const hoverEnabledRef = useRef(false);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const islandHint = useFirstTimeHint("sidebar.island.hoverHint", 2200);
   // Which content the expanded island pill shows — "nav" is the default
   // project/nav/actions row; "notifications" / "projects" morph the pill
@@ -202,7 +204,7 @@ export function Sidebar({
   // the user's mouse leaves the pill.
   const [liveAlertQueue, setLiveAlertQueue] = useState<LiveAlert[]>([]);
   const liveAlert = liveAlertQueue[0] ?? null;
-  // Separate from `islandHovered` — the pill's own onMouseEnter is a no-op
+  // Separate from `islandOpen` — the pill's own onMouseEnter is a no-op
   // while an alert is showing (see `onIslandEnter`), so this is the only
   // signal that the user's cursor is over a message alert, used to pause
   // its auto-advance timer without swapping the pill over to nav view.
@@ -213,17 +215,11 @@ export function Sidebar({
   const chatStatusRef = useRef<Map<string, NodeStatus>>(new Map());
 
   useEffect(() => {
-    return () => {
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!islandHovered) {
+    if (!islandOpen) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIslandView("nav");
     }
-  }, [islandHovered]);
+  }, [islandOpen]);
 
   // Catalog → Sidebar wire for the notifications popover. Sidebar is
   // always mounted (drawer or desktop), so this handler is reachable
@@ -231,8 +227,6 @@ export function Sidebar({
   useCommand("nav.notifications.toggle", () => setNotifOpen((v) => !v), []);
 
   const isCollapsed = drawerMode ? false : mode === "collapsed";
-  const isIsland = !drawerMode && mode === "island";
-
   useRadioEvents({
     onChatStatus: (projectId: string, taskId: string, chatId: string, status: NodeStatus, payload?: ChatStatusEvent) => {
       const prevStatus = chatStatusRef.current.get(chatId);
@@ -305,11 +299,10 @@ export function Sidebar({
   useEffect(() => {
     if (!isIsland) {
       hoverEnabledRef.current = false;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setIslandHovered(false);
       // Drop any queued live-activity alerts — they'd otherwise resurface
       // stale (possibly minutes/hours old) if the user leaves and later
       // re-enters island mode.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLiveAlertQueue([]);
       return;
     }
@@ -339,7 +332,7 @@ export function Sidebar({
   const handleToggleIsland = () => {
     if (mode === "island") {
       onSetMode("expanded");
-      setIslandHovered(false);
+      closeIsland();
     } else {
       onSetMode("island");
     }
@@ -351,19 +344,14 @@ export function Sidebar({
     // be reachable without the whole pill snapping over to the nav view
     // out from under the cursor) — see `alertHovered` / `IslandLiveAlert`.
     if (liveAlert) return;
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    setIslandHovered(true);
+    enter();
     islandHint.show();
-  }, [islandHint, liveAlert]);
+  }, [islandHint, liveAlert, enter]);
 
   const onIslandLeave = useCallback(() => {
     if (!hoverEnabledRef.current) return;
-    // Keep a short grace period so grazing the edge does not cause flicker,
-    // while still letting the island collapse promptly after the pointer
-    // leaves the visible surface.
-    const delay = islandHovered ? 180 : 100;
-    hideTimerRef.current = setTimeout(() => setIslandHovered(false), delay);
-  }, [islandHovered]);
+    leave();
+  }, [leave]);
 
   // Pop the front of the queue — called once a message alert's timer
   // expires, or a permission alert is resolved/ignored.
@@ -376,11 +364,11 @@ export function Sidebar({
   // the user-driven nav/notifications/projects view instead, which pauses
   // draining until the mouse leaves (see the cleanup/deps below).
   useEffect(() => {
-    if (islandHovered || alertHovered) return;
+    if (islandOpen || alertHovered) return;
     if (!liveAlert || liveAlert.kind !== "message") return;
     const t = setTimeout(advanceLiveAlertQueue, 5000);
     return () => clearTimeout(t);
-  }, [liveAlert, islandHovered, alertHovered, advanceLiveAlertQueue]);
+  }, [liveAlert, islandOpen, alertHovered, advanceLiveAlertQueue]);
 
   const handleLiveAlertMessageClick = () => {
     if (!liveAlert || liveAlert.kind !== "message") return;
@@ -642,26 +630,26 @@ export function Sidebar({
   // node, no FLIP — keeps the morph buttery and avoids layout jumps.
   //
   // Resting: 120×16 — slim chip, just thick enough to read as interactive.
-  // Expanded (nav view): 720×64 — wide horizontal menu, full nav width.
+  // The nav grows with its page count, capped by the viewport; excess pages use More.
   // Expanded (notifications view): narrower + taller — the pill morphs into
   // an in-place notification list instead of popping a separate floating
   // card, so it needs list height rather than menu width.
-  const isNotificationsView = islandHovered && islandView === "notifications";
-  const isProjectsView = islandHovered && islandView === "projects";
+  const isNotificationsView = islandOpen && islandView === "notifications";
+  const isProjectsView = islandOpen && islandView === "projects";
   const isWideExpandedView = isNotificationsView || isProjectsView;
   // Live-activity alerts only ever show while resting (not hovered) — see
   // the `liveAlertQueue` drain effect above. "message" is a single-line
   // toast; "permission" needs room for a description + two rows of buttons.
-  const isMessageAlert = !islandHovered && liveAlert?.kind === "message";
-  const isPermissionAlert = !islandHovered && liveAlert?.kind === "permission";
-  const islandW = islandHovered
-    ? (isWideExpandedView ? 400 : 720)
+  const isMessageAlert = !islandOpen && liveAlert?.kind === "message";
+  const isPermissionAlert = !islandOpen && liveAlert?.kind === "permission";
+  const islandW = islandOpen
+    ? (isWideExpandedView ? 400 : Math.min(960, 408 + (navItems.length + (sidebarPlugins?.length ?? 0)) * 40))
     : isMessageAlert
       ? 380
       : isPermissionAlert
         ? 480
         : 120;
-  const islandH = islandHovered
+  const islandH = islandOpen
     ? (isWideExpandedView ? 420 : 64)
     : isMessageAlert
       ? 60
@@ -672,6 +660,11 @@ export function Sidebar({
   return (
     <>
     <motion.aside
+      ref={surfaceRef}
+      aria-label={isIsland ? "Dynamic Island" : undefined}
+      tabIndex={isIsland ? 0 : undefined}
+      onPointerDownCapture={isIsland && (!liveAlert || islandOpen) ? pin : undefined}
+      onFocusCapture={isIsland && (!liveAlert || islandOpen) ? pin : undefined}
       initial={false}
       animate={{
         width: isIsland ? islandW : (mode === "collapsed" ? 72 : 256),
@@ -682,7 +675,7 @@ export function Sidebar({
         bottom: isIsland ? "auto" : 12,
         x: isIsland ? "-50%" : "0%",
         y: 0,
-        borderRadius: isIsland ? (islandHovered || isMessageAlert || isPermissionAlert ? 24 : 18) : 16,
+        borderRadius: isIsland ? (islandOpen || isMessageAlert || isPermissionAlert ? 24 : 18) : 16,
       }}
       transition={{
         type: "spring",
@@ -694,7 +687,7 @@ export function Sidebar({
       onMouseLeave={isIsland ? onIslandLeave : undefined}
       className={`fixed ${isIsland ? "z-50" : "z-40"} flex select-none ${
         isIsland
-          ? `glass-island overflow-visible ${theme.isLight ? "glass-island-light" : ""} ${islandHovered || liveAlert ? "" : "glass-island-resting"}`
+          ? `glass-island overflow-visible ${theme.isLight ? "glass-island-light" : ""} ${islandOpen || liveAlert ? "" : "glass-island-resting"}`
           : "glass-panel rounded-2xl flex-col overflow-visible"
       }`}
       style={{
@@ -702,18 +695,22 @@ export function Sidebar({
         // the wider sidebar so the inner island-expanded row can render
         // horizontally without conflicting with parent flex direction.
         flexDirection: isIsland ? "row" : "column",
+        maxWidth: isIsland ? "calc(100vw - 32px)" : undefined,
+        maxHeight: isIsland ? "calc(100dvh - 40px)" : undefined,
+        containerType: isIsland ? "inline-size" : undefined,
       }}
     >
       {isIsland ? (
-        islandHovered ? (
+        islandOpen ? (
           isNotificationsView ? (
             <IslandNotifications
               onBack={() => setIslandView("nav")}
-              onNavigate={onNavigate}
+              onNavigate={(page, data) => { closeIsland(); onNavigate?.(page, data); }}
             />
           ) : isProjectsView ? (
             <IslandProjectSwitcher
               onBack={() => setIslandView("nav")}
+              onComplete={closeIsland}
               onProjectSwitch={onProjectSwitch}
               onManageProjects={onManageProjects}
               onAddProject={onAddProject}
@@ -722,16 +719,16 @@ export function Sidebar({
           ) : (
             <IslandExpanded
               activeItem={activeItem}
-              onItemClick={onItemClick}
+              onItemClick={(id) => { closeIsland(); onItemClick(id); }}
               navItems={navItems}
               sidebarPlugins={sidebarPlugins}
               selectedProjectName={selectedProject?.name ?? "No project"}
               selectedProjectStyle={selectedProject ? getProjectStyle(selectedProject.id, theme.accentPalette) : null}
               unreadCount={unreadCount}
-              onOpenSearch={() => { onSearch?.(); setIslandHovered(false); }}
-              onOpenNotifications={() => setIslandView("notifications")}
-              onOpenProjectPalette={() => setIslandView("projects")}
-              onOpenSettings={() => onItemClick("settings")}
+              onOpenSearch={() => { onSearch?.(); closeIsland(); }}
+              onOpenNotifications={() => { pin(); setIslandView("notifications"); }}
+              onOpenProjectPalette={() => { pin(); setIslandView("projects"); }}
+              onOpenSettings={() => { closeIsland(); onItemClick("settings"); }}
               onRestoreSidebar={handleToggleIsland}
               hintVisible={islandHint.visible}
               onDismissHint={islandHint.dismiss}
@@ -759,22 +756,7 @@ export function Sidebar({
 
 // ── Island expanded content ─────────────────────────────────────────────
 //
-// The wide horizontal pill shown when the user hovers over the resting
-// island. Three columns:
-//
-//   ┌──────────────────────────────────────────────────────────────┐
-//   │ [project] │ nav items (scrollable horizontal) │ search · bell · settings │
-//   └──────────────────────────────────────────────────────────────┘
-//
-// Why this layout:
-//   - Left anchor gives users a stable "where am I" cue (the project).
-//     Clicking it opens the global project palette instead of the inline
-//     picker — keeps island mode's interactions simple and consistent.
-//   - Middle is the nav strip, scrollable horizontally so adding nav
-//     items or plugin entries never pushes the right column off-screen.
-//   - Right column is global actions (⌘K, notifications, settings, restore).
-//     Active nav state is signaled by a 2px underline under the icon —
-//     minimal, no text labels (matches Dynamic Island aesthetics).
+// A responsive project anchor, page strip with overflow, and persistent actions.
 
 interface IslandExpandedProps {
   activeItem: string;
@@ -809,24 +791,22 @@ function IslandExpanded({
   hintVisible,
   onDismissHint,
 }: IslandExpandedProps) {
-  // Build the combined nav list including plugin entries
-  const allNavIds = useMemo(() => {
-    const ids = navItems.map((n) => n.id);
-    if (sidebarPlugins) {
-      for (const p of sidebarPlugins) {
-        ids.push(`plugin:${p.id}`);
-      }
-    }
-    return ids;
-  }, [navItems, sidebarPlugins]);
+  const pages = useMemo(() => [
+    ...navItems.map((item) => ({ id: item.id, label: item.label, icon: <item.icon className="w-4 h-4" /> })),
+    ...(sidebarPlugins ?? []).map((plugin) => ({
+      id: `plugin:${plugin.id}`,
+      label: plugin.contributes?.sidebar?.title || plugin.name,
+      icon: <PluginIcon plugin={plugin} size={16} />,
+    })),
+  ], [navItems, sidebarPlugins]);
 
   return (
-    <div className="relative w-full h-full flex items-center px-3 gap-2">
+    <div className="island-toolbar relative w-full min-w-0 h-full flex items-center px-3 gap-2">
       {/* Left column — project anchor */}
       <button
         onClick={onOpenProjectPalette}
         title={`${selectedProjectName} — click to switch`}
-        className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[color-mix(in_oklab,currentColor_85%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)] transition-colors flex-shrink-0 max-w-[160px]"
+        className="island-project flex min-w-0 items-center gap-2 px-2.5 py-1.5 rounded-lg text-[color-mix(in_oklab,currentColor_85%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)] transition-colors shrink-0 max-w-[clamp(44px,22cqw,160px)]"
       >
         {selectedProjectStyle ? (
           <div
@@ -845,41 +825,7 @@ function IslandExpanded({
       {/* Divider */}
       <span className="w-px h-5 bg-[color-mix(in_oklab,currentColor_10%,transparent)] flex-shrink-0" aria-hidden />
 
-      {/* Middle column — horizontal nav */}
-      <div className="flex-1 min-w-0 overflow-x-auto scrollbar-none">
-        <div className="flex items-center gap-1 px-1">
-          {navItems.map((item) => {
-            const isActive = activeItem === item.id;
-            return (
-              <IslandNavButton
-                key={item.id}
-                icon={<item.icon className="w-4 h-4" />}
-                label={item.label}
-                isActive={isActive}
-                onClick={() => onItemClick(item.id)}
-              />
-            );
-          })}
-          {sidebarPlugins?.map((p) => {
-            const navId = `plugin:${p.id}`;
-            const isActive = activeItem === navId;
-            return (
-              <IslandNavButton
-                key={navId}
-                icon={<PluginIcon plugin={p} size={16} />}
-                label={p.contributes?.sidebar?.title || p.name}
-                isActive={isActive}
-                onClick={() => onItemClick(navId)}
-              />
-            );
-          })}
-          {/* Keep at least one tab in DOM even when the only nav item is
-              active so the scroll-snap / overflow indicator stays stable */}
-          {allNavIds.length === 0 && (
-            <span className="text-[12px] text-[color-mix(in_oklab,currentColor_40%,transparent)] px-2">No pages</span>
-          )}
-        </div>
-      </div>
+      <IslandNavigation pages={pages} activeId={activeItem} onSelect={onItemClick} />
 
       {/* Divider */}
       <span className="w-px h-5 bg-[color-mix(in_oklab,currentColor_10%,transparent)] flex-shrink-0" aria-hidden />
@@ -892,7 +838,7 @@ function IslandExpanded({
           ariaLabel="Open search"
         >
           <Search className="w-4 h-4" />
-          <span className="text-[10px] font-mono opacity-50 ml-0.5">⌘K</span>
+          <span className="island-search-shortcut text-[10px] font-mono opacity-50 ml-0.5">⌘K</span>
         </IslandIconButton>
         <IslandIconButton
           onClick={onOpenNotifications}
@@ -942,38 +888,6 @@ function IslandExpanded({
   );
 }
 
-interface IslandNavButtonProps {
-  icon: React.ReactNode;
-  label: string;
-  isActive: boolean;
-  onClick: () => void;
-}
-
-function IslandNavButton({ icon, label, isActive, onClick }: IslandNavButtonProps) {
-  return (
-    <button
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      aria-current={isActive ? "page" : undefined}
-      className={`relative flex flex-col items-center justify-center px-3 py-1.5 rounded-lg transition-colors flex-shrink-0 ${
-        isActive
-          ? "text-current"
-          : "text-[color-mix(in_oklab,currentColor_60%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_8%,transparent)]"
-      }`}
-    >
-      {icon}
-      {isActive && (
-        <motion.span
-          layoutId="island-nav-underline"
-          className="absolute bottom-0.5 left-3 right-3 h-0.5 rounded-full bg-current"
-          transition={{ type: "spring", stiffness: 500, damping: 35 }}
-        />
-      )}
-    </button>
-  );
-}
-
 interface IslandIconButtonProps {
   onClick: () => void;
   title: string;
@@ -988,7 +902,7 @@ function IslandIconButton({ onClick, title, ariaLabel, badge, children }: Island
       onClick={onClick}
       title={title}
       aria-label={ariaLabel}
-      className="relative flex items-center px-2 py-1.5 rounded-lg text-[color-mix(in_oklab,currentColor_70%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)] transition-colors"
+      className="island-action relative flex items-center justify-center px-2 py-1.5 rounded-lg text-[color-mix(in_oklab,currentColor_70%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)] transition-colors"
     >
       {children}
       {badge && (
@@ -1115,6 +1029,7 @@ function IslandNotifications({ onBack, onNavigate }: IslandNotificationsProps) {
 
 interface IslandProjectSwitcherProps {
   onBack: () => void;
+  onComplete: () => void;
   onProjectSwitch?: (projectId?: string) => void;
   onManageProjects?: (tab?: "coding" | "studio") => void;
   onAddProject?: (studioMode?: "studio") => void;
@@ -1123,6 +1038,7 @@ interface IslandProjectSwitcherProps {
 
 function IslandProjectSwitcher({
   onBack,
+  onComplete,
   onProjectSwitch,
   onManageProjects,
   onAddProject,
@@ -1150,7 +1066,7 @@ function IslandProjectSwitcher({
     const switched = selectedProject?.id !== project.id;
     selectProject(project);
     if (switched) onProjectSwitch?.(project.id);
-    onBack();
+    onComplete();
   };
 
   return (
@@ -1235,7 +1151,7 @@ function IslandProjectSwitcher({
         <button
           onClick={() => {
             onAddProject?.(typeFilter === "studio" ? "studio" : undefined);
-            onBack();
+            onComplete();
           }}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] text-[color-mix(in_oklab,currentColor_70%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)] transition-colors"
         >
@@ -1245,7 +1161,7 @@ function IslandProjectSwitcher({
         <button
           onClick={() => {
             onManageProjects?.(typeFilter);
-            onBack();
+            onComplete();
           }}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] text-[color-mix(in_oklab,currentColor_70%,transparent)] hover:text-current hover:bg-[color-mix(in_oklab,currentColor_10%,transparent)] transition-colors"
         >
