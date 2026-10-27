@@ -189,11 +189,14 @@ install-updater = false
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.5" }
 
-# Keep debug builds lean: full debuginfo pushes __eh_frame past the 16MB
-# compact-unwind limit on macOS arm64 (linker warning + slower unwinding).
-# Line tables keep panic backtraces symbolicated.
+# Keep line information for symbolicated panic backtraces in development.
 [profile.dev]
 debug = "line-tables-only"
+
+# Optimize Grove's monomorphized code to keep its unwind tables below the
+# macOS compact-unwind 16MB limit, without rebuilding every dependency optimized.
+[profile.dev.package.grove-rs]
+opt-level = 1
 
 # Profile used by `make flamegraph`: release optimizations + line-number
 # debuginfo so samply can symbolicate frames. Doesn't affect normal `cargo
