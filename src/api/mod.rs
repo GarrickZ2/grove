@@ -970,6 +970,10 @@ pub fn create_api_router() -> Router {
         .route("/extensions/explore", get(handlers::extensions::explore))
         .route("/extensions/mcp", post(handlers::extensions::create_mcp))
         .route(
+            "/extensions/mcp/display-name",
+            put(handlers::extensions::update_mcp_display_name),
+        )
+        .route(
             "/extensions/mcp/connection",
             post(handlers::mcp_connections::status),
         )

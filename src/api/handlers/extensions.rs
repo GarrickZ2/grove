@@ -81,6 +81,7 @@ pub async fn explore(Query(query): Query<ExploreQuery>) -> impl IntoResponse {
     }
 
     let mcp_installs = extensions::list_mcp_installations().unwrap_or_default();
+    let display_names = extensions::mcp_display_names().unwrap_or_default();
     let plugins = crate::storage::plugins::list().unwrap_or_default();
     let sources = skills::load_sources();
     for artifact in extensions::list_artifacts().unwrap_or_default() {
@@ -128,8 +129,15 @@ pub async fn explore(Query(query): Query<ExploreQuery>) -> impl IntoResponse {
             Vec::new()
         };
         out.push(ExtensionSummary {
+            name: if artifact.kind == "mcp" {
+                display_names
+                    .get(&(artifact.repo_key.clone(), artifact.repo_path.clone()))
+                    .cloned()
+                    .unwrap_or(artifact.name)
+            } else {
+                artifact.name
+            },
             kind: artifact.kind,
-            name: artifact.name,
             description: artifact.description,
             version: artifact.version,
             source: artifact.source_name,
@@ -283,6 +291,29 @@ pub async fn create_mcp(Json(req): Json<CreateMcpRequest>) -> impl IntoResponse 
 }
 
 #[derive(Debug, Deserialize)]
+pub struct McpDisplayNameRequest {
+    pub repo_key: String,
+    pub repo_path: String,
+    pub display_name: String,
+}
+
+/// PUT /api/v1/extensions/mcp/display-name — a local, display-only alias.
+pub async fn update_mcp_display_name(Json(req): Json<McpDisplayNameRequest>) -> impl IntoResponse {
+    match extensions::get_artifact(&req.repo_key, &req.repo_path, "mcp") {
+        Ok(Some(_)) => {}
+        Ok(None) => return ApiError::response(StatusCode::NOT_FOUND, "MCP artifact not found"),
+        Err(e) => return ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+    match extensions::save_mcp_display_name(&req.repo_key, &req.repo_path, &req.display_name) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(crate::error::GroveError::Config(message)) => {
+            ApiError::response(StatusCode::BAD_REQUEST, message)
+        }
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct InstallMcpRequest {
     pub repo_key: String,
     pub repo_path: String,
@@ -394,5 +425,67 @@ pub async fn install_plugin(Json(req): Json<InstallPluginRequest>) -> impl IntoR
     match result {
         Ok(plugin) => Json(json!({ "ok": true, "plugin": plugin })).into_response(),
         Err(error) => error.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct GroveDirGuard;
+
+    impl Drop for GroveDirGuard {
+        fn drop(&mut self) {
+            crate::storage::set_grove_dir_override(None);
+        }
+    }
+
+    #[tokio::test]
+    async fn renamed_mcp_is_searchable_without_changing_the_manifest() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _guard = GroveDirGuard;
+        let artifact = extensions::ExtensionArtifact {
+            repo_key: "repo".into(),
+            repo_path: String::new(),
+            source_name: "source".into(),
+            kind: "mcp".into(),
+            name: "mcp-streamable-http".into(),
+            version: None,
+            description: String::new(),
+            relative_path: "server.json".into(),
+            manifest: json!({"name": "mcp-streamable-http", "remotes": []}),
+        };
+        extensions::replace_source_artifacts("source", &[artifact]).unwrap();
+        for (repo_key, name, expected) in [
+            ("missing", "TradingView", StatusCode::NOT_FOUND),
+            ("repo", "  ", StatusCode::BAD_REQUEST),
+            ("repo", "TradingView", StatusCode::OK),
+        ] {
+            let response = update_mcp_display_name(Json(McpDisplayNameRequest {
+                repo_key: repo_key.into(),
+                repo_path: String::new(),
+                display_name: name.into(),
+            }))
+            .await
+            .into_response();
+            assert_eq!(response.status(), expected);
+        }
+        let response = explore(Query(ExploreQuery {
+            kind: Some("mcp".into()),
+            search: Some("tradingview".into()),
+            source: None,
+        }))
+        .await
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let items: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(items.as_array().unwrap().len(), 1);
+        assert_eq!(items[0]["name"], "TradingView");
+        assert_eq!(items[0]["manifest"]["name"], "mcp-streamable-http");
+        assert_eq!(items[0]["repo_key"], "repo");
     }
 }

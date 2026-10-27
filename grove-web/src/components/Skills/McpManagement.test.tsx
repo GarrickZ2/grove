@@ -24,6 +24,7 @@ vi.mock("../../api/extensions", () => ({
   finishMcpAuth: vi.fn(),
   disconnectMcp: vi.fn(),
   createManagedMcp: vi.fn(),
+  updateMcpDisplayName: vi.fn(),
   installMcp: vi.fn(),
   listMcpInstallations: vi.fn(),
 }));
@@ -146,6 +147,7 @@ beforeEach(() => {
     repo_path: "",
   });
   vi.mocked(api.installMcp).mockResolvedValue({ ok: true });
+  vi.mocked(api.updateMcpDisplayName).mockResolvedValue({ ok: true });
   vi.mocked(api.getMcpConnection).mockResolvedValue(connection());
   vi.mocked(api.probeMcpPackage).mockResolvedValue({
     id: "package-check",
@@ -1058,5 +1060,72 @@ describe("MCP add and management", () => {
     expect(host.textContent).toContain("Retry loading Agents");
     await click("Done");
     expect(api.installMcp).not.toHaveBeenCalled();
+  });
+
+  it("saves a display-only alias without requiring Agent access and keeps it after a connection check", async () => {
+    vi.mocked(api.listMcpInstallations).mockResolvedValue([]);
+    vi.mocked(api.probeMcp).mockResolvedValue(
+      connection({
+        status: "public",
+        auth_type: "none",
+        server_info: { ...info, name: "mcp-streamable-http", title: null },
+      }),
+    );
+    const onSaved = vi.fn();
+    await act(async () =>
+      root.render(
+        <McpManagementDrawer
+          artifact={{ ...artifact, name: "mcp-streamable-http" }}
+          agents={agents}
+          projectPath="/project"
+          onClose={vi.fn()}
+          onSaved={onSaved}
+        />,
+      ),
+    );
+    await input('section[aria-label="Display details"] input', " TradingView ");
+    expect(button("Save changes").disabled).toBe(false);
+    await click("Save changes");
+    expect(api.updateMcpDisplayName).toHaveBeenCalledWith({
+      repo_key: "repo",
+      repo_path: "",
+      display_name: "TradingView",
+    });
+    expect(api.installMcp).not.toHaveBeenCalled();
+    expect(onSaved).toHaveBeenCalledOnce();
+    expect(host.querySelector("h2")?.textContent).toBe("TradingView");
+    await click("Check connection");
+    expect(host.querySelector("h2")?.textContent).toBe("TradingView");
+    expect(button("Save changes").disabled).toBe(true);
+  });
+
+  it("keeps a failed rename editable and warns before discarding it", async () => {
+    vi.mocked(api.updateMcpDisplayName).mockRejectedValue(
+      new Error("Could not save name"),
+    );
+    const onClose = vi.fn();
+    await act(async () =>
+      root.render(
+        <McpManagementDrawer
+          artifact={artifact}
+          agents={agents}
+          projectPath={null}
+          onClose={onClose}
+          onSaved={vi.fn()}
+        />,
+      ),
+    );
+    await input('section[aria-label="Display details"] input', "  ");
+    expect(button("Save changes").disabled).toBe(true);
+    await input('section[aria-label="Display details"] input', "My provider");
+    await click("Save changes");
+    expect(host.textContent).toContain("Could not save name");
+    expect(host.querySelector("h2")?.textContent).toBe("Provider");
+    expect(button("Save changes").disabled).toBe(false);
+    await click("Done");
+    expect(host.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      "unsaved display name",
+    );
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

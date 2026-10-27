@@ -99,6 +99,14 @@ export async function createManagedMcp(manifest: Record<string, unknown>): Promi
   return apiClient.post("/api/v1/extensions/mcp", { manifest });
 }
 
+export async function updateMcpDisplayName(input: {
+  repo_key: string;
+  repo_path: string;
+  display_name: string;
+}): Promise<{ ok: boolean }> {
+  return apiClient.put("/api/v1/extensions/mcp/display-name", input);
+}
+
 export async function installMcp(input: {
   repo_key: string;
   repo_path: string;

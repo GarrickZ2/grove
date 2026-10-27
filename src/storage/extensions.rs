@@ -81,9 +81,43 @@ pub fn replace_source_artifacts(source_name: &str, artifacts: &[ExtensionArtifac
 
 pub fn remove_source_artifacts(source_name: &str) -> Result<()> {
     let conn = crate::storage::database::connection();
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM mcp_display_names WHERE (repo_key, repo_path) IN
+         (SELECT repo_key, repo_path FROM extension_artifacts WHERE source_name=?1 AND kind='mcp')",
+        params![source_name],
+    )?;
+    tx.execute(
         "DELETE FROM extension_artifacts WHERE source_name=?1",
         params![source_name],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Display-only overrides. Keep these separate from both source manifests and
+/// resolved Agent configurations so renaming cannot change connection identity.
+pub fn mcp_display_names() -> Result<std::collections::HashMap<(String, String), String>> {
+    let conn = crate::storage::database::connection();
+    let mut stmt =
+        conn.prepare("SELECT repo_key, repo_path, display_name FROM mcp_display_names")?;
+    let rows = stmt.query_map([], |row| Ok(((row.get(0)?, row.get(1)?), row.get(2)?)))?;
+    rows.collect::<std::result::Result<_, _>>()
+        .map_err(Into::into)
+}
+
+pub fn save_mcp_display_name(repo_key: &str, repo_path: &str, name: &str) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 200 || name.chars().any(char::is_control) {
+        return Err(crate::error::GroveError::config(
+            "Enter a display name of 1–200 characters without control characters.",
+        ));
+    }
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "INSERT INTO mcp_display_names (repo_key, repo_path, display_name) VALUES (?1, ?2, ?3)
+         ON CONFLICT (repo_key, repo_path) DO UPDATE SET display_name=excluded.display_name",
+        params![repo_key, repo_path, name],
     )?;
     Ok(())
 }
@@ -544,7 +578,19 @@ mod tests {
                 }]
             }),
         };
-        replace_source_artifacts("test-source", &[remote, package]).unwrap();
+        let artifacts = [remote, package];
+        replace_source_artifacts("test-source", &artifacts).unwrap();
+        save_mcp_display_name("remote-repo", "servers/remote", " TradingView ").unwrap();
+        save_mcp_display_name("package-repo", "servers/package", "Local tools").unwrap();
+        assert!(save_mcp_display_name("remote-repo", "servers/remote", "  ").is_err());
+        assert!(save_mcp_display_name("remote-repo", "servers/remote", "bad\nname").is_err());
+        assert!(save_mcp_display_name("remote-repo", "servers/remote", &"a".repeat(201)).is_err());
+        // A source sync replaces catalog rows but must preserve local aliases.
+        replace_source_artifacts("test-source", &artifacts).unwrap();
+        assert_eq!(
+            mcp_display_names().unwrap()[&("remote-repo".into(), "servers/remote".into())],
+            "TradingView"
+        );
         save_mcp_installations(
             "remote-repo",
             "servers/remote",
@@ -570,6 +616,7 @@ mod tests {
 
         let global = resolve_effective_mcp_configs("claude-acp", None).unwrap();
         assert_eq!(global.len(), 1);
+        assert_eq!(global[0].name, "remote-server");
         assert_eq!(global[0].url.as_deref(), Some("https://example.com/mcp"));
         assert_eq!(
             global[0].headers.get("Authorization").map(String::as_str),
@@ -591,5 +638,7 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        remove_source_artifacts("test-source").unwrap();
+        assert!(mcp_display_names().unwrap().is_empty());
     }
 }

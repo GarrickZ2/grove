@@ -5,6 +5,7 @@ import { ConfirmDialog } from "../Dialogs/ConfirmDialog";
 import {
   createManagedMcp,
   installMcp,
+  updateMcpDisplayName,
   type ManagedMcpServer,
   type ExtensionArtifact,
   type McpConnection,
@@ -640,6 +641,11 @@ export function McpManagementDrawer({
   const root = useRef<HTMLDivElement>(null);
   const [connection, setConnection] = useState<McpConnection | null>(null);
   const [packageInfo, setPackageInfo] = useState<McpServerInfo | null>(null);
+  const [displayName, setDisplayName] = useState(artifact.name);
+  const [savedName, setSavedName] = useState(artifact.name);
+  const [saving, setSaving] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [nameNotice, setNameNotice] = useState<string | null>(null);
   const [valuesRevision, setValuesRevision] = useState(0);
   const [confirmation, setConfirmation] = useState<
     | { type: "discard" }
@@ -689,16 +695,46 @@ export function McpManagementDrawer({
   const version =
     detectedInfo?.version ||
     (artifact.version !== "unknown" ? artifact.version : null);
+  const nameDirty = displayName.trim() !== savedName;
+  const validName =
+    displayName.trim().length > 0 &&
+    !/\p{Cc}/u.test(displayName);
+  const busy = saving || editor.saving;
+  const dirty = nameDirty || editor.dirtyScopes.length > 0;
   const requestClose = () => {
-    if (confirmation || editor.saving) return;
-    if (editor.dirtyScopes.length) setConfirmation({ type: "discard" });
+    if (confirmation || busy) return;
+    if (dirty) setConfirmation({ type: "discard" });
     else onClose();
   };
   useMcpDialogFocus(root, requestClose, confirmation !== null, () => {
     if (!confirmBusy) setConfirmation(null);
   });
   const save = async () => {
-    if (await editor.save(fields)) await onSaved();
+    if (busy || !validName) return;
+    setSaving(true);
+    setNameError(null);
+    setNameNotice(null);
+    let updated = false;
+    try {
+      if (nameDirty) {
+        const name = displayName.trim();
+        await updateMcpDisplayName({
+          repo_key: artifact.repo_key,
+          repo_path: artifact.repo_path,
+          display_name: name,
+        });
+        setSavedName(name);
+        setDisplayName(name);
+        setNameNotice("Display name saved.");
+        updated = true;
+      }
+      if (editor.dirty && (await editor.save(fields))) updated = true;
+      if (updated) await onSaved();
+    } catch (cause) {
+      setNameError(mcpErrorText(cause));
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <DrawerShell
@@ -714,7 +750,7 @@ export function McpManagementDrawer({
           <div className="flex min-w-0 items-center gap-3.5">
             <ExtensionIdentityIcon
               kind="mcp"
-              name={artifact.name}
+              name={savedName}
               manifest={
                 detectedInfo?.icons.length
                   ? { ...manifest, icons: detectedInfo.icons }
@@ -724,7 +760,7 @@ export function McpManagementDrawer({
             <div className="min-w-0">
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <h2 className="break-words text-lg font-semibold">
-                  {artifact.name}
+                  {savedName}
                 </h2>
                 {version && (
                   <span className="text-xs text-[var(--color-text-muted)]">
@@ -752,11 +788,46 @@ export function McpManagementDrawer({
               {detectedInfo?.description || artifact.description}
             </p>
           )}
+          <section className="space-y-2" aria-label="Display details">
+            <label className="block text-xs font-medium">
+              Display name
+              <input
+                value={displayName}
+                onChange={(event) => {
+                  setDisplayName(event.target.value);
+                  setNameError(null);
+                  setNameNotice(null);
+                }}
+                maxLength={200}
+                disabled={busy}
+                aria-describedby="mcp-display-name-hint"
+                aria-invalid={!validName}
+                className={mcpInputClass}
+              />
+            </label>
+            <p
+              id="mcp-display-name-hint"
+              className="text-xs leading-5 text-[var(--color-text-muted)]"
+            >
+              Choose a name you recognize. Saved in Grove and kept when the
+              server’s details refresh.
+            </p>
+            <McpFeedback
+              error={
+                nameError ||
+                (!validName
+                  ? "Enter a display name without control characters."
+                  : null)
+              }
+              notice={nameNotice}
+            />
+          </section>
           {variants.length > 1 && editor.draft && (
             <div>
               <label className="mb-2 block text-xs font-medium">Runtime</label>
               <Combobox
                 allowCustom={false}
+                disabled={busy}
                 value={`${runtime?.kind}-${runtime?.index}`}
                 onChange={(value) => {
                   const next = variants.find(
@@ -831,7 +902,7 @@ export function McpManagementDrawer({
               loading={!editor.loaded && !editor.error}
               error={!editor.loaded ? editor.error : null}
               onRetry={editor.retry}
-              disabled={editor.saving || !editor.loaded}
+              disabled={busy || !editor.loaded}
               dirtyScopes={editor.dirtyScopes}
             />
             {fields.map((field) => (
@@ -846,7 +917,7 @@ export function McpManagementDrawer({
                   type={field.isSecret === true ? "password" : "text"}
                   autoComplete="off"
                   className={mcpInputClass}
-                  disabled={!editor.loaded || editor.saving}
+                  disabled={!editor.loaded || busy}
                   value={editor.draft?.values[String(field.name)] ?? ""}
                   onChange={(event) => {
                     setValuesRevision((value) => value + 1);
@@ -873,34 +944,39 @@ export function McpManagementDrawer({
                   label="Manifest"
                   value={artifact.relative_path || "server.json"}
                 />
-                {detectedInfo?.name && (
-                  <Detail label="Server identity" value={detectedInfo.name} />
+                {(detectedInfo?.name || typeof manifest.name === "string") && (
+                  <Detail
+                    label="Server identity"
+                    value={detectedInfo?.name || String(manifest.name)}
+                  />
                 )}
               </dl>
             </McpDisclosure>
           </div>
         </div>
         <footer className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]/35 px-6 py-4">
-          {editor.dirtyScopes.length > 0 && (
+          {dirty && (
             <span className="mr-auto text-xs text-[var(--color-text-muted)]">
               Unsaved changes
             </span>
           )}
           <Button
             variant="secondary"
-            disabled={editor.saving}
+            disabled={busy}
             onClick={requestClose}
           >
             Done
           </Button>
           <Button
             disabled={
-              !editor.loaded || !editor.dirty || editor.saving || !variant
+              busy ||
+              !validName ||
+              (!nameDirty && (!editor.loaded || !editor.dirty || !variant))
             }
             onClick={() => void save()}
           >
-            {editor.saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {editor.saving ? "Saving…" : "Save changes"}
+            {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {busy ? "Saving…" : "Save changes"}
           </Button>
         </footer>
       </div>
@@ -914,7 +990,7 @@ export function McpManagementDrawer({
         message={
           confirmation?.type === "disconnect"
             ? "Grove will remove its saved credentials and request revocation when supported. This server and its Agent bindings will stay. Running Agents may keep their current token until it expires."
-            : "Your unsaved Agent bindings and credential edits will be discarded. Saved authorization will stay."
+            : "Your unsaved display name, Agent bindings and credential edits will be discarded. Saved authorization will stay."
         }
         confirmLabel={
           confirmBusy

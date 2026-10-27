@@ -515,6 +515,15 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (repo_key, repo_path, kind)
         );
 
+        -- User-facing aliases survive catalog refreshes without changing the
+        -- manifest name used as the Agent's MCP connection identity.
+        CREATE TABLE IF NOT EXISTS mcp_display_names (
+            repo_key       TEXT NOT NULL,
+            repo_path      TEXT NOT NULL,
+            display_name   TEXT NOT NULL,
+            PRIMARY KEY (repo_key, repo_path)
+        );
+
         -- A standalone MCP is installed for canonical ACP Agent ids. The
         -- server definition remains in server.json; this table stores only the
         -- user's runtime choice, scope, and supplied variable values.
