@@ -1575,7 +1575,7 @@ fn grove_mcp_server(env_vars: &HashMap<String, String>) -> crate::error::Result<
 /// `grove acp` standalone mode, tests). In that case the agent only sees
 /// stdio tools — agent_graph features become unavailable but the session
 /// still works for normal chat.
-fn build_mcp_servers(
+async fn build_mcp_servers(
     env_vars: &HashMap<String, String>,
     agent_graph_token: Option<&str>,
     supports_http: bool,
@@ -1667,21 +1667,31 @@ fn build_mcp_servers(
         // task/project context env (so a plugin's MCP server has the same "current
         // context" the panel gets from host.getInfo).
         servers.extend(load_plugin_mcp_servers(env_vars));
-        servers.extend(load_standalone_mcp_servers(env_vars));
+        servers.extend(load_standalone_mcp_servers(env_vars, supports_http).await?);
     }
     Ok(servers)
 }
 
-fn load_standalone_mcp_servers(base_env: &HashMap<String, String>) -> Vec<acp::McpServer> {
+async fn load_standalone_mcp_servers(
+    base_env: &HashMap<String, String>,
+    supports_http: bool,
+) -> crate::error::Result<Vec<acp::McpServer>> {
     let Some(agent_id) = base_env.get("GROVE_AGENT_ID") else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    let configs = crate::storage::extensions::resolve_effective_mcp_configs(
+    let mut configs = crate::storage::extensions::resolve_effective_mcp_configs(
         agent_id,
         base_env.get("GROVE_PROJECT").map(String::as_str),
-    )
-    .unwrap_or_default();
-    configs
+    )?;
+    if !supports_http && configs.iter().any(|c| c.transport != "stdio") {
+        return Err(crate::error::GroveError::config(
+            "This Agent does not support HTTP MCP servers over ACP.",
+        ));
+    }
+    crate::mcp_client::authorize_configs(&mut configs)
+        .await
+        .map_err(crate::error::GroveError::config)?;
+    Ok(configs
         .into_iter()
         .filter_map(|config| {
             let name = sanitize_mcp_server_name(&config.name);
@@ -1709,7 +1719,7 @@ fn load_standalone_mcp_servers(base_env: &HashMap<String, String>) -> Vec<acp::M
                 ))
             }
         })
-        .collect()
+        .collect())
 }
 
 fn sanitize_mcp_server_name(raw: &str) -> String {
@@ -5965,7 +5975,7 @@ async fn drive_session(
                     supports_mcp_http,
                     &config.additional_mcp_servers,
                     config.mcp_server_policy,
-                )
+                ).await
                 .map_err(to_acp_err)?;
             // 重试循环:session/new 在用户没登录时(claude-code-acp / codex 都
             // 这样)会直接抛 -32000 AuthRequired。捕获后 emit AuthRequired banner,
@@ -6205,6 +6215,7 @@ async fn drive_session(
                 &config.additional_mcp_servers,
                 config.mcp_server_policy,
             )
+            .await
             .map_err(to_acp_err)?;
             let resp = loop {
                 match conn
@@ -6256,6 +6267,7 @@ async fn drive_session(
                 &config.additional_mcp_servers,
                 config.mcp_server_policy,
             )
+            .await
             .map_err(to_acp_err)?;
             let mut resume_failure = None;
             let resume_response = loop {
@@ -6366,6 +6378,7 @@ async fn drive_session(
                 &config.additional_mcp_servers,
                 config.mcp_server_policy,
             )
+            .await
             .map_err(to_acp_err)?;
             let resp = loop {
                 match conn
@@ -7584,7 +7597,9 @@ async fn drive_session(
                         supports_mcp_http,
                         &config.additional_mcp_servers,
                         config.mcp_server_policy,
-                    ) {
+                    )
+                    .await
+                    {
                         Ok(mcp_servers) => {
                             match conn
                                 .send_request(

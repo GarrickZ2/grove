@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ExtensionArtifact } from "../../api/extensions";
 import type { Plugin } from "../../api/plugins";
+import { needsMcpAgentSetup } from "./mcpManagementState";
 import { resolveInstalledPlugin } from "./installedPlugin";
 
 function plugin(id: string, name: string): Plugin {
@@ -34,8 +35,41 @@ function artifact(installedPluginId: string): ExtensionArtifact {
 
 describe("resolveInstalledPlugin", () => {
   it("uses the backend plugin id when catalog paths are empty", () => {
-    const plugins = [plugin("pl-first", "first"), plugin("pl-second", "second")];
+    const plugins = [
+      plugin("pl-first", "first"),
+      plugin("pl-second", "second"),
+    ];
 
-    expect(resolveInstalledPlugin(artifact("pl-second"), plugins)?.name).toBe("second");
+    expect(resolveInstalledPlugin(artifact("pl-second"), plugins)?.name).toBe(
+      "second",
+    );
+  });
+});
+
+describe("MCP Agent setup status", () => {
+  it("requires setup for connected servers without Agents, but not for an enabled server", () => {
+    const item: ExtensionArtifact = {
+      ...artifact(""),
+      kind: "mcp",
+      installed_agents: [],
+      mcp_connections: [
+        {
+          url: "https://provider.example/mcp",
+          status: "authorized",
+          auth_type: "oauth",
+          has_credentials: true,
+          server_info: null,
+          checked_at: null,
+          expires_at: null,
+          scopes: [],
+          error: null,
+        },
+      ],
+    };
+    expect(needsMcpAgentSetup(item)).toBe(true);
+    expect(needsMcpAgentSetup({ ...item, installed_agents: ["one"] })).toBe(
+      false,
+    );
+    expect(needsMcpAgentSetup({ ...item, mcp_connections: [] })).toBe(false);
   });
 });

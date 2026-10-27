@@ -4,6 +4,65 @@ use std::process::Command;
 
 use crate::error::{GroveError, Result};
 
+/// A short-lived package discovery process. Keep it in its own process group
+/// so cancelling npx/uvx also terminates the MCP subprocess they launched.
+pub(crate) struct McpProbeProcess {
+    pub child: tokio::process::Child,
+    cleanup_args: Option<Vec<String>>,
+}
+
+impl Drop for McpProbeProcess {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            // This group was created exclusively for this probe below.
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+        let _ = self.child.start_kill();
+        if let (Some(args), Ok(runtime)) = (
+            self.cleanup_args.take(),
+            tokio::runtime::Handle::try_current(),
+        ) {
+            runtime.spawn(async move {
+                let mut command = tokio::process::Command::new("docker");
+                command
+                    .args(args)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .kill_on_drop(true);
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), command.status()).await;
+            });
+        }
+    }
+}
+
+pub(crate) fn spawn_mcp_probe(
+    config: &crate::storage::extensions::ResolvedMcpConfig,
+    cwd: &std::path::Path,
+    cleanup_args: Option<Vec<String>>,
+) -> std::io::Result<McpProbeProcess> {
+    use std::process::Stdio;
+    let mut command = tokio::process::Command::new(config.command.as_deref().unwrap_or_default());
+    command
+        .args(&config.args)
+        .envs(&config.env)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    Ok(McpProbeProcess {
+        child: command.spawn()?,
+        cleanup_args,
+    })
+}
+
 /// Session 环境变量
 #[derive(Debug, Clone, Default)]
 pub struct SessionEnv {

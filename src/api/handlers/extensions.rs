@@ -27,6 +27,8 @@ pub struct ExtensionSummary {
     pub manifest: Value,
     pub install_status: String,
     pub installed_agents: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mcp_connections: Vec<crate::mcp_client::ConnectionSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub installed_plugin_id: Option<String>,
 }
@@ -73,6 +75,7 @@ pub async fn explore(Query(query): Query<ExploreQuery>) -> impl IntoResponse {
             }
             .into(),
             installed_agents: agents,
+            mcp_connections: Vec::new(),
             installed_plugin_id: None,
         });
     }
@@ -111,6 +114,19 @@ pub async fn explore(Query(query): Query<ExploreQuery>) -> impl IntoResponse {
         } else {
             installed_plugin.is_some()
         };
+        let mcp_connections = if artifact.kind == "mcp" {
+            artifact
+                .manifest
+                .get("remotes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|remote| remote.get("url").and_then(Value::as_str))
+                .filter_map(|url| crate::mcp_client::connection_summary(url).ok())
+                .collect()
+        } else {
+            Vec::new()
+        };
         out.push(ExtensionSummary {
             kind: artifact.kind,
             name: artifact.name,
@@ -128,6 +144,7 @@ pub async fn explore(Query(query): Query<ExploreQuery>) -> impl IntoResponse {
             }
             .into(),
             installed_agents: agents,
+            mcp_connections,
             installed_plugin_id: installed_plugin.map(|plugin| plugin.id.clone()),
         });
     }
@@ -168,6 +185,7 @@ pub async fn explore(Query(query): Query<ExploreQuery>) -> impl IntoResponse {
             manifest,
             install_status: "installed".into(),
             installed_agents: Vec::new(),
+            mcp_connections: Vec::new(),
             installed_plugin_id: Some(plugin.id.clone()),
         });
     }
@@ -240,6 +258,7 @@ pub async fn create_mcp(Json(req): Json<CreateMcpRequest>) -> impl IntoResponse 
     }
     let source_name = format!("{}-{}", name.rsplit('/').next().unwrap_or("mcp"), &id[..8]);
     let url = dir.display().to_string();
+    let repo_key = skills::compute_repo_key(&url);
     let mut sources = skills::load_sources();
     sources.sources.push(skills::SkillSourceDef {
         name: source_name.clone(),
@@ -247,7 +266,7 @@ pub async fn create_mcp(Json(req): Json<CreateMcpRequest>) -> impl IntoResponse 
         management_mode: "managed".into(),
         url: url.clone(),
         subpath: None,
-        repo_key: skills::compute_repo_key(&url),
+        repo_key: repo_key.clone(),
         last_synced: None,
         local_head: None,
     });
@@ -258,7 +277,7 @@ pub async fn create_mcp(Json(req): Json<CreateMcpRequest>) -> impl IntoResponse 
     }
     (
         StatusCode::CREATED,
-        Json(json!({ "ok": true, "source": source_name })),
+        Json(json!({ "ok": true, "source": source_name, "repo_key": repo_key, "repo_path": "" })),
     )
         .into_response()
 }

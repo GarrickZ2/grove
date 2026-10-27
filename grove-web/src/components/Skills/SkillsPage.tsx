@@ -169,7 +169,7 @@ export function SkillsPage() {
       </div>
       <AddSourceDialog isOpen={sourceDialog !== null} editingSource={null} initialSourceType={sourceDialog ?? "git"} onClose={() => setSourceDialog(null)} onSaved={async () => { setSourceDialog(null); await refreshSources(); setRefreshToken((value) => value + 1); }} />
       {showAddPlugin && <AddPluginDialog onClose={() => { setShowAddPlugin(false); setRefreshToken((value) => value + 1); }} />}
-      {showAddMcp && <AddMcpDialog onClose={() => setShowAddMcp(false)} onCreated={async () => { setShowAddMcp(false); await refreshSources(); setRefreshToken((value) => value + 1); }} />}
+      {showAddMcp && <AddMcpDialog projectPath={projectPath} onClose={() => { setShowAddMcp(false); void refreshSources(); setRefreshToken((value) => value + 1); }} onCreated={async () => { setShowAddMcp(false); await refreshSources(); setRefreshToken((value) => value + 1); }} />}
     </div>
   );
 }

@@ -218,6 +218,7 @@ pub async fn agent_pty_handler(
     // the chat, cleaned up on chat delete (see acp.rs delete_chat).
     let include_agent_graph = agent_graph_token.is_some();
     let mcp_config_path = build_mcp_config_file(&chat_id, &grove_env, include_agent_graph)
+        .await
         .map_err(|e| AgentPtyError::Internal(format!("write mcp-config: {}", e)))?;
 
     let mut cmd = CommandBuilder::new(&claude_cmd);
@@ -285,7 +286,7 @@ pub async fn agent_pty_handler(
 /// cleanup simple (delete the dir when the chat is deleted) and avoids env
 /// snapshots from one chat leaking into another's claude process. Overwritten
 /// on every launch so the latest env values always win.
-fn build_mcp_config_file(
+async fn build_mcp_config_file(
     chat_id: &str,
     grove_env: &std::collections::HashMap<String, String>,
     include_agent_graph: bool,
@@ -316,15 +317,18 @@ fn build_mcp_config_file(
             }),
         );
     }
-    for server in crate::storage::extensions::resolve_effective_mcp_configs(
+    let mut standalone = crate::storage::extensions::resolve_effective_mcp_configs(
         grove_env
             .get("GROVE_AGENT_ID")
             .map(String::as_str)
             .unwrap_or(""),
         grove_env.get("GROVE_PROJECT").map(String::as_str),
     )
-    .unwrap_or_default()
-    {
+    .map_err(std::io::Error::other)?;
+    crate::mcp_client::authorize_configs(&mut standalone)
+        .await
+        .map_err(std::io::Error::other)?;
+    for server in standalone {
         let key = server
             .name
             .chars()
@@ -355,6 +359,20 @@ fn build_mcp_config_file(
     let dir = crate::storage::grove_dir().join("agents-tmp").join(chat_id);
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("mcp.json");
-    std::fs::write(&path, serde_json::to_vec_pretty(&config)?)?;
+    // This launch snapshot can contain third-party access tokens.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    std::io::Write::write_all(&mut file, &serde_json::to_vec_pretty(&config)?)?;
     Ok(path)
 }

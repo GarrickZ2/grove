@@ -321,92 +321,142 @@ pub fn resolve_effective_mcp_configs(
         let Some(package) = packages.get(selected_index).or_else(|| packages.first()) else {
             continue;
         };
-        let registry = package
-            .get("registryType")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let Some(identifier) = package.get("identifier").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let version = package
-            .get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let (command, mut args) = match registry {
-            "npm" => (
-                "npx".to_string(),
-                vec![
-                    "-y".to_string(),
-                    if version.is_empty() {
-                        identifier.to_string()
-                    } else {
-                        format!("{identifier}@{version}")
-                    },
-                ],
-            ),
-            "pypi" => (
-                "uvx".to_string(),
-                vec![if version.is_empty() {
+        let mut config = resolve_package_mcp_config(package, &values)?;
+        config.name = artifact.name;
+        out.push(config);
+    }
+    Ok(out)
+}
+
+/// Resolve the same package launcher for discovery and subsequent Agent sessions.
+pub fn resolve_package_mcp_config(
+    package: &serde_json::Value,
+    values: &std::collections::HashMap<String, String>,
+) -> Result<ResolvedMcpConfig> {
+    let registry = package
+        .get("registryType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let Some(identifier) = package
+        .get("identifier")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && !v.starts_with('-') && !v.chars().any(char::is_whitespace))
+    else {
+        return Err(crate::error::GroveError::config(
+            "The package must declare its executable name.",
+        ));
+    };
+    let version = package
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if identifier.contains('\0')
+        || version.contains('\0')
+        || version.chars().any(char::is_whitespace)
+    {
+        return Err(crate::error::GroveError::config(
+            "Enter a valid package name and version.",
+        ));
+    }
+    let (command, mut args) = match registry {
+        "npm" => (
+            "npx".to_string(),
+            vec![
+                "-y".to_string(),
+                if version.is_empty() {
                     identifier.to_string()
                 } else {
-                    format!("{identifier}=={version}")
-                }],
-            ),
-            "oci" => (
-                "docker".to_string(),
-                vec![
-                    "run".to_string(),
-                    "--rm".to_string(),
-                    "-i".to_string(),
-                    if version.is_empty() {
-                        identifier.to_string()
-                    } else {
-                        format!("{identifier}:{version}")
-                    },
-                ],
-            ),
-            _ => continue,
-        };
-        if let Some(arguments) = package.get("runtimeArguments").and_then(|v| v.as_array()) {
-            args.extend(
-                arguments
-                    .iter()
-                    .filter_map(|v| v.get("value").or(Some(v)).and_then(|v| v.as_str()))
-                    .map(String::from),
-            );
+                    format!("{identifier}@{version}")
+                },
+            ],
+        ),
+        "pypi" => (
+            "uvx".to_string(),
+            vec![if version.is_empty() {
+                identifier.to_string()
+            } else {
+                format!("{identifier}=={version}")
+            }],
+        ),
+        "oci" => (
+            "docker".to_string(),
+            vec![
+                "run".to_string(),
+                "--rm".to_string(),
+                "-i".to_string(),
+                if version.is_empty() {
+                    identifier.to_string()
+                } else {
+                    format!("{identifier}:{version}")
+                },
+            ],
+        ),
+        _ => {
+            return Err(crate::error::GroveError::config(
+                "Choose NPM, PyPI, or OCI.",
+            ))
         }
-        if let Some(arguments) = package.get("packageArguments").and_then(|v| v.as_array()) {
-            args.extend(
-                arguments
-                    .iter()
-                    .filter_map(|v| v.get("value").or(Some(v)).and_then(|v| v.as_str()))
-                    .map(String::from),
-            );
-        }
-        let mut env = std::collections::HashMap::new();
-        if let Some(definitions) = package
-            .get("environmentVariables")
-            .and_then(|v| v.as_array())
-        {
-            for definition in definitions {
-                if let Some(name) = definition.get("name").and_then(|v| v.as_str()) {
-                    if let Some(value) = values.get(name) {
-                        env.insert(name.to_string(), value.clone());
-                    }
+    };
+    if let Some(arguments) = package.get("runtimeArguments").and_then(|v| v.as_array()) {
+        args.extend(
+            arguments
+                .iter()
+                .filter_map(|v| v.get("value").or(Some(v)).and_then(|v| v.as_str()))
+                .map(String::from),
+        );
+    }
+    if let Some(arguments) = package.get("packageArguments").and_then(|v| v.as_array()) {
+        args.extend(
+            arguments
+                .iter()
+                .filter_map(|v| v.get("value").or(Some(v)).and_then(|v| v.as_str()))
+                .map(String::from),
+        );
+    }
+    let mut env = std::collections::HashMap::new();
+    if let Some(definitions) = package
+        .get("environmentVariables")
+        .and_then(|v| v.as_array())
+    {
+        for definition in definitions {
+            if let Some(name) = definition.get("name").and_then(|v| v.as_str()) {
+                if definition.get("isRequired").and_then(|v| v.as_bool()) == Some(true)
+                    && values.get(name).is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(crate::error::GroveError::config(format!(
+                        "{name} is required before connecting."
+                    )));
+                }
+                if let Some(value) = values.get(name) {
+                    env.insert(name.to_string(), value.clone());
                 }
             }
         }
-        out.push(ResolvedMcpConfig {
-            name: artifact.name,
-            transport: "stdio".into(),
-            command: Some(command),
-            args,
-            env,
-            url: None,
-            headers: Default::default(),
-        });
     }
-    Ok(out)
+
+    if env
+        .iter()
+        .any(|(name, value)| name.is_empty() || name.contains(['=', '\0']) || value.contains('\0'))
+    {
+        return Err(crate::error::GroveError::config(
+            "Enter valid environment variable names and values.",
+        ));
+    }
+    if registry == "oci" {
+        let mut names = env.keys().cloned().collect::<Vec<String>>();
+        names.sort();
+        args.splice(3..3, names.into_iter().flat_map(|name| ["-e".into(), name]));
+    }
+    Ok(ResolvedMcpConfig {
+        name: String::new(),
+        transport: "stdio".into(),
+        command: Some(command),
+        args,
+        env,
+        url: None,
+        headers: Default::default(),
+    })
 }
 
 #[cfg(test)]
@@ -418,6 +468,34 @@ mod tests {
     impl Drop for GroveDirGuard {
         fn drop(&mut self) {
             crate::storage::set_grove_dir_override(None);
+        }
+    }
+
+    #[test]
+    fn package_probe_and_agent_launchers_use_the_same_runtime_and_container_environment() {
+        let values =
+            std::collections::HashMap::from([("API_KEY".to_string(), "private-value".to_string())]);
+        for (registry, command, identifier) in [
+            ("npm", "npx", "@company/server"),
+            ("pypi", "uvx", "mcp-server"),
+            ("oci", "docker", "ghcr.io/company/server"),
+        ] {
+            let package = serde_json::json!({"registryType":registry,"identifier":identifier,"version":"1.2.3","environmentVariables":[{"name":"API_KEY"}],"packageArguments":[{"value":"--stdio"}]});
+            let config = resolve_package_mcp_config(&package, &values).unwrap();
+            assert_eq!(config.command.as_deref(), Some(command));
+            assert_eq!(config.env["API_KEY"], "private-value");
+            assert_eq!(config.args.last().map(String::as_str), Some("--stdio"));
+            assert!(!config.args.iter().any(|arg| arg.contains("private-value")));
+            if registry == "oci" {
+                assert_eq!(config.args[3..5], ["-e", "API_KEY"]);
+            }
+        }
+        for identifier in ["", "--help", "package name"] {
+            assert!(resolve_package_mcp_config(
+                &serde_json::json!({"registryType":"npm","identifier":identifier}),
+                &values
+            )
+            .is_err());
         }
     }
 

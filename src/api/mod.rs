@@ -970,6 +970,39 @@ pub fn create_api_router() -> Router {
         .route("/extensions/explore", get(handlers::extensions::explore))
         .route("/extensions/mcp", post(handlers::extensions::create_mcp))
         .route(
+            "/extensions/mcp/connection",
+            post(handlers::mcp_connections::status),
+        )
+        .route(
+            "/extensions/mcp/probe",
+            post(handlers::mcp_connections::probe),
+        )
+        .route(
+            "/extensions/mcp/package/probe",
+            post(handlers::mcp_connections::probe_package),
+        )
+        .route(
+            "/extensions/mcp/package/probe/{id}",
+            get(handlers::mcp_connections::package_status)
+                .delete(handlers::mcp_connections::cancel_package),
+        )
+        .route(
+            "/extensions/mcp/authorize",
+            post(handlers::mcp_connections::authorize),
+        )
+        .route(
+            "/extensions/mcp/disconnect",
+            post(handlers::mcp_connections::disconnect),
+        )
+        .route(
+            "/extensions/mcp/auth/{id}",
+            get(handlers::mcp_connections::flow_status).delete(handlers::mcp_connections::cancel),
+        )
+        .route(
+            "/extensions/mcp/auth/{id}/callback",
+            post(handlers::mcp_connections::callback),
+        )
+        .route(
             "/extensions/mcp/install",
             get(handlers::extensions::list_mcp_installed).post(handlers::extensions::install_mcp),
         )

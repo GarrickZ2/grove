@@ -24,6 +24,7 @@ mod fs_link;
 mod git;
 mod grove;
 mod hooks;
+mod mcp_client;
 mod memory;
 mod model;
 mod notification_renderer;

@@ -1,10 +1,10 @@
 import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, Download, FolderOpen, GitBranch, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
-import { Button, Combobox, DialogShell, DrawerShell } from "../ui";
+import { AlertTriangle, ChevronLeft, ChevronRight, Download, FolderOpen, GitBranch, Search, SlidersHorizontal, X } from "lucide-react";
+import { Button, DrawerShell } from "../ui";
 import { SkillDetailPanel } from "./SkillDetailPanel";
 import { PluginDetailDialog } from "../Config/PluginDetailDialog";
-import { createManagedMcp, exploreExtensions, installCatalogPlugin, installMcp } from "../../api/extensions";
+import { exploreExtensions, installCatalogPlugin } from "../../api/extensions";
 import { listInstalledAgentConfigs, type InstalledAgentConfig } from "../../api/marketplace";
 import { listPlugins, type Plugin } from "../../api/plugins";
 import type { AgentDef, ExtensionArtifact, InstalledSkill, SkillSource } from "../../api";
@@ -18,6 +18,9 @@ import { MultiSelectFilter } from "./MultiSelectFilter";
 import { AgentIcon } from "./AgentIcon";
 import { ExtensionIdentityIcon } from "./ExtensionIdentityIcon";
 import { resolveInstalledPlugin } from "./installedPlugin";
+import { McpManagementDrawer } from "./McpManagement";
+import { connectionPresentation, needsMcpAgentSetup } from "./mcpManagementState";
+export { AddMcpDialog } from "./McpManagement";
 import { useIsMobile } from "../../hooks/useIsMobile";
 
 type InstallationFilter = "installed" | "partial" | "not_installed";
@@ -93,7 +96,7 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
     if (target === "installed") return item.install_status !== "not_installed";
     if (target === "available") return item.install_status === "not_installed";
     if (target === "development") return plugin?.source === "dev" || sourcesByName.get(item.source)?.management_mode === "development";
-    return !!plugin && (plugin.exists === false || plugin.built === false || plugin.runtime?.available === false || plugin.sdk_status === "outdated" || plugin.sdk_status === "missing");
+    return needsMcpAgentSetup(item) || item.mcp_connections?.some((connection) => ["auth_required", "expired", "error"].includes(connection.status)) || !!plugin && (plugin.exists === false || plugin.built === false || plugin.runtime?.available === false || plugin.sdk_status === "outdated" || plugin.sdk_status === "missing");
   }, [sourcesByName]);
 
   const views = useMemo(() => ([
@@ -216,8 +219,8 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
 
       <SkillDetailPanel selectedSkill={selectedSkill} agents={agents} installed={installed} projectPath={projectPath}
         onClose={() => setSelectedSkill(null)} onInstalled={async () => { await onInstalled(); await reload(); }} />
-      {selectedMcp && <McpInstallDialog artifact={selectedMcp} agents={agentOptions} projectPath={projectPath}
-        onClose={() => setSelectedMcp(null)} onSaved={async () => { setSelectedMcp(null); await reload(); }} />}
+      {selectedMcp && <McpManagementDrawer artifact={selectedMcp} agents={agentOptions} projectPath={projectPath}
+        onClose={() => { setSelectedMcp(null); void reload(); }} onSaved={async () => { await reload(); }} />}
       {selectedPlugin && <PluginDetailDialog plugin={selectedPlugin} onClose={() => setSelectedPlugin(null)} onDeleted={async () => { setSelectedPlugin(null); await onInstalled(); await reload(); }} />}
       {selectedPluginArtifact && <PluginArtifactDrawer item={selectedPluginArtifact} busy={busyKey === `${selectedPluginArtifact.repo_key}/${selectedPluginArtifact.repo_path}`} onClose={() => setSelectedPluginArtifact(null)} onInstall={async () => { await installPlugin(selectedPluginArtifact); setSelectedPluginArtifact(null); }} />}
     </div>
@@ -229,24 +232,27 @@ function deployment(item: ExtensionArtifact, plugin?: Plugin): { label: string; 
     if (plugin?.source === "dev") return { label: "Development", tone: "info" };
     return plugin || item.install_status === "installed" ? { label: "Installed", tone: "success" } : { label: "Not installed", tone: "neutral" };
   }
+  if (needsMcpAgentSetup(item)) return { label: "Setup required", tone: "warning" };
   const count = item.installed_agents.length;
-  if (count > 0) return { label: `${count} ${item.kind === "mcp" ? "binding" : "install"}${count === 1 ? "" : "s"}`, tone: item.install_status === "partial" ? "warning" : item.kind === "mcp" ? "info" : "success" };
-  return { label: item.kind === "mcp" ? "Not configured" : "Not installed", tone: "neutral" };
+  if (count > 0) return { label: `${count} ${item.kind === "mcp" ? "Agent" : "install"}${count === 1 ? "" : "s"}`, tone: item.install_status === "partial" ? "warning" : item.kind === "mcp" ? "info" : "success" };
+  return { label: item.kind === "mcp" ? "No Agents" : "Not installed", tone: "neutral" };
 }
 
 function CatalogHeader() {
   return <div className="hidden shrink-0 grid-cols-[minmax(360px,1fr)_150px_28px] items-center gap-5 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/35 px-5 py-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)] md:grid lg:grid-cols-[minmax(420px,1fr)_minmax(220px,320px)_150px_28px]">
-    <span>Extension</span><span className="hidden lg:block">Source</span><span>Installation</span><span />
+    <span>Extension</span><span className="hidden lg:block">Source</span><span>Status</span><span />
   </div>;
 }
 
 function CatalogRow({ record, onOpen }: { record: CatalogRecord; onOpen: () => void }) {
   const { item, plugin } = record;
   const deployed = deployment(item, plugin);
+  const connection = item.mcp_connections?.find((value) => ["auth_required", "expired", "error"].includes(value.status)) ?? item.mcp_connections?.[0];
+  const connectionState = connection ? connectionPresentation(connection) : null;
   return <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }} className="group relative grid min-h-28 cursor-pointer grid-cols-1 gap-3 border-b border-[var(--color-border)] px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-[var(--color-bg-secondary)]/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-highlight)] md:h-16 md:min-h-0 md:grid-cols-[minmax(360px,1fr)_150px_28px] md:items-center md:gap-5 md:px-5 md:py-2 lg:grid-cols-[minmax(420px,1fr)_minmax(220px,320px)_150px_28px]">
-    <div className="flex min-w-0 items-start gap-3 md:items-center"><ExtensionIdentityIcon kind={item.kind} name={item.name} manifest={item.manifest} plugin={plugin} /><div className="min-w-0 flex-1 pr-6 md:pr-0"><div className="flex min-w-0 flex-wrap items-center gap-2"><span className="max-w-full truncate text-sm font-semibold text-[var(--color-text)]">{item.name}</span><TypeLabel kind={item.kind} />{item.version && <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">v{item.version}</span>}</div><p className="mt-1 line-clamp-2 break-words text-xs leading-5 text-[var(--color-text-muted)] md:mt-0.5 md:truncate">{item.description || "No description provided"}</p><p className="mt-1 max-w-full truncate font-mono text-[10px] text-[var(--color-text-muted)] lg:hidden">{item.source}{item.relative_path ? ` · ${item.relative_path}` : ""}</p></div></div>
+    <div className="flex min-w-0 items-start gap-3 md:items-center"><ExtensionIdentityIcon kind={item.kind} name={item.name} manifest={item.manifest} plugin={plugin} /><div className="min-w-0 flex-1 pr-6 md:pr-0"><div className="flex min-w-0 flex-wrap items-center gap-2"><span className="max-w-full truncate text-sm font-semibold text-[var(--color-text)]">{item.name}</span><TypeLabel kind={item.kind} />{item.version && item.version !== "unknown" && <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">v{item.version}</span>}</div><p className="mt-1 line-clamp-2 break-words text-xs leading-5 text-[var(--color-text-muted)] md:mt-0.5 md:truncate">{item.description || "No description provided"}</p><p className="mt-1 max-w-full truncate font-mono text-[10px] text-[var(--color-text-muted)] lg:hidden">{item.source}{item.relative_path ? ` · ${item.relative_path}` : ""}</p></div></div>
     <div className="hidden min-w-0 lg:block"><div className="truncate text-sm font-medium text-[var(--color-text)]">{sourceDisplayLabel(item.source, plugin)}</div><div className="mt-0.5 truncate font-mono text-[10px] text-[var(--color-text-muted)]">{item.relative_path || item.repo_path || plugin?.local_path}</div></div>
-    <div className="ml-12 md:ml-0"><StatusBadge label={deployed.label} tone={deployed.tone} /></div>
+    <div className="ml-12 space-y-1 md:ml-0"><StatusBadge label={deployed.label} tone={deployed.tone} />{connectionState && <p className={`text-xs ${connectionState.tone === "danger" ? "text-[var(--color-error)]" : connectionState.tone === "warning" ? "text-[var(--color-warning)]" : "text-[var(--color-text-muted)]"}`}>{connectionState.label}</p>}</div>
     <ChevronRight className="absolute right-4 top-5 h-4 w-4 text-[var(--color-text-muted)] opacity-60 transition-all group-hover:translate-x-0.5 group-hover:opacity-100 md:static" />
   </div>;
 }
@@ -274,104 +280,4 @@ function PluginArtifactDrawer({ item, busy, onClose, onInstall }: { item: Extens
   const contributes = Object.keys((item.manifest?.contributes ?? {}) as Record<string, unknown>);
   const permissions = Array.isArray(item.manifest?.permissions) ? item.manifest.permissions as string[] : [];
   return <DrawerShell isOpen onClose={onClose}><div className="flex h-full flex-col"><div className="flex items-start justify-between border-b border-[var(--color-border)] px-5 py-4"><div className="flex items-center gap-3"><ExtensionIdentityIcon kind="plugin" name={item.name} manifest={item.manifest} /><div><h2 className="text-base font-semibold">{item.name}</h2><p className="mt-0.5 text-xs text-[var(--color-text-muted)]">Plugin · {item.version ? `v${item.version}` : "Unversioned"}</p></div></div><button type="button" onClick={onClose} className="rounded-lg p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)]"><X className="h-4 w-4" /></button></div><div className="flex-1 overflow-y-auto px-5 py-5"><p className="text-sm leading-6 text-[var(--color-text-muted)]">{item.description || "Grove application extension"}</p><section className="mt-5 border-t border-[var(--color-border)] pt-4"><h3 className="text-sm font-semibold">Source</h3><p className="mt-2 text-sm">{item.source}</p><p className="mt-1 break-all font-mono text-xs text-[var(--color-text-muted)]">{item.repo_path}</p></section><section className="mt-5 border-t border-[var(--color-border)] pt-4"><h3 className="text-sm font-semibold">Capabilities</h3><p className="mt-2 text-sm text-[var(--color-text-muted)]">{contributes.length > 0 ? contributes.join(", ") : "No contributions declared"}</p></section><section className="mt-5 border-t border-[var(--color-border)] pt-4"><h3 className="text-sm font-semibold">Permissions</h3><p className="mt-2 text-sm text-[var(--color-text-muted)]">{permissions.length > 0 ? permissions.join(", ") : "No permissions requested"}</p></section></div><div className="flex items-center justify-between border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]/55 px-5 py-4"><span className="text-xs text-[var(--color-text-muted)]">Not installed</span><Button variant="primary" onClick={onInstall} disabled={busy}><Download className="mr-1.5 h-4 w-4" />{busy ? "Installing…" : "Install Plugin"}</Button></div></div></DrawerShell>;
-}
-
-function McpInstallDialog({ artifact, agents, projectPath, onClose, onSaved }: { artifact: ExtensionArtifact; agents: InstalledAgentConfig[]; projectPath: string | null; onClose: () => void; onSaved: () => void }) {
-  const manifest = artifact.manifest ?? {};
-  const remotes = Array.isArray(manifest.remotes) ? manifest.remotes as Record<string, unknown>[] : [];
-  const packages = Array.isArray(manifest.packages) ? manifest.packages as Record<string, unknown>[] : [];
-  const variants = [...remotes.map((value, index) => ({ kind: "remote" as const, index, label: `${String(value.type ?? "HTTP")} · ${String(value.url ?? "")}`, value })), ...packages.map((value, index) => ({ kind: "package" as const, index, label: `${String(value.registryType ?? "package")} · ${String(value.identifier ?? "")}`, value }))];
-  const [variantIndex, setVariantIndex] = useState(0);
-  const [selectedAgents, setSelectedAgents] = useState<string[]>(artifact.installed_agents);
-  const [scope, setScope] = useState<"global" | "project">("global");
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const variant = variants[variantIndex];
-  const definitions = variant?.kind === "remote"
-    ? (Array.isArray(variant.value.headers) ? variant.value.headers : [])
-    : (Array.isArray(variant?.value.environmentVariables) ? variant.value.environmentVariables : []);
-  return <DrawerShell isOpen onClose={onClose} width="w-full sm:w-[640px]"><div className="flex h-full flex-col">
-    <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4"><div className="flex min-w-0 items-center gap-3"><ExtensionIdentityIcon kind="mcp" name={artifact.name} manifest={artifact.manifest} /><div className="min-w-0"><h2 className="truncate text-base font-semibold">{artifact.name}</h2><p className="mt-1 text-xs text-[var(--color-text-muted)]">Configure runtime and Agent bindings</p></div></div><button type="button" onClick={onClose} className="rounded-lg p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button></div>
-    <div className="flex-1 overflow-y-auto px-5 py-4">
-    <label className="mb-1 block text-xs font-medium">Runtime</label><div className="mb-4"><Combobox allowCustom={false} value={String(variantIndex)} onChange={(value) => setVariantIndex(Number(value))} options={variants.map((option, index) => ({ id: `${option.kind}-${option.index}`, value: String(index), label: option.label }))} /></div>
-    {definitions.map((definition, index) => { const value = definition as Record<string, unknown>; const name = String(value.name ?? `value-${index}`); return <label key={name} className="mb-3 block text-xs"><span className="mb-1 block">{name}{value.isRequired === true && " *"}</span><input type={value.isSecret === true ? "password" : "text"} value={values[name] ?? ""} onChange={(event) => setValues((old) => ({ ...old, [name]: event.target.value }))} className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-sm" /></label>; })}
-    <div className="mb-4"><span className="mb-2 block text-xs font-medium">ACP Agents</span><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{agents.map((agent) => <label key={agent.id} className="flex items-center gap-2 rounded border border-[var(--color-border)] p-2 text-xs"><input type="checkbox" checked={selectedAgents.includes(agent.id)} onChange={() => setSelectedAgents((old) => old.includes(agent.id) ? old.filter((id) => id !== agent.id) : [...old, agent.id])} />{agent.name}</label>)}</div></div>
-    <div className="mb-5 flex gap-3 text-xs"><label><input type="radio" checked={scope === "global"} onChange={() => setScope("global")} /> Global</label><label className={!projectPath ? "opacity-40" : ""}><input type="radio" disabled={!projectPath} checked={scope === "project"} onChange={() => setScope("project")} /> Current Project</label></div>
-    </div>
-    <div className="flex justify-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4"><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={saving || !variant} onClick={async () => { if (!variant) return; setSaving(true); try { await installMcp({ repo_key: artifact.repo_key, repo_path: artifact.repo_path, scope, project_path: scope === "project" ? projectPath ?? undefined : undefined, agent_ids: selectedAgents, runtime: { kind: variant.kind, index: variant.index }, values }); onSaved(); } finally { setSaving(false); } }}>{saving ? "Saving..." : selectedAgents.length === 0 ? "Remove bindings" : "Save"}</Button></div>
-  </div></DrawerShell>;
-}
-
-export function AddMcpDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  type RuntimeType = "remote" | "npm" | "pypi" | "oci";
-  type Variable = { name: string; required: boolean; secret: boolean };
-  const schema = "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json";
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [version, setVersion] = useState("1.0.0");
-  const [runtimeType, setRuntimeType] = useState<RuntimeType>("remote");
-  const [location, setLocation] = useState("");
-  const [runtimeVersion, setRuntimeVersion] = useState("");
-  const [variables, setVariables] = useState<Variable[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const buildManifest = (): Record<string, unknown> => {
-    const base: Record<string, unknown> = { $schema: schema, name: name.trim(), description: description.trim(), version: version.trim() || "1.0.0" };
-    const definitions = variables.filter((item) => item.name.trim()).map((item) => ({ name: item.name.trim(), isRequired: item.required, isSecret: item.secret }));
-    if (runtimeType === "remote") {
-      base.remotes = [{ type: "streamable-http", url: location.trim(), ...(definitions.length > 0 ? { headers: definitions } : {}) }];
-    } else {
-      base.packages = [{ registryType: runtimeType, identifier: location.trim(), ...(runtimeVersion.trim() ? { version: runtimeVersion.trim() } : {}), ...(definitions.length > 0 ? { environmentVariables: definitions } : {}) }];
-    }
-    return base;
-  };
-
-  const create = async () => {
-    setError(null);
-    if (!name.trim()) { setError("Name is required."); return; }
-    if (!location.trim()) { setError(runtimeType === "remote" ? "Server URL is required." : "Package name is required."); return; }
-    const manifest = buildManifest();
-    setSaving(true);
-    try { await createManagedMcp(manifest); onCreated(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to create MCP"); }
-    finally { setSaving(false); }
-  };
-
-  const inputClass = "w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm outline-none focus:border-[var(--color-highlight)]";
-  return <DialogShell isOpen onClose={onClose} maxWidth="max-w-3xl">
-    <div className="max-h-[90vh] overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 shadow-2xl">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div><h2 className="text-lg font-semibold">Add MCP Server</h2><p className="mt-1 text-xs text-[var(--color-text-muted)]">Configure a managed MCP server. Grove saves it as a standard server.json.</p></div>
-      </div>
-
-      <div className="space-y-5">
-        <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-          <h3 className="mb-3 text-sm font-semibold">Server</h3>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="text-xs"><span className="mb-1 block font-medium">Name *</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="io.company/server-name" className={inputClass} /></label>
-            <label className="text-xs"><span className="mb-1 block font-medium">Version</span><input value={version} onChange={(event) => setVersion(event.target.value)} className={inputClass} /></label>
-            <label className="col-span-2 text-xs"><span className="mb-1 block font-medium">Description</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this MCP server provides" className={inputClass} /></label>
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-          <h3 className="mb-3 text-sm font-semibold">Runtime</h3>
-          <div className="mb-3 flex gap-1 rounded-lg bg-[var(--color-bg-secondary)] p-1">{(["remote", "npm", "pypi", "oci"] as RuntimeType[]).map((type) => <button key={type} type="button" onClick={() => setRuntimeType(type)} className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium ${runtimeType === type ? "bg-[var(--color-highlight)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{type === "remote" ? "Remote HTTP" : type === "pypi" ? "PyPI" : type.toUpperCase()}</button>)}</div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className={`text-xs ${runtimeType === "remote" ? "col-span-2" : ""}`}><span className="mb-1 block font-medium">{runtimeType === "remote" ? "Server URL *" : "Package name *"}</span><input value={location} onChange={(event) => setLocation(event.target.value)} placeholder={runtimeType === "remote" ? "https://example.com/mcp" : runtimeType === "npm" ? "@company/mcp-server" : "package-name"} className={inputClass} /></label>
-            {runtimeType !== "remote" && <label className="text-xs"><span className="mb-1 block font-medium">Package version</span><input value={runtimeVersion} onChange={(event) => setRuntimeVersion(event.target.value)} placeholder="latest" className={inputClass} /></label>}
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-          <div className="mb-3 flex items-center justify-between"><div><h3 className="text-sm font-semibold">{runtimeType === "remote" ? "Headers" : "Environment Variables"}</h3><p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">Declare values users provide when binding this server to an Agent.</p></div><Button variant="secondary" size="sm" onClick={() => setVariables((old) => [...old, { name: "", required: true, secret: false }])}><Plus className="mr-1 h-3.5 w-3.5" />Add row</Button></div>
-          {variables.length === 0 ? <div className="rounded-lg border border-dashed border-[var(--color-border)] py-5 text-center text-xs text-[var(--color-text-muted)]">No {runtimeType === "remote" ? "headers" : "environment variables"} required.</div> : <div className="overflow-hidden rounded-lg border border-[var(--color-border)]"><div className="grid grid-cols-[1fr_90px_80px_36px] gap-2 bg-[var(--color-bg-secondary)] px-3 py-2 text-[10px] font-medium uppercase text-[var(--color-text-muted)]"><span>Name</span><span>Required</span><span>Secret</span><span /></div>{variables.map((variable, index) => <div key={index} className="grid grid-cols-[1fr_90px_80px_36px] items-center gap-2 border-t border-[var(--color-border)] px-3 py-2"><input value={variable.name} onChange={(event) => setVariables((old) => old.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} placeholder={runtimeType === "remote" ? "Authorization" : "API_TOKEN"} className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-xs" /><input type="checkbox" checked={variable.required} onChange={(event) => setVariables((old) => old.map((item, itemIndex) => itemIndex === index ? { ...item, required: event.target.checked } : item))} /><input type="checkbox" checked={variable.secret} onChange={(event) => setVariables((old) => old.map((item, itemIndex) => itemIndex === index ? { ...item, secret: event.target.checked } : item))} /><button type="button" onClick={() => setVariables((old) => old.filter((_, itemIndex) => itemIndex !== index))} className="text-[var(--color-text-muted)] hover:text-[var(--color-error)]"><Trash2 className="h-4 w-4" /></button></div>)}</div>}
-        </section>
-      </div>
-
-      {error && <p className="mt-3 text-xs text-[var(--color-error)]">{error}</p>}
-      <div className="mt-5 flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={saving} onClick={() => void create()}>{saving ? "Creating..." : "Create Server"}</Button></div>
-    </div>
-  </DialogShell>;
 }
