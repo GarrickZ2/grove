@@ -187,6 +187,9 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   // NOTE: only edge-drag flow uses this ref; node-drag and pan flows do not
   // touch it.
   const dragEdgeRef = useRef<{ from: string } | null>(null);
+  // A drag from one SVG node to another can produce a click on their common
+  // canvas ancestor after mouseup. That click must not dismiss the new form.
+  const edgeDragClickRef = useRef(false);
   const [dragMousePos, setDragMousePos] = useState<{ x: number; y: number } | null>(null);
 
   // Tracks every window-level listener attached by drag/pan handlers so we
@@ -939,6 +942,10 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
           activeListenersRef.current.add(teardown);
         }}
         onClick={() => {
+          if (edgeDragClickRef.current) {
+            edgeDragClickRef.current = false;
+            return;
+          }
           // Suppress deselect that follows a pan gesture.
           if (panMovedRef.current) {
             panMovedRef.current = false;
@@ -1385,6 +1392,7 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
                     style={{ cursor: "crosshair" }}
                     onMouseDown={(e) => {
                       e.stopPropagation();
+                      edgeDragClickRef.current = true;
                       const drag = { from: node.id };
                       dragEdgeRef.current = drag;
                       setDragEdge(drag);
@@ -1408,6 +1416,10 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
                         activeListenersRef.current.delete(teardown);
                       };
                       const onUp = (ev: MouseEvent) => {
+                        // The browser dispatches the click immediately after
+                        // mouseup. Clear the guard afterward even if no click
+                        // is generated (for example, a drop outside the SVG).
+                        window.setTimeout(() => { edgeDragClickRef.current = false; }, 0);
                         // If the React node onMouseUp didn't consume the drop
                         // (e.g. dropped on empty space), `dragEdgeRef.current`
                         // is still set here; teardown() will null it out.
