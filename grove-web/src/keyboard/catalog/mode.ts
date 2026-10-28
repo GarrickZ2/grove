@@ -18,7 +18,7 @@ export const MODE_COMMANDS: CommandDef[] = [
   },
   {
     id: "mode.ide.layout.toggle",
-    name: "Toggle IDE Layout",
+    name: "Toggle Agent Layout",
     category: "Mode",
     scope: "workspace",
   },

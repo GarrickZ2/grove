@@ -140,7 +140,7 @@ export function PluginsSection() {
                   {p.contributes?.panel && (
                     <span
                       className="shrink-0 rounded-full bg-[var(--color-bg)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]"
-                      title="Opens as a workspace panel — from a task's toolbar (IDE Layout) or [+] menu (Free Layout)"
+                      title="Opens as a workspace panel — from a task's toolbar (Agent Layout) or [+] menu (Free Layout)"
                     >
                       panel
                     </span>

@@ -26,9 +26,9 @@ export const WORKSPACE_COMMANDS: CommandDef[] = [
   },
   {
     id: "workspace.ideLayout.toggle",
-    name: "Toggle IDE Layout",
+    name: "Toggle Agent Layout",
     category: "Workspace",
-    description: "Toggle the IDE-style layout preset",
+    description: "Toggle the Agent layout preset",
     scope: "workspace",
   },
 ];

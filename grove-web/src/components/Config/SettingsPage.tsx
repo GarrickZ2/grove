@@ -2112,7 +2112,7 @@ env_vars = [
         <Section
           id="devtools"
           title="General"
-          description="Default applications"
+          description="Interface and default applications"
           icon={Wrench}
           iconColor="#64748b"
           isOpen={openSections.devtools}
@@ -2182,6 +2182,24 @@ env_vars = [
 
             {windowShortcutControl}
 
+            {/* Orbit will become selectable when its interface is available. */}
+            <div>
+              <div className="flex items-center gap-2 mb-3 select-none">
+                <LayoutGrid className="w-4 h-4 text-[var(--color-info)]" />
+                <span className="text-sm font-medium text-[var(--color-text)]">Interface</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button" aria-pressed="true" className="p-3 rounded-lg border text-left border-[var(--color-highlight)] bg-[var(--color-highlight)]/10">
+                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Workbench</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">Projects, tasks, and panels in a flexible workspace</div>
+                </button>
+                <button type="button" disabled aria-pressed="false" className="p-3 rounded-lg border text-left border-[var(--color-border)] bg-[var(--color-bg-secondary)] opacity-60 cursor-not-allowed">
+                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Orbit · Coming soon</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">Start with a conversation and follow your work</div>
+                </button>
+              </div>
+            </div>
+
             {/* Workspace Layout */}
             <div>
               <div className="flex items-center gap-2 mb-3 select-none">
@@ -2208,7 +2226,7 @@ env_vars = [
                       : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-highlight)]/50"
                   }`}
                 >
-                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">IDE Layout</div>
+                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Agent Layout</div>
                   <div className="text-[11px] text-[var(--color-text-muted)]">Fixed panels with Chat-centric view</div>
                 </button>
               </div>
