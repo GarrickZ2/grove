@@ -94,7 +94,7 @@ const ALL_NAV_ITEMS: Record<string, NavItem> = {
   work: { id: "work", label: "Work", icon: Laptop },
   tasks: { id: "tasks", label: "Tasks", icon: ListTodo },
   resource: { id: "resource", label: "Studio", icon: Layers },
-  memory: { id: "memory", label: "Memory", icon: Brain, beta: true },
+  memory: { id: "memory", label: "Memory", icon: Brain },
   automation: { id: "automation", label: "Automation", icon: Repeat },
   skills: { id: "skills", label: "Extensions", icon: Blocks },
   ai: { id: "ai", label: "AI", icon: Sparkles },
