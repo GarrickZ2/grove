@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Calendar, GitCommit, FileCode, Clock, Activity, Loader2, GitBranch, Info, Link2, X } from "lucide-react";
+import { ArrowRight, Calendar, GitCommit, FileCode, Clock, Activity, Loader2, GitBranch, Info, Link2, X } from "lucide-react";
 import {
   getTaskStats,
   getDiff,
@@ -15,7 +15,7 @@ import {
   type ProjectListItem,
 } from "../../../../api";
 import type { Task } from "../../../../data/types";
-import { useTheme } from "../../../../context";
+import { useProject, useTheme } from "../../../../context";
 import { compactPath } from "../../../../utils/pathUtils";
 import { getProjectStyle } from "../../../../utils/projectStyle";
 import { ProjectTypeBadge } from "../../../ui/ProjectTypeBadge";
@@ -131,6 +131,7 @@ function formatRelativeTime(isoString: string): string {
 
 export function StatsTab({ projectId, task }: StatsTabProps) {
   const { theme } = useTheme();
+  const { projects } = useProject();
   const [stats, setStats] = useState<TaskStatsResponse | null>(null);
   const [diffData, setDiffData] = useState<DiffResponse | null>(null);
   const [commitsData, setCommitsData] = useState<CommitsResponse | null>(null);
@@ -291,6 +292,7 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
           <div className="space-y-1.5">
             {linkedProjects.map((project) => {
               const { color, Icon } = getProjectStyle(project.id, theme.accentPalette);
+              const canOpen = project.exists && projects.some((item) => item.id === project.id && item.exists);
               return (
                 <div
                   key={project.id}
@@ -315,6 +317,16 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
                       </div>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new CustomEvent("grove:navigate", { detail: { route: "dashboard", project_id: project.id } }))}
+                    disabled={!canOpen}
+                    className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-highlight)] disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label={`Open ${project.name}`}
+                    title={canOpen ? `Open ${project.name}` : "Project is not available"}
+                  >
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => void saveLinkedProjects(linkedProjects.filter((item) => item.id !== project.id).map((item) => item.id))}
