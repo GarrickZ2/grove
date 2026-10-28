@@ -18,6 +18,7 @@ import { MultiSelectFilter } from "./MultiSelectFilter";
 import { AgentIcon } from "./AgentIcon";
 import { ExtensionIdentityIcon } from "./ExtensionIdentityIcon";
 import { resolveInstalledPlugin } from "./installedPlugin";
+import { pluginAttentionReasons } from "./pluginAttention";
 import { McpManagementDrawer } from "./McpManagement";
 import { connectionPresentation, needsMcpAgentSetup } from "./mcpManagementState";
 export { AddMcpDialog } from "./McpManagement";
@@ -51,7 +52,8 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
   const [installations, setInstallations] = useState<string[]>([]);
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [view, setView] = useState<CatalogView>("all");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => sessionStorage.getItem("grove:mcp-warning-search") ?? "");
+  useEffect(() => { sessionStorage.removeItem("grove:mcp-warning-search"); }, []);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const tableBodyRef = useRef<HTMLDivElement>(null);
@@ -96,7 +98,7 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
     if (target === "installed") return item.install_status !== "not_installed";
     if (target === "available") return item.install_status === "not_installed";
     if (target === "development") return plugin?.source === "dev" || sourcesByName.get(item.source)?.management_mode === "development";
-    return needsMcpAgentSetup(item) || item.mcp_connections?.some((connection) => ["auth_required", "expired", "error"].includes(connection.status)) || !!plugin && (plugin.exists === false || plugin.built === false || plugin.runtime?.available === false || plugin.sdk_status === "outdated" || plugin.sdk_status === "missing");
+    return needsMcpAgentSetup(item) || item.mcp_connections?.some((connection) => ["auth_required", "expired", "error"].includes(connection.status)) || pluginAttentionReasons(plugin).length > 0;
   }, [sourcesByName]);
 
   const views = useMemo(() => ([
@@ -118,6 +120,7 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
       if (agentIds.length > 0 && !item.installed_agents.some((id) => agentIds.includes(id))) return false;
       return !query
         || item.name.toLowerCase().includes(query)
+        || (typeof item.manifest?.name === "string" && item.manifest.name.toLowerCase().includes(query))
         || item.description.toLowerCase().includes(query)
         || item.source.toLowerCase().includes(query);
     });
@@ -201,7 +204,7 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
 
       <TableFrame facets={<CatalogViewRail views={views} active={view} onChange={(next) => { setView(next); setPage(1); }} />}>
         <CatalogHeader />
-        <div ref={tableBodyRef} className="min-h-0 flex-1 overflow-visible md:overflow-hidden">
+        <div ref={tableBodyRef} className="min-h-0 flex-1 overflow-visible md:overflow-y-auto">
           {loading ? <CatalogSkeleton /> : pageItems.length === 0 ? <TableEmpty title="No extensions found" description="Try another search or clear a filter." /> : pageItems.map((record) => {
             const key = `${record.item.kind}/${record.item.repo_key}/${record.item.repo_path}`;
             return <CatalogRow key={key} record={record} onOpen={() => openRecord(record)} />;
@@ -249,10 +252,11 @@ function CatalogRow({ record, onOpen }: { record: CatalogRecord; onOpen: () => v
   const deployed = deployment(item, plugin);
   const connection = item.mcp_connections?.find((value) => ["auth_required", "expired", "error"].includes(value.status)) ?? item.mcp_connections?.[0];
   const connectionState = connection ? connectionPresentation(connection) : null;
-  return <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }} className="group relative grid min-h-28 cursor-pointer grid-cols-1 gap-3 border-b border-[var(--color-border)] px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-[var(--color-bg-secondary)]/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-highlight)] md:h-16 md:min-h-0 md:grid-cols-[minmax(360px,1fr)_150px_28px] md:items-center md:gap-5 md:px-5 md:py-2 lg:grid-cols-[minmax(420px,1fr)_minmax(220px,320px)_150px_28px]">
+  const pluginIssues = pluginAttentionReasons(plugin);
+  return <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }} className="group relative grid min-h-28 cursor-pointer grid-cols-1 gap-3 border-b border-[var(--color-border)] px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-[var(--color-bg-secondary)]/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-highlight)] md:min-h-16 md:grid-cols-[minmax(360px,1fr)_150px_28px] md:items-center md:gap-5 md:px-5 md:py-2 lg:grid-cols-[minmax(420px,1fr)_minmax(220px,320px)_150px_28px]">
     <div className="flex min-w-0 items-start gap-3 md:items-center"><ExtensionIdentityIcon kind={item.kind} name={item.name} manifest={item.manifest} plugin={plugin} /><div className="min-w-0 flex-1 pr-6 md:pr-0"><div className="flex min-w-0 flex-wrap items-center gap-2"><span className="max-w-full truncate text-sm font-semibold text-[var(--color-text)]">{item.name}</span><TypeLabel kind={item.kind} />{item.version && item.version !== "unknown" && <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">v{item.version}</span>}</div><p className="mt-1 line-clamp-2 break-words text-xs leading-5 text-[var(--color-text-muted)] md:mt-0.5 md:truncate">{item.description || "No description provided"}</p><p className="mt-1 max-w-full truncate font-mono text-[10px] text-[var(--color-text-muted)] lg:hidden">{item.source}{item.relative_path ? ` · ${item.relative_path}` : ""}</p></div></div>
     <div className="hidden min-w-0 lg:block"><div className="truncate text-sm font-medium text-[var(--color-text)]">{sourceDisplayLabel(item.source, plugin)}</div><div className="mt-0.5 truncate font-mono text-[10px] text-[var(--color-text-muted)]">{item.relative_path || item.repo_path || plugin?.local_path}</div></div>
-    <div className="ml-12 space-y-1 md:ml-0"><StatusBadge label={deployed.label} tone={deployed.tone} />{connectionState && <p className={`text-xs ${connectionState.tone === "danger" ? "text-[var(--color-error)]" : connectionState.tone === "warning" ? "text-[var(--color-warning)]" : "text-[var(--color-text-muted)]"}`}>{connectionState.label}</p>}</div>
+    <div className="ml-12 space-y-1 md:ml-0"><StatusBadge label={deployed.label} tone={deployed.tone} />{connectionState && <p className={`text-xs ${connectionState.tone === "danger" ? "text-[var(--color-error)]" : connectionState.tone === "warning" ? "text-[var(--color-warning)]" : "text-[var(--color-text-muted)]"}`}>{connectionState.label}</p>}{pluginIssues.length > 0 && <p className="text-xs text-[var(--color-warning)]">{pluginIssues.join(" · ")}</p>}</div>
     <ChevronRight className="absolute right-4 top-5 h-4 w-4 text-[var(--color-text-muted)] opacity-60 transition-all group-hover:translate-x-0.5 group-hover:opacity-100 md:static" />
   </div>;
 }

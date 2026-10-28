@@ -3,6 +3,7 @@ import type { ExtensionArtifact } from "../../api/extensions";
 import type { Plugin } from "../../api/plugins";
 import { needsMcpAgentSetup } from "./mcpManagementState";
 import { resolveInstalledPlugin } from "./installedPlugin";
+import { pluginAttentionReasons } from "./pluginAttention";
 
 function plugin(id: string, name: string): Plugin {
   return {
@@ -43,6 +44,18 @@ describe("resolveInstalledPlugin", () => {
     expect(resolveInstalledPlugin(artifact("pl-second"), plugins)?.name).toBe(
       "second",
     );
+  });
+});
+
+describe("plugin attention reasons", () => {
+  it("explains each condition that puts a plugin in Needs attention", () => {
+    const current = plugin("id", "demo");
+    expect(pluginAttentionReasons(current)).toEqual([]);
+    expect(pluginAttentionReasons({ ...current, sdk_status: "outdated" })).toEqual(["SDK outdated"]);
+    expect(pluginAttentionReasons({ ...current, built: false, runtime: { command: "node", available: false }, sdk_status: "missing" })).toEqual([
+      "Build required", "node unavailable", "SDK missing",
+    ]);
+    expect(pluginAttentionReasons({ ...current, exists: false, sdk_status: "missing" })).toEqual(["Plugin folder missing"]);
   });
 });
 
