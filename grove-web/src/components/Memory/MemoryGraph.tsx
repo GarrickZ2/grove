@@ -591,8 +591,9 @@ function drawScene(
     const hasFocus = Boolean(focusedNodeId || focusedRelationId);
     const topologyMode = Boolean(focusedTopology);
     context.beginPath();
+    const control = linkCurveControl(projected);
     context.moveTo(source.x, source.y);
-    context.lineTo(target.x, target.y);
+    context.quadraticCurveTo(control.x, control.y, target.x, target.y);
     context.lineCap = "round";
     context.lineWidth = topologyMode
       ? clamp(projected.width * 0.82, 0.65, 1.2)
@@ -810,8 +811,6 @@ function drawTravelingPulse(
   const normalized = clamp(progress, 0, 1);
   const traveled = 0.5 - Math.cos(normalized * Math.PI) / 2;
   const head = reverse ? 1 - traveled : traveled;
-  const directionX = link.target.x - link.source.x;
-  const directionY = link.target.y - link.source.y;
   const direction = reverse ? 1 : -1;
   const trailLength = 0.22;
   const segmentCount = 12;
@@ -834,8 +833,10 @@ function drawTravelingPulse(
         ? clamp(link.width + 2.4 * nearHead, 1.8, 3.5)
         : clamp(0.45 + link.width * 0.55 + 0.55 * nearHead, 0.65, 1.35);
       context.beginPath();
-      context.moveTo(link.source.x + directionX * start, link.source.y + directionY * start);
-      context.lineTo(link.source.x + directionX * end, link.source.y + directionY * end);
+      const startPoint = linkCurvePoint(link, start);
+      const endPoint = linkCurvePoint(link, end);
+      context.moveTo(startPoint.x, startPoint.y);
+      context.lineTo(endPoint.x, endPoint.y);
       context.stroke();
     }
   }
@@ -914,6 +915,39 @@ function projectPoint(x: number, y: number, z: number, width: number, height: nu
   };
 }
 
+// Bend toward the top of the screen regardless of the relation's source and
+// target order. The projected endpoints continue to follow the orbiting scene.
+function linkCurveControl(link: ProjectedLink) {
+  const dx = link.target.x - link.source.x;
+  const dy = link.target.y - link.source.y;
+  const length = Math.hypot(dx, dy);
+  const offset = Math.min(length * 0.06, 20);
+  return {
+    x: (link.source.x + link.target.x) / 2,
+    y: (link.source.y + link.target.y) / 2 - offset,
+  };
+}
+
+function linkCurvePoint(link: ProjectedLink, t: number) {
+  const control = linkCurveControl(link);
+  const inverse = 1 - t;
+  return {
+    x: inverse * inverse * link.source.x + 2 * inverse * t * control.x + t * t * link.target.x,
+    y: inverse * inverse * link.source.y + 2 * inverse * t * control.y + t * t * link.target.y,
+  };
+}
+
+function distanceToLink(x: number, y: number, link: ProjectedLink) {
+  let previous = linkCurvePoint(link, 0);
+  let distance = Infinity;
+  for (let step = 1; step <= 16; step += 1) {
+    const point = linkCurvePoint(link, step / 16);
+    distance = Math.min(distance, distanceToSegment(x, y, previous.x, previous.y, point.x, point.y));
+    previous = point;
+  }
+  return distance;
+}
+
 function hitTest(x: number, y: number, nodes: ProjectedNode[], links: ProjectedLink[]) {
   for (let index = nodes.length - 1; index >= 0; index -= 1) {
     const node = nodes[index];
@@ -921,7 +955,7 @@ function hitTest(x: number, y: number, nodes: ProjectedNode[], links: ProjectedL
   }
   let nearest: { id: string; distance: number } | null = null;
   for (const link of links) {
-    const distance = distanceToSegment(x, y, link.source.x, link.source.y, link.target.x, link.target.y);
+    const distance = distanceToLink(x, y, link);
     const threshold = Math.max(6, link.width + 3);
     if (distance <= threshold && (!nearest || distance < nearest.distance)) nearest = { id: link.link.relation.id, distance };
   }
