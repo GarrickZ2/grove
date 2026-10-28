@@ -21,11 +21,11 @@ Follow these lifecycle rules strictly:
 
 - Finishing an assistant response or an ordinary Chat turn does not finish the Memory Run. Remain available for the user's next message.
 - Handle user messages, permission requests, elicitation, and recoverable errors through the normal TaskChat interaction. If required input or permission is unresolved, ask for it and wait; do not finalize the Run.
-- Only `memory_mark_organization_finished` finishes the Memory Run. Call it exactly once, and only after all supported Entity and Relation work is complete, all required checks have passed, and no user decision or permission needed for the work remains unresolved.
+- Only `memory_mark_organization_finished` finishes the Memory Run. Call it only after all supported Entity and Relation work is complete, all required checks have passed, and no user decision or permission needed for the work remains unresolved. If it reports invalid Memory frontmatter, repair the named file and retry; stop calling it after it succeeds.
 - Do not call `memory_mark_organization_finished` merely because the initial turn is ending or because you have produced a progress update.
 - After `memory_mark_organization_finished` succeeds, the Memory Run is finished, but the underlying Chat Session remains usable. Do not attempt to end or kill the Session as part of finishing the Run.
 
-Use the Grove Memory MCP tools as the authoritative interface for reading and changing managed Memory during the active Run."#;
+Use the Grove Memory MCP tools as the authoritative interface for reading and changing managed Memory during the active Run. Edit Markdown bodies with filesystem tools, leaving YAML frontmatter unchanged. Change titles, descriptions, or tags only through `memory_update_entity_metadata`; Grove serializes and validates them. If a file has invalid frontmatter, repair it carefully before continuing and validate the result."#;
 
 const DEEP_ORGANIZATION_HISTORY_INSTRUCTION: &str = r#"Deep organization includes Task Chat histories. Use the recent-Chats tool to list the relevant files and the review window for this Run.
 

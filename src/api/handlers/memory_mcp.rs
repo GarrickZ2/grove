@@ -134,6 +134,7 @@ impl ServerHandler for MemoryMcpService {
 const ORGANIZATION_TOOLS: &[&str] = &[
     "memory_get_directory",
     "memory_create_entity",
+    "memory_update_entity_metadata",
     "memory_delete_entity",
     "memory_get_pending_logs",
     "memory_get_recent_chats",
@@ -146,7 +147,7 @@ const ORGANIZATION_TOOLS: &[&str] = &[
 impl MemoryMcpService {
     #[tool(
         name = "memory_get_directory",
-        description = "Return the absolute path of this Project's managed long-term Memory directory. Read and edit existing Markdown files there with filesystem tools. Create and delete Entity files only through memory_create_entity and memory_delete_entity.",
+        description = "Return the absolute path of this Project's managed long-term Memory directory. Read existing Markdown files and edit their bodies with filesystem tools, preserving frontmatter unchanged. Update titles, descriptions and tags only through memory_update_entity_metadata. Create and delete Entity files only through memory_create_entity and memory_delete_entity.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<DirectoryOutput>()
     )]
     async fn get_directory(
@@ -162,7 +163,7 @@ impl MemoryMcpService {
 
     #[tool(
         name = "memory_create_entity",
-        description = "Create and register one long-term Memory Entity, then return its managed Markdown path for filesystem editing. base_score is an integer from 0 through 80 inclusive. Tags are structured key/value objects; icon is optional per Tag and there is no Entity-level icon.",
+        description = "Create and register one long-term Memory Entity, then return its managed Markdown path for body editing. Leave the YAML frontmatter unchanged; use memory_update_entity_metadata for later metadata changes. base_score is an integer from 0 through 80 inclusive. Tags are structured key/value objects; icon is optional per Tag and there is no Entity-level icon.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<CreateEntityOutput>()
     )]
     async fn create_entity(
@@ -185,6 +186,31 @@ impl MemoryMcpService {
             entity_id: entity.entity.entity_id,
             file_path: entity.absolute_path,
         })
+    }
+
+    #[tool(
+        name = "memory_update_entity_metadata",
+        description = "Update a Memory Entity's title, description, and/or tags using Grove's validated YAML serializer. Omitted fields remain unchanged; pass an empty tags array to clear tags. The Markdown body is preserved. The list/search projection updates when the organization Run is published. Do not directly edit YAML frontmatter.",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<UpdateEntityMetadataOutput>()
+    )]
+    async fn update_entity_metadata(
+        &self,
+        Parameters(input): Parameters<UpdateEntityMetadataInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        let (project_id, _) = organization_context(&parts)?;
+        let tags = input
+            .tags
+            .map(|tags| tags.into_iter().map(Into::into).collect::<Vec<_>>());
+        memory::update_entity_metadata(
+            &project_id,
+            &input.entity_id,
+            input.title.as_deref(),
+            input.description.as_deref(),
+            tags.as_deref(),
+        )
+        .map_err(storage_error)?;
+        json_success(&UpdateEntityMetadataOutput { updated: true })
     }
 
     #[tool(
@@ -490,6 +516,19 @@ struct CreateEntityInput {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct UpdateEntityMetadataInput {
+    /// Stable managed Entity id.
+    entity_id: String,
+    /// Replacement title, if changing it.
+    title: Option<String>,
+    /// Replacement description, if changing it.
+    description: Option<String>,
+    /// Replacement tags. An empty array removes all tags.
+    tags: Option<Vec<MemoryTagInput>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct PendingLogsPageInput {
     /// Opaque next_cursor returned by the previous memory_get_pending_logs call. Omit for the first page.
     cursor: Option<String>,
@@ -677,8 +716,13 @@ struct DirectoryOutput {
 struct CreateEntityOutput {
     /// Stable id for later Relation or deletion operations.
     entity_id: String,
-    /// Absolute Markdown path for filesystem editing.
+    /// Absolute Markdown path for body editing; do not directly edit frontmatter.
     file_path: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct UpdateEntityMetadataOutput {
+    updated: bool,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

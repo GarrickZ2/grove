@@ -428,6 +428,65 @@ pub fn create_entity(
     })
 }
 
+/// Update metadata through Grove's YAML serializer. The Markdown body is kept
+/// byte-for-byte, and the existing projection is refreshed on publication.
+pub fn update_entity_metadata(
+    project_id: &str,
+    entity_id: &str,
+    title: Option<&str>,
+    description: Option<&str>,
+    tags: Option<&[MemoryTag]>,
+) -> Result<()> {
+    validate_path_segment(project_id, "project_id")?;
+    validate_path_segment(entity_id, "entity_id")?;
+    if title.is_none() && description.is_none() && tags.is_none() {
+        return Err(GroveError::invalid_data(
+            "Provide at least one metadata field to update",
+        ));
+    }
+    let entity = get_entity(project_id, entity_id)?
+        .ok_or_else(|| GroveError::not_found(format!("Memory Entity {entity_id}")))?;
+    let path = entity_absolute_path(project_id, &entity.file_path)?;
+    let raw = fs::read_to_string(&path)?;
+    parse_memory_file(&raw, &path)?;
+    let (yaml, body) = raw
+        .strip_prefix("---\n")
+        .unwrap()
+        .split_once("\n---\n")
+        .unwrap();
+    let mut fields: serde_yaml::Mapping = serde_yaml::from_str(yaml)
+        .map_err(|error| GroveError::invalid_data(format!("parse Memory frontmatter: {error}")))?;
+    if let Some(title) = title {
+        fields.insert("title".into(), required(title, "title")?.into());
+    }
+    if let Some(description) = description {
+        fields.insert(
+            "description".into(),
+            required(description, "description")?.into(),
+        );
+    }
+    if let Some(tags) = tags {
+        let normalized = normalize_memory_tags(tags)?;
+        fields.insert(
+            "tags".into(),
+            serde_yaml::to_value(normalized).map_err(|error| {
+                GroveError::invalid_data(format!("serialize Memory tags: {error}"))
+            })?,
+        );
+    }
+    let yaml = serde_yaml::to_string(&fields).map_err(|error| {
+        GroveError::invalid_data(format!("serialize Memory frontmatter: {error}"))
+    })?;
+    let updated = format!("---\n{yaml}---\n{body}");
+    parse_memory_file(&updated, &path)?;
+    if fs::read_to_string(&path)? != raw {
+        return Err(GroveError::invalid_data(
+            "Memory file changed during metadata update; retry with the latest contents",
+        ));
+    }
+    atomic_write(&path, updated.as_bytes())
+}
+
 pub fn delete_entity(project_id: &str, entity_id: &str) -> Result<bool> {
     validate_path_segment(project_id, "project_id")?;
     validate_path_segment(entity_id, "entity_id")?;
@@ -528,8 +587,9 @@ pub fn get_entity_document(
     let Some(entity) = get_entity(project_id, entity_id)? else {
         return Ok(None);
     };
-    let raw = fs::read_to_string(entity_absolute_path(project_id, &entity.file_path)?)?;
-    let (_, body) = parse_markdown(&raw)?;
+    let path = entity_absolute_path(project_id, &entity.file_path)?;
+    let raw = fs::read_to_string(&path)?;
+    let (_, body) = parse_memory_file(&raw, &path)?;
     Ok(Some(MemoryEntityDocument {
         entity,
         body: body.trim_start_matches('\n').to_string(),
@@ -775,8 +835,9 @@ pub fn read_entity(
     let Some(existing) = get_entity(project_id, entity_id)? else {
         return Ok(None);
     };
-    let raw = fs::read_to_string(entity_absolute_path(project_id, &existing.file_path)?)?;
-    let (_, body) = parse_markdown(&raw)?;
+    let path = entity_absolute_path(project_id, &existing.file_path)?;
+    let raw = fs::read_to_string(&path)?;
+    let (_, body) = parse_memory_file(&raw, &path)?;
     let body = body.trim_start_matches('\n').to_string();
 
     let conn = database::connection();
@@ -993,8 +1054,8 @@ fn sync_entity_projections_on(
             deleted += 1;
             continue;
         }
-        let raw = fs::read_to_string(path)?;
-        let (frontmatter, _) = parse_markdown(&raw)?;
+        let raw = fs::read_to_string(&path)?;
+        let (frontmatter, _) = parse_memory_file(&raw, &path)?;
         let hash = content_hash(raw.as_bytes());
         let base_score = base_scores
             .get(&entity.entity_id)
@@ -1971,6 +2032,15 @@ fn parse_markdown(raw: &str) -> Result<(MemoryFrontmatter, &str)> {
     Ok((frontmatter, body))
 }
 
+fn parse_memory_file<'a>(
+    raw: &'a str,
+    path: &std::path::Path,
+) -> Result<(MemoryFrontmatter, &'a str)> {
+    parse_markdown(raw).map_err(|error| {
+        GroveError::invalid_data(format!("Memory file {}: {error}", path.display()))
+    })
+}
+
 fn normalize_memory_tags(tags: &[MemoryTag]) -> Result<Vec<MemoryTag>> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
@@ -2113,6 +2183,64 @@ fn normalize_tags(tags: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_frontmatter_quotes_colons_and_reports_the_invalid_file() {
+        let frontmatter = MemoryFrontmatter {
+            title: "Example".into(),
+            description: "Contract: details".into(),
+            tags: vec![],
+        };
+        let raw = render_markdown(&frontmatter).unwrap();
+        let (parsed, _) = parse_markdown(&raw).unwrap();
+        assert_eq!(parsed.description, frontmatter.description);
+
+        let bad = "---\ntitle: Example\ndescription: Contract: details\ntags: []\n---\n";
+        let error = parse_memory_file(bad, std::path::Path::new("entities/broken.md"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("entities/broken.md"));
+        assert!(error.contains("parse Memory frontmatter"));
+    }
+
+    #[test]
+    fn metadata_update_serializes_values_preserves_body_and_rejects_invalid_files() {
+        let _lock = database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let created =
+            create_entity("structured-metadata-test", "Original", "Old", &[], 25).unwrap();
+        let path = PathBuf::from(&created.absolute_path);
+        let original = fs::read_to_string(&path).unwrap();
+        fs::write(&path, format!("{original}# Body\n\nKeep: this text.\n")).unwrap();
+        update_entity_metadata(
+            "structured-metadata-test",
+            &created.entity.entity_id,
+            None,
+            Some("Contract: details and # signs"),
+            None,
+        )
+        .unwrap();
+        let updated = fs::read_to_string(&path).unwrap();
+        let (header, body) = parse_markdown(&updated).unwrap();
+        assert_eq!(header.title, "Original");
+        assert_eq!(header.description, "Contract: details and # signs");
+        assert_eq!(body, "\n# Body\n\nKeep: this text.\n");
+
+        let invalid =
+            "---\ntitle: Original\ndescription: Invalid: unquoted\ntags: []\n---\n\n# Body\n";
+        fs::write(&path, invalid).unwrap();
+        assert!(update_entity_metadata(
+            "structured-metadata-test",
+            &created.entity.entity_id,
+            Some("New"),
+            None,
+            None
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), invalid);
+        crate::storage::set_grove_dir_override(None);
+    }
 
     fn insert_test_memory_config(project_id: &str, automation_id: &str, deep: bool) {
         let now = Utc::now().to_rfc3339();

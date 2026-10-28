@@ -934,6 +934,8 @@ function MemoriesTab({ projectId, refreshTick, onChanged }: { projectId: string;
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<MemoryEntityDocument | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailRetry, setDetailRetry] = useState(0);
   const [relations, setRelations] = useState<MemoryRelation[]>([]);
   const [relatedNames, setRelatedNames] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -971,6 +973,7 @@ function MemoriesTab({ projectId, refreshTick, onChanged }: { projectId: string;
         return;
       }
       setDetail(null);
+      setDetailError(null);
       try {
         const [document, relationPage] = await Promise.all([
           getMemoryEntity(projectId, selectedId),
@@ -987,11 +990,11 @@ function MemoriesTab({ projectId, refreshTick, onChanged }: { projectId: string;
         loaded.forEach((entity) => { if (entity) known.set(entity.entity_id, entity.title); });
         setRelatedNames(Object.fromEntries(known));
       } catch (reason) {
-        if (active) setError(errorMessage(reason));
+        if (active) setDetailError(errorMessage(reason));
       }
     });
     return () => { active = false; };
-  }, [items, projectId, selectedId]);
+  }, [items, projectId, selectedId, detailRetry]);
 
   const categories = useMemo(() => {
     const counts = new Map<string, number>();
@@ -1113,6 +1116,8 @@ function MemoriesTab({ projectId, refreshTick, onChanged }: { projectId: string;
         isOpen={Boolean(selectedId)}
         onClose={() => setSelectedId(null)}
         detail={detail}
+        error={detailError}
+        onRetry={() => setDetailRetry((count) => count + 1)}
         relations={relations}
         relatedNames={relatedNames}
         onOpen={setSelectedId}
@@ -1169,7 +1174,7 @@ function MemoryEntityList({ entities, onOpen }: { entities: MemoryEntity[]; onOp
   );
 }
 
-function MemoryDocumentDialog({ isOpen, onClose, detail, relations, relatedNames, onOpen, onDelete }: { isOpen: boolean; onClose: () => void; detail: MemoryEntityDocument | null; relations: MemoryRelation[]; relatedNames: Record<string, string>; onOpen: (id: string) => void; onDelete: (detail: MemoryEntityDocument) => void }) {
+function MemoryDocumentDialog({ isOpen, onClose, detail, error, onRetry, relations, relatedNames, onOpen, onDelete }: { isOpen: boolean; onClose: () => void; detail: MemoryEntityDocument | null; error: string | null; onRetry: () => void; relations: MemoryRelation[]; relatedNames: Record<string, string>; onOpen: (id: string) => void; onDelete: (detail: MemoryEntityDocument) => void }) {
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1196,7 +1201,7 @@ function MemoryDocumentDialog({ isOpen, onClose, detail, relations, relatedNames
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          {!detail ? <div className="flex min-h-[360px] items-center justify-center"><CenteredLoading compact /></div> : <MemoryDetail detail={detail} relations={relations} relatedNames={relatedNames} onOpen={onOpen} />}
+          {error ? <div role="alert" className="mx-auto flex min-h-[360px] max-w-xl flex-col items-center justify-center gap-3 px-6 text-center"><CircleAlert className="h-6 w-6 text-[var(--color-error)]" /><p className="text-sm font-medium text-[var(--color-text)]">Could not open this Memory</p><p className="break-words text-sm text-[var(--color-text-muted)]">{error}</p><button type="button" onClick={onRetry} className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm hover:bg-[var(--color-bg-secondary)]">Try again</button></div> : !detail ? <div className="flex min-h-[360px] items-center justify-center"><CenteredLoading compact /></div> : <MemoryDetail detail={detail} relations={relations} relatedNames={relatedNames} onOpen={onOpen} />}
         </div>
       </div>
     </DialogShell>
