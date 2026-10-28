@@ -13,8 +13,8 @@ export function contentBlock(value: unknown): AgentContentBlock | undefined {
       return typeof block.text === "string" ? { type: "text", text: block.text } : undefined;
     case "image":
     case "audio":
-      return typeof block.data === "string" && typeof block.mimeType === "string"
-        ? { type: block.type, data: block.data, mime_type: block.mimeType, ...(block.type === "image" && typeof block.uri === "string" ? { uri: block.uri } : {}) }
+      return typeof block.mimeType === "string"
+        ? { type: block.type, data: typeof block.data === "string" ? block.data : undefined, mime_type: block.mimeType, ...(block.type === "image" && typeof block.uri === "string" ? { uri: block.uri } : {}), ...(typeof (block._meta as RawBlock | undefined)?.name === "string" ? { label: (block._meta as RawBlock).name as string } : {}) }
         : undefined;
     case "resource_link":
       return typeof block.uri === "string" && typeof block.name === "string"
@@ -44,7 +44,7 @@ export function reduceV2Message(messages: ChatMessage[], event: ServerEvent): Ch
   if (event.type === "v2_message_bind") {
     if (typeof event.client_message_id !== "string" || typeof event.message_id !== "string") return messages;
     return messages.map((message) => message.type === "user" && message.clientMessageId === event.client_message_id
-      ? { ...message, messageId: event.message_id, v2EchoPending: true } : message);
+      ? { ...message, messageId: event.message_id, v2EchoPending: true, v2OriginalAttachments: message.attachments ?? [], v2EchoAttachments: [] } : message);
   }
   const update = event.update as RawBlock | undefined;
   if (!update || typeof update.messageId !== "string" || typeof update.sessionUpdate !== "string") return messages;
@@ -59,9 +59,15 @@ export function reduceV2Message(messages: ChatMessage[], event: ServerEvent): Ch
     const block = contentBlock(update.content);
     if (!block) return messages;
     if (user) {
-      const prepared = messages.map((message) => message.type === "user" && message.messageId === id && message.v2EchoPending
-        ? { ...message, content: "", attachments: [], v2EchoPending: false } : message);
-      return reduceUserMessage(prepared, { type: "user_message", message_id: id, text: block.type === "text" ? block.text : "" }, userAttachments([block]));
+      const existing = messages.find((message) => message.type === "user" && message.messageId === id);
+      if (existing?.type === "user" && existing.v2OriginalAttachments) {
+        const echo = [...(existing.v2EchoAttachments ?? []), ...userAttachments([block])];
+        return messages.map((message) => message === existing ? {
+          ...existing, content: (existing.v2EchoPending ? "" : existing.content) + (block.type === "text" ? block.text : ""),
+          attachments: mergeAttachments(existing.v2OriginalAttachments!, echo), v2EchoAttachments: echo, v2EchoPending: false,
+        } : message);
+      }
+      return reduceUserMessage(messages, { type: "user_message", message_id: id, text: block.type === "text" ? block.text : "" }, userAttachments([block]));
     }
     if (thought) {
       if (block.type !== "text") return messages;
@@ -88,7 +94,10 @@ export function reduceV2Message(messages: ChatMessage[], event: ServerEvent): Ch
     if (i !== index) return message;
     if (message.type === "thinking") { const thoughtScan = scanThought(undefined, text); return { ...message, thoughtScan, content: thoughtStatusContent(thoughtScan) }; }
     if (message.type === "assistant") return { ...message, content: text, blocks };
-    if (message.type === "user") return { ...message, content: text, attachments: userAttachments(blocks), v2EchoPending: false };
+    if (message.type === "user") {
+      const echo = userAttachments(blocks);
+      return { ...message, content: text, attachments: update.content === null || !message.v2OriginalAttachments ? echo : mergeAttachments(message.v2OriginalAttachments, echo), v2OriginalAttachments: update.content === null ? [] : message.v2OriginalAttachments, v2EchoAttachments: echo, v2EchoPending: false };
+    }
     return message;
   });
   if (user) return [...messages, { type: "user", messageId: id, content: text, attachments: userAttachments(blocks) }];
@@ -100,12 +109,33 @@ export function reduceV2Message(messages: ChatMessage[], event: ServerEvent): Ch
   });
 }
 
+type UserAttachment = NonNullable<Extract<ChatMessage, { type: "user" }>['attachments']>[number];
+
+// Match echoed blocks to the locally submitted attachments by occurrence, so
+// incomplete echoes retain local metadata and repeated identical files remain distinct.
+function mergeAttachments(original: UserAttachment[], echo: UserAttachment[]): UserAttachment[] {
+  const merged = original.map((attachment) => ({ ...attachment }));
+  const matched = new Set<number>();
+  for (const item of echo) {
+    const index = original.findIndex((candidate, i) => !matched.has(i) && candidate.type === item.type &&
+      (candidate.uri && item.uri ? candidate.uri === item.uri : candidate.data && item.data ? candidate.data === item.data : candidate.mimeType === item.mimeType));
+    if (index < 0) { merged.push(item); continue; }
+    matched.add(index);
+    const local = merged[index];
+    merged[index] = { ...item, ...local, data: item.data || local.data, mimeType: item.mimeType || local.mimeType,
+      uri: item.uri || local.uri, previewUrl: item.previewUrl || local.previewUrl, label: local.label || item.label, name: local.name || item.name };
+  }
+  return merged;
+}
+
 function userAttachments(blocks: AgentContentBlock[]): NonNullable<Extract<ChatMessage, { type: "user" }>["attachments"]> {
   return blocks.flatMap<NonNullable<Extract<ChatMessage, { type: "user" }>["attachments"]>[number]>((block) => {
     if (block.type === "text") return [];
     if (block.type === "image" || block.type === "audio") return [{
       type: block.type, data: block.data ?? "", mimeType: block.mime_type,
       name: block.label ?? "", label: block.label ?? "", uri: block.type === "image" ? block.uri : undefined,
+      previewUrl: block.type === "image" && block.data
+        ? `data:${block.mime_type};base64,${block.data}` : undefined,
     }];
     return [{ type: "resource" as const, data: block.type === "resource" ? block.text ?? block.blob ?? "" : "",
       mimeType: block.mime_type ?? "", name: block.type === "resource_link" ? block.name : "",

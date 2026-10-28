@@ -12900,6 +12900,24 @@ mod tests {
             .map(|block| content_block_to_data(&block).unwrap())
             .collect();
 
+        // V2 dispatch converts the same outbound blocks through JSON into the
+        // v2 schema. Verify media bytes and file links survive that boundary.
+        let wire: Vec<serde_json::Value> = blocks[..3]
+            .iter()
+            .map(|block| {
+                let value = serde_json::to_value(to_acp_content_block(block)).unwrap();
+                let v2: agent_client_protocol::schema::v2::ContentBlock =
+                    serde_json::from_value(value).unwrap();
+                serde_json::to_value(v2).unwrap()
+            })
+            .collect();
+        assert_eq!(wire[0]["data"], "image-data");
+        assert_eq!(wire[0]["mimeType"], "image/png");
+        assert_eq!(wire[1]["data"], "audio-data");
+        assert_eq!(wire[1]["mimeType"], "audio/wav");
+        assert_eq!(wire[2]["uri"], "file:///tmp/report.md");
+        assert_eq!(wire[2]["name"], "report.md");
+
         assert!(matches!(
             &converted[0],
             ContentBlockData::Image {

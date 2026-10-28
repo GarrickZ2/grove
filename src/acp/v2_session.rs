@@ -1473,13 +1473,20 @@ for line in sys.stdin:
         if req['params']['protocolVersion'] == 1:
             send({'jsonrpc':'2.0','id':ident,'error':{'code':-32022,'message':'unsupported protocol version','data':{'requested':1,'supported':[2]}}})
         else:
-            send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':2,'info':{'name':'fixture','version':'1'},'capabilities':{'session':{}}}})
+            send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':2,'info':{'name':'fixture','version':'1'},'capabilities':{'session':{'prompt':{'image':{},'audio':{}}}}}})
     elif method == 'session/new':
         assert not req['params'].get('mcpServers')
         send({'jsonrpc':'2.0','id':ident,'result':{'sessionId':'session-test'}})
     elif method == 'session/prompt':
+        prompt = req['params']['prompt']
+        assert [block['type'] for block in prompt] == ['text', 'image', 'audio', 'resource_link'], prompt
+        assert prompt[1]['data'] == 'aW1hZ2U=' and prompt[1]['mimeType'] == 'image/png'
+        assert prompt[2]['data'] == 'YXVkaW8=' and prompt[2]['mimeType'] == 'audio/wav'
+        assert prompt[3]['uri'] == 'file:///tmp/report.txt' and prompt[3]['name'] == 'report.txt'
         update({'sessionUpdate':'state_update','state':'running'})
         update({'sessionUpdate':'user_message_chunk','messageId':'u1','content':{'type':'text','text':'hello'}})
+        for block in prompt[1:]:
+            update({'sessionUpdate':'user_message_chunk','messageId':'u1','content':block})
         update({'sessionUpdate':'agent_message_chunk','messageId':'a1','content':{'type':'text','text':'old'}})
         send({'jsonrpc':'2.0','id':ident,'result':{'messageId':'u1'}})
         update({'sessionUpdate':'agent_message','messageId':'a1','content':[{'type':'text','text':'new'}]})
@@ -1562,7 +1569,34 @@ for line in sys.stdin:
                             1
                         );
                         handle
-                            .send_tracked_prompt("hello".into(), Vec::new(), None, false, None)
+                            .send_tracked_prompt(
+                                "hello".into(),
+                                vec![
+                                    super::super::ContentBlockData::Image {
+                                        data: "aW1hZ2U=".into(),
+                                        mime_type: "image/png".into(),
+                                        uri: None,
+                                        label: Some("Image #1".into()),
+                                    },
+                                    super::super::ContentBlockData::Audio {
+                                        data: "YXVkaW8=".into(),
+                                        mime_type: "audio/wav".into(),
+                                        label: Some("Audio #1".into()),
+                                    },
+                                    super::super::ContentBlockData::ResourceLink {
+                                        uri: "file:///tmp/report.txt".into(),
+                                        name: "report.txt".into(),
+                                        mime_type: Some("text/plain".into()),
+                                        size: None,
+                                        title: None,
+                                        description: None,
+                                        label: Some("File #1".into()),
+                                    },
+                                ],
+                                None,
+                                false,
+                                None,
+                            )
                             .await
                             .unwrap();
                         sent = true;
@@ -1582,7 +1616,7 @@ for line in sys.stdin:
                         recorded_cost = true;
                     }
                     super::super::AcpUpdate::PromptCompleted { stop_reason, .. } => {
-                        assert!(sent && bound && recorded_cost && message_updates >= 3);
+                        assert!(sent && bound && recorded_cost && message_updates >= 6);
                         assert_eq!(stop_reason, "end_turn");
                         break;
                     }
@@ -1593,6 +1627,21 @@ for line in sys.stdin:
         })
         .await
         .unwrap();
+        let history = crate::storage::chat_history::load_history(&key, "test", "usage-chat");
+        let replayed: Vec<_> = history
+            .iter()
+            .filter_map(|event| match event {
+                super::super::AcpUpdate::V2MessageUpdate { update } => {
+                    serde_json::to_value(update).ok()
+                }
+                _ => None,
+            })
+            .filter(|event| event["sessionUpdate"] == "user_message_chunk")
+            .collect();
+        assert_eq!(replayed.len(), 4);
+        assert_eq!(replayed[1]["content"]["data"], "aW1hZ2U=");
+        assert_eq!(replayed[2]["content"]["data"], "YXVkaW8=");
+        assert_eq!(replayed[3]["content"]["uri"], "file:///tmp/report.txt");
         let count: i64 = crate::storage::database::connection().query_row(
             "SELECT count(*) FROM chat_token_usage WHERE project_key = ?1 AND total_tokens = 12 AND cost_amount = 0.5",
             [key], |row| row.get(0),

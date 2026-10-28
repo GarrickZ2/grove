@@ -539,6 +539,8 @@ export type ChatMessage =
       clientMessageId?: string;
       messageId?: string;
       v2EchoPending?: boolean;
+      v2OriginalAttachments?: Attachment[];
+      v2EchoAttachments?: Attachment[];
     }
   | {
       type: "assistant";
