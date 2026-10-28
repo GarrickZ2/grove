@@ -1256,12 +1256,12 @@ function buildConversationTurns(
 }
 
 /** Flatten a render item to a plain text blob for data-layer chat search. */
-function extractRenderItemText(item: RenderItem): string {
+function extractRenderItemText(item: RenderItem, expandedSections: Set<string>): string {
   if (item.kind === "single") {
     const m = item.message;
     switch (m.type) {
       case "subagent":
-        return [m.title, m.description, ...buildSequentialRenderItems(m.messages).map(extractRenderItemText)].filter(Boolean).join("\n");
+        return [m.title, m.description].filter(Boolean).join("\n");
       case "session_exchange":
         return m.blocks.map((block) => block.type === "text" ? block.text : "").join("\n");
       case "plan_document":
@@ -1270,8 +1270,9 @@ function extractRenderItemText(item: RenderItem): string {
         return m.entries.map((entry) => entry.content).join("\n");
       case "user":
         return [m.sender ?? "", m.content].filter(Boolean).join("\n");
-      case "assistant":
       case "thinking":
+        return "";
+      case "assistant":
       case "system":
         return m.content;
       case "compaction":
@@ -1311,12 +1312,11 @@ function extractRenderItemText(item: RenderItem): string {
     item.kind === "tool-section" ||
     item.kind === "file-change-summary"
   ) {
-    return item.tools
-      .map((t) => [t.message.title, t.message.name, t.message.content ?? ""].filter(Boolean).join("\n"))
-      .join("\n");
+    return "";
   }
+  if (!expandedSections.has(item.sectionId)) return "";
   return item.items
-    .filter(({ message }) => message.type !== "thinking")
+    .filter(({ message }) => message.type === "assistant")
     .map(({ message }) =>
       message.type === "tool"
         ? [message.title, message.name, message.content ?? ""].filter(Boolean).join("\n")
@@ -10230,7 +10230,7 @@ export function TaskChat({
     items: renderItems,
     query: chatSearchOpen ? chatSearchQuery : "",
     enabled: chatSearchOpen,
-    extractText: extractRenderItemText,
+    extractText: useCallback((item: RenderItem) => extractRenderItemText(item, expandedSections), [expandedSections]),
     scrollerRef: messagesViewportRef,
     renderToken,
     ensureItemAvailable: ensureVirtualItemAvailable,

@@ -28,6 +28,27 @@ function matchKey(m: Match): string {
   return `${m.itemIndex}:${m.intra}`;
 }
 
+/** Text currently rendered in a row, excluding explicitly hidden content. */
+function visibleTextNodes(container: HTMLElement): Text[] {
+  const texts: Text[] = [];
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => {
+      const parent = node.parentElement;
+      if (!parent || !node.textContent || parent.closest(
+        "[data-grove-search-bar], [data-grove-search-skip], [hidden], [aria-hidden='true'], script, style, noscript",
+      )) return NodeFilter.FILTER_REJECT;
+      for (let el: HTMLElement | null = parent; el && el !== container; el = el.parentElement) {
+        const style = getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  let node: Node | null;
+  while ((node = walker.nextNode())) texts.push(node as Text);
+  return texts;
+}
+
 export interface ChatSearchResult {
   total: number;
   /** 0-indexed; equals 0 when total === 0 */
@@ -92,23 +113,53 @@ export function useChatSearch<T>(opts: {
     "highlights" in CSS &&
     typeof Highlight !== "undefined";
 
+  // Mounted rows reflect local accordion state; off-screen rows use the
+  // conservative data-layer fallback.
+  const [visibleRows, setVisibleRows] = useState<Map<number, string[]>>(() => new Map());
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!enabled || !scroller) return;
+    let timer: number | undefined;
+    const readRows = () => {
+      const rows = new Map<number, string[]>();
+      scroller.querySelectorAll<HTMLElement>("[data-item-index]").forEach((row) => {
+        const index = Number(row.dataset.itemIndex);
+        if (Number.isInteger(index)) rows.set(index, visibleTextNodes(row).map((node) => node.data));
+      });
+      setVisibleRows((previous) => {
+        if (previous.size === rows.size && [...rows].every(([key, value]) =>
+          JSON.stringify(previous.get(key)) === JSON.stringify(value))) return previous;
+        return rows;
+      });
+    };
+    readRows();
+    const observer = new MutationObserver(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(readRows, 200);
+    });
+    observer.observe(scroller, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["aria-expanded", "aria-hidden", "hidden"] });
+    return () => { observer.disconnect(); window.clearTimeout(timer); };
+  }, [enabled, scrollerRef, renderToken, items]);
+
   const matches = useMemo<Match[]>(() => {
     if (!enabled || !query) return [];
     const q = query.toLowerCase();
     const out: Match[] = [];
     items.forEach((it, idx) => {
-      const text = extractText(it).toLowerCase();
-      if (!text) return;
-      let i = 0;
+      const texts = visibleRows.get(idx) ?? [extractText(it)];
       let intra = 0;
-      while ((i = text.indexOf(q, i)) !== -1) {
-        out.push({ itemIndex: idx, intra });
-        intra += 1;
-        i += q.length;
+      for (const value of texts) {
+        const text = value.toLowerCase();
+        let i = 0;
+        while ((i = text.indexOf(q, i)) !== -1) {
+          out.push({ itemIndex: idx, intra });
+          intra += 1;
+          i += q.length;
+        }
       }
     });
     return out;
-  }, [items, query, enabled, extractText]);
+  }, [items, query, enabled, extractText, visibleRows]);
 
   // Anchor focus to the (itemIndex, intra) pair, NOT an ordinal index.
   // During streaming, new matches may appear earlier in the list (e.g.
@@ -251,28 +302,7 @@ export function useChatSearch<T>(opts: {
       if (idxAttr === null) return;
       const itemIdx = Number(idxAttr);
 
-      const texts: Text[] = [];
-      const walker = document.createTreeWalker(
-        container,
-        NodeFilter.SHOW_TEXT,
-        {
-          acceptNode: (node) => {
-            const parent = node.parentElement;
-            if (!parent) return NodeFilter.FILTER_REJECT;
-            if (parent.closest("[data-grove-search-bar]"))
-              return NodeFilter.FILTER_REJECT;
-            if (parent.closest("[data-grove-search-skip]"))
-              return NodeFilter.FILTER_REJECT;
-            const tag = parent.tagName?.toLowerCase();
-            if (tag === "script" || tag === "style" || tag === "noscript")
-              return NodeFilter.FILTER_REJECT;
-            if (!node.textContent) return NodeFilter.FILTER_REJECT;
-            return NodeFilter.FILTER_ACCEPT;
-          },
-        },
-      );
-      let n: Node | null;
-      while ((n = walker.nextNode())) texts.push(n as Text);
+      const texts = visibleTextNodes(container);
 
       let intra = 0;
       for (const tn of texts) {
@@ -338,6 +368,7 @@ export function useChatSearch<T>(opts: {
     supportsHighlight,
     scrollerRef,
     renderToken,
+    visibleRows,
     clearHighlights,
   ]);
 
