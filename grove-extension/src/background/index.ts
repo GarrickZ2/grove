@@ -462,157 +462,98 @@ async function waitForCondition(
 }
 
 // ==========================================
-// 🔌 Connection to Local Grove App (WebSocket)
-// ==========================================
-const PORT_RANGE_START = 3001;
-const PORT_RANGE_END = 3010;
-const GROVE_LOOPBACK_HOST = '127.0.0.1';
+// Connection settings are owned by the background worker so reconnects never
+// silently replace a manually selected remote server with a local one.
+const DEFAULT_ADDRESS = 'http://127.0.0.1:3001';
 const GROVE_CONNECT_TIMEOUT_MS = 4000;
-let activePort = 3001;
+type ConnectionSettings = { address: string; passkey: string; autoDiscover: boolean };
+let activeAddress = DEFAULT_ADDRESS;
 let groveWs: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
-
-async function pingPort(port: number): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 800); // 800ms quick loopback timeout
-    const resp = await fetch(`http://${GROVE_LOOPBACK_HOST}:${port}/api/v1/auth/info`, {
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    return resp.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function findGrovePort(): Promise<number> {
-  // 1. Try to read last working port from chrome.storage
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    const data = await chrome.storage.local.get('grove_port');
-    if (data.grove_port) {
-      console.log(`[Grove Background] Testing cached port: ${data.grove_port}`);
-      const isAlive = await pingPort(data.grove_port);
-      if (isAlive) {
-        activePort = data.grove_port;
-        return data.grove_port;
-      }
-    }
-  }
-
-  // 2. Scan ports in parallel (3001 to 3010)
-  console.log(`[Grove Background] Scanning ports ${PORT_RANGE_START} to ${PORT_RANGE_END}...`);
-  const scanPromises: Promise<number | null>[] = [];
-  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
-    scanPromises.push(
-      pingPort(port).then(isAlive => isAlive ? port : null)
-    );
-  }
-
-  const results = await Promise.all(scanPromises);
-  const foundPort = results.find(p => p !== null);
-
-  if (foundPort) {
-    console.log(`[Grove Background] Discovered active port: ${foundPort}`);
-    activePort = foundPort;
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      await chrome.storage.local.set({ grove_port: foundPort });
-    }
-    return foundPort;
-  }
-
-  // Fallback to default
-  console.log(`[Grove Background] No active server found. Falling back to port 3001.`);
-  activePort = 3001;
-  return 3001;
-}
-
-// In-flight guard. Without this, a triggering event arriving while a
-// prior connect is still inside `await findGrovePort()` triggers a
-// second connect that races the first — two `groveWs = new WebSocket(...)`
-// assignments and an orphaned onclose handler scheduling a stale reconnect.
 let connectInFlight = false;
+let connectionGeneration = 0;
+
+async function settings(): Promise<ConnectionSettings> {
+  const data = await chrome.storage.local.get(['grove_connection', 'grove_port']);
+  if (data.grove_connection) return data.grove_connection as ConnectionSettings;
+  return { address: `http://127.0.0.1:${data.grove_port || 3001}`, passkey: '', autoDiscover: true };
+}
+
+async function pingAddress(address: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 800);
+  try {
+    const response = await fetch(`${address}/api/v1/auth/info`, { signal: controller.signal });
+    if (!response.ok) return false;
+    const info = await response.json();
+    return typeof info.required === 'boolean' && typeof info.mode === 'string';
+  } catch { return false; } finally { clearTimeout(timeout); }
+}
+
+async function signedSocketUrl(config: ConnectionSettings): Promise<string> {
+  const url = new URL('/api/v1/extension/ws', config.address);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  if (config.passkey) {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const nonce = crypto.randomUUID().replaceAll('-', '');
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey('raw', encoder.encode(config.passkey), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(`${timestamp}|${nonce}|GET|/api/v1/extension/ws`));
+    const hex = Array.from(new Uint8Array(signature), byte => byte.toString(16).padStart(2, '0')).join('');
+    url.search = new URLSearchParams({ ts: timestamp, nonce, sig: hex }).toString();
+  }
+  return url.toString();
+}
 
 async function connectToGrove() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  if (connectInFlight) return;
-  if (
-    groveWs?.readyState === WebSocket.OPEN ||
-    groveWs?.readyState === WebSocket.CONNECTING
-  ) return;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (connectInFlight || groveWs?.readyState === WebSocket.OPEN || groveWs?.readyState === WebSocket.CONNECTING) return;
   connectInFlight = true;
+  const generation = connectionGeneration;
   try {
-    const port = await findGrovePort();
-    const url = `ws://${GROVE_LOOPBACK_HOST}:${port}/api/v1/extension/ws`;
-    console.log(`[Grove Background] Connecting to ${url}`);
-
+    const config = await settings();
+    if (config.autoDiscover && !(await pingAddress(config.address))) {
+      const addresses = Array.from({ length: 10 }, (_, i) => `http://127.0.0.1:${3001 + i}`);
+      const found = await Promise.all(addresses.map(pingAddress));
+      config.address = addresses[found.findIndex(Boolean)] || config.address;
+    }
+    const url = await signedSocketUrl(config);
+    if (generation !== connectionGeneration) return;
+    activeAddress = config.address;
     const myWs = new WebSocket(url);
     groveWs = myWs;
     const connectTimeout = setTimeout(() => {
-      if (groveWs !== myWs || myWs.readyState !== WebSocket.CONNECTING) return;
-      console.warn(
-        `[Grove Background] Connection to Grove timed out after ${GROVE_CONNECT_TIMEOUT_MS}ms.`,
-      );
-      myWs.close();
+      if (groveWs === myWs && myWs.readyState === WebSocket.CONNECTING) myWs.close();
     }, GROVE_CONNECT_TIMEOUT_MS);
-    // All event handlers below close over `myWs` and bail out if a newer
-    // connection has replaced it (`groveWs !== myWs`). Without this, a
-    // late-firing handler from a closed-mid-handshake socket can stomp on
-    // the new socket's state.
-
     myWs.onopen = () => {
       if (groveWs !== myWs) return;
       clearTimeout(connectTimeout);
-      console.log(`[Grove Background] Connected to Grove Local Server on port ${port}.`);
-      myWs.send(JSON.stringify({
-        type: 'COMPANION_HELLO',
-        extensionVersion: chrome.runtime.getManifest().version,
-        protocolVersion: COMPANION_PROTOCOL_VERSION,
-        capabilities: COMPANION_CAPABILITIES,
-      }));
+      myWs.send(JSON.stringify({ type: 'COMPANION_HELLO', extensionVersion: chrome.runtime.getManifest().version, protocolVersion: COMPANION_PROTOCOL_VERSION, capabilities: COMPANION_CAPABILITIES }));
       if (keepAliveTimer) clearInterval(keepAliveTimer);
-      // Chrome MV3 workers may be suspended after 30s without WebSocket
-      // traffic. A 20s ping follows Chrome's documented keepalive pattern.
       keepAliveTimer = setInterval(() => {
-        if (groveWs === myWs && myWs.readyState === WebSocket.OPEN) {
-          myWs.send(JSON.stringify({ type: 'ping' }));
-        }
+        if (groveWs === myWs && myWs.readyState === WebSocket.OPEN) myWs.send(JSON.stringify({ type: 'ping' }));
       }, 20_000);
     };
-
     myWs.onmessage = async (event) => {
       if (groveWs !== myWs) return;
-      try {
-        const msg = JSON.parse(event.data);
-        console.log('[Grove Background] Message received from Grove:', msg);
-        await handleGroveMessage(msg);
-      } catch (e) {
-        console.error('[Grove Background] Error parsing Grove message:', e);
-      }
+      try { await handleGroveMessage(JSON.parse(event.data)); }
+      catch (error) { console.error('[Grove Background] Invalid message:', error); }
     };
-
     myWs.onclose = () => {
       if (groveWs !== myWs) return;
       clearTimeout(connectTimeout);
-      if (keepAliveTimer) {
-        clearInterval(keepAliveTimer);
-        keepAliveTimer = null;
-      }
+      if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
       groveWs = null;
-      console.log('[Grove Background] Connection to Grove lost. Retrying port discovery in 5s...');
       reconnectTimer = setTimeout(connectToGrove, 5000);
     };
-
-    myWs.onerror = (err) => {
-      if (groveWs !== myWs) return;
-      console.error('[Grove Background] Grove socket error:', err);
-    };
+    myWs.onerror = () => console.warn('[Grove Background] Connection failed.');
+  } catch (error) {
+    console.error('[Grove Background] Connection setup failed:', error);
+    if (generation === connectionGeneration) reconnectTimer = setTimeout(connectToGrove, 5000);
   } finally {
     connectInFlight = false;
+    if (generation !== connectionGeneration) void connectToGrove();
   }
 }
 
@@ -1068,44 +1009,23 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-// Listen for dynamic port discoveries from Content Scripts or the Popup UI.
-//
-// The listener is intentionally NOT declared `async` — Chrome treats a returned
-// Promise inconsistently across versions, and `sendResponse` only stays valid
-// when the listener returns `true`. Here we don't respond to the sender, so we
-// kick off the async work in a void IIFE and return synchronously.
+// Keep editing state in the popup separate from actual connection state.
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'GROVE_CONNECTION_STATUS') {
-    sendResponse({
-      connected: groveWs?.readyState === WebSocket.OPEN,
-      connecting: connectInFlight || groveWs?.readyState === WebSocket.CONNECTING,
-      port: activePort,
-    });
+    sendResponse({ connected: groveWs?.readyState === WebSocket.OPEN, connecting: connectInFlight || groveWs?.readyState === WebSocket.CONNECTING, address: activeAddress });
     return;
   }
-  if (message?.type === 'GROVE_PORT_DISCOVERED') {
+  if (message?.type === 'GROVE_CONNECT') {
     void (async () => {
-      const discoveredPort = message.port;
-      if (
-        discoveredPort === activePort &&
-        (connectInFlight ||
-          groveWs?.readyState === WebSocket.OPEN ||
-          groveWs?.readyState === WebSocket.CONNECTING)
-      ) return;
-      console.log(
-        `[Grove Background] Connecting to Grove port discovered by popup/page: ${discoveredPort}.`,
-      );
-      activePort = discoveredPort;
-      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-        await chrome.storage.local.set({ grove_port: discoveredPort });
-      }
-      if (groveWs && groveWs.readyState !== WebSocket.CLOSED) {
-        const previous = groveWs;
-        groveWs = null;
-        previous.close();
-      }
-      connectToGrove();
-    })();
-    return;
+      await chrome.storage.local.set({ grove_connection: message.config });
+      connectionGeneration++;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (groveWs) { const previous = groveWs; groveWs = null; previous.close(); }
+      if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+      activeAddress = message.config.address;
+      void connectToGrove();
+      sendResponse({ ok: true });
+    })().catch(() => sendResponse({ ok: false }));
+    return true;
   }
 });
