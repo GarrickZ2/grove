@@ -215,9 +215,9 @@ export function BlitzTaskListItem({
           </span>
           <span
             className="min-w-0 truncate rounded border border-[var(--color-highlight)]/20 bg-[var(--color-bg-tertiary)]/60 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
-            title={task.isLocal ? "Local" : projectName}
+            title={task.isLocal ? "Work" : projectName}
           >
-            {task.isLocal ? "Local" : projectName}
+            {task.isLocal ? "Work" : projectName}
           </span>
         </div>
       </button>

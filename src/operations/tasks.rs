@@ -678,31 +678,7 @@ fn create_task_inner(
     }
 
     let (task_path_str, branch) = if is_studio {
-        // Studio: create folder structure under ~/.grove/studios/{project_key}/tasks/{slug}/
-        let studio_dir = workspace::studio_project_dir(repo_path);
-        let task_dir = studio_dir.join("tasks").join(&slug);
-        std::fs::create_dir_all(task_dir.join("input"))?;
-        std::fs::create_dir_all(task_dir.join("output"))?;
-        std::fs::create_dir_all(task_dir.join("internal"))?;
-        std::fs::create_dir_all(task_dir.join("scripts"))?;
-
-        // Symlink resource/ → project resource/ (read-only)
-        let resource_link = task_dir.join("resource");
-        let project_resource = studio_dir.join("resource");
-        if !resource_link.exists() && project_resource.exists() {
-            let _ = crate::fs_link::create_link(&project_resource, &resource_link);
-        }
-
-        // Symlink instructions.md → project instructions.md (read-only)
-        let instructions_link = task_dir.join("instructions.md");
-        let project_instructions = studio_dir.join("instructions.md");
-        if !instructions_link.exists() && project_instructions.exists() {
-            let _ = crate::fs_link::create_link(&project_instructions, &instructions_link);
-        }
-
-        // Generate AGENTS.md and its agent-specific aliases.
-        write_studio_task_contract(&task_dir, &task_name)?;
-
+        let task_dir = prepare_studio_task_directory(repo_path, &slug, &task_name)?;
         (task_dir.to_string_lossy().to_string(), String::new())
     } else {
         // Repo: create git worktree
@@ -772,6 +748,90 @@ fn create_task_inner(
         task,
         worktree_path: task_path_str,
     })
+}
+
+/// Prepare a Studio workspace without overwriting an existing contract or files.
+fn prepare_studio_task_directory(
+    project_path: &str,
+    task_id: &str,
+    task_name: &str,
+) -> Result<std::path::PathBuf> {
+    let studio_dir = workspace::studio_project_dir(project_path);
+    let task_dir = studio_dir.join("tasks").join(task_id);
+    for dir in ["input", "output", "internal", "scripts"] {
+        std::fs::create_dir_all(task_dir.join(dir))?;
+    }
+    for (link, target) in [
+        ("resource", "resource"),
+        ("instructions.md", "instructions.md"),
+    ] {
+        let destination = task_dir.join(link);
+        let source = studio_dir.join(target);
+        if std::fs::symlink_metadata(&destination).is_err() && source.exists() {
+            crate::fs_link::create_link(&source, &destination)?;
+        }
+    }
+    if std::fs::symlink_metadata(task_dir.join("AGENTS.md")).is_err() {
+        // Contract generation replaces aliases; avoid overwriting any existing
+        // files when a legacy or partially initialized directory is present.
+        if ["CLAUDE.md", "GEMINI.md"]
+            .iter()
+            .any(|name| std::fs::symlink_metadata(task_dir.join(name)).is_ok())
+        {
+            return Err(GroveError::invalid_data("Studio task has agent aliases but no AGENTS.md; refusing to overwrite existing files"));
+        }
+        write_studio_task_contract(&task_dir, task_name)?;
+    }
+    Ok(task_dir)
+}
+
+/// Create the built-in Studio task once, including for projects from older releases.
+/// Serialize initialization so concurrent project loads cannot overwrite its contract.
+pub fn ensure_studio_local_task(
+    project_path: &str,
+    project_key: &str,
+    project_name: &str,
+) -> Result<tasks::Task> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(task) = tasks::get_task(project_key, tasks::LOCAL_TASK_ID)? {
+        return Ok(task);
+    }
+    // Do not replace an existing archived row or its files.
+    if tasks::get_archived_task(project_key, tasks::LOCAL_TASK_ID)?.is_some() {
+        return Err(GroveError::invalid_data(
+            "Studio Work task is unexpectedly archived",
+        ));
+    }
+    let studio_dir = workspace::studio_project_dir(project_path);
+    if !studio_dir.join("resource").is_dir() || !studio_dir.join("instructions.md").is_file() {
+        return Err(GroveError::invalid_data(
+            "Studio project resource or instructions are missing",
+        ));
+    }
+    let task_dir = prepare_studio_task_directory(project_path, tasks::LOCAL_TASK_ID, project_name)?;
+    let now = chrono::Utc::now();
+    let task = tasks::Task {
+        id: tasks::LOCAL_TASK_ID.to_string(),
+        name: project_name.to_string(),
+        branch: String::new(),
+        target: String::new(),
+        worktree_path: task_dir.to_string_lossy().into_owned(),
+        initial_commit: None,
+        created_at: now,
+        updated_at: now,
+        status: tasks::TaskStatus::Active,
+        multiplexer: "tmux".to_string(),
+        session_name: session::session_name(project_key, tasks::LOCAL_TASK_ID),
+        created_by: "system".to_string(),
+        archived_at: None,
+        code_additions: 0,
+        code_deletions: 0,
+        files_changed: 0,
+        is_local: true,
+    };
+    tasks::add_task(project_key, task.clone())?;
+    Ok(task)
 }
 
 /// Result of recover_task operation
@@ -939,4 +999,78 @@ pub fn reset_task(
         .ok_or_else(|| GroveError::not_found("Task not found after reset"))?;
 
     Ok(ResetTaskResult { task: updated_task })
+}
+
+#[cfg(test)]
+mod studio_local_tests {
+    use super::*;
+
+    #[test]
+    fn studio_work_is_created_and_backfilled_without_touching_existing_tasks() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+        let path = workspace::create_studio_project("Studio Work migration").unwrap();
+        let key = workspace::project_hash(&path);
+        let local = tasks::get_task(&key, tasks::LOCAL_TASK_ID)
+            .unwrap()
+            .unwrap();
+        let local_dir = std::path::Path::new(&local.worktree_path);
+        assert_eq!(
+            local_dir,
+            workspace::studio_project_dir(&path).join("tasks/_local")
+        );
+        assert!(local.is_local);
+        assert!(local.branch.is_empty());
+        for entry in [
+            "input",
+            "output",
+            "internal",
+            "scripts",
+            "resource",
+            "instructions.md",
+            "AGENTS.md",
+        ] {
+            assert!(local_dir.join(entry).exists(), "missing {entry}");
+        }
+        let regular =
+            create_studio_task(&path, &key, "Existing task".into(), "tmux", "user").unwrap();
+        std::fs::write(
+            std::path::Path::new(&regular.worktree_path).join("output/keep.txt"),
+            "keep",
+        )
+        .unwrap();
+        std::fs::write(local_dir.join("output/keep.txt"), "local").unwrap();
+        std::fs::write(local_dir.join("AGENTS.md"), "preserve").unwrap();
+        {
+            let conn = crate::storage::database::connection();
+            conn.execute(
+                "DELETE FROM tasks WHERE project = ?1 AND id = ?2",
+                rusqlite::params![key, tasks::LOCAL_TASK_ID],
+            )
+            .unwrap();
+        }
+        let restored = ensure_studio_local_task(&path, &key, "Studio Work migration").unwrap();
+        let again = ensure_studio_local_task(&path, &key, "Studio Work migration").unwrap();
+        assert_eq!(restored.created_at, again.created_at);
+        assert_eq!(
+            std::fs::read_to_string(local_dir.join("AGENTS.md")).unwrap(),
+            "preserve"
+        );
+        assert_eq!(
+            std::fs::read_to_string(local_dir.join("output/keep.txt")).unwrap(),
+            "local"
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                std::path::Path::new(&regular.worktree_path).join("output/keep.txt")
+            )
+            .unwrap(),
+            "keep"
+        );
+        assert!(tasks::archive_task(&key, tasks::LOCAL_TASK_ID).is_err());
+        assert!(tasks::remove_task(&key, tasks::LOCAL_TASK_ID).is_err());
+        assert!(tasks::get_task(&key, &regular.task.id).unwrap().is_some());
+        crate::storage::set_grove_dir_override(None);
+    }
 }

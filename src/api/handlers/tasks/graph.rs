@@ -592,6 +592,10 @@ mod tests {
         let task_id = "task-1";
         let project_path = temp.path().join("project-1");
         std::fs::create_dir_all(&project_path).unwrap();
+        let studio_dir =
+            crate::storage::workspace::studio_project_dir(project_path.to_str().unwrap());
+        std::fs::create_dir_all(studio_dir.join("resource")).unwrap();
+        std::fs::write(studio_dir.join("instructions.md"), "").unwrap();
         add_project_with_type(
             "Test Project",
             project_path.to_str().unwrap(),

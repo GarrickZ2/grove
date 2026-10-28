@@ -780,10 +780,14 @@ export function BlitzPage({
     selectedTask,
     inWorkspace: pageState.inWorkspace,
     onSelectTask: (task) => {
-      const bt = displayTasks.find(t => t.task.id === task.id);
+      const bt = displayTasks.find(t => t.task === task);
       if (bt) handleSelectTask(bt);
     },
     setContextMenu: pageHandlers.setContextMenu,
+    taskSelector: (task) => {
+      const bt = displayTasks.find((item) => item.task === task);
+      return bt ? `[data-project-id="${CSS.escape(bt.projectId)}"][data-task-id="${CSS.escape(task.id)}"]` : `[data-task-id="${CSS.escape(task.id)}"]`;
+    },
   });
 
   // Build context menu items
@@ -791,7 +795,7 @@ export function BlitzPage({
     if (!pageState.contextMenu) return [];
     // Find the BlitzTask to get projectType — more reliable than checking branch.
     const ctxBlitzTask = filteredTasks.find(
-      (bt) => bt.task.id === pageState.contextMenu!.task.id,
+      (bt) => bt.task === pageState.contextMenu!.task,
     );
     const isStudioTask = ctxBlitzTask?.projectType === "studio";
     const items = buildContextMenuItems(pageState.contextMenu.task, {
@@ -809,7 +813,7 @@ export function BlitzPage({
 
     // Add "Move to group" options for all tasks
     const task = pageState.contextMenu.task;
-    const bt = blitzTasks.find(b => b.task.id === task.id);
+    const bt = blitzTasks.find(b => b.task === task);
     if (bt) {
       const taskKey = `${bt.projectId}:${task.id}`;
       // Find which group the task is currently in
@@ -819,7 +823,7 @@ export function BlitzPage({
       if (availableGroups.length > 0) {
         items.push({ id: "div-group", label: "", divider: true, onClick: () => {} });
         for (const group of availableGroups) {
-          const label = group.id === MAIN_GROUP_ID ? "Main" : group.id === LOCAL_GROUP_ID ? "Local" : group.name;
+          const label = group.id === MAIN_GROUP_ID ? "Main" : group.id === LOCAL_GROUP_ID ? "Work" : group.name;
           const icon = group.id === LOCAL_GROUP_ID ? Laptop : Folder;
           items.push({
             id: `move-to-group-${group.id}`,
@@ -933,16 +937,16 @@ export function BlitzPage({
   // tasks have no clean/reset semantics; gated via isStudioTask.
   const isArchived = selectedTask?.status === "archived";
   const enabledArchiveCmd = useCallback(
-    () => hasTask && !isArchived && canOperate,
-    [hasTask, isArchived, canOperate],
+    () => hasTask && !isArchived && canOperate && !selectedTask?.isLocal,
+    [hasTask, isArchived, canOperate, selectedTask?.isLocal],
   );
   const enabledResetCmd = useCallback(
-    () => hasTask && canOperate && !isStudioTask,
-    [hasTask, canOperate, isStudioTask],
+    () => hasTask && canOperate && !isStudioTask && !selectedTask?.isLocal,
+    [hasTask, canOperate, isStudioTask, selectedTask?.isLocal],
   );
   const enabledCleanCmd = useCallback(
-    () => hasTask && !isStudioTask,
-    [hasTask, isStudioTask],
+    () => hasTask && !isStudioTask && !selectedTask?.isLocal,
+    [hasTask, isStudioTask, selectedTask?.isLocal],
   );
   useCommand("task.rename", opsHandlers.handleRename, { enabled: enabledTask }, [opsHandlers, enabledTask]);
   useCommand("task.archive", () => { void opsHandlers.handleArchive(); }, { enabled: enabledArchiveCmd }, [opsHandlers, enabledArchiveCmd]);
@@ -1188,6 +1192,7 @@ export function BlitzPage({
     pageOptionsRef.current = {
       taskActions: {
         selectedTask: selectedTask ?? null,
+        isStudio: isStudioTask,
         inWorkspace: pageState.inWorkspace,
         opsHandlers,
         onEnterWorkspace: pageHandlers.handleEnterWorkspace,
@@ -1557,7 +1562,7 @@ export function BlitzPage({
                       <ChevronRight className="w-3.5 h-3.5" />
                     </motion.span>
                     <Laptop className="w-3.5 h-3.5 text-[var(--color-accent)]" />
-                    <span>Local</span>
+                    <span>Work</span>
                     <span className="ml-auto px-1.5 py-0.5 rounded-full bg-[var(--color-bg-tertiary)] text-[10px]">
                       {folderLocalTasks.length}
                     </span>
@@ -1673,13 +1678,13 @@ export function BlitzPage({
                       onClose={handleCloseTask}
                       onEnterWorkspace={currentSelected.task.status !== "archived" ? pageHandlers.handleEnterWorkspace : undefined}
                       onAddPanel={currentSelected.task.status !== "archived" ? handleAddPanelFromInfo : undefined}
-                      onClean={isStudioTask ? undefined : opsHandlers.handleClean}
+                      onClean={isStudioTask || currentSelected.task.isLocal ? undefined : opsHandlers.handleClean}
                       onCommit={isStudioTask ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleCommit : undefined)}
                       onRebase={isStudioTask ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleRebase : undefined)}
                       onSync={isStudioTask ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleSync : undefined)}
                       onMerge={isStudioTask ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleMerge : undefined)}
-                      onArchive={currentSelected.task.status !== "archived" ? opsHandlers.handleArchive : undefined}
-                      onReset={isStudioTask ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleReset : undefined)}
+                      onArchive={!currentSelected.task.isLocal && currentSelected.task.status !== "archived" ? opsHandlers.handleArchive : undefined}
+                      onReset={isStudioTask || currentSelected.task.isLocal ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleReset : undefined)}
                       activeTab={pageState.infoPanelTab}
                       onTabChange={pageHandlers.setInfoPanelTab}
                     />
@@ -1736,9 +1741,9 @@ export function BlitzPage({
                     onRebase={active && !studio ? opsHandlers.handleRebase : undefined}
                     onSync={active && !studio ? opsHandlers.handleSync : undefined}
                     onMerge={active && !studio ? opsHandlers.handleMerge : undefined}
-                    onArchive={active ? opsHandlers.handleArchive : undefined}
-                    onClean={active && !studio ? opsHandlers.handleClean : undefined}
-                    onReset={active && !studio ? opsHandlers.handleReset : undefined}
+                    onArchive={active && !bt.task.isLocal ? opsHandlers.handleArchive : undefined}
+                    onClean={active && !studio && !bt.task.isLocal ? opsHandlers.handleClean : undefined}
+                    onReset={active && !studio && !bt.task.isLocal ? opsHandlers.handleReset : undefined}
                   />
                 </div>
               );

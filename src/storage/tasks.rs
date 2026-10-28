@@ -239,6 +239,9 @@ pub fn update_archived_task_code_stats(
 
 /// 归档任务
 pub fn archive_task(project: &str, task_id: &str) -> Result<Option<Task>> {
+    if task_id == LOCAL_TASK_ID {
+        return Err(GroveError::invalid_data("Cannot archive local task"));
+    }
     let task = get_task(project, task_id)?;
     if task.is_none() {
         return Ok(None);
@@ -277,6 +280,9 @@ pub fn recover_task(project: &str, task_id: &str) -> Result<()> {
 
 /// 删除活跃任务
 pub fn remove_task(project: &str, task_id: &str) -> Result<()> {
+    if task_id == LOCAL_TASK_ID {
+        return Err(GroveError::invalid_data("Cannot delete local task"));
+    }
     let conn = crate::storage::database::connection();
     let tx = conn.unchecked_transaction()?;
     crate::storage::agent_graph::cascade_delete_for_task(&tx, project, task_id)?;

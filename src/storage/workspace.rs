@@ -309,6 +309,13 @@ pub fn add_project_with_type(name: &str, path: &str, project_type: ProjectType) 
             crate::storage::tasks::LOCAL_TASK_ID,
             true,
         )?;
+    } else {
+        crate::operations::tasks::ensure_studio_local_task(&resolved_path, &hash, name)?;
+        crate::storage::taskgroups::ensure_task_assignment(
+            &hash,
+            crate::storage::tasks::LOCAL_TASK_ID,
+            true,
+        )?;
     }
 
     Ok(())

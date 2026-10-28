@@ -76,7 +76,7 @@ describe("Command catalog — integrity", () => {
     expect(bad, `when parse errors: ${bad.join(", ")}`).toEqual([]);
   });
 
-  it("keeps numbered navigation shortcuts aligned with sidebar order", () => {
+  it("keeps Work and Tasks shortcuts consistent across project types", () => {
     const assertLayout = (
       ids: readonly string[],
       commandIdForItem: (id: string) => string,
@@ -90,10 +90,10 @@ describe("Command catalog — integrity", () => {
     };
 
     assertLayout(REPO_NAV_IDS, (id) => `nav.${id}`);
-    assertLayout(
-      STUDIO_NAV_IDS,
-      (id) => id === "tasks" ? "nav.tasks.studio" : `nav.${id}`,
-    );
+    expect(STUDIO_NAV_IDS.slice(0, 3)).toEqual(REPO_NAV_IDS.slice(0, 3));
+    expect(COMMAND_CATALOG.find((c) => c.id === "nav.work")?.defaultWhen).toBeUndefined();
+    expect(COMMAND_CATALOG.find((c) => c.id === "nav.tasks")?.defaultWhen).toBeUndefined();
+    expect(COMMAND_CATALOG.find((c) => c.id === "nav.resource")?.defaultBindings?.[0]?.key).toBe("Mod+Alt+3");
   });
 
   it("reports binding conflicts (informational)", () => {

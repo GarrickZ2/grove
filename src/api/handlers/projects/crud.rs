@@ -304,19 +304,36 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
 
     if is_studio {
         let project_key = id.clone();
-        let (tasks_list, _) = tokio::task::spawn_blocking(move || {
-            let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
-            let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
+        let studio_path = project_path.clone();
+        let studio_name = project_name.clone();
+        let (tasks_list, local_task) = tokio::task::spawn_blocking(move || {
+            let local = crate::operations::tasks::ensure_studio_local_task(
+                &studio_path,
+                &project_key,
+                &studio_name,
+            )?;
+            crate::storage::taskgroups::ensure_task_assignment(
+                &project_key,
+                tasks::LOCAL_TASK_ID,
+                true,
+            )?;
+            let active_tasks = tasks::load_tasks(&project_key)?;
+            let archived_tasks = tasks::load_archived_tasks(&project_key)?;
             let mut all: Vec<TaskResponse> = active_tasks
                 .iter()
+                .filter(|t| !t.is_local)
                 .chain(archived_tasks.iter())
                 .map(storage_task_to_response)
                 .collect();
             all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-            (all, ())
+            Ok::<_, crate::error::GroveError>((all, Some(storage_task_to_response(&local))))
         })
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|e| {
+            eprintln!("Failed to initialize Studio Work: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
         return Ok(Json(ProjectResponse {
             id,
@@ -324,7 +341,7 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
             path: project.path,
             current_branch: String::new(),
             tasks: tasks_list,
-            local_task: None,
+            local_task,
             added_at,
             is_git_repo: false,
             exists: true,
@@ -552,13 +569,24 @@ pub async fn create_new_project(
         })?;
 
         let id = workspace::project_hash(&virtual_path);
+        let local_task = tasks::get_task(&id, tasks::LOCAL_TASK_ID)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiError {
+                        error: e.to_string(),
+                    }),
+                )
+            })?
+            .as_ref()
+            .map(storage_task_to_response);
         Ok(Json(ProjectResponse {
             id,
             name,
             path: virtual_path,
             current_branch: String::new(),
             tasks: Vec::new(),
-            local_task: None,
+            local_task,
             added_at: Utc::now().to_rfc3339(),
             is_git_repo: false,
             exists: true,

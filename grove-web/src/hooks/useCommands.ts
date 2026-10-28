@@ -103,6 +103,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
       const { onNavigate } = navigation;
       commands.push(
         withRanking({ id: "nav-dashboard", name: "Go to Dashboard", category: "Navigation", icon: LayoutGrid, handler: () => onNavigate("dashboard"), keywords: ["home"] }, { contexts: { default: 28, tasks: 4, workspace: -8 } }),
+        withRanking({ id: "nav-work", name: "Go to Work", category: "Navigation", icon: Laptop, handler: () => onNavigate("work"), keywords: ["local", "workspace", "main"] }, { contexts: { default: 52, tasks: 12, workspace: 4 } }),
       );
       if (isStudio) {
         commands.push(
@@ -111,7 +112,6 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
         );
       } else {
         commands.push(
-          withRanking({ id: "nav-work", name: "Go to Work", category: "Navigation", icon: Laptop, handler: () => onNavigate("work"), keywords: ["local", "workspace", "main"] }, { contexts: { default: 52, tasks: 12, workspace: 4 } }),
           withRanking({ id: "nav-tasks", name: "Go to Tasks", category: "Navigation", icon: ListTodo, handler: () => onNavigate("tasks"), keywords: ["zen"] }, { contexts: { default: 48, tasks: 8, workspace: 0 } }),
         );
       }
@@ -291,7 +291,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
         );
       }
 
-      if (selectedTask && isActive) {
+      if (selectedTask && isActive && !selectedTask.isLocal) {
         commands.push(withRanking({
           id: "task-archive",
           name: "Archive",
@@ -302,7 +302,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
         }, { contexts: { default: -4, tasks: 8, workspace: 14 } }));
       }
 
-      if (canOperate && !studioMode) {
+      if (canOperate && !studioMode && !selectedTask?.isLocal) {
         commands.push(withRanking({
           id: "task-reset",
           name: "Reset",
@@ -313,7 +313,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
         }, { contexts: { default: -8, tasks: 4, workspace: 12 } }));
       }
 
-      if (selectedTask) {
+      if (selectedTask && !selectedTask.isLocal && !studioMode) {
         commands.push(withRanking({
           id: "task-clean",
           name: "Clean (Delete Worktree)",

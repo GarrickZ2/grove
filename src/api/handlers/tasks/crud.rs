@@ -44,7 +44,11 @@ pub async fn list_tasks(
             } else {
                 tasks::load_tasks(&pk).unwrap_or_default()
             };
-            stored.iter().map(storage_task_to_response).collect()
+            stored
+                .iter()
+                .filter(|t| !t.is_local)
+                .map(storage_task_to_response)
+                .collect()
         })
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -254,6 +258,16 @@ pub async fn archive_task(
     Path((id, task_id)): Path<(String, String)>,
     Query(query): Query<ArchiveQuery>,
 ) -> Result<Json<TaskResponse>, (StatusCode, Json<ArchiveConfirmResponse>)> {
+    if task_id == tasks::LOCAL_TASK_ID {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ArchiveConfirmResponse::error(
+                "LOCAL_TASK",
+                "Cannot archive the built-in Work task",
+                task_id,
+            )),
+        ));
+    }
     let (project, project_key) = common::find_project_by_id(&id).map_err(|s| {
         (
             s,

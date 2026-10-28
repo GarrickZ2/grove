@@ -30,13 +30,12 @@ interface WorkPageProps {
 }
 
 /**
- * Work — dedicated page for a project's Local Task (the always-present
- * "work in the main repo" session).
+ * Work — dedicated page for a project's built-in Local Task. Coding uses
+ * the main repository; Studio uses its own task workspace.
  *
  * Renders TaskView directly; no task list, no filters, no inWorkspace state.
- * Local Task is resolved synchronously (backend version preferred, else
- * synthesized from project metadata), so the page mounts straight into the
- * workspace with zero flash or loading intermediate.
+ * Coding can synthesize a fallback from project metadata; Studio waits for
+ * the backend to initialize its task directory and return the real task.
  *
  * Lifecycle: keep-alive, mirroring TasksPage. App mounts it on first visit
  * and then only flips `display` — the Local Task workspace survives nav
@@ -64,7 +63,7 @@ export function WorkPage({ initialChatId, onNavigationConsumed, pageVisible = tr
     setPendingArchiveConfirm,
   });
 
-  const localTask = selectedProject ? resolveLocalTask(selectedProject) : null;
+  const localTask = selectedProject ? (selectedProject.projectType === "studio" ? selectedProject.localTask : resolveLocalTask(selectedProject)) : null;
 
   // Switch to a specific chat session if a deep-link asked for one.
   useChatDeepLink({
@@ -121,6 +120,7 @@ export function WorkPage({ initialChatId, onNavigationConsumed, pageVisible = tr
       taskActions: localTask
         ? {
             selectedTask: localTask,
+            isStudio: selectedProject?.projectType === "studio",
             inWorkspace: true,
             opsHandlers,
             onEnterWorkspace: () => {
@@ -185,9 +185,6 @@ export function WorkPage({ initialChatId, onNavigationConsumed, pageVisible = tr
           onRebase={selectedProject.isGitRepo ? opsHandlers.handleRebase : undefined}
           onSync={selectedProject.isGitRepo ? opsHandlers.handleSync : undefined}
           onMerge={selectedProject.isGitRepo ? opsHandlers.handleMerge : undefined}
-          onArchive={selectedProject.isGitRepo ? opsHandlers.handleArchive : undefined}
-          onClean={selectedProject.isGitRepo ? opsHandlers.handleClean : undefined}
-          onReset={selectedProject.isGitRepo ? opsHandlers.handleReset : undefined}
         />
       </div>
 
