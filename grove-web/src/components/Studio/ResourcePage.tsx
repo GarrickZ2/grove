@@ -1,3 +1,4 @@
+import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
@@ -134,6 +135,9 @@ export function ResourcePage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isEditingInstructions, setIsEditingInstructions] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEscapeScope(searchFocused, () => { setSearchQuery(""); searchRef.current?.blur(); });
   const [previewFile, setPreviewFile] = useState<{ file: ResourceFile; content: string; downloadUrl?: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
@@ -774,6 +778,9 @@ export function ResourcePage() {
           >
             <Search className="w-4 h-4 shrink-0" style={{ color: "var(--color-text-muted)" }} />
             <input
+              ref={searchRef}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search files"

@@ -91,6 +91,26 @@ describe("KeyboardManager — dispatch", () => {
     expect(outer).not.toHaveBeenCalled();
   });
 
+  it("lets Monaco close its visible find widget before the workspace", () => {
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "close", name: "close", category: "t", defaultBindings: [{ key: "Escape" }], scope: "workspace" },
+      handler,
+    );
+    mgr.pushScope("workspace");
+    const editor = document.createElement("div");
+    editor.className = "monaco-editor";
+    editor.innerHTML = '<div class="find-widget visible"><input></div>';
+    document.body.appendChild(editor);
+    const input = editor.querySelector("input")!;
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(handler).not.toHaveBeenCalled();
+    editor.querySelector(".find-widget")!.classList.remove("visible");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(handler).toHaveBeenCalledOnce();
+    editor.remove();
+  });
+
   it("falls through to next scope when top has no match", () => {
     const outer = vi.fn();
     commandRegistry.contribute(

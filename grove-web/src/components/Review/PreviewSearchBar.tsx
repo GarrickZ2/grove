@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 
 interface PreviewSearchBarProps {
@@ -25,6 +26,7 @@ export function PreviewSearchBar({
   className,
 }: PreviewSearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  useEscapeScope(true, onClose);
 
   useEffect(() => {
     inputRef.current?.focus();

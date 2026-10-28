@@ -1,3 +1,4 @@
+import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -87,6 +88,7 @@ export function AppPicker({
   appFilter,
 }: AppPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
+  useEscapeScope(isOpen, () => setIsOpen(false));
   const [searchQuery, setSearchQuery] = useState("");
   const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);

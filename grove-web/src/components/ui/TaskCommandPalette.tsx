@@ -1,3 +1,4 @@
+import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Code, Laptop, Zap } from "lucide-react";
@@ -22,6 +23,7 @@ function getTaskIcon(task: Task) {
 export function TaskCommandPalette({ isOpen, onClose, tasks, selectedTask, onTaskSelect }: TaskCommandPaletteProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
+  useEscapeScope(isOpen, onClose);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const isKeyboardNav = useRef(false);
@@ -72,7 +74,7 @@ export function TaskCommandPalette({ isOpen, onClose, tasks, selectedTask, onTas
   // Register the `palette.task.select` catalog command so it is
   // discoverable / rebindable. Mirrors the local Enter key path; the
   // local onKeyDown still handles Enter directly since this palette
-  // does not push its own keyboard scope.
+  // uses a separate scope for Escape.
   useCommand(
     "palette.task.select",
     () => {

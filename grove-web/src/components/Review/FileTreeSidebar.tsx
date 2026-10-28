@@ -1,3 +1,4 @@
+import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { DiffFile } from '../../api/review';
@@ -78,6 +79,9 @@ export function FileTreeSidebar({
   hideViewed = false,
   onToggleHideViewed,
 }: FileTreeSidebarProps) {
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEscapeScope(searchFocused, () => { onSearchChange?.(""); searchRef.current?.blur(); });
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -202,6 +206,9 @@ export function FileTreeSidebar({
         <div className="diff-sidebar-search">
           <Search style={{ width: 13, height: 13, color: 'var(--color-text-muted)', flexShrink: 0 }} />
           <input
+            ref={searchRef}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
             className="diff-sidebar-search-input"
             type="text"
             placeholder="Filter files..."

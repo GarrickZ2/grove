@@ -1,3 +1,4 @@
+import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { isIosClient } from "../../utils/platform";
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -156,6 +157,7 @@ export function BlitzPage({
 
   const mainListRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [searchFocused, setSearchFocused] = useState(false);
   // Imperative handles for every keep-alive workspace. taskViewRef always
   // points at the currently visible one; taskViewRefs owns the cached set.
   const taskViewRef = useRef<TaskViewHandle | null>(null);
@@ -212,6 +214,7 @@ export function BlitzPage({
 
   // Page state hook
   const [pageState, pageHandlers] = useTaskPageState(isMobile);
+  useEscapeScope(searchFocused, () => { pageHandlers.setSearchQuery(""); searchInputRef.current?.blur(); });
   if (pageState.inWorkspace && !mobileShowDetail) setMobileShowDetail(true);
   if (isMobile && mobileShowDetail && selectedTask && !pageState.inWorkspace) {
     pageHandlers.setInWorkspace(true);
@@ -1243,6 +1246,8 @@ export function BlitzPage({
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
             <input
               ref={searchInputRef}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
               type="text"
               value={pageState.searchQuery}
               onChange={(e) => pageHandlers.setSearchQuery(e.target.value)}

@@ -284,6 +284,11 @@ export class KeyboardManagerImpl {
     if (e.defaultPrevented) return;
     if (e.isComposing || e.keyCode === 229) return;
 
+    // Monaco owns Escape while its find widget is open. Its listener runs
+    // after this capture listener, so allow it to dismiss the widget first.
+    const editor = (e.target as Element | null)?.closest?.(".monaco-editor");
+    if (e.key === "Escape" && editor?.querySelector(".find-widget.visible")) return;
+
     const suppression = detectSuppression();
     const ctx = contextKeyService.getSnapshot();
     const resolved = this.getResolved();

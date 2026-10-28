@@ -1,3 +1,4 @@
+import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -73,6 +74,7 @@ export function Combobox({
   const [customValue, setCustomValue] = useState(() => (value && !options.find((opt) => opt.value === value)) ? value : "");
   const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition | null>(null);
   const [localSearch, setLocalSearch] = useState("");
+  useEscapeScope(isOpen, () => setIsOpen(false));
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);

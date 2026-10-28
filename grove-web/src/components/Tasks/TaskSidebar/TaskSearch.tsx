@@ -1,4 +1,6 @@
 import { Search } from "lucide-react";
+import { useState, useRef } from "react";
+import { useEscapeScope } from "../../../keyboard/useEscapeScope";
 
 interface TaskSearchProps {
   value: string;
@@ -7,6 +9,10 @@ interface TaskSearchProps {
 }
 
 export function TaskSearch({ value, onChange, inputRef }: TaskSearchProps) {
+  const [focused, setFocused] = useState(false);
+  const localRef = useRef<HTMLInputElement>(null);
+  useEscapeScope(focused, () => { onChange(""); localRef.current?.blur(); });
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -19,7 +25,9 @@ export function TaskSearch({ value, onChange, inputRef }: TaskSearchProps) {
     <div className="relative select-none">
       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)] pointer-events-none" />
       <input
-        ref={inputRef}
+        ref={(node) => { localRef.current = node; if (inputRef) inputRef.current = node; }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}

@@ -1,3 +1,4 @@
+import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, CircleAlert, Link2, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
@@ -433,6 +434,7 @@ function TargetSelect({ value, placeholder, disabled, options, onSelect }: { val
     return options.filter((option) => option.title.toLocaleLowerCase().includes(normalized) || (option.subtitle ?? '').toLocaleLowerCase().includes(normalized));
   }, [options, query]);
   const close = useCallback(() => { setOpen(false); setQuery(''); setHighlight(0); }, []);
+  useEscapeScope(open, () => { close(); triggerRef.current?.focus(); });
   const update = useCallback(() => {
     const el = triggerRef.current;
     if (!el) return;

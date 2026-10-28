@@ -1,3 +1,4 @@
+import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search } from "lucide-react";
@@ -16,6 +17,7 @@ const COMMAND_PALETTE_USAGE_KEY = "grove.command-palette.usage";
 
 export function CommandPalette() {
   const { isOpen, close, getCommands, pageContext } = useCommandPalette();
+  useEscapeScope(isOpen, close);
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [usageStats, setUsageStats] = useState<CommandUsageMap>({});

@@ -1,3 +1,4 @@
+import { useEscapeScope } from "../../../../keyboard/useEscapeScope";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Search, Link2 } from "lucide-react";
@@ -82,6 +83,8 @@ export function LinkedProjectPicker({
     setQuery("");
     setHighlightedIndex(0);
   }, []);
+
+  useEscapeScope(open, close);
 
   const select = useCallback(
     (project: ProjectListItem) => {
