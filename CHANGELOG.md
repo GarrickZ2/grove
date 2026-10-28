@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.12] - 2026-10-28
+
+### Added
+
+- **ACP sessions** — Support ACP v2 sessions and more resilient MCP setup.
+- **MCP connections** — Discover and connect packages and remote servers with unified authorization, and edit saved server display names.
+- **Linked projects** — Navigate from tasks to their linked projects.
+- **Application icons** — Choose from selectable Grove icon styles.
+
+### Improved
+
+- **ACP integration** — Update the agent client protocol and preserve message identities and session metadata across history and live updates.
+- **Memory graph** — Soften graph connections and remove the sidebar beta badge.
+
+### Fixed
+
+- **Agent connections** — Recover sessions, report connection and marketplace errors more clearly, and trust system certificates for registry requests.
+- **Chat** — Search visible conversation content, support larger attachments, and clean up previews and history limit hints.
+- **Remote clients** — Keep remote GUI configuration separate from local settings.
+- **Memory and graph editing** — Protect metadata updates, report read errors, and retain edge forms after dragging.
+- **Navigation and dialogs** — Improve Island navigation, preserve click-open panels, restore dialog surfaces, and scope Escape handling to active controls.
+- **Mobile composer and permissions** — Keep the composer open during control interactions and truncate resolved permission messages to one line.
+- **HTML preview** — Navigate relative file links correctly.
+- **Extensions** — Explain attention status more clearly.
+
 ## [0.12.11] - 2026-10-21
 
 ### Added
