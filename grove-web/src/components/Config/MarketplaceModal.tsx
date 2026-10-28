@@ -1,4 +1,5 @@
 import { errorMessage } from "../../utils/errorMessage";
+import { ProtocolVersionSelect } from "../ui/ProtocolVersionSelect";
 import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 /**
  * Agent Marketplace Modal — single window for browsing the ACP registry +
@@ -447,6 +448,7 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
   const [argsDraft, setArgsDraft] = useState(
     (installed?.args_override ?? []).join(" "),
   );
+  const [protocolDraft, setProtocolDraft] = useState<1 | 2>(installed?.acp_protocol_version ?? 1);
   const [envDraft, setEnvDraft] = useState(
     Object.entries(installed?.env_override ?? {})
       .map(([k, v]) => `${k}=${v}`)
@@ -461,6 +463,7 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
     // want a "controlled mirror" of the server snapshot.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setArgsDraft((installed?.args_override ?? []).join(" "));
+    setProtocolDraft(installed?.acp_protocol_version ?? 1);
     setEnvDraft(
       Object.entries(installed?.env_override ?? {})
         .map(([k, v]) => `${k}=${v}`)
@@ -659,6 +662,14 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
         {canApply && (
           <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
             <div>
+              <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+                ACP protocol
+              </div>
+              <div className="mt-1">
+                <ProtocolVersionSelect value={protocolDraft} onChange={setProtocolDraft} size="small" />
+              </div>
+            </div>
+            <div>
               <label className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
                 Extra args
               </label>
@@ -697,6 +708,7 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
                   onPatch({
                     args_override: parsedArgs,
                     env_override: parsedEnv,
+                    ...(protocolDraft !== (installed?.acp_protocol_version ?? 1) ? { acp_protocol_version: protocolDraft } : {}),
                   })
                 }
                 disabled={busy}

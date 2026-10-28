@@ -272,11 +272,22 @@ impl AcpSessionHandle {
         if !child.cancel {
             return Err("Subagent does not support cancellation".into());
         }
-        let connection = self.subagent_connection.lock().unwrap();
-        let connection = connection.as_ref().ok_or("Agent is disconnected")?;
-        connection
-            .send_notification(acp::CancelNotification::new(session.to_owned()))
-            .map_err(|error| error.to_string())?;
+        let v2_connection = self.subagent_connection_v2.lock().unwrap();
+        if let Some(connection) = v2_connection.as_ref() {
+            connection
+                .send_notification(
+                    agent_client_protocol::schema::v2::CancelSessionNotification::new(
+                        session.to_owned(),
+                    ),
+                )
+                .map_err(|error| error.to_string())?;
+        } else {
+            let connection = self.subagent_connection.lock().unwrap();
+            let connection = connection.as_ref().ok_or("Agent is disconnected")?;
+            connection
+                .send_notification(acp::CancelNotification::new(session.to_owned()))
+                .map_err(|error| error.to_string())?;
+        }
         // Cancel queued and visible requests for this child, never another child.
         child.cancellation.cancel();
         child.cancellation = CancellationToken::new();

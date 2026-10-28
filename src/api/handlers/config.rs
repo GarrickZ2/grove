@@ -138,6 +138,8 @@ pub struct CustomAgentDto {
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_header: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_protocol_version: Option<u8>,
 }
 
 impl From<&Config> for ConfigResponse {
@@ -181,6 +183,7 @@ impl From<&Config> for ConfigResponse {
                         args: a.args.clone(),
                         url: a.url.clone(),
                         auth_header: a.auth_header.clone(),
+                        acp_protocol_version: a.acp_protocol_version,
                     })
                     .collect(),
                 render_window_limit: config.acp.render_window_limit,
@@ -463,6 +466,9 @@ pub async fn patch_config(
                     args: a.args,
                     url: a.url,
                     auth_header: a.auth_header,
+                    acp_protocol_version: a
+                        .acp_protocol_version
+                        .filter(|version| matches!(version, 1 | 2)),
                 })
                 .collect();
         }

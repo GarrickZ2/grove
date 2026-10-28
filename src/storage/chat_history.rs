@@ -199,6 +199,9 @@ fn prepare_update_for_storage(update: &mut AcpUpdate) {
         }
         AcpUpdate::TerminalOutputUpdate {
             output, truncated, ..
+        }
+        | AcpUpdate::V2TerminalOutputUpdate {
+            output, truncated, ..
         } => truncate_terminal_snapshot(output, truncated, MAX_TOOL_CONTENT_BYTES),
         _ => {}
     }
@@ -235,6 +238,16 @@ pub fn should_persist(update: &AcpUpdate) -> bool {
     if matches!(
         update,
         AcpUpdate::TerminalOutputUpdate {
+            exit_status: None,
+            ..
+        }
+    ) {
+        return false;
+    }
+    if matches!(
+        update,
+        AcpUpdate::V2TerminalOutputUpdate {
+            checkpoint: false,
             exit_status: None,
             ..
         }
@@ -860,6 +873,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn v2_terminal_history_persists_checkpoints_without_each_live_chunk() {
+        let event = |checkpoint| AcpUpdate::V2TerminalOutputUpdate {
+            terminal_id: "terminal".into(),
+            output: "tail".into(),
+            truncated: false,
+            exit_status: None,
+            command: Some("ls".into()),
+            cwd: Some("/tmp".into()),
+            checkpoint,
+            meta: Default::default(),
+        };
+        assert!(!should_persist(&event(false)));
+        assert!(should_persist(&event(true)));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        append_event_to_path(&path, &event(true));
+        assert!(
+            matches!(&load_history_from_path(&path, None)[0], AcpUpdate::V2TerminalOutputUpdate { command: Some(command), cwd: Some(cwd), .. } if command == "ls" && cwd == "/tmp")
+        );
+    }
+
+    #[test]
+    fn v1_and_v2_message_updates_round_trip_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        append_event_to_path(
+            &path,
+            &AcpUpdate::MessageChunk {
+                text: "older".into(),
+                message_id: Some("v1".into()),
+            },
+        );
+        for value in [
+            serde_json::json!({"sessionUpdate":"agent_message_chunk", "messageId":"v2", "content":{"type":"text", "text":"before"}}),
+            serde_json::json!({"sessionUpdate":"agent_message", "messageId":"v2", "content":null, "_meta":{"key":"value"}}),
+        ] {
+            let update = serde_json::from_value(value).unwrap();
+            append_event_to_path(&path, &AcpUpdate::V2MessageUpdate { update });
+        }
+        let events = load_history_from_path(&path, None);
+        assert!(matches!(&events[0], AcpUpdate::MessageChunk { text, .. } if text == "older"));
+        let mut projection = crate::acp::v2_messages::Messages::default();
+        for event in &events[1..] {
+            if let AcpUpdate::V2MessageUpdate { update } = event {
+                assert!(projection.apply(update));
+            } else {
+                panic!("expected v2 message update");
+            }
+        }
+        assert!(projection.entries()[0].content.is_empty());
+        assert_eq!(
+            projection.entries()[0].meta,
+            agent_client_protocol::schema::MaybeUndefined::Value(
+                serde_json::from_value(serde_json::json!({"key":"value"})).unwrap()
+            )
+        );
+    }
+
+    #[test]
     fn client_message_id_survives_history_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("history.jsonl");
@@ -1019,6 +1091,8 @@ mod tests {
     fn perm_req(id: &str) -> AcpUpdate {
         AcpUpdate::PermissionRequest {
             id: id.into(),
+            title: None,
+            detail: None,
             description: format!("desc-{}", id),
             options: Vec::new(),
         }

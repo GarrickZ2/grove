@@ -167,8 +167,11 @@ enum ServerMessage {
     },
     SessionReady {
         session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        protocol_version: Option<u8>,
         agent_name: String,
         agent_version: String,
+        mcp_warnings: Vec<crate::acp::McpWarning>,
         available_modes: Vec<ModeOption>,
         current_mode_id: Option<String>,
         available_models: Vec<ModelOption>,
@@ -226,6 +229,16 @@ enum ServerMessage {
         message_id: Option<String>,
         content: ContentBlockData,
     },
+    V2MessageUpdate {
+        update: agent_client_protocol::schema::v2::SessionUpdate,
+    },
+    V2MessageBind {
+        client_message_id: String,
+        message_id: String,
+    },
+    V2ToolUpdate {
+        update: agent_client_protocol::schema::v2::SessionUpdate,
+    },
     ThoughtChunk {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
@@ -275,9 +288,15 @@ enum ServerMessage {
         truncated: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         exit_status: Option<crate::acp::TerminalExitStatusData>,
+        command: Option<String>,
+        cwd: Option<String>,
     },
     PermissionRequest {
         id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
         description: String,
         options: Vec<PermOptionMsg>,
     },
@@ -553,8 +572,10 @@ impl From<AcpUpdate> for ServerMessage {
             },
             AcpUpdate::SessionReady {
                 session_id,
+                protocol_version,
                 agent_name,
                 agent_version,
+                mcp_warnings,
                 available_modes,
                 mode_descriptions,
                 current_mode_id,
@@ -573,8 +594,10 @@ impl From<AcpUpdate> for ServerMessage {
                 logout_capable,
             } => ServerMessage::SessionReady {
                 session_id,
+                protocol_version,
                 agent_name,
                 agent_version,
+                mcp_warnings,
                 available_modes: available_modes
                     .into_iter()
                     .map(|(id, name)| ModeOption {
@@ -655,6 +678,15 @@ impl From<AcpUpdate> for ServerMessage {
                 content,
                 message_id,
             },
+            AcpUpdate::V2MessageUpdate { update } => ServerMessage::V2MessageUpdate { update },
+            AcpUpdate::V2MessageBind {
+                client_message_id,
+                message_id,
+            } => ServerMessage::V2MessageBind {
+                client_message_id,
+                message_id,
+            },
+            AcpUpdate::V2ToolUpdate { update } => ServerMessage::V2ToolUpdate { update },
             AcpUpdate::ThoughtChunk { text, message_id } => {
                 ServerMessage::ThoughtChunk { text, message_id }
             }
@@ -787,10 +819,14 @@ impl From<AcpUpdate> for ServerMessage {
             }
             AcpUpdate::PermissionRequest {
                 id,
+                title,
+                detail,
                 description,
                 options,
             } => ServerMessage::PermissionRequest {
                 id,
+                title,
+                detail,
                 description,
                 options: options
                     .into_iter()
@@ -938,6 +974,24 @@ impl From<AcpUpdate> for ServerMessage {
                 output,
                 truncated,
                 exit_status,
+                command: None,
+                cwd: None,
+            },
+            AcpUpdate::V2TerminalOutputUpdate {
+                terminal_id,
+                output,
+                truncated,
+                exit_status,
+                command,
+                cwd,
+                ..
+            } => ServerMessage::TerminalOutputUpdate {
+                terminal_id,
+                output,
+                truncated,
+                exit_status,
+                command,
+                cwd,
             },
             AcpUpdate::ConnectPhase { phase } => ServerMessage::ConnectPhase { phase },
             AcpUpdate::UsageUpdate { used, size, cost } => {
@@ -1136,8 +1190,17 @@ async fn handle_acp_ws(
                 let (sid, _name, _ver) = info.unwrap_or_default();
                 ServerMessage::SessionReady {
                     session_id: sid,
+                    protocol_version: match handle
+                        .protocol_version
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        1 => Some(1),
+                        2 => Some(2),
+                        _ => None,
+                    },
                     agent_name: meta.agent_name,
                     agent_version: meta.agent_version,
+                    mcp_warnings: handle.mcp_warnings.lock().unwrap().clone(),
                     available_modes: meta
                         .available_modes
                         .iter()
@@ -1200,8 +1263,17 @@ async fn handle_acp_ws(
                 let (sid, name, ver) = info.unwrap_or_default();
                 ServerMessage::SessionReady {
                     session_id: sid,
+                    protocol_version: match handle
+                        .protocol_version
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        1 => Some(1),
+                        2 => Some(2),
+                        _ => None,
+                    },
                     agent_name: name,
                     agent_version: ver,
+                    mcp_warnings: handle.mcp_warnings.lock().unwrap().clone(),
                     available_modes: Vec::new(),
                     current_mode_id: None,
                     available_models: Vec::new(),
@@ -2874,15 +2946,47 @@ fn history_start_for_recent_turns(history: &[AcpUpdate], turns: usize) -> (usize
         return (0, 0);
     }
     let mut seen_message_ids = std::collections::HashSet::new();
+    let mut local_message_ids = std::collections::HashSet::new();
     let starts: Vec<usize> = history
         .iter()
         .enumerate()
         .filter_map(|(index, update)| match update {
             AcpUpdate::UserMessage {
-                message_id: Some(id),
+                message_id,
+                client_message_id,
                 ..
-            } => seen_message_ids.insert(id).then_some(index),
-            AcpUpdate::UserMessage { .. } => Some(index),
+            } => {
+                if let Some(id) = client_message_id {
+                    local_message_ids.insert(id.clone());
+                }
+                match message_id {
+                    Some(id) => seen_message_ids.insert(format!("v1:{id}")).then_some(index),
+                    None => Some(index),
+                }
+            }
+            AcpUpdate::V2MessageBind {
+                client_message_id,
+                message_id,
+            } => {
+                // This protocol message is already represented by the local
+                // user event immediately preceding its binding.
+                if local_message_ids.contains(client_message_id) {
+                    seen_message_ids.insert(format!("v2:{message_id}"));
+                }
+                None
+            }
+            AcpUpdate::V2MessageUpdate { update } => {
+                let id = match update {
+                    agent_client_protocol::schema::v2::SessionUpdate::UserMessage(message) => {
+                        &message.message_id
+                    }
+                    agent_client_protocol::schema::v2::SessionUpdate::UserMessageChunk(chunk) => {
+                        &chunk.message_id
+                    }
+                    _ => return None,
+                };
+                seen_message_ids.insert(format!("v2:{id}")).then_some(index)
+            }
             _ => None,
         })
         .collect();
@@ -3419,6 +3523,20 @@ mod tests {
         .collect::<Vec<AcpUpdate>>();
         assert_eq!(history_start_for_recent_turns(&history, 1), (1, 1));
         assert_eq!(history_start_for_recent_turns(&history, 2), (0, 0));
+    }
+
+    #[test]
+    fn recent_history_counts_imported_v2_messages_and_deduplicates_bound_echoes() {
+        let history = [
+            serde_json::json!({"type":"user_message","text":"local","client_message_id":"local"}),
+            serde_json::json!({"type":"v2_message_bind","client_message_id":"local","message_id":"u1"}),
+            serde_json::json!({"type":"v2_message_update","update":{"sessionUpdate":"user_message_chunk","messageId":"u1","content":{"type":"text","text":"local"}}}),
+            serde_json::json!({"type":"v2_message_update","update":{"sessionUpdate":"user_message_chunk","messageId":"u2","content":{"type":"text","text":"imported"}}}),
+            serde_json::json!({"type":"v2_message_update","update":{"sessionUpdate":"user_message","messageId":"u2","content":[{"type":"text","text":"imported"}]}}),
+        ].into_iter().map(|value| serde_json::from_value(value).unwrap()).collect::<Vec<AcpUpdate>>();
+        assert_eq!(history_start_for_recent_turns(&history, 1), (3, 1));
+        assert_eq!(history_start_for_recent_turns(&history, 2), (0, 0));
+        assert_eq!(history_start_for_recent_turns(&history[1..], 1), (2, 1));
     }
 
     #[test]

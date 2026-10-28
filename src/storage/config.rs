@@ -72,6 +72,8 @@ pub struct CustomAgentServer {
     /// Remote: Authorization header
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_header: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_protocol_version: Option<u8>,
 }
 
 fn default_acp_render_window_trigger() -> u32 {

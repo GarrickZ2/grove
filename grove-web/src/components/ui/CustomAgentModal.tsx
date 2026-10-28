@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Plus, Pencil, Trash2, Globe, Terminal, Server } from "lucide-react";
 import type { CustomAgentServer } from "../../api/config";
 import { Button } from "./Button";
+import { ProtocolVersionSelect } from "./ProtocolVersionSelect";
 import { useIsMobile } from "../../hooks";
 import { useCommand, useKeyboardScope } from "../../keyboard";
 
@@ -397,6 +398,11 @@ export function CustomAgentModal({
                   </div>
 
                   <div className="border-t border-[var(--color-border)]" />
+
+                  <div>
+                    <div className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider block mb-1.5">ACP Protocol</div>
+                    <ProtocolVersionSelect value={current.acp_protocol_version ?? 1} onChange={(version) => updateAgent(current.id, { acp_protocol_version: version })} />
+                  </div>
 
                   {/* Type tabs */}
                   <div>

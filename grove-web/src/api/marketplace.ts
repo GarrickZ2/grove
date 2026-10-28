@@ -34,6 +34,7 @@ export interface InstalledAgentView {
   selected_install_method: InstallMethod;
   args_override: string[];
   env_override: Record<string, string>;
+  acp_protocol_version: 1 | 2;
   capability_snapshot: AgentCapabilitySnapshot | null;
   capability_updated_at: string | null;
   hidden: boolean;
@@ -107,6 +108,7 @@ export interface PatchAgentRequest {
   selected_install_method?: InstallMethod;
   args_override?: string[];
   env_override?: Record<string, string>;
+  acp_protocol_version?: 1 | 2;
   hidden?: boolean;
 }
 

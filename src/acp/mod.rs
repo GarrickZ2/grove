@@ -18,6 +18,14 @@ pub use compaction::CompactionUpdateData;
 pub use subagents::SubagentUpdateData;
 mod terminal_auth;
 mod tool_identity;
+mod v2_config;
+pub(crate) mod v2_messages;
+mod v2_permissions;
+mod v2_session;
+mod v2_state;
+mod v2_terminal;
+mod v2_tools;
+mod v2_wire;
 pub use terminal_auth::AuthMethodKind;
 use terminal_auth::{TerminalAuthLaunch, TerminalAuthState};
 pub(crate) use tool_identity::is_grove_memory_read_name;
@@ -110,6 +118,7 @@ pub struct AcpSessionHandle {
     idle: Arc<Mutex<idle::IdleState>>,
     subagents: Mutex<subagents::SubagentRegistry>,
     subagent_connection: Mutex<Option<acp::ConnectionTo<acp::Agent>>>,
+    subagent_connection_v2: Mutex<Option<agent_client_protocol::V2ConnectionTo<acp::Agent>>>,
     pub update_tx: broadcast::Sender<AcpUpdate>,
     cmd_tx: mpsc::Sender<AcpCommand>,
     /// Out-of-band shutdown signal for the whole ACP transport/process.
@@ -120,6 +129,8 @@ pub struct AcpSessionHandle {
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     /// Agent info stored after initialization: (session_id, name, version)
     pub agent_info: std::sync::RwLock<Option<(String, String, String)>>,
+    /// Actual protocol of the currently ready connection; zero means unknown.
+    pub protocol_version: std::sync::atomic::AtomicU8,
     readiness: tokio::sync::watch::Sender<SessionReadiness>,
     /// 待处理的权限请求响应 channel + 它的 id（来源是 ACP tool_call.id）。
     /// id 用来在 reconcile 时把这条 live pending 与 history 中的 PermissionRequest
@@ -271,11 +282,18 @@ pub struct AcpSessionHandle {
     /// 让前端继续显示 banner;避免"刷新后看起来连上了但消息发不出去"。
     /// 进入 retry 时设置,authenticate 成功 → SessionReady 真正发出后清除。
     pub pending_auth: Mutex<Option<PendingAuthState>>,
+    pub mcp_warnings: Mutex<Vec<McpWarning>>,
     /// Session-scoped instruction update waiting to be merged into the next
     /// real user prompt. Revision prevents a newer update being cleared when
     /// an older prompt completes.
     pending_session_instruction: Mutex<Option<(u64, String, String)>>,
     session_instruction_revision: std::sync::atomic::AtomicU64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct McpWarning {
+    pub name: String,
+    pub message: String,
 }
 
 /// `pending_auth` 内容:重发 AuthRequired 所需的全部字段
@@ -458,8 +476,12 @@ pub enum AcpUpdate {
     /// Agent 初始化完成
     SessionReady {
         session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        protocol_version: Option<u8>,
         agent_name: String,
         agent_version: String,
+        #[serde(default)]
+        mcp_warnings: Vec<McpWarning>,
         available_modes: Vec<(String, String)>,
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         mode_descriptions: HashMap<String, String>,
@@ -544,6 +566,19 @@ pub enum AcpUpdate {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
         content: ContentBlockData,
+    },
+    /// An ACP v2 message delta or snapshot. Retaining the protocol payload
+    /// preserves replacement, clearing, and future content for history replay.
+    V2MessageUpdate {
+        update: agent_client_protocol::schema::v2::SessionUpdate,
+    },
+    V2MessageBind {
+        client_message_id: String,
+        message_id: String,
+    },
+    /// Raw v2 tool event, preserved for both live rendering and history.
+    V2ToolUpdate {
+        update: agent_client_protocol::schema::v2::SessionUpdate,
     },
     /// Agent 思考过程片段
     ThoughtChunk {
@@ -635,12 +670,37 @@ pub enum AcpUpdate {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         exit_status: Option<TerminalExitStatusData>,
     },
+    /// ACP v2 agent-owned display terminal snapshot. Unlike v1 host terminals,
+    /// live snapshots are retained for replay even before the Agent exits.
+    V2TerminalOutputUpdate {
+        terminal_id: String,
+        output: String,
+        truncated: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_status: Option<TerminalExitStatusData>,
+        #[serde(default)]
+        command: Option<String>,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        checkpoint: bool,
+        #[serde(
+            default,
+            skip_serializing_if = "agent_client_protocol::schema::MaybeUndefined::is_undefined"
+        )]
+        meta:
+            agent_client_protocol::schema::MaybeUndefined<agent_client_protocol::schema::v2::Meta>,
+    },
     /// 权限请求（带选项，等待用户交互）。`id` 是 ACP tool_call.id，
     /// 用于把后续的 PermissionResponse 精确对应到这条 Request；老历史里的
     /// 事件没有这个字段，反序列化时落到空串，reconcile 视为 legacy orphan。
     PermissionRequest {
         #[serde(default)]
         id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
         description: String,
         options: Vec<PermOptionData>,
     },
@@ -1590,18 +1650,42 @@ async fn build_mcp_servers(
     supports_http: bool,
     additional: &[LoopbackMcpServer],
     policy: McpServerPolicy,
+    warnings: &Mutex<Vec<McpWarning>>,
+) -> crate::error::Result<Vec<acp::McpServer>> {
+    build_mcp_servers_filtered(
+        env_vars,
+        agent_graph_token,
+        supports_http,
+        additional,
+        policy,
+        None,
+        warnings,
+    )
+    .await
+}
+
+async fn build_mcp_servers_filtered(
+    env_vars: &HashMap<String, String>,
+    agent_graph_token: Option<&str>,
+    supports_http: bool,
+    additional: &[LoopbackMcpServer],
+    policy: McpServerPolicy,
+    allowed_transports: Option<(bool, bool)>,
+    warnings: &Mutex<Vec<McpWarning>>,
 ) -> crate::error::Result<Vec<acp::McpServer>> {
     let mut servers = Vec::new();
     if policy == McpServerPolicy::WorkingSession {
-        servers.push(grove_mcp_server(env_vars)?);
+        if allowed_transports.is_none_or(|(stdio, _)| stdio) {
+            servers.push(grove_mcp_server(env_vars)?);
+        }
         if let Some(token) = agent_graph_token {
             if let Some(url) = crate::api::handlers::agent_graph_mcp::build_mcp_url(token) {
-                if supports_http {
+                if supports_http && allowed_transports.is_none_or(|(_, http)| http) {
                     servers.push(acp::McpServer::Http(acp::McpServerHttp::new(
                         "grove_agent",
                         url,
                     )));
-                } else {
+                } else if !supports_http {
                     // Stdio is mandatory for every ACP Agent. When Streamable HTTP
                     // is unavailable, expose the same agent_graph service through
                     // Grove's stdio-to-HTTP bridge instead.
@@ -1638,6 +1722,9 @@ async fn build_mcp_servers(
         }
     }
     for server in additional {
+        if supports_http && allowed_transports.is_some_and(|(_, http)| !http) {
+            continue;
+        }
         if supports_http {
             servers.push(acp::McpServer::Http(acp::McpServerHttp::new(
                 server.name.clone(),
@@ -1675,31 +1762,86 @@ async fn build_mcp_servers(
         // Inject stdio MCP servers contributed by installed plugins, forwarding the
         // task/project context env (so a plugin's MCP server has the same "current
         // context" the panel gets from host.getInfo).
-        servers.extend(load_plugin_mcp_servers(env_vars));
-        servers.extend(load_standalone_mcp_servers(env_vars, supports_http).await?);
+        if allowed_transports.is_none_or(|(stdio, _)| stdio) {
+            servers.extend(load_plugin_mcp_servers(env_vars));
+        }
+        servers.extend(
+            load_standalone_mcp_servers(
+                env_vars,
+                supports_http,
+                allowed_transports,
+                Some(warnings),
+            )
+            .await?,
+        );
     }
     Ok(servers)
+}
+
+async fn prepare_mcp_configs(
+    configs: Vec<crate::storage::extensions::ResolvedMcpConfig>,
+    supports_http: bool,
+) -> (
+    Vec<crate::storage::extensions::ResolvedMcpConfig>,
+    Vec<McpWarning>,
+) {
+    let results = futures::future::join_all(configs.into_iter().map(|mut config| async move {
+        if !supports_http && config.transport != "stdio" {
+            return Err(McpWarning {
+                name: config.name,
+                message: "This Agent does not support HTTP MCP servers.".into(),
+            });
+        }
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            crate::mcp_client::authorize_configs(std::slice::from_mut(&mut config)),
+        )
+        .await;
+        match result {
+            Ok(Ok(())) => Ok(config),
+            failure => Err(McpWarning {
+                name: config.name,
+                message: match failure {
+                    Ok(Err(error)) => error.to_string(),
+                    Err(_) => "The MCP authorization request timed out.".into(),
+                    Ok(Ok(())) => unreachable!(),
+                },
+            }),
+        }
+    }))
+    .await;
+    let (usable, skipped): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+    let usable: Vec<_> = usable.into_iter().filter_map(Result::ok).collect();
+    let skipped: Vec<_> = skipped.into_iter().filter_map(Result::err).collect();
+    (usable, skipped)
 }
 
 async fn load_standalone_mcp_servers(
     base_env: &HashMap<String, String>,
     supports_http: bool,
+    allowed_transports: Option<(bool, bool)>,
+    warnings: Option<&Mutex<Vec<McpWarning>>>,
 ) -> crate::error::Result<Vec<acp::McpServer>> {
     let Some(agent_id) = base_env.get("GROVE_AGENT_ID") else {
         return Ok(Vec::new());
     };
-    let mut configs = crate::storage::extensions::resolve_effective_mcp_configs(
+    let mut configs = crate::storage::extensions::resolve_effective_mcp_configs_for_transports(
         agent_id,
         base_env.get("GROVE_PROJECT").map(String::as_str),
+        allowed_transports,
     )?;
-    if !supports_http && configs.iter().any(|c| c.transport != "stdio") {
-        return Err(crate::error::GroveError::config(
-            "This Agent does not support HTTP MCP servers over ACP.",
-        ));
+    if let Some((stdio, http)) = allowed_transports {
+        configs.retain(|config| match config.transport.as_str() {
+            "stdio" => stdio,
+            "http" | "streamable-http" => http,
+            _ => false,
+        });
     }
-    crate::mcp_client::authorize_configs(&mut configs)
-        .await
-        .map_err(crate::error::GroveError::config)?;
+    let (usable, skipped) = prepare_mcp_configs(configs, supports_http).await;
+    if let Some(warnings) = warnings {
+        *warnings.lock().unwrap() = skipped;
+    }
+    let configs = usable;
     Ok(configs
         .into_iter()
         .filter_map(|config| {
@@ -2221,6 +2363,21 @@ fn truncate_for_row(s: &str, limit: usize) -> String {
     }
 }
 
+fn permission_input_detail(input: &Option<serde_json::Value>) -> Option<String> {
+    match input.as_ref()? {
+        serde_json::Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
+        value => ["command", "file_path", "path", "url", "query", "pattern"]
+            .iter()
+            .find_map(|key| {
+                value
+                    .get(key)
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_owned)
+            }),
+    }
+}
+
 /// 权限请求 handler。序列化:同一时刻只能有一个 permission 等待用户响应,
 /// 后续请求会在 `permission_lock` 上排队。
 async fn handle_request_permission(
@@ -2263,6 +2420,15 @@ async fn handle_request_permission(
     state
         .handle
         .own_child_request(&request_id, &args.session_id.to_string());
+    let primary_title = args
+        .tool_call
+        .fields
+        .title
+        .clone()
+        .filter(|title| !title.trim().is_empty())
+        .or_else(|| args.tool_call.fields.name.clone())
+        .unwrap_or_else(|| "Permission Required".to_owned());
+    let detail = permission_input_detail(&args.tool_call.fields.raw_input);
     let title = args.tool_call.fields.title.clone().unwrap_or_default();
     let title = match args.tool_call.fields.name.as_deref() {
         Some(name) if title.is_empty() => name.to_string(),
@@ -2274,6 +2440,10 @@ async fn handle_request_permission(
     // "bash". Falls back gracefully if raw_input is missing or not the
     // shape we expect.
     let desc = enrich_permission_description(&title, &args.tool_call.fields.raw_input);
+    let primary_title = child_title
+        .as_ref()
+        .map(|name| format!("{name} · {primary_title}"))
+        .unwrap_or(primary_title);
     let desc = child_title
         .map(|name| format!("{name} · {desc}"))
         .unwrap_or(desc);
@@ -2304,6 +2474,8 @@ async fn handle_request_permission(
     state.handle.emit_with_origin(
         AcpUpdate::PermissionRequest {
             id: request_id.clone(),
+            title: Some(primary_title),
+            detail,
             description: desc.clone(),
             options: options.clone(),
         },
@@ -4789,10 +4961,12 @@ pub async fn get_or_start_session(
                     idle: Arc::default(),
                     subagents: Mutex::default(),
                     subagent_connection: Mutex::default(),
+                    subagent_connection_v2: Mutex::default(),
                     update_tx: update_tx.clone(),
                     cmd_tx,
                     shutdown_tx,
                     agent_info: std::sync::RwLock::new(None),
+                    protocol_version: std::sync::atomic::AtomicU8::new(0),
                     readiness: tokio::sync::watch::channel(SessionReadiness::Starting).0,
                     pending_permission: Mutex::new(None),
                     permission_lock: tokio::sync::Mutex::new(()),
@@ -4842,6 +5016,7 @@ pub async fn get_or_start_session(
                     pending_auth_retry: Mutex::new(None),
                     middleware_dispatched_retries: Mutex::new(std::collections::HashSet::new()),
                     pending_auth: Mutex::new(None),
+                    mcp_warnings: Mutex::new(Vec::new()),
                     pending_session_instruction: Mutex::new(None),
                     session_instruction_revision: std::sync::atomic::AtomicU64::new(0),
                     fork_capable: std::sync::atomic::AtomicBool::new(false),
@@ -5049,10 +5224,20 @@ async fn run_acp_session(
     let _early_token_guard = EarlyTokenGuard(agent_graph_token.clone());
 
     let cmd_rx = Arc::new(tokio::sync::Mutex::new(cmd_rx));
+    let mut negotiated_version = None;
     loop {
-        match run_acp_connection(handle.clone(), config.clone(), cmd_rx.clone()).await {
-            Ok(true) => {}
-            Ok(false) => return Ok(()),
+        match run_acp_connection(
+            handle.clone(),
+            config.clone(),
+            cmd_rx.clone(),
+            negotiated_version,
+        )
+        .await
+        {
+            Ok(ConnectionOutcome::Restart) => negotiated_version = None,
+            Ok(ConnectionOutcome::RetryV2) => negotiated_version = Some(2),
+            Ok(ConnectionOutcome::RetryV1) => negotiated_version = Some(1),
+            Ok(ConnectionOutcome::Stop) => return Ok(()),
             Err(error) => {
                 if handle.terminal_auth.lock().unwrap().reconnecting {
                     handle.emit(AcpUpdate::AuthFailed {
@@ -5067,17 +5252,30 @@ async fn run_acp_session(
     }
 }
 
-async fn await_startup_response<T>(
-    phase: &str,
-    deadline: std::time::Duration,
-    future: impl std::future::Future<Output = acp::Result<T>>,
-) -> acp::Result<T> {
-    tokio::time::timeout(deadline, future).await.map_err(|_| {
-        acp::Error::internal_error().data(format!(
-            "Agent connection timed out during {phase} after {} seconds. Use Reconnect to retry.",
-            deadline.as_secs()
-        ))
-    })?
+enum ConnectionOutcome {
+    Stop,
+    Restart,
+    RetryV2,
+    RetryV1,
+}
+
+fn v1_rejected_with_v2(error: &acp::Error) -> bool {
+    i32::from(error.code) == -32022
+        && error
+            .data
+            .as_ref()
+            .and_then(|data| data.get("requested"))
+            .and_then(|value| value.as_u64())
+            == Some(1)
+        && error
+            .data
+            .as_ref()
+            .and_then(|data| data.get("supported"))
+            .and_then(|supported| supported.as_array())
+            .is_some_and(|supported| {
+                supported.iter().any(|version| version.as_u64() == Some(2))
+                    && !supported.iter().any(|version| version.as_u64() == Some(1))
+            })
 }
 
 fn missing_saved_session(error: &acp::Error) -> bool {
@@ -5098,7 +5296,8 @@ async fn run_acp_connection(
     handle: Arc<AcpSessionHandle>,
     config: AcpStartConfig,
     cmd_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<AcpCommand>>>,
-) -> crate::error::Result<bool> {
+    negotiated_version: Option<u8>,
+) -> crate::error::Result<ConnectionOutcome> {
     let _resource_process_guard = ResourceProcessGuard(handle.clone());
     *handle.subagents.lock().unwrap() = subagents::SubagentRegistry::default();
     let agent_name_for_log = config.agent_name.clone();
@@ -5282,6 +5481,71 @@ async fn run_acp_connection(
         native_plans_seen: std::sync::atomic::AtomicBool::new(false),
     });
 
+    let canonical_agent =
+        crate::storage::installed_agents::canonicalize_agent_id(&config.agent_name);
+    let app_config = crate::storage::config::load_config();
+    let custom = app_config
+        .acp
+        .custom_agents
+        .iter()
+        .find(|agent| agent.id == config.agent_name);
+    let preferred_version = match custom {
+        Some(agent) => agent
+            .acp_protocol_version
+            .filter(|version| matches!(version, 1 | 2))
+            .unwrap_or(1),
+        None => crate::storage::installed_agents::get_acp_protocol_version(&canonical_agent)?,
+    };
+    let protocol_version = negotiated_version.unwrap_or(preferred_version);
+    if protocol_version == 2 {
+        let mut shutdown_rx = handle.shutdown_tx.subscribe();
+        let transport = acp::ByteStreams::new(writer, reader);
+        let connection = v2_session::run(transport, state.clone(), config, cmd_rx);
+        tokio::pin!(connection);
+        let result = tokio::select! {
+            result = &mut connection => result.map(|()| ConnectionOutcome::Stop),
+            _ = shutdown_rx.wait_for(|requested| *requested) => Ok(ConnectionOutcome::Stop),
+            _ = restart_rx.changed() => Ok(ConnectionOutcome::Restart),
+        };
+        *state.handle.subagent_connection_v2.lock().unwrap() = None;
+        state.handle.end_subagents();
+        if state.handle.is_retiring() {
+            if let Some(ref mut process) = child {
+                let _ = process.kill().await;
+            }
+        }
+        drop(child);
+        return match result {
+            Err(error)
+                if negotiated_version.is_none()
+                    && error
+                        .data
+                        .as_ref()
+                        .and_then(|data| data.get("grove_lower_version"))
+                        .and_then(|value| value.as_bool())
+                        == Some(true)
+                    && i32::from(error.code) == -32022
+                    && error
+                        .data
+                        .as_ref()
+                        .and_then(|value| value.get("requested"))
+                        .and_then(|value| value.as_u64())
+                        == Some(2)
+                    && error
+                        .data
+                        .as_ref()
+                        .and_then(|value| value.get("supported"))
+                        .and_then(|value| value.as_array())
+                        .is_some_and(|versions| {
+                            versions.iter().any(|version| version.as_u64() == Some(1))
+                        }) =>
+            {
+                Ok(ConnectionOutcome::RetryV1)
+            }
+            result => result.map_err(|error| crate::error::GroveError::Session(error.to_string())),
+        };
+    }
+
     let reader = subagents::adapt_reader(reader, state.adapter.supports_subagents_legacy());
     let transport = acp::ByteStreams::new(writer, reader);
 
@@ -5450,9 +5714,9 @@ async fn run_acp_connection(
         );
     tokio::pin!(connection);
     let result = tokio::select! {
-        result = &mut connection => result.map(|()| false),
-        _ = shutdown_rx.wait_for(|requested| *requested) => Ok(false),
-        _ = restart_rx.changed() => Ok(true),
+        result = &mut connection => result.map(|()| ConnectionOutcome::Stop),
+        _ = shutdown_rx.wait_for(|requested| *requested) => Ok(ConnectionOutcome::Stop),
+        _ = restart_rx.changed() => Ok(ConnectionOutcome::Restart),
     };
 
     *state.handle.subagent_connection.lock().unwrap() = None;
@@ -5493,7 +5757,12 @@ async fn run_acp_connection(
     // kill_on_drop remains the fallback for other exit paths.
     drop(child);
 
-    result.map_err(|e| crate::error::GroveError::Session(e.to_string()))
+    match result {
+        Err(error) if negotiated_version.is_none() && v1_rejected_with_v2(&error) => {
+            Ok(ConnectionOutcome::RetryV2)
+        }
+        result => result.map_err(|e| crate::error::GroveError::Session(e.to_string())),
+    }
 }
 
 /// 在 `connect_with` 的 `main_fn` 里运行 ACP 会话生命周期:initialize → 创建/恢复
@@ -5507,7 +5776,7 @@ fn validate_v1_protocol_version(version: acp::ProtocolVersion) -> acp::Result<()
     Err(acp::Error::new(
         -32099,
         format!(
-            "Unable to connect to this agent. This agent uses ACP protocol version {}, but Grove currently supports version 1 only.",
+            "ACP v1 was requested, but the Agent returned protocol version {}.",
             version.as_u16()
         ),
     ))
@@ -5618,14 +5887,12 @@ async fn drive_session(
     adapter::resolve_adapter(&config.agent_name, &config.agent_command)
         .configure_client_capabilities(&mut client_capabilities);
 
-    // Bound startup RPCs only. Human sign-in and normal prompt execution
-    // intentionally have no such deadline.
     macro_rules! startup_request {
         ($phase:expr, $future:expr) => {{
             handle.emit(AcpUpdate::ConnectPhase {
                 phase: $phase.into(),
             });
-            await_startup_response($phase, std::time::Duration::from_secs(60), $future).await
+            $future.await
         }};
     }
 
@@ -6033,6 +6300,7 @@ async fn drive_session(
                     supports_mcp_http,
                     &config.additional_mcp_servers,
                     config.mcp_server_policy,
+                    &handle.mcp_warnings,
                 ).await
                 .map_err(to_acp_err)?;
             // 重试循环:session/new 在用户没登录时(claude-code-acp / codex 都
@@ -6274,6 +6542,7 @@ async fn drive_session(
                     supports_mcp_http,
                     &config.additional_mcp_servers,
                     config.mcp_server_policy,
+                    &handle.mcp_warnings,
                 )
                 .await
                 .map_err(to_acp_err)?;
@@ -6327,6 +6596,7 @@ async fn drive_session(
                     supports_mcp_http,
                     &config.additional_mcp_servers,
                     config.mcp_server_policy,
+                    &handle.mcp_warnings,
                 )
                 .await
                 .map_err(to_acp_err)?;
@@ -6449,6 +6719,7 @@ async fn drive_session(
                     supports_mcp_http,
                     &config.additional_mcp_servers,
                     config.mcp_server_policy,
+                    &handle.mcp_warnings,
                 )
                 .await
                 .map_err(to_acp_err)?;
@@ -6660,8 +6931,10 @@ async fn drive_session(
 
     handle.emit(AcpUpdate::SessionReady {
         session_id,
+        protocol_version: Some(1),
         agent_name: agent_name.clone(),
         agent_version,
+        mcp_warnings: handle.mcp_warnings.lock().unwrap().clone(),
         available_modes,
         mode_descriptions,
         current_mode_id,
@@ -7680,6 +7953,7 @@ async fn drive_session(
                         supports_mcp_http,
                         &config.additional_mcp_servers,
                         config.mcp_server_policy,
+                        &Mutex::new(Vec::new()),
                     )
                     .await
                     {
@@ -8119,6 +8393,57 @@ impl AcpSessionHandle {
                 };
                 (ids, TurnEvent::MessageChunk { text: text.clone() }, false)
             }
+            AcpUpdate::V2MessageUpdate {
+                update: agent_client_protocol::schema::v2::SessionUpdate::AgentMessageChunk(chunk),
+            } => {
+                let agent_client_protocol::schema::v2::ContentBlock::Text(text) = &chunk.content
+                else {
+                    return;
+                };
+                self.last_turn_reply.lock().unwrap().push_str(&text.text);
+                let Some(ids) = self.active_turn_ids() else {
+                    return;
+                };
+                (
+                    ids,
+                    TurnEvent::MessageChunk {
+                        text: text.text.clone(),
+                    },
+                    false,
+                )
+            }
+            AcpUpdate::V2ToolUpdate {
+                update: agent_client_protocol::schema::v2::SessionUpdate::ToolCallUpdate(tool),
+            } => {
+                let Some(ids) = self.active_turn_ids() else {
+                    return;
+                };
+                let value =
+                    |field: &agent_client_protocol::schema::MaybeUndefined<String>| match field {
+                        agent_client_protocol::schema::MaybeUndefined::Value(value) => {
+                            Some(value.clone())
+                        }
+                        _ => None,
+                    };
+                let status = match &tool.status {
+                    agent_client_protocol::schema::MaybeUndefined::Value(status) => {
+                        serde_json::to_value(status)
+                            .ok()
+                            .and_then(|value| value.as_str().map(str::to_owned))
+                    }
+                    _ => None,
+                };
+                (
+                    ids,
+                    TurnEvent::ToolChanged {
+                        id: tool.tool_call_id.to_string(),
+                        name: value(&tool.name),
+                        title: value(&tool.title),
+                        status,
+                    },
+                    false,
+                )
+            }
             AcpUpdate::ToolCall { id, title, .. } => {
                 self.last_turn_reply.lock().unwrap().clear();
                 let Some(ids) = self.active_turn_ids() else {
@@ -8197,6 +8522,7 @@ impl AcpSessionHandle {
                 id,
                 description,
                 options,
+                ..
             } => {
                 // Requests carry no originating-turn token. Use only the
                 // ingress-time snapshot — when it is absent, the request's
@@ -9061,7 +9387,13 @@ impl AcpSessionHandle {
 
         let was_ready = matches!(*self.readiness.borrow(), SessionReadiness::Ready);
         match &update {
-            AcpUpdate::SessionReady { .. } => {
+            AcpUpdate::SessionReady {
+                protocol_version, ..
+            } => {
+                self.protocol_version.store(
+                    protocol_version.unwrap_or(0),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 self.readiness.send_replace(SessionReadiness::Ready);
             }
             AcpUpdate::SessionEnded => {
@@ -10324,6 +10656,7 @@ pub fn new_handle_for_test(
         idle: Arc::default(),
         subagents: Mutex::default(),
         subagent_connection: Mutex::default(),
+        subagent_connection_v2: Mutex::default(),
         update_tx: update_tx.clone(),
         cmd_tx,
         shutdown_tx,
@@ -10332,6 +10665,7 @@ pub fn new_handle_for_test(
             "claude".into(),
             "test".into(),
         ))),
+        protocol_version: std::sync::atomic::AtomicU8::new(0),
         readiness: tokio::sync::watch::channel(SessionReadiness::Ready).0,
         pending_permission: Mutex::new(None),
         permission_lock: tokio::sync::Mutex::new(()),
@@ -10379,6 +10713,7 @@ pub fn new_handle_for_test(
         pending_auth_retry: Mutex::new(None),
         middleware_dispatched_retries: Mutex::new(std::collections::HashSet::new()),
         pending_auth: Mutex::new(None),
+        mcp_warnings: Mutex::new(Vec::new()),
         pending_session_instruction: Mutex::new(None),
         session_instruction_revision: std::sync::atomic::AtomicU64::new(0),
         fork_capable: std::sync::atomic::AtomicBool::new(false),
@@ -11191,6 +11526,35 @@ async fn drain_stderr_to_file(stderr: tokio::process::ChildStderr, path: PathBuf
 #[cfg(test)]
 mod tests {
     #[tokio::test]
+    async fn unavailable_mcp_does_not_block_other_servers() {
+        use crate::storage::extensions::ResolvedMcpConfig;
+        let local = ResolvedMcpConfig {
+            name: "local".into(),
+            transport: "stdio".into(),
+            command: Some("example".into()),
+            args: vec![],
+            env: Default::default(),
+            url: None,
+            headers: Default::default(),
+        };
+        let bad = ResolvedMcpConfig {
+            name: "broken".into(),
+            transport: "http".into(),
+            command: None,
+            args: vec![],
+            env: Default::default(),
+            url: Some("not a URL".into()),
+            headers: Default::default(),
+        };
+        let (usable, warnings) = super::prepare_mcp_configs(vec![bad, local], true).await;
+        assert_eq!(usable.len(), 1);
+        assert_eq!(usable[0].name, "local");
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].name, "broken");
+        assert!(warnings[0].message.contains("valid MCP server URL"));
+    }
+
+    #[tokio::test]
     async fn resource_process_registration_tracks_session_and_clears_on_exit() {
         let (handle, _, _session_guard) = super::new_handle_for_test(
             "resource-process-test",
@@ -11282,34 +11646,6 @@ mod tests {
         assert!(!missing_saved_session(
             &acp::Error::internal_error().data("network unavailable")
         ));
-    }
-
-    #[tokio::test]
-    async fn reconnect_startup_deadline_names_the_stalled_rpc_and_preserves_agent_errors() {
-        let error = await_startup_response::<()>(
-            "session/load",
-            std::time::Duration::from_millis(1),
-            futures::future::pending(),
-        )
-        .await
-        .unwrap_err();
-        assert!(error.to_string().contains("session/load"));
-        let error = await_startup_response::<()>(
-            "session/resume",
-            std::time::Duration::from_secs(1),
-            async { Err(acp::Error::resource_not_found(None)) },
-        )
-        .await
-        .unwrap_err();
-        assert!(missing_saved_session(&error));
-        assert_eq!(
-            await_startup_response("session/new", std::time::Duration::from_secs(1), async {
-                Ok("ready")
-            })
-            .await
-            .unwrap(),
-            "ready"
-        );
     }
 
     #[tokio::test]
@@ -11563,6 +11899,8 @@ mod tests {
         let mut sub = crate::radio::subscribe();
         handle.emit(AcpUpdate::PermissionRequest {
             id: "perm-late".to_string(),
+            title: None,
+            detail: None,
             description: "run a command".to_string(),
             options: vec![PermOptionData {
                 option_id: "allow".to_string(),
@@ -11607,6 +11945,8 @@ mod tests {
         handle.emit_with_origin(
             AcpUpdate::PermissionRequest {
                 id: "perm-active".to_string(),
+                title: None,
+                detail: None,
                 description: "run a command".to_string(),
                 options: vec![PermOptionData {
                     option_id: "allow".to_string(),
@@ -11674,6 +12014,8 @@ mod tests {
         handle.emit_with_origin(
             AcpUpdate::PermissionRequest {
                 id: "perm-delayed".to_string(),
+                title: None,
+                detail: None,
                 description: "run a command".to_string(),
                 options: vec![],
             },
@@ -12064,7 +12406,7 @@ mod tests {
         let error = validate_v1_protocol_version(v2).unwrap_err();
         assert_eq!(
             error.message,
-            "Unable to connect to this agent. This agent uses ACP protocol version 2, but Grove currently supports version 1 only."
+            "ACP v1 was requested, but the Agent returned protocol version 2."
         );
     }
 

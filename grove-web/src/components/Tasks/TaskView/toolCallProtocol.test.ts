@@ -232,6 +232,14 @@ describe("ACP v1 tool-call reduction", () => {
       ],
     });
     expect(completedAfterRelease.output?.[1]).toEqual(updated.output?.[1]);
+    const withCommand = applyTerminalOutputUpdate(updated, {
+      type: "terminal_output_update", terminal_id: "terminal-2", output: "done", command: "ls", cwd: "/tmp",
+    });
+    expect(withCommand.output?.[1]).toMatchObject({ command: "ls", cwd: "/tmp" });
+    const cleared = applyTerminalOutputUpdate(withCommand, {
+      type: "terminal_output_update", terminal_id: "terminal-2", output: "done", command: null, cwd: null,
+    });
+    expect(cleared.output?.[1]).toMatchObject({ command: undefined, cwd: undefined });
   });
 });
 

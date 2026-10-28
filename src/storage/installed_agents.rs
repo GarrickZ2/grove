@@ -242,6 +242,35 @@ pub fn get_capability_snapshot(id: &str) -> Result<Option<serde_json::Value>> {
         .transpose()
 }
 
+/// Protocol preference belongs to the Agent, not to individual chats.
+pub fn get_acp_protocol_version(id: &str) -> Result<u8> {
+    let conn = crate::storage::database::connection();
+    let version = conn
+        .query_row(
+            "SELECT acp_protocol_version FROM installed_agents WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, u8>(0),
+        )
+        .optional()?;
+    Ok(version.unwrap_or(1))
+}
+
+pub fn set_acp_protocol_version(id: &str, version: u8) -> Result<()> {
+    if !matches!(version, 1 | 2) {
+        return Err(crate::error::GroveError::storage(
+            "Unsupported ACP protocol version",
+        ));
+    }
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE installed_agents SET acp_protocol_version = ?1 WHERE id = ?2",
+        params![version, id],
+    )?;
+    drop(conn);
+    crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
+    Ok(())
+}
+
 pub fn get_capability_updated_at(id: &str) -> Result<Option<String>> {
     let conn = crate::storage::database::connection();
     conn.query_row(

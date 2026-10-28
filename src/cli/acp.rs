@@ -6,6 +6,75 @@ use std::path::PathBuf;
 
 use crate::acp::{self, AcpStartConfig, AcpUpdate, ContentBlockData};
 
+fn v2_message_delta(
+    messages: &mut acp::v2_messages::Messages,
+    update: &agent_client_protocol::schema::v2::SessionUpdate,
+) -> Option<(bool, String)> {
+    use acp::v2_messages::MessageKind;
+    use agent_client_protocol::schema::v2::{ContentBlock, SessionUpdate};
+    let (kind, id) = match update {
+        SessionUpdate::AgentMessage(message) => {
+            (MessageKind::Agent, message.message_id.to_string())
+        }
+        SessionUpdate::AgentMessageChunk(message) => {
+            (MessageKind::Agent, message.message_id.to_string())
+        }
+        SessionUpdate::AgentThought(message) => {
+            (MessageKind::Thought, message.message_id.to_string())
+        }
+        SessionUpdate::AgentThoughtChunk(message) => {
+            (MessageKind::Thought, message.message_id.to_string())
+        }
+        _ => return None,
+    };
+    let text = |messages: &acp::v2_messages::Messages| {
+        messages
+            .entries()
+            .iter()
+            .find(|message| message.kind == kind && message.id == id)
+            .map(|message| {
+                message
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text(text) => Some(text.text.clone()),
+                        ContentBlock::Image(image) => Some(format!(
+                            "\n[Image: {}]\n",
+                            image.uri.as_deref().unwrap_or("image")
+                        )),
+                        ContentBlock::Audio(_) => Some("\n[Audio]\n".to_owned()),
+                        ContentBlock::ResourceLink(resource) => {
+                            Some(format!("\n[Resource: {}]\n", resource.uri))
+                        }
+                        ContentBlock::Resource(_) => Some("\n[Embedded resource]\n".to_owned()),
+                        _ => None,
+                    })
+                    .collect::<String>()
+            })
+            .unwrap_or_default()
+    };
+    let before = text(messages);
+    messages.apply(update);
+    let after = text(messages);
+    let delta = after
+        .strip_prefix(&before)
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("\n{after}"));
+    Some((kind == MessageKind::Thought, delta))
+}
+
+fn display_v2_tool_content(content: &agent_client_protocol::schema::v2::ToolCallContent) {
+    if let Ok(value) = serde_json::to_value(content) {
+        if let Some(text) = value
+            .pointer("/content/text")
+            .or_else(|| value.pointer("/patch/text"))
+            .and_then(|value| value.as_str())
+        {
+            eprintln!("{text}");
+        }
+    }
+}
+
 /// 执行 ACP 交互式聊天
 pub async fn execute(agent: String, cwd: String) {
     let working_dir = PathBuf::from(&cwd)
@@ -101,6 +170,8 @@ pub async fn execute(agent: String, cwd: String) {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
     let handle_for_input = handle.clone();
+    let mut v2_messages = acp::v2_messages::Messages::default();
+    let mut v2_terminals: HashMap<String, String> = HashMap::new();
 
     loop {
         // 显示提示符
@@ -145,6 +216,61 @@ pub async fn execute(agent: String, cwd: String) {
                 other => other,
             };
             match update {
+                Ok(AcpUpdate::V2MessageUpdate { update }) => {
+                    if let Some((thought, delta)) = v2_message_delta(&mut v2_messages, &update) {
+                        if thought {
+                            eprint!("\x1b[90m{}\x1b[0m", delta);
+                            io::stderr().flush().ok();
+                        } else {
+                            print!("{}", delta);
+                            io::stdout().flush().ok();
+                        }
+                    }
+                }
+                Ok(AcpUpdate::V2ToolUpdate { update }) => {
+                    use agent_client_protocol::schema::{v2::SessionUpdate, MaybeUndefined};
+                    match update {
+                        SessionUpdate::ToolCallUpdate(tool) => {
+                            let title = match tool.title {
+                                MaybeUndefined::Value(value) => value,
+                                _ => tool.tool_call_id.to_string(),
+                            };
+                            let status = match tool.status {
+                                MaybeUndefined::Value(value) => serde_json::to_value(value)
+                                    .ok()
+                                    .and_then(|v| v.as_str().map(str::to_owned))
+                                    .unwrap_or_default(),
+                                _ => String::new(),
+                            };
+                            eprintln!("\x1b[36m[Tool: {title} {status}]\x1b[0m");
+                            if let MaybeUndefined::Value(content) = tool.content {
+                                for item in &content {
+                                    display_v2_tool_content(item);
+                                }
+                            }
+                        }
+                        SessionUpdate::ToolCallContentChunk(chunk) => {
+                            display_v2_tool_content(&chunk.content)
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(AcpUpdate::V2TerminalOutputUpdate {
+                    terminal_id,
+                    output,
+                    ..
+                }) => {
+                    let previous = v2_terminals.entry(terminal_id).or_default();
+                    let delta = output
+                        .strip_prefix(previous.as_str())
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("\n{output}"));
+                    if !delta.is_empty() {
+                        eprint!("{delta}");
+                        io::stderr().flush().ok();
+                    }
+                    *previous = output;
+                }
                 Ok(AcpUpdate::MessageChunk {
                     message_id: _,
                     text,
@@ -306,6 +432,7 @@ pub async fn execute(agent: String, cwd: String) {
                     | AcpUpdate::ThoughtLevelsUpdate { .. }
                     | AcpUpdate::ConfigOptionsUpdate { .. }
                     | AcpUpdate::ConfigOptionError { .. }
+                    | AcpUpdate::V2MessageBind { .. }
                     | AcpUpdate::PlanDocumentUpdate { .. }
                     | AcpUpdate::PlanDocumentRemoved { .. }
                     | AcpUpdate::PlanUpdate { .. }
@@ -343,4 +470,35 @@ pub async fn execute(agent: String, cwd: String) {
     // 清理
     let _ = handle.kill().await;
     eprintln!("Session ended.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn v2_snapshots_and_chunks_are_visible_without_repeating_a_prefix() {
+        let mut messages = acp::v2_messages::Messages::default();
+        let event = |value| serde_json::from_value(value).unwrap();
+        let first = event(
+            serde_json::json!({"sessionUpdate":"agent_message", "messageId":"m", "content":[{"type":"text","text":"hello"}]}),
+        );
+        assert_eq!(
+            v2_message_delta(&mut messages, &first),
+            Some((false, "hello".into()))
+        );
+        let chunk = event(
+            serde_json::json!({"sessionUpdate":"agent_message_chunk", "messageId":"m", "content":{"type":"text","text":" world"}}),
+        );
+        assert_eq!(
+            v2_message_delta(&mut messages, &chunk),
+            Some((false, " world".into()))
+        );
+        let snapshot = event(
+            serde_json::json!({"sessionUpdate":"agent_message", "messageId":"m", "content":[{"type":"text","text":"changed"}]}),
+        );
+        assert_eq!(
+            v2_message_delta(&mut messages, &snapshot),
+            Some((false, "\nchanged".into()))
+        );
+    }
 }

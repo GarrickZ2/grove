@@ -67,6 +67,7 @@ pub struct InstalledAgentView {
     pub selected_install_method: InstallMethod,
     pub args_override: Vec<String>,
     pub env_override: HashMap<String, String>,
+    pub acp_protocol_version: u8,
     /// Last real ACP capability declaration, cached on the installed Agent so
     /// configuration UIs do not need to launch a 10–20 second probe Session.
     pub capability_snapshot: Option<serde_json::Value>,
@@ -94,6 +95,7 @@ impl From<&InstalledAgent> for InstalledAgentView {
             selected_install_method: a.selected_install_method,
             args_override: a.args_override.clone(),
             env_override: a.env_override.clone(),
+            acp_protocol_version: installed_agents::get_acp_protocol_version(&a.id).unwrap_or(1),
             capability_snapshot: installed_agents::get_capability_snapshot(&a.id)
                 .ok()
                 .flatten(),
@@ -738,6 +740,8 @@ pub struct PatchRequest {
     pub env_override: Option<HashMap<String, String>>,
     #[serde(default)]
     pub hidden: Option<bool>,
+    #[serde(default)]
+    pub acp_protocol_version: Option<u8>,
 }
 
 /// PATCH /api/v1/agents/marketplace/{id}
@@ -746,6 +750,14 @@ pub async fn patch_agent(
     Json(body): Json<PatchRequest>,
 ) -> Result<Json<InstalledAgentView>, MarketplaceError> {
     let id = installed_agents::canonicalize_agent_id(&id);
+    if body
+        .acp_protocol_version
+        .is_some_and(|version| !matches!(version, 1 | 2))
+    {
+        return Err(MarketplaceError::BadRequest(
+            "ACP protocol version must be 1 or 2".into(),
+        ));
+    }
     let updated = installed_agents::patch_or_create(
         &id,
         body.selected_install_method,
@@ -762,6 +774,10 @@ pub async fn patch_agent(
         } => MarketplaceError::BadRequest(msg),
         other => MarketplaceError::internal(format!("patch: {}", other)),
     })?;
+    if let Some(version) = body.acp_protocol_version {
+        installed_agents::set_acp_protocol_version(&id, version)
+            .map_err(|e| MarketplaceError::internal(format!("protocol version: {e}")))?;
+    }
     Ok(Json(InstalledAgentView::from(&updated)))
 }
 

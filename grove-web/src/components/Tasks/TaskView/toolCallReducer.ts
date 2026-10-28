@@ -16,6 +16,8 @@ export type ToolCallContentData =
       output?: string;
       truncated?: boolean;
       exit_status?: { exit_code?: number; signal?: string };
+      command?: string;
+      cwd?: string;
     };
 
 export type ToolCallInputData = { label: string; value: string };
@@ -99,6 +101,8 @@ export type ToolCallMessage = {
   locations?: { path: string; line?: number }[];
   /** Exact ACP locations; display locations additionally include Diff paths. */
   protocolLocations?: { path: string; line?: number }[];
+  /** Original v2 patch state, also used when replaying history. */
+  v2State?: Record<string, unknown>;
 };
 
 type ToolEvent = { type: string; [key: string]: unknown };
@@ -316,6 +320,8 @@ export function applyTerminalOutputUpdate(
       ...item,
       output: typeof event.output === "string" ? event.output : (item.output ?? ""),
       truncated: event.truncated === true,
+      ...("command" in event ? { command: typeof event.command === "string" ? event.command : undefined } : {}),
+      ...("cwd" in event ? { cwd: typeof event.cwd === "string" ? event.cwd : undefined } : {}),
       exit_status:
         event.exit_status && typeof event.exit_status === "object"
           ? (event.exit_status as { exit_code?: number; signal?: string })

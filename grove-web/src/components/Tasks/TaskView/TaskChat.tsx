@@ -1,4 +1,7 @@
+import { useEscapeScope } from "../../../keyboard/useEscapeScope";
 import { reduceMessageChunk, reduceUserMessage } from "./messageChunks";
+import { reduceV2Message } from "./v2Messages";
+import { reduceV2Tool } from "./v2Tools";
 import { chatConnectionLabels, chatConnectionStatusAfterClose, MAX_CHAT_RECONNECT_ATTEMPTS, type ChatConnectionStatus } from "./chatConnectionStatus";
 import { watchChatConnection, withConnectionDeadline } from "./chatConnectionAttempt";
 import { resolveAuthenticationMessages } from "./authenticationState";
@@ -469,6 +472,8 @@ type PermissionMessage = {
   /** Server-assigned id (ACP tool_call_id). Empty for legacy events. */
   id: string;
   description: string;
+  title?: string;
+  detail?: string;
   options: PermOption[];
   resolved?: string; // selected option name when resolved
 };
@@ -533,6 +538,7 @@ export type ChatMessage =
       terminal?: boolean;
       clientMessageId?: string;
       messageId?: string;
+      v2EchoPending?: boolean;
     }
   | {
       type: "assistant";
@@ -551,7 +557,7 @@ export type ChatMessage =
       /** Wall-clock seconds when the prompt response arrived. */
       endTs?: number;
     }
-  | { type: "thinking"; messageId?: string; content: string; collapsed: boolean; complete: boolean }
+  | { type: "thinking"; messageId?: string; content: string; thoughtScan?: import("./v2ThoughtStatus").ThoughtScan; collapsed: boolean; complete: boolean }
   | ToolMessage
   | AskFormMessage
   | ElicitationMessage
@@ -2156,6 +2162,11 @@ function reduceHistoryMessages(
     case "message_content_chunk":
     case "thought_chunk":
       return reduceMessageChunk(messages, msg);
+    case "v2_message_update":
+    case "v2_message_bind":
+      return reduceV2Message(messages, msg);
+    case "v2_tool_update":
+      return reduceV2Tool(messages, msg);
     case "tool_call": {
       const prev = completeThinking(messages);
       if (prev.some((m) => m.type === "tool" && m.id === msg.id)) {
@@ -2203,6 +2214,8 @@ function reduceHistoryMessages(
           type: "permission",
           id: typeof msg.id === "string" ? msg.id : "",
           description: msg.description,
+          title: typeof msg.title === "string" ? msg.title : undefined,
+          detail: typeof msg.detail === "string" ? msg.detail : undefined,
           options: msg.options ?? [],
         },
       ];
@@ -2582,7 +2595,10 @@ export function TaskChat({
   const [isConnected, setIsConnected] = useState(false);
   // Keep status per session and update it from live events, not history replay.
   const [chatConnectionStatuses, setChatConnectionStatuses] = useState<Record<string, ChatConnectionStatus>>({});
+  const [chatProtocolVersions, setChatProtocolVersions] = useState<Record<string, 1 | 2 | undefined>>({});
   const [connectionErrors, setConnectionErrors] = useState<Record<string, string>>({});
+  const [mcpWarnings, setMcpWarnings] = useState<Record<string, { name: string; message: string }[]>>({});
+  const dismissedMcpWarningsRef = useRef(new Set<string>());
   const [connectionStages, setConnectionStages] = useState<Record<string, string>>({});
   const setChatConnectionStatus = useCallback((chatId: string, status: ChatConnectionStatus | ((current: ChatConnectionStatus) => ChatConnectionStatus)) => {
     setChatConnectionStatuses((previous) => {
@@ -3306,6 +3322,7 @@ export function TaskChat({
   const [chatSearchQuery, setChatSearchQuery] = useState("");
   const planFilePathRef = useRef("");
   const planFileToolIdsRef = useRef<Set<string>>(new Set());
+  const seenV2ToolIdsRef = useRef<Set<string>>(new Set());
   const followStateRef = useRef<TaskChatFollowState>("following");
   // Capture the reader's intent before a completion commit replaces the live
   // sequential rows with a much shorter WorkSummary. Virtuoso emits transient
@@ -3478,7 +3495,9 @@ export function TaskChat({
   const connectionPending = connectionStatus === "connecting" || connectionStatus === "reconnecting";
   const connectionLabel = connectionPending && activeChatId && connectionStages[activeChatId]
     ? `${chatConnectionLabels[connectionStatus]} · ${connectionStages[activeChatId]}`
-    : chatConnectionLabels[connectionStatus];
+    : connectionStatus === "connected" && activeChatId && !isTerminalLaunchMode && !isTerminalMode && chatProtocolVersions[activeChatId]
+      ? `${chatConnectionLabels[connectionStatus]} · v${chatProtocolVersions[activeChatId]}`
+      : chatConnectionLabels[connectionStatus];
   const connectionDotClass = isViewingArchived || connectionStatus === "disconnected"
     ? "bg-[var(--color-text-muted)]"
     : connectionStatus === "connected"
@@ -5221,6 +5240,12 @@ export function TaskChat({
           const runtime =
             historyRuntimeRef.current.get(chatId) ?? defaultChatHistoryRuntime();
           if (data?.type === "session_ready") {
+            const protocolVersion = data.protocol_version === 1 || data.protocol_version === 2 ? data.protocol_version : undefined;
+            setChatProtocolVersions((previous) => previous[chatId] === protocolVersion ? previous : { ...previous, [chatId]: protocolVersion });
+            if (!dismissedMcpWarningsRef.current.has(chatId)) {
+              const warnings = Array.isArray(data.mcp_warnings) ? data.mcp_warnings.filter((warning: unknown): warning is { name: string; message: string } => typeof warning === "object" && warning !== null && typeof (warning as { name?: unknown }).name === "string" && typeof (warning as { message?: unknown }).message === "string") : [];
+              setMcpWarnings((previous) => ({ ...previous, [chatId]: warnings }));
+            }
             setChatConnectionStatus(chatId, "connected");
             setConnectionErrors((previous) => ({ ...previous, [chatId]: "" }));
             runtime.connected = true;
@@ -6230,6 +6255,8 @@ export function TaskChat({
           break;
         case "message_chunk":
         case "message_content_chunk":
+        case "v2_message_update":
+        case "v2_message_bind":
           // Auto-close the current tool section (one-time)
           setAutoExpandSectionId((prev) => {
             if (prev) {
@@ -6283,6 +6310,36 @@ export function TaskChat({
             planFileToolIdsRef.current.add(msg.id);
           }
           break;
+        case "v2_tool_update": {
+          setMessages((prev) => reduceHistoryMessages(prev, msg));
+          const update = msg.update;
+          const id = typeof update?.toolCallId === "string" ? update.toolCallId : undefined;
+          if (!id) break;
+          const toolKey = `${getActiveChatId()}:${id}`;
+          if (!seenV2ToolIdsRef.current.has(toolKey)) {
+            seenV2ToolIdsRef.current.add(toolKey);
+            setAutoExpandSectionId((prev) => {
+              if (prev !== null) return prev;
+              setExpandedSections((sections) => new Set(sections).add(id));
+              return id;
+            });
+          }
+          const planPath = planFilePathRef.current;
+          const contents = Array.isArray(update.content) ? update.content : [update.content];
+          const touchesPlan = Array.isArray(update.locations) && update.locations.some((location: { path?: string }) => location.path === planPath)
+            || contents.some((content: { type?: string; changes?: { path?: string }[] } | undefined) => content?.type === "diff" && content.changes?.some((change) => change.path === planPath));
+          if (planPath && touchesPlan) {
+            planFileToolIdsRef.current.add(id);
+          }
+          if (update.status === "completed" && planPath && planFileToolIdsRef.current.has(id)) {
+            planFileToolIdsRef.current.delete(id);
+            const planChatId = getActiveChatId();
+            readFile(planPath).then((res) => {
+              if (planFilePathRef.current === planPath && getActiveChatId() === planChatId) setPlanFileContent(res.content);
+            }).catch(() => {});
+          }
+          break;
+        }
         case "tool_call_update":
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           // Re-fetch plan file content if a completed tool touches the plan file
@@ -6797,7 +6854,10 @@ export function TaskChat({
           break;
         case "message_chunk":
         case "message_content_chunk":
+        case "v2_message_update":
+        case "v2_message_bind":
         case "tool_call":
+        case "v2_tool_update":
         case "thought_chunk":
         case "tool_call_update":
         case "terminal_output_update":
@@ -8825,6 +8885,8 @@ export function TaskChat({
   const performReconnect = useCallback(async () => {
     if (!activeChatId || isReconnecting) return;
     const chatId = activeChatId;
+    dismissedMcpWarningsRef.current.delete(chatId);
+    setMcpWarnings((previous) => ({ ...previous, [chatId]: [] }));
     backgroundConnections.observe(chatId);
     attachOnlyChatsRef.current.delete(chatId);
     const existingWs = wsMapRef.current.get(chatId);
@@ -11230,6 +11292,18 @@ export function TaskChat({
               <button type="button" className="shrink-0 underline disabled:opacity-50" disabled={isReconnecting} onClick={handleReconnect}>Reconnect</button>
             </div>
           )}
+          {activeChatId && !isReadOnlyHistory && !isTerminalLaunchMode && (mcpWarnings[activeChatId]?.length ?? 0) > 0 && (
+            <div role="alert" className="absolute inset-x-3 top-2 z-20 rounded-lg border border-amber-500 bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text)] shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold">Some MCP servers were skipped</div>
+                  <ul className="mt-1 space-y-1">{mcpWarnings[activeChatId].map((warning, index) => <li key={`${warning.name}-${index}`}><strong>{warning.name}</strong>: {warning.message} <button type="button" className="underline" onClick={() => { sessionStorage.setItem("grove:mcp-warning-search", warning.name); window.dispatchEvent(new CustomEvent("grove:navigate", { detail: { route: "skills" } })); }}>Open in Extensions</button></li>)}</ul>
+                  <p className="mt-1">The Agent is connected without these tools. After fixing the connection, use Reconnect to load them.</p>
+                </div>
+                <button type="button" aria-label="Dismiss MCP warning" className="shrink-0 underline" onClick={() => { dismissedMcpWarningsRef.current.add(activeChatId); setMcpWarnings((previous) => ({ ...previous, [activeChatId]: [] })); }}>Dismiss</button>
+              </div>
+            </div>
+          )}
           <ConversationMinimap
             turns={conversationTurns}
             activeMessageIndex={minimapActiveMessageIndex}
@@ -11908,55 +11982,7 @@ export function TaskChat({
 
                       {activeComposerPanel === "permission" &&
                         activePermissionMessage && (
-                          <div className={`flex min-h-0 flex-col gap-3 ${isPhoneLayout ? "mobile-permission-content" : ""}`}>
-                            <div className="min-h-0 overflow-y-auto overscroll-contain" role="region" aria-label="Permission request details" tabIndex={0}>
-                              {isPhoneLayout ? (
-                                <>
-                                  <div className="flex items-center gap-2">
-                                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--color-warning)_14%,transparent)] text-[var(--color-warning)]">
-                                      <ShieldCheck className="h-4 w-4" />
-                                    </span>
-                                    <div className="min-w-0">
-                                      <div className="text-sm font-semibold text-[var(--color-text)]">Permission required</div>
-                                      <div className="text-xs text-[var(--color-text-muted)]">Review this Agent action to continue</div>
-                                    </div>
-                                  </div>
-                                  <details className="mobile-permission-details rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
-                                    <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-text-secondary)]">Request details</summary>
-                                    <div className="mt-2 max-h-36 overflow-y-auto whitespace-pre-wrap break-all border-t border-[var(--color-border)] pt-2 text-xs leading-5 text-[var(--color-text-muted)]">
-                                      {activePermissionMessage.description}
-                                    </div>
-                                  </details>
-                                </>
-                              ) : (
-                                <div className="flex items-start gap-2">
-                                  <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--color-warning)] mt-0.5" />
-                                  <span className="text-sm font-medium text-[var(--color-text)] break-all whitespace-pre-wrap min-w-0">
-                                    {activePermissionMessage.description}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                            <div className="shrink-0 space-y-2 border-t border-[var(--color-border)] pt-3">
-                              {activePermissionMessage.options.map((opt) => (
-                                <button
-                                  key={opt.option_id}
-                                  onClick={() =>
-                                    handlePermissionResponse(
-                                      opt.option_id,
-                                      activePermissionMessage.id,
-                                    )
-                                  }
-                                  className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left transition-colors ${opt.kind.startsWith("reject") ? "border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-bg-tertiary)]" : "border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)]"}`}
-                                >
-                                  <span className="text-sm font-medium text-[var(--color-text)]">
-                                    {opt.name}
-                                  </span>
-                                  <ChevronRight className="h-4 w-4 text-[var(--color-warning)]" />
-                                </button>
-                              ))}
-                            </div>
-                          </div>
+                          <PermissionCard message={activePermissionMessage} onRespond={handlePermissionResponse} composer isPhoneLayout={isPhoneLayout} />
                         )}
                       {activeComposerPanel === "ask_form" &&
                         activeSurveyMessage && (
@@ -13021,6 +13047,10 @@ const SessionSettingsMenu = ({
   } | null>(null);
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  useEscapeScope(open, () => {
+    if (activeOptionId) { setActiveOptionId(null); setSearchQuery(""); }
+    else onToggle();
+  });
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const activeOption = useMemo(
@@ -13300,6 +13330,7 @@ const DropdownSelect = ({
   onSelect: (value: string) => void;
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  useEscapeScope(open, () => { if (searchQuery) setSearchQuery(""); else onToggle(); });
   const searchInputRef = useRef<HTMLInputElement>(null);
   const enableSearch = options.length > 5;
 
@@ -14175,12 +14206,7 @@ const MessageItem = memo(function MessageItem({
       return <ul className="space-y-1 text-sm">{message.entries.map((entry, i) => <li key={i} className="flex gap-2"><span className="text-[var(--color-text-muted)]">{entry.status === "completed" ? "✓" : entry.status === "in_progress" ? "◐" : "○"}</span><span>{entry.content}</span></li>)}</ul>;
     case "thinking":
       if (message.complete) return null;
-      return (
-        <ThinkingStatus
-          label={extractThoughtStatus(message.content)}
-          active={!message.complete && isBusy}
-        />
-      );
+      return <ThinkingStatus label={extractThoughtStatus(message.content)} active={isBusy} />;
     case "permission":
       return message.resolved ? (
         <PermissionCard message={message} onRespond={onPermissionResponse} />
@@ -14272,9 +14298,13 @@ const MessageItem = memo(function MessageItem({
 function PermissionCard({
   message,
   onRespond,
+  composer = false,
+  isPhoneLayout = false,
 }: {
   message: PermissionMessage;
   onRespond?: (optionId: string, requestId: string) => void;
+  composer?: boolean;
+  isPhoneLayout?: boolean;
 }) {
   const isResolved = !!message.resolved;
   const isCancelled =
@@ -14301,14 +14331,14 @@ function PermissionCard({
           <ShieldX className="w-3.5 h-3.5 text-[var(--color-error)] shrink-0" />
         )}
         <span
-          title={message.description}
+          title={message.title || message.description}
           className={`flex-1 min-w-0 truncate ${
             isCancelled
               ? "text-[color-mix(in_srgb,var(--color-warning)_92%,white_6%)]"
               : "text-[var(--color-text-muted)]"
           }`}
         >
-          {message.description}
+          {message.title || message.description}
         </span>
         <span
           title={message.resolved}
@@ -14316,6 +14346,47 @@ function PermissionCard({
         >
           {message.resolved}
         </span>
+      </div>
+    );
+  }
+
+  if (composer) {
+    return (
+      <div className={`flex min-h-0 flex-col gap-3 ${isPhoneLayout ? "mobile-permission-content" : ""}`}>
+        <div className="min-h-0 overflow-y-auto overscroll-contain" role="region" aria-label="Permission request details" tabIndex={0}>
+          <div className="flex items-start gap-2">
+            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warning)]" />
+            <div className="min-w-0 flex-1">
+              <div className="max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-sm font-medium text-[var(--color-text)]" tabIndex={0}>
+                {message.title || message.description}
+              </div>
+              {message.detail && message.detail.trim() !== (message.title || message.description).trim() && (
+                <div className="mt-2 max-h-36 overflow-y-auto rounded-lg bg-[var(--color-bg)] px-3 py-2 text-xs leading-5 text-[var(--color-text-muted)] whitespace-pre-wrap break-words" tabIndex={0}>
+                  {message.detail}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="shrink-0 space-y-2 border-t border-[var(--color-border)] pt-3">
+          {message.options.map((opt) => (
+            <button
+              key={opt.option_id}
+              onClick={() =>
+                onRespond?.(
+                  opt.option_id,
+                  message.id,
+                )
+              }
+              className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left transition-colors ${opt.kind.startsWith("reject") ? "border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-bg-tertiary)]" : "border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)]"}`}
+            >
+              <span className="text-sm font-medium text-[var(--color-text)]">
+                {opt.name}
+              </span>
+              <ChevronRight className="h-4 w-4 text-[var(--color-warning)]" />
+            </button>
+          ))}
+        </div>
       </div>
     );
   }
@@ -14985,6 +15056,12 @@ function ToolContentBlocks({ content }: { content: ToolCallContentData[] }) {
             {!hasSnapshot && (
               <div className="px-2.5 py-2 text-[var(--color-text-muted)]">
                 Terminal output is unavailable.
+              </div>
+            )}
+            {(item.command || item.cwd) && (
+              <div className="max-h-36 overflow-y-auto whitespace-pre-wrap break-words px-2.5 py-1.5 font-mono" tabIndex={0}>
+                {item.command && <div>{item.command}</div>}
+                {item.cwd && <div>{item.cwd}</div>}
               </div>
             )}
             {hasSnapshot && (

@@ -66,6 +66,7 @@ export interface CustomAgentServer {
   args?: string[];
   url?: string;
   auth_header?: string;
+  acp_protocol_version?: 1 | 2;
 }
 
 export interface AcpConfig {

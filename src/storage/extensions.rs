@@ -293,14 +293,29 @@ pub fn resolve_effective_mcp_configs(
     agent_id: &str,
     project_path: Option<&str>,
 ) -> Result<Vec<ResolvedMcpConfig>> {
+    resolve_effective_mcp_configs_for_transports(agent_id, project_path, None)
+}
+
+pub fn resolve_effective_mcp_configs_for_transports(
+    agent_id: &str,
+    project_path: Option<&str>,
+    allowed: Option<(bool, bool)>,
+) -> Result<Vec<ResolvedMcpConfig>> {
     let mut out = Vec::new();
     for installation in effective_mcp_installations(agent_id, project_path)? {
+        let selected_kind = installation.runtime.get("kind").and_then(|v| v.as_str());
+        if let Some((stdio, http)) = allowed {
+            if (selected_kind == Some("remote") && !http)
+                || (selected_kind == Some("package") && !stdio)
+            {
+                continue;
+            }
+        }
         let Some(artifact) = get_artifact(&installation.repo_key, &installation.repo_path, "mcp")?
         else {
             continue;
         };
         let values = value_map(&installation.values);
-        let selected_kind = installation.runtime.get("kind").and_then(|v| v.as_str());
         let selected_index = installation
             .runtime
             .get("index")
@@ -321,9 +336,23 @@ pub fn resolve_effective_mcp_configs(
         let choose_remote =
             selected_kind == Some("remote") || (selected_kind.is_none() && !remotes.is_empty());
         if choose_remote {
+            if allowed.is_some_and(|(_, http)| !http) {
+                continue;
+            }
             let Some(remote) = remotes.get(selected_index).or_else(|| remotes.first()) else {
                 continue;
             };
+            if allowed.is_some()
+                && !matches!(
+                    remote
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("streamable-http"),
+                    "http" | "streamable-http"
+                )
+            {
+                continue;
+            }
             let Some(url) = remote.get("url").and_then(|v| v.as_str()) else {
                 continue;
             };
@@ -350,6 +379,9 @@ pub fn resolve_effective_mcp_configs(
                 url: Some(apply_variables(url.to_string(), &values)),
                 headers,
             });
+            continue;
+        }
+        if allowed.is_some_and(|(stdio, _)| !stdio) {
             continue;
         }
         let Some(package) = packages.get(selected_index).or_else(|| packages.first()) else {

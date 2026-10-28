@@ -1354,6 +1354,8 @@ mod tests {
 
         let permission = crate::acp::AcpUpdate::PermissionRequest {
             id: "permission-1".to_string(),
+            title: None,
+            detail: None,
             description: "Allow access?".to_string(),
             options: Vec::new(),
         };
