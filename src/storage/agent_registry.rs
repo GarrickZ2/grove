@@ -214,15 +214,22 @@ pub fn is_stale() -> bool {
 /// Fetch the registry from the CDN and write to the cache. Never partially
 /// updates — either the whole doc lands or the cache stays as it was.
 pub async fn refresh() -> Result<RegistryDocument> {
-    let client = reqwest::Client::builder()
-        .timeout(FETCH_TIMEOUT)
+    // Include certificates trusted by the OS (for example, enterprise TLS
+    // gateways) alongside reqwest's built-in roots. Verification stays enabled.
+    let mut builder = reqwest::Client::builder().timeout(FETCH_TIMEOUT);
+    for cert in rustls_native_certs::load_native_certs().certs {
+        if let Ok(cert) = reqwest::Certificate::from_der(cert.as_ref()) {
+            builder = builder.add_root_certificate(cert);
+        }
+    }
+    let client = builder
         .build()
         .map_err(|e| crate::error::GroveError::storage(format!("reqwest build: {}", e)))?;
     let resp = client
         .get(REGISTRY_URL)
         .send()
         .await
-        .map_err(|e| crate::error::GroveError::storage(format!("registry fetch: {}", e)))?;
+        .map_err(|e| crate::error::GroveError::storage(format!("registry fetch: {e:#}")))?;
     if !resp.status().is_success() {
         return Err(crate::error::GroveError::storage(format!(
             "registry fetch HTTP {}",
