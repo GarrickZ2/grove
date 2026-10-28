@@ -1,3 +1,4 @@
+import { errorMessage } from "../../utils/errorMessage";
 import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 /**
  * Agent Marketplace Modal — single window for browsing the ACP registry +
@@ -123,7 +124,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
       setMarketplaceIcons(resp.agents.map((a) => ({ id: a.id, icon_url: a.icon_url })));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -145,7 +146,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
       setData(resp);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setRefreshing(false);
     }
@@ -157,7 +158,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
       await installAgent(id, method);
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setBusyId(null);
     }
@@ -169,7 +170,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
       await uninstallAgent(id, method);
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setBusyId(null);
     }
@@ -181,7 +182,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
       await patchAgent(id, body);
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setBusyId(null);
     }
@@ -288,7 +289,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
         {error && (
           <div className="flex items-center gap-2 border-b border-[color-mix(in_srgb,var(--color-warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_8%,transparent)] px-5 py-2 text-xs text-[var(--color-warning)]">
             <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{error}</span>
+            <span className="min-w-0 flex-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-words">{error}</span>
             <button
               type="button"
               onClick={() => setError(null)}
