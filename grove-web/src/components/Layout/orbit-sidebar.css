@@ -1,0 +1,257 @@
+.orbit-window-header,
+.ide-workbench.is-orbit {
+  --orbit-chrome-background: color-mix(in srgb, var(--color-highlight) 2%, color-mix(in oklab, var(--color-bg) 94.5%, var(--color-text) 5.5%));
+}
+.orbit-window-header {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 40px;
+  /* Above the App-level drag strip (z-45); the toolbar host carries its own drag attributes. */
+  z-index: 50;
+  pointer-events: none;
+  background: var(--color-bg);
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border) 70%, transparent);
+}
+.orbit-window-header.has-mac-controls { height: 54px; }
+.orbit-window-header.is-hidden { display: none; }
+/* Leaving display:none restarts the animation, so the bar eases in whenever it (re)appears. */
+.orbit-window-header:not(.is-hidden) { animation: orbit-header-in .24s cubic-bezier(.25, 1, .5, 1); }
+@keyframes orbit-header-in { from { opacity: 0; transform: translateY(-8px); } }
+/* New page → Session hand-off: the workspace fades in. No movement, so the
+   composer ghost can be measured onto its final position. */
+.orbit-handoff-enter { animation: orbit-handoff-in .26s cubic-bezier(.25, 1, .5, 1); }
+@keyframes orbit-handoff-in { from { opacity: 0; } }
+/* 30px host = button height, centered at 20px (40px bar) or 27px (macOS traffic lights). */
+.orbit-workspace-toolbar { position: absolute; top: 5px; right: 8px; left: 256px; height: 30px; z-index: 50; pointer-events: auto; display: flex; align-items: center; }
+.orbit-workspace-toolbar.has-mac-controls { top: 12px; }
+/* Collapsed: first toolbar button sits 10px after the sidebar's two title-bar icons. */
+.orbit-workspace-toolbar.is-collapsed { left: 76px; }
+.orbit-workspace-toolbar.is-collapsed.has-mac-controls { left: 158px; }
+.orbit-toolbar-slot { flex: 1 1 auto; min-width: 0; height: 100%; }
+/* Keep the shared toolbar button styling; Orbit only positions its host. */
+.orbit-workspace-toolbar .ide-toolbar { width: 100%; height: 100%; padding: 0 8px; }
+.orbit-workspace-toolbar .ide-toolbar__group { height: 100%; align-items: center; gap: 2px; }
+/* Icon-only panel toggles; labels stay available through the title tooltip. */
+.orbit-workspace-toolbar .ide-toolbar__btn { width: 30px; height: 30px; padding: 0; justify-content: center; border: 0; border-radius: 7px; }
+/* Hide only the label; plugin icons (emoji / image) also render as a span, but always first. */
+.orbit-workspace-toolbar .ide-toolbar__btn > span:last-child:not(:first-child) { display: none; }
+.orbit-workspace-toolbar .ide-toolbar__btn svg { width: 16px; height: 16px; stroke-width: 1.6; }
+.orbit-workspace-toolbar .ide-toolbar__btn > :first-child { filter: grayscale(1); }
+.orbit-workspace-toolbar .ide-toolbar__btn:hover { color: var(--color-text); background: color-mix(in oklab, var(--color-text) 7%, transparent); }
+.orbit-workspace-toolbar .ide-toolbar__btn--active,
+.orbit-workspace-toolbar .ide-toolbar__btn--active:hover,
+.orbit-workspace-toolbar .ide-toolbar__btn:disabled:hover { color: var(--color-text); background: color-mix(in oklab, var(--color-text) 10%, transparent); }
+.orbit-workspace-toolbar .ide-toolbar__btn:disabled { opacity: 1; }
+/* The open panel keeps its name so it stays recognisable at a glance. */
+.orbit-workspace-toolbar .ide-toolbar__btn--active { width: auto; gap: 6px; padding: 0 10px 0 8px; }
+.orbit-workspace-toolbar .ide-toolbar__btn--active > span:last-child:not(:first-child) { display: inline; font-size: 12.5px; font-weight: 500; }
+.ide-toolbar__tip {
+  position: fixed;
+  z-index: 120;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.orbit-workspace-toolbar .ide-toolbar__separator { height: 16px; margin: 0 4px; background: color-mix(in oklab, var(--color-border) 70%, transparent); }
+.ide-workbench.is-orbit { padding: 0; border: 0; border-radius: 0; background: var(--color-bg); box-shadow: none; }
+.ide-workbench.is-orbit .ide-chat-surface,
+.ide-workbench.is-orbit .ide-panel-slot { border: 0; border-radius: 0; box-shadow: none; }
+.ide-workbench.is-orbit .ide-chat-surface > div { border-radius: 0; }
+.ide-workbench.is-orbit .orbit-chat-header,
+.ide-workbench.is-orbit .ide-panel-slot__header,
+.ide-workbench.is-orbit .ide-panel-slot--terminal > div:first-child {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  min-height: 36px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  background: var(--color-bg) !important;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border) 55%, transparent) !important;
+  backdrop-filter: none !important;
+}
+.ide-workbench.is-orbit .ide-panel-slot__title { font-size: 13px; font-weight: 500; }
+.ide-workbench.is-orbit .orbit-chat-header > div { width: 100%; }
+.ide-workbench.is-orbit .ide-resizer { width: 1px; min-width: 1px; }
+.ide-workbench.is-orbit .ide-resizer::before { content: ""; position: absolute; inset: 0 -4px; }
+.ide-workbench.is-orbit .ide-resizer::after { left: 0; width: 1px; border-radius: 0; background: color-mix(in oklab, var(--color-border) 70%, transparent); }
+.ide-workbench.is-orbit .ide-resizer:hover::after,
+.ide-workbench.is-orbit .ide-resizer:active::after { left: 0; width: 1px; background: var(--color-highlight); }
+.orbit-sidebar {
+  --orbit-list-row-gap: 2px;
+  position: fixed;
+  z-index: 50;
+  inset: 0 auto 0 0;
+  display: flex;
+  flex-direction: column;
+  width: 256px;
+  color: var(--color-text);
+  --orbit-surface: color-mix(in oklab, var(--color-bg) 94.5%, var(--color-text) 5.5%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-highlight) 3%, transparent), transparent 155px),
+    var(--orbit-surface);
+}
+.orbit-sidebar:not(.is-collapsed)::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 1px; background: color-mix(in oklab, var(--color-border) 80%, transparent); pointer-events: none; }
+.orbit-sidebar.is-collapsed { inset: 0 auto auto 0; width: auto; height: 40px; border: 0; background: transparent; }
+.orbit-sidebar.is-collapsed:not(.has-mac-controls) .orbit-titlebar-actions { top: 4px; }
+.orbit-titlebar { position: relative; height: 32px; flex: none; }
+.orbit-titlebar-actions { position: absolute; top: 0; right: 14px; left: auto; display: flex; height: 32px; align-items: center; gap: 2px; }
+.orbit-sidebar.has-mac-controls .orbit-titlebar { height: 44px; }
+.orbit-sidebar.has-mac-controls .orbit-titlebar-actions { top: 11px; left: auto; }
+.orbit-sidebar.has-mac-controls.is-collapsed { height: 54px; }
+.orbit-sidebar.is-collapsed .orbit-titlebar-actions { right: auto; left: 8px; }
+.orbit-sidebar.has-mac-controls.is-collapsed .orbit-titlebar-actions { top: 11px; left: 90px; }
+.orbit-sidebar.is-collapsed .orbit-titlebar { width: 160px; }
+.orbit-sidebar.is-collapsed:not(.has-mac-controls) .orbit-titlebar { width: 78px; }
+.orbit-header { height: 44px; padding: 0 11px 0 15px; display: flex; align-items: center; gap: 2px; flex: none; }
+.orbit-brand { display: flex; align-items: center; flex: 1; }
+.orbit-header-actions { display: flex; align-items: center; }
+.orbit-icon-button { width: 32px; height: 32px; flex: none; display: inline-flex; position: relative; align-items: center; justify-content: center; border: 0; border-radius: 6px; color: var(--color-text-muted); background: transparent; cursor: pointer; }
+.orbit-icon-button:disabled { opacity: .4; cursor: default; }
+.orbit-icon-button:hover, .orbit-row:hover, .orbit-task-row:hover, .orbit-task-new:hover { color: var(--color-text); background: color-mix(in oklab, var(--color-text) 9%, transparent); }
+.orbit-unread, .orbit-status { width: 7px; height: 7px; border-radius: 50%; background: var(--color-highlight); flex: none; }
+.orbit-unread { position: absolute; top: 4px; right: 5px; }
+.orbit-status.is-waiting { background: #df9c31; }
+.orbit-project { flex: none; padding-bottom: 5px; }
+.orbit-navigation { display: flex; flex-direction: column; gap: var(--orbit-list-row-gap); flex: none; padding: 0 8px 4px; }
+.orbit-row { width: 100%; min-width: 0; min-height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: inherit; font-size: 14px; font-weight: 400; line-height: 1.35; text-align: left; cursor: pointer; }
+.orbit-row.is-selected { background: color-mix(in oklab, var(--color-text) 10%, transparent); }
+.orbit-nav-row svg { flex: none; color: var(--color-text-muted); }
+.orbit-nav-row:hover svg, .orbit-nav-row.is-selected svg { color: var(--color-text); }
+.orbit-nav-row .orbit-more-chevron { margin-left: auto; transition: transform .15s ease; }
+.orbit-nav-row .orbit-more-chevron.is-collapsed { transform: rotate(-90deg); }
+.orbit-session-area { min-height: 0; flex: 1; overflow-y: auto; padding: 3px 8px 12px; }
+.orbit-nav-row:disabled, .orbit-task-new:disabled { opacity: .45; cursor: default; }
+.orbit-section-label { padding: 17px 10px 6px; color: var(--color-text-muted); font-size: 12px; font-weight: 500; }
+.orbit-session { min-height: 32px; }
+.orbit-session-nested { padding-left: 32px; }
+.orbit-truncate { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-task { margin-top: var(--orbit-list-row-gap); }
+.orbit-task-row { position: relative; display: flex; min-width: 0; align-items: center; border-radius: 6px; }
+.orbit-task-toggle { display: flex; align-items: center; gap: 7px; min-width: 0; height: 34px; flex: 1; padding: 0 8px; color: inherit; background: transparent; border: 0; font-size: 14px; text-align: left; cursor: pointer; }
+.orbit-task-toggle svg { flex: none; }
+.orbit-task-new { position: absolute; right: 2px; top: 2px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; color: var(--color-text-muted); background: transparent; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.orbit-task-row:hover .orbit-task-new, .orbit-task-row:focus-within .orbit-task-new { opacity: 1; pointer-events: auto; }
+.orbit-task-row:hover .orbit-task-toggle, .orbit-task-row:focus-within .orbit-task-toggle { padding-right: 66px; }
+.orbit-error { padding: 8px 10px; color: var(--color-text-muted); font-size: 11px; }
+.orbit-footer { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 8px 8px; border-top: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent); }
+.orbit-session-row { position: relative; display: flex; align-items: center; min-width: 0; border-radius: 8px; }
+.orbit-session-row + .orbit-session-row,
+.orbit-task-row + .orbit-session-row { margin-top: var(--orbit-list-row-gap); }
+.orbit-session-row:hover, .orbit-session-row:focus-within { background: color-mix(in oklab, var(--color-text) 9%, transparent); }
+.orbit-session-row.is-selected { background: color-mix(in oklab, var(--color-text) 12%, transparent); }
+.orbit-session-row .orbit-session { flex: 1; width: auto; }
+.orbit-session-row .orbit-session:hover { background: transparent; }
+.orbit-row-menu { position: absolute; right: 3px; top: 3px; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.orbit-task-row > .orbit-row-menu { right: 34px; }
+.orbit-session-row:hover .orbit-row-menu, .orbit-session-row:focus-within .orbit-row-menu, .orbit-task-row:hover .orbit-row-menu, .orbit-task-row:focus-within .orbit-row-menu { opacity: 1; pointer-events: auto; }
+.orbit-session-row:hover .orbit-session, .orbit-session-row:focus-within .orbit-session { padding-right: 36px; }
+.orbit-more-button { display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); cursor: pointer; }
+.orbit-more-button:hover, .orbit-more-button[aria-expanded="true"] { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 9%, transparent); }
+.orbit-row-menu:has(.orbit-session-live-slot > *) .orbit-session-fallback { display: none; }
+.orbit-session-live-slot > :not(:last-child) { display: none; }
+.orbit-rename-dialog { padding: 20px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-bg); box-shadow: 0 16px 48px rgba(0,0,0,.2); }
+.orbit-rename-dialog h2 { margin: 0 0 16px; color: var(--color-text); font-size: 16px; font-weight: 600; }
+.orbit-rename-dialog input { width: 100%; padding: 9px 10px; outline: none; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-secondary); color: var(--color-text); font-size: 14px; }
+.orbit-rename-dialog input:focus { border-color: var(--color-highlight); }
+.orbit-rename-dialog > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.orbit-rename-dialog button { padding: 7px 13px; border: 0; border-radius: 7px; background: var(--color-bg-secondary); color: var(--color-text); font-size: 13px; cursor: pointer; }
+.orbit-rename-dialog button[type="submit"] { background: var(--color-text); color: var(--color-bg); }
+.orbit-rename-dialog button:disabled { opacity: .45; cursor: default; }
+.orbit-notification-popover {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border) 75%, transparent);
+  border-radius: 12px;
+  background: var(--color-bg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .13), 0 2px 6px rgba(0, 0, 0, .05);
+}
+.orbit-notification-header { padding: 13px 14px 9px; }
+.orbit-notification-list { padding: 2px 6px 7px; }
+.orbit-notification-list > div { padding: 9px 8px; border-radius: 8px; }
+.orbit-action-menu { padding: 5px; border-color: color-mix(in srgb, var(--color-border) 80%, transparent); border-radius: 14px; background: var(--color-bg); box-shadow: 0 4px 18px rgba(0, 0, 0, .10); }
+.orbit-action-menu button { min-height: 30px; padding: 6px 9px; gap: 9px; border-radius: 7px; font-size: 13px; font-weight: 400; }
+.orbit-action-menu button > span:first-child { width: 15px; height: 15px; }
+.orbit-action-menu button > span:first-child svg { width: 15px; height: 15px; stroke-width: 1.7; }
+.orbit-menu-divider { height: 1px; margin: 4px 5px; background: color-mix(in srgb, var(--color-border) 75%, transparent); }
+.orbit-task-section-heading { display: flex; align-items: center; justify-content: space-between; min-height: 34px; margin-top: 12px; padding-left: 10px; }
+/* Sessions is the first section: same toggle as Tasks, spaced like the old plain label. */
+.orbit-sessions-heading { margin-top: 8px; }
+.orbit-task-section-toggle { display: flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--color-text-muted); font-size: 12px; font-weight: 500; cursor: pointer; }
+.orbit-task-section-toggle svg { transition: transform .15s ease; }
+.orbit-task-section-toggle svg.is-collapsed { transform: rotate(-90deg); }
+.orbit-section-add { display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); cursor: pointer; }
+.orbit-section-add:hover { background: color-mix(in srgb, var(--color-text) 9%, transparent); color: var(--color-text); }
+.orbit-section-add:disabled { opacity: .4; cursor: default; }
+/* Narrow desktop / tablet window: the sidebar opens over the workspace instead of pushing it. */
+.orbit-sidebar.is-overlay { z-index: 60; box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-border) 60%, transparent), 12px 0 40px rgba(0, 0, 0, .18); animation: orbit-overlay-in .22s cubic-bezier(.25, 1, .5, 1); }
+@keyframes orbit-overlay-in { from { transform: translateX(-24px); opacity: 0; } }
+.orbit-sidebar-scrim { position: fixed; inset: 0; z-index: 55; padding: 0; border: 0; background: rgba(0, 0, 0, .16); cursor: default; }
+
+/* Phone: the drawer slides in over the page. Above the page (z 2), below dialogs and menus (z 50+). */
+.orbit-phone-drawer { --orbit-drawer-width: min(84vw, 320px); position: fixed; inset: 0 auto 0 0; z-index: 40; width: var(--orbit-drawer-width); visibility: hidden; transform: translateX(-100%); transition: transform .32s cubic-bezier(.25, 1, .5, 1), box-shadow .32s ease, visibility 0s .32s; }
+.orbit-phone-drawer.is-open { visibility: visible; transform: none; box-shadow: 1px 0 0 color-mix(in oklab, var(--color-border) 70%, transparent), 18px 0 40px rgba(0, 0, 0, .22); transition: transform .32s cubic-bezier(.25, 1, .5, 1), box-shadow .32s ease; }
+.orbit-sidebar.is-drawer { position: absolute; inset: 0; width: 100%; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+.orbit-sidebar.is-drawer::after { display: none; }
+.orbit-sidebar.is-drawer .orbit-header { height: 56px; padding: 0 10px 0 16px; }
+.orbit-sidebar.is-drawer .orbit-icon-button { width: 40px; height: 40px; border-radius: 50%; }
+.orbit-sidebar.is-drawer .orbit-row { min-height: 42px; font-size: 15px; }
+.orbit-sidebar.is-drawer .orbit-task-toggle { height: 42px; font-size: 15px; }
+.orbit-sidebar.is-drawer .orbit-task-section-toggle { font-size: 13px; }
+/* No hover on touch: row actions stay visible. */
+.orbit-sidebar.is-drawer .orbit-row-menu,
+.orbit-sidebar.is-drawer .orbit-task-new { opacity: 1; pointer-events: auto; top: 6px; }
+.orbit-sidebar.is-drawer .orbit-task-new { top: 6px; }
+.orbit-sidebar.is-drawer .orbit-session-row .orbit-session { padding-right: 40px; }
+.orbit-sidebar.is-drawer .orbit-task-row .orbit-task-toggle { padding-right: 72px; }
+.orbit-sidebar.is-drawer .orbit-footer { padding: 10px 12px 12px; border-top: 0; }
+.orbit-sidebar.is-drawer .orbit-footer > .orbit-row { width: auto; }
+.orbit-drawer-new { display: inline-flex; flex: none; align-items: center; gap: 6px; height: 42px; margin-left: auto; padding: 0 18px 0 14px; border: 0; border-radius: 999px; background: var(--color-text); color: var(--color-bg); font-size: 14px; font-weight: 500; cursor: pointer; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); }
+.orbit-drawer-new:disabled { opacity: .45; cursor: default; }
+.orbit-phone-stage { position: relative; z-index: 2; display: flex; min-height: 0; flex: 1; flex-direction: column; background: var(--color-bg); }
+.orbit-phone-scrim { position: absolute; inset: 0; z-index: 80; padding: 0; border: 0; background: rgba(0, 0, 0, .32); cursor: default; animation: orbit-sheet-fade .24s ease; }
+.orbit-phone-header { display: grid; flex: none; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; height: 56px; padding: 0 12px; }
+/* Menu button sits just right of the traffic lights (they end ~81px in, centered at ~28px like this bar). */
+.orbit-phone-header.has-mac-controls { padding-left: 92px; }
+.orbit-phone-button { display: inline-flex; width: 40px; height: 40px; flex: none; align-items: center; justify-content: center; border: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent); border-radius: 50%; background: color-mix(in oklab, var(--color-text) 5%, var(--color-bg)); color: var(--color-text); cursor: pointer; }
+.orbit-phone-button:active { background: color-mix(in oklab, var(--color-text) 12%, var(--color-bg)); }
+.orbit-phone-button:disabled { opacity: .4; cursor: default; }
+.orbit-phone-title { display: flex; min-width: 0; justify-content: center; }
+.orbit-phone-title-slot { display: flex; min-width: 0; justify-content: center; }
+.orbit-phone-title-slot:empty { display: none; }
+.orbit-phone-title-slot:not(:empty) + .orbit-phone-title-fallback { display: none; }
+.orbit-phone-title-fallback, .orbit-phone-session-title { overflow: hidden; color: var(--color-text); font-size: 15px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-phone-session-title { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.orbit-phone-session-title > span { overflow: hidden; text-overflow: ellipsis; }
+.orbit-phone-actions { display: flex; align-items: center; gap: 8px; }
+.orbit-phone-actions-slot { display: flex; align-items: center; }
+.orbit-phone-actions-slot:empty { display: none; }
+/* An open panel shows as a closable chip next to New. */
+.orbit-phone-panel-chip { display: inline-flex; max-width: 140px; height: 40px; align-items: center; gap: 6px; padding: 0 10px 0 12px; border: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent); border-radius: 999px; background: color-mix(in oklab, var(--color-text) 9%, var(--color-bg)); color: var(--color-text); font-size: 13px; font-weight: 500; cursor: pointer; }
+.orbit-phone-panel-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-phone-sheet { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-end; }
+.orbit-phone-sheet__backdrop { position: absolute; inset: 0; padding: 0; border: 0; background: rgba(0, 0, 0, .32); cursor: default; animation: orbit-sheet-fade .2s ease; }
+.orbit-phone-sheet__panel { position: relative; width: 100%; max-height: 80%; overflow-y: auto; padding: 8px 14px calc(16px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; background: var(--color-bg); box-shadow: 0 -10px 40px rgba(0, 0, 0, .18); animation: orbit-sheet-up .28s cubic-bezier(.25, 1, .5, 1); }
+@keyframes orbit-sheet-fade { from { opacity: 0; } }
+@keyframes orbit-sheet-up { from { transform: translateY(40%); opacity: 0; } }
+.orbit-phone-sheet__grabber { width: 36px; height: 4px; margin: 0 auto 14px; border-radius: 2px; background: color-mix(in oklab, var(--color-text) 20%, transparent); }
+.orbit-phone-sheet__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.orbit-phone-sheet__tile { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 6px; padding: 12px 4px 10px; border: 0; border-radius: 14px; background: color-mix(in oklab, var(--color-text) 5%, var(--color-bg)); color: var(--color-text-muted); cursor: pointer; }
+.orbit-phone-sheet__tile.is-active { background: color-mix(in oklab, var(--color-text) 12%, var(--color-bg)); color: var(--color-text); }
+.orbit-phone-sheet__tile-icon { display: flex; height: 22px; align-items: center; }
+.orbit-phone-sheet__tile-label { max-width: 100%; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-phone-sheet__actions { display: flex; flex-direction: column; gap: 2px; margin-top: 14px; padding-top: 10px; border-top: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent); }
+.orbit-phone-sheet__action { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: var(--color-text); font-size: 15px; text-align: left; cursor: pointer; }
+.orbit-phone-sheet__action:active { background: color-mix(in oklab, var(--color-text) 8%, transparent); }
+.orbit-phone-sheet__action:disabled { opacity: .4; cursor: default; }
+.orbit-phone-sheet__action.is-warning { color: var(--color-warning); }
+.orbit-phone-sheet__action.is-danger { color: var(--color-error); }
+/* Phone: the header chip names and closes the open panel, so the panel drops its own title bar. */
+.ide-workbench.is-orbit.is-phone .ide-panel-slot__header { display: none; }
+/* Same height as the desktop sidebar's macOS title bar. */
+.orbit-drawer-titlebar { height: 44px; flex: none; }

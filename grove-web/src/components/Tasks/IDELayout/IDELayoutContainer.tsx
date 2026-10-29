@@ -19,6 +19,8 @@ import type {
 } from "./IDELayout.types";
 import { AUX_PANEL_TYPES } from "./IDELayout.types";
 import { MultiTabTerminalPanel } from "./MultiTabTerminalPanel";
+import { OrbitPhonePanels, type OrbitPhonePanel } from "./OrbitPhonePanels";
+import { ORBIT_PHONE_ACTIONS_SLOT, ORBIT_PHONE_SHOW_CHAT_EVENT } from "../../Layout/OrbitPhoneHeader";
 import type { FileNavRequest } from "../../Review";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from "../../ui/sketchChipCache";
 import { useConfig, useProject } from "../../../context";
@@ -123,6 +125,7 @@ function Toolbar({
   infoPanels,
   leading,
   trailing,
+  compact = false,
 }: {
   state: IDELayoutInternalState;
   update: (partial: Partial<IDELayoutInternalState>) => void;
@@ -132,8 +135,19 @@ function Toolbar({
   infoPanels: PanelDescriptor[];
   leading?: React.ReactNode;
   trailing?: React.ReactNode;
+  /** Orbit: inactive buttons are icon-only (CSS), so names come from an instant tooltip. */
+  compact?: boolean;
 }) {
   const hasOpenPanel = state.auxVisible || state.infoVisible;
+  const [tip, setTip] = useState<{ text: string; left: number; top: number } | null>(null);
+  const tipProps = (text: string) => compact ? {
+    "aria-label": text,
+    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      setTip({ text, left: r.left + r.width / 2, top: r.bottom + 6 });
+    },
+    onMouseLeave: () => setTip(null),
+  } : { title: text };
 
   // Real keybinding hints: resolve each panel's `panel.<key>.open` command from
   // the catalog + the user's keymap overrides (NOT a hardcoded guess), and
@@ -228,6 +242,8 @@ function Toolbar({
     compute();
     const ro = new ResizeObserver(compute);
     if (rowRef.current) ro.observe(rowRef.current);
+    // Button widths change when Orbit reveals the active panel's label.
+    for (const child of Array.from(measureRef.current?.children ?? [])) ro.observe(child);
     return () => ro.disconnect();
   }, [items]);
 
@@ -256,9 +272,9 @@ function Toolbar({
     return (
       <button
         key={item.d.key}
-        onClick={() => activate(item)}
+        onClick={() => { activate(item); setTip(null); }}
         className={`ide-toolbar__btn ${active ? "ide-toolbar__btn--active" : ""}`}
-        title={sc ? `${item.d.label} (${sc})` : item.d.label}
+        {...tipProps(sc ? `${item.d.label} (${sc})` : item.d.label)}
       >
         <Icon size={13} />
         <span>{item.d.label}</span>
@@ -330,7 +346,7 @@ function Toolbar({
         }}
         disabled={!isMobile && state.chatVisible && !hasOpenPanel}
         className={`ide-toolbar__btn ide-toolbar__btn--chat ${chatActive ? "ide-toolbar__btn--active" : ""}`}
-        title={hasOpenPanel ? "Toggle Agent" : "Agent stays visible until another panel is open"}
+        {...tipProps(hasOpenPanel ? "Toggle Agent" : "Agent stays visible until another panel is open")}
       >
         <MessageSquare size={13} />
         <span>Agent</span>
@@ -360,7 +376,7 @@ function Toolbar({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={toggleMenu}
             className={`ide-toolbar__btn ${overflow.some(isItemActive) ? "ide-toolbar__btn--active" : ""}`}
-            title="More panels"
+            {...tipProps("More panels")}
           >
             <MoreHorizontal size={13} />
           </button>
@@ -409,6 +425,7 @@ function Toolbar({
           <div className="ide-toolbar__trailing">{trailing}</div>
         </>
       )}
+      {tip && createPortal(<div className="ide-toolbar__tip" style={{ left: tip.left, top: tip.top }}>{tip.text}</div>, document.body)}
     </div>
   );
 }
@@ -446,10 +463,28 @@ function PanelSlot({
 }
 
 export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainerProps>(
-  function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing }, ref) {
+  function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing, phoneActions, isActive = true }, ref) {
     const { selectedProject, projects } = useProject();
-    const { terminalAvailable } = useConfig();
+    const { terminalAvailable, config } = useConfig();
     const { isMobile } = useIsMobile();
+    // Orbit styling depends only on the interface, never on visibility: a
+    // keep-alive page that drops it while hidden flashes Classic chrome for a
+    // frame when shown again. Visibility only decides who owns the toolbar slot.
+    // On a phone Orbit swaps the toolbar for the header's panel sheet.
+    const orbitLayout = config?.web?.interface === "orbit";
+    const orbitPhone = orbitLayout && isMobile;
+    const orbitSlotId = orbitPhone ? ORBIT_PHONE_ACTIONS_SLOT : "orbit-workspace-toolbar";
+    const [orbitToolbarSlot, setOrbitToolbarSlot] = useState<HTMLElement | null>(() =>
+      typeof document === "undefined" ? null : document.getElementById(orbitSlotId));
+    useEffect(() => {
+      let cancelled = false;
+      void Promise.resolve().then(() => {
+        if (!cancelled) setOrbitToolbarSlot(orbitLayout ? document.getElementById(orbitSlotId) : null);
+      });
+      return () => { cancelled = true; };
+    }, [orbitLayout, orbitSlotId]);
+    const orbitToolbarTarget = orbitLayout && isActive ? orbitToolbarSlot : null;
+    const resizerWidth = orbitLayout ? 1 : RESIZER_PX;
     // Resolve the project this task actually belongs to by its projectId,
     // not the globally-selected project. Blitz lets the user open a task
     // from any project while sidebar still shows a different one; using
@@ -491,8 +526,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         persisted.terminalActiveId && terminalTabs.some((t) => t.id === persisted.terminalActiveId)
           ? persisted.terminalActiveId
           : terminalTabs[0].id;
-      const auxVisible = persisted.auxVisible ?? false;
-      const infoVisible = (persisted.infoVisible ?? false) && (!isMobile || !auxVisible);
+      // Orbit on a phone always opens on the chat.
+      const auxVisible = !orbitPhone && (persisted.auxVisible ?? false);
+      const infoVisible = !orbitPhone && (persisted.infoVisible ?? false) && (!isMobile || !auxVisible);
       return {
         auxType: persisted.auxType ?? null,
         auxVisible,
@@ -562,6 +598,12 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       },
       [setStateTagged],
     );
+    useEffect(() => {
+      if (!orbitPhone) return;
+      const showChat = () => update({ chatVisible: true, auxVisible: false, infoVisible: false });
+      window.addEventListener(ORBIT_PHONE_SHOW_CHAT_EVENT, showChat);
+      return () => window.removeEventListener(ORBIT_PHONE_SHOW_CHAT_EVENT, showChat);
+    }, [orbitPhone, update]);
 
     const handleNavigateToFile = useCallback(
       async (filePath: string, line?: number, mode?: "diff" | "full"): Promise<boolean> => {
@@ -672,8 +714,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         : Boolean(s.auxVisible && s.auxType);
       const otherFloor = otherSide === "info" ? INFO_COL_FLOOR : AUX_COL_FLOOR;
       const maxSide = otherVisible
-        ? sw - CHAT_COL_MIN - RESIZER_PX * 2 - otherFloor
-        : sw - CHAT_COL_MIN - RESIZER_PX;
+        ? sw - CHAT_COL_MIN - resizerWidth * 2 - otherFloor
+        : sw - CHAT_COL_MIN - resizerWidth;
       const maxSideWidth = Math.max(side === "aux" ? AUX_COL_FLOOR : INFO_COL_FLOOR, Math.floor(maxSide));
 
       // Use the actually-rendered panel width as the baseline. When the layout
@@ -727,7 +769,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
 
       document.addEventListener("pointermove", handlePointerMove);
       document.addEventListener("pointerup", handlePointerUp);
-    }, [auxWidth, infoWidth]);
+    }, [auxWidth, infoWidth, resizerWidth]);
 
     // Persist layout state whenever relevant fields change
     useEffect(() => {
@@ -890,6 +932,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       isStudio,
       isGitRepo,
       terminalAvailable,
+      orbitHeader: orbitLayout,
+      isActive,
       onClose,
       fileNavRequest: state.fileNavRequest,
       artifactPreviewRequest: state.artifactPreviewRequest,
@@ -910,7 +954,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         />
       ),
       plugins: panelPlugins,
-    }), [projectId, task, isStudio, isGitRepo, terminalAvailable, state.fileNavRequest, state.artifactPreviewRequest, state.lastChatIdleAt, state.isChatBusy, handleChatBecameIdle, handleBusyStateChange, state.terminalTabs, state.terminalActiveId, update, panelPlugins]);
+    }), [projectId, task, isStudio, isGitRepo, terminalAvailable, orbitLayout, isActive, state.fileNavRequest, state.artifactPreviewRequest, state.lastChatIdleAt, state.isChatBusy, handleChatBecameIdle, handleBusyStateChange, state.terminalTabs, state.terminalActiveId, update, panelPlugins]);
 
     // Aux column. Terminal renders its own multi-tab header (no slot);
     // everything else is wrapped in PanelSlot with the registry's label/icon.
@@ -962,12 +1006,12 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
 
     const auxMaxCSS = (() => {
       if (useDefaultAuxPairRatio || !showChat) return `${auxWidth}px`;
-      const reserved = CHAT_COL_MIN + RESIZER_PX + (showInfo ? RESIZER_PX + INFO_COL_FLOOR : 0);
+      const reserved = CHAT_COL_MIN + resizerWidth + (showInfo ? resizerWidth + INFO_COL_FLOOR : 0);
       return `min(${auxWidth}px, calc(100% - ${reserved}px))`;
     })();
     const infoMaxCSS = (() => {
       if (useDefaultInfoPairRatio || !showChat) return `${infoWidth}px`;
-      const reserved = CHAT_COL_MIN + RESIZER_PX + (showAux ? RESIZER_PX + AUX_COL_FLOOR : 0);
+      const reserved = CHAT_COL_MIN + resizerWidth + (showAux ? resizerWidth + AUX_COL_FLOOR : 0);
       return `min(${infoWidth}px, calc(100% - ${reserved}px))`;
     })();
 
@@ -988,9 +1032,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         : "minmax(360px, 1fr)";
     const gridColumns = [
       showAux ? auxColumn : null,
-      showAux && (showChat || showInfo) ? "8px" : null,
+      showAux && (showChat || showInfo) ? `${resizerWidth}px` : null,
       showChat ? chatColumn : null,
-      showChat && showInfo ? "8px" : null,
+      showChat && showInfo ? `${resizerWidth}px` : null,
       showInfo ? infoColumn : null,
     ].filter(Boolean).join(" ");
     // Toolbar buttons come straight from the shared catalog, split by column.
@@ -1006,12 +1050,34 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         infoPanels={infoPanels}
         leading={toolbarLeading}
         trailing={toolbarTrailing}
+        compact={orbitLayout}
+      />
+    );
+
+    const phonePanelList: OrbitPhonePanel[] = [
+      ...auxPanels.map((d) => ({ d, kind: "aux" as const })),
+      ...infoPanels.map((d) => ({ d, kind: "info" as const })),
+    ];
+    const phoneOpenPanel = phonePanelList.find((panel) => panel.kind === "aux"
+      ? state.auxVisible && state.auxType === panel.d.key
+      : state.infoVisible && state.infoType === panel.d.key) ?? null;
+    // Same mutually-exclusive switching the mobile toolbar does.
+    const phonePanels = (
+      <OrbitPhonePanels
+        panels={phonePanelList}
+        openPanel={phoneOpenPanel}
+        actions={phoneActions}
+        onShowChat={() => update({ chatVisible: true, auxVisible: false, infoVisible: false })}
+        onOpen={(panel) => update(panel.kind === "aux"
+          ? { auxType: panel.d.key, auxVisible: true, chatVisible: false, infoVisible: false }
+          : { infoType: panel.d.key, infoVisible: true, chatVisible: false, auxVisible: false })}
       />
     );
 
     return (
-      <div className="ide-workbench">
-        {toolbar}
+      <div className={`ide-workbench${orbitLayout ? " is-orbit" : ""}${orbitPhone ? " is-phone" : ""}`}>
+        {/* In Orbit the toolbar lives in the window header; a hidden page renders none. */}
+        {orbitLayout ? orbitToolbarTarget && createPortal(orbitPhone ? phonePanels : toolbar, orbitToolbarTarget) : toolbar}
         <div
           ref={shellRef}
           className="ide-layout"

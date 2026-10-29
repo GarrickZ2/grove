@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { ArrowRight, Calendar, GitCommit, FileCode, Clock, Activity, Loader2, GitBranch, Info, Link2, X } from "lucide-react";
 import {
@@ -24,6 +24,34 @@ import { LinkedProjectPicker } from "./LinkedProjectPicker";
 interface StatsTabProps {
   projectId: string;
   task: Task;
+  /** Orbit renders a compact, list-style summary that hides empty data. */
+  variant?: "default" | "orbit";
+}
+
+function formatShortDate(date: Date | undefined): string {
+  if (!date) return "—";
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function OrbitCard({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="rounded-xl border border-[color-mix(in_oklab,var(--color-border)_70%,transparent)] bg-[var(--color-bg)] px-3.5 py-3">
+      <div className="mb-1.5 flex min-h-6 items-center justify-between gap-2 select-none">
+        <h3 className="text-[13px] font-medium text-[var(--color-text)]">{title}</h3>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function OrbitRow({ label, children, title }: { label: string; children: ReactNode; title?: string }) {
+  return (
+    <div className="flex min-h-7 items-center justify-between gap-3 text-[13px]">
+      <span className="shrink-0 text-[var(--color-text-muted)]">{label}</span>
+      <span className="min-w-0 truncate text-right text-[var(--color-text)]" title={title}>{children}</span>
+    </div>
+  );
 }
 
 function formatDate(date: Date | undefined, timeAgo?: string): string {
@@ -129,7 +157,7 @@ function formatRelativeTime(isoString: string): string {
 }
 
 
-export function StatsTab({ projectId, task }: StatsTabProps) {
+export function StatsTab({ projectId, task, variant = "default" }: StatsTabProps) {
   const { theme } = useTheme();
   const { projects } = useProject();
   const [stats, setStats] = useState<TaskStatsResponse | null>(null);
@@ -219,6 +247,98 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
   const maxEditCount = stats?.file_edits.length
     ? Math.max(...stats.file_edits.map((f) => f.edit_count))
     : 1;
+
+  if (variant === "orbit") {
+    const activeTime = stats?.hourly_activity ? calculateActiveTime(stats.hourly_activity) : "—";
+    const hasChanges = commits.length > 0 || filesChanged > 0 || activeTime !== "—";
+    const topEdits = stats?.file_edits.slice(0, 5) ?? [];
+    return (
+      <div className="h-full min-h-0 space-y-3 overflow-y-auto pr-1">
+        <OrbitCard title="Task">
+          <div className="mb-1 truncate text-[13px] font-medium text-[var(--color-text)]" title={task.name}>{task.name}</div>
+          {task.branch && (
+            <OrbitRow label="Branch" title={`${task.branch} → ${task.target}`}>
+              <span className="font-mono text-[12px]">{task.branch}</span>
+              {task.target && <span className="text-[var(--color-text-muted)]"> → {task.target}</span>}
+            </OrbitRow>
+          )}
+          <OrbitRow label="Created">{formatShortDate(task.createdAt)}</OrbitRow>
+          <OrbitRow label="Updated">{formatShortDate(task.updatedAt)}</OrbitRow>
+        </OrbitCard>
+
+        <OrbitCard
+          title="Linked projects"
+          action={<LinkedProjectPicker projects={linkCandidates} disabled={linksSaving || linksLoading} onSelect={(project) => { void saveLinkedProjects([...linkedIds, project.id]); }} />}
+        >
+          {linksLoading ? (
+            <div className="flex items-center gap-2 py-1 text-[12px] text-[var(--color-text-muted)]"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading…</div>
+          ) : linkedProjects.length === 0 ? (
+            <p className="text-[12px] text-[var(--color-text-muted)]">None linked</p>
+          ) : (
+            <div className="-mx-1.5">
+              {linkedProjects.map((project) => {
+                const { color, Icon } = getProjectStyle(project.id, theme.accentPalette);
+                const canOpen = project.exists && projects.some((item) => item.id === project.id && item.exists);
+                return (
+                  <div key={project.id} className="group flex min-h-8 items-center gap-2 rounded-md px-1.5 hover:bg-[color-mix(in_oklab,var(--color-text)_6%,transparent)]">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded" style={{ backgroundColor: color.bg }}>
+                      <Icon className="h-3 w-3" style={{ color: color.fg }} />
+                    </span>
+                    <span className={`min-w-0 flex-1 truncate text-[13px] ${project.exists ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] line-through"}`} title={project.exists ? project.name : "Project is no longer available"}>{project.name}</span>
+                    <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("grove:navigate", { detail: { route: "dashboard", project_id: project.id } }))} disabled={!canOpen} className="rounded p-1 text-[var(--color-text-muted)] opacity-0 transition-opacity hover:text-[var(--color-text)] group-hover:opacity-100 disabled:hidden" aria-label={`Open ${project.name}`} title={`Open ${project.name}`}><ArrowRight className="h-3.5 w-3.5" /></button>
+                    <button type="button" onClick={() => void saveLinkedProjects(linkedProjects.filter((item) => item.id !== project.id).map((item) => item.id))} disabled={linksSaving} className="rounded p-1 text-[var(--color-text-muted)] opacity-0 transition-opacity hover:text-[var(--color-error)] group-hover:opacity-100 disabled:opacity-50" aria-label={`Unlink ${project.name}`} title={`Unlink ${project.name}`}><X className="h-3.5 w-3.5" /></button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {linksError && <p className="mt-1 text-[12px] text-[var(--color-error)]">{linksError}</p>}
+        </OrbitCard>
+
+        <OrbitCard title="Changes">
+          {isLoading ? (
+            <div className="flex items-center gap-2 py-1 text-[12px] text-[var(--color-text-muted)]"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading…</div>
+          ) : error ? (
+            <p className="text-[12px] text-[var(--color-text-muted)]">{error}</p>
+          ) : !hasChanges ? (
+            <p className="text-[12px] text-[var(--color-text-muted)]">No changes yet</p>
+          ) : (
+            <>
+              <OrbitRow label="Files">
+                {filesChanged}
+                <span className="ml-2 font-mono text-[12px] text-[var(--color-success)]">+{additions}</span>
+                <span className="ml-1 font-mono text-[12px] text-[var(--color-error)]">−{deletions}</span>
+              </OrbitRow>
+              <OrbitRow label="Commits">{commits.length}</OrbitRow>
+              {activeTime !== "—" && <OrbitRow label="Active time">{activeTime}</OrbitRow>}
+            </>
+          )}
+        </OrbitCard>
+
+        {commits.length > 0 && (
+          <OrbitCard title="Recent commits">
+            {commits.slice(0, 5).map((commit) => (
+              <div key={commit.hash} className="flex min-h-7 items-center gap-2 text-[13px]">
+                <span className="min-w-0 flex-1 truncate text-[var(--color-text)]" title={commit.message}>{commit.message}</span>
+                <span className="shrink-0 text-[12px] text-[var(--color-text-muted)]">{commit.time_ago}</span>
+              </div>
+            ))}
+          </OrbitCard>
+        )}
+
+        {topEdits.length > 0 && (
+          <OrbitCard title="Most edited">
+            {topEdits.map((file) => (
+              <div key={file.path} className="flex min-h-7 items-center gap-2 text-[13px]">
+                <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-[var(--color-text)]" title={file.path}>{compactPath(file.path, 32)}</span>
+                <span className="shrink-0 tabular-nums text-[12px] text-[var(--color-text-muted)]">{file.edit_count}</span>
+              </div>
+            ))}
+          </OrbitCard>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="h-full min-h-0 overflow-y-auto space-y-4 pr-1">

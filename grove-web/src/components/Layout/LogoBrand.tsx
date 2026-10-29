@@ -8,9 +8,10 @@ interface LogoBrandProps {
   mode: TasksMode;
   onToggle?: () => void;
   subtitle?: string;
+  icon?: React.ReactNode;
 }
 
-export function LogoBrand({ mode, onToggle, subtitle }: LogoBrandProps) {
+export function LogoBrand({ mode, onToggle, subtitle, icon }: LogoBrandProps) {
   const Root = onToggle ? "button" : "div";
   const isBlitz = mode === "blitz";
 
@@ -23,7 +24,7 @@ export function LogoBrand({ mode, onToggle, subtitle }: LogoBrandProps) {
       title={onToggle ? `Switch to ${isBlitz ? "Zen" : "Blitz"} mode` : undefined}
     >
       <div className="relative flex-shrink-0">
-        <GroveIcon size={35} shimmer background className="rounded-xl" />
+        {icon ?? <GroveIcon size={35} shimmer background className="rounded-xl" />}
       </div>
 
       <div className="flex min-w-0 flex-col items-start -space-y-0.5">

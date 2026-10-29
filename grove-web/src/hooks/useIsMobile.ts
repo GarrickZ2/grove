@@ -1,4 +1,11 @@
-import { useState, useEffect } from "react";
+import { createContext, useContext, useState, useEffect } from "react";
+
+/**
+ * Orbit keeps its desktop layout on tablets: only phones get the mobile
+ * layout. App provides `true` here while Orbit is on, so every component
+ * below sees a tablet as a desktop.
+ */
+export const TabletAsDesktopContext = createContext(false);
 
 interface DeviceState {
   isMobile: boolean;
@@ -44,5 +51,8 @@ export function useIsMobile(): DeviceState {
     };
   }, []);
 
-  return state;
+  const tabletAsDesktop = useContext(TabletAsDesktopContext);
+  return tabletAsDesktop && state.isTablet
+    ? { ...state, isMobile: false, isTablet: false, isDesktop: true }
+    : state;
 }

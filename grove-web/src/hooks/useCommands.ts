@@ -60,6 +60,7 @@ export interface UseCommandsOptions {
   // Mode (optional)
   mode?: {
     tasksMode: "zen" | "blitz";
+    allowBlitz?: boolean;
     onToggleMode: () => void;
     onToggleSidebar: () => void;
   };
@@ -197,7 +198,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
     // --- Mode ---
     if (mode) {
       const { tasksMode, onToggleMode, onToggleSidebar } = mode;
-      commands.push(
+      if (mode.allowBlitz !== false) commands.push(
         withRanking({
           id: "mode-toggle",
           name: tasksMode === "zen" ? "Switch to Blitz Mode" : "Switch to Zen Mode",
@@ -206,6 +207,8 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
           handler: onToggleMode,
           keywords: ["mode", "zen", "blitz", "cross-project"],
         }, { contexts: { default: 6, tasks: 14, workspace: 2 } }),
+      );
+      commands.push(
         withRanking({
           id: "sidebar-toggle",
           name: "Toggle Sidebar",

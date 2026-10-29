@@ -6,7 +6,7 @@ import {
   writeLastActiveTab,
 } from "../../../utils/lastActiveTab";
 
-function buildDefaultSessionTitle(): string {
+export function buildDefaultSessionTitle(): string {
   const now = new Date();
   const pad = (value: number) => value.toString().padStart(2, "0");
   return `New Session ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
@@ -18,6 +18,10 @@ interface Params {
   fixedChatId?: string;
   setChats: (chats: ChatSessionResponse[]) => void;
   setActiveChatId: (id: string) => void;
+  /** Create an empty chat when the Task has none (Classic). Orbit starts one from its New page instead. */
+  autoCreate?: boolean;
+  /** Called when the Task has no chats and none was created. */
+  onEmpty?: () => void;
 }
 
 /**
@@ -34,6 +38,8 @@ export function useInitialChatLoad({
   fixedChatId,
   setChats,
   setActiveChatId,
+  autoCreate = true,
+  onEmpty,
 }: Params): void {
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +73,12 @@ export function useInitialChatLoad({
         chatList = await listChats(projectId, taskId);
       } catch (err) {
         console.error("Failed to load chats:", err);
+        return;
+      }
+      if (chatList.length === 0 && !autoCreate) {
+        if (cancelled) return;
+        setChats([]);
+        onEmpty?.();
         return;
       }
       if (chatList.length === 0) {
@@ -119,5 +131,7 @@ export function useInitialChatLoad({
     return () => {
       cancelled = true;
     };
-  }, [projectId, taskId, fixedChatId, setChats, setActiveChatId]);
+    // onEmpty is a notification only; re-running the load for a new callback is not wanted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, taskId, fixedChatId, setChats, setActiveChatId, autoCreate]);
 }

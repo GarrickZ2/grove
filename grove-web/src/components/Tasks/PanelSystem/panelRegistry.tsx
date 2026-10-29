@@ -55,6 +55,9 @@ export interface PanelRenderCtx {
   isStudio: boolean;
   isGitRepo?: boolean;
   terminalAvailable: boolean;
+  orbitHeader?: boolean;
+  /** The page hosting this layout is visible (keep-alive pages may be hidden). */
+  isActive?: boolean;
   /** Close/hide this panel — delete-tab in FlexLayout, hide-column in IDE. */
   onClose: () => void;
   /** Chat: navigate the editor/review to a file. */
@@ -108,7 +111,7 @@ const always = () => true;
 export const BUILT_IN_PANELS: PanelDescriptor[] = [
   {
     key: "chat",
-    label: "Chat",
+    label: "Agent",
     icon: MessageSquare,
     color: "var(--color-info)",
     category: "chat",
@@ -119,6 +122,8 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
           key={`${ctx.projectId}:${ctx.task.id}`}
           projectId={ctx.projectId}
           taskId={ctx.task.id}
+          orbitHeader={ctx.orbitHeader}
+          pageActive={ctx.isActive ?? true}
           finished={ctx.task.status === "archived"}
           fullscreen
           onNavigateToFile={ctx.navigateToFile}
@@ -224,7 +229,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-accent)",
     category: "info",
     available: always,
-    render: (ctx) => <StatsTab projectId={ctx.projectId} task={ctx.task} />,
+    render: (ctx) => <StatsTab projectId={ctx.projectId} task={ctx.task} variant={ctx.orbitHeader ? "orbit" : "default"} />,
   },
   {
     key: "git",

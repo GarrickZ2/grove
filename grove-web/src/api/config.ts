@@ -50,6 +50,7 @@ export interface WebConfig {
   terminal_mode?: string;
   /** Workspace layout mode: "flex" (default) | "ide" */
   workspace_layout?: "flex" | "ide";
+  interface?: "workbench" | "orbit";
   /** GUI-only global shortcut for showing or hiding the main window. */
   show_hide_window_shortcut?: string;
 }

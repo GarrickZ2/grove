@@ -586,3 +586,77 @@
 @keyframes chatbox-drop-dash {
   to { background-position: 24px 0; }
 }
+
+/* Orbit on a phone: the docked composer matches Orbit's New page — Agent pill
+   on top, attach on the left, Model / Mode / Thinking values next to Send. */
+@media (max-width: 767px) {
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-bubble {
+    border-radius: 26px;
+    padding: 8px 12px 12px;
+  }
+
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-header {
+    display: flex;
+    padding-right: 0;
+  }
+
+  /* One row: Agent pill, voice, then the status chips scrolling in the rest. */
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-header > :first-child {
+    flex: 1 1 auto;
+  }
+
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-header .mobile-composer-status {
+    width: auto;
+    min-width: 0;
+    flex: 1 1 auto;
+    margin: 0;
+  }
+
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-header .mobile-composer-status button {
+    min-height: 28px;
+    padding-inline: 8px;
+  }
+
+  /* The pill names the Agent like New's does; its quota / context badges
+     already sit in the phone status row above the composer. */
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-agent-static-label,
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-agent-name {
+    display: inline;
+  }
+
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-agent-pill > :not(:first-child):not(.chatbox-agent-static-label):not(.chatbox-agent-name) {
+    display: none;
+  }
+
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-footer-left {
+    display: flex;
+  }
+
+  /* Status text ("Enter send" …) has no room next to the quick options. */
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-footer-left > span {
+    display: none;
+  }
+
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-footer {
+    justify-content: space-between;
+  }
+
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-footer-right {
+    min-width: 0;
+    flex-shrink: 1;
+    gap: 6px;
+  }
+
+  /* Chips keep their natural width; TaskChat folds whatever doesn't fit into the settings menu. */
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-footer-right > * {
+    flex: none;
+  }
+
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-dropdown-label {
+    display: none;
+  }
+
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-footer-right .max-w-40 {
+    max-width: 84px;
+  }
+}

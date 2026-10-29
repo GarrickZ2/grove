@@ -233,7 +233,7 @@ interface DependencyState {
 export function SettingsPage({ config }: SettingsPageProps) {
   const catalogRevision = useAgentCatalogRevision();
   const { theme, mode, lightThemeId, darkThemeId, customThemes, themes, setAppearance } = useTheme();
-  const { updateAvailability, refresh: refreshGlobalConfig } = useConfig();
+  const { config: currentGlobalConfig, updateAvailability, refresh: refreshGlobalConfig } = useConfig();
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     terminal: false,
     chat: false,
@@ -1420,11 +1420,7 @@ env_vars = [
   ) : null;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-    >
+    <motion.div>
       {/* Compact Header */}
       <div className="flex items-center gap-3 mb-6 select-none">
         <div className="w-10 h-10 rounded-xl bg-[var(--color-highlight)]/10 flex items-center justify-center">
@@ -2182,20 +2178,20 @@ env_vars = [
 
             {windowShortcutControl}
 
-            {/* Orbit will become selectable when its interface is available. */}
+            {/* Interface selection is saved independently from other settings. */}
             <div>
               <div className="flex items-center gap-2 mb-3 select-none">
                 <LayoutGrid className="w-4 h-4 text-[var(--color-info)]" />
                 <span className="text-sm font-medium text-[var(--color-text)]">Interface</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <button type="button" aria-pressed="true" className="p-3 rounded-lg border text-left border-[var(--color-highlight)] bg-[var(--color-highlight)]/10">
+                <button type="button" aria-pressed={currentGlobalConfig?.web.interface === "orbit"} onClick={() => { void patchConfig({ web: { interface: "orbit" } }).then(refreshGlobalConfig).catch(() => showBanner("Failed to switch interface", "error")); }} className={`p-3 rounded-lg border text-left ${currentGlobalConfig?.web.interface === "orbit" ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10" : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]"}`}>
+                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Orbit</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">Start with a conversation and follow your work</div>
+                </button>
+                <button type="button" aria-pressed={currentGlobalConfig?.web.interface !== "orbit"} onClick={() => { void patchConfig({ web: { interface: "workbench" } }).then(refreshGlobalConfig).catch(() => showBanner("Failed to switch interface", "error")); }} className={`p-3 rounded-lg border text-left ${currentGlobalConfig?.web.interface !== "orbit" ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10" : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]"}`}>
                   <div className="text-xs font-medium text-[var(--color-text)] mb-1">Workbench</div>
                   <div className="text-[11px] text-[var(--color-text-muted)]">Projects, tasks, and panels in a flexible workspace</div>
-                </button>
-                <button type="button" disabled aria-pressed="false" className="p-3 rounded-lg border text-left border-[var(--color-border)] bg-[var(--color-bg-secondary)] opacity-60 cursor-not-allowed">
-                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Orbit · Coming soon</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">Start with a conversation and follow your work</div>
                 </button>
               </div>
             </div>
@@ -2208,17 +2204,6 @@ env_vars = [
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => setWorkspaceLayout("flex")}
-                  className={`p-3 rounded-lg border text-left transition-all ${
-                    workspaceLayout === "flex"
-                      ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
-                      : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-highlight)]/50"
-                  }`}
-                >
-                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Free Layout</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">Drag and arrange panels freely</div>
-                </button>
-                <button
                   onClick={() => setWorkspaceLayout("ide")}
                   className={`p-3 rounded-lg border text-left transition-all ${
                     workspaceLayout === "ide"
@@ -2228,6 +2213,17 @@ env_vars = [
                 >
                   <div className="text-xs font-medium text-[var(--color-text)] mb-1">Agent Layout</div>
                   <div className="text-[11px] text-[var(--color-text-muted)]">Fixed panels with Chat-centric view</div>
+                </button>
+                <button
+                  onClick={() => setWorkspaceLayout("flex")}
+                  className={`p-3 rounded-lg border text-left transition-all ${
+                    workspaceLayout === "flex"
+                      ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
+                      : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-highlight)]/50"
+                  }`}
+                >
+                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Free Layout</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">Drag and arrange panels freely</div>
                 </button>
               </div>
             </div>

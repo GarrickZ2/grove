@@ -13,8 +13,8 @@ describe("task navigation by viewport", () => {
   let container: HTMLDivElement;
   let root: Root;
 
-  function Page({ mobile, archived = false }: { mobile: boolean; archived?: boolean }) {
-    const [state, handlers] = useTaskPageState(mobile);
+  function Page({ mobile, archived = false, orbit = false }: { mobile: boolean; archived?: boolean; orbit?: boolean }) {
+    const [state, handlers] = useTaskPageState(mobile, orbit);
     const view = state.inWorkspace ? "workspace" : state.selectedTask && !mobile ? "overview" : "list";
     return (
       <div>
@@ -22,6 +22,7 @@ describe("task navigation by viewport", () => {
         <button data-select onClick={() => handlers.handleSelectTask(archived ? { ...task, status: "archived" } : task)}>Task A</button>
         <button data-open onClick={() => handlers.handleDoubleClickTask(task)}>Open Workspace</button>
         <button data-back onClick={handlers.handleCloseTask}>Back</button>
+        <button data-restore-overview onClick={() => { handlers.setSelectedTask(task); handlers.setInWorkspace(false); }}>Restore saved overview</button>
       </div>
     );
   }
@@ -78,6 +79,28 @@ describe("task navigation by viewport", () => {
   it("has no mobile Overview step for archived tasks either", () => {
     act(() => root.render(<Page mobile archived />));
     click("[data-select]");
+    expect(container.querySelector("output")!.textContent).toBe("workspace");
+  });
+
+  it("opens an Orbit task directly in Workspace and cannot return to the list", () => {
+    act(() => root.render(<Page mobile={false} orbit />));
+    click("[data-select]");
+    expect(container.querySelector("output")!.textContent).toBe("workspace");
+    click("[data-back]");
+    expect(container.querySelector("output")!.textContent).toBe("workspace");
+  });
+
+  it("restores an old Overview location as Workspace in Orbit", () => {
+    act(() => root.render(<Page mobile={false} orbit />));
+    click("[data-restore-overview]");
+    expect(container.querySelector("output")!.textContent).toBe("workspace");
+  });
+
+  it("enters Workspace when switching a selected Workbench task to Orbit", () => {
+    act(() => root.render(<Page mobile={false} />));
+    click("[data-select]");
+    expect(container.querySelector("output")!.textContent).toBe("overview");
+    act(() => root.render(<Page mobile={false} orbit />));
     expect(container.querySelector("output")!.textContent).toBe("workspace");
   });
 });

@@ -156,6 +156,10 @@
 }
 
 /* ── Drag & Drop ── */
+.orbit-free-layout .flexlayout__tabset { border: 0; }
+.orbit-free-layout .flexlayout__splitter { background: var(--color-border); }
+.orbit-free-layout .flexlayout__splitter:hover { background: var(--color-highlight); opacity: 1; }
+
 .grove-flex-flexlayout__outline_rect {
   border: 2px dashed var(--color-highlight);
   background: color-mix(in srgb, var(--color-highlight) 8%, transparent);

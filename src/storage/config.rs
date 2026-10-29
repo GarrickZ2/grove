@@ -601,6 +601,9 @@ pub struct WebConfig {
     ///   - "ide": 固定三栏 IDE 布局 (Chat-centric)
     #[serde(default)]
     pub workspace_layout: Option<String>,
+    /// Main web interface: "workbench" (default) or "orbit".
+    #[serde(default)]
+    pub interface: Option<String>,
     /// GUI-only global shortcut for showing or hiding the main window.
     #[serde(default)]
     pub show_hide_window_shortcut: Option<String>,

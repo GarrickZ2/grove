@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { FlexLayoutContainer, type FlexLayoutContainerHandle } from "../PanelSystem";
 import { IDELayoutContainer } from "../IDELayout";
+import type { OrbitPhoneAction } from "../IDELayout/OrbitPhonePanels";
 import type { IDELayoutHandle, LayoutMode, AuxPanelType, InfoTabType } from "../IDELayout";
 import { AUX_PANEL_TYPES, INFO_PANEL_TYPES } from "../IDELayout";
 import type { Task } from "../../../data/types";
@@ -23,6 +24,7 @@ import { sendInputToTerminal, pasteToTerminal } from "../TaskDetail/terminalCach
 import { activateTask } from "../../../api";
 import { patchConfig } from "../../../api/config";
 import { useConfig } from "../../../context";
+import { useIsMobile } from "../../../hooks";
 import { useCommand, useKeyboardScope, useContextKey, useVoiceControlContext } from "../../../keyboard";
 import { usePluginPanelCommands } from "../../Plugins/pluginPanelCommands";
 
@@ -183,7 +185,11 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   const layoutRef = useRef<FlexLayoutContainerHandle>(null);
   const ideLayoutRef = useRef<IDELayoutHandle>(null);
   const { config, refresh: refreshConfig } = useConfig();
-  const layoutMode: LayoutMode = (config?.web?.workspace_layout === "flex" ? "flex" : "ide") as LayoutMode;
+  const { isMobile } = useIsMobile();
+  // Orbit reaches TaskView on phones too; App keeps tablets on the desktop layout.
+  const orbit = config?.web?.interface === "orbit";
+  // Docking panels has no room on a phone: Orbit there shows one panel at a time.
+  const layoutMode: LayoutMode = (config?.web?.workspace_layout === "flex" && !(orbit && isMobile) ? "flex" : "ide") as LayoutMode;
   const fullscreen = externalFullscreen ?? false;
   const toggleFullscreen = () => onFullscreenChange?.(!fullscreen);
 
@@ -415,6 +421,14 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     }] : []),
   ], [isLocal, onRebase, onArchive, onReset, onClean, canOperate, isArchived]);
 
+  // Orbit on a phone lists every workspace action in one sheet.
+  const phoneActions = useMemo<OrbitPhoneAction[]>(() => [
+    ...(onCommit ? [{ id: "commit", label: "Commit", icon: GitCommit, onClick: onCommit, disabled: isArchived }] : []),
+    ...(onMerge ? [{ id: "merge", label: "Merge", icon: GitMerge, onClick: onMerge, disabled: !canOperate }] : []),
+    ...(!isLocal && onSync ? [{ id: "sync", label: "Sync", icon: RefreshCw, onClick: onSync, disabled: !canOperate }] : []),
+    ...overflowItems,
+  ], [onCommit, onMerge, onSync, isLocal, isArchived, canOperate, overflowItems]);
+
   const workspaceLeading = useMemo(() => onBack ? (
     <div className="flex items-center gap-2.5 text-[12.5px] shrink-0">
       <button
@@ -464,7 +478,9 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
         </button>
       )}
 
-      <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
+      {(onCommit || onMerge || (!isLocal && onSync)) && overflowItems.length > 0 && (
+        <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
+      )}
       {overflowItems.length > 0 && <OverflowDropdown items={overflowItems} />}
     </div>
   ), [onCommit, onMerge, onSync, canOperate, isLocal, isArchived, overflowItems]);
@@ -472,7 +488,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   return (
     <div className={`flex-1 flex flex-col h-full overflow-hidden ${fullscreen ? 'fixed inset-0 z-50 bg-[var(--color-bg)]' : ''}`}>
       {/* Workspace Bar — hidden in fullscreen */}
-      {!fullscreen && layoutMode !== "ide" && <div className="flex items-center h-9 px-3 gap-3 bg-[var(--color-bg)] border-b border-[var(--color-border)] shrink-0 select-none">
+      {!fullscreen && !orbit && layoutMode !== "ide" && <div className="flex items-center h-9 px-3 gap-3 bg-[var(--color-bg)] border-b border-[var(--color-border)] shrink-0 select-none">
         {/* Left: Back + Breadcrumb + Branch */}
         <div className="flex items-center gap-2.5 min-w-0 text-[12.5px]">
           {/* Back button (hidden when onBack is not provided, e.g. localMode) */}
@@ -571,6 +587,8 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             projectId={projectId}
             toolbarLeading={workspaceLeading}
             toolbarTrailing={workspaceActions}
+            phoneActions={phoneActions}
+            isActive={isActive}
           />
         ) : (
           <FlexLayoutContainer
@@ -578,6 +596,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             ref={layoutRef}
             task={task}
             projectId={projectId}
+            isActive={isActive}
             fullscreen={fullscreen}
             onToggleFullscreen={toggleFullscreen}
           />

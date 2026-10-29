@@ -108,6 +108,7 @@ pub struct WebConfigDto {
     pub terminal: Option<String>,
     pub terminal_mode: Option<String>,
     pub workspace_layout: Option<String>,
+    pub interface: Option<String>,
     pub show_hide_window_shortcut: Option<String>,
 }
 
@@ -164,6 +165,7 @@ impl From<&Config> for ConfigResponse {
                 terminal: config.web.terminal.clone(),
                 terminal_mode: config.web.terminal_mode.clone(),
                 workspace_layout: config.web.workspace_layout.clone(),
+                interface: config.web.interface.clone(),
                 show_hide_window_shortcut: config.web.show_hide_window_shortcut.clone(),
             },
             auto_link: AutoLinkConfigDto {
@@ -318,6 +320,7 @@ pub struct WebConfigPatch {
     pub terminal: Option<String>,
     pub terminal_mode: Option<String>,
     pub workspace_layout: Option<String>,
+    pub interface: Option<String>,
     pub show_hide_window_shortcut: Option<String>,
 }
 
@@ -432,6 +435,11 @@ pub async fn patch_config(
         }
         if web_patch.workspace_layout.is_some() {
             config.web.workspace_layout = web_patch.workspace_layout;
+        }
+        if let Some(interface) = web_patch.interface {
+            if interface == "workbench" || interface == "orbit" {
+                config.web.interface = Some(interface);
+            }
         }
         if let Some(shortcut) = web_patch.show_hide_window_shortcut {
             let shortcut = shortcut.trim().to_string();

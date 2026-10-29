@@ -133,11 +133,16 @@ const DEFAULT_DRAFT: MemoryConfigInput = {
   event_triggers: ["task.finished"],
 };
 
-export function MemoryPage() {
+interface MemoryPageProps {
+  /** Opens the Runs tab with the run whose session is this chat (e.g. from Automation's "Open session"). */
+  initialRunChatId?: string;
+}
+
+export function MemoryPage({ initialRunChatId }: MemoryPageProps = {}) {
   const catalogRevision = useAgentCatalogRevision();
   const { selectedProject } = useProject();
   const projectId = selectedProject?.id ?? null;
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(initialRunChatId ? "runs" : "overview");
   const [config, setConfig] = useState<MemoryConfig | null>(null);
   const [overview, setOverview] = useState<MemoryOverview>(EMPTY_OVERVIEW);
   const [agents, setAgents] = useState<InstalledAgentConfig[]>([]);
@@ -313,6 +318,7 @@ export function MemoryPage() {
             config={config}
             refreshTick={refreshTick}
             liveUpdates={liveRunUpdates}
+            openRunChatId={initialRunChatId}
             onChanged={() => setRefreshTick((value) => value + 1)}
           />
         )}
@@ -1387,12 +1393,14 @@ function RunsTab({
   config,
   refreshTick,
   liveUpdates,
+  openRunChatId,
   onChanged,
 }: {
   projectId: string;
   config: MemoryConfig | null;
   refreshTick: number;
   liveUpdates: MemoryRunStreamUpdate[];
+  openRunChatId?: string;
   onChanged: () => void;
 }) {
   const [runs, setRuns] = useState<AutomationRun[]>([]);
@@ -1477,6 +1485,17 @@ function RunsTab({
     setHistory([]);
     setHistoryUsage(null);
   };
+  // Open the requested run once the list has it (only the first time).
+  const openedRunChatRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openRunChatId || openedRunChatRef.current === openRunChatId) return;
+    const run = runs.find((candidate) => candidate.resolved_chat_id === openRunChatId);
+    if (!run) return;
+    openedRunChatRef.current = openRunChatId;
+    void Promise.resolve().then(() => toggle(run.id));
+    // toggle reads current state; only a newly loaded run list should trigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRunChatId, runs]);
   useEffect(() => {
     if (!expanded) return;
     let disposed = false;

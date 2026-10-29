@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react";
@@ -16,6 +16,7 @@ interface DropdownItem {
   listAction?: boolean;
   variant?: "default" | "warning" | "danger";
   disabled?: boolean;
+  dividerBefore?: boolean;
 }
 
 interface DropdownMenuProps {
@@ -30,6 +31,7 @@ interface DropdownMenuProps {
   size?: "default" | "small";
   /** Portal menus can open below the trigger and flip above when needed. */
   placement?: "side" | "bottom";
+  appearance?: "default" | "orbit";
 }
 
 export function DropdownMenu({
@@ -42,6 +44,7 @@ export function DropdownMenu({
   compact = false,
   size = "default",
   placement = "side",
+  appearance = "default",
 }: DropdownMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeSubmenuId, setActiveSubmenuId] = useState<string | null>(null);
@@ -57,8 +60,12 @@ export function DropdownMenu({
   const visibleItems = activeSubmenu?.children ?? items;
   const submenuIsWide = !!activeSubmenu?.wideChildren;
   const small = size === "small";
-  const menuWidth = submenuIsWide ? 360 : small ? 128 : 192;
-  const menuMaxHeight = submenuIsWide ? 420 : 256;
+  const menuWidth = submenuIsWide ? 360 : small ? 128 : appearance === "orbit" ? 160 : 192;
+  // Orbit's action list should open at its natural height. Reserve room for
+  // the outer padding/border while keeping oversized submenus bounded.
+  const menuMaxHeight = appearance === "orbit" && !activeSubmenu
+    ? Math.max(0, (window.visualViewport?.height ?? window.innerHeight) - 28)
+    : submenuIsWide ? 420 : 256;
 
   const closeMenu = useCallback(() => {
     setIsOpen(false);
@@ -254,7 +261,7 @@ export function DropdownMenu({
         </button>
       )}
       <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain ${small ? "py-0.5" : "py-1"}`} onWheel={(event) => event.stopPropagation()}>
-        {visibleItems.map(renderItem)}
+        {visibleItems.map((item) => <Fragment key={item.id}>{item.dividerBefore && <div className="orbit-menu-divider" />}{renderItem(item)}</Fragment>)}
       </div>
     </div>
   );
@@ -313,7 +320,7 @@ export function DropdownMenu({
               maxHeight: menuMaxHeight,
               zIndex: 1000,
             }}
-            className={`overflow-hidden border border-[var(--color-border)] bg-[var(--color-bg)] ${small ? "rounded-md shadow-md" : "rounded-lg shadow-lg"}`}
+            className={`overflow-hidden border border-[var(--color-border)] bg-[var(--color-bg)] ${small ? "rounded-md shadow-md" : "rounded-lg shadow-lg"} ${appearance === "orbit" ? "orbit-action-menu" : ""}`}
           >
             {menuItems}
           </div>,

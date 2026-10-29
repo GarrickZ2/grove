@@ -18,6 +18,7 @@ import type { ArtifactPreviewRequest } from '../TaskInfoPanel/tabs';
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from '../../ui/sketchChipCache';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { useConfig, useProject } from '../../../context';
+import { useIsMobile } from '../../../hooks';
 import { apiClient } from '../../../api/client';
 import { listPlugins, type Plugin } from '../../../api/plugins';
 import {
@@ -208,6 +209,7 @@ function TabBarDropdown({ icon: TriggerIcon, items, title, label }: {
 }
 
 interface FlexLayoutContainerProps {
+  isActive?: boolean;
   task: Task;
   projectId: string;
   initialLayout?: IJsonModel;
@@ -233,8 +235,10 @@ export interface FlexLayoutContainerHandle {
 export const FlexLayoutContainer = forwardRef<
   FlexLayoutContainerHandle,
   FlexLayoutContainerProps
->(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen }, ref) => {
-  const { terminalAvailable } = useConfig();
+>(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen, isActive = true }, ref) => {
+  const { terminalAvailable, config } = useConfig();
+  const { isMobile } = useIsMobile();
+  const orbit = !isMobile && config?.web?.interface === 'orbit';
   const { selectedProject, projects } = useProject();
   // Resolve project from the task's projectId, not the globally-selected one:
   // Blitz can open a task from a different project than the sidebar selection.
@@ -312,7 +316,27 @@ export const FlexLayoutContainer = forwardRef<
   }, [getPanelLabel]);
 
   // Initialize model from the layout chosen above (initialLayout / saved / default).
-  const [model] = useState<Model>(() => Model.fromJson(initialLayoutJson));
+  const [model] = useState<Model>(() => {
+    const restored = Model.fromJson({
+      ...initialLayoutJson,
+      global: { ...initialLayoutJson.global, ...(orbit ? { splitterSize: 1, splitterExtra: 4 } : {}) },
+    });
+    // Update saved default labels while preserving user-renamed panels.
+    restored.visitNodes((node) => {
+      if (node.getType() !== 'tab') return;
+      const tab = node as TabNode;
+      if (tab.getComponent() === 'chat' && /^Chat(?: #\d+)?$/.test(tab.getName())) {
+        restored.doAction(Actions.renameTab(tab.getId(), tab.getName().replace(/^Chat/, 'Agent')));
+      }
+    });
+    return restored;
+  });
+  useEffect(() => {
+    model.doAction(Actions.updateModelAttributes({
+      splitterSize: orbit ? 1 : (initialLayoutJson.global?.splitterSize ?? 4),
+      splitterExtra: orbit ? 4 : (initialLayoutJson.global?.splitterExtra ?? 0),
+    }));
+  }, [model, orbit, initialLayoutJson]);
 
   // Installed plugins that contribute a workspace panel — the dynamic part of
   // the panel registry. Loaded once; the [+] menu lists them and the factory
@@ -889,6 +913,7 @@ export const FlexLayoutContainer = forwardRef<
       isStudio,
       isGitRepo: taskIsGitRepo,
       terminalAvailable,
+      orbitHeader: orbit && isActive,
       onClose: () => model.doAction(Actions.deleteTab(node.getId())),
       navigateToFile,
       fileNavRequest,
@@ -911,7 +936,7 @@ export const FlexLayoutContainer = forwardRef<
       plugins,
     };
     return <div style={flexWrapStyle(key)}>{renderPanel(key, ctx)}</div>;
-  }, [projectId, task, model, isStudio, terminalAvailable, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, isChatBusy, handleChatBecameIdle, handleBusyStateChange, taskIsGitRepo, plugins]);
+  }, [projectId, task, model, isStudio, terminalAvailable, orbit, isActive, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, isChatBusy, handleChatBecameIdle, handleBusyStateChange, taskIsGitRepo, plugins]);
 
   // Track empty state
   const [isEmpty, setIsEmpty] = useState(() => getAllTabs().length === 0);
@@ -922,6 +947,11 @@ export const FlexLayoutContainer = forwardRef<
   // outside the try block to satisfy React Compiler's value-blocks rule.
   const handleModelChange = useCallback((m: Model) => {
     const json = m.toJson();
+    if (orbit) json.global = {
+      ...json.global,
+      splitterSize: initialLayoutJson.global?.splitterSize ?? 4,
+      splitterExtra: initialLayoutJson.global?.splitterExtra ?? 0,
+    };
     stripMaximizedNodes(json.layout);
     let serialized: string | null = null;
     try {
@@ -938,14 +968,14 @@ export const FlexLayoutContainer = forwardRef<
     }
     if (onLayoutChange) onLayoutChange(json);
     setIsEmpty(getAllTabs().length === 0);
-  }, [layoutStorageKey, onLayoutChange, getAllTabs]);
+  }, [layoutStorageKey, onLayoutChange, getAllTabs, orbit, initialLayoutJson]);
 
   // Fullscreen: maximize panel to fill entire container
   if (fullscreenPanelId && fullscreen) {
     const fullscreenTabSet = model.getNodeById(fullscreenPanelId);
     if (fullscreenTabSet && fullscreenTabSet.getType() === 'tabset') {
       return (
-        <div className="absolute inset-0 bg-[var(--color-bg)]">
+        <div className={`absolute inset-0 bg-[var(--color-bg)]${orbit ? ' orbit-free-layout' : ''}`}>
           <Layout
             model={model}
             factory={factory}
@@ -960,7 +990,7 @@ export const FlexLayoutContainer = forwardRef<
 
   return (
     <>
-      <div className="absolute inset-0">
+      <div className={`absolute inset-0${orbit ? ' orbit-free-layout' : ''}`}>
         <Layout
           model={model}
           factory={factory}
@@ -979,7 +1009,7 @@ export const FlexLayoutContainer = forwardRef<
             </p>
             <div className="flex items-center gap-2">
               <button onClick={() => addPanel('chat')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
-                <MessageSquare size={13} /> Chat
+                <MessageSquare size={13} /> Agent
               </button>
               {isStudio && (
                 <button onClick={() => addPanel('artifacts')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">

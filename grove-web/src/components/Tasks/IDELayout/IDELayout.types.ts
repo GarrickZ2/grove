@@ -1,4 +1,5 @@
 import type { Task } from "../../../data/types";
+import type { OrbitPhoneAction } from "./OrbitPhonePanels";
 
 // ── Layout Mode ──
 export type LayoutMode = "flex" | "ide";
@@ -20,6 +21,9 @@ export interface IDELayoutContainerProps {
   projectId: string;
   toolbarLeading?: React.ReactNode;
   toolbarTrailing?: React.ReactNode;
+  /** Orbit on a phone: the workspace actions, listed in the panel sheet. */
+  phoneActions?: OrbitPhoneAction[];
+  isActive?: boolean;
 }
 
 export interface IDELayoutHandle {

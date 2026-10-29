@@ -8,7 +8,7 @@ import { NewTaskDialog } from "./NewTaskDialog";
 import { TaskOperationDialogs } from "./TaskOperationDialogs";
 import { Button } from "../ui";
 import { ContextMenu } from "../ui/ContextMenu";
-import { useProject, useCommandPalette } from "../../context";
+import { useProject, useCommandPalette, useConfig } from "../../context";
 import { useReportDebugId } from "../../perf/debugIdsStore";
 import {
   useIsMobile,
@@ -69,6 +69,8 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
   const isStudio = selectedProject?.projectType === "studio";
 
   const { isMobile } = useIsMobile();
+  const { config } = useConfig();
+  const orbit = config?.web.interface === "orbit";
 
   // Zen-specific state
   const [filter, setFilter] = useState<TaskFilter>(initialTaskFilter ?? "active");
@@ -106,7 +108,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
   const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
 
   // Page state hook
-  const [pageState, pageHandlers] = useTaskPageState(isMobile);
+  const [pageState, pageHandlers] = useTaskPageState(isMobile, orbit);
   // Entering a workspace also enters the detail stack at any viewport width.
   if (pageState.inWorkspace && !mobileShowDetail) setMobileShowDetail(true);
   // A desktop Overview or a saved detail becomes Workspace on mobile.
@@ -203,6 +205,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
       if (cancelled) return;
       if (task) {
         handleSelectTask(task);
+        if (orbit && initialChatId) pageHandlers.setPendingPanel("chat");
         if (initialShowDetail !== undefined) setMobileShowDetail(initialShowDetail);
       } else {
         setMobileShowDetail(false);
@@ -218,7 +221,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
       onNavigationConsumed?.();
     });
     return () => { cancelled = true; };
-  }, [selectedProject, initialTaskId, initialViewMode, initialShowDetail, restoringNavigation, activeTasks, tasks, filter, isLoadingArchived, archivedLoadedFor, onNavigationConsumed, pageHandlers, handleSelectTask, isMobile]);
+  }, [selectedProject, initialTaskId, initialChatId, initialViewMode, initialShowDetail, restoringNavigation, activeTasks, tasks, filter, isLoadingArchived, archivedLoadedFor, onNavigationConsumed, pageHandlers, handleSelectTask, isMobile, orbit]);
 
   useEffect(() => {
     if (!pageVisible || !selectedProject || selectedProject.taskCount !== undefined || initialTaskId || restoringNavigation) return;
@@ -412,10 +415,11 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
   // Process pendingPanel after entering workspace
   useEffect(() => {
     if (pageState.inWorkspace && pageState.pendingPanel && taskViewRef.current) {
-      taskViewRef.current.addPanel(pageState.pendingPanel);
+      if (orbit && pageState.pendingPanel === "chat") taskViewRef.current.ensurePanel("chat");
+      else taskViewRef.current.addPanel(pageState.pendingPanel);
       pageHandlers.setPendingPanel(null);
     }
-  }, [pageState.inWorkspace, pageState.pendingPanel, pageHandlers]);
+  }, [pageState.inWorkspace, pageState.pendingPanel, pageHandlers, orbit]);
 
   // Handle new task creation (Zen-only)
   const handleCreateTask = useCallback(
@@ -671,8 +675,8 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
     scope: "tasks",
     hidden: true,
     handler: isMobile ? handleMobileBack : pageHandlers.handleCloseTask,
-    enabled: () => pageState.inWorkspace || hasTask,
-  }, [pageHandlers, pageState.inWorkspace, hasTask, isMobile, handleMobileBack]);
+    enabled: () => !orbit && (pageState.inWorkspace || hasTask),
+  }, [pageHandlers, pageState.inWorkspace, hasTask, isMobile, handleMobileBack, orbit]);
 
   // --- Workspace tab switching (Cmd+1-9 / Cmd+Shift+[ ] / Option+Cmd+Up/Down / Cmd+W).
   // These live in the `workspace` scope (pushed by TaskView) so they only
@@ -949,7 +953,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
       className="h-full flex flex-col"
     >
       {/* Header - hidden in fullscreen and workspace */}
-      {!isFullscreen && !pageState.inWorkspace && (
+      {!orbit && !isFullscreen && !pageState.inWorkspace && (
         <div className="flex items-center justify-between mb-4 flex-shrink-0">
           <h1 className="text-xl font-semibold text-[var(--color-text)] select-none">Tasks</h1>
           <div className="flex items-center gap-2">
@@ -972,7 +976,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
 
       {/* Main Content */}
       <div className="flex-1 relative overflow-hidden">
-        <div className={`absolute inset-0 ${pageState.inWorkspace ? "pointer-events-none" : ""}`} aria-hidden={pageState.inWorkspace || undefined}>
+        {!orbit && <div className={`absolute inset-0 ${pageState.inWorkspace ? "pointer-events-none" : ""}`} aria-hidden={pageState.inWorkspace || undefined}>
         {isMobile ? (
           /* Mobile: List or Workspace, without an Overview step. */
           <AnimatePresence initial={false}>
@@ -1085,7 +1089,12 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
 
           </>
         )}
-        </div>
+        </div>}
+        {orbit && !pageState.selectedTask && !showNewTaskDialog && (
+          <div className="h-full flex items-center justify-center text-sm text-[var(--color-text-muted)]">
+            Select a session from the sidebar to start working
+          </div>
+        )}
             {/* Keep one TaskView mounted while only its responsive layout changes. */}
             <AnimatePresence mode="popLayout">
               {pageState.inWorkspace && pageState.selectedTask && (
@@ -1105,7 +1114,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
                     projectName={selectedProject.name}
                     fullscreen={isFullscreen}
                     onFullscreenChange={setIsFullscreen}
-                    onBack={isMobile ? handleMobileBack : pageHandlers.handleCloseTask}
+                    onBack={orbit ? undefined : isMobile ? handleMobileBack : pageHandlers.handleCloseTask}
                     onCommit={isStudio ? undefined : opsHandlers.handleCommit}
                     onRebase={isStudio ? undefined : opsHandlers.handleRebase}
                     onSync={isStudio ? undefined : opsHandlers.handleSync}

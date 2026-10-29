@@ -11,6 +11,9 @@ import { listPlugins, PLUGINS_CHANGED_EVENT, type Plugin } from "./api/plugins";
 import { MobileHeader } from "./components/Layout/MobileHeader";
 import { MobileDrawer } from "./components/Layout/MobileDrawer";
 import { NotificationPopover } from "./components/Layout/NotificationPopover";
+import { OrbitSidebar } from "./components/Layout/OrbitSidebar";
+import { OrbitPhoneHeader, ORBIT_PHONE_SHOW_CHAT_EVENT } from "./components/Layout/OrbitPhoneHeader";
+import { OrbitNewChat } from "./components/Orbit/OrbitNewChat";
 import { ConnectDialog, SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
 import { BlitzPage } from "./components/Blitz";
@@ -43,6 +46,7 @@ import { getConfig, patchConfig, openIDE, openTerminal } from "./api";
 import { listMarketplace } from "./api/marketplace";
 import { setMarketplaceIcons } from "./utils/agentIcon";
 import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
+import { TabletAsDesktopContext } from "./hooks/useIsMobile";
 import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
 import { readLastProjectView, writeLastProjectView } from "./utils/lastProjectView";
@@ -135,6 +139,11 @@ function registerGlobalShortcut(
   };
 }
 
+const ORBIT_PAGE_TITLES: Record<string, string> = {
+  dashboard: "Dashboard", resource: "Studio", memory: "Memory", skills: "Extensions",
+  automation: "Automation", ai: "AI", statistics: "Statistics", settings: "Settings", projects: "Projects",
+};
+
 // Main sidebar nav items for Cmd+1-8 and Option+Cmd+Up/Down cycling.
 // "settings" and "projects" are excluded as they are utility pages, not part of the main nav cycle.
 function AppContent() {
@@ -153,9 +162,14 @@ function AppContent() {
   const [restoredNavigation] = useState(readNavigationState);
   const [activeItem, setActiveItem] = useState(restoredNavigation?.page ?? "dashboard");
   const [connectOpen, setConnectOpen] = useState(false);
-  const { isMobile } = useIsMobile();
+  const { isMobile: viewportMobile, isTablet } = useIsMobile();
+  const { config: globalConfig } = useConfig();
+  const orbit = globalConfig?.web.interface === "orbit";
+  // Orbit keeps its desktop layout on tablets; only phones get the mobile one.
+  const isMobile = viewportMobile && !(orbit && isTablet);
+  const orbitPhone = orbit && isMobile;
   const [preferredTasksMode, setTasksMode] = useState<TasksMode>(restoredNavigation?.tasksMode ?? "zen");
-  const tasksMode: TasksMode = isMobile ? "zen" : preferredTasksMode;
+  const tasksMode: TasksMode = isMobile || orbit ? "zen" : preferredTasksMode;
   // Ref mirror of tasksMode for use inside stable callbacks (e.g. the
   // tray:navigate listener) that capture the initial closure and would
   // otherwise see a stale mode. Sync via effect — refs cannot be
@@ -338,6 +352,9 @@ function AppContent() {
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Orbit on a narrow desktop/tablet window: the forced-collapsed sidebar
+  // opens as an overlay instead of pushing the workspace.
+  const [orbitSidebarOverlayOpen, setOrbitSidebarOverlayOpen] = useState(false);
   const [mobileNotifOpen, setMobileNotifOpen] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const {
@@ -351,7 +368,6 @@ function AppContent() {
     inWorkspace,
   } = useCommandPalette();
   const { theme, mode: themeMode, setAppearance } = useTheme();
-  const { config: globalConfig } = useConfig();
   const navItems: readonly string[] = selectedProject?.projectType === "studio" ? STUDIO_NAV_IDS : REPO_NAV_IDS;
 
   // Navigate sidebar by absolute index or relative delta (based on current active item)
@@ -754,6 +770,21 @@ function AppContent() {
     const saved = readLastProjectView(currentProjectId);
     setActiveItem(saved && saved !== "connect" ? saved : "dashboard");
   }
+  // The New page is Orbit-only; leaving Orbit (or restoring it under Workbench) falls back to the dashboard.
+  // Wait for the config so Orbit's own restore isn't bounced before the interface is known.
+  if (globalConfig && !orbit && activeItem === "new") {
+    setActiveItem("dashboard");
+  }
+  // Orbit on a phone opens on the New page, like a chat app — once per app
+  // load, after the project restore above has settled.
+  const [orbitPhoneLandingChecked, setOrbitPhoneLandingChecked] = useState(false);
+  if (!orbitPhoneLandingChecked && globalConfig && !isLoading && selectedProject) {
+    setOrbitPhoneLandingChecked(true);
+    if (orbitPhone && activeItem !== "new") {
+      setActiveItem("new");
+      setNavigationData(null);
+    }
+  }
 
   // Keep-alive gating for WorkPage — mirrors TasksPage's always-mounted
   // contract: once visited, WorkPage stays mounted (display:none) so Work ⇄
@@ -934,6 +965,13 @@ function AppContent() {
   }, []);
 
 
+  // Orbit New page → Session: the workspace host fades in instead of snapping in.
+  const [orbitHandoffAt, setOrbitHandoffAt] = useState(0);
+  useEffect(() => {
+    if (!orbitHandoffAt) return;
+    const timer = window.setTimeout(() => setOrbitHandoffAt(0), 400);
+    return () => window.clearTimeout(timer);
+  }, [orbitHandoffAt]);
   const handleNavigate = (page: string, data?: Record<string, unknown>) => {
     console.log("[BlitzNav] handleNavigate (notification)", { page, data, tasksMode });
     let targetProject = selectedProject;
@@ -949,6 +987,16 @@ function AppContent() {
     // targetProject may come from the minimal project list (localTask: null),
     // so checking the id directly is the reliable fallback.
     let effectivePage = page;
+    // Orbit has no Tasks list page: a Tasks target without a known Task (or a
+    // new-task request) lands on the New page instead of the Classic list.
+    if (orbit && page === "tasks" && !data?.openNewTask) {
+      const known = data?.taskId === "_local" || targetProject?.tasks?.some((task) => task.id === data?.taskId);
+      if (!known) {
+        setActiveItem("new");
+        setNavigationData(null);
+        return;
+      }
+    }
     if (page === "tasks" && data?.taskId) {
       const task = targetProject?.tasks?.find((t) => t.id === data.taskId);
       const isLocalTask =
@@ -957,13 +1005,27 @@ function AppContent() {
       if (isLocalTask) effectivePage = "work";
     }
     setActiveItem(effectivePage);
+    if (orbitPhone && data?.chatId) window.dispatchEvent(new CustomEvent(ORBIT_PHONE_SHOW_CHAT_EVENT));
     console.log("[BlitzNav] handleNavigate: setNavigationData", { effectivePage, data });
     setNavigationData(data ?? null);
+    if (data?.orbitHandoff) setOrbitHandoffAt(Date.now());
   };
 
   // When project changes via sidebar ProjectSelector, restore the user's
   // last view for that project (falls back to dashboard if the saved view
   // isn't valid for the new project type).
+  // Orbit: a visible TaskChat whose Task has no sessions left asks for the New page.
+  const handleNavigateRef = useRef(handleNavigate);
+  useEffect(() => { handleNavigateRef.current = handleNavigate; });
+  useEffect(() => {
+    const openNew = (event: Event) => {
+      const taskId = (event as CustomEvent<{ taskId?: string }>).detail?.taskId;
+      handleNavigateRef.current("new", taskId ? { taskId } : undefined);
+    };
+    window.addEventListener("grove:orbit-open-new", openNew);
+    return () => window.removeEventListener("grove:orbit-open-new", openNew);
+  }, []);
+
   const handleProjectSwitch = useCallback(
     (newProjectId?: string) => {
       const targetId = newProjectId ?? selectedProject?.id ?? null;
@@ -991,6 +1053,10 @@ function AppContent() {
     if (!isMobile) setTasksMode((prev) => (prev === "zen" ? "blitz" : "zen"));
   }, [isMobile]);
   const toggleSidebar = useCallback(() => {
+    if (orbit) {
+      setSidebarMode(effectiveSidebarMode === "collapsed" ? "expanded" : "collapsed");
+      return;
+    }
     // Mod+B: binary expanded ⇄ collapsed. If currently in island mode,
     // first leave the island — Mod+B shouldn't drop you into collapsed
     // when you were already in a "hidden" state.
@@ -1000,8 +1066,12 @@ function AppContent() {
       return;
     }
     setSidebarCollapsed((prev) => !prev);
-  }, [sidebarIsland]);
+  }, [orbit, effectiveSidebarMode, setSidebarMode, sidebarIsland]);
   const archiveSidebar = useCallback(() => {
+    if (orbit) {
+      setSidebarMode(effectiveSidebarMode === "collapsed" ? "expanded" : "collapsed");
+      return;
+    }
     // Mod+. : three-state cycle.
     //   expanded → collapsed → island → expanded
     // Anchored on the current mode, so repeated presses always walk the same
@@ -1009,7 +1079,7 @@ function AppContent() {
     setSidebarMode(
       sidebarIsland ? "expanded" : (sidebarCollapsed ? "island" : "collapsed")
     );
-  }, [sidebarIsland, sidebarCollapsed, setSidebarMode]);
+  }, [orbit, effectiveSidebarMode, sidebarIsland, sidebarCollapsed, setSidebarMode]);
   const handleOpenIDE = useCallback(() => {
     if (selectedProject) openIDE(selectedProject.id);
   }, [selectedProject]);
@@ -1194,8 +1264,8 @@ function AppContent() {
   useCommand(
     "mode.blitz.activate",
     () => setTasksMode("blitz"),
-    { enabled: () => !isMobile && tasksMode !== "blitz" },
-    [isMobile, tasksMode],
+    { enabled: () => !isMobile && !orbit && tasksMode !== "blitz" },
+    [isMobile, orbit, tasksMode],
   );
 
   // Help / Settings
@@ -1301,6 +1371,7 @@ function AppContent() {
     },
     mode: {
       tasksMode,
+      allowBlitz: !orbit,
       onToggleMode: toggleMode,
       onToggleSidebar: toggleSidebar,
     },
@@ -1384,6 +1455,13 @@ function AppContent() {
               //     back to readLastActiveTab and our chatId is ignored.
               const projectId = selectedProject?.id;
               if (!projectId) return;
+              // Memory Organization chats live in the internal "_memory"
+              // namespace, not a Task: open them in Memory's run viewer.
+              if (taskId === "_memory") {
+                setActiveItem("memory");
+                setNavigationData({ memoryRunChatId: chatId });
+                return;
+              }
               const isLocal = taskId === "_local";
               if (isLocal) {
                 (window as unknown as Record<string, unknown>).__grove_pending_chat = {
@@ -1397,6 +1475,10 @@ function AppContent() {
                     detail: { projectId, taskId, chatId },
                   }),
                 );
+              } else if (orbit && !selectedProject?.tasks.some((task) => task.id === taskId)) {
+                // Orbit has no Tasks list page to fall back to.
+                setActiveItem("new");
+                setNavigationData(null);
               } else {
                 setActiveItem("tasks");
                 setNavigationData({ taskId, chatId });
@@ -1405,7 +1487,7 @@ function AppContent() {
           />
         );
       case "memory":
-        return <MemoryPage />;
+        return <MemoryPage key={(navigationData?.memoryRunChatId as string | undefined) ?? "memory"} initialRunChatId={navigationData?.memoryRunChatId as string | undefined} />;
       case "skills":
         return <SkillsPage />;
       case "ai":
@@ -1414,6 +1496,8 @@ function AppContent() {
         return <ProjectStatsPage projectId={selectedProject?.id} />;
       case "settings":
         return <SettingsPage config={mockConfig} />;
+      case "new":
+        return <OrbitNewChat key={(navigationData?.taskId as string | undefined) ?? "_local"} initialTaskId={navigationData?.taskId as string | undefined} onNavigate={handleNavigate} />;
       default: {
         // Plugin sidebar page (`contributes.sidebar`) — app-scoped full page.
         if (activeItem.startsWith("plugin:")) {
@@ -1446,6 +1530,9 @@ function AppContent() {
   };
 
   const isDashboardPage = activeItem === "dashboard";
+  // Orbit's window header only hosts the workspace toolbar. Other pages drop it,
+  // except when the collapsed sidebar's controls need a bar to sit on.
+  const orbitHeaderVisible = ((activeItem === "tasks" || activeItem === "work") && globalConfig?.web.workspace_layout !== "flex") || effectiveSidebarMode === "collapsed";
   const isFullWidthPage =
     isDashboardPage ||
     activeItem === "projects" ||
@@ -1456,6 +1543,7 @@ function AppContent() {
     activeItem === "memory" ||
     activeItem === "automation" ||
     activeItem === "statistics" ||
+    activeItem === "new" ||
     activeItem.startsWith("plugin:");
 
   const sidebarProps = {
@@ -1565,8 +1653,15 @@ function AppContent() {
     );
   }
 
+  const orbitSidebarOverlay = orbitSidebarOverlayOpen && orbit && !isMobile && viewportTooNarrowForSidebar;
+  // Phone header fallback; a visible Session puts its own title over it.
+  const orbitPhoneTitle = activeItem === "new" || activeItem === "tasks" || activeItem === "work"
+    ? selectedProject?.name ?? "Grove"
+    : ORBIT_PAGE_TITLES[activeItem] ?? sidebarPlugins.find((plugin) => `plugin:${plugin.id}` === activeItem)?.name ?? "Grove";
+
   // One page tree across breakpoints keeps task/workspace state alive.
   return (
+    <TabletAsDesktopContext.Provider value={orbit}>
     <div className={isMobile ? "grove-app-shell flex flex-col bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)]" : "flex h-screen bg-[var(--color-bg)] overflow-hidden"}>
       {/* Invisible top-edge drag strip — Tauri Overlay title-bar mode hides
           the OS title bar, so the user expects to drag the window from
@@ -1584,15 +1679,43 @@ function AppContent() {
             listener in the parent useEffect to trigger startDragging(). */}
       <div
         className={`fixed top-0 left-0 right-0 h-6 z-[45] ${isMobile ? "hidden" : ""}`}
+        style={!isMobile && orbit && globalConfig?.web.workspace_layout === "flex" && !orbitHeaderVisible ? { right: "auto", width: 256 } : undefined}
         data-tauri-drag-region
         data-window-drag-strip
       />
       <UpdateBanner />
-      {isMobile && <MobileHeader onMenuOpen={() => setDrawerOpen(true)} onNotificationOpen={() => setMobileNotifOpen(true)} />}
-      <NotificationPopover isOpen={isMobile && mobileNotifOpen} onClose={() => setMobileNotifOpen(false)} onNavigate={handleNavigate} />
-      <MobileDrawer isOpen={isMobile && drawerOpen} onClose={() => setDrawerOpen(false)}>
+      {isMobile && !orbitPhone && <MobileHeader onMenuOpen={() => setDrawerOpen(true)} onNotificationOpen={() => setMobileNotifOpen(true)} />}
+      <NotificationPopover isOpen={isMobile && !orbitPhone && mobileNotifOpen} onClose={() => setMobileNotifOpen(false)} onNavigate={handleNavigate} />
+      <MobileDrawer isOpen={isMobile && !orbitPhone && drawerOpen} onClose={() => setDrawerOpen(false)}>
         <Sidebar {...sidebarProps} drawerMode onDrawerClose={() => setDrawerOpen(false)} />
       </MobileDrawer>
+      {/* Orbit on a phone: the sidebar slides in over the page, which dims behind it. */}
+      {orbitPhone && (
+        <div className={`orbit-phone-drawer${drawerOpen ? " is-open" : ""}`} inert={!drawerOpen}>
+          <OrbitSidebar
+            variant="drawer"
+            activeItem={activeItem}
+            collapsed={false}
+            onCollapse={() => setDrawerOpen(false)}
+            onItemClick={(item) => { setDrawerOpen(false); handleItemClick(item); }}
+            onNavigate={(page, data) => { setDrawerOpen(false); handleNavigate(page, data); }}
+            onSearch={() => { setDrawerOpen(false); openCommandPalette(); }}
+            onProjectSwitch={handleProjectSwitch}
+            onManageProjects={(tab) => { setDrawerOpen(false); sidebarProps.onManageProjects(tab); }}
+            onAddProject={(mode) => { setDrawerOpen(false); sidebarProps.onAddProject(mode); }}
+          />
+        </div>
+      )}
+      <div className={orbitPhone ? "orbit-phone-stage" : "contents"}>
+      {orbitPhone && (
+        <OrbitPhoneHeader
+          title={orbitPhoneTitle}
+          onMenu={() => setDrawerOpen(true)}
+          onNew={() => handleNavigate("new")}
+          newDisabled={activeItem === "new"}
+        />
+      )}
+      {orbitPhone && drawerOpen && <button type="button" className="orbit-phone-scrim" aria-label="Close menu" onClick={() => setDrawerOpen(false)} />}
       <AnimatePresence key="app-content" mode="wait">
         {tasksMode === "blitz" ? (
           <motion.div
@@ -1624,25 +1747,35 @@ function AppContent() {
             exit={{ opacity: 0, x: -40 }}
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
-            <div data-grove-sidebar className={isMobile ? "hidden" : undefined}>{!isMobile && <Sidebar {...sidebarProps} />}</div>
+            {!isMobile && orbit && <div className={`orbit-window-header${shouldAvoidTrafficLightsInIsland ? " has-mac-controls" : ""}${orbitHeaderVisible ? "" : " is-hidden"}`}>
+              <div className={`orbit-workspace-toolbar${effectiveSidebarMode === "collapsed" ? " is-collapsed" : ""}${shouldAvoidTrafficLightsInIsland ? " has-mac-controls" : ""}`} data-tauri-drag-region data-window-drag-strip>
+                <div id="orbit-workspace-toolbar" className="orbit-toolbar-slot" />
+              </div>
+            </div>}
+            {orbitSidebarOverlay && <button type="button" className="orbit-sidebar-scrim" aria-label="Close sidebar" onClick={() => setOrbitSidebarOverlayOpen(false)} />}
+            <div data-grove-sidebar className={isMobile ? "hidden" : undefined}>{!isMobile && (orbit ? <OrbitSidebar activeItem={activeItem} variant={orbitSidebarOverlay ? "overlay" : undefined} collapsed={effectiveSidebarMode === "collapsed" && !orbitSidebarOverlay} onCollapse={() => {
+                if (viewportTooNarrowForSidebar) setOrbitSidebarOverlayOpen(!orbitSidebarOverlay);
+                else setSidebarMode(effectiveSidebarMode === "collapsed" ? "expanded" : "collapsed");
+              }} onItemClick={(item) => { setOrbitSidebarOverlayOpen(false); handleItemClick(item); }} onNavigate={(page, data) => { setOrbitSidebarOverlayOpen(false); handleNavigate(page, data); }} onSearch={openCommandPalette} onProjectSwitch={handleProjectSwitch} onManageProjects={sidebarProps.onManageProjects} onAddProject={sidebarProps.onAddProject} /> : <Sidebar {...sidebarProps} />)}</div>
             {/* Floating main card — mirrors the sidebar's "floating panel"
                language so the chrome reads as a single design system:
                two cards on a desktop, 12px gap between them and to all
                window edges. left tracks the sidebar collapsed state so
                the gap stays visually consistent in both modes. */}
             <main
-              className={isMobile ? `relative min-h-0 flex-1 ${activeItem === "tasks" || activeItem === "work" || activeItem === "ai" ? "overflow-hidden" : "overflow-y-auto"}` : `fixed top-3 right-3 bottom-3 rounded-2xl bg-[var(--color-bg)] transition-[left] duration-200 ease-in-out ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}
+              className={isMobile ? `relative min-h-0 flex-1 ${activeItem === "tasks" || activeItem === "work" || activeItem === "ai" || activeItem === "new" ? "overflow-hidden" : "overflow-y-auto"}` : `fixed ${orbit ? "inset-y-0 right-0" : "top-3 right-3 bottom-3 rounded-2xl"} bg-[var(--color-bg)] transition-[left] duration-200 ease-in-out ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}
               style={isMobile ? undefined : {
                 // Three-tier left: island → 12px (pill is at top-center, sidebar is
                 // effectively absent on the left edge so main uses full width);
                 // collapsed → 96px; expanded → 280px. Matches the visual gap of the
                 // sidebar's left:12 in both expanded/collapsed modes, so the
                 // floating-panel language stays consistent.
-                left: effectiveSidebarMode === "island"
+                left: orbit ? (effectiveSidebarMode === "collapsed" ? "0px" : "256px") : effectiveSidebarMode === "island"
                   ? "12px"
                   : (effectiveSidebarMode === "collapsed" ? "96px" : "280px"),
-                boxShadow:
+                boxShadow: orbit ? "none" :
                   "0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06), 0 0 0 1px color-mix(in oklab, var(--color-border) 35%, transparent)",
+                top: orbit ? (orbitHeaderVisible ? (shouldAvoidTrafficLightsInIsland ? "54px" : "40px") : "0px") : undefined,
               }}
             >
               {/* TasksPage always mounted to preserve workspace state across tab switches.
@@ -1650,7 +1783,7 @@ function AppContent() {
                   (.ide-workbench) now matches main's rounded-2xl corners exactly, so
                   an extra p-2 here would just reintroduce a redundant border gap. */}
               <div
-                className={`h-full transition-[padding] duration-300 ease-out ${isMobile ? "p-3" : inWorkspace ? "" : "p-6"} ${!isMobile && inWorkspace && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? "ide-traffic-light-clearance" : ""}`}
+                className={`h-full transition-[padding] duration-300 ease-out ${isMobile ? (orbitPhone ? "" : "p-3") : orbit || inWorkspace ? "" : "p-6"} ${!isMobile && inWorkspace && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? "ide-traffic-light-clearance" : ""}${orbitHandoffAt ? " orbit-handoff-enter" : ""}`}
                 style={{ display: activeItem === "tasks" ? "block" : "none" }}
               >
                 <TasksPage
@@ -1670,7 +1803,7 @@ function AppContent() {
               {/* WorkPage keep-alive — mirrors the TasksPage host above: mounts
                   on first visit, then only `display` flips across nav switches. */}
               <div
-                className={`h-full ${isMobile ? "p-3" : ""} ${!isMobile && activeItem === "work" && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? "ide-traffic-light-clearance" : ""}`}
+                className={`h-full ${isMobile && !orbitPhone ? "p-3" : ""} ${!isMobile && activeItem === "work" && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? "ide-traffic-light-clearance" : ""}${orbitHandoffAt ? " orbit-handoff-enter" : ""}`}
                 style={{ display: activeItem === "work" ? "block" : "none" }}
               >
                 {workEverVisited && (
@@ -1682,8 +1815,17 @@ function AppContent() {
                 )}
               </div>
               {activeItem !== "tasks" && activeItem !== "work" && (
-                <div className={isMobile ? activeItem === "ai" ? "h-full p-3" : isFullWidthPage ? "min-h-full p-3" : "max-w-5xl mx-auto p-3" : isFullWidthPage ? "h-full transition-[padding] duration-300 ease-out p-6" : "max-w-5xl mx-auto p-6"}>
-                  {renderContent()}
+                <div className={isMobile ? orbitPhone && activeItem === "new" ? "h-full" : activeItem === "ai" ? "h-full p-3" : isFullWidthPage ? "min-h-full p-3" : "max-w-5xl mx-auto p-3" : isFullWidthPage ? "h-full transition-[padding] duration-300 ease-out p-6" : "max-w-5xl mx-auto p-6"}>
+                  {/* One shared enter transition for every routed page (pages don't animate their own root). */}
+                  <motion.div
+                    key={activeItem}
+                    className={isFullWidthPage || activeItem === "ai" ? "h-full" : undefined}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.22, ease: [0.25, 1, 0.5, 1] }}
+                  >
+                    {renderContent()}
+                  </motion.div>
                 </div>
               )}
               {selectedProject && !selectedProject.exists &&
@@ -1696,6 +1838,7 @@ function AppContent() {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
       <AddProjectDialog
         isOpen={showAddProject}
         onClose={() => {
@@ -1729,6 +1872,7 @@ function AppContent() {
       <HelpOverlay isOpen={!isMobile && showHelp} onClose={() => setShowHelp(false)} />
       {addLibraryDialog}
     </div>
+    </TabletAsDesktopContext.Provider>
   );
 }
 

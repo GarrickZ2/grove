@@ -1174,10 +1174,7 @@ export function ResourcePage() {
   return (
     <>
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25 }}
-      className="h-full flex flex-col gap-4 p-4 overflow-y-auto select-none"
+      className="h-full flex flex-col gap-4 overflow-y-auto select-none"
       style={{ color: "var(--color-text)" }}
       onDrop={handleDrop}
       onDragEnter={(e) => {

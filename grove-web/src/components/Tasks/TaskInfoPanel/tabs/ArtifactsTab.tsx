@@ -1195,7 +1195,7 @@ function FolderEntryRow({
       type="button"
       onClick={onOpen}
       className="group flex w-full items-center gap-3 px-3 py-2 rounded-lg text-left transition-all"
-      onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
+      onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg)"}
       onMouseLeave={e => e.currentTarget.style.background = "transparent"}
     >
       <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
@@ -1297,8 +1297,8 @@ function FileCard({
     <div
       className="group flex items-center gap-3 px-3 py-2 rounded-lg transition-all cursor-pointer"
       onClick={() => isLink ? onOpenLink?.(file) : canPreview ? onPreview(file) : onDownload(file)}
-      onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
-      onMouseLeave={e => e.currentTarget.style.background = "var(--color-bg)"}
+      onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg)"}
+      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
       draggable={!file.is_dir}
       onDragStart={(e) => {
         if (file.is_dir) return;

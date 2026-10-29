@@ -59,9 +59,12 @@ interface TaskPageHandlers {
  *
  * @returns [state, handlers]
  */
-export function useTaskPageState(isMobile = false): [TaskPageState, TaskPageHandlers] {
+export function useTaskPageState(isMobile = false, workspaceOnly = false): [TaskPageState, TaskPageHandlers] {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [inWorkspace, setInWorkspace] = useState(false);
+  const [workspaceOpen, setInWorkspace] = useState(false);
+  // Orbit has no list/overview destination, including when restoring an old
+  // navigation entry that recorded inWorkspace=false.
+  const inWorkspace = workspaceOnly ? selectedTask !== null : workspaceOpen;
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [infoPanelTab, setInfoPanelTab] = useState<TabType>("stats");
@@ -84,6 +87,7 @@ export function useTaskPageState(isMobile = false): [TaskPageState, TaskPageHand
 
   // Handle closing task view
   const handleCloseTask = useCallback(() => {
+    if (workspaceOnly) return;
     if (inWorkspace) {
       // From Workspace, go back to Task List page (keep Info Panel open)
       setInWorkspace(false);
@@ -91,7 +95,7 @@ export function useTaskPageState(isMobile = false): [TaskPageState, TaskPageHand
       // From Info Panel, go back to Empty State
       setSelectedTask(null);
     }
-  }, [inWorkspace]);
+  }, [inWorkspace, workspaceOnly]);
 
   // Handle entering Workspace
   const handleEnterWorkspace = useCallback(() => {

@@ -1,4 +1,3 @@
-import { useEscapeScope } from "../../../keyboard/useEscapeScope";
 import { reduceMessageChunk, reduceUserMessage } from "./messageChunks";
 import { reduceV2Message } from "./v2Messages";
 import { reduceV2Tool } from "./v2Tools";
@@ -51,6 +50,7 @@ import {
   Loader2,
   CheckCircle2,
   Check,
+  Copy,
   Circle,
   CircleAlert,
   Brain,
@@ -90,7 +90,6 @@ import {
   ListChecks,
   Download,
   ArrowRightLeft,
-  SlidersHorizontal,
   Box,
   Database,
   Archive,
@@ -110,6 +109,9 @@ import {
 import { agentOptions } from "../../../data/agents";
 import { invalidateAgentCatalog } from "../../../api/agentCatalogChanges";
 import { createClientMessageId } from "../../../utils/clientMessageId";
+import { takeOrbitFirstMessage } from "../../Orbit/orbitFirstMessage";
+import { AttachmentError, attachmentLabel, prepareFileAttachment, type Attachment } from "./chatAttachments";
+import { DropdownSelect, SessionSettingsMenu, type ChatDropdownOption } from "./ChatConfigMenus";
 import {
   buildMentionItems,
   buildStudioMentionItems,
@@ -156,12 +158,8 @@ import {
   type AgentVoicePlaybackStatus,
   type AgentVoiceSessionState,
 } from "../../../utils/agentVoice";
-import type {
-  SessionConfigOption,
-  SessionConfigSelectValue,
-} from "../../../api/tasks";
+import type { SessionConfigOption } from "../../../api/tasks";
 import {
-  configCategoryMatches,
   configDropdownValues,
   quickConfigOptions,
 } from "./sessionConfigOptions";
@@ -260,7 +258,7 @@ import { contextUsagePercent } from "./contextUsage";
 import { ChatComposerPanel } from "./ChatComposerPanel";
 import { MobileComposerStatus } from "./MobileComposerStatus";
 import { mobileComposerPanelTitles, type MobileComposerPanel } from "./mobileComposerPanels";
-import { TurnUsageMeta } from "./TurnUsageMeta";
+import { formatDuration, formatTokens } from "../../Stats/formatters";
 import { collectReadMemoryIds } from "./memoryRead";
 import {
   quotaBadgePercent,
@@ -297,6 +295,7 @@ import { openExternalUrl } from "../../../utils/openExternal";
 import { ansiToHtml, stripAnsi } from "../../../utils/ansi";
 import { fuzzyFindByName } from "../../../utils/fuzzySearch";
 import { useCommand, useContextKey, useVoiceControlContext } from "../../../keyboard";
+import { ORBIT_PHONE_TITLE_SLOT } from "../../Layout/OrbitPhoneHeader";
 import "./task-chat.css";
 
 // ─── Queue send mode persistence (localStorage) ───────────────────────────
@@ -431,6 +430,9 @@ function gcChatDraftsOnce(): void {
 interface TaskChatProps {
   projectId: string;
   taskId: string;
+  orbitHeader?: boolean;
+  /** Hosting page is visible; only a visible Orbit chat may navigate away when its Task has no sessions. */
+  pageActive?: boolean;
   fixedChatId?: string;
   sessionManagement?: boolean;
   /** Render persisted history without attaching to the live Agent session. */
@@ -478,19 +480,6 @@ type PermissionMessage = {
   resolved?: string; // selected option name when resolved
 };
 
-interface Attachment {
-  type: "image" | "audio" | "resource";
-  data: string; // base64 for image/audio
-  mimeType: string;
-  name: string; // original filename
-  label: string; // display label e.g. "Image #1", "Audio #2", "File #3"
-  previewUrl?: string; // blob URL for image preview
-  uri?: string;
-  size?: number;
-  /** Raw file pending upload — upload is deferred until the prompt is sent */
-  pendingFile?: File;
-}
-
 interface TurnUsageData {
   inputTokens: number;
   outputTokens: number;
@@ -537,6 +526,7 @@ export type ChatMessage =
       attachments?: Attachment[];
       terminal?: boolean;
       clientMessageId?: string;
+      sentAt?: number;
       messageId?: string;
       v2EchoPending?: boolean;
       v2OriginalAttachments?: Attachment[];
@@ -600,6 +590,7 @@ type PendingInput = {
   dispatched?: boolean;
   cancelled?: boolean;
   sentAt: number;
+  submittedAt?: number;
   error?: string;
 };
 
@@ -726,7 +717,7 @@ function apiErrorMessage(error: unknown): string {
 }
 
 interface SessionActionsMenuProps {
-  surface: "header" | "sidebar";
+  surface: "header" | "sidebar" | "orbit";
   chatId: string;
   forkCapable: boolean;
   importCapable: boolean;
@@ -750,9 +741,10 @@ interface SessionActionsMenuProps {
   onReconnect: () => void;
   onDelete: (chatId: string) => void;
   onArchive: (chatId: string) => void;
+  onRename?: () => void;
 }
 
-function SessionActionsMenu({
+export function SessionActionsMenu({
   surface,
   chatId,
   forkCapable,
@@ -777,8 +769,11 @@ function SessionActionsMenu({
   onReconnect,
   onDelete,
   onArchive,
+  onRename,
 }: SessionActionsMenuProps) {
   const items: Parameters<typeof DropdownMenu>[0]["items"] = [];
+
+  if (onRename) items.push({ id: "rename", label: "Rename", icon: Pencil, onClick: onRename });
 
   if (forkCapable) {
     items.push({
@@ -867,7 +862,7 @@ function SessionActionsMenu({
   });
 
   const triggerClassName =
-    surface === "header"
+    surface === "orbit" ? "orbit-more-button" : surface === "header"
       ? "flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-highlight)]"
       : "flex h-full shrink-0 items-center gap-1.5 rounded-md border border-dashed border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-transparent px-2 text-[12px] text-[var(--color-text-muted)] transition-colors hover:border-[color-mix(in_srgb,var(--color-highlight)_34%,transparent)] hover:text-[var(--color-highlight)]";
 
@@ -877,13 +872,15 @@ function SessionActionsMenu({
       trigger={
         <>
           <MoreHorizontal className={surface === "header" ? "h-3.5 w-3.5" : "h-3 w-3"} />
-          <span>More</span>
+          {surface !== "orbit" && <span>More</span>}
         </>
       }
       triggerClassName={triggerClassName}
       ariaLabel="Session actions"
       portal
       compact
+      appearance={surface === "orbit" ? "orbit" : "default"}
+      placement={surface === "orbit" ? "bottom" : "side"}
     />
   );
 }
@@ -923,12 +920,6 @@ const AGENT_PICKER_MENU_WIDTH = 192;
 const AGENT_PICKER_MENU_MAX_HEIGHT = 256;
 const AGENT_PICKER_VIEWPORT_MARGIN = 8;
 
-type ChatDropdownOption = {
-  label: string;
-  value: string;
-  description?: string | null;
-  group?: string;
-};
 
 /** Per-chat cached state (preserved across chat switches) */
 interface PerChatState {
@@ -1418,11 +1409,6 @@ function reservePendingAttachmentLabels(counters: AttachmentCounters, inputs: Pe
   return reserved;
 }
 
-function attachmentLabel(type: "image" | "audio" | "resource", index: number): string {
-  const prefix = type === "image" ? "Image" : type === "audio" ? "Audio" : "File";
-  return `${prefix} #${index}`;
-}
-
 function previewCommentElementLabel(draft: PreviewCommentDraft): string {
   return `${draft.locator.tagName}${draft.locator.id ? `#${draft.locator.id}` : ""}${draft.locator.className ? `.${draft.locator.className.split(/\s+/).slice(0, 3).join(".")}` : ""}`;
 }
@@ -1494,44 +1480,6 @@ function appendSystemMessage(
   const last = messages[messages.length - 1];
   if (last?.type === "system" && last.content === content) return messages;
   return [...messages, { type: "system", content }];
-}
-
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB — Claude API limit
-const MAX_IMAGE_DIMENSION = 2048;
-
-/** Resize + compress an image blob to JPEG via Canvas. Reduces dimensions first,
- *  then lowers JPEG quality in steps until the result fits within MAX_IMAGE_BYTES. */
-async function compressImageViaCanvas(source: File | Blob): Promise<Blob> {
-  const objectUrl = URL.createObjectURL(source);
-  const img = new Image();
-  img.src = objectUrl;
-  await img.decode();
-  URL.revokeObjectURL(objectUrl);
-
-  let w = img.naturalWidth;
-  let h = img.naturalHeight;
-  if (w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION) {
-    const ratio = Math.min(MAX_IMAGE_DIMENSION / w, MAX_IMAGE_DIMENSION / h);
-    w = Math.round(w * ratio);
-    h = Math.round(h * ratio);
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
-
-  let quality = 0.85;
-  let blob: Blob | null = null;
-  while (quality >= 0.3) {
-    blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", quality),
-    );
-    if (!blob || blob.size <= MAX_IMAGE_BYTES) break;
-    quality -= 0.1;
-  }
-  if (!blob) throw new Error("Canvas compression failed");
-  return blob;
 }
 
 type ChatRenderWindowSettings = {
@@ -2285,7 +2233,8 @@ function reduceHistoryMessages(
         msg.option_id,
         typeof msg.id === "string" ? msg.id : undefined,
       );
-    case "complete": {
+    case "complete":
+    case "turn_interrupted": {
       const completed = completeThinking(interruptCompactions(messages));
       const usage: TurnUsageData | undefined = msg.usage
         ? {
@@ -2301,9 +2250,15 @@ function reduceHistoryMessages(
       const startTs =
         typeof msg.start_ts === "number" ? msg.start_ts : undefined;
       const endTs = typeof msg.end_ts === "number" ? msg.end_ts : undefined;
-      const completedTurn = completed.map((m) =>
-        m.type === "assistant" && !m.complete
-          ? { ...m, complete: true, usage, startTs, endTs }
+      let lastAssistant = -1;
+      for (let i = completed.length - 1; i >= 0; i--) {
+        if (completed[i].type === "user") break;
+        const message = completed[i];
+        if (message.type === "assistant" && (message.content.trim() || message.blocks?.some((block) => block.type !== "text"))) { lastAssistant = i; break; }
+      }
+      const completedTurn = completed.map((m, i) =>
+        m.type === "assistant" && (i === lastAssistant || !m.complete)
+          ? { ...m, complete: true, ...(i === lastAssistant ? { usage, startTs, endTs } : {}) }
           : m,
       );
       return String(msg.stop_reason).toLowerCase() === "refusal"
@@ -2312,6 +2267,17 @@ function reduceHistoryMessages(
     }
     case "user_message":
       return reduceUserMessage(messages, msg, msg.attachments?.map(attachmentFromContent) ?? []);
+    case "user_message_time": {
+      let index = messages.length - 1;
+      while (index >= 0) {
+        const message = messages[index];
+        if (message.type === "user" && (!msg.client_message_id || message.clientMessageId === msg.client_message_id)) break;
+        index--;
+      }
+      return typeof msg.sent_at === "number" && index >= 0
+        ? messages.map((message, i) => i === index && message.type === "user" ? { ...message, sentAt: msg.sent_at } : message)
+        : messages;
+    }
     case "terminal_execute":
       return [
         ...messages,
@@ -2381,6 +2347,8 @@ function DownloadingLabel({ startedAt, compact }: { startedAt: number; compact?:
 export function TaskChat({
   projectId,
   taskId,
+  orbitHeader = false,
+  pageActive = true,
   fixedChatId,
   sessionManagement = true,
   finished = false,
@@ -2431,6 +2399,28 @@ export function TaskChat({
     setActiveChatId,
   } = useActiveChatId(null);
   useReportDebugId("chatId", activeChatId);
+  const [orbitMenuTarget, setOrbitMenuTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!orbitHeader || !activeChatId) {
+      setOrbitMenuTarget(null);
+      return;
+    }
+    const findTarget = () => document.getElementById(`orbit-session-menu-${activeChatId}`);
+    let target = findTarget();
+    setOrbitMenuTarget(target);
+    const observer = new MutationObserver(() => {
+      const next = findTarget();
+      if (next !== target) { target = next; setOrbitMenuTarget(next); }
+    });
+    observer.observe(document.querySelector('[aria-label="Orbit sidebar"]') ?? document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["id"] });
+    return () => observer.disconnect();
+  }, [orbitHeader, activeChatId]);
+  // Orbit on a phone: no chat header; the visible Session titles the app's top bar.
+  const orbitPhone = orbitHeader && isPhoneLayout;
+  const [orbitPhoneTitleTarget, setOrbitPhoneTitleTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setOrbitPhoneTitleTarget(orbitPhone && pageActive ? document.getElementById(ORBIT_PHONE_TITLE_SLOT) : null);
+  }, [orbitPhone, pageActive]);
 
   // Voice control context contribution for active chat sessions
   useVoiceControlContext("active_chat", () => {
@@ -2595,6 +2585,18 @@ export function TaskChat({
 
   // ─── Active chat's live state ─────────────────────────────────────────
   const [isConnected, setIsConnected] = useState(false);
+  // Orbit's New page creates the Session on first send; the typed message is
+  // sent here once that Session reaches session_ready (assigned further down).
+  const sendOrbitFirstMessageRef = useRef<(chatId: string) => void>(() => {});
+  // Orbit: a Task may have no sessions; the visible chat then hands over to the
+  // New page (targeting this Task) instead of showing an empty, session-less chat.
+  const openOrbitNewForEmptyTaskRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    openOrbitNewForEmptyTaskRef.current = () => {
+      if (!orbitHeader || !pageActive || fixedChatId) return;
+      window.dispatchEvent(new CustomEvent("grove:orbit-open-new", { detail: { taskId } }));
+    };
+  }, [orbitHeader, pageActive, fixedChatId, taskId]);
   // Keep status per session and update it from live events, not history replay.
   const [chatConnectionStatuses, setChatConnectionStatuses] = useState<Record<string, ChatConnectionStatus>>({});
   const [chatProtocolVersions, setChatProtocolVersions] = useState<Record<string, 1 | 2 | undefined>>({});
@@ -3668,8 +3670,10 @@ export function TaskChat({
       activeComposerPanel === "auth" ||
       activeComposerPanel === "ask_form");
   const mobileDetailsPanelOpen = isPhoneLayout && composerPanelOpen && !mobileActionPanelOpen;
+  // Orbit keeps the full composer docked on phones, matching its New page.
   const showMobileComposerPill =
     isPhoneLayout &&
+    !orbitPhone &&
     !mobileComposerOpen &&
     (!composerPanelOpen || mobileDetailsPanelOpen) &&
     !activePermissionMessage &&
@@ -4232,18 +4236,61 @@ export function TaskChat({
   // Watch the chatbox container width — flip to narrow mode when the
   // composer can't comfortably fit the Model / Mode / Thinking dropdowns
   // alongside the input + Send button.
+  // Orbit on a phone measures instead: label-less chips vary with their
+  // values, so keep as many as actually fit next to Send (Model first, then
+  // Mode, then Thinking) and fold the rest into the settings menu.
+  const quickChipWidthsRef = useRef({ model: 0, mode: 0, thinking: 0 });
   useEffect(() => {
     const el = chatboxContainerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
+    const fitPhoneQuickOptions = () => {
+      const footer = el.querySelector<HTMLElement>(".chatbox-footer");
+      const right = footer?.querySelector<HTMLElement>(".chatbox-footer-right");
+      if (!footer || !right) return;
+      const chips = [
+        ["model", modelMenuRef.current, composerNarrow],
+        ["mode", permMenuRef.current, composerHideMode],
+        ["thinking", thoughtLevelMenuRef.current, composerHideThinking],
+      ] as const;
+      const widths = quickChipWidthsRef.current;
+      // A folded chip keeps its last measured width; one the Agent doesn't offer takes none.
+      for (const [key, chip, folded] of chips) {
+        if (chip?.isConnected) widths[key] = chip.offsetWidth;
+        else if (!folded) widths[key] = 0;
+      }
+      const GAP = 6;
+      const others = Array.from(right.children).filter((child) => !chips.some(([, chip]) => chip === child)) as HTMLElement[];
+      // The settings button appears once something is folded; reserve its room up front.
+      const settingsReserve = right.querySelector(".chatbox-session-settings") ? 0 : 40 + GAP;
+      const left = footer.querySelector<HTMLElement>(".chatbox-footer-left");
+      let budget = footer.clientWidth - (left?.offsetWidth ?? 0) - 8
+        - others.reduce((sum, child) => sum + child.offsetWidth + GAP, 0) - settingsReserve;
+      let kept = 0;
+      for (const [key] of chips) {
+        const width = widths[key];
+        if (width > 0 && width + GAP > budget) break;
+        budget -= width > 0 ? width + GAP : 0;
+        kept += 1;
+      }
+      setComposerNarrow(kept < 1);
+      setComposerHideMode(kept < 2);
+      setComposerHideThinking(kept < 3);
+    };
     const ro = new ResizeObserver(() => {
+      if (orbitPhone) {
+        fitPhoneQuickOptions();
+        return;
+      }
       const w = el.getBoundingClientRect().width;
       setComposerNarrow(w > 0 && w < COMPOSER_HIDE_ALL_WIDTH);
       setComposerHideMode(w > 0 && w < COMPOSER_HIDE_MODE_WIDTH);
       setComposerHideThinking(w > 0 && w < COMPOSER_HIDE_THINKING_WIDTH);
     });
     ro.observe(el);
+    // A chip's width follows its value (e.g. switching Model), so watch the visible ones too.
+    if (orbitPhone) for (const chip of [modelMenuRef.current, permMenuRef.current, thoughtLevelMenuRef.current]) if (chip) ro.observe(chip);
     return () => ro.disconnect();
-  }, []);
+  }, [orbitPhone, composerNarrow, composerHideMode, composerHideThinking]);
 
   // Set while a programmatic scrollToIndex is in flight. Virtuoso fires
   // isScrolling(true) for ANY scroll (including ours), which would
@@ -4878,6 +4925,8 @@ export function TaskChat({
     fixedChatId,
     setChats,
     setActiveChatId,
+    autoCreate: !orbitHeader,
+    onEmpty: () => openOrbitNewForEmptyTaskRef.current(),
   });
 
   useEffect(() => {
@@ -5030,6 +5079,7 @@ export function TaskChat({
           setActiveChatId(null);
           restoreChatState("__deleted__");
           wsRef.current = null;
+          openOrbitNewForEmptyTaskRef.current();
         }
       })();
     },
@@ -5048,6 +5098,17 @@ export function TaskChat({
       // hasn't propagated to listChats), park it as pending so the
       // ChatListChanged handler picks it up. Otherwise switch immediately.
       const known = chatsRef.current.some((c) => c.id === detail.chatId);
+      // The sender created the chat itself (Orbit's New page) and passes it
+      // along, so add it now and switch before the page is shown, instead of
+      // briefly showing the previous chat until ChatListChanged arrives.
+      const created = detail.chat as ChatSessionResponse | undefined;
+      if (!known && created && created.id === detail.chatId) {
+        const next = [created, ...chatsRef.current];
+        chatsRef.current = next;
+        setChats(next);
+        switchChatRef.current(detail.chatId);
+        return;
+      }
       if (!known) {
         (window as unknown as Record<string, unknown>).__grove_pending_chat = {
           projectId: detail.projectId,
@@ -5262,6 +5323,7 @@ export function TaskChat({
             // repeated start failures instead of restarting every cycle.
             wsSessionEverReadyRef.current.set(chatId, true);
             reconnectAttemptRef.current.delete(chatId);
+            sendOrbitFirstMessageRef.current(chatId);
             // A reconnect leaves a gap that cannot be recovered from the live
             // stream alone. Mark the history request as loading before the
             // React effect runs, so events arriving in that small window are
@@ -6423,7 +6485,7 @@ export function TaskChat({
           });
           setMessages((prev) => {
             const updated = prev.map((m) =>
-              m.type === "auth_required" &&
+              msg.stop_reason !== "error" && msg.stop_reason !== "killed" && m.type === "auth_required" &&
               (m.status === "idle" || m.status === "in_progress")
                 ? { ...m, status: "succeeded" as const }
                 : m
@@ -6477,6 +6539,10 @@ export function TaskChat({
           }
           break;
         }
+        case "user_message_time":
+        case "turn_interrupted":
+          setMessages((prev) => reduceHistoryMessages(prev, msg));
+          break;
         case "user_message": {
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           // A queued message may start while the user is reading history.
@@ -6880,6 +6946,8 @@ export function TaskChat({
         case "elicitation_complete":
         case "complete":
         case "user_message":
+        case "user_message_time":
+        case "turn_interrupted":
         case "terminal_execute":
         case "terminal_chunk":
         case "terminal_complete":
@@ -7188,7 +7256,8 @@ export function TaskChat({
 
   const handleArchiveChat = useCallback(
     async (chatId: string) => {
-      if (chats.length <= 1 || sessionActivity[chatId]?.running) return;
+      // Classic keeps one active session; Orbit can empty a Task and start again from New.
+      if ((chats.length <= 1 && !orbitHeader) || sessionActivity[chatId]?.running) return;
       try {
         const archived = await archiveChat(projectId, taskId, chatId);
         const ws = wsMapRef.current.get(chatId);
@@ -7216,6 +7285,11 @@ export function TaskChat({
             restoreChatState(next.id);
             await connectChatWs(next.id);
             wsRef.current = wsMapRef.current.get(next.id) ?? null;
+          } else {
+            setActiveChatId(null);
+            restoreChatState("__deleted__");
+            wsRef.current = null;
+            openOrbitNewForEmptyTaskRef.current();
           }
         }
       } catch (error) {
@@ -7223,7 +7297,7 @@ export function TaskChat({
       }
       setShowChatMenu(false);
     },
-    [activeChatId, chats, connectChatWs, forgetMessages, projectId, restoreChatState, sessionActivity, setActiveChatId, taskId],
+    [activeChatId, chats, connectChatWs, forgetMessages, orbitHeader, projectId, restoreChatState, sessionActivity, setActiveChatId, taskId],
   );
 
   const handleRestoreChat = useCallback(
@@ -7269,7 +7343,7 @@ export function TaskChat({
   const handleDeleteChat = useCallback(
     async (chatId: string, scope: "grove" | "agent") => {
       const deletingArchived = archivedChats.some((chat) => chat.id === chatId);
-      if (!deletingArchived && chats.length <= 1) return; // Keep one active chat
+      if (!deletingArchived && chats.length <= 1 && !orbitHeader) return; // Classic keeps one active chat
       setIsDeletingChat(true);
       try {
         await deleteChat(projectId, taskId, chatId, scope);
@@ -7311,6 +7385,11 @@ export function TaskChat({
             restoreChatState(next.id);
             await connectChatWs(next.id);
             wsRef.current = wsMapRef.current.get(next.id) ?? null;
+          } else if (!deletingArchived) {
+            setActiveChatId(null);
+            restoreChatState("__deleted__");
+            wsRef.current = null;
+            openOrbitNewForEmptyTaskRef.current();
           }
         }
         setDeleteConfirmChatId(null);
@@ -7324,7 +7403,7 @@ export function TaskChat({
       }
       setShowChatMenu(false);
     },
-    [activeChatId, archivedChats, chats, connectChatWs, forgetMessages, projectId, restoreChatState, setActiveChatId, taskId, updatePendingInputs, updateLocalInputPlacements, savePendingInputState, finishPendingQueueEdit],
+    [activeChatId, archivedChats, chats, connectChatWs, forgetMessages, orbitHeader, projectId, restoreChatState, setActiveChatId, taskId, updatePendingInputs, updateLocalInputPlacements, savePendingInputState, finishPendingQueueEdit],
   );
 
   // ─── Chat fork ─────────────────────────────────────────────────────────
@@ -7453,185 +7532,31 @@ export function TaskChat({
       const edit = pendingQueueEditRef.current;
       const canAttach = () => getActiveChatId() === chatId && pendingQueueEditRef.current === edit && !edit?.attemptId;
       if (!canAttach()) return;
-      if (!file.type.startsWith("image/") && !file.type.startsWith("audio/")) {
-        // Defer upload until the prompt is actually sent
-        attachCountersRef.current.resource += 1;
-        const label = attachmentLabel("resource", attachCountersRef.current.resource);
-        setAttachments((prev) => [
-          ...prev,
-          {
-            type: "resource",
-            data: "",
-            mimeType: file.type || "application/octet-stream",
-            name: file.name,
-            label,
-            size: file.size,
-            pendingFile: file,
-          },
-        ]);
-        return;
-      }
-
-      if (edit) {
+      // Images/audio are read (and maybe compressed) now; a queued-message edit
+      // waits for them. Other files are kept as-is and uploaded on send.
+      const importing = !!edit && (file.type.startsWith("image/") || file.type.startsWith("audio/"));
+      if (importing) {
         edit.importCount = (edit.importCount ?? 0) + 1;
         setPendingEditImporting(true);
       }
-      let importFinished = false;
       const finishImport = () => {
-        if (importFinished) return;
-        importFinished = true;
-        if (edit) {
-          edit.importCount = Math.max(0, (edit.importCount ?? 0) - 1);
-          if (pendingQueueEditRef.current === edit) setPendingEditImporting(edit.importCount > 0);
-        }
+        if (!importing) return;
+        edit.importCount = Math.max(0, (edit.importCount ?? 0) - 1);
+        if (pendingQueueEditRef.current === edit) setPendingEditImporting(edit.importCount > 0);
       };
-
-      if (file.type.startsWith("audio/")) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          finishImport();
-          if (!canAttach()) return;
-          const dataUrl = reader.result as string;
-          const base64 = dataUrl.split(",")[1];
-          attachCountersRef.current.audio += 1;
-          const label = attachmentLabel("audio", attachCountersRef.current.audio);
-          setAttachments((prev) => [
-            ...prev,
-            { type: "audio", data: base64, mimeType: file.type, name: file.name, label },
-          ]);
-        };
-        reader.onerror = finishImport;
-        reader.onabort = finishImport;
-        reader.readAsDataURL(file);
-        return;
-      }
-
-      // Image handling: pass through supported formats, convert others via Canvas
-      const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
-      if (SUPPORTED_IMAGE_TYPES.has(file.type)) {
-        // GIF: never re-encode via Canvas (would lose animation)
-        if (file.type === "image/gif" && file.size > MAX_IMAGE_BYTES) {
-          finishImport();
-          setMessages((prev) =>
-            appendSystemMessage(prev, `GIF file is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Please compress and try again.`),
-          );
-          return;
-        }
-
-        // Oversized image: compress to JPEG via Canvas
-        if (file.size > MAX_IMAGE_BYTES) {
-          try {
-            const blob = await compressImageViaCanvas(file);
-            const reader = new FileReader();
-            reader.onload = () => {
-              finishImport();
-              if (!canAttach()) return;
-              const dataUrl = reader.result as string;
-              const base64 = dataUrl.split(",")[1];
-              const previewUrl = URL.createObjectURL(blob);
-              attachCountersRef.current.image += 1;
-              const label = attachmentLabel("image", attachCountersRef.current.image);
-              const compressedName = file.name.replace(/\.[^.]+$/, ".jpg");
-              setAttachments((prev) => [
-                ...prev,
-                { type: "image", data: base64, mimeType: "image/jpeg", name: compressedName, label, previewUrl },
-              ]);
-            };
-            reader.onerror = finishImport;
-            reader.onabort = finishImport;
-            reader.readAsDataURL(blob);
-          } catch {
-            finishImport();
-            setMessages((prev) =>
-              appendSystemMessage(prev, `Failed to compress image (${file.name}). Please compress manually and try again.`),
-            );
-          }
-          return;
-        }
-
-        // Check dimensions even for small files — Claude enforces a 2000px limit in multi-image requests
-        const dimCheckUrl = URL.createObjectURL(file);
-        const dimImg = new Image();
-        dimImg.src = dimCheckUrl;
-        await dimImg.decode().catch(() => {});
-        URL.revokeObjectURL(dimCheckUrl);
-        if (dimImg.naturalWidth > MAX_IMAGE_DIMENSION || dimImg.naturalHeight > MAX_IMAGE_DIMENSION) {
-          try {
-            const blob = await compressImageViaCanvas(file);
-            const reader = new FileReader();
-            reader.onload = () => {
-              finishImport();
-              if (!canAttach()) return;
-              const dataUrl = reader.result as string;
-              const base64 = dataUrl.split(",")[1];
-              const previewUrl = URL.createObjectURL(blob);
-              attachCountersRef.current.image += 1;
-              const label = attachmentLabel("image", attachCountersRef.current.image);
-              const resizedName = file.name.replace(/\.[^.]+$/, ".jpg");
-              setAttachments((prev) => [
-                ...prev,
-                { type: "image", data: base64, mimeType: "image/jpeg", name: resizedName, label, previewUrl },
-              ]);
-            };
-            reader.onerror = finishImport;
-            reader.onabort = finishImport;
-            reader.readAsDataURL(blob);
-          } catch {
-            finishImport();
-            setMessages((prev) =>
-              appendSystemMessage(prev, `Image is too large and resizing failed (${file.name}). Please resize it manually and try again.`),
-            );
-          }
-          return;
-        }
-
-        // Small supported image with acceptable dimensions: pass through directly
-        const reader = new FileReader();
-        reader.onload = () => {
-          finishImport();
-          if (!canAttach()) return;
-          const dataUrl = reader.result as string;
-          const base64 = dataUrl.split(",")[1];
-          const previewUrl = URL.createObjectURL(file);
-          attachCountersRef.current.image += 1;
-          const label = attachmentLabel("image", attachCountersRef.current.image);
-          setAttachments((prev) => [
-            ...prev,
-            { type: "image", data: base64, mimeType: file.type, name: file.name, label, previewUrl },
-          ]);
-        };
-        reader.onerror = finishImport;
-        reader.onabort = finishImport;
-        reader.readAsDataURL(file);
-        return;
-      }
-
-      // Unsupported image format — try Canvas decode/convert to JPEG (with size cap)
       try {
-        const blob = await compressImageViaCanvas(file);
-        const reader = new FileReader();
-        reader.onload = () => {
-          finishImport();
-          if (!canAttach()) return;
-          const dataUrl = reader.result as string;
-          const base64 = dataUrl.split(",")[1];
-          const previewUrl = URL.createObjectURL(blob);
-          attachCountersRef.current.image += 1;
-          const label = attachmentLabel("image", attachCountersRef.current.image);
-          const convertedName = file.name.replace(/\.[^.]+$/, ".jpg");
-          setAttachments((prev) => [
-            ...prev,
-            { type: "image", data: base64, mimeType: "image/jpeg", name: convertedName, label, previewUrl },
-          ]);
-        };
-        reader.onerror = finishImport;
-        reader.onabort = finishImport;
-        reader.readAsDataURL(blob);
-      } catch {
+        const prepared = await prepareFileAttachment(file);
         finishImport();
-        setMessages((prev) =>
-          appendSystemMessage(prev, `Unsupported image format (${file.name}). Please convert to JPEG or PNG and try again.`),
-        );
+        if (!canAttach()) {
+          if (prepared.previewUrl) URL.revokeObjectURL(prepared.previewUrl);
+          return;
+        }
+        attachCountersRef.current[prepared.type] += 1;
+        const label = attachmentLabel(prepared.type, attachCountersRef.current[prepared.type]);
+        setAttachments((prev) => [...prev, { ...prepared, label }]);
+      } catch (error) {
+        finishImport();
+        if (error instanceof AttachmentError) setMessages((prev) => appendSystemMessage(prev, error.message));
       }
     },
     [getActiveChatId],
@@ -7927,6 +7852,7 @@ export function TaskChat({
       ws.send(JSON.stringify({
         type: mode,
         client_message_id: id,
+        sent_at: input.submittedAt ?? input.sentAt,
         ...(retry ? { retry: true } : {}),
         text: input.text,
         attachments: contentAttachments,
@@ -7940,6 +7866,62 @@ export function TaskChat({
         : item));
     }
   }, [projectId, taskId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, pendingInputMode, getActiveChatId, openInputQueue]);
+
+  // Orbit first message: shown as a "sending" bubble as soon as its Session is
+  // open (so it doesn't look lost while the Agent starts), dispatched on session_ready.
+  const orbitAwaitingInputRef = useRef<Map<string, string>>(new Map());
+  const seedOrbitFirstMessage = useCallback((chatId: string) => {
+    const first = takeOrbitFirstMessage(chatId);
+    if (!first) return;
+    // A freshly mounted TaskChat can be switched to the new chat before its
+    // list includes it; without the row the header falls back to the default
+    // Agent (e.g. Claude Code instead of Codex) until ChatListChanged arrives.
+    if (first.chat && !chatsRef.current.some((chat) => chat.id === chatId)) {
+      const next = [first.chat, ...chatsRef.current];
+      chatsRef.current = next;
+      setChats(next);
+    }
+    const firstAttachments = first.attachments ?? [];
+    const input: PendingInput = {
+      id: createClientMessageId(),
+      text: first.text,
+      attachments: firstAttachments.map(attachmentToContent),
+      config: first.config,
+      mode: "prompt",
+      status: "sending",
+      serverAccepted: false,
+      sentAt: Date.now(),
+      submittedAt: Date.now(),
+    };
+    // dispatchPendingInput uploads the files still pending from these originals.
+    if (firstAttachments.length > 0) pendingAttachmentsRef.current.set(input.id, firstAttachments);
+    updateLocalInputPlacements(chatId, (items) => [...items, { id: input.id, position: timelineEndRef.current.get(chatId) ?? 0 }]);
+    updatePendingInputs(chatId, (items) => [...items, input]);
+    promoteChatForLocalActivity(chatId);
+    orbitAwaitingInputRef.current.set(chatId, input.id);
+  }, [updateLocalInputPlacements, updatePendingInputs, promoteChatForLocalActivity]);
+
+  // Layout effect: the bubble is in place before the switched-to chat is first painted.
+  useLayoutEffect(() => {
+    if (activeChatId) seedOrbitFirstMessage(activeChatId);
+  }, [activeChatId, seedOrbitFirstMessage]);
+
+  useEffect(() => {
+    sendOrbitFirstMessageRef.current = (chatId: string) => {
+      seedOrbitFirstMessage(chatId);
+      const id = orbitAwaitingInputRef.current.get(chatId);
+      if (!id) return;
+      orbitAwaitingInputRef.current.delete(chatId);
+      // A socket that dropped during Agent start marks waiting inputs failed;
+      // this message was never dispatched, so the first ready session sends it.
+      updatePendingInputs(chatId, (items) => items.map((item) => item.id === id && item.status === "failed" && !item.cancelled && !item.dispatched
+        ? { ...item, status: "sending", error: undefined, sentAt: Date.now() }
+        : item));
+      const mode = pendingInputMode(chatId, id);
+      updatePendingInputs(chatId, (items) => items.map((item) => item.id === id ? { ...item, mode } : item));
+      void dispatchPendingInput(chatId, id);
+    };
+  }, [dispatchPendingInput, pendingInputMode, seedOrbitFirstMessage, updatePendingInputs]);
 
   const handleSavePendingEdit = useCallback(async () => {
     const edit = pendingQueueEditRef.current;
@@ -8159,6 +8141,7 @@ export function TaskChat({
       status: "sending",
       serverAccepted: false,
       sentAt: Date.now(),
+      submittedAt: Date.now(),
     };
     pendingAttachmentsRef.current.set(input.id, attachments);
     if (inputLocation(input) === "timeline") {
@@ -8247,7 +8230,7 @@ export function TaskChat({
     });
     updatePendingInputs(activeChatId, (items) => [
       ...items.filter((item) => item.id !== input.id),
-      { ...input, id, mode, status: "sending", serverAccepted: false, serverQueued: false, dispatched: false, cancelled: false, sentAt: Date.now(), error: undefined },
+      { ...input, id, mode, status: "sending", serverAccepted: false, serverQueued: false, dispatched: false, cancelled: false, sentAt: Date.now(), submittedAt: id === input.id ? input.submittedAt ?? input.sentAt : Date.now(), error: undefined },
     ]);
     if (mode === "queue_message") openInputQueue();
     requestBottom("auto");
@@ -10510,6 +10493,8 @@ export function TaskChat({
         ? pendingInputs.find((pending) => pending.id === clientMessageId)
         : undefined;
       const waiting = input?.status === "sending";
+      const nextUser = messageTimeline.messages.slice(item.index + 1).findIndex((message) => message.type === "user");
+      const remainingTurn = messageTimeline.messages.slice(item.index + 1, nextUser < 0 ? undefined : item.index + 1 + nextUser);
       return (
         <MeasuredTaskChatRow
           className={rowClassName}
@@ -10521,6 +10506,7 @@ export function TaskChat({
           <MessageItem
             message={item.message}
             index={item.sourceIndex ?? item.index}
+            showActions={item.message.type !== "assistant" || !remainingTurn.some((message) => message.type === "assistant" && (message.content.trim() || message.blocks?.some((block) => block.type !== "text")))}
             isBusy={isBusy}
             agentLabel={agentLabel}
             projectId={projectId}
@@ -10691,6 +10677,24 @@ export function TaskChat({
         }
       }}
     >
+      {orbitHeader && activeChat && !isViewingArchived && orbitMenuTarget && createPortal(
+        <SessionActionsMenu
+          surface="orbit" chatId={activeChat.id} forkCapable={forkCapable} importCapable={importCapable}
+          importSessions={importSessions} importLoading={importLoading} importNextCursor={importNextCursor}
+          authMethods={authMethods} logoutCapable={logoutCapable}
+          refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+          reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+          actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
+          deleteDisabled={false} archiveDisabled={isBusy}
+          onFork={handleForkChat} onOpenImport={() => { if (importSessions.length === 0) void loadImportSessions(); }}
+          onLoadMoreImport={() => { if (importNextCursor) void loadImportSessions(importNextCursor); }}
+          onImport={(session) => void handleImportSession(session)} onLogin={handleMenuLogin} onLogout={handleLogout}
+          onRefresh={() => void handleRefresh()} onReconnect={handleReconnect} onDelete={requestDeleteChat}
+          onArchive={(chatId) => void handleArchiveChat(chatId)}
+          onRename={() => window.dispatchEvent(new CustomEvent("grove:orbit-rename-session", { detail: { projectId, taskId, chatId: activeChat.id, name: activeChat.title || "Untitled session" } }))}
+        />,
+        orbitMenuTarget,
+      )}
       {chatSearchOpen && (
         <PreviewSearchBar
           query={chatSearchQuery}
@@ -10704,8 +10708,15 @@ export function TaskChat({
         />
       )}
       {/* Header */}
-      {!hideHeader && sessionRailCollapsed && (
-        <div className="relative z-30 border-b border-[color-mix(in_srgb,var(--color-border)_78%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_88%,transparent)] backdrop-blur-sm select-none">
+      {orbitPhoneTitleTarget && activeChat && createPortal(
+        <span className="orbit-phone-session-title">
+          {AgentIcon ? <AgentIcon size={15} className="shrink-0 text-[var(--color-text-muted)]" /> : <MessageSquare className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />}
+          <span>{activeChat.title || "New Chat"}</span>
+        </span>,
+        orbitPhoneTitleTarget,
+      )}
+      {!hideHeader && !orbitPhone && (orbitHeader || sessionRailCollapsed) && (
+        <div className={`${orbitHeader ? "orbit-chat-header " : ""}relative z-30 border-b border-[color-mix(in_srgb,var(--color-border)_78%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_88%,transparent)] backdrop-blur-sm select-none`}>
           <div className="flex w-full items-center justify-between px-3 py-1.5">
             <div className="flex flex-1 min-w-0 items-center gap-2 text-sm select-none">
               {activeChat ? (
@@ -10737,7 +10748,7 @@ export function TaskChat({
                     </div>
                   ) : (
                     <button
-                      onClick={() => setShowChatMenu((prev) => !prev)}
+                      onClick={() => { if (!orbitHeader) setShowChatMenu((prev) => !prev); }}
                       onDoubleClick={() => {
                         if (isViewingArchived) return;
                         setEditTitleValue(activeChat.title);
@@ -10762,11 +10773,11 @@ export function TaskChat({
                         text={activeChat.title}
                         className="text-[13px] font-medium text-[var(--color-text)]"
                       />
-                      <ChevronDown className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />
+                      {!orbitHeader && <ChevronDown className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />}
                     </button>
                   )}
 
-                  {showChatMenu && (
+                  {!orbitHeader && showChatMenu && (
                     <div className="absolute top-full left-0 z-[80] mt-1 min-w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg">
                       <div className="border-b border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[var(--color-bg)] px-2 py-1">
                         <button
@@ -10900,7 +10911,7 @@ export function TaskChat({
                 </span>
               )}
 
-              <div className="relative shrink-0" ref={headerAgentPickerRef}>
+              {!orbitHeader && <div className="relative shrink-0" ref={headerAgentPickerRef}>
                 <button
                   onClick={(e) => toggleAgentPicker(e.currentTarget)}
                   className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-highlight)]"
@@ -10909,8 +10920,8 @@ export function TaskChat({
                   <Plus className="w-3.5 h-3.5" />
                   <span>New</span>
                 </button>
-              </div>
-              {activeChat && isViewingArchived ? (
+              </div>}
+              {!orbitHeader && (activeChat && isViewingArchived ? (
                 <><button
                   type="button"
                   onClick={() => void handleRestoreChat(activeChat.id)}
@@ -10949,7 +10960,7 @@ export function TaskChat({
                   onDelete={requestDeleteChat}
                   onArchive={(chatId) => void handleArchiveChat(chatId)}
                 />
-              ) : null}
+              ) : null)}
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5 select-none">
@@ -10991,7 +11002,7 @@ export function TaskChat({
       )}
 
       <div className="flex min-h-0 min-w-0 max-w-full flex-1 overflow-hidden">
-        {canManageSessions && <div
+        {canManageSessions && !orbitHeader && <div
           className={`taskchat-session-rail shrink-0 border-r border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_20%,transparent)] transition-all duration-200 ${sessionRailCollapsed ? "w-0 overflow-hidden border-r-transparent" : "overflow-hidden"}`}
           style={{ width: sessionRailCollapsed ? 0 : sessionRailWidth }}
         >
@@ -11527,7 +11538,7 @@ export function TaskChat({
                 ? { type: "spring", stiffness: 390, damping: 34, mass: 0.82 }
                 : { duration: 0 }}
               aria-hidden={showMobileComposerPill || undefined}
-              className={`chatbox-cq-root mx-auto w-full max-w-[920px] ${isPhoneLayout ? "task-chat-mobile-composer" : ""} ${showMobileComposerPill ? "mobile-composer-expanded-hidden pointer-events-none absolute inset-x-0 bottom-0" : "pointer-events-auto relative"}`}
+              className={`chatbox-cq-root mx-auto w-full max-w-[920px] ${isPhoneLayout ? "task-chat-mobile-composer" : ""}${orbitPhone ? " is-orbit-phone" : ""} ${showMobileComposerPill ? "mobile-composer-expanded-hidden pointer-events-none absolute inset-x-0 bottom-0" : "pointer-events-auto relative"}`}
             >
               {isRemoteSession && (
                 <div className="absolute inset-x-0 bottom-full z-20 mb-3">
@@ -12164,7 +12175,8 @@ export function TaskChat({
                     </div>
                   </div>
                 )}
-                {!showMobileComposerPill && mobileStatus}
+                {/* Orbit on a phone folds the status into the Agent row below. */}
+                {!showMobileComposerPill && !orbitPhone && mobileStatus}
                 <div className="chatbox-header mb-2 flex items-center justify-between gap-2 pr-10 select-none">
                   <div className="flex min-w-0 items-center gap-2 select-none">
                     <div className="chatbox-agent-pill inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[11px] text-[var(--color-text)]">
@@ -12344,6 +12356,7 @@ export function TaskChat({
                         Shell
                       </div>
                     )}
+                    {orbitPhone && mobileStatus}
                   </div>
                   <div className="chatbox-header-actions flex shrink-0 items-center gap-1.5 select-none">
                     {hasMemoryPanel && (
@@ -12606,7 +12619,7 @@ export function TaskChat({
                   </div>
                 )}
 
-                <button
+                {!orbitPhone && <button
                   onClick={() => {
                     if (isPhoneLayout) {
                       editableRef.current?.blur();
@@ -12635,7 +12648,7 @@ export function TaskChat({
                   ) : (
                     <Maximize2 className="w-3.5 h-3.5" />
                   )}
-                </button>
+                </button>}
 
                 <div
                   className={`relative flex ${isTerminalMode ? "items-start" : ""}`}
@@ -13024,429 +13037,6 @@ export function TaskChat({
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
-
-const SessionSettingsMenu = ({
-  ref,
-  options,
-  open,
-  disabled,
-  pendingConfigIds,
-  onToggle,
-  onSelect,
-}: {
-  ref: React.RefObject<HTMLDivElement | null>;
-  options: SessionConfigOption[];
-  open: boolean;
-  disabled: boolean;
-  pendingConfigIds: Set<string>;
-  onToggle: () => void;
-  onSelect: (option: SessionConfigOption, value: string | boolean) => void;
-}) => {
-  const [menuAnchor, setMenuAnchor] = useState<{
-    left: number;
-    bottom: number;
-    maxHeight: number;
-  } | null>(null);
-  const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  useEscapeScope(open, () => {
-    if (activeOptionId) { setActiveOptionId(null); setSearchQuery(""); }
-    else onToggle();
-  });
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  const activeOption = useMemo(
-    () =>
-      options.find(
-        (option) => option.id === activeOptionId && option.type === "select",
-      ),
-    [activeOptionId, options],
-  );
-  const activeValues = activeOption ? configDropdownValues(activeOption) : [];
-  const enableSearch = activeValues.length > 5;
-  const normalizedSearchQuery = searchQuery.toLowerCase();
-  const filteredValues = normalizedSearchQuery
-    ? activeValues.filter((value) =>
-        value.name.toLowerCase().includes(normalizedSearchQuery),
-      )
-    : activeValues;
-
-  useEffect(() => {
-    if (!activeOption || !enableSearch) return;
-    requestAnimationFrame(() => searchInputRef.current?.focus());
-  }, [activeOption, enableSearch]);
-
-  const positionMenu = useCallback((trigger: HTMLElement) => {
-    const rect = trigger.getBoundingClientRect();
-    const viewportMargin = 8;
-    const menuGap = 4;
-    const menuWidth = 320;
-    setMenuAnchor({
-      left: Math.min(
-        Math.max(viewportMargin, rect.right - menuWidth),
-        window.innerWidth - menuWidth - viewportMargin,
-      ),
-      bottom: window.innerHeight - rect.top + menuGap,
-      maxHeight: Math.max(
-        120,
-        Math.min(320, rect.top - menuGap - viewportMargin),
-      ),
-    });
-  }, []);
-
-  const iconForOption = (option: SessionConfigOption) => {
-    if (configCategoryMatches(option, "model")) return <Box className="h-3.5 w-3.5" />;
-    if (configCategoryMatches(option, "mode")) return <ShieldCheck className="h-3.5 w-3.5" />;
-    if (configCategoryMatches(option, "thought_level")) return <Brain className="h-3.5 w-3.5" />;
-    return <SlidersHorizontal className="h-3.5 w-3.5" />;
-  };
-
-  const renderValue = (
-    option: SessionConfigOption,
-    value: SessionConfigSelectValue,
-  ) => (
-    <button
-      key={value.value}
-      type="button"
-      disabled={pendingConfigIds.has(option.id)}
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={() => {
-        onSelect(option, value.value);
-        setActiveOptionId(null);
-        setSearchQuery("");
-      }}
-      className="grid w-full grid-cols-[14px_minmax(0,1fr)_auto] items-start gap-x-2 rounded-md px-1 py-1.5 text-left hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
-    >
-      <span aria-hidden="true" />
-      <span className="min-w-0">
-        <span className="block text-xs text-[var(--color-text)]">{value.name}</span>
-        {value.description && (
-          <span className="mt-0.5 block text-[10px] leading-4 text-[var(--color-text-muted)]">
-            {value.description}
-          </span>
-        )}
-      </span>
-      {option.currentValue === value.value && (
-        <span className="mt-0.5 justify-self-end text-xs text-[var(--color-highlight)]">✓</span>
-      )}
-    </button>
-  );
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={(event) => {
-          if (!open) {
-            positionMenu(event.currentTarget);
-            setActiveOptionId(null);
-            setSearchQuery("");
-          }
-          onToggle();
-        }}
-        disabled={disabled}
-        title="Session settings"
-        aria-label="Session settings"
-        className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-bg)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        <SlidersHorizontal className="h-3.5 w-3.5" />
-      </button>
-      {open && !disabled && menuAnchor && typeof document !== "undefined" &&
-        createPortal(
-        <div
-          data-session-settings-menu
-          className="fixed z-[1000] flex w-80 flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg"
-          style={{
-            left: menuAnchor.left,
-            bottom: menuAnchor.bottom,
-            maxHeight: menuAnchor.maxHeight,
-            overflowAnchor: "none",
-          }}
-        >
-          {activeOption ? (
-            <>
-              <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-2 py-2">
-                <button
-                  type="button"
-                  aria-label="Back to session settings"
-                  onClick={() => {
-                    setActiveOptionId(null);
-                    setSearchQuery("");
-                  }}
-                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <span className="text-[var(--color-text-muted)]">
-                  {iconForOption(activeOption)}
-                </span>
-                <span className="min-w-0 truncate text-xs font-medium text-[var(--color-text)]">
-                  {activeOption.name}
-                </span>
-              </div>
-              {enableSearch && (
-                <div className="shrink-0 border-b border-[var(--color-border)] p-2">
-                  <div className="flex items-center gap-1.5 rounded-md bg-[var(--color-bg-secondary)] px-2 py-1.5">
-                    <Search className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />
-                    <input
-                      ref={searchInputRef}
-                      type="text"
-                      value={searchQuery}
-                      onChange={(event) => setSearchQuery(event.target.value)}
-                      placeholder={`Search ${activeOption.name.toLowerCase()}...`}
-                      className="min-w-0 flex-1 bg-transparent text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-muted)]"
-                    />
-                  </div>
-                </div>
-              )}
-              <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-                {filteredValues.map((value, index) => (
-                  <Fragment key={value.value}>
-                    {value.group &&
-                      filteredValues[index - 1]?.group !== value.group && (
-                        <div className="px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-                          {value.group}
-                        </div>
-                      )}
-                    {renderValue(activeOption, value)}
-                  </Fragment>
-                ))}
-                {filteredValues.length === 0 && (
-                  <div className="px-3 py-4 text-center text-xs text-[var(--color-text-muted)]">
-                    No matches
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-            {options.map((option) => {
-              const currentValue =
-                option.type === "select"
-                  ? configDropdownValues(option).find(
-                      (value) => value.value === option.currentValue,
-                    )?.name ?? String(option.currentValue)
-                  : null;
-              return (
-            <div key={option.id} className="border-b border-[var(--color-border)] px-1 py-1 last:border-b-0">
-              {option.type === "boolean" ? (
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={option.currentValue}
-                  disabled={pendingConfigIds.has(option.id)}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => onSelect(option, !option.currentValue)}
-                  className="grid w-full grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-2 text-left text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
-                >
-                  <span className="text-[var(--color-text-muted)]">
-                    {iconForOption(option)}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block font-medium">{option.name}</span>
-                    {option.description && (
-                      <span className="mt-0.5 block truncate text-[10px] text-[var(--color-text-muted)]">
-                        {option.description}
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    className={`relative inline-block h-4 w-7 justify-self-end rounded-full transition-colors ${
-                      option.currentValue
-                        ? "bg-[var(--color-highlight)]"
-                        : "bg-[var(--color-bg-tertiary)]"
-                    }`}
-                  >
-                    <span
-                      className={`absolute top-0.5 block h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${
-                        option.currentValue ? "translate-x-3.5" : "translate-x-0.5"
-                      }`}
-                    />
-                  </span>
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    disabled={pendingConfigIds.has(option.id)}
-                    onClick={() => {
-                      setActiveOptionId(option.id);
-                      setSearchQuery("");
-                    }}
-                    className="grid w-full grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-2 text-left hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
-                  >
-                    <span className="text-[var(--color-text-muted)]">
-                      {iconForOption(option)}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-xs font-medium text-[var(--color-text)]">
-                        {option.name}
-                      </span>
-                      {option.description && (
-                        <span className="mt-0.5 block truncate text-[10px] text-[var(--color-text-muted)]">
-                          {option.description}
-                        </span>
-                      )}
-                    </span>
-                    <span className="flex max-w-32 items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
-                      <span className="truncate">{currentValue}</span>
-                      <ChevronRight className="h-3 w-3 shrink-0" />
-                    </span>
-                  </button>
-                </>
-              )}
-            </div>
-              );
-            })}
-            </div>
-          )}
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-};
-
-/** Reusable dropdown selector for bottom toolbar */
-const DropdownSelect = ({
-  ref,
-  label,
-  icon,
-  options,
-  value,
-  open,
-  disabled = false,
-  loading = false,
-  onToggle,
-  onSelect,
-}: {
-  ref: React.RefObject<HTMLDivElement | null>;
-  label: string;
-  icon?: ReactNode;
-  options: ChatDropdownOption[];
-  value: string;
-  open: boolean;
-  disabled?: boolean;
-  loading?: boolean;
-  onToggle: () => void;
-  onSelect: (value: string) => void;
-}) => {
-  const [searchQuery, setSearchQuery] = useState("");
-  useEscapeScope(open, () => { if (searchQuery) setSearchQuery(""); else onToggle(); });
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const enableSearch = options.length > 5;
-
-  useEffect(() => {
-    if (open && enableSearch) {
-      requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-      });
-    }
-  }, [open, enableSearch]);
-
-  useEffect(() => {
-    if (open) return;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setSearchQuery("");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
-  const filteredOptions = useMemo(() => {
-    if (!searchQuery || !enableSearch) return options;
-    const q = searchQuery.toLowerCase();
-    return options.filter((o) => o.label.toLowerCase().includes(q));
-  }, [options, searchQuery, enableSearch]);
-
-  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Escape") {
-      if (searchQuery) {
-        setSearchQuery("");
-      } else {
-        onToggle();
-      }
-      e.stopPropagation();
-    }
-  };
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={onToggle}
-        disabled={disabled}
-        className="inline-flex h-7 items-center gap-1 rounded-full bg-[var(--color-bg)] px-2.5 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : icon}
-        <span className="chatbox-dropdown-label opacity-70">{label}</span>
-        <span className="max-w-40 truncate text-[var(--color-text)]">
-          {options.find((o) => o.value === value)?.label ?? "Default"}
-        </span>
-        <ChevronDown className="w-3 h-3 opacity-70" />
-      </button>
-      {open && !disabled && (
-        <div className="absolute bottom-full right-0 mb-1 min-w-44 max-h-64 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
-          {enableSearch && (
-            <div className="px-2 pt-1.5 pb-1 border-b border-[var(--color-border)] flex-shrink-0">
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--color-bg-secondary)]">
-                <Search className="w-3 h-3 text-[var(--color-text-muted)] flex-shrink-0" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={handleSearchKeyDown}
-                  placeholder="Search..."
-                  className="flex-1 bg-transparent text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] outline-none min-w-0"
-                />
-              </div>
-            </div>
-          )}
-          <div className="overflow-y-auto flex-1">
-          {filteredOptions.map((opt, index) => (
-            <Fragment key={opt.value}>
-              {opt.group && filteredOptions[index - 1]?.group !== opt.group && (
-                <div className="px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-                  {opt.group}
-                </div>
-              )}
-              <button
-                onClick={() => onSelect(opt.value)}
-                className={`w-full text-left px-3 py-1.5 text-sm flex items-center justify-between hover:bg-[var(--color-bg-tertiary)] transition-colors ${
-                  value === opt.value
-                    ? "text-[var(--color-text)]"
-                    : "text-[var(--color-text-muted)]"
-                }`}
-              >
-                <span className="min-w-0">
-                  <span className="block truncate">{opt.label}</span>
-                  {opt.description && (
-                    <span className="mt-0.5 block text-[10px] leading-4 text-[var(--color-text-muted)]">
-                      {opt.description}
-                    </span>
-                  )}
-                </span>
-                {value === opt.value && (
-                  <span className="text-[var(--color-highlight)]">✓</span>
-                )}
-              </button>
-            </Fragment>
-          ))}
-          {enableSearch && filteredOptions.length === 0 && (
-            <div className="px-3 py-2 text-xs text-[var(--color-text-muted)] text-center">
-              No matches
-            </div>
-          )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
 
 /**
  * Render a user-message body, replacing every `<grove-meta>` envelope with the
@@ -13867,6 +13457,39 @@ function AgentContentBlocks({
   );
 }
 
+function MessageActions({ text, timestamp, usage, startTs, endTs, now, alignRight = false }: {
+  text: string; timestamp?: number; usage?: TurnUsageData; startTs?: number; endTs?: number; now: number; alignRight?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const date = timestamp == null ? undefined : new Date(timestamp);
+  const minutes = date ? Math.max(0, Math.floor((now - date.getTime()) / 60000)) : 0;
+  const sameDay = date?.toDateString() === new Date(now).toDateString();
+  const time = date && (sameDay && minutes < 1 ? "just now" : sameDay && minutes < 60 ? `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago` : date.toLocaleString(undefined, sameDay ? { hour: "numeric", minute: "2-digit" } : { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));
+  const duration = startTs != null && endTs != null && endTs >= startTs ? formatDuration(endTs - startTs) : undefined;
+  const copy = async () => {
+    let success = false;
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      try { await navigator.clipboard.writeText(text); success = true; } catch { /* Try selection-based copying. */ }
+    }
+    if (!success) {
+      const textarea = document.createElement("textarea");
+      const focused = document.activeElement as HTMLElement | null;
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.top = "-9999px";
+      document.body.appendChild(textarea);
+      try { textarea.select(); success = document.execCommand("copy"); } catch { success = false; } finally { textarea.remove(); focused?.focus({ preventScroll: true }); }
+    }
+    if (success) { setCopied(true); window.setTimeout(() => setCopied(false), 2000); }
+  };
+  return <div className={`mt-1 flex min-h-6 items-center gap-2 text-xs text-[var(--color-text-muted)] opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100 ${alignRight ? "justify-end" : "justify-start"}`}>
+    {time && <span title={date?.toLocaleString()}>{time}</span>}
+    {usage && <span title={`Input ${usage.inputTokens.toLocaleString()}, output ${usage.outputTokens.toLocaleString()} tokens`}>{formatTokens(usage.totalTokens)} tokens</span>}
+    {duration && <span>{duration}</span>}
+    <button type="button" title={copied ? "Copied" : "Copy message"} aria-label={copied ? "Copied" : "Copy message"} className="rounded p-1 hover:text-[var(--color-text)] focus-visible:opacity-100" onClick={() => void copy()}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+  </div>;
+}
+
 /** Individual message rendering */
 const MessageItem = memo(function MessageItem({
   message,
@@ -13894,10 +13517,12 @@ const MessageItem = memo(function MessageItem({
   resolveSender,
   delivery,
   deliveryError,
+  showActions = true,
 }: {
   message: ChatMessage;
   delivery?: ReactNode;
   deliveryError?: string;
+  showActions?: boolean;
   index: number;
   isBusy: boolean;
   agentLabel?: string;
@@ -13924,6 +13549,7 @@ const MessageItem = memo(function MessageItem({
     Icon: React.ComponentType<{ size?: number; className?: string }>;
   };
 }) {
+  const [hoverTime, setHoverTime] = useState(Date.now);
   const sketchContext = useMemo(
     () => (isStudio ? { projectId, taskId } : undefined),
     [isStudio, projectId, taskId],
@@ -14002,7 +13628,7 @@ const MessageItem = memo(function MessageItem({
         const cmd = parts ? parts[1] : message.content;
         const args = parts ? parts[2] : "";
         return (
-          <div className="flex justify-end">
+          <div className="group/message flex justify-end" onMouseEnter={() => setHoverTime(Date.now())} onFocus={() => setHoverTime(Date.now())}>
             <div className="max-w-[85%] min-w-0">
               <div className="rounded-xl px-3.5 py-2 bg-[var(--color-bg-tertiary)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
                 <code className="text-[13px] font-mono whitespace-pre-wrap">
@@ -14015,12 +13641,13 @@ const MessageItem = memo(function MessageItem({
                   <span className="text-[var(--color-text)]">{args}</span>
                 </code>
               </div>
+              <MessageActions text={message.content} timestamp={message.sentAt} now={hoverTime} alignRight />
             </div>
           </div>
         );
       }
       return (
-        <div className="flex items-end justify-end gap-1">
+        <div className="group/message flex items-end justify-end gap-1" onMouseEnter={() => setHoverTime(Date.now())} onFocus={() => setHoverTime(Date.now())}>
           {delivery && <div className="shrink-0" title={deliveryError}>{delivery}</div>}
           <div className="max-w-[80%] min-w-0">
             {message.sender && (() => {
@@ -14124,6 +13751,7 @@ const MessageItem = memo(function MessageItem({
                 <UserMessageBody content={message.content} />
               )}
             </div>
+            <MessageActions text={message.content} timestamp={message.sentAt} now={hoverTime} alignRight />
           </div>
         </div>
       );
@@ -14137,7 +13765,7 @@ const MessageItem = memo(function MessageItem({
       // structured ACP content block.
       if (!shown.trim() && !hasStructuredContent) return null;
       return (
-        <div className="flex justify-start">
+        <div className="group/message flex justify-start" onMouseEnter={() => setHoverTime(Date.now())} onFocus={() => setHoverTime(Date.now())}>
           <div
             className="w-full min-w-0 text-sm text-[var(--color-text)]"
             data-grove-commentable-message="true"
@@ -14181,15 +13809,7 @@ const MessageItem = memo(function MessageItem({
                 comments={markdownComments}
               />
             )}
-            {message.complete && message.usage && (
-              <TurnUsageMeta
-                inputTokens={message.usage.inputTokens}
-                outputTokens={message.usage.outputTokens}
-                cachedReadTokens={message.usage.cachedReadTokens}
-                startTs={message.startTs}
-                endTs={message.endTs}
-              />
-            )}
+            {message.complete && showActions && <MessageActions text={message.content} timestamp={message.endTs == null ? undefined : message.endTs * 1000} usage={message.usage} startTs={message.startTs} endTs={message.endTs} now={hoverTime} />}
           </div>
         </div>
       );
