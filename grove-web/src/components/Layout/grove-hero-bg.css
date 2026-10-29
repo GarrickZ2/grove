@@ -1,0 +1,65 @@
+/* Brand backdrop: a dot grid that fades toward the edges, a soft highlight glow, and a
+   band of light that sweeps across the dots. Hosts move the focal points via the
+   --hero-* variables. */
+.grove-hero-bg {
+  --hero-dots-size: 80% 60%;
+  --hero-dots-at: 50% 35%;
+  --hero-glow-size: 55% 35%;
+  --hero-glow-at: 50% 30%;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.grove-hero-bg__dots,
+.grove-hero-bg__sweep,
+.grove-hero-bg__glow {
+  position: absolute;
+  inset: 0;
+}
+
+.grove-hero-bg__dots {
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--color-text) 14%, transparent) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+  mask-image: radial-gradient(var(--hero-dots-size) at var(--hero-dots-at), black, transparent 75%);
+}
+
+/* Same grid in the highlight color, revealed only inside a diagonal band that travels
+   left to right, then rests off-screen before the next pass. */
+.grove-hero-bg__sweep {
+  background-image: radial-gradient(circle, var(--color-highlight) 1.4px, transparent 2px);
+  background-size: 22px 22px;
+  mask-image:
+    linear-gradient(115deg, transparent 38%, black 50%, transparent 62%),
+    radial-gradient(var(--hero-dots-size) at var(--hero-dots-at), black 25%, transparent 90%);
+  mask-size: 300% 100%, 100% 100%;
+  mask-repeat: no-repeat;
+  mask-composite: intersect;
+  animation: grove-hero-sweep 9s linear infinite;
+}
+
+.grove-hero-bg__glow {
+  background: radial-gradient(var(--hero-glow-size) at var(--hero-glow-at), color-mix(in srgb, var(--color-highlight) 18%, transparent), transparent 70%);
+  animation: grove-hero-glow 1.6s ease-out both;
+}
+
+@keyframes grove-hero-sweep {
+  from { mask-position: 100% 0, 0 0; }
+  70%, to { mask-position: 0% 0, 0 0; }
+}
+
+@keyframes grove-hero-glow {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grove-hero-bg__sweep {
+    display: none;
+  }
+
+  .grove-hero-bg__glow {
+    animation: none;
+  }
+}

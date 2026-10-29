@@ -11,7 +11,8 @@ import {
 } from '../api/auth';
 import { hmacSha256Hex } from '../api/hmac';
 import { handRemoteAuthToShell } from '../utils/tauriShell';
-import { Checkbox } from './ui/Checkbox';
+import { GroveHeroBackground } from './Layout/GroveHeroBackground';
+import { GroveIcon } from './Layout/GroveIcon';
 
 type AuthState = 'loading' | 'authenticated' | 'needs_auth' | 'connection_error';
 
@@ -177,44 +178,50 @@ export function AuthGate({ children }: { children: ReactNode }) {
   };
 
   if (authState === 'loading') return (
-    <div className="flex min-h-dvh items-center justify-center bg-[#0a0a0a]">
+    <div className="flex min-h-dvh items-center justify-center bg-[var(--color-bg)]">
       <div className="flex flex-col items-center gap-6">
-        <div role="status" aria-label="Connecting" className="w-8 h-8 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" />
-        {isIosClient && <a href="/_grove/" className="text-sm text-[#aaa] py-3">Switch server</a>}
+        <div role="status" aria-label="Connecting" className="w-8 h-8 border-2 border-[var(--color-highlight)] border-t-transparent rounded-full animate-spin" />
+        {isIosClient && <a href="/_grove/" className="text-sm text-[var(--color-text-muted)] py-3">Switch server</a>}
       </div>
     </div>
   );
   if (authState === 'authenticated') return <>{children}</>;
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-[#0a0a0a] p-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-white mb-2">Grove</h1>
-          <p className="text-[#888] text-sm">{authState === 'connection_error' ? 'Connection unavailable' : 'Enter the secret key to continue'}</p>
+    <div className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-[var(--color-bg)] p-4">
+      <GroveHeroBackground />
+      <div className="relative w-full max-w-sm">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <GroveIcon size={96} grow />
+          <h1 className="mt-5 mb-2 text-2xl font-semibold tracking-tight text-[var(--color-text)]">Welcome back</h1>
+          <p className="text-sm text-[var(--color-text-muted)]">{authState === 'connection_error' ? 'Connection unavailable' : 'Enter the secret key to continue'}</p>
         </div>
         {authState === 'connection_error' ? (
           <div className="space-y-4">
-            <p role="alert" className="text-sm text-[#aaa]">{error}</p>
-            <button onClick={() => { void initialize(); }} className="w-full py-3 bg-[#3b82f6] text-white rounded-lg text-sm">Retry connection</button>
+            <p role="alert" className="text-sm text-[var(--color-text-muted)]">{error}</p>
+            <button onClick={() => { void initialize(); }} className="w-full py-3 bg-[var(--color-highlight)] hover:opacity-90 text-white rounded-lg text-sm">Retry connection</button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <input type="password" name="password" autoComplete="current-password" value={skInput}
               onChange={event => { setSkInput(event.target.value); setError(null); }}
               placeholder="Secret key" aria-label="Secret key" autoFocus
-              className="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333] rounded-lg text-white placeholder-[#666] focus:outline-none focus:ring-1 focus:ring-[#3b82f6] font-mono text-sm" />
+              className="w-full px-4 py-3 bg-[var(--color-bg-secondary)]/80 backdrop-blur-sm border border-[var(--color-border)] rounded-lg text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)] font-mono text-sm" />
             {info?.required && (
-              <Checkbox checked={trusted} onChange={setTrusted} label="Trust this device"
-                className="min-h-11 gap-2.5 text-sm text-[#bbb] transition-colors hover:text-white [--color-bg:#1a1a1a] [--color-border:#444] [--color-highlight:#3b82f6]" />
+              // Native checkbox (as a switch) inside a label, so the whole card toggles it.
+              <label className="flex min-h-11 cursor-pointer select-none items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/80 px-4 py-3 backdrop-blur-sm">
+                <span className="min-w-0 text-sm text-[var(--color-text)]">Remember this device</span>
+                <input type="checkbox" role="switch" checked={trusted} onChange={event => setTrusted(event.target.checked)} className="peer sr-only" />
+                <span aria-hidden className="relative h-5 w-9 flex-shrink-0 rounded-full bg-[var(--color-bg-tertiary)] ring-1 ring-inset ring-[var(--color-border)] transition-colors peer-checked:bg-[var(--color-highlight)] peer-checked:ring-transparent peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--color-highlight)]/40 after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:after:translate-x-4" />
+              </label>
             )}
-            {error && <p role="alert" className="text-red-400 text-xs">{error}</p>}
-            <button type="submit" disabled={!skInput || verifying} className="w-full py-3 bg-[#3b82f6] hover:bg-[#2563eb] disabled:bg-[#333] disabled:text-[#666] text-white rounded-lg font-medium text-sm">
+            {error && <p role="alert" className="text-[var(--color-error)] text-xs">{error}</p>}
+            <button type="submit" disabled={!skInput || verifying} className="w-full py-3 bg-[var(--color-highlight)] hover:opacity-90 disabled:opacity-40 text-white rounded-lg font-medium text-sm transition-opacity">
               {verifying ? 'Connecting…' : 'Connect'}
             </button>
           </form>
         )}
-        {isIosClient && <a href="/_grove/" className="mt-5 block py-3 text-center text-sm text-[#aaa]">Switch or add server</a>}
+        {isIosClient && <a href="/_grove/" className="mt-5 block py-3 text-center text-sm text-[var(--color-text-muted)]">Switch or add server</a>}
       </div>
     </div>
   );

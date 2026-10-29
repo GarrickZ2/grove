@@ -1,4 +1,5 @@
 import { useId } from "react";
+import "./grove-icon.css";
 
 interface GroveIconProps {
   size: number;

@@ -1,0 +1,38 @@
+/* GroveIcon `grow` entrance: stems and branches rise from their base, then leaves pop in. */
+.grove-grow-rise,
+.grove-grow-pop {
+  transform-box: fill-box;
+  animation-duration: 0.7s;
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.grove-grow-rise {
+  transform-origin: 50% 100%;
+  animation-name: grove-grow-rise;
+}
+
+.grove-grow-pop {
+  transform-origin: 50% 50%;
+  animation-name: grove-grow-pop;
+  animation-duration: 0.5s;
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes grove-grow-rise {
+  from { transform: scaleY(0); opacity: 0; }
+  30% { opacity: 1; }
+  to { transform: scaleY(1); opacity: 1; }
+}
+
+@keyframes grove-grow-pop {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grove-grow-rise,
+  .grove-grow-pop {
+    animation: none;
+  }
+}

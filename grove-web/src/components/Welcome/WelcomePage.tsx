@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { ChevronRight, FolderOpen, FolderPlus, GitBranch, Palette, type LucideIcon } from "lucide-react";
 import { getVersion } from "../../api";
+import { GroveHeroBackground } from "../Layout/GroveHeroBackground";
 import { GroveIcon } from "../Layout/GroveIcon";
 import "./welcome.css";
 
@@ -49,6 +50,7 @@ export function WelcomePage({ onAction }: WelcomePageProps) {
     >
       <div className="flex min-h-full flex-col lg:flex-row">
         <section className="welcome-hero relative flex flex-col items-center justify-center overflow-hidden px-6 pb-8 pt-16 text-center lg:flex-[1.15] lg:items-start lg:px-[8vw] lg:py-16 lg:text-left">
+          <GroveHeroBackground />
           <div className="relative">
             <GroveIcon size={176} grow={!reduceMotion} />
           </div>
