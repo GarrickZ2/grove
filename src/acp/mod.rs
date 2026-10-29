@@ -1367,11 +1367,105 @@ Before substantive work, use the provided Grove capability to read the current T
 
 Preserve the user's control over consequential changes. Actions that complete, merge, archive, publish, externally communicate, or otherwise finalize the Task require explicit user direction. When the work reveals a material change to the understood goal, scope, decision, expected behavior, or tradeoff, make that change visible to the user before treating it as the new direction."#;
 
-const WORKING_AGENT_RUNTIME_INSTRUCTION: &str = r#"Keep the Session title aligned with the user's primary intent. Update it when that intent materially changes.
+const WORKING_AGENT_RUNTIME_INSTRUCTION: &str = r#"Use Grove's set_title tool at most once per Session to give it a concise title reflecting the user's initial intent. Do not rename it again, even if the conversation's focus changes; a stable title helps the user find the Session.
 
 Use Grove collaboration when another Session can contribute relevant existing context or concrete, independently executable work. Understand the available Sessions before coordinating, give delegated work a clear outcome and boundary, and remain responsible for integrating the result into the current Task.
 
 Use a structured form when several related user decisions need to be collected together."#;
+
+fn initial_prompt_title(text: &str) -> Option<String> {
+    // Context chips are serialized as metadata; do not expose their JSON as a title.
+    let mut visible = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("<grove-meta>") {
+        let Some(end) = rest[start..].find("</grove-meta>") else {
+            break;
+        };
+        visible.push_str(&rest[..start]);
+        rest = &rest[start + end + "</grove-meta>".len()..];
+    }
+    visible.push_str(rest);
+    let normalized = visible.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut chars = normalized.chars();
+    let title: String = chars.by_ref().take(40).collect();
+    Some(if chars.next().is_some() {
+        format!("{}…", title.trim_end())
+    } else {
+        title
+    })
+}
+
+#[cfg(test)]
+mod initial_prompt_title_tests {
+    use super::initial_prompt_title;
+
+    #[test]
+    fn title_uses_visible_text_and_unicode_characters() {
+        assert_eq!(
+            initial_prompt_title("  你好\n  世界  "),
+            Some("你好 世界".into())
+        );
+        assert_eq!(
+            initial_prompt_title(&"你".repeat(41)),
+            Some(format!("{}…", "你".repeat(40)))
+        );
+        assert_eq!(
+            initial_prompt_title("<grove-meta>{}</grove-meta>  Fix this"),
+            Some("Fix this".into())
+        );
+        assert_eq!(initial_prompt_title(" <grove-meta>{}</grove-meta> "), None);
+    }
+}
+
+fn set_initial_title_from_prompt(handle: &AcpSessionHandle, text: &str) {
+    let Some(chat_id) = handle.chat_id.as_deref() else {
+        return;
+    };
+    let Some(title) = initial_prompt_title(text) else {
+        return;
+    };
+    let Ok(Some(chat)) =
+        crate::storage::tasks::get_chat_session(&handle.project_key, &handle.task_id, chat_id)
+    else {
+        return;
+    };
+    let default_title = format!("New Chat {}", chat.created_at.format("%Y-%m-%d %H:%M"));
+    if chat.title != default_title {
+        return;
+    }
+    let history =
+        crate::storage::chat_history::load_history(&handle.project_key, &handle.task_id, chat_id);
+    if history.iter().any(|event| match event {
+        AcpUpdate::UserMessage { sender, .. } => {
+            !sender.as_deref().is_some_and(|s| s.starts_with("agent:"))
+        }
+        AcpUpdate::V2MessageUpdate { update } => matches!(
+            update,
+            agent_client_protocol::schema::v2::SessionUpdate::UserMessage(_)
+                | agent_client_protocol::schema::v2::SessionUpdate::UserMessageChunk(_)
+        ),
+        _ => false,
+    }) {
+        return;
+    }
+    if crate::storage::tasks::update_chat_title_if_unchanged(
+        &handle.project_key,
+        &handle.task_id,
+        chat_id,
+        &default_title,
+        &title,
+    )
+    .unwrap_or(false)
+    {
+        crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
+            project_id: handle.project_key.clone(),
+            task_id: handle.task_id.clone(),
+        });
+    }
+}
 
 const WORKING_CODING_LOCAL_INSTRUCTION: &str = r#"This is a repository Task operating in the Project's primary working tree. Preserve unrelated existing changes, understand the current repository state before editing, and keep your work scoped to the user's request.
 
@@ -7307,6 +7401,9 @@ async fn drive_session(
                         )
                     }
                 };
+                if !sender.as_deref().is_some_and(|s| s.starts_with("agent:")) {
+                    set_initial_title_from_prompt(&handle, &source_text);
+                }
                 handle.emit(AcpUpdate::PromptStarted {
                     message_ids: message_ids.clone(),
                 });

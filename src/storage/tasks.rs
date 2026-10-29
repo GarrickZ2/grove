@@ -746,6 +746,21 @@ pub fn update_chat_title(project: &str, task_id: &str, chat_id: &str, title: &st
     Ok(())
 }
 
+/// Rename only if the title has not changed since it was inspected.
+pub fn update_chat_title_if_unchanged(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+    expected: &str,
+    title: &str,
+) -> Result<bool> {
+    let conn = crate::storage::database::connection();
+    Ok(conn.execute(
+        "UPDATE session SET title = ?1 WHERE project = ?2 AND task_id = ?3 AND session_id = ?4 AND title = ?5",
+        params![title, project, task_id, chat_id, expected],
+    )? > 0)
+}
+
 /// Apply Agent metadata without treating a rename as new conversation activity.
 /// `None` leaves a field alone; an empty title or `Some(None)` clears it.
 pub fn update_chat_session_info(
