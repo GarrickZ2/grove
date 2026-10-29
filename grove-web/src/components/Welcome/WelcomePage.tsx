@@ -1,16 +1,33 @@
 import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
-import { ArrowRight, GitBranch, Terminal, Layers } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
+import { ChevronRight, FolderOpen, FolderPlus, GitBranch, Palette, type LucideIcon } from "lucide-react";
 import { getVersion } from "../../api";
 import { GroveIcon } from "../Layout/GroveIcon";
-import { GroveWordmark } from "../Layout/GroveWordmark";
+import "./welcome.css";
+
+/** How the first project is added; maps onto AddProjectDialog's mode and tab. */
+export type WelcomeAction = "existing" | "git" | "new" | "studio";
 
 interface WelcomePageProps {
-  onGetStarted: () => void;
+  onAction: (action: WelcomeAction) => void;
 }
 
-export function WelcomePage({ onGetStarted }: WelcomePageProps) {
+const ACTIONS: { id: WelcomeAction; icon: LucideIcon; title: string; description: string }[] = [
+  { id: "existing", icon: FolderOpen, title: "Open a folder", description: "Add a repository already on this computer" },
+  { id: "git", icon: GitBranch, title: "Clone a repository", description: "From a Git URL" },
+  { id: "new", icon: FolderPlus, title: "Create a project", description: "Start an empty folder" },
+  { id: "studio", icon: Palette, title: "Create a Studio", description: "For design, docs, and non-code work" },
+];
+
+const EASE = [0.16, 1, 0.3, 1] as const;
+
+/**
+ * First page when Grove has no projects. Wide windows split into a brand hero
+ * (growing tree, title, tagline) and the ways to add a project; narrow ones stack.
+ */
+export function WelcomePage({ onAction }: WelcomePageProps) {
   const [version, setVersion] = useState<string>("");
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     getVersion()
@@ -19,173 +36,68 @@ export function WelcomePage({ onGetStarted }: WelcomePageProps) {
   }, []);
   const isRemote = typeof window !== "undefined" && !!(window as unknown as Record<string, unknown>).__GROVE_REMOTE__;
 
+  const rise = (delay: number, x = 0) => reduceMotion
+    ? {}
+    : { initial: { opacity: 0, x, y: x ? 0 : 12 }, animate: { opacity: 1, x: 0, y: 0 }, transition: { delay, duration: 0.6, ease: EASE } };
+
   return (
     <motion.div
       initial={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.5, ease: "easeInOut" }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]"
+      transition={{ duration: 0.3, ease: "easeInOut" }}
+      className="fixed inset-0 z-50 overflow-y-auto bg-[var(--color-bg)]"
     >
-      {/* Animated background gradient */}
-      <div className="absolute inset-0 overflow-hidden">
-        <motion.div
-          animate={{
-            scale: [1, 1.2, 1],
-            opacity: [0.2, 0.3, 0.2],
-          }}
-          transition={{
-            duration: 8,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
-          className="absolute -top-1/2 -left-1/2 w-full h-full bg-gradient-to-br from-[var(--color-highlight)] via-transparent to-transparent rounded-full blur-3xl"
-        />
-        <motion.div
-          animate={{
-            scale: [1.2, 1, 1.2],
-            opacity: [0.2, 0.3, 0.2],
-          }}
-          transition={{
-            duration: 8,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
-          className="absolute -top-1/2 -right-1/2 w-full h-full bg-gradient-to-bl from-[var(--color-highlight)] via-transparent to-transparent rounded-full blur-3xl"
-        />
-      </div>
-      <div className="relative flex flex-col items-center text-center max-w-lg px-6">
-        {/* Main Icon with complex glow */}
-        <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{
-            type: "spring",
-            stiffness: 100,
-            damping: 15,
-            delay: 0.2,
-          }}
-          className="relative mb-8"
-        >
-          <div className="absolute -inset-4 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 rounded-full blur-3xl opacity-75 animate-pulse" />
-          <motion.div
-            animate={{
-              y: [0, -10, 0],
-            }}
-            transition={{
-              duration: 6,
-              repeat: Infinity,
-              ease: "easeInOut",
-            }}
-          >
-            <motion.div
-              className="relative"
-              initial={{ rotate: -10 }}
-              animate={{ rotate: 0 }}
-              transition={{ delay: 0.15, duration: 1.4, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <GroveIcon size={160} background shimmer className="rounded-3xl" />
+      <div className="flex min-h-full flex-col lg:flex-row">
+        <section className="welcome-hero relative flex flex-col items-center justify-center overflow-hidden px-6 pb-8 pt-16 text-center lg:flex-[1.15] lg:items-start lg:px-[8vw] lg:py-16 lg:text-left">
+          <div className="relative">
+            <GroveIcon size={176} grow={!reduceMotion} />
+          </div>
+          <motion.h1 {...rise(0.45)} className="relative mt-8 text-4xl font-semibold tracking-tight text-[var(--color-text)] lg:text-[52px] lg:leading-[1.05]">
+            Welcome to Grove
+          </motion.h1>
+          <motion.p {...rise(0.55)} className="relative mt-4 max-w-md text-base text-[var(--color-text-muted)] lg:text-lg">
+            Manage the context. Let agents do the work.
+          </motion.p>
+          {(version || isRemote) && (
+            <motion.p {...rise(0.9)} className="relative mt-8 flex items-center gap-2 text-xs text-[var(--color-text-muted)] lg:absolute lg:bottom-8 lg:left-[8vw] lg:mt-0">
+              {version && <span>v{version}</span>}
               {isRemote && (
-                <span className="absolute bottom-2.5 right-2.5 px-2 py-0.75 text-[9px] font-black uppercase tracking-widest rounded-lg bg-[var(--color-highlight)]/10 text-[var(--color-highlight)] border border-[var(--color-highlight)]/20 backdrop-blur-md shadow-sm shadow-[var(--color-highlight)]/5 select-none">
+                <span className="rounded-md border border-[var(--color-highlight)]/20 bg-[var(--color-highlight)]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-highlight)]">
                   Remote
                 </span>
               )}
-            </motion.div>
-          </motion.div>
-        </motion.div>
+            </motion.p>
+          )}
+        </section>
 
-        {/* Title with shimmer effect */}
-        <motion.h1
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 1.0, duration: 0.5 }}
-          className="text-7xl font-black mb-4 tracking-tight relative"
-        >
-          <GroveWordmark height={72} />
-        </motion.h1>
-
-        {/* Tagline */}
-        <motion.p
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 1.2, duration: 0.5 }}
-          className="text-xl text-[var(--color-text-muted)] mb-8 max-w-md"
-        >
-          Parallel AI coding workflows with Git worktrees
-        </motion.p>
-
-        {/* Features */}
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 1.4, duration: 0.5 }}
-          className="flex gap-8 mb-12"
-        >
-          <Feature icon={GitBranch} label="Git Worktrees" delay={1.5} />
-          <Feature icon={Terminal} label="Tmux Sessions" delay={1.6} />
-          <Feature icon={Layers} label="Task Management" delay={1.7} />
-        </motion.div>
-
-        {/* Get Started Button */}
-        <motion.button
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 1.8, duration: 0.5 }}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={onGetStarted}
-          className="group relative flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-[var(--color-highlight)] to-[var(--color-accent)] text-white font-semibold text-lg rounded-2xl shadow-xl shadow-[var(--color-highlight)]/30 hover:shadow-2xl hover:shadow-[var(--color-highlight)]/40 transition-shadow overflow-hidden"
-        >
-          {/* Button shimmer */}
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-          <span className="relative">Get Started</span>
-          <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
-        </motion.button>
-
-        {/* Version */}
-        {version && (
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 2.0, duration: 0.5 }}
-            className="mt-8 text-sm text-[var(--color-text-muted)]"
-          >
-            v{version}
-          </motion.p>
-        )}
+        <section className="flex flex-1 items-center justify-center px-6 pb-16 lg:border-l lg:border-[var(--color-border)] lg:px-12 lg:py-16">
+          <div className="w-full max-w-[420px]">
+            <motion.p {...rise(0.6, 16)} className="mb-3 text-[13px] font-medium text-[var(--color-text-muted)]">
+              Add your first project
+            </motion.p>
+            <div className="flex flex-col gap-2.5">
+              {ACTIONS.map(({ id, icon: Icon, title, description }, index) => (
+                <motion.button
+                  key={id}
+                  type="button"
+                  {...rise(0.68 + index * 0.07, 16)}
+                  onClick={() => onAction(id)}
+                  className="group flex w-full items-center gap-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3.5 text-left transition-[border-color,background-color,box-shadow] hover:border-[var(--color-highlight)]/40 hover:bg-[var(--color-bg-secondary)] hover:shadow-sm"
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] transition-colors group-hover:border-[var(--color-highlight)]/30 group-hover:text-[var(--color-highlight)]">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-[var(--color-text)]">{title}</span>
+                    <span className="block text-xs text-[var(--color-text-muted)]">{description}</span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-text-muted)] transition-transform group-hover:translate-x-0.5" />
+                </motion.button>
+              ))}
+            </div>
+          </div>
+        </section>
       </div>
-
-      {/* CSS for shimmer animation */}
-      <style>{`
-        @keyframes shimmer {
-          0% { background-position: 100% 50%; }
-          100% { background-position: -100% 50%; }
-        }
-        .animate-shimmer {
-          animation: shimmer 3s ease-in-out infinite;
-        }
-      `}</style>
-    </motion.div>
-  );
-}
-
-function Feature({ icon: Icon, label, delay }: { icon: typeof GitBranch; label: string; delay: number }) {
-  return (
-    <motion.div
-      initial={{ y: 20, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ delay, duration: 0.4 }}
-      className="flex flex-col items-center gap-2 cursor-default"
-    >
-      <motion.div
-        whileHover={{ y: -4 }}
-        transition={{ duration: 0.2, ease: "easeOut" }}
-        className="flex flex-col items-center gap-2"
-      >
-        <div className="w-14 h-14 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] flex items-center justify-center hover:border-[var(--color-highlight)]/50 hover:bg-[var(--color-highlight)]/5 transition-colors">
-          <Icon className="w-7 h-7 text-[var(--color-highlight)]" />
-        </div>
-        <span className="text-sm text-[var(--color-text-muted)]">{label}</span>
-      </motion.div>
     </motion.div>
   );
 }

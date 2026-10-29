@@ -9,7 +9,7 @@ import { filesystemBasename, isAbsoluteFilesystemPath, joinFilesystemPath } from
 import { useCommand, useKeyboardScope } from "../../keyboard";
 
 type ProjectMode = "coding" | "studio";
-type CodingTab = "existing" | "new" | "git";
+export type CodingTab = "existing" | "new" | "git";
 
 // Smart-parse a user-pasted string into a canonical git URL.
 // Handles standard https URLs, SSH URLs, bare owner/repo shortcuts, and
@@ -88,6 +88,8 @@ interface AddProjectDialogProps {
   isLoading?: boolean;
   externalError?: string | null;
   initialMode?: ProjectMode;
+  /** Coding tab to open on; defaults to adding an existing folder. */
+  initialCodingTab?: CodingTab;
 }
 
 export function AddProjectDialog({
@@ -99,6 +101,7 @@ export function AddProjectDialog({
   isLoading,
   externalError,
   initialMode = "coding",
+  initialCodingTab = "existing",
 }: AddProjectDialogProps) {
   const [mode, setMode] = useState<ProjectMode>(initialMode);
   const [codingTab, setCodingTab] = useState<CodingTab>("existing");
@@ -132,7 +135,7 @@ export function AddProjectDialog({
   useEffect(() => {
     if (isOpen && !prevIsOpenRef.current) {
       setMode(initialMode);
-      setCodingTab("existing");
+      setCodingTab(initialCodingTab);
       setPath("");
       setExistingName("");
       setExistingNameTouched(false);
@@ -146,7 +149,7 @@ export function AddProjectDialog({
       setError("");
     }
     prevIsOpenRef.current = isOpen;
-  }, [isOpen, initialMode]);
+  }, [isOpen, initialMode, initialCodingTab]);
 
   useEffect(() => {
     if (isOpen) {
@@ -177,9 +180,9 @@ export function AddProjectDialog({
   useEffect(() => {
     if (!isOpen) return;
     setMode(initialMode);
-    setCodingTab("existing");
+    setCodingTab(initialCodingTab);
     setError("");
-  }, [initialMode, isOpen]);
+  }, [initialMode, initialCodingTab, isOpen]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // Auto-derive a project name from a filesystem path (last segment).

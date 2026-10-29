@@ -24,6 +24,9 @@ import { ProjectsPage } from "./components/Projects";
 import { MissingProjectState } from "./components/Projects/MissingProjectState";
 import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
+import type { WelcomeAction } from "./components/Welcome/WelcomePage";
+import type { CodingTab } from "./components/Projects/AddProjectDialog";
+import { InterfaceChoiceDialog } from "./components/Orbit/InterfaceChoiceDialog";
 import { DiffReviewPage } from "./components/Review";
 import { HelpOverlay } from "./components/Tasks/HelpOverlay";
 import { SkillsPage } from "./components/Skills";
@@ -349,6 +352,7 @@ function AppContent() {
   }));
   const [showAddProject, setShowAddProject] = useState(false);
   const [addProjectInitialMode, setAddProjectInitialMode] = useState<"coding" | "studio">("coding");
+  const [addProjectInitialTab, setAddProjectInitialTab] = useState<CodingTab>("existing");
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -725,8 +729,8 @@ function AppContent() {
     setIsAddingProject(false);
   };
 
-  // Check if we should show welcome page
-  const shouldShowWelcome = currentProjectId === null && !hasExitedWelcome;
+  // Welcome is the first page until a project exists.
+  const shouldShowWelcome = projects.length === 0;
 
   // Update document title based on current view
   useEffect(() => {
@@ -739,9 +743,10 @@ function AppContent() {
     }
   }, [selectedProject, shouldShowWelcome]);
 
-  const handleGetStarted = () => {
-    setHasExitedWelcome(true);
-    setActiveItem("projects");
+  const handleWelcomeAction = (action: WelcomeAction) => {
+    setAddProjectInitialMode(action === "studio" ? "studio" : "coding");
+    setAddProjectInitialTab(action === "studio" ? "existing" : action);
+    setShowAddProject(true);
   };
 
   // Auto-navigate when a project is auto-selected via currentProjectId.
@@ -1142,6 +1147,7 @@ function AppContent() {
   // Project
   useCommand("project.add", () => {
     setAddProjectInitialMode("coding");
+    setAddProjectInitialTab("existing");
     setShowAddProject(true);
   }, []);
   useCommand("project.switch", () => toggleProjectPalette(), [toggleProjectPalette]);
@@ -1364,6 +1370,7 @@ function AppContent() {
       onSelectProject: selectProject,
     onAddProject: (studioMode?: "studio") => {
       setAddProjectInitialMode(studioMode === "studio" ? "studio" : "coding");
+      setAddProjectInitialTab("existing");
       setShowAddProject(true);
     },
       onProjectSwitch: handleProjectSwitch,
@@ -1409,6 +1416,23 @@ function AppContent() {
     }
   }, [activeItem, inWorkspace]);
 
+  const addProjectDialog = (
+    <AddProjectDialog
+      isOpen={showAddProject}
+      onClose={() => {
+        setShowAddProject(false);
+        setAddProjectError(null);
+      }}
+      onAdd={handleAddProject}
+      onCreateNew={handleCreateNewProject}
+      onClone={handleCloneProject}
+      isLoading={isAddingProject}
+      externalError={addProjectError}
+      initialMode={addProjectInitialMode}
+      initialCodingTab={addProjectInitialTab}
+    />
+  );
+
   // Show loading state
   if (isLoading) {
     return (
@@ -1420,7 +1444,12 @@ function AppContent() {
 
   // Show Welcome page
   if (shouldShowWelcome) {
-    return <WelcomePage onGetStarted={handleGetStarted} />;
+    return (
+      <>
+        <WelcomePage onAction={handleWelcomeAction} />
+        {addProjectDialog}
+      </>
+    );
   }
 
   const renderContent = () => {
@@ -1555,6 +1584,7 @@ function AppContent() {
     onManageProjects: (tab?: "coding" | "studio") => handleNavigate("projects", { tab }),
     onAddProject: (studioMode?: "studio") => {
       setAddProjectInitialMode(studioMode === "studio" ? "studio" : "coding");
+      setAddProjectInitialTab("existing");
       setShowAddProject(true);
     },
     onNavigate: handleNavigate,
@@ -1839,19 +1869,7 @@ function AppContent() {
         )}
       </AnimatePresence>
       </div>
-      <AddProjectDialog
-        isOpen={showAddProject}
-        onClose={() => {
-          setShowAddProject(false);
-          setAddProjectError(null);
-        }}
-        onAdd={handleAddProject}
-        onCreateNew={handleCreateNewProject}
-        onClone={handleCloneProject}
-        isLoading={isAddingProject}
-        externalError={addProjectError}
-        initialMode={addProjectInitialMode}
-      />
+      {addProjectDialog}
       <ConnectDialog isOpen={connectOpen} onClose={() => setConnectOpen(false)} />
       <CommandPalette />
       <ActionCommandPalette />
@@ -1870,6 +1888,7 @@ function AppContent() {
       <GlobalAudioRecorder projectId={selectedProject?.id ?? null} />
       <GlobalVoiceControlRecorder isLoading={isLoading} />
       <HelpOverlay isOpen={!isMobile && showHelp} onClose={() => setShowHelp(false)} />
+      {!isMobile && selectedProject && <InterfaceChoiceDialog />}
       {addLibraryDialog}
     </div>
     </TabletAsDesktopContext.Provider>

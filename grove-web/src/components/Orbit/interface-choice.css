@@ -1,0 +1,36 @@
+/* "New" accents on the first-run interface picker. */
+.interface-choice__new {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* A light band sweeps across the pill every few seconds. */
+.interface-choice__new::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(105deg, transparent 35%, color-mix(in srgb, white 55%, transparent) 50%, transparent 65%);
+  transform: translateX(-120%);
+  animation: interface-choice-sweep 3.2s ease-in-out 0.6s infinite;
+}
+
+@keyframes interface-choice-sweep {
+  0% { transform: translateX(-120%); }
+  45%, 100% { transform: translateX(120%); }
+}
+
+/* Orbit's preview carries a soft highlight wash so the new option reads first. */
+.interface-choice__orbit-preview {
+  background:
+    radial-gradient(120% 90% at 85% 0%, color-mix(in srgb, var(--color-highlight) 24%, transparent), transparent 65%),
+    var(--color-bg-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interface-choice__new::after {
+    animation: none;
+    display: none;
+  }
+}
