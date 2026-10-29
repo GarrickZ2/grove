@@ -2090,13 +2090,8 @@ pub async fn archive_chat(
 ) -> Result<Json<ChatSessionResponse>, AcpError> {
     let (project_key, _, _) = resolve_project_key(&project_id)?;
     require_chat_namespace(&project_key, &task_id)?;
-    let active = tasks::load_chat_sessions(&project_key, &task_id)
-        .map_err(|e| AcpError::Internal(e.to_string()))?;
-    if active.len() <= 1 {
-        return Err(AcpError::BadRequest(
-            "Cannot archive the last active session".to_string(),
-        ));
-    }
+    // A Task may be left with no active sessions; clients that need one
+    // (Classic) keep their own guard, Orbit starts the next one from New.
     let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?
         .ok_or_else(|| AcpError::NotFound("Active session not found".to_string()))?;
