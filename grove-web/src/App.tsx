@@ -1818,13 +1818,13 @@ function AppContent() {
               >
                 <TasksPage
                   pageVisible={activeItem === "tasks"}
-                  initialTaskId={navigationData?.taskId as string | undefined}
-                  initialChatId={navigationData?.chatId as string | undefined}
-                  initialViewMode={navigationData?.viewMode as string | undefined}
-                  initialTaskFilter={navigationData?.taskFilter as "active" | "archived" | undefined}
-                  initialShowDetail={navigationData?.showDetail as boolean | undefined}
-                  restoringNavigation={navigationData?.restore === true}
-                  initialOpenNewTask={navigationData?.openNewTask as boolean | undefined}
+                  initialTaskId={activeItem === "tasks" ? navigationData?.taskId as string | undefined : undefined}
+                  initialChatId={activeItem === "tasks" ? navigationData?.chatId as string | undefined : undefined}
+                  initialViewMode={activeItem === "tasks" ? navigationData?.viewMode as string | undefined : undefined}
+                  initialTaskFilter={activeItem === "tasks" ? navigationData?.taskFilter as "active" | "archived" | undefined : undefined}
+                  initialShowDetail={activeItem === "tasks" ? navigationData?.showDetail as boolean | undefined : undefined}
+                  restoringNavigation={activeItem === "tasks" && navigationData?.restore === true}
+                  initialOpenNewTask={activeItem === "tasks" ? navigationData?.openNewTask as boolean | undefined : undefined}
                   onNavigationConsumed={() => setNavigationData(null)}
                   onNavByIndex={navigateSidebar}
                   exitWorkspaceSignal={tasksExitSignal}
@@ -1839,7 +1839,7 @@ function AppContent() {
                 {workEverVisited && (
                   <WorkPage
                     pageVisible={activeItem === "work"}
-                    initialChatId={navigationData?.chatId as string | undefined}
+                    initialChatId={activeItem === "work" ? navigationData?.chatId as string | undefined : undefined}
                     onNavigationConsumed={() => setNavigationData(null)}
                   />
                 )}

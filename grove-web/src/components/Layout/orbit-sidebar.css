@@ -109,16 +109,49 @@
 .orbit-sidebar.has-mac-controls.is-collapsed .orbit-titlebar-actions { top: 11px; left: 90px; }
 .orbit-sidebar.is-collapsed .orbit-titlebar { width: 160px; }
 .orbit-sidebar.is-collapsed:not(.has-mac-controls) .orbit-titlebar { width: 78px; }
-.orbit-header { height: 44px; padding: 0 11px 0 15px; display: flex; align-items: center; gap: 2px; flex: none; }
+.orbit-header { position: relative; height: 44px; padding: 0 11px 0 15px; display: flex; align-items: center; gap: 2px; flex: none; }
 .orbit-brand { display: flex; align-items: center; flex: 1; }
 .orbit-header-actions { display: flex; align-items: center; }
 .orbit-icon-button { width: 32px; height: 32px; flex: none; display: inline-flex; position: relative; align-items: center; justify-content: center; border: 0; border-radius: 6px; color: var(--color-text-muted); background: transparent; cursor: pointer; }
 .orbit-icon-button:disabled { opacity: .4; cursor: default; }
 .orbit-icon-button:hover, .orbit-row:hover, .orbit-task-row:hover, .orbit-task-new:hover { color: var(--color-text); background: color-mix(in oklab, var(--color-text) 9%, transparent); }
-.orbit-unread, .orbit-status { width: 7px; height: 7px; border-radius: 50%; background: var(--color-highlight); flex: none; }
-.orbit-unread { position: absolute; top: 4px; right: 5px; }
-.orbit-status.is-waiting { background: #df9c31; }
+.orbit-unread { position: absolute; top: 4px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--color-highlight); }
+.orbit-status { width: 12px; height: 12px; flex: none; border: 1.5px solid var(--color-text-muted); border-right-color: transparent; border-radius: 50%; animation: orbit-status-spin .9s linear infinite; }
+.orbit-status.is-waiting { width: 7px; height: 7px; border: 0; background: #df9c31; animation: none; }
+@keyframes orbit-status-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .orbit-status { animation: none; } }
 .orbit-project { flex: none; padding-bottom: 5px; }
+/* Project switcher: the trigger is a nav-aligned row; the 20px icon centers on the 16px nav icons below. */
+.orbit-project-selector { position: relative; padding: 0 8px; }
+.orbit-row.orbit-project-trigger { min-height: 36px; gap: 8px; padding: 0 8px; font-weight: 500; }
+.orbit-project-trigger.is-open { background: color-mix(in oklab, var(--color-text) 9%, transparent); }
+.orbit-project-icon { width: 20px; height: 20px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: color-mix(in oklab, var(--color-text) 10%, transparent); }
+.orbit-project-name { flex: 1; min-width: 0; }
+.orbit-project-chevron { flex: none; color: var(--color-text-muted); }
+.orbit-project-menu { position: absolute; z-index: 60; top: calc(100% + 4px); right: 8px; left: 8px; display: flex; flex-direction: column; padding: 5px; border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent); border-radius: 14px; background: var(--color-bg); box-shadow: 0 4px 18px rgba(0, 0, 0, .10); }
+.orbit-project-search { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 9px; border-radius: 8px; background: color-mix(in oklab, var(--color-text) 5%, transparent); color: var(--color-text-muted); }
+.orbit-project-search svg { flex: none; }
+.orbit-project-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--color-text); font-size: 13px; }
+.orbit-project-search input::placeholder { color: var(--color-text-muted); }
+.orbit-project-tabs { display: flex; gap: 2px; margin: 5px 0 4px; padding: 2px; border-radius: 8px; background: color-mix(in oklab, var(--color-text) 5%, transparent); }
+.orbit-project-tabs button { flex: 1; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); font-size: 12px; font-weight: 500; cursor: pointer; }
+.orbit-project-tabs button:hover { color: var(--color-text); }
+.orbit-project-tabs button.is-selected { color: var(--color-text); background: var(--color-bg); box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-border) 80%, transparent), 0 1px 2px rgba(0, 0, 0, .06); }
+.orbit-project-list { display: flex; flex-direction: column; gap: 1px; max-height: 280px; overflow-y: auto; }
+.orbit-project-option, .orbit-project-action { width: 100%; min-height: 32px; display: flex; flex: none; align-items: center; gap: 9px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--color-text); font-size: 13px; text-align: left; cursor: pointer; }
+.orbit-project-option.is-active, .orbit-project-action:hover { background: color-mix(in oklab, var(--color-text) 8%, transparent); }
+.orbit-project-option.is-selected .orbit-project-name { font-weight: 500; }
+.orbit-project-option.is-missing { opacity: .5; }
+.orbit-project-option.is-missing .orbit-project-name { text-decoration: line-through; }
+.orbit-project-count { flex: none; color: var(--color-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.orbit-project-flag { flex: none; display: inline-flex; }
+.orbit-project-flag.is-error { color: var(--color-error); }
+.orbit-project-flag.is-warning { color: var(--color-warning); }
+.orbit-project-check { width: 14px; flex: none; display: inline-flex; color: var(--color-text); }
+.orbit-project-empty { margin: 0; padding: 8px 9px; color: var(--color-text-muted); font-size: 13px; }
+.orbit-project-action { color: var(--color-text-muted); }
+.orbit-project-action:hover { color: var(--color-text); }
+.orbit-project-action svg { flex: none; }
 .orbit-navigation { display: flex; flex-direction: column; gap: var(--orbit-list-row-gap); flex: none; padding: 0 8px 4px; }
 .orbit-row { width: 100%; min-width: 0; min-height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: inherit; font-size: 14px; font-weight: 400; line-height: 1.35; text-align: left; cursor: pointer; }
 .orbit-row.is-selected { background: color-mix(in oklab, var(--color-text) 10%, transparent); }
@@ -164,16 +197,39 @@
 .orbit-rename-dialog button { padding: 7px 13px; border: 0; border-radius: 7px; background: var(--color-bg-secondary); color: var(--color-text); font-size: 13px; cursor: pointer; }
 .orbit-rename-dialog button[type="submit"] { background: var(--color-text); color: var(--color-bg); }
 .orbit-rename-dialog button:disabled { opacity: .45; cursor: default; }
-.orbit-notification-popover {
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--color-border) 75%, transparent);
-  border-radius: 12px;
-  background: var(--color-bg);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .13), 0 2px 6px rgba(0, 0, 0, .05);
+/* Notifications: hangs from the header and stays inside the sidebar, like the project switcher's menu. */
+.orbit-notification-menu { position: absolute; z-index: 60; top: 100%; right: 8px; left: 8px; display: flex; flex-direction: column; max-height: 460px; padding: 5px; border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent); border-radius: 14px; background: var(--color-bg); box-shadow: 0 4px 18px rgba(0, 0, 0, .10); }
+.orbit-notification-sheet { position: fixed; z-index: 90; inset: auto 0 0; display: flex; flex-direction: column; max-height: 70vh; padding: 0 8px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent); border-radius: 18px 18px 0 0; background: var(--color-bg); box-shadow: 0 -8px 28px rgba(0, 0, 0, .12); }
+.orbit-notification-scrim { position: fixed; z-index: 89; inset: 0; background: rgba(0, 0, 0, .32); }
+.orbit-notification-grabber { width: 36px; height: 4px; flex: none; margin: 8px auto 2px; border-radius: 999px; background: color-mix(in oklab, var(--color-text) 18%, transparent); }
+.orbit-notification-header { display: flex; flex: none; align-items: center; gap: 7px; min-height: 32px; padding: 0 4px 0 9px; font-size: 13px; font-weight: 600; }
+.orbit-notification-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in oklab, var(--color-text) 8%, transparent); color: var(--color-text-muted); font-size: 11px; font-weight: 500; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.orbit-notification-clear { margin-left: auto; padding: 3px 7px; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); font-size: 12px; cursor: pointer; }
+.orbit-notification-clear:hover { color: var(--color-text); background: color-mix(in oklab, var(--color-text) 8%, transparent); }
+.orbit-notification-list { display: flex; flex-direction: column; gap: 1px; min-height: 0; overflow-y: auto; }
+.orbit-notification-empty { margin: 0; padding: 18px 9px 20px; color: var(--color-text-muted); font-size: 13px; text-align: center; }
+.orbit-notification-item { position: relative; flex: none; border-radius: 8px; }
+.orbit-notification-item:hover { background: color-mix(in oklab, var(--color-text) 7%, transparent); }
+.orbit-notification-main { width: 100%; display: flex; align-items: flex-start; gap: 9px; padding: 8px 9px; border: 0; border-radius: 8px; background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
+.orbit-notification-level { flex: none; margin-top: 1px; color: var(--color-text-muted); }
+.orbit-notification-level.is-warning { color: var(--color-warning); }
+.orbit-notification-level.is-error { color: var(--color-error); }
+.orbit-notification-body { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 1px; }
+.orbit-notification-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 13px; font-weight: 500; line-height: 1.35; }
+.orbit-notification-time { flex: none; color: var(--color-text-muted); font-size: 11.5px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.orbit-notification-project { flex: none; color: var(--color-text-muted); font-size: 12px; line-height: 1.35; }
+.orbit-notification-message { display: -webkit-box; margin-top: 3px; overflow: hidden; color: color-mix(in oklab, var(--color-text) 82%, transparent); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+/* The dismiss button takes the timestamp's spot on hover. */
+.orbit-notification-dismiss { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.orbit-notification-dismiss:hover { color: var(--color-text); background: color-mix(in oklab, var(--color-text) 9%, transparent); }
+.orbit-notification-item:hover .orbit-notification-dismiss, .orbit-notification-dismiss:focus-visible { opacity: 1; pointer-events: auto; }
+.orbit-notification-item:hover .orbit-notification-time { visibility: hidden; }
+/* No hover on touch: the dismiss button stays visible beside the timestamp. */
+@media (hover: none) {
+  .orbit-notification-dismiss { opacity: 1; pointer-events: auto; }
+  .orbit-notification-main { padding-right: 34px; }
+  .orbit-notification-item:hover .orbit-notification-time { visibility: visible; }
 }
-.orbit-notification-header { padding: 13px 14px 9px; }
-.orbit-notification-list { padding: 2px 6px 7px; }
-.orbit-notification-list > div { padding: 9px 8px; border-radius: 8px; }
 .orbit-action-menu { padding: 5px; border-color: color-mix(in srgb, var(--color-border) 80%, transparent); border-radius: 14px; background: var(--color-bg); box-shadow: 0 4px 18px rgba(0, 0, 0, .10); }
 .orbit-action-menu button { min-height: 30px; padding: 6px 9px; gap: 9px; border-radius: 7px; font-size: 13px; font-weight: 400; }
 .orbit-action-menu button > span:first-child { width: 15px; height: 15px; }
@@ -201,6 +257,9 @@
 .orbit-sidebar.is-drawer .orbit-header { height: 56px; padding: 0 10px 0 16px; }
 .orbit-sidebar.is-drawer .orbit-icon-button { width: 40px; height: 40px; border-radius: 50%; }
 .orbit-sidebar.is-drawer .orbit-row { min-height: 42px; font-size: 15px; }
+.orbit-sidebar.is-drawer .orbit-project-option, .orbit-sidebar.is-drawer .orbit-project-action { min-height: 40px; font-size: 15px; }
+.orbit-sidebar.is-drawer .orbit-project-search { height: 36px; }
+.orbit-sidebar.is-drawer .orbit-project-search input { font-size: 15px; }
 .orbit-sidebar.is-drawer .orbit-task-toggle { height: 42px; font-size: 15px; }
 .orbit-sidebar.is-drawer .orbit-task-section-toggle { font-size: 13px; }
 /* No hover on touch: row actions stay visible. */

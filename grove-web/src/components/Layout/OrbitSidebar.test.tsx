@@ -4,15 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OrbitSidebar } from "./OrbitSidebar";
 import { archiveChat, createChat, listChats, updateChatTitle } from "../../api";
 
+const project = vi.hoisted(() => ({ id: "p1", projectType: "studio", localTask: { id: "_local" }, tasks: [{ id: "task-a", name: "Task A", status: "active" }] }));
 vi.mock("../../api", () => ({ listChats: vi.fn(), createChat: vi.fn(), updateChatTitle: vi.fn(), renameTask: vi.fn(), archiveTask: vi.fn(), deleteTask: vi.fn(), archiveChat: vi.fn(), deleteChat: vi.fn() }));
 vi.mock("../../context", () => ({
-  useProject: () => ({ selectedProject: { id: "p1", projectType: "studio", localTask: { id: "_local" }, tasks: [{ id: "task-a", name: "Task A", status: "active" }] } }),
+  useProject: () => ({ selectedProject: project }),
   useNotifications: () => ({ unreadCount: 0 }),
   useTheme: () => ({ appIcon: "orbit", theme: { isLight: true } }),
 }));
 vi.mock("../../hooks", () => ({ useRadioEvents: vi.fn() }));
-vi.mock("./ProjectSelector", () => ({ ProjectSelector: () => <div>Project selector</div> }));
-vi.mock("./NotificationPopover", () => ({ NotificationPopover: () => null }));
+vi.mock("./OrbitProjectSelector", () => ({ OrbitProjectSelector: () => <div>Project selector</div> }));
+vi.mock("./OrbitNotificationPopover", () => ({ OrbitNotificationPopover: () => null }));
 vi.mock("../ui/DialogShell", () => ({ DialogShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock("../Dialogs", () => ({ ConfirmDialog: ({ onConfirm }: { onConfirm: () => void }) => <button onClick={onConfirm}>Confirm deletion</button> }));
 
@@ -23,6 +24,8 @@ describe("Orbit sidebar", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
   beforeEach(() => {
+    localStorage.clear();
+    project.id = "p1";
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.mocked(listChats).mockImplementation(async (_project, task) => task === "_local" ? [chat("work-chat", "Work conversation")] : [chat("task-chat", "Task conversation")]);
     vi.mocked(createChat).mockResolvedValue(chat("new-chat", "New Chat"));
@@ -59,6 +62,38 @@ describe("Orbit sidebar", () => {
     act(() => toggle.click());
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(container.textContent).not.toContain("Task A");
+  });
+  it("opens a new chat with the corresponding task selected", async () => {
+    await act(async () => root.render(<OrbitSidebar activeItem="new" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="New chat in Task A"]')!.click());
+    expect(navigate).toHaveBeenCalledWith("new", { taskId: "task-a" });
+    expect(createChat).not.toHaveBeenCalled();
+  });
+  it("restores section and folder expansion separately for each project", async () => {
+    const render = () => root.render(<OrbitSidebar activeItem="new" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />);
+    const section = (name: string) => [...container.querySelectorAll<HTMLButtonElement>(".orbit-task-section-toggle")].find((button) => button.textContent === name)!;
+    const folder = () => container.querySelector<HTMLButtonElement>(".orbit-task-toggle")!;
+    await act(async () => render());
+    expect(folder().getAttribute("aria-expanded")).toBe("false");
+    act(() => folder().click());
+    act(() => section("Sessions").click());
+    act(() => section("Tasks").click());
+    project.id = "p2";
+    await act(async () => render());
+    expect(section("Sessions").getAttribute("aria-expanded")).toBe("true");
+    expect(section("Tasks").getAttribute("aria-expanded")).toBe("true");
+    expect(folder().getAttribute("aria-expanded")).toBe("false");
+    project.id = "p1";
+    await act(async () => render());
+    expect(section("Sessions").getAttribute("aria-expanded")).toBe("false");
+    expect(section("Tasks").getAttribute("aria-expanded")).toBe("false");
+    act(() => section("Tasks").click());
+    expect(folder().getAttribute("aria-expanded")).toBe("true");
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => render());
+    expect(section("Sessions").getAttribute("aria-expanded")).toBe("false");
+    expect(folder().getAttribute("aria-expanded")).toBe("true");
   });
   it("uses the configured icon and offers session and task actions", async () => {
     await act(async () => root.render(<OrbitSidebar activeItem="dashboard" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));

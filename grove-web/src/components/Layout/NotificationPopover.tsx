@@ -1,18 +1,13 @@
-import { useEffect, useRef, type CSSProperties } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
-import { useNotifications } from "../../context";
-import { useIsMobile } from "../../hooks";
 import type { HookEntryResponse } from "../../api/hooks";
 import { formatTimeAgo, getLevelIcon } from "../../utils/notificationFormat";
+import { useNotificationPopover } from "./useNotificationPopover";
 
 interface NotificationPopoverProps {
   isOpen: boolean;
   onClose: () => void;
   onNavigate?: (page: string, data?: Record<string, unknown>) => void;
-  /** Desktop anchor override — defaults to the bottom-left sidebar position. */
-  anchorStyle?: CSSProperties;
-  variant?: "default" | "orbit";
 }
 
 function NotificationItem({
@@ -61,24 +56,9 @@ function NotificationItem({
   );
 }
 
-export function NotificationPopover({ isOpen, onClose, onNavigate, anchorStyle, variant = "default" }: NotificationPopoverProps) {
-  const { notifications, dismissNotification, clearAllNotifications } = useNotifications();
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const { isMobile } = useIsMobile();
-
-  // Close on click outside
-  useEffect(() => {
-    if (!isOpen) return;
-
-    function handleMouseDown(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    }
-
-    document.addEventListener("mousedown", handleMouseDown);
-    return () => document.removeEventListener("mousedown", handleMouseDown);
-  }, [isOpen, onClose]);
+export function NotificationPopover({ isOpen, onClose, onNavigate }: NotificationPopoverProps) {
+  const { notifications, dismissNotification, clearAllNotifications, openNotification, popoverRef, isMobile } =
+    useNotificationPopover({ isOpen, onClose, onNavigate });
 
   return (
     <AnimatePresence>
@@ -102,14 +82,13 @@ export function NotificationPopover({ isOpen, onClose, onNavigate, anchorStyle, 
             transition={isMobile ? { type: "spring", damping: 30, stiffness: 300 } : { duration: 0.15 }}
             className={isMobile
               ? "glass-overlay fixed inset-x-0 bottom-0 z-50 rounded-t-2xl"
-              : variant === "orbit" ? "orbit-notification-popover fixed z-50" : "glass-popover fixed z-50 rounded-xl"
+              : "glass-popover fixed z-50 rounded-xl"
             }
             style={isMobile ? { maxHeight: "70vh" } : {
               left: 72,
               bottom: 80,
               width: 360,
               maxHeight: 480,
-              ...anchorStyle,
             }}
           >
           {/* Mobile drag indicator */}
@@ -120,7 +99,7 @@ export function NotificationPopover({ isOpen, onClose, onNavigate, anchorStyle, 
           )}
 
           {/* Header */}
-          <div className={`flex items-center justify-between px-4 py-3 ${variant === "orbit" ? "orbit-notification-header" : "border-b border-[var(--color-border)]"}`}>
+          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
             <span className="text-sm font-semibold text-[var(--color-text)]">
               Notifications
             </span>
@@ -148,24 +127,13 @@ export function NotificationPopover({ isOpen, onClose, onNavigate, anchorStyle, 
                 No notifications
               </div>
             ) : (
-              <div className={variant === "orbit" ? "orbit-notification-list" : "divide-y divide-[var(--color-border)]"}>
+              <div className="divide-y divide-[var(--color-border)]">
                 {notifications.map((n) => (
                   <NotificationItem
                     key={`${n.project_id}-${n.task_id}`}
                     notification={n}
                     onDismiss={() => dismissNotification(n.project_id, n.task_id)}
-                    onClick={() => {
-                      dismissNotification(n.project_id, n.task_id);
-                      // chat_id is null for legacy entries; in that case the
-                      // navigation falls back to selecting the task only.
-                      onNavigate?.("tasks", {
-                        taskId: n.task_id,
-                        projectId: n.project_id,
-                        viewMode: "terminal",
-                        ...(n.chat_id ? { chatId: n.chat_id } : {}),
-                      });
-                      onClose();
-                    }}
+                    onClick={() => openNotification(n)}
                   />
                 ))}
               </div>

@@ -14,8 +14,8 @@ import { DropdownMenu } from "../ui/DropdownMenu";
 import { DialogShell } from "../ui/DialogShell";
 import { ConfirmDialog } from "../Dialogs";
 import { buildArchiveConfirmMessage, handleArchiveError, type PendingArchiveConfirm } from "../../utils/archiveHelpers";
-import { NotificationPopover } from "./NotificationPopover";
-import { ProjectSelector } from "./ProjectSelector";
+import { OrbitNotificationPopover } from "./OrbitNotificationPopover";
+import { OrbitProjectSelector } from "./OrbitProjectSelector";
 import { LogoBrand } from "./LogoBrand";
 import { useGlobalActiveChatId } from "../Tasks/TaskView/useActiveChatId";
 import "./orbit-sidebar.css";
@@ -37,15 +37,31 @@ interface OrbitSidebarProps {
 type Selection = { projectId: string; taskId: string; chatId: string };
 type Target = { kind: "task" | "session"; projectId: string; taskId: string; name: string; chatId?: string };
 
+type ExpansionState = { sessions: boolean; tasks: boolean; expandedTasks: string[] };
+const defaultExpansion: ExpansionState = { sessions: true, tasks: true, expandedTasks: [] };
+const expansionKey = (projectId: string) => `grove:orbit-sidebar-expansion:${projectId}`;
+
+function readExpansion(projectId: string): ExpansionState {
+  try {
+    const value = JSON.parse(localStorage.getItem(expansionKey(projectId)) ?? "null");
+    if (!value || typeof value !== "object") return defaultExpansion;
+    return {
+      sessions: typeof value.sessions === "boolean" ? value.sessions : true,
+      tasks: typeof value.tasks === "boolean" ? value.tasks : true,
+      expandedTasks: Array.isArray(value.expandedTasks) ? value.expandedTasks.filter((id: unknown): id is string => typeof id === "string") : [],
+    };
+  } catch {
+    return defaultExpansion;
+  }
+}
+
 export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onItemClick, onNavigate, onSearch, onProjectSwitch, onManageProjects, onAddProject }: OrbitSidebarProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
   const { theme, appIcon } = useTheme();
   const { unreadCount } = useNotifications();
   const activeChatId = useGlobalActiveChatId();
   const [notificationOpen, setNotificationOpen] = useState(false);
-  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(() => new Set());
-  const [tasksExpanded, setTasksExpanded] = useState(true);
-  const [sessionsExpanded, setSessionsExpanded] = useState(true);
+  const [expansionByProject, setExpansionByProject] = useState<Record<string, ExpansionState>>({});
   const [moreExpanded, setMoreExpanded] = useState(false);
   const [sessions, setSessions] = useState<Record<string, ChatSessionResponse[]>>({});
   const [statuses, setStatuses] = useState<Record<string, NodeStatus>>({});
@@ -57,6 +73,28 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
   const [pendingArchive, setPendingArchive] = useState<PendingArchiveConfirm | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const projectId = selectedProject?.id;
+  const expansion = projectId ? expansionByProject[projectId] ?? readExpansion(projectId) : defaultExpansion;
+  const { sessions: sessionsExpanded, tasks: tasksExpanded, expandedTasks } = expansion;
+  const updateExpansion = (next: ExpansionState) => {
+    if (!projectId) return;
+    setExpansionByProject((previous) => ({ ...previous, [projectId]: next }));
+    try { localStorage.setItem(expansionKey(projectId), JSON.stringify(next)); } catch { /* Storage may be unavailable. */ }
+    window.dispatchEvent(new CustomEvent("grove:orbit-sidebar-expansion", { detail: { projectId, expansion: next } }));
+  };
+  useEffect(() => {
+    const sync = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId: string; expansion: ExpansionState }>).detail;
+      if (detail) setExpansionByProject((previous) => ({ ...previous, [detail.projectId]: detail.expansion }));
+    };
+    const syncStorage = (event: StorageEvent) => {
+      if (projectId && event.key === expansionKey(projectId)) {
+        setExpansionByProject((previous) => ({ ...previous, [projectId]: readExpansion(projectId) }));
+      }
+    };
+    window.addEventListener("grove:orbit-sidebar-expansion", sync);
+    window.addEventListener("storage", syncStorage);
+    return () => { window.removeEventListener("grove:orbit-sidebar-expansion", sync); window.removeEventListener("storage", syncStorage); };
+  }, [projectId]);
   const ready = !!selectedProject && selectedProject.taskCount === undefined && !!selectedProject.localTask;
   const tasks = useMemo(() => selectedProject?.tasks.filter((task) => task.status !== "archived") ?? [], [selectedProject]);
   const taskIds = useMemo(() => ready ? ["_local", ...tasks.map((task) => task.id)] : [], [ready, tasks]);
@@ -235,9 +273,10 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
           <button className="orbit-icon-button" type="button" title="Notifications" aria-label="Notifications" aria-expanded={notificationOpen} onMouseDown={(event) => event.stopPropagation()} onClick={() => setNotificationOpen((open) => !open)}><Bell size={17} />{unreadCount > 0 && <span className="orbit-unread" />}</button>
           <button className="orbit-icon-button" type="button" title="Search" aria-label="Search" onClick={onSearch}><Search size={17} /></button>
         </div>
+        <OrbitNotificationPopover isOpen={notificationOpen} onClose={() => setNotificationOpen(false)} onNavigate={onNavigate} />
       </header>}
       {!collapsed && <>
-        <div className="orbit-project"><ProjectSelector collapsed={false} onProjectSwitch={onProjectSwitch} onManageProjects={onManageProjects} onAddProject={onAddProject} /></div>
+        <div className="orbit-project"><OrbitProjectSelector onProjectSwitch={onProjectSwitch} onManageProjects={onManageProjects} onAddProject={onAddProject} /></div>
         <nav className="orbit-navigation" aria-label="Project navigation">
           {!drawer && <button type="button" className={`orbit-row orbit-nav-row${activeItem === "new" ? " is-selected" : ""}`} disabled={!ready} onClick={() => newChat("_local")}><Plus size={16} strokeWidth={1.6} /><span>New</span></button>}
           {navigation.map(renderNavRow)}
@@ -247,23 +286,23 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
         <section className="orbit-session-area" aria-label="Sessions">
           {error && <p role="alert" className="orbit-error">{error}</p>}
           <div className="orbit-task-section-heading orbit-sessions-heading">
-            <button type="button" className="orbit-task-section-toggle" aria-expanded={sessionsExpanded} onClick={() => setSessionsExpanded((value) => !value)}>
+            <button type="button" className="orbit-task-section-toggle" aria-expanded={sessionsExpanded} onClick={() => updateExpansion({ ...expansion, sessions: !sessionsExpanded })}>
               <span>Sessions</span><ChevronDown size={13} className={sessionsExpanded ? "" : "is-collapsed"} />
             </button>
           </div>
           {sessionsExpanded && renderSessions("_local")}
           <div className="orbit-task-section-heading">
-            <button type="button" className="orbit-task-section-toggle" aria-expanded={tasksExpanded} onClick={() => setTasksExpanded((value) => !value)}>
+            <button type="button" className="orbit-task-section-toggle" aria-expanded={tasksExpanded} onClick={() => updateExpansion({ ...expansion, tasks: !tasksExpanded })}>
               <span>Tasks</span><ChevronDown size={13} className={tasksExpanded ? "" : "is-collapsed"} />
             </button>
             <button type="button" className="orbit-section-add" title="New task" aria-label="New task" disabled={!ready} onClick={() => onNavigate("tasks", { openNewTask: true })}><Plus size={17} strokeWidth={1.7} /></button>
           </div>
           {tasksExpanded && tasks.map((task) => {
-            const expanded = expandedTasks.has(task.id);
+            const expanded = expandedTasks.includes(task.id);
             const target: Target = { kind: "task", projectId: projectId ?? "", taskId: task.id, name: task.name };
             return <div key={task.id} className="orbit-task">
               <div className="orbit-task-row">
-                <button type="button" className="orbit-task-toggle" aria-expanded={expanded} onClick={() => setExpandedTasks((previous) => { const next = new Set(previous); if (next.has(task.id)) next.delete(task.id); else next.add(task.id); return next; })}>
+                <button type="button" className="orbit-task-toggle" aria-expanded={expanded} onClick={() => updateExpansion({ ...expansion, expandedTasks: expanded ? expandedTasks.filter((id) => id !== task.id) : [...expandedTasks, task.id] })}>
                   {expanded ? <FolderOpen size={17} strokeWidth={1.7} /> : <Folder size={17} strokeWidth={1.7} />}<span className="orbit-truncate">{task.name}</span>
                 </button>
                 <div className="orbit-row-menu"><DropdownMenu portal compact appearance="orbit" placement="bottom" ariaLabel={`More actions for ${task.name}`} triggerClassName="orbit-more-button" items={[
@@ -271,7 +310,7 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
                   { id: "archive", label: "Archive", icon: Archive, onClick: () => void archiveTarget(target) },
                   { id: "delete", label: "Delete", icon: Trash2, variant: "danger", dividerBefore: true, onClick: () => setDeleteTarget(target) },
                 ]} /></div>
-                <button type="button" className="orbit-task-new" aria-label={`New chat in ${task.name}`} title="New chat" onClick={() => { setExpandedTasks((previous) => new Set(previous).add(task.id)); newChat(task.id); }}><SquarePen size={15} /></button>
+                <button type="button" className="orbit-task-new" aria-label={`New chat in ${task.name}`} title="New chat" onClick={() => { if (!expanded) updateExpansion({ ...expansion, expandedTasks: [...expandedTasks, task.id] }); newChat(task.id); }}><SquarePen size={15} /></button>
               </div>
               {expanded && renderSessions(task.id)}
             </div>;
@@ -283,7 +322,6 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
           {drawer && <button type="button" className="orbit-drawer-new" disabled={!ready} onClick={() => newChat("_local")}><Plus size={17} strokeWidth={1.8} /><span>New session</span></button>}
         </footer>
       </>}
-      <NotificationPopover isOpen={notificationOpen && !collapsed} onClose={() => setNotificationOpen(false)} onNavigate={onNavigate} variant="orbit" anchorStyle={{ top: drawer ? (hasMacControls ? 100 : 56) : hasMacControls ? 88 : 76, left: 12, bottom: "auto", width: drawer ? "min(300px, calc(100vw - 24px))" : 300 }} />
       {renameTarget && <DialogShell isOpen onClose={() => setRenameTarget(null)}>
         <form className="orbit-rename-dialog" onSubmit={(event) => { event.preventDefault(); void saveRename(); }}>
           <h2>Rename {renameTarget.kind === "task" ? "task" : "session"}</h2>
