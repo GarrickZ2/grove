@@ -959,6 +959,51 @@ mod tests {
     }
 
     #[test]
+    fn message_and_interruption_times_survive_history_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        let events = vec![
+            AcpUpdate::UserMessage {
+                message_id: None,
+                text: "hello".into(),
+                client_message_id: Some("input-1".into()),
+                attachments: vec![],
+                sender: None,
+                terminal: false,
+            },
+            AcpUpdate::UserMessageTime {
+                sent_at: 1_700_000_000_123,
+                client_message_id: Some("input-1".into()),
+            },
+            AcpUpdate::MessageChunk {
+                message_id: None,
+                text: "partial".into(),
+            },
+            AcpUpdate::TurnInterrupted {
+                start_ts: 1_700_000_001,
+                end_ts: 1_700_000_010,
+                usage: None,
+            },
+        ];
+        for event in &events {
+            assert!(should_persist(event));
+            append_event_to_path(&path, event);
+        }
+        let restored = compact_events(load_history_from_path(&path, None));
+        assert!(
+            matches!(&restored[1], AcpUpdate::UserMessageTime { sent_at: 1_700_000_000_123, client_message_id: Some(id) } if id == "input-1")
+        );
+        assert!(matches!(
+            restored.last(),
+            Some(AcpUpdate::TurnInterrupted {
+                start_ts: 1_700_000_001,
+                end_ts: 1_700_000_010,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn full_history_reader_keeps_events_before_the_bounded_tail() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("history.jsonl");

@@ -31,6 +31,8 @@ enum ClientMessage {
         #[serde(default)]
         client_message_id: Option<String>,
         #[serde(default)]
+        sent_at: Option<i64>,
+        #[serde(default)]
         retry: bool,
         #[serde(default)]
         attachments: Vec<ContentBlockData>,
@@ -68,6 +70,8 @@ enum ClientMessage {
         text: String,
         #[serde(default)]
         client_message_id: Option<String>,
+        #[serde(default)]
+        sent_at: Option<i64>,
         #[serde(default)]
         retry: bool,
         #[serde(default)]
@@ -203,6 +207,16 @@ enum ServerMessage {
     },
     PromptStarted {
         message_ids: Vec<String>,
+    },
+    UserMessageTime {
+        sent_at: i64,
+        client_message_id: Option<String>,
+    },
+    TurnInterrupted {
+        start_ts: i64,
+        end_ts: i64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        usage: Option<crate::acp::TurnUsage>,
     },
     InputAccepted {
         client_message_id: String,
@@ -644,6 +658,22 @@ impl From<AcpUpdate> for ServerMessage {
             AcpUpdate::PromptStarted { message_ids } => {
                 ServerMessage::PromptStarted { message_ids }
             }
+            AcpUpdate::UserMessageTime {
+                sent_at,
+                client_message_id,
+            } => ServerMessage::UserMessageTime {
+                sent_at,
+                client_message_id,
+            },
+            AcpUpdate::TurnInterrupted {
+                start_ts,
+                end_ts,
+                usage,
+            } => ServerMessage::TurnInterrupted {
+                start_ts,
+                end_ts,
+                usage,
+            },
             AcpUpdate::InputAccepted { client_message_id } => {
                 ServerMessage::InputAccepted { client_message_id }
             }
@@ -1482,6 +1512,7 @@ async fn handle_acp_ws(
                             ClientMessage::Prompt {
                                 text,
                                 client_message_id,
+                                sent_at,
                                 retry,
                                 attachments,
                                 sender,
@@ -1496,7 +1527,7 @@ async fn handle_acp_ws(
                                         });
                                         continue;
                                     }
-                                    if !handle_for_input.claim_browser_input(&id, retry) {
+                                    if !handle_for_input.claim_browser_input(&id, retry, sent_at) {
                                         handle_for_input.emit(AcpUpdate::InputAccepted {
                                             client_message_id: id,
                                         });
@@ -1589,6 +1620,7 @@ async fn handle_acp_ws(
                             ClientMessage::QueueMessage {
                                 text,
                                 client_message_id,
+                                sent_at,
                                 retry,
                                 attachments,
                                 config: msg_config,
@@ -1606,7 +1638,7 @@ async fn handle_acp_ws(
                                         });
                                         continue;
                                     }
-                                    if !handle_for_input.claim_browser_input(id, retry) {
+                                    if !handle_for_input.claim_browser_input(id, retry, sent_at) {
                                         handle_for_input.emit(AcpUpdate::InputAccepted {
                                             client_message_id: id.to_owned(),
                                         });

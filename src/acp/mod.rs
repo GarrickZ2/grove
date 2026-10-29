@@ -164,6 +164,7 @@ pub struct AcpSessionHandle {
     pending_queue: Mutex<Vec<QueuedMessage>>,
     /// Browser input ids already admitted by this live session.
     admitted_browser_inputs: Mutex<std::collections::HashSet<String>>,
+    input_times: Mutex<HashMap<String, i64>>,
     /// 队列暂停标志（用户正在编辑队列消息时暂停 auto-send）
     queue_paused: std::sync::atomic::AtomicBool,
     /// Serializes end-of-turn and edit-resume queue drains. Without this,
@@ -534,6 +535,17 @@ pub enum AcpUpdate {
     /// Grove has started one agent turn for these accepted input messages.
     PromptStarted {
         message_ids: Vec<String>,
+    },
+    /// Original acceptance time of the user input, in Unix milliseconds.
+    UserMessageTime {
+        sent_at: i64,
+        client_message_id: Option<String>,
+    },
+    TurnInterrupted {
+        start_ts: i64,
+        end_ts: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<TurnUsage>,
     },
     /// Transport acknowledgement for a browser-submitted input.
     InputAccepted {
@@ -5078,6 +5090,7 @@ pub async fn get_or_start_session(
                     ),
                     pending_queue: Mutex::new(Vec::new()),
                     admitted_browser_inputs: Mutex::new(std::collections::HashSet::new()),
+                    input_times: Mutex::new(HashMap::new()),
                     queue_paused: std::sync::atomic::AtomicBool::new(false),
                     queue_drain_lock: Mutex::new(()),
                     queue_mode: Mutex::new(QueueMode::default()),
@@ -7415,6 +7428,10 @@ async fn drive_session(
                     sender,
                     terminal,
                 });
+                handle.emit_user_message_time(
+                    &message_ids,
+                    (message_ids.len() == 1).then(|| message_ids[0].clone()),
+                );
                 // Stash the user prompt BEFORE emitting Busy so the
                 // ChatStatus broadcast triggered by Busy=true can pick it
                 // up. (emit() is synchronous, so the order matters.)
@@ -7626,6 +7643,11 @@ async fn drive_session(
 
                 if got_kill {
                     handle.emit(AcpUpdate::Busy { value: false });
+                    handle.emit(AcpUpdate::TurnInterrupted {
+                        start_ts: turn_start_ts,
+                        end_ts: chrono::Utc::now().timestamp(),
+                        usage: None,
+                    });
                     handle.emit(AcpUpdate::PromptCompleted {
                         message_ids: message_ids.clone(),
                         stop_reason: "killed".to_string(),
@@ -7754,6 +7776,11 @@ async fn drive_session(
                     }
                     Err(e) => {
                         handle.emit(AcpUpdate::Busy { value: false });
+                        handle.emit(AcpUpdate::TurnInterrupted {
+                            start_ts: turn_start_ts,
+                            end_ts: chrono::Utc::now().timestamp(),
+                            usage: None,
+                        });
                         // -32000 AuthRequired:转登录流程,不当一般错误报。
                         if is_auth_required_error(&e) {
                             let methods = handle
@@ -9560,7 +9587,7 @@ impl AcpSessionHandle {
 
     /// Claim a browser input before its asynchronous submit path. A recent
     /// persisted UserMessage also covers retries after a backend restart.
-    pub(crate) fn claim_browser_input(&self, id: &str, retry: bool) -> bool {
+    pub(crate) fn claim_browser_input(&self, id: &str, retry: bool, sent_at: Option<i64>) -> bool {
         let mut admitted = self.admitted_browser_inputs.lock().unwrap();
         if admitted.contains(id) {
             return false;
@@ -9577,11 +9604,21 @@ impl AcpSessionHandle {
             }
         }
         admitted.insert(id.to_owned());
+        let now = Utc::now().timestamp_millis();
+        let timestamp = sent_at
+            .filter(|value| *value > 0 && *value <= now + 300_000)
+            .unwrap_or(now);
+        self.input_times
+            .lock()
+            .unwrap()
+            .entry(id.to_owned())
+            .or_insert(timestamp);
         true
     }
 
     pub(crate) fn release_browser_input(&self, id: &str) {
         self.admitted_browser_inputs.lock().unwrap().remove(id);
+        self.input_times.lock().unwrap().remove(id);
     }
 
     /// Accepts a prompt and returns Grove's own message id. This id is local
@@ -9617,6 +9654,7 @@ impl AcpSessionHandle {
         terminal: bool,
         config: Option<QueuedConfig>,
     ) -> crate::error::Result<()> {
+        self.record_input_time(&message_id);
         let _activity = self.begin_activity()?;
         let source_text = text.clone();
         let text = match crate::plugins::prompt_middleware::run(
@@ -10028,9 +10066,34 @@ impl AcpSessionHandle {
 
     /// 添加消息到待执行队列，返回更新后的队列
     pub fn queue_message(&self, msg: QueuedMessage) -> Vec<QueuedMessage> {
+        for id in &msg.message_ids {
+            self.record_input_time(id);
+        }
         let mut q = self.pending_queue.lock().unwrap();
         q.push(msg);
         q.clone()
+    }
+
+    fn record_input_time(&self, id: &str) {
+        if let Ok(mut times) = self.input_times.lock() {
+            times
+                .entry(id.to_owned())
+                .or_insert_with(|| Utc::now().timestamp_millis());
+        }
+    }
+
+    fn emit_user_message_time(&self, ids: &[String], client_message_id: Option<String>) {
+        let sent_at = self
+            .input_times
+            .lock()
+            .ok()
+            .and_then(|mut times| ids.iter().filter_map(|id| times.remove(id)).min());
+        if let Some(sent_at) = sent_at {
+            self.emit(AcpUpdate::UserMessageTime {
+                sent_at,
+                client_message_id,
+            });
+        }
     }
 
     /// Any failure before the normal Busy=true/false pair must also wake a
@@ -10047,6 +10110,7 @@ impl AcpSessionHandle {
         message: String,
         visible_during_replay: bool,
     ) {
+        self.discard_input_times(&message_ids);
         let failed = AcpUpdate::PromptFailed {
             message_ids,
             message: message.clone(),
@@ -10062,6 +10126,7 @@ impl AcpSessionHandle {
     }
 
     fn emit_local_prompt_rejection(&self, message_ids: Vec<String>, message: String) {
+        self.discard_input_times(&message_ids);
         self.emit_unsuppressed(AcpUpdate::PromptFailed {
             message_ids,
             message,
@@ -10086,6 +10151,9 @@ impl AcpSessionHandle {
         &self,
         mut msg: QueuedMessage,
     ) -> crate::error::Result<Vec<QueuedMessage>> {
+        for id in &msg.message_ids {
+            self.record_input_time(id);
+        }
         let _activity = self.begin_activity()?;
         let processed_text = crate::plugins::prompt_middleware::run(
             crate::plugins::prompt_middleware::Phase::Submit,
@@ -10105,7 +10173,8 @@ impl AcpSessionHandle {
     pub fn dequeue_message(&self, index: usize) -> Vec<QueuedMessage> {
         let mut q = self.pending_queue.lock().unwrap();
         if index < q.len() {
-            q.remove(index);
+            let removed = q.remove(index);
+            self.discard_input_times(&removed.message_ids);
         }
         q.clone()
     }
@@ -10127,7 +10196,13 @@ impl AcpSessionHandle {
     pub fn dequeue_messages_by_sender(&self, sender: &str) -> usize {
         let mut q = self.pending_queue.lock().unwrap();
         let before = q.len();
-        q.retain(|m| m.sender.as_deref() != Some(sender));
+        q.retain(|m| {
+            let keep = m.sender.as_deref() != Some(sender);
+            if !keep {
+                self.discard_input_times(&m.message_ids);
+            }
+            keep
+        });
         before - q.len()
     }
 
@@ -10136,7 +10211,13 @@ impl AcpSessionHandle {
     pub fn dequeue_message_by_id(&self, id: &str) -> (bool, Vec<QueuedMessage>) {
         let mut q = self.pending_queue.lock().unwrap();
         let before = q.len();
-        q.retain(|m| m.id != id);
+        q.retain(|m| {
+            let keep = m.id != id;
+            if !keep {
+                self.discard_input_times(&m.message_ids);
+            }
+            keep
+        });
         let found = q.len() != before;
         (found, q.clone())
     }
@@ -10195,8 +10276,19 @@ impl AcpSessionHandle {
     /// 清空待执行队列，返回空队列
     pub fn clear_queue(&self) -> Vec<QueuedMessage> {
         let mut q = self.pending_queue.lock().unwrap();
+        for message in q.iter() {
+            self.discard_input_times(&message.message_ids);
+        }
         q.clear();
         q.clone()
+    }
+
+    fn discard_input_times(&self, ids: &[String]) {
+        if let Ok(mut times) = self.input_times.lock() {
+            for id in ids {
+                times.remove(id);
+            }
+        }
     }
 
     /// 获取当前队列内容
@@ -10778,6 +10870,7 @@ pub fn new_handle_for_test(
         replay_user_messages: std::sync::atomic::AtomicBool::new(false),
         pending_queue: Mutex::new(Vec::new()),
         admitted_browser_inputs: Mutex::new(std::collections::HashSet::new()),
+        input_times: Mutex::new(HashMap::new()),
         queue_paused: std::sync::atomic::AtomicBool::new(false),
         queue_drain_lock: Mutex::new(()),
         queue_mode: Mutex::new(QueueMode::default()),
@@ -11829,6 +11922,35 @@ mod tests {
                 .unwrap_err(),
             "Agent session ended"
         );
+    }
+
+    #[tokio::test]
+    async fn queued_inputs_keep_their_submission_time_until_dispatch() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _dir_guard = ReadinessGroveDirGuard;
+        let key = format!("input-time-{}", uuid::Uuid::new_v4());
+        let (handle, mut updates, _guard) = new_handle_for_test(&key, "project", &key, "chat");
+        let timestamp = Utc::now().timestamp_millis() - 60_000;
+        assert!(handle.claim_browser_input("input-one", false, Some(timestamp)));
+        let mut queued = QueuedMessage::new("hello".into(), vec![], None, false, None);
+        queued.message_ids = vec!["input-one".into()];
+        handle.queue_message(queued);
+        let (message, _) = handle.pop_queue_for_auto_send().unwrap();
+        handle.emit_user_message_time(&message.message_ids, Some("input-one".into()));
+        loop {
+            if let AcpUpdate::UserMessageTime {
+                sent_at,
+                client_message_id,
+            } = updates.recv().await.unwrap()
+            {
+                assert_eq!(sent_at, timestamp);
+                assert_eq!(client_message_id.as_deref(), Some("input-one"));
+                break;
+            }
+        }
+        assert!(!handle.input_times.lock().unwrap().contains_key("input-one"));
     }
 
     #[tokio::test]

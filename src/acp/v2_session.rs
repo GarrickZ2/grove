@@ -474,6 +474,7 @@ async fn drive(
                         }
                         Err(error) => {
                             state.handle.emit(super::AcpUpdate::Busy { value: foreground.is_active() });
+                            state.handle.emit(super::AcpUpdate::TurnInterrupted { start_ts: active.start, end_ts: chrono::Utc::now().timestamp(), usage: None });
                             state.handle.emit(super::AcpUpdate::PromptFailed { message_ids: active.message_ids.clone(), message: error.to_string() });
                             if i32::from(error.code) == -32000 {
                                 *state.handle.pending_auth_retry.lock().unwrap() = Some(active.retry.clone());
@@ -493,7 +494,12 @@ async fn drive(
             command = state.handle.next_command(commands), if can_take_command => {
                 let Some(command) = command else { break };
                 match command {
-                    AcpCommand::Kill => break,
+                    AcpCommand::Kill => {
+                        if let Some(active) = turn.take() {
+                            state.handle.emit(super::AcpUpdate::TurnInterrupted { start_ts: active.start, end_ts: chrono::Utc::now().timestamp(), usage: None });
+                        }
+                        break;
+                    },
                     AcpCommand::Cancel => {
                         state.handle.cancel_current_turn_state();
                         connection.send_notification(v2::CancelSessionNotification::new(opened.id.clone()))?;
@@ -544,6 +550,7 @@ async fn drive(
                         let local_message_id = if message_ids.len() == 1 { message_ids[0].clone() } else { format!("v2-{}", message_ids.first().cloned().unwrap_or_else(|| uuid::Uuid::new_v4().to_string())) };
                         if !is_retry {
                             state.handle.emit(super::AcpUpdate::UserMessage { message_id: None, client_message_id: Some(local_message_id.clone()), text: wire_text, attachments, sender, terminal });
+                            state.handle.emit_user_message_time(&message_ids, Some(local_message_id.clone()));
                         }
                         *state.handle.last_user_prompt.lock().unwrap() = Some(text);
                         state.handle.emit(super::AcpUpdate::Busy { value: true });
@@ -568,6 +575,13 @@ async fn drive(
             let finished = turn.take().unwrap();
             finish_turn(&state, &config, finished);
         }
+    }
+    if let Some(active) = turn.take() {
+        state.handle.emit(super::AcpUpdate::TurnInterrupted {
+            start_ts: active.start,
+            end_ts: chrono::Utc::now().timestamp(),
+            usage: None,
+        });
     }
     for terminal in terminals.values() {
         emit_terminal(&state, terminal, true);
@@ -1016,6 +1030,11 @@ fn finish_turn(state: &AcpClientState, config: &AcpStartConfig, turn: Turn) {
     }
     state.handle.emit(super::AcpUpdate::Busy { value: false });
     if let Some(message) = failure {
+        state.handle.emit(super::AcpUpdate::TurnInterrupted {
+            start_ts: turn.start,
+            end_ts,
+            usage,
+        });
         state.handle.emit(super::AcpUpdate::PromptFailed {
             message_ids: turn.message_ids,
             message: message.clone(),

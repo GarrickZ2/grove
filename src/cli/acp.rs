@@ -427,6 +427,8 @@ pub async fn execute(agent: String, cwd: String) {
                     | AcpUpdate::PromptCompleted { .. }
                     | AcpUpdate::PromptFailed { .. }
                     | AcpUpdate::UserMessage { .. }
+                    | AcpUpdate::UserMessageTime { .. }
+                    | AcpUpdate::TurnInterrupted { .. }
                     | AcpUpdate::ModeChanged { .. }
                     | AcpUpdate::ModelChanged { .. }
                     | AcpUpdate::ThoughtLevelsUpdate { .. }
