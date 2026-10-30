@@ -201,9 +201,7 @@ function AppContent() {
       return false;
     }
   });
-  // Persist the user's last explicit choice (not the viewport-forced
-  // override below — that only affects `effectiveSidebarMode`, never these
-  // two raw booleans) so the sidebar mode survives an app restart.
+  // Persist the user's sidebar choice across app restarts and window resizes.
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -214,23 +212,6 @@ function AppContent() {
       /* ignore */
     }
   }, [sidebarIsland, sidebarCollapsed]);
-  // Auto-collapse sidebar when the viewport is too narrow to host an expanded
-  // sidebar (256px) plus the workspace's minimum content width. Keeps the
-  // chat composer / panel system from being squeezed below their min-widths.
-  // User's explicit collapse preference still takes precedence; we only force
-  // collapse in the auto direction.
-  const [viewportTooNarrowForSidebar, setViewportTooNarrowForSidebar] = useState(false);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const SIDEBAR_EXPANDED_PX = 256;
-    const CONTENT_MIN_PX = 900;
-    const THRESHOLD = SIDEBAR_EXPANDED_PX + CONTENT_MIN_PX;
-    const update = () => setViewportTooNarrowForSidebar(window.innerWidth < THRESHOLD);
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
-
   // Approximate native macOS "scroll bars: when scrolling" behavior. Listen
   // for any scroll event in capture phase and flip a body class so the
   // .blitz-area scrollbar thumb appears for ~900ms after the last scroll,
@@ -291,14 +272,10 @@ function AppContent() {
     };
   }, []);
 
-  // Single SSoT for the sidebar's three visual modes. Viewport-too-narrow
-  // forces collapsed (not island), since the pill + main-content flex don't
-  // compose well under ~1000px wide.
-  const effectiveSidebarMode: "expanded" | "collapsed" | "island" = viewportTooNarrowForSidebar
-    ? "collapsed"
-    : sidebarIsland
-      ? "island"
-      : (sidebarCollapsed ? "collapsed" : "expanded");
+  // Desktop sidebar mode follows the user's choice at every window width.
+  const effectiveSidebarMode: "expanded" | "collapsed" | "island" = sidebarIsland
+    ? "island"
+    : (sidebarCollapsed ? "collapsed" : "expanded");
   const setSidebarMode = useCallback((next: "expanded" | "collapsed" | "island") => {
     setSidebarIsland(next === "island");
     setSidebarCollapsed(next === "collapsed");
@@ -358,9 +335,6 @@ function AppContent() {
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  // Orbit on a narrow desktop/tablet window: the forced-collapsed sidebar
-  // opens as an overlay instead of pushing the workspace.
-  const [orbitSidebarOverlayOpen, setOrbitSidebarOverlayOpen] = useState(false);
   const orbitDrawerRef = useRef<HTMLDivElement>(null);
   const orbitStageRef = useRef<HTMLDivElement>(null);
   const orbitScrimRef = useRef<HTMLButtonElement>(null);
@@ -1685,7 +1659,6 @@ function AppContent() {
     );
   }
 
-  const orbitSidebarOverlay = orbitSidebarOverlayOpen && orbit && !isMobile && viewportTooNarrowForSidebar;
   // Phone header fallback; a visible Session puts its own title over it.
   const orbitPhoneTitle = activeItem === "new" || activeItem === "tasks" || activeItem === "work"
     ? selectedProject?.name ?? "Grove"
@@ -1785,11 +1758,9 @@ function AppContent() {
                 <div id="orbit-workspace-toolbar" className="orbit-toolbar-slot" />
               </div>
             </div>}
-            {orbitSidebarOverlay && <button type="button" className="orbit-sidebar-scrim" aria-label="Close sidebar" onClick={() => setOrbitSidebarOverlayOpen(false)} />}
-            <div data-grove-sidebar className={isMobile ? "hidden" : undefined}>{!isMobile && (orbit ? <OrbitSidebar activeItem={activeItem} variant={orbitSidebarOverlay ? "overlay" : undefined} collapsed={effectiveSidebarMode === "collapsed" && !orbitSidebarOverlay} onCollapse={() => {
-                if (viewportTooNarrowForSidebar) setOrbitSidebarOverlayOpen(!orbitSidebarOverlay);
-                else setSidebarMode(effectiveSidebarMode === "collapsed" ? "expanded" : "collapsed");
-              }} onItemClick={(item) => { setOrbitSidebarOverlayOpen(false); handleItemClick(item); }} onNavigate={(page, data) => { setOrbitSidebarOverlayOpen(false); handleNavigate(page, data); }} onSearch={openCommandPalette} onProjectSwitch={handleProjectSwitch} onManageProjects={sidebarProps.onManageProjects} onAddProject={sidebarProps.onAddProject} /> : <Sidebar {...sidebarProps} />)}</div>
+            <div data-grove-sidebar className={isMobile ? "hidden" : undefined}>{!isMobile && (orbit ? <OrbitSidebar activeItem={activeItem} collapsed={effectiveSidebarMode === "collapsed"} onCollapse={() => {
+                setSidebarMode(effectiveSidebarMode === "collapsed" ? "expanded" : "collapsed");
+              }} onItemClick={handleItemClick} onNavigate={handleNavigate} onSearch={openCommandPalette} onProjectSwitch={handleProjectSwitch} onManageProjects={sidebarProps.onManageProjects} onAddProject={sidebarProps.onAddProject} /> : <Sidebar {...sidebarProps} />)}</div>
             {/* Floating main card — mirrors the sidebar's "floating panel"
                language so the chrome reads as a single design system:
                two cards on a desktop, 12px gap between them and to all

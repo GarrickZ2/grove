@@ -265,11 +265,6 @@
 .orbit-section-archive { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
 .orbit-task-section-heading:hover .orbit-section-archive, .orbit-task-section-heading:focus-within .orbit-section-archive { opacity: 1; pointer-events: auto; }
 .orbit-task-section-heading:hover .orbit-section-archive:disabled { opacity: .4; }
-/* Narrow desktop / tablet window: the sidebar opens over the workspace instead of pushing it. */
-.orbit-sidebar.is-overlay { z-index: 60; box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-border) 60%, transparent), 12px 0 40px rgba(0, 0, 0, .18); animation: orbit-overlay-in .22s cubic-bezier(.25, 1, .5, 1); }
-@keyframes orbit-overlay-in { from { transform: translateX(-24px); opacity: 0; } }
-.orbit-sidebar-scrim { position: fixed; inset: 0; z-index: 55; padding: 0; border: 0; background: rgba(0, 0, 0, .16); cursor: default; }
-
 /* Phone: the drawer slides in over the page. Above the page (z 2), below dialogs and menus (z 50+). */
 .orbit-phone-drawer { --orbit-drawer-width: min(84vw, 320px); position: fixed; inset: 0 auto 0 0; z-index: 40; width: var(--orbit-drawer-width); visibility: hidden; transform: translateX(-100%); transition: transform .32s cubic-bezier(.25, 1, .5, 1), box-shadow .32s ease, visibility 0s .32s; }
 .orbit-phone-drawer.is-open { visibility: visible; transform: none; box-shadow: 1px 0 0 color-mix(in oklab, var(--color-border) 70%, transparent), 18px 0 40px rgba(0, 0, 0, .22); transition: transform .32s cubic-bezier(.25, 1, .5, 1), box-shadow .32s ease; }

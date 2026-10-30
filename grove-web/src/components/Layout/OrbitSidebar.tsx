@@ -28,8 +28,8 @@ import "./orbit-sidebar.css";
 
 interface OrbitSidebarProps {
   activeItem: string;
-  /** "drawer": the phone's slide-out sidebar. "overlay": opened over the workspace on a narrow window. */
-  variant?: "drawer" | "overlay";
+  /** The phone's slide-out sidebar. */
+  variant?: "drawer";
   collapsed: boolean;
   onCollapse: () => void;
   onItemClick: (item: string) => void;
