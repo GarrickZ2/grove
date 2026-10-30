@@ -41,3 +41,8 @@
 .orbit-new__recent-meta { display: flex; flex: none; max-width: 45%; align-items: center; gap: 6px; color: var(--color-text-muted); font-size: 12px; white-space: nowrap; }
 .orbit-new__recent-task { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .orbit-new__recent-task::after { content: "·"; margin-left: 6px; }
+/* Phone: the tray sits at the screen's bottom, so its pickers open upward, anchored to the
+   whole tray (not the chip) so they never run off the right edge. */
+.orbit-new.is-phone .orbit-new__context { position: relative; }
+.orbit-new.is-phone .orbit-new__tray-picker { position: static; }
+.orbit-new.is-phone .orbit-new__context .picker-menu { right: 0; left: 0; width: auto; max-width: none; max-height: min(320px, 55dvh); }

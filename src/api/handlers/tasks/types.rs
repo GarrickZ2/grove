@@ -97,6 +97,13 @@ pub struct RenameTaskRequest {
     pub name: String,
 }
 
+/// Request body for reordering a project's active tasks.
+#[derive(Debug, Deserialize)]
+pub struct ReorderTasksRequest {
+    /// Active task IDs, top to bottom.
+    pub task_ids: Vec<String>,
+}
+
 /// Notes response
 #[derive(Debug, Serialize)]
 pub struct NotesResponse {
@@ -157,6 +164,7 @@ pub enum DiffStatus {
 #[derive(Debug, Serialize)]
 pub struct DiffFileEntry {
     pub path: String,
+    pub old_path: Option<String>,
     pub status: DiffStatus,
     pub additions: u32,
     pub deletions: u32,
@@ -184,6 +192,7 @@ pub struct DiffQuery {
 #[derive(Debug, Deserialize)]
 pub struct SingleFileDiffQuery {
     pub path: String,
+    pub old_path: Option<String>,
     pub from_ref: Option<String>,
     pub to_ref: Option<String>,
 }

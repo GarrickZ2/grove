@@ -149,6 +149,14 @@ pub fn load_worktrees(project_path: &str) -> Vec<Worktree> {
     worktrees
 }
 
+/// 确保项目的 Local Task 记录存在且已同步,不构建 Worktree。
+///
+/// 返回 Local Task 是否可用(Studio 项目 / 补建失败返回 false)。
+pub fn sync_local_task(project_path: &str) -> bool {
+    let (active_tasks, _) = ensure_local_task_synced(project_path);
+    active_tasks.iter().any(|t| t.is_local)
+}
+
 /// 加载项目的 Local Task(每个项目有且只有一个)
 ///
 /// Local Task 在项目注册时创建。返回 `None` 表示该项目尚未注册或为 Studio 项目。

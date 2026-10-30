@@ -94,6 +94,8 @@ import {
   Database,
   Archive,
   ArchiveRestore,
+  Pin,
+  PinOff,
   AudioWaveform,
 } from "lucide-react";
 import { VoiceIdentityIcon } from "../../AI/components/VoiceIdentityIcon";
@@ -207,6 +209,7 @@ import { useInitialChatLoad } from "./useInitialChatLoad";
 import { useActiveChatId } from "./useActiveChatId";
 import { useLiveSessionMessages } from "./useLiveSessionMessages";
 import { useTypewriter } from "./useTypewriter";
+import { showMessageActions } from "./messageActions";
 import { useIsMobile } from "../../../hooks/useIsMobile";
 import { CHAT_HISTORY_PREFERENCES_CHANGED, CHAT_HISTORY_PREFERENCES_KEY, loadChatHistoryPreferences } from "./chatHistoryPreferences";
 import {
@@ -272,6 +275,7 @@ import {
   createChat,
   archiveChat,
   restoreChat,
+  setChatPinned,
   updateChatTitle,
   deleteChat,
   forkChat,
@@ -882,6 +886,38 @@ export function SessionActionsMenu({
       appearance={surface === "orbit" ? "orbit" : "default"}
       placement={surface === "orbit" ? "bottom" : "side"}
     />
+  );
+}
+
+/** Inline pin toggle in the session lists: shown on hover, kept visible while pinned. */
+function SessionPinButton({
+  pinned,
+  touch,
+  onToggle,
+}: {
+  pinned: boolean;
+  touch: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+      className={`group/pin shrink-0 rounded p-0.5 transition-all hover:text-[var(--color-highlight)] ${
+        pinned
+          ? "text-[var(--color-text)] opacity-100"
+          : `text-[var(--color-text-muted)] ${touch ? "opacity-60" : "opacity-0 group-hover:opacity-100"}`
+      }`}
+      title={pinned ? "Unpin" : "Pin to top"}
+      aria-label={pinned ? "Unpin session" : "Pin session to top"}
+      aria-pressed={pinned}
+    >
+      <Pin className={`h-3 w-3 ${pinned ? "group-hover/pin:hidden" : ""}`} />
+      {pinned && <PinOff className="hidden h-3 w-3 group-hover/pin:block" />}
+    </button>
   );
 }
 
@@ -2392,7 +2428,8 @@ export function TaskChat({
     const next = promoteSession(chatsRef.current, chatId);
     chatsRef.current = next;
     setChats(next);
-  }, []);
+    window.dispatchEvent(new CustomEvent("grove:session-local-activity", { detail: { projectId, taskId, chatId } }));
+  }, [projectId, taskId]);
   const {
     activeChatId,
     getActiveChatId,
@@ -3339,6 +3376,13 @@ export function TaskChat({
   }, [messages.length]);
   const inputAreaRef = useRef<HTMLDivElement>(null);
   const chatboxContainerRef = useRef<HTMLDivElement>(null);
+  // The composer mounts only once a chat is loaded; mirror it in state so the
+  // width watcher below attaches when it appears, not just on first render.
+  const [chatboxElement, setChatboxElement] = useState<HTMLDivElement | null>(null);
+  const setChatboxContainer = useCallback((node: HTMLDivElement | null) => {
+    chatboxContainerRef.current = node;
+    setChatboxElement(node);
+  }, []);
   const taskChatRootRef = useRef<HTMLDivElement>(null);
   // Composer width budget — when the chat panel is squeezed (e.g. opened
   // alongside a Graph / Editor split), move the quick settings into the
@@ -4241,7 +4285,7 @@ export function TaskChat({
   // Mode, then Thinking) and fold the rest into the settings menu.
   const quickChipWidthsRef = useRef({ model: 0, mode: 0, thinking: 0 });
   useEffect(() => {
-    const el = chatboxContainerRef.current;
+    const el = chatboxElement;
     if (!el || typeof ResizeObserver === "undefined") return;
     const fitPhoneQuickOptions = () => {
       const footer = el.querySelector<HTMLElement>(".chatbox-footer");
@@ -4259,12 +4303,16 @@ export function TaskChat({
         else if (!folded) widths[key] = 0;
       }
       const GAP = 6;
-      const others = Array.from(right.children).filter((child) => !chips.some(([, chip]) => chip === child)) as HTMLElement[];
+      // Send sits in a `display: contents` wrapper while there's a draft; measure what it lays out.
+      const boxWidth = (element: Element): number => getComputedStyle(element).display === "contents"
+        ? Array.from(element.children).reduce((sum, child) => sum + boxWidth(child), 0)
+        : (element as HTMLElement).offsetWidth;
+      const others = Array.from(right.children).filter((child) => !chips.some(([, chip]) => chip === child));
       // The settings button appears once something is folded; reserve its room up front.
       const settingsReserve = right.querySelector(".chatbox-session-settings") ? 0 : 40 + GAP;
       const left = footer.querySelector<HTMLElement>(".chatbox-footer-left");
       let budget = footer.clientWidth - (left?.offsetWidth ?? 0) - 8
-        - others.reduce((sum, child) => sum + child.offsetWidth + GAP, 0) - settingsReserve;
+        - others.reduce((sum, child) => sum + boxWidth(child) + GAP, 0) - settingsReserve;
       let kept = 0;
       for (const [key] of chips) {
         const width = widths[key];
@@ -4287,10 +4335,31 @@ export function TaskChat({
       setComposerHideThinking(w > 0 && w < COMPOSER_HIDE_THINKING_WIDTH);
     });
     ro.observe(el);
+    if (!orbitPhone) return () => ro.disconnect();
     // A chip's width follows its value (e.g. switching Model), so watch the visible ones too.
-    if (orbitPhone) for (const chip of [modelMenuRef.current, permMenuRef.current, thoughtLevelMenuRef.current]) if (chip) ro.observe(chip);
-    return () => ro.disconnect();
-  }, [orbitPhone, composerNarrow, composerHideMode, composerHideThinking]);
+    const watchChips = () => {
+      for (const chip of [modelMenuRef.current, permMenuRef.current, thoughtLevelMenuRef.current]) if (chip) ro.observe(chip);
+    };
+    watchChips();
+    // Chips can also appear later (an Agent's options arrive once it connects) or change label
+    // without resizing the composer box, since the footer just overflows; refit on any change.
+    let frame = 0;
+    const footer = el.querySelector(".chatbox-footer");
+    const mo = new MutationObserver(() => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        watchChips();
+        fitPhoneQuickOptions();
+      });
+    });
+    if (footer) mo.observe(footer, { childList: true, subtree: true, characterData: true });
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [chatboxElement, orbitPhone, composerNarrow, composerHideMode, composerHideThinking]);
 
   // Set while a programmatic scrollToIndex is in flight. Virtuoso fires
   // isScrolling(true) for ANY scroll (including ours), which would
@@ -4979,6 +5048,7 @@ export function TaskChat({
   const connectChatWsRef = useRef<(chatId: string, importing?: boolean, attachOnly?: boolean) => Promise<void>>(
     async () => {},
   );
+  const switchChatRef = useRef<(chatId: string) => Promise<void>>(async () => {});
 
   // ─── Auto-refetch chat list on RadioEvent::ChatListChanged ─────────────
   // Fired by the `grove_agent_graph_spawn` MCP tool after a sibling session is
@@ -5054,13 +5124,9 @@ export function TaskChat({
           pending.taskId === taskId &&
           freshIds.has(pending.chatId);
         if (pendingMatches && pending) {
-          const targetId = pending.chatId;
-          delete (window as unknown as Record<string, unknown>).__grove_pending_chat;
-          setActiveChatId(targetId);
-          writeLastActiveTab("chat", projectId, taskId, targetId);
-          restoreChatState(targetId);
-          await connectChatWsRef.current(targetId);
-          wsRef.current = wsMapRef.current.get(targetId) ?? null;
+          // Use the same path as an explicit switch: save the outgoing draft,
+          // consume the handoff, and leave the composer alone if already here.
+          await switchChatRef.current(pending.chatId);
           return;
         }
 
@@ -5087,7 +5153,6 @@ export function TaskChat({
 
   // ─── External chat switch (Radio → Blitz) ──────────────────────────────
 
-  const switchChatRef = useRef<(chatId: string) => void>(() => {});
   useEffect(() => {
     const handler = (e: Event) => {
       if (!canManageSessions) return;
@@ -7130,8 +7195,19 @@ export function TaskChat({
   const switchChat = useCallback(
     async (chatId: string) => {
       if (!canManageSessions && chatId !== fixedChatId) return;
+      // An immediate switch fulfils (or supersedes) this task's pending
+      // navigation. Consume it even when the target is already active;
+      // otherwise a sibling's Complete -> ChatListChanged replays it later
+      // and restores an old draft over the user's current input.
+      const win = window as unknown as Record<string, unknown>;
+      const pending = win.__grove_pending_chat as
+        | { projectId: string; taskId: string; chatId: string }
+        | undefined;
+      if (pending?.projectId === projectId && pending.taskId === taskId) {
+        delete win.__grove_pending_chat;
+      }
       setSessionActivity((previous) => markSessionRead(previous, chatId));
-      if (chatId === activeChatId) return;
+      if (chatId === getActiveChatId()) return;
       perfMark("TaskChat:switchChat", { from: activeChatId, to: chatId });
       saveCurrentChatState();
       setActiveChatId(chatId);
@@ -7149,7 +7225,7 @@ export function TaskChat({
         updateBusy(false);
       }
     },
-    [backgroundConnections, activeChatId, archivedChats, canManageSessions, fixedChatId, projectId, taskId, saveCurrentChatState, restoreChatState, connectChatWs, setActiveChatId, updateBusy],
+    [backgroundConnections, activeChatId, archivedChats, canManageSessions, fixedChatId, projectId, taskId, saveCurrentChatState, restoreChatState, connectChatWs, getActiveChatId, setActiveChatId, updateBusy],
   );
   useEffect(() => {
     switchChatRef.current = switchChat;
@@ -7179,7 +7255,7 @@ export function TaskChat({
           buildDefaultSessionTitle(),
           agent,
         );
-        setChats((prev) => [newChat, ...prev]);
+        setChats((prev) => promoteSession([newChat, ...prev], newChat.id));
         switchChat(newChat.id);
       } catch (err) {
         console.error("Failed to create chat:", err);
@@ -7321,6 +7397,18 @@ export function TaskChat({
     [activeChatId, connectChatWs, projectId, taskId],
   );
 
+  const handleTogglePinned = useCallback(
+    async (chatId: string, pinned: boolean) => {
+      try {
+        await setChatPinned(projectId, taskId, chatId, pinned);
+        setChats(await listChats(projectId, taskId));
+      } catch (error) {
+        console.error("Failed to update session pin:", error);
+      }
+    },
+    [projectId, taskId],
+  );
+
   // ─── Chat deletion ─────────────────────────────────────────────────────
 
   const requestDeleteChat = useCallback(
@@ -7414,7 +7502,7 @@ export function TaskChat({
     async (chatId: string) => {
       try {
         const created = await forkChat(projectId, taskId, chatId);
-        setChats((prev) => [created, ...prev]);
+        setChats((prev) => promoteSession([created, ...prev], created.id));
         setActiveChatId(created.id);
         writeLastActiveTab("chat", projectId, taskId, created.id);
         restoreChatState(created.id);
@@ -8680,6 +8768,9 @@ export function TaskChat({
   );
 
   const resolveAskForm = useCallback((id: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "ask_form_resolved", id }));
+    }
     setMessages((prev) =>
       prev.map((m) =>
         m.type === "ask_form" && m.id === id ? { ...m, resolved: true } : m,
@@ -10493,8 +10584,6 @@ export function TaskChat({
         ? pendingInputs.find((pending) => pending.id === clientMessageId)
         : undefined;
       const waiting = input?.status === "sending";
-      const nextUser = messageTimeline.messages.slice(item.index + 1).findIndex((message) => message.type === "user");
-      const remainingTurn = messageTimeline.messages.slice(item.index + 1, nextUser < 0 ? undefined : item.index + 1 + nextUser);
       return (
         <MeasuredTaskChatRow
           className={rowClassName}
@@ -10506,7 +10595,7 @@ export function TaskChat({
           <MessageItem
             message={item.message}
             index={item.sourceIndex ?? item.index}
-            showActions={item.message.type !== "assistant" || !remainingTurn.some((message) => message.type === "assistant" && (message.content.trim() || message.blocks?.some((block) => block.type !== "text")))}
+            showActions={showMessageActions(messageTimeline.messages, item.index, isBusy)}
             isBusy={isBusy}
             agentLabel={agentLabel}
             projectId={projectId}
@@ -10823,6 +10912,11 @@ export function TaskChat({
                                   aria-label="New completed activity"
                                 />
                               )}
+                              <SessionPinButton
+                                pinned={!!chat.pinned}
+                                touch={isMobile}
+                                onToggle={() => void handleTogglePinned(chat.id, !chat.pinned)}
+                              />
                               {!isMobile && chats.length > 1 && !isRunning && (
                                 <button
                                   onClick={(event) => {
@@ -11189,6 +11283,16 @@ export function TaskChat({
                           className="taskchat-session-unread-dot"
                           title="New completed activity"
                           aria-label="New completed activity"
+                        />
+                      )}
+                      {!(
+                        editingTitle?.chatId === chat.id &&
+                        editingTitle.surface === "sidebar-list"
+                      ) && (
+                        <SessionPinButton
+                          pinned={!!chat.pinned}
+                          touch={isMobile}
+                          onToggle={() => void handleTogglePinned(chat.id, !chat.pinned)}
                         />
                       )}
                       {!isMobile && chats.length > 1 && !isRunning &&
@@ -12153,7 +12257,7 @@ export function TaskChat({
               />
 
               <div
-                ref={chatboxContainerRef}
+                ref={setChatboxContainer}
                 className={`chatbox-bubble relative min-w-0 rounded-[30px] border bg-[color-mix(in_srgb,var(--color-bg-secondary)_78%,transparent)] px-3 pt-2 pb-3 shadow-[0_22px_60px_rgba(0,0,0,0.18)] backdrop-blur-md transition-all ${
                   isBusy
                     ? "chatbox-busy-border border-transparent focus-within:border-transparent"

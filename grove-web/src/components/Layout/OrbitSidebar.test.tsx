@@ -2,16 +2,23 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OrbitSidebar } from "./OrbitSidebar";
-import { archiveChat, createChat, listChats, updateChatTitle } from "../../api";
+import { archiveChat, createChat, listChats, reorderTasks, updateChatTitle } from "../../api";
+import type { NodeStatus } from "../../api/walkieTalkie";
 
 const project = vi.hoisted(() => ({ id: "p1", projectType: "studio", localTask: { id: "_local" }, tasks: [{ id: "task-a", name: "Task A", status: "active" }] }));
-vi.mock("../../api", () => ({ listChats: vi.fn(), createChat: vi.fn(), updateChatTitle: vi.fn(), renameTask: vi.fn(), archiveTask: vi.fn(), deleteTask: vi.fn(), archiveChat: vi.fn(), deleteChat: vi.fn() }));
+const radio = vi.hoisted(() => ({ callbacks: {} as { onEvent?: (event: unknown) => void; onChatStatus?: (project: string, task: string, chat: string, status: NodeStatus) => void; onChatListChanged?: (project: string, task: string) => void } }));
+const visibleChat = vi.hoisted(() => ({ id: null as string | null }));
+vi.mock("../Tasks/TaskView/useActiveChatId", () => ({ useGlobalActiveChatId: () => visibleChat.id }));
+vi.mock("../../api", () => ({ listChats: vi.fn(), createChat: vi.fn(), updateChatTitle: vi.fn(), renameTask: vi.fn(), archiveTask: vi.fn(), deleteTask: vi.fn(), archiveChat: vi.fn(), deleteChat: vi.fn(), reorderTasks: vi.fn() }));
+const refreshSelectedProject = vi.hoisted(() => async () => {});
 vi.mock("../../context", () => ({
-  useProject: () => ({ selectedProject: project }),
+  useProject: () => ({ selectedProject: project, refreshSelectedProject }),
   useNotifications: () => ({ unreadCount: 0 }),
   useTheme: () => ({ appIcon: "orbit", theme: { isLight: true } }),
 }));
-vi.mock("../../hooks", () => ({ useRadioEvents: vi.fn() }));
+vi.mock("../../hooks", () => ({ useRadioEvents: (callbacks: typeof radio.callbacks) => { radio.callbacks = callbacks; } }));
+vi.mock("../../hooks/useRadioEvents", () => ({ refreshRadioActivity: vi.fn() }));
+vi.mock("../../hooks/useIsMobile", () => ({ useIsMobile: () => ({ isMobile: false, isTouchDevice: false }) }));
 vi.mock("./OrbitProjectSelector", () => ({ OrbitProjectSelector: () => <div>Project selector</div> }));
 vi.mock("./OrbitNotificationPopover", () => ({ OrbitNotificationPopover: () => null }));
 vi.mock("../ui/DialogShell", () => ({ DialogShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
@@ -26,6 +33,7 @@ describe("Orbit sidebar", () => {
   beforeEach(() => {
     localStorage.clear();
     project.id = "p1";
+    visibleChat.id = null;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.mocked(listChats).mockImplementation(async (_project, task) => task === "_local" ? [chat("work-chat", "Work conversation")] : [chat("task-chat", "Task conversation")]);
     vi.mocked(createChat).mockResolvedValue(chat("new-chat", "New Chat"));
@@ -95,6 +103,92 @@ describe("Orbit sidebar", () => {
     expect(section("Sessions").getAttribute("aria-expanded")).toBe("false");
     expect(folder().getAttribute("aria-expanded")).toBe("true");
   });
+  it("reconciles running indicators from snapshots and subsequent status events", async () => {
+    await act(async () => root.render(<OrbitSidebar activeItem="tasks" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));
+    act(() => container.querySelector<HTMLButtonElement>(".orbit-task-toggle")!.click());
+    const session = () => [...container.querySelectorAll<HTMLButtonElement>(".orbit-session")].find((button) => button.textContent?.includes("Task conversation"))!;
+    act(() => radio.callbacks.onEvent?.({ type: "activity_snapshot", chats: [{ project_id: "p1", task_id: "task-a", chat_id: "task-chat", status: "busy" }] }));
+    expect(session().querySelector('[aria-label="busy"]')).toBeTruthy();
+    act(() => radio.callbacks.onChatStatus?.("p1", "task-a", "task-chat", "idle"));
+    expect(session().querySelector(".orbit-status.is-completed")).toBeTruthy();
+    act(() => radio.callbacks.onChatStatus?.("p1", "task-a", "task-chat", "busy"));
+    act(() => radio.callbacks.onEvent?.({ type: "activity_snapshot", chats: [] }));
+    expect(session().querySelector(".orbit-status")).toBeNull();
+  });
+  it("clears completion when viewed, but shows it on other pages even with a remembered active chat", async () => {
+    const render = (page: string) => root.render(<OrbitSidebar activeItem={page} collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />);
+    const status = (value: NodeStatus) => radio.callbacks.onChatStatus?.("p1", "_local", "work-chat", value);
+    visibleChat.id = "work-chat";
+    await act(async () => render("dashboard"));
+    act(() => { status("busy"); status("idle"); });
+    expect(container.querySelector(".is-completed")).toBeTruthy();
+    await act(async () => render("tasks"));
+    expect(container.querySelector(".is-completed")).toBeNull();
+    await act(async () => render("dashboard"));
+    act(() => status("idle"));
+    expect(container.querySelector(".is-completed")).toBeNull();
+    await act(async () => render("tasks"));
+    act(() => status("busy"));
+    expect(container.querySelector('[aria-label="busy"]')).toBeTruthy();
+    act(() => status("idle"));
+    await act(async () => render("dashboard"));
+    expect(container.querySelector(".is-completed")).toBeNull();
+  });
+  it("hides input dots only while viewing the session and keeps forms orange after the turn finishes", async () => {
+    const render = (page = "tasks") => root.render(<OrbitSidebar activeItem={page} collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />);
+    const status = (value: NodeStatus) => radio.callbacks.onChatStatus?.("p1", "_local", "work-chat", value);
+    const input = (waiting: boolean) => radio.callbacks.onEvent?.({ type: "chat_input_status", project_id: "p1", task_id: "_local", chat_id: "work-chat", waiting_for_input: waiting });
+    await act(async () => render());
+    act(() => status("permission_required"));
+    expect(container.querySelector(".is-waiting")).toBeTruthy();
+    visibleChat.id = "work-chat";
+    await act(async () => render());
+    expect(container.querySelector(".orbit-status")).toBeNull();
+    await act(async () => render("dashboard"));
+    expect(container.querySelector(".is-waiting")).toBeTruthy();
+    act(() => { status("busy"); input(true); status("idle"); });
+    expect(container.querySelector(".is-waiting")).toBeTruthy();
+    expect(container.querySelector(".is-completed")).toBeNull();
+    await act(async () => render());
+    expect(container.querySelector(".orbit-status")).toBeNull();
+    visibleChat.id = "another-chat";
+    await act(async () => render());
+    expect(container.querySelector(".is-waiting")).toBeTruthy();
+    act(() => input(false));
+    expect(container.querySelector(".orbit-status")).toBeNull();
+  });
+  it("restores form attention from a snapshot without marking an initially idle session complete", async () => {
+    await act(async () => root.render(<OrbitSidebar activeItem="dashboard" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));
+    const snapshot = (waiting: boolean) => radio.callbacks.onEvent?.({ type: "activity_snapshot", chats: [{ project_id: "p1", task_id: "_local", chat_id: "work-chat", status: "idle", waiting_for_input: waiting }] });
+    act(() => snapshot(false));
+    expect(container.querySelector(".orbit-status")).toBeNull();
+    act(() => snapshot(true));
+    expect(container.querySelector(".is-waiting")).toBeTruthy();
+    act(() => snapshot(false));
+    expect(container.querySelector(".orbit-status")).toBeNull();
+  });
+  it("keeps the newest session order when refresh requests finish out of order", async () => {
+    let resolveOlder!: (chats: ReturnType<typeof chat>[]) => void;
+    let resolveNewer!: (chats: ReturnType<typeof chat>[]) => void;
+    await act(async () => root.render(<OrbitSidebar activeItem="new" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));
+    act(() => container.querySelector<HTMLButtonElement>(".orbit-task-toggle")!.click());
+    vi.mocked(listChats).mockImplementationOnce(() => new Promise((resolve) => { resolveOlder = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNewer = resolve; }));
+    act(() => { radio.callbacks.onChatListChanged?.("p1", "task-a"); radio.callbacks.onChatListChanged?.("p1", "task-a"); });
+    await act(async () => resolveNewer([chat("b", "Recent"), chat("a", "Older")]));
+    await act(async () => resolveOlder([chat("a", "Older"), chat("b", "Recent")]));
+    expect([...container.querySelectorAll(".orbit-session-nested")].map((button) => button.textContent)).toEqual(["Recent", "Older"]);
+  });
+  it("immediately moves the session with local activity to the top of its task", async () => {
+    vi.mocked(listChats).mockImplementation(async (_project, task) => task === "task-a" ? [chat("a", "First"), chat("b", "Second")] : []);
+    await act(async () => root.render(<OrbitSidebar activeItem="tasks" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));
+    act(() => container.querySelector<HTMLButtonElement>(".orbit-task-toggle")!.click());
+    const titles = () => [...container.querySelectorAll(".orbit-session-nested")].map((button) => button.textContent);
+    act(() => window.dispatchEvent(new CustomEvent("grove:session-local-activity", { detail: { projectId: "other", taskId: "task-a", chatId: "b" } })));
+    expect(titles()).toEqual(["First", "Second"]);
+    act(() => window.dispatchEvent(new CustomEvent("grove:session-local-activity", { detail: { projectId: "p1", taskId: "task-a", chatId: "b" } })));
+    expect(titles()).toEqual(["Second", "First"]);
+  });
   it("uses the configured icon and offers session and task actions", async () => {
     await act(async () => root.render(<OrbitSidebar activeItem="dashboard" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));
     expect(container.querySelector(".orbit-brand img")?.getAttribute("src")).toBe("/app-icons/orbit-light.svg");
@@ -124,6 +218,30 @@ describe("Orbit sidebar", () => {
     await act(async () => archive.click());
     expect(archiveChat).toHaveBeenCalledWith('p1', '_local', 'b');
     expect(navigate).not.toHaveBeenCalled();
+  });
+  it("reorders tasks by dragging a task row onto another task", async () => {
+    const original = project.tasks;
+    project.tasks = [{ id: "task-a", name: "Task A", status: "active" }, { id: "task-b", name: "Task B", status: "active" }];
+    // Hold the request open: once it settles the order comes from the (mocked, unchanged) project refresh.
+    vi.mocked(reorderTasks).mockReturnValue(new Promise(() => {}));
+    await act(async () => root.render(<OrbitSidebar activeItem="dashboard" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));
+    const names = () => [...container.querySelectorAll(".orbit-task-toggle")].map((button) => button.textContent);
+    const drag = (target: Element, type: string) => {
+      // jsdom has no DragEvent; React only needs the type and a dataTransfer.
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: { setData: vi.fn(), effectAllowed: "", dropEffect: "" } });
+      target.dispatchEvent(event);
+    };
+    const [rowA, rowB] = [...container.querySelectorAll(".orbit-task-row")];
+    expect(rowA.getAttribute("draggable")).toBe("true");
+    act(() => drag(rowA, "dragstart"));
+    // jsdom reports zero-size rects, so the drop lands in the lower half: after Task B.
+    act(() => drag(rowB, "dragover"));
+    expect(rowB.parentElement?.classList.contains("is-drop-after")).toBe(true);
+    await act(async () => drag(rowB, "drop"));
+    expect(reorderTasks).toHaveBeenCalledWith("p1", ["task-b", "task-a"]);
+    expect(names()).toEqual(["Task B", "Task A"]);
+    project.tasks = original;
   });
   it("replaces the collapsed sidebar with title-bar controls", async () => {
     const onCollapse = vi.fn();

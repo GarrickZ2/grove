@@ -198,6 +198,8 @@ export function DropdownMenu({
     updatePortalAnchor(menuWidth, menuMaxHeight);
   }, [activeSubmenuId, isOpen, menuMaxHeight, menuWidth, portal, updatePortalAnchor]);
 
+  // Orbit cards are padded and rounded: full-bleed rules become inset dividers.
+  const orbit = appearance === "orbit";
   const renderItem = (item: DropdownItem) => {
     const Icon = item.icon;
     const hasChildren = !!item.children?.length;
@@ -218,7 +220,7 @@ export function DropdownMenu({
         disabled={item.disabled}
         className={`w-full flex items-center text-left transition-colors focus:outline-none ${
           item.listAction
-            ? "justify-center border-t border-[var(--color-border)] px-3 py-2 text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
+            ? `justify-center ${orbit ? "" : "border-t border-[var(--color-border)]"} px-3 py-2 text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]`
             : small
             ? "gap-1.5 px-2 py-1 text-xs leading-4"
             : compact
@@ -231,7 +233,7 @@ export function DropdownMenu({
         }`}
       >
         {Icon && (
-          <span className={`flex shrink-0 items-center justify-center ${small ? "h-3 w-3" : "h-4 w-4"}`}>
+          <span className={`dropdown-item-icon flex shrink-0 items-center justify-center ${small ? "h-3 w-3" : "h-4 w-4"}`}>
             <Icon className={small ? "h-3 w-3" : compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
           </span>
         )}
@@ -254,14 +256,15 @@ export function DropdownMenu({
         <button
           type="button"
           onClick={() => setActiveSubmenuId(null)}
-          className={`flex w-full shrink-0 items-center border-b border-[var(--color-border)] text-left font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)] ${compact ? "gap-2 px-2.5 py-1.5 text-[12.5px]" : "gap-2 px-3 py-1.5 text-sm"}`}
+          className={`flex w-full shrink-0 items-center ${orbit ? "" : "border-b border-[var(--color-border)]"} text-left font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)] ${compact ? "gap-2 px-2.5 py-1.5 text-[12.5px]" : "gap-2 px-3 py-1.5 text-sm"}`}
         >
           <ChevronLeft className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
           <span>{activeSubmenu.label}</span>
         </button>
       )}
+      {activeSubmenu && orbit && <div className="orbit-menu-divider" />}
       <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain ${small ? "py-0.5" : "py-1"}`} onWheel={(event) => event.stopPropagation()}>
-        {visibleItems.map((item) => <Fragment key={item.id}>{item.dividerBefore && <div className="orbit-menu-divider" />}{renderItem(item)}</Fragment>)}
+        {visibleItems.map((item) => <Fragment key={item.id}>{(item.dividerBefore || (orbit && item.listAction)) && <div className="orbit-menu-divider" />}{renderItem(item)}</Fragment>)}
       </div>
     </div>
   );

@@ -187,6 +187,55 @@ pub fn add_task(project: &str, task: Task) -> Result<()> {
             task.files_changed as i64,
         ],
     )?;
+    if !task.is_local && task.status == TaskStatus::Active {
+        place_task_on_top(&conn, project, &task.id)?;
+    }
+    Ok(())
+}
+
+/// Step between adjacent `sort_position` values written by [`reorder_tasks`].
+const SORT_POSITION_STEP: i64 = 1_000;
+
+/// Move a task above every other placed task in its project.
+fn place_task_on_top(conn: &rusqlite::Connection, project: &str, task_id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE tasks SET sort_position = (
+             SELECT COALESCE(MIN(sort_position), ?3) - ?3 FROM tasks
+             WHERE project = ?1 AND id != ?2 AND sort_position IS NOT NULL
+         )
+         WHERE project = ?1 AND id = ?2",
+        params![project, task_id, SORT_POSITION_STEP],
+    )?;
+    Ok(())
+}
+
+/// User-defined sidebar order of a project's active tasks: task id → rank
+/// (ascending). Tasks never placed are absent.
+pub fn load_task_order(project: &str) -> Result<std::collections::HashMap<String, i64>> {
+    let conn = crate::storage::database::connection();
+    let mut stmt = conn.prepare(
+        "SELECT id, sort_position FROM tasks
+         WHERE project = ?1 AND status = 'active' AND sort_position IS NOT NULL",
+    )?;
+    let order = stmt
+        .query_map(params![project], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(order)
+}
+
+/// Persist a new sidebar order. `task_ids` lists active tasks top to bottom;
+/// tasks not listed keep their current rank.
+pub fn reorder_tasks(project: &str, task_ids: &[String]) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    let tx = conn.unchecked_transaction()?;
+    for (index, task_id) in task_ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE tasks SET sort_position = ?1
+             WHERE project = ?2 AND id = ?3 AND status = 'active' AND is_local = 0",
+            params![(index as i64 + 1) * SORT_POSITION_STEP, project, task_id],
+        )?;
+    }
+    tx.commit()?;
     Ok(())
 }
 
@@ -271,10 +320,14 @@ pub fn archive_task(project: &str, task_id: &str) -> Result<Option<Task>> {
 pub fn recover_task(project: &str, task_id: &str) -> Result<()> {
     let now = Utc::now().to_rfc3339();
     let conn = crate::storage::database::connection();
-    conn.execute(
+    let changed = conn.execute(
         "UPDATE tasks SET status = 'active', updated_at = ?1, archived_at = NULL WHERE project = ?2 AND id = ?3 AND status = 'archived'",
         params![now, project, task_id],
     )?;
+    if changed > 0 {
+        // A recovered task re-enters the sidebar like a new one: at the top.
+        place_task_on_top(&conn, project, task_id)?;
+    }
     Ok(())
 }
 
@@ -652,10 +705,44 @@ pub fn load_archived_chat_sessions(project: &str, task_id: &str) -> Result<Vec<C
     Ok(chats)
 }
 
+/// IDs of a task's active sessions pinned to the top of its session list.
+pub fn load_pinned_chat_ids(
+    project: &str,
+    task_id: &str,
+) -> Result<std::collections::HashSet<String>> {
+    let conn = crate::storage::database::connection();
+    let mut stmt = conn.prepare(
+        "SELECT session_id FROM session
+         WHERE project = ?1 AND task_id = ?2 AND archived_at IS NULL AND pinned_at IS NOT NULL",
+    )?;
+    let ids = stmt
+        .query_map(params![project, task_id], |row| row.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(ids)
+}
+
+/// Pin or unpin an active session. Returns false when no active session matched.
+pub fn set_chat_session_pinned(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+    pinned: bool,
+) -> Result<bool> {
+    let conn = crate::storage::database::connection();
+    let pinned_at = pinned.then(|| Utc::now().to_rfc3339());
+    let changed = conn.execute(
+        "UPDATE session SET pinned_at = ?1
+         WHERE project = ?2 AND task_id = ?3 AND session_id = ?4 AND archived_at IS NULL",
+        params![pinned_at, project, task_id, chat_id],
+    )?;
+    Ok(changed > 0)
+}
+
+/// Archiving also unpins: a restored session comes back as an ordinary one.
 pub fn archive_chat_session(project: &str, task_id: &str, chat_id: &str) -> Result<bool> {
     let conn = crate::storage::database::connection();
     let changed = conn.execute(
-        "UPDATE session SET archived_at = ?1
+        "UPDATE session SET archived_at = ?1, pinned_at = NULL
          WHERE project = ?2 AND task_id = ?3 AND session_id = ?4 AND archived_at IS NULL",
         params![Utc::now().to_rfc3339(), project, task_id, chat_id],
     )?;
@@ -1180,6 +1267,44 @@ mod tests {
     }
 
     #[test]
+    fn pinning_marks_active_sessions_and_archiving_unpins() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        let project = format!("project-{}", uuid::Uuid::new_v4().simple());
+        let chat_id = generate_chat_id();
+        add_chat_session(
+            &project,
+            "task",
+            ChatSession {
+                id: chat_id.clone(),
+                title: "Pinned".to_string(),
+                agent: "claude".to_string(),
+                acp_session_id: None,
+                created_at: Utc::now(),
+                duty: None,
+                launch_mode: "acp".to_string(),
+            },
+        )
+        .unwrap();
+        let pinned = || load_pinned_chat_ids(&project, "task").unwrap();
+
+        assert!(set_chat_session_pinned(&project, "task", &chat_id, true).unwrap());
+        assert!(pinned().contains(&chat_id));
+        assert!(set_chat_session_pinned(&project, "task", &chat_id, false).unwrap());
+        assert!(pinned().is_empty());
+
+        set_chat_session_pinned(&project, "task", &chat_id, true).unwrap();
+        assert!(archive_chat_session(&project, "task", &chat_id).unwrap());
+        assert!(!set_chat_session_pinned(&project, "task", &chat_id, true).unwrap());
+        assert!(restore_chat_session(&project, "task", &chat_id).unwrap());
+        assert!(pinned().is_empty());
+
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    #[test]
     fn archived_sessions_leave_normal_discovery_until_restored() {
         let _lock = crate::storage::database::test_lock().blocking_lock();
         let temp = tempfile::tempdir().unwrap();
@@ -1337,5 +1462,58 @@ created_at = "2025-01-01T00:00:00Z"
         session.duty = None;
         let toml_str2 = toml::to_string(&session).unwrap();
         assert!(!toml_str2.contains("duty"));
+    }
+
+    #[test]
+    fn manual_task_order_puts_new_and_recovered_tasks_on_top() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        let project = format!("project-{}", uuid::Uuid::new_v4().simple());
+        let make_task = |id: &str| Task {
+            id: id.to_string(),
+            name: id.to_string(),
+            branch: id.to_string(),
+            target: "main".to_string(),
+            worktree_path: String::new(),
+            initial_commit: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            status: TaskStatus::Active,
+            multiplexer: "tmux".to_string(),
+            session_name: String::new(),
+            created_by: String::new(),
+            archived_at: None,
+            code_additions: 0,
+            code_deletions: 0,
+            files_changed: 0,
+            is_local: false,
+        };
+        let ordered = || {
+            let order = load_task_order(&project).unwrap();
+            let mut ids: Vec<String> = order.keys().cloned().collect();
+            ids.sort_by_key(|id| order[id]);
+            ids
+        };
+
+        add_task(&project, make_task("a")).unwrap();
+        add_task(&project, make_task("b")).unwrap();
+        add_task(&project, make_task("c")).unwrap();
+        assert_eq!(ordered(), ["c", "b", "a"]);
+
+        reorder_tasks(&project, &["a".into(), "c".into(), "b".into()]).unwrap();
+        assert_eq!(ordered(), ["a", "c", "b"]);
+
+        archive_task(&project, "c").unwrap();
+        assert_eq!(ordered(), ["a", "b"]);
+        recover_task(&project, "c").unwrap();
+        assert_eq!(ordered(), ["c", "a", "b"]);
+
+        // Recovering an already-active task must not move it.
+        recover_task(&project, "b").unwrap();
+        assert_eq!(ordered(), ["c", "a", "b"]);
+
+        crate::storage::set_grove_dir_override(None);
     }
 }

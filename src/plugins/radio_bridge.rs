@@ -27,6 +27,7 @@ fn task_of(event: &RadioEvent) -> Option<&str> {
         | RadioEvent::TerminalInput { task_id, .. }
         | RadioEvent::ChatListChanged { task_id, .. }
         | RadioEvent::ChatStatus { task_id, .. }
+        | RadioEvent::ChatInputStatus { task_id, .. }
         | RadioEvent::Turn { task_id, .. }
         | RadioEvent::PendingChanged { task_id, .. } => Some(task_id),
         RadioEvent::ClientConnected

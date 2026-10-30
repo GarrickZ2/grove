@@ -1334,7 +1334,7 @@ export function DiffFileView({
           <span className={badgeClass}>
             {file.change_type === 'added' ? 'A' : file.change_type === 'deleted' ? 'D' : file.change_type === 'renamed' ? 'R' : 'M'}
           </span>
-          <span className="diff-file-path">{file.new_path}</span>
+          <span className="diff-file-path">{file.change_type === 'renamed' && file.old_path !== file.new_path ? `${file.old_path} → ${file.new_path}` : file.new_path}</span>
           {onTogglePreview && (
             <button
               className={`diff-file-preview-btn${isPreviewOpen ? ' active' : ''}`}

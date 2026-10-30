@@ -273,8 +273,20 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     const observer = new ResizeObserver(fit);
     observer.observe(footer);
     // A chip's width follows its value, so watch the visible ones too.
-    for (const [, ref] of chips) if (ref.current) observer.observe(ref.current);
-    return () => observer.disconnect();
+    const watchChips = () => { for (const [, ref] of chips) if (ref.current) observer.observe(ref.current); };
+    watchChips();
+    // Chips that appear or relabel later don't resize the footer (it just overflows); refit on any change.
+    let frame = 0;
+    const mutations = new MutationObserver(() => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; watchChips(); fit(); });
+    });
+    mutations.observe(footer, { childList: true, subtree: true, characterData: true });
+    return () => {
+      observer.disconnect();
+      mutations.disconnect();
+      cancelAnimationFrame(frame);
+    };
   }, [phone, quickKept, agentId, selection.source]);
   const valueOf = (option: SessionConfigOption | undefined) => {
     if (!option || selection.source !== "config_options") return "";
@@ -495,6 +507,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
               icon={selectedProject ? projectIcon(selectedProject.id) : <Folder size={14} strokeWidth={1.7} />}
               label={selectedProject?.name ?? "Choose project"}
               searchPlaceholder="Search projects"
+              opensUp={phone}
               items={projectItems.map((project) => ({ id: project.id, label: project.name, icon: projectIcon(project.id) }))}
               selectedId={selectedProject?.id}
               onSelect={(id) => {
@@ -506,6 +519,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
               icon={effectiveTaskId === "_local" ? <Laptop size={14} strokeWidth={1.7} /> : <GitBranch size={14} strokeWidth={1.7} />}
               label={effectiveTaskId === "_local" ? "Local" : tasks.find((task) => task.id === effectiveTaskId)?.name ?? "Local"}
               searchPlaceholder="Search tasks"
+              opensUp={phone}
               items={[
                 { id: "_local", label: "Local", icon: <Laptop size={14} strokeWidth={1.7} /> },
                 ...tasks.map((task) => ({ id: task.id, label: task.name, icon: <GitBranch size={14} strokeWidth={1.7} /> })),
@@ -524,13 +538,17 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   );
 }
 
-/** Chip in the tray under the composer; opens the shared picker downward. */
-function TrayPicker({ icon, label, items, selectedId, searchPlaceholder, onSelect }: {
+/**
+ * Chip in the tray under the composer; opens the shared picker downward, or
+ * upward (spanning the tray, see CSS) on a phone where the tray sits at the bottom.
+ */
+function TrayPicker({ icon, label, items, selectedId, searchPlaceholder, opensUp, onSelect }: {
   icon: ReactNode;
   label: string;
   items: PickerMenuItem[];
   selectedId?: string;
   searchPlaceholder: string;
+  opensUp?: boolean;
   onSelect: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -546,12 +564,12 @@ function TrayPicker({ icon, label, items, selectedId, searchPlaceholder, onSelec
   }, [open]);
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="orbit-new__tray-picker relative">
       <button type="button" className="orbit-new__chip" aria-expanded={open} onClick={() => setOpen(!open)}>
         {icon}<span className="orbit-new__label">{label}</span><ChevronDown size={12} />
       </button>
       {open && (
-        <PickerMenu items={items} selectedId={selectedId} searchPlaceholder={searchPlaceholder} onEscape={() => setOpen(false)}
+        <PickerMenu items={items} selectedId={selectedId} placement={opensUp ? "up-left" : "down-left"} searchPlaceholder={searchPlaceholder} onEscape={() => setOpen(false)}
           onSelect={(id) => { onSelect(id); setOpen(false); }} />
       )}
     </div>

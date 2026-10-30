@@ -118,6 +118,7 @@
 .orbit-unread { position: absolute; top: 4px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--color-highlight); }
 .orbit-status { width: 12px; height: 12px; flex: none; border: 1.5px solid var(--color-text-muted); border-right-color: transparent; border-radius: 50%; animation: orbit-status-spin .9s linear infinite; }
 .orbit-status.is-waiting { width: 7px; height: 7px; border: 0; background: #df9c31; animation: none; }
+.orbit-status.is-completed { width: 7px; height: 7px; border: 0; background: #3b82f6; animation: none; }
 @keyframes orbit-status-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .orbit-status { animation: none; } }
 .orbit-project { flex: none; padding-bottom: 5px; }
@@ -165,7 +166,13 @@
 .orbit-session { min-height: 32px; }
 .orbit-session-nested { padding-left: 32px; }
 .orbit-truncate { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.orbit-task { margin-top: var(--orbit-list-row-gap); }
+.orbit-task { position: relative; margin-top: var(--orbit-list-row-gap); }
+.orbit-task.is-dragging { opacity: .4; }
+/* Drop indicator: a line in the gap above or below the hovered task. */
+.orbit-task.is-drop-before::before,
+.orbit-task.is-drop-after::after { content: ""; position: absolute; left: 6px; right: 6px; height: 2px; border-radius: 1px; background: var(--color-highlight); pointer-events: none; }
+.orbit-task.is-drop-before::before { top: calc(-1px - var(--orbit-list-row-gap) / 2); }
+.orbit-task.is-drop-after::after { bottom: calc(-1px - var(--orbit-list-row-gap) / 2); }
 .orbit-task-row { position: relative; display: flex; min-width: 0; align-items: center; border-radius: 6px; }
 .orbit-task-toggle { display: flex; align-items: center; gap: 7px; min-width: 0; height: 34px; flex: 1; padding: 0 8px; color: inherit; background: transparent; border: 0; font-size: 14px; text-align: left; cursor: pointer; }
 .orbit-task-toggle svg { flex: none; }
@@ -184,10 +191,18 @@
 .orbit-row-menu { position: absolute; right: 3px; top: 3px; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
 .orbit-task-row > .orbit-row-menu { right: 34px; }
 .orbit-session-row:hover .orbit-row-menu, .orbit-session-row:focus-within .orbit-row-menu, .orbit-task-row:hover .orbit-row-menu, .orbit-task-row:focus-within .orbit-row-menu { opacity: 1; pointer-events: auto; }
-.orbit-session-row:hover .orbit-session, .orbit-session-row:focus-within .orbit-session { padding-right: 36px; }
 .orbit-more-button { display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); cursor: pointer; }
 .orbit-more-button:hover, .orbit-more-button[aria-expanded="true"] { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 9%, transparent); }
 .orbit-row-menu:has(.orbit-session-live-slot > *) .orbit-session-fallback { display: none; }
+/* Pin: revealed on hover beside the menu; a pinned session keeps it visible at the row's end. */
+.orbit-session-pin { position: absolute; top: 3px; right: 33px; display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.orbit-session-pin:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 9%, transparent); }
+.orbit-session-row:hover .orbit-session-pin, .orbit-session-row:focus-within .orbit-session-pin, .orbit-session-row.is-pinned .orbit-session-pin { opacity: 1; pointer-events: auto; }
+.orbit-session-row.is-pinned:not(:hover):not(:focus-within) .orbit-session-pin { right: 3px; }
+.orbit-session-row.is-pinned .orbit-session { padding-right: 36px; }
+.orbit-session-row:hover .orbit-session, .orbit-session-row:focus-within .orbit-session { padding-right: 66px; }
+.orbit-unpin-icon, .orbit-session-row.is-pinned .orbit-session-pin:hover .orbit-pin-icon { display: none; }
+.orbit-session-row.is-pinned .orbit-session-pin:hover .orbit-unpin-icon { display: block; }
 .orbit-session-live-slot > :not(:last-child) { display: none; }
 .orbit-rename-dialog { padding: 20px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-bg); box-shadow: 0 16px 48px rgba(0,0,0,.2); }
 .orbit-rename-dialog h2 { margin: 0 0 16px; color: var(--color-text); font-size: 16px; font-weight: 600; }
@@ -232,10 +247,11 @@
 }
 .orbit-action-menu { padding: 5px; border-color: color-mix(in srgb, var(--color-border) 80%, transparent); border-radius: 14px; background: var(--color-bg); box-shadow: 0 4px 18px rgba(0, 0, 0, .10); }
 .orbit-action-menu button { min-height: 30px; padding: 6px 9px; gap: 9px; border-radius: 7px; font-size: 13px; font-weight: 400; }
-.orbit-action-menu button > span:first-child { width: 15px; height: 15px; }
-.orbit-action-menu button > span:first-child svg { width: 15px; height: 15px; stroke-width: 1.7; }
+.orbit-action-menu button > .dropdown-item-icon { width: 15px; height: 15px; }
+.orbit-action-menu button > .dropdown-item-icon svg { width: 15px; height: 15px; stroke-width: 1.7; }
 .orbit-menu-divider { height: 1px; margin: 4px 5px; background: color-mix(in srgb, var(--color-border) 75%, transparent); }
-.orbit-task-section-heading { display: flex; align-items: center; justify-content: space-between; min-height: 34px; margin-top: 12px; padding-left: 10px; }
+/* Each section bounds its sticky heading, so the next heading pushes it out. */
+.orbit-task-section-heading { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; min-height: 34px; margin-top: 12px; padding-left: 10px; background: var(--orbit-surface); }
 /* Sessions is the first section: same toggle as Tasks, spaced like the old plain label. */
 .orbit-sessions-heading { margin-top: 8px; }
 .orbit-task-section-toggle { display: flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--color-text-muted); font-size: 12px; font-weight: 500; cursor: pointer; }
@@ -244,6 +260,11 @@
 .orbit-section-add { display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); cursor: pointer; }
 .orbit-section-add:hover { background: color-mix(in srgb, var(--color-text) 9%, transparent); color: var(--color-text); }
 .orbit-section-add:disabled { opacity: .4; cursor: default; }
+.orbit-section-actions { display: flex; align-items: center; gap: 2px; }
+/* Archived stays out of the way: it shows only while the heading is hovered or focused. */
+.orbit-section-archive { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.orbit-task-section-heading:hover .orbit-section-archive, .orbit-task-section-heading:focus-within .orbit-section-archive { opacity: 1; pointer-events: auto; }
+.orbit-task-section-heading:hover .orbit-section-archive:disabled { opacity: .4; }
 /* Narrow desktop / tablet window: the sidebar opens over the workspace instead of pushing it. */
 .orbit-sidebar.is-overlay { z-index: 60; box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-border) 60%, transparent), 12px 0 40px rgba(0, 0, 0, .18); animation: orbit-overlay-in .22s cubic-bezier(.25, 1, .5, 1); }
 @keyframes orbit-overlay-in { from { transform: translateX(-24px); opacity: 0; } }
@@ -264,16 +285,20 @@
 .orbit-sidebar.is-drawer .orbit-task-section-toggle { font-size: 13px; }
 /* No hover on touch: row actions stay visible. */
 .orbit-sidebar.is-drawer .orbit-row-menu,
+.orbit-sidebar.is-drawer .orbit-section-archive,
 .orbit-sidebar.is-drawer .orbit-task-new { opacity: 1; pointer-events: auto; top: 6px; }
 .orbit-sidebar.is-drawer .orbit-task-new { top: 6px; }
-.orbit-sidebar.is-drawer .orbit-session-row .orbit-session { padding-right: 40px; }
+.orbit-sidebar.is-drawer .orbit-session-row .orbit-session { padding-right: 72px; }
+.orbit-sidebar.is-drawer .orbit-session-pin { top: 6px; right: 35px; opacity: 1; pointer-events: auto; }
+.orbit-sidebar.is-drawer .orbit-session-row.is-pinned:not(:hover):not(:focus-within) .orbit-session-pin { right: 35px; }
 .orbit-sidebar.is-drawer .orbit-task-row .orbit-task-toggle { padding-right: 72px; }
 .orbit-sidebar.is-drawer .orbit-footer { padding: 10px 12px 12px; border-top: 0; }
 .orbit-sidebar.is-drawer .orbit-footer > .orbit-row { width: auto; }
 .orbit-drawer-new { display: inline-flex; flex: none; align-items: center; gap: 6px; height: 42px; margin-left: auto; padding: 0 18px 0 14px; border: 0; border-radius: 999px; background: var(--color-text); color: var(--color-bg); font-size: 14px; font-weight: 500; cursor: pointer; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); }
 .orbit-drawer-new:disabled { opacity: .45; cursor: default; }
 .orbit-phone-stage { position: relative; z-index: 2; display: flex; min-height: 0; flex: 1; flex-direction: column; background: var(--color-bg); }
-.orbit-phone-scrim { position: absolute; inset: 0; z-index: 80; padding: 0; border: 0; background: rgba(0, 0, 0, .32); cursor: default; animation: orbit-sheet-fade .24s ease; }
+.orbit-phone-scrim { position: absolute; inset: 0; z-index: 80; padding: 0; border: 0; background: rgba(0, 0, 0, .32); cursor: default; visibility: hidden; opacity: 0; transition: opacity .32s ease, visibility 0s .32s; }
+.orbit-phone-scrim.is-open { visibility: visible; opacity: 1; transition: opacity .32s ease; }
 .orbit-phone-header { display: grid; flex: none; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; height: 56px; padding: 0 12px; }
 /* Menu button sits just right of the traffic lights (they end ~81px in, centered at ~28px like this bar). */
 .orbit-phone-header.has-mac-controls { padding-left: 92px; }

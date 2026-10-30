@@ -3,6 +3,8 @@ import { TaskSearch } from "./TaskSearch";
 import { TaskFilters } from "./TaskFilters";
 import { TaskListItem } from "./TaskListItem";
 import { useNotifications, useProject } from "../../../context";
+import { useIsMobile } from "../../../hooks";
+import type { useTaskReorder } from "../../../hooks/useTaskReorder";
 import type { Task, TaskFilter } from "../../../data/types";
 
 interface TaskSidebarProps {
@@ -19,6 +21,8 @@ interface TaskSidebarProps {
   onSearchChange: (query: string) => void;
   /** When true, take full width (mobile list view) */
   fullWidth?: boolean;
+  /** Manual ordering; pass only when `tasks` is the full, unfiltered active list. */
+  reorder?: ReturnType<typeof useTaskReorder<Task>>;
 }
 
 export function TaskSidebar({
@@ -34,8 +38,10 @@ export function TaskSidebar({
   onFilterChange,
   onSearchChange,
   fullWidth,
+  reorder,
 }: TaskSidebarProps) {
   const { getTaskNotification, dismissNotification } = useNotifications();
+  const { isTouchDevice } = useIsMobile();
   // Zen mode shows one project's tasks; match hooks by (project, task) since
   // task ids are only unique per project ("_local" is shared by all projects).
   const projectId = useProject().selectedProject?.id ?? "";
@@ -64,12 +70,23 @@ export function TaskSidebar({
           </div>
         ) : (
           <div className="divide-y divide-[var(--color-border)]">
-            {tasks.map((task) => {
+            {tasks.map((task, index) => {
               const notif = getTaskNotification(projectId, task.id);
+              const drop = reorder?.dropTarget?.taskId === task.id && reorder.draggingId !== task.id ? reorder.dropTarget.placement : null;
               return (
                 <TaskListItem
                   key={task.id}
                   task={task}
+                  reorder={reorder && tasks.length > 1 ? {
+                    dragProps: {
+                      ...reorder.dragSourceProps(task.id, !isTouchDevice),
+                      ...reorder.dropTargetProps(task.id),
+                    },
+                    isDragging: reorder.draggingId === task.id,
+                    dropPlacement: drop,
+                    onMoveUp: index > 0 ? () => reorder.moveBy(task.id, -1) : undefined,
+                    onMoveDown: index < tasks.length - 1 ? () => reorder.moveBy(task.id, 1) : undefined,
+                  } : undefined}
                   isSelected={selectedTask?.id === task.id}
                   onClick={() => {
                     if (notif) {

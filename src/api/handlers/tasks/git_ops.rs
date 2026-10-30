@@ -230,15 +230,13 @@ fn review_diff_entries(
     worktree_path: &str,
     target: &str,
     query: &DiffQuery,
-) -> Result<Vec<git::DiffStatEntry>, (StatusCode, Json<ApiError>)> {
+) -> Result<Vec<git::ReviewDiffEntry>, (StatusCode, Json<ApiError>)> {
     let base = query
         .from_ref
         .clone()
         .unwrap_or_else(|| git::effective_review_base(worktree_path, target));
-    let result = match query.to_ref.as_deref() {
-        Some(to_ref) => git::diff_stat_range(worktree_path, &base, to_ref),
-        None => git::diff_stat(worktree_path, &base),
-    };
+    let result = git::ReviewComparison::new(worktree_path, &base, query.to_ref.as_deref())
+        .and_then(|comparison| comparison.entries());
     result.map_err(|error| ApiError::internal(format!("Failed to load diff: {error}")))
 }
 
@@ -266,7 +264,9 @@ pub async fn get_diff(
 
     let files: Vec<DiffFileEntry> = diff_entries
         .into_iter()
-        .filter(|entry| entry.additions > 0 || entry.deletions > 0 || entry.is_binary)
+        .filter(|entry| {
+            entry.additions > 0 || entry.deletions > 0 || entry.is_binary || entry.status == 'R'
+        })
         .map(|entry| {
             total_additions += entry.additions;
             total_deletions += entry.deletions;
@@ -281,6 +281,7 @@ pub async fn get_diff(
 
             DiffFileEntry {
                 path: entry.path,
+                old_path: entry.old_path,
                 status,
                 additions: entry.additions,
                 deletions: entry.deletions,
@@ -377,9 +378,14 @@ pub async fn get_single_file_diff(
     let from_ref = query.from_ref.as_deref().or(Some(&default_base));
     let to_ref = query.to_ref.as_deref();
 
-    let result =
-        crate::diff::get_single_file_diff(&task.worktree_path, &query.path, from_ref, to_ref)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result = crate::diff::get_single_file_diff(
+        &task.worktree_path,
+        &query.path,
+        from_ref,
+        to_ref,
+        query.old_path.as_deref(),
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(result).into_response())
 }
@@ -396,6 +402,90 @@ mod review_diff_tests {
         git::git_cmd(path, &["config", "user.name", "test"]).unwrap();
         git::git_cmd(path, &["commit", "--allow-empty", "-m", "initial"]).unwrap();
         dir
+    }
+
+    #[test]
+    fn review_detects_untracked_and_committed_renames_without_changing_index() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        let original = (0..30).map(|i| format!("line {i}\n")).collect::<String>();
+        std::fs::write(dir.path().join("old name.txt"), &original).unwrap();
+        git::git_cmd(path, &["add", "old name.txt"]).unwrap();
+        git::git_cmd(path, &["commit", "-m", "base"]).unwrap();
+        let base = git::git_cmd(path, &["rev-parse", "HEAD"]).unwrap();
+        std::fs::rename(
+            dir.path().join("old name.txt"),
+            dir.path().join("new name.txt"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("new name.txt"),
+            original.replace("line 15\n", "changed line\n"),
+        )
+        .unwrap();
+        let before = git::git_cmd(path, &["status", "--porcelain=v1"]).unwrap();
+        let comparison = git::ReviewComparison::new(path, &base, None).unwrap();
+        let entries = comparison.entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, 'R');
+        assert_eq!(entries[0].old_path.as_deref(), Some("old name.txt"));
+        assert_eq!(entries[0].path, "new name.txt");
+        assert_eq!((entries[0].additions, entries[0].deletions), (1, 1));
+        let diff = crate::diff::get_single_file_diff(
+            path,
+            "new name.txt",
+            Some(&base),
+            None,
+            Some("old name.txt"),
+        )
+        .unwrap();
+        assert_eq!(diff.change_type, "renamed");
+        assert_eq!(diff.old_path, "old name.txt");
+        assert_eq!((diff.additions, diff.deletions), (1, 1));
+        assert_eq!(
+            before,
+            git::git_cmd(path, &["status", "--porcelain=v1"]).unwrap()
+        );
+        git::git_cmd(path, &["add", "-A"]).unwrap();
+        git::git_cmd(path, &["commit", "-m", "rename"]).unwrap();
+        let committed = git::ReviewComparison::new(path, &base, Some("HEAD")).unwrap();
+        let entries = committed.entries().unwrap();
+        assert_eq!(entries[0].status, 'R');
+        assert_eq!(entries[0].old_path.as_deref(), Some("old name.txt"));
+        let diff = crate::diff::get_single_file_diff(
+            path,
+            "new name.txt",
+            Some(&base),
+            Some("HEAD"),
+            Some("old name.txt"),
+        )
+        .unwrap();
+        assert_eq!(diff.change_type, "renamed");
+        assert_eq!((diff.additions, diff.deletions), (1, 1));
+    }
+
+    #[test]
+    fn review_keeps_pure_renames_and_untracked_status() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("old"), "").unwrap();
+        git::git_cmd(path, &["add", "old"]).unwrap();
+        git::git_cmd(path, &["commit", "-m", "base"]).unwrap();
+        std::fs::rename(dir.path().join("old"), dir.path().join("new")).unwrap();
+        std::fs::write(dir.path().join("extra"), "new content\n").unwrap();
+        let entries = review_diff_entries(
+            path,
+            "HEAD",
+            &DiffQuery {
+                from_ref: None,
+                to_ref: None,
+            },
+        )
+        .unwrap();
+        assert!(entries
+            .iter()
+            .any(|e| e.status == 'R' && e.path == "new" && e.additions == 0 && e.deletions == 0));
+        assert!(entries.iter().any(|e| e.status == 'U' && e.path == "extra"));
     }
 
     #[tokio::test]

@@ -530,36 +530,38 @@
 }
 
 /* ── Mobile: single visible pane (toolbar acts as pane switcher) ────────── */
-@media (max-width: 1199px) {
-  .ide-workbench {
-    padding: 4px;
-  }
+/* Keyed off `.is-stacked`, which IDELayoutContainer sets from the same
+   `isMobile` it uses to keep exactly one surface visible. A width media query
+   here used to disagree with JS — Orbit treats tablets as desktop, so panes
+   that JS showed side by side were stacked on top of each other. */
+.ide-workbench.is-stacked {
+  padding: 4px;
+}
 
-  .ide-layout {
-    /* Override JS-set inline grid-template-columns to a single full-width col
-       and a single full-height row, then stack all panes in the same cell so
-       the visible one (others are display:none) fills the whole grid. */
-    grid-template-columns: minmax(0, 1fr) !important;
-    grid-template-rows: minmax(0, 1fr) !important;
-  }
+.ide-workbench.is-stacked .ide-layout {
+  /* Override JS-set inline grid-template-columns to a single full-width col
+     and a single full-height row, then stack all panes in the same cell so
+     the visible one (others are display:none) fills the whole grid. */
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+}
 
-  /* All three pane hosts collapse onto the same grid cell on mobile.
-     The host JSX (IDELayoutContainer.tsx) sets `display:none` on
-     hidden hosts via inline style, so only one ever paints — without
-     that inline style we'd get visible stacking. Keep the two paths
-     in sync if either is touched. */
-  .ide-aux-host,
-  .ide-info-host,
-  .ide-chat-surface {
-    grid-column: 1;
-    grid-row: 1;
-    min-width: 0;
-    min-height: 0;
-  }
+/* All three pane hosts collapse onto the same grid cell when stacked.
+   The host JSX (IDELayoutContainer.tsx) sets `display:none` on
+   hidden hosts via inline style, so only one ever paints — without
+   that inline style we'd get visible stacking. Keep the two paths
+   in sync if either is touched. */
+.ide-workbench.is-stacked .ide-aux-host,
+.ide-workbench.is-stacked .ide-info-host,
+.ide-workbench.is-stacked .ide-chat-surface {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+}
 
-  .ide-resizer {
-    display: none;
-  }
+.ide-workbench.is-stacked .ide-resizer {
+  display: none;
 }
 
 @media (max-width: 1280px) {

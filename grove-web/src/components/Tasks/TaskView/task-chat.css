@@ -386,8 +386,11 @@
     justify-content: flex-end;
   }
 
+  /* Send / Queue sit in a `display: contents` wrapper while there's a draft; size them the same. */
   .task-chat-mobile-composer .chatbox-session-settings > div > button,
-  .task-chat-mobile-composer .chatbox-footer-right > button {
+  .task-chat-mobile-composer .chatbox-footer-right > button,
+  .task-chat-mobile-composer .chatbox-footer-right > .contents > button {
+    flex: none;
     width: 40px;
     height: 40px;
     border-radius: 14px;
@@ -395,7 +398,8 @@
   }
 
   .task-chat-mobile-composer .chatbox-session-settings > div > button svg,
-  .task-chat-mobile-composer .chatbox-footer-right > button svg {
+  .task-chat-mobile-composer .chatbox-footer-right > button svg,
+  .task-chat-mobile-composer .chatbox-footer-right > .contents > button svg {
     width: 16px;
     height: 16px;
   }
@@ -648,7 +652,8 @@
   }
 
   /* Chips keep their natural width; TaskChat folds whatever doesn't fit into the settings menu. */
-  .task-chat-mobile-composer.is-orbit-phone .chatbox-footer-right > * {
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-footer-right > *,
+  .task-chat-mobile-composer.is-orbit-phone .chatbox-footer-right > .contents > * {
     flex: none;
   }
 

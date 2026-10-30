@@ -349,6 +349,10 @@ pub fn create_api_router() -> Router {
             post(handlers::acp::restore_chat),
         )
         .route(
+            "/projects/{id}/tasks/{taskId}/chats/{chatId}/pin",
+            put(handlers::acp::set_chat_pinned),
+        )
+        .route(
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/attachments",
             post(handlers::acp::upload_chat_attachment).layer(DefaultBodyLimit::max(
                 handlers::acp::CHAT_ATTACHMENT_BODY_LIMIT,
@@ -534,6 +538,10 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/tasks",
             get(handlers::tasks::list_tasks).post(handlers::tasks::create_task),
+        )
+        .route(
+            "/projects/{id}/tasks/order",
+            put(handlers::tasks::reorder_tasks),
         )
         .route(
             "/projects/{id}/tasks/{taskId}",

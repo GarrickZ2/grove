@@ -46,6 +46,27 @@ pub fn storage_task_to_response(task: &tasks::Task) -> TaskResponse {
     }
 }
 
+/// Worktree tasks for the project sidebar: active tasks in the user's manual
+/// order, then archived tasks by recency. Local Task is excluded.
+fn sidebar_ordered_tasks(
+    project_key: &str,
+    active: &[tasks::Task],
+    archived: &[tasks::Task],
+) -> Vec<TaskResponse> {
+    let order = tasks::load_task_order(project_key).unwrap_or_default();
+    let mut active: Vec<&tasks::Task> = active.iter().filter(|t| !t.is_local).collect();
+    // Unplaced tasks (None) sort first, like newly created ones; the stable
+    // sort keeps load_tasks' recency order among equal ranks.
+    active.sort_by_key(|t| order.get(&t.id).copied());
+    let mut archived: Vec<&tasks::Task> = archived.iter().collect();
+    archived.sort_by_key(|t| std::cmp::Reverse(t.updated_at));
+    active
+        .into_iter()
+        .chain(archived)
+        .map(storage_task_to_response)
+        .collect()
+}
+
 /// Count tasks for a project
 fn count_project_tasks(project_key: &str) -> u32 {
     let active_tasks = tasks::load_tasks(project_key).unwrap_or_default();
@@ -319,13 +340,7 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
             )?;
             let active_tasks = tasks::load_tasks(&project_key)?;
             let archived_tasks = tasks::load_archived_tasks(&project_key)?;
-            let mut all: Vec<TaskResponse> = active_tasks
-                .iter()
-                .filter(|t| !t.is_local)
-                .chain(archived_tasks.iter())
-                .map(storage_task_to_response)
-                .collect();
-            all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            let all = sidebar_ordered_tasks(&project_key, &active_tasks, &archived_tasks);
             Ok::<_, crate::error::GroveError>((all, Some(storage_task_to_response(&local))))
         })
         .await
@@ -377,13 +392,7 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
             .map(|t| t.branch.clone())
             .unwrap_or_default();
 
-        let mut all_tasks: Vec<TaskResponse> = active_tasks
-            .iter()
-            .filter(|t| !t.is_local)
-            .chain(archived_tasks.iter())
-            .map(storage_task_to_response)
-            .collect();
-        all_tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        let all_tasks = sidebar_ordered_tasks(&project_key, &active_tasks, &archived_tasks);
 
         let local_task = local_task_db.as_ref().map(storage_task_to_response);
 

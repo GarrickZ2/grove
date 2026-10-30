@@ -25,6 +25,7 @@ import type { FileNavRequest } from "../../Review";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from "../../ui/sketchChipCache";
 import { useConfig, useProject } from "../../../context";
 import { useIsMobile } from "../../../hooks";
+import { useLinkedReviewProjects } from "../../../hooks/useLinkedReviewProjects";
 import { apiClient } from "../../../api/client";
 import { listPlugins, type Plugin } from "../../../api/plugins";
 import {
@@ -493,6 +494,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const taskProject = projects.find((p) => p.id === projectId) ?? selectedProject;
     const isStudio = taskProject?.projectType === "studio";
     const isGitRepo = taskProject?.isGitRepo;
+    const linkedReviewProjects = useLinkedReviewProjects(projectId, task.id);
+    const hasLinkedReview = linkedReviewProjects.length > 0;
 
     // Read persisted state once at mount via useState lazy initializer (avoids repeated localStorage reads)
     const [persisted] = useState<Partial<PersistedIDEState>>(() =>
@@ -598,6 +601,52 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       },
       [setStateTagged],
     );
+    // Most recently used surface — opened via toolbar/shortcut or clicked into.
+    // Decides which one survives when the window narrows into the stacked
+    // single-pane layout.
+    const lastSurfaceRef = useRef<"aux" | "info" | "chat">("chat");
+    const prevSurfacesRef = useRef(state);
+    useEffect(() => {
+      const prev = prevSurfacesRef.current;
+      prevSurfacesRef.current = state;
+      if (state.auxVisible && (!prev.auxVisible || prev.auxType !== state.auxType)) {
+        lastSurfaceRef.current = "aux";
+      } else if (state.infoVisible && (!prev.infoVisible || prev.infoType !== state.infoType)) {
+        lastSurfaceRef.current = "info";
+      } else if (state.chatVisible && !prev.chatVisible) {
+        lastSurfaceRef.current = "chat";
+      }
+    }, [state]);
+
+    // Below the desktop breakpoint ide-layout.css stacks every surface in one
+    // grid cell and relies on state to keep exactly one visible. Mount and the
+    // toolbar enforce that, but narrowing a desktop window with several
+    // surfaces open did not — they painted on top of each other. Collapse to
+    // the last-used surface (falling back to chat) on that transition.
+    const wasMobileRef = useRef(isMobile);
+    useEffect(() => {
+      const wasMobile = wasMobileRef.current;
+      wasMobileRef.current = isMobile;
+      if (!isMobile || wasMobile) return;
+      setStateTagged((prev) => {
+        const aux = prev.auxVisible && !!prev.auxType;
+        const info = prev.infoVisible && !!prev.infoType;
+        const chat = prev.chatVisible || (!aux && !info);
+        if (Number(aux) + Number(info) + Number(chat) <= 1) return prev;
+        const last = lastSurfaceRef.current;
+        const keep = last === "aux" && aux ? "aux"
+          : last === "info" && info ? "info"
+          : chat ? "chat"
+          : aux ? "aux" : "info";
+        return {
+          ...prev,
+          auxVisible: keep === "aux",
+          infoVisible: keep === "info",
+          chatVisible: keep === "chat",
+        };
+      });
+    }, [isMobile, setStateTagged]);
+
     useEffect(() => {
       if (!orbitPhone) return;
       const showChat = () => update({ chatVisible: true, auxVisible: false, infoVisible: false });
@@ -856,7 +905,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           const auxTypes = AUX_PANEL_TYPES.filter((type) =>
             (type !== "artifacts" || isStudio) &&
             (type !== "sketch" || isStudio) &&
-            (type !== "review" || !isStudio) &&
+            (type !== "review" || !isStudio || hasLinkedReview) &&
             (type !== "terminal" || terminalAvailable)
           );
           if (auxTypes.length === 0) return false;
@@ -920,7 +969,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           });
         },
       }),
-      [isStudio, terminalAvailable, setStateTagged, isMobile],
+      [isStudio, hasLinkedReview, terminalAvailable, setStateTagged, isMobile],
     );
 
     // Shared render context (registry-driven). onClose differs per column;
@@ -954,7 +1003,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         />
       ),
       plugins: panelPlugins,
-    }), [projectId, task, isStudio, isGitRepo, terminalAvailable, orbitLayout, isActive, state.fileNavRequest, state.artifactPreviewRequest, state.lastChatIdleAt, state.isChatBusy, handleChatBecameIdle, handleBusyStateChange, state.terminalTabs, state.terminalActiveId, update, panelPlugins]);
+      linkedReviewProjects,
+    }), [projectId, task, isStudio, isGitRepo, terminalAvailable, orbitLayout, isActive, state.fileNavRequest, state.artifactPreviewRequest, state.lastChatIdleAt, state.isChatBusy, handleChatBecameIdle, handleBusyStateChange, state.terminalTabs, state.terminalActiveId, update, panelPlugins, linkedReviewProjects]);
 
     // Aux column. Terminal renders its own multi-tab header (no slot);
     // everything else is wrapped in PanelSlot with the registry's label/icon.
@@ -1038,7 +1088,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       showInfo ? infoColumn : null,
     ].filter(Boolean).join(" ");
     // Toolbar buttons come straight from the shared catalog, split by column.
-    const catalog = buildPanelCatalog(panelPlugins, { isStudio, terminalAvailable });
+    const catalog = buildPanelCatalog(panelPlugins, { isStudio, terminalAvailable, hasLinkedReview });
     const auxPanels = catalog.filter((d) => d.category === "aux");
     const infoPanels = catalog.filter((d) => d.category === "info");
     const toolbar = (
@@ -1075,7 +1125,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     );
 
     return (
-      <div className={`ide-workbench${orbitLayout ? " is-orbit" : ""}${orbitPhone ? " is-phone" : ""}`}>
+      <div className={`ide-workbench${orbitLayout ? " is-orbit" : ""}${orbitPhone ? " is-phone" : ""}${isMobile ? " is-stacked" : ""}`}>
         {/* In Orbit the toolbar lives in the window header; a hidden page renders none. */}
         {orbitLayout ? orbitToolbarTarget && createPortal(orbitPhone ? phonePanels : toolbar, orbitToolbarTarget) : toolbar}
         <div
@@ -1089,8 +1139,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             <div
               className="ide-aux-host"
               style={{ display: showAux ? "flex" : "none" }}
-              onFocusCapture={() => { lastFocusedSideRef.current = "aux"; }}
-              onMouseDownCapture={() => { lastFocusedSideRef.current = "aux"; }}
+              onFocusCapture={() => { lastFocusedSideRef.current = "aux"; lastSurfaceRef.current = "aux"; }}
+              onMouseDownCapture={() => { lastFocusedSideRef.current = "aux"; lastSurfaceRef.current = "aux"; }}
             >
               {state.visitedAux.map((type) => {
                 const isActive = state.auxType === type;
@@ -1112,6 +1162,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           <div
             className="ide-chat-surface"
             style={{ display: showChat ? "block" : "none" }}
+            onFocusCapture={() => { lastSurfaceRef.current = "chat"; }}
+            onMouseDownCapture={() => { lastSurfaceRef.current = "chat"; }}
           >
             {renderChat()}
           </div>
@@ -1122,8 +1174,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             <div
               className="ide-info-host"
               style={{ display: showInfo ? "flex" : "none" }}
-              onFocusCapture={() => { lastFocusedSideRef.current = "info"; }}
-              onMouseDownCapture={() => { lastFocusedSideRef.current = "info"; }}
+              onFocusCapture={() => { lastFocusedSideRef.current = "info"; lastSurfaceRef.current = "info"; }}
+              onMouseDownCapture={() => { lastFocusedSideRef.current = "info"; lastSurfaceRef.current = "info"; }}
             >
               {state.visitedInfo.map((type) => {
                 const isActive = state.infoType === type;

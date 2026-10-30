@@ -95,6 +95,14 @@ pub enum RadioEvent {
         project_id: String,
         task_id: String,
     },
+    /// Input attention is independent of busy/idle: ask_form can stay open
+    /// after the agent's turn has finished.
+    ChatInputStatus {
+        project_id: String,
+        task_id: String,
+        chat_id: String,
+        waiting_for_input: bool,
+    },
     ChatStatus {
         project_id: String,
         task_id: String,
@@ -157,6 +165,7 @@ pub struct ChatSnapshot {
     pub agent: Option<String>,
     /// "idle" | "busy" | "permission_required".
     pub status: String,
+    pub waiting_for_input: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission: Option<PermissionInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]

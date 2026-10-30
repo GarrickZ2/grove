@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { getDiffStats, getSingleFileDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent, editComment as apiEditComment, editReply as apiEditReply, deleteReply as apiDeleteReply, bulkDeleteComments as apiBulkDeleteComments } from '../../api/review';
 import type { DiffFile, DiffStatsResult } from '../../api/review';
@@ -91,6 +91,8 @@ interface DiffReviewPageProps {
   /** Whether the project is a git repository (non-git projects don't have Changes mode) */
   isGitRepo?: boolean;
   isChatBusy?: boolean;
+  /** Replaces the "Code Review" heading (e.g. with a project switcher). */
+  title?: ReactNode;
 }
 
 interface RefetchDiffOptions {
@@ -111,7 +113,7 @@ function diffLoadErrorMessage(error: unknown): string {
 import { getPreviewRenderer } from './previewRenderers';
 
 
-export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, isGitRepo, isChatBusy }: DiffReviewPageProps) {
+export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, isGitRepo, isChatBusy, title }: DiffReviewPageProps) {
   // Host-side file actions would open the remote Grove server's desktop, not
   // the reviewing user's machine. Local web and Desktop remain eligible.
   const canUseHostFileActions =
@@ -119,6 +121,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     (window as unknown as Record<string, unknown>).__GROVE_REMOTE__ !== true;
   const { isMobile } = useIsMobile();
   const [diffData, setDiffData] = useState<DiffStatsResult | null>(null);
+  const diffDataRef = useRef<DiffStatsResult | null>(null);
   const [commitsMeta, setCommitsMeta] = useState<{ total: number; list: number; truncated: boolean } | null>(null);
   const [taskPath, setTaskPath] = useState<string | null>(null);
   useEffect(() => {
@@ -622,7 +625,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     }
     if (!diffData) return [];
     const statFiles: DiffFile[] = diffData.files.map(e => ({
-      old_path: e.path,
+      old_path: e.old_path ?? e.path,
       new_path: e.path,
       change_type: (e.status === 'A' || e.status === 'U') ? 'added' : e.status === 'D' ? 'deleted' : e.status === 'R' ? 'renamed' : 'modified',
       hunks: [],
@@ -828,7 +831,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     loadingDiffsRef.current = new Set(loadingDiffsRef.current).add(filePath);
     let caught: unknown = null;
     try {
-      const result = await getSingleFileDiff(projectId, taskId, filePath, fromRef, toRef);
+      const result = await getSingleFileDiff(projectId, taskId, filePath, fromRef, toRef, diffDataRef.current?.files.find(f => f.path === filePath)?.old_path ?? undefined);
       setFileDiffCache(prev => new Map(prev).set(filePath, result));
     } catch (e: unknown) {
       caught = e;
@@ -988,7 +991,6 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   // leaving the diff view stuck on "Loading diff..." until the user manually clicks a file.
   useEffect(() => {
     if (!activeFilePath || viewMode !== 'diff') return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadFileDiff(activeFilePath, currentDiffRefs.fromRef, currentDiffRefs.toRef);
   }, [activeFilePath, viewMode, currentDiffRefs.fromRef, currentDiffRefs.toRef, loadFileDiff, diffCacheGen]);
 
@@ -1040,6 +1042,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     if (fetchGenRef.current !== gen) return; // stale — a newer fetch is running
     if (data) {
       setError(null);
+      diffDataRef.current = data;
       setDiffData(data);
       if (!keepSelection) {
         setSelectedFile(null);
@@ -1275,6 +1278,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     let cancelled = false;
 
     const load = async () => {
+      diffDataRef.current = null;
       setLoading(true);
       setError(null);
       clearFileDiffCache();
@@ -1412,6 +1416,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
           // in the diff range) are computed in sortedDiffFiles for "All Files"
           // mode only — adding them to diffData would leak them into "Changes"
           // mode and inflate the file count for the selected vN..latest range.
+          diffDataRef.current = data;
           setDiffData(data);
           if (filesData) {
             setAllFiles(filesData.files);
@@ -1479,7 +1484,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       Promise.all(batch.map(f => {
         if (fileDiffCacheRef.current.has(f.path) || loadingDiffsRef.current.has(f.path)) return Promise.resolve();
         loadingDiffsRef.current = new Set(loadingDiffsRef.current).add(f.path);
-        return getSingleFileDiff(projectId, taskId, f.path, fromOpt?.ref, toOpt?.ref)
+        return getSingleFileDiff(projectId, taskId, f.path, fromOpt?.ref, toOpt?.ref, f.old_path ?? undefined)
           .then(result => {
             setFileDiffCache(prev => new Map(prev).set(f.path, result));
           })
@@ -2049,7 +2054,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     >
       {/* Page Header with Mode Selector */}
       <div className="diff-page-header">
-        <div className="diff-page-title">Code Review</div>
+        {title ?? <div className="diff-page-title">Code Review</div>}
         <div className="diff-mode-selector">
           {isGitRepo !== false && (
             <button

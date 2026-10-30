@@ -65,6 +65,9 @@ enum ClientMessage {
         #[serde(flatten)]
         response: ElicitationResponseData,
     },
+    AskFormResolved {
+        id: String,
+    },
     /// Add a message to the pending queue
     QueueMessage {
         text: String,
@@ -1421,6 +1424,14 @@ async fn handle_acp_ws(
         }
     }
 
+    // Ask forms are transient too; opening an orange-dot session must restore
+    // the actual unanswered form even if no browser was attached when sent.
+    for event in handle.pending_ask_form_snapshots() {
+        if let Ok(json) = serde_json::to_string(&ServerMessage::from(event)) {
+            let _ = ws_sender.send(Message::Text(json.into())).await;
+        }
+    }
+
     // A reconnect may have missed Busy(false) while the browser was suspended.
     // Always send the current value so the client can clear stale working UI.
     if is_existing {
@@ -1598,6 +1609,9 @@ async fn handle_acp_ws(
                                         message: "No pending permission request".to_string(),
                                     });
                                 }
+                            }
+                            ClientMessage::AskFormResolved { id } => {
+                                handle_for_input.resolve_ask_form(&id);
                             }
                             ClientMessage::ElicitationResponse { id, response } => {
                                 match handle_for_input.respond_elicitation(&id, response) {
@@ -1895,6 +1909,9 @@ pub struct ChatSessionResponse {
     /// "acp" (default) or "terminal" — frontend routes WS / renders chat area
     /// accordingly. Snapshotted at chat creation and immutable.
     pub launch_mode: String,
+    /// Pinned to the top of its task's session list. Only `list_chats` and
+    /// `set_chat_pinned` fill this in; other responses report false.
+    pub pinned: bool,
 }
 
 #[derive(Serialize)]
@@ -1962,6 +1979,7 @@ impl ChatSessionResponse {
             created_at: chat.created_at.to_rfc3339(),
             history_path,
             launch_mode: chat.launch_mode.clone(),
+            pinned: false,
         }
     }
 }
@@ -2059,12 +2077,48 @@ pub async fn list_chats(
 
     let chats = tasks::load_chat_sessions(&project_key, &task_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?;
+    let pinned = tasks::load_pinned_chat_ids(&project_key, &task_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?;
 
-    Ok(Json(ChatListResponse {
-        chats: chats
-            .iter()
-            .map(|c| ChatSessionResponse::build(&project_key, &task_id, c))
-            .collect(),
+    // Pinned sessions first; the stable sort keeps recency order within each group.
+    let mut chats: Vec<ChatSessionResponse> = chats
+        .iter()
+        .map(|c| ChatSessionResponse {
+            pinned: pinned.contains(&c.id),
+            ..ChatSessionResponse::build(&project_key, &task_id, c)
+        })
+        .collect();
+    chats.sort_by_key(|chat| !chat.pinned);
+    Ok(Json(ChatListResponse { chats }))
+}
+
+#[derive(Deserialize)]
+pub struct SetChatPinnedRequest {
+    pub pinned: bool,
+}
+
+/// PUT /projects/{id}/tasks/{taskId}/chats/{chatId}/pin
+pub async fn set_chat_pinned(
+    Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
+    Json(req): Json<SetChatPinnedRequest>,
+) -> Result<Json<ChatSessionResponse>, AcpError> {
+    let (project_key, _, _) = resolve_project_key(&project_id)?;
+    require_chat_namespace(&project_key, &task_id)?;
+    let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
+        .ok_or_else(|| AcpError::NotFound("Active session not found".to_string()))?;
+    if !tasks::set_chat_session_pinned(&project_key, &task_id, &chat_id, req.pinned)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
+    {
+        return Err(AcpError::NotFound("Active session not found".to_string()));
+    }
+    crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
+        project_id: project_id.clone(),
+        task_id: task_id.clone(),
+    });
+    Ok(Json(ChatSessionResponse {
+        pinned: req.pinned,
+        ..ChatSessionResponse::build(&project_key, &task_id, &chat)
     }))
 }
 

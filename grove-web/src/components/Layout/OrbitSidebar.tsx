@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   Bell, Blocks, Brain, BarChart2, ChevronDown, Folder, FolderOpen,
   LayoutDashboard, Layers, MonitorSmartphone, MoreHorizontal, PanelLeftClose, PanelLeftOpen,
-  Plus, Repeat, Search, Settings, Sparkles, SquarePen, Pencil, Archive, Trash2,
+  Plus, Repeat, Search, Settings, Sparkles, SquarePen, Pencil, Archive, Trash2, ArrowUp, ArrowDown, Pin, PinOff,
 } from "lucide-react";
-import { listChats, renameTask, archiveTask, deleteTask, archiveChat, deleteChat, updateChatTitle } from "../../api";
+import { listChats, renameTask, archiveTask, deleteTask, archiveChat, deleteChat, updateChatTitle, setChatPinned } from "../../api";
 import type { ChatSessionResponse } from "../../api/tasks";
 import type { NodeStatus } from "../../api/walkieTalkie";
 import { useNotifications, useProject, useTheme } from "../../context";
 import { useRadioEvents } from "../../hooks";
+import { useIsMobile } from "../../hooks/useIsMobile";
+import { useTaskReorder } from "../../hooks/useTaskReorder";
+import { refreshRadioActivity } from "../../hooks/useRadioEvents";
 import { appIconAssetUrl } from "../../data/appIcons";
 import { DropdownMenu } from "../ui/DropdownMenu";
 import { DialogShell } from "../ui/DialogShell";
@@ -18,6 +21,9 @@ import { OrbitNotificationPopover } from "./OrbitNotificationPopover";
 import { OrbitProjectSelector } from "./OrbitProjectSelector";
 import { LogoBrand } from "./LogoBrand";
 import { useGlobalActiveChatId } from "../Tasks/TaskView/useActiveChatId";
+import { promoteSession } from "../Tasks/TaskView/sessionListState";
+import { ArchivedDialog, type ArchivedScope } from "../Archived/ArchivedDialog";
+import { sessionActivityReducer, type SessionActivityState } from "./orbitSessionActivity";
 import "./orbit-sidebar.css";
 
 interface OrbitSidebarProps {
@@ -64,7 +70,8 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
   const [expansionByProject, setExpansionByProject] = useState<Record<string, ExpansionState>>({});
   const [moreExpanded, setMoreExpanded] = useState(false);
   const [sessions, setSessions] = useState<Record<string, ChatSessionResponse[]>>({});
-  const [statuses, setStatuses] = useState<Record<string, NodeStatus>>({});
+  const sessionRefreshGeneration = useRef<Record<string, number>>({});
+  const [activity, dispatchActivity] = useReducer(sessionActivityReducer, {});
   const [selection, setSelection] = useState<Selection | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<Target | null>(null);
@@ -72,7 +79,15 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
   const [deleteTarget, setDeleteTarget] = useState<Target | null>(null);
   const [pendingArchive, setPendingArchive] = useState<PendingArchiveConfirm | null>(null);
   const [actionPending, setActionPending] = useState(false);
+  const [archivedScope, setArchivedScope] = useState<ArchivedScope | null>(null);
   const projectId = selectedProject?.id;
+  // Selection can outlive the visible chat panel (e.g. while reviewing code).
+  // Only the visible chat on the current page counts as having been read.
+  const viewedChatId = activeItem === "tasks" || activeItem === "work" ? activeChatId : null;
+  const viewed = projectId && viewedChatId ? { projectId, chatId: viewedChatId } : null;
+  useEffect(() => {
+    if (projectId && viewedChatId) dispatchActivity({ type: "viewed", viewed: { projectId, chatId: viewedChatId } });
+  }, [projectId, viewedChatId]);
   const expansion = projectId ? expansionByProject[projectId] ?? readExpansion(projectId) : defaultExpansion;
   const { sessions: sessionsExpanded, tasks: tasksExpanded, expandedTasks } = expansion;
   const updateExpansion = (next: ExpansionState) => {
@@ -99,12 +114,19 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
   const tasks = useMemo(() => selectedProject?.tasks.filter((task) => task.status !== "archived") ?? [], [selectedProject]);
   const taskIds = useMemo(() => ready ? ["_local", ...tasks.map((task) => task.id)] : [], [ready, tasks]);
   const taskKey = taskIds.join("\u0000");
+  const { isTouchDevice } = useIsMobile();
+  const reorder = useTaskReorder(projectId, tasks, refreshSelectedProject, setError);
 
   const refreshSessions = useCallback(async (pid: string, tid: string) => {
+    const key = `${pid}:${tid}`;
+    const generation = (sessionRefreshGeneration.current[key] ?? 0) + 1;
+    sessionRefreshGeneration.current[key] = generation;
     try {
       const chats = await listChats(pid, tid);
-      setSessions((previous) => ({ ...previous, [`${pid}:${tid}`]: chats }));
+      if (sessionRefreshGeneration.current[key] !== generation) return;
+      setSessions((previous) => ({ ...previous, [key]: chats }));
     } catch (err) {
+      if (sessionRefreshGeneration.current[key] !== generation) return;
       console.error("Failed to load Orbit sessions", err);
       setError("Could not load sessions. Try refreshing the project.");
     }
@@ -115,13 +137,40 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
       for (const tid of taskKey.split("\u0000").filter(Boolean)) void refreshSessions(projectId, tid);
     });
   }, [projectId, taskKey, refreshSessions]);
+  useEffect(() => {
+    const onActivity = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId: string; taskId: string; chatId: string }>).detail;
+      if (!detail || detail.projectId !== projectId) return;
+      const key = `${detail.projectId}:${detail.taskId}`;
+      sessionRefreshGeneration.current[key] = (sessionRefreshGeneration.current[key] ?? 0) + 1;
+      setSessions((previous) => previous[key] ? { ...previous, [key]: promoteSession(previous[key], detail.chatId) } : previous);
+    };
+    window.addEventListener("grove:session-local-activity", onActivity);
+    return () => window.removeEventListener("grove:session-local-activity", onActivity);
+  }, [projectId]);
   useRadioEvents({
+    onEvent: (event) => {
+      if (!event || typeof event !== "object" || !("type" in event)) return;
+      if (event.type === "chat_input_status" && "project_id" in event && typeof event.project_id === "string" && "task_id" in event && typeof event.task_id === "string" && "chat_id" in event && typeof event.chat_id === "string" && "waiting_for_input" in event && typeof event.waiting_for_input === "boolean") {
+        dispatchActivity({ type: "input", key: `${event.project_id}:${event.task_id}:${event.chat_id}`, projectId: event.project_id, chatId: event.chat_id, waiting: event.waiting_for_input });
+        return;
+      }
+      if (event.type !== "activity_snapshot" || !("chats" in event) || !Array.isArray(event.chats)) return;
+      const next: SessionActivityState = {};
+      for (const chat of event.chats) {
+        if (typeof chat.project_id === "string" && typeof chat.task_id === "string" && typeof chat.chat_id === "string" && ["connecting", "idle", "busy", "permission_required", "disconnected"].includes(chat.status)) {
+          next[`${chat.project_id}:${chat.task_id}:${chat.chat_id}`] = { projectId: chat.project_id, chatId: chat.chat_id, status: chat.status as NodeStatus, waitingForInput: chat.waiting_for_input === true, unreadCompletion: false };
+        }
+      }
+      dispatchActivity({ type: "snapshot", chats: next, viewed });
+    },
     onChatListChanged: (pid, tid) => { if (pid === projectId) void refreshSessions(pid, tid); },
     onConnected: () => { if (projectId) for (const tid of taskIds) void refreshSessions(projectId, tid); },
     onChatStatus: (pid, tid, cid, status) => {
-      if (pid === projectId) setStatuses((previous) => ({ ...previous, [`${pid}:${tid}:${cid}`]: status }));
+      dispatchActivity({ type: "status", key: `${pid}:${tid}:${cid}`, projectId: pid, chatId: cid, status, viewed });
     },
   });
+  useEffect(() => { if (projectId) refreshRadioActivity(); }, [projectId]);
 
   const openChat = (taskId: string, chatId: string) => {
     if (!projectId) return;
@@ -233,17 +282,35 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
   const renderNavRow = ({ id, label, icon: Icon }: (typeof navigation)[number]) => <button type="button" key={id} className={`orbit-row orbit-nav-row${activeItem === id ? " is-selected" : ""}`} onClick={() => onItemClick(id)}><Icon size={16} strokeWidth={1.6} /><span>{label}</span></button>;
   const drawer = variant === "drawer";
   const hasMacControls = typeof window !== "undefined" && ("__TAURI__" in window || "__TAURI_INTERNALS__" in window) && /Mac/i.test(navigator.platform);
+  const togglePinned = async (taskId: string, chat: ChatSessionResponse) => {
+    if (!projectId) return;
+    try {
+      await setChatPinned(projectId, taskId, chat.id, !chat.pinned);
+      await refreshSessions(projectId, taskId);
+      setError(null);
+    } catch (err) { showError((err as { message?: string })?.message || "Could not update the pin."); }
+  };
   const renderSessions = (taskId: string) => (sessions[`${projectId}:${taskId}`] ?? []).map((chat) => {
-    const status = statuses[`${projectId}:${taskId}:${chat.id}`];
+    const sessionActivity = activity[`${projectId}:${taskId}:${chat.id}`];
+    const status = sessionActivity?.status;
+    const waiting = status === "permission_required" || sessionActivity?.waitingForInput;
+    const isViewed = viewedChatId === chat.id;
+    const indicator = waiting ? (isViewed ? null : "waiting")
+      : status === "busy" || status === "connecting" ? status
+      : sessionActivity?.unreadCompletion && !isViewed ? "completed" : null;
+    const indicatorLabel = indicator === "waiting" ? "Waiting for your input" : indicator === "completed" ? "Completed — unread" : indicator;
     const isRunning = status === "busy" || status === "permission_required" || status === "connecting";
     const onlySession = (sessions[`${projectId}:${taskId}`] ?? []).length <= 1;
     const selected = (activeItem === "tasks" || activeItem === "work") && (activeChatId ? activeChatId === chat.id : selection?.projectId === projectId && selection?.taskId === taskId && selection?.chatId === chat.id);
     const target: Target = { kind: "session", projectId: projectId ?? "", taskId, chatId: chat.id, name: chat.title || "Untitled session" };
     return (
-      <div key={chat.id} className={`orbit-session-row${selected ? " is-selected" : ""}`}>
+      <div key={chat.id} className={`orbit-session-row${selected ? " is-selected" : ""}${chat.pinned ? " is-pinned" : ""}`}>
         <button type="button" title={chat.title} onClick={() => openChat(taskId, chat.id)} className={`orbit-row orbit-session${taskId === "_local" ? "" : " orbit-session-nested"}`}>
           <span className="orbit-truncate">{chat.title || "New Chat"}</span>
-          {status && status !== "idle" && status !== "disconnected" && <span className={`orbit-status${status === "permission_required" ? " is-waiting" : ""}`} title={status} aria-label={status} />}
+          {indicator && <span className={`orbit-status${indicator === "waiting" ? " is-waiting" : indicator === "completed" ? " is-completed" : ""}`} title={indicatorLabel ?? undefined} aria-label={indicatorLabel ?? undefined} />}
+        </button>
+        <button type="button" className="orbit-session-pin" title={chat.pinned ? "Unpin" : "Pin to top"} aria-label={chat.pinned ? `Unpin ${target.name}` : `Pin ${target.name} to top`} aria-pressed={!!chat.pinned} onClick={() => void togglePinned(taskId, chat)}>
+          <Pin size={14} strokeWidth={1.7} className="orbit-pin-icon" /><PinOff size={14} strokeWidth={1.7} className="orbit-unpin-icon" />
         </button>
         <div className="orbit-row-menu">
           <div className="orbit-session-fallback"><DropdownMenu portal compact appearance="orbit" placement="bottom" ariaLabel={`More actions for ${target.name}`} triggerClassName="orbit-more-button" items={[
@@ -285,36 +352,53 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
         </nav>
         <section className="orbit-session-area" aria-label="Sessions">
           {error && <p role="alert" className="orbit-error">{error}</p>}
+          <div className="orbit-section">
           <div className="orbit-task-section-heading orbit-sessions-heading">
             <button type="button" className="orbit-task-section-toggle" aria-expanded={sessionsExpanded} onClick={() => updateExpansion({ ...expansion, sessions: !sessionsExpanded })}>
               <span>Sessions</span><ChevronDown size={13} className={sessionsExpanded ? "" : "is-collapsed"} />
             </button>
+            <div className="orbit-section-actions">
+              <button type="button" className="orbit-section-add orbit-section-archive" title="Archived sessions" aria-label="Archived sessions" disabled={!projectId} onClick={() => setArchivedScope("sessions")}><Archive size={15} strokeWidth={1.7} /></button>
+            </div>
           </div>
           {sessionsExpanded && renderSessions("_local")}
+          </div>
+          <div className="orbit-section">
           <div className="orbit-task-section-heading">
             <button type="button" className="orbit-task-section-toggle" aria-expanded={tasksExpanded} onClick={() => updateExpansion({ ...expansion, tasks: !tasksExpanded })}>
               <span>Tasks</span><ChevronDown size={13} className={tasksExpanded ? "" : "is-collapsed"} />
             </button>
-            <button type="button" className="orbit-section-add" title="New task" aria-label="New task" disabled={!ready} onClick={() => onNavigate("tasks", { openNewTask: true })}><Plus size={17} strokeWidth={1.7} /></button>
+            <div className="orbit-section-actions">
+              <button type="button" className="orbit-section-add orbit-section-archive" title="Archived tasks" aria-label="Archived tasks" disabled={!projectId} onClick={() => setArchivedScope("tasks")}><Archive size={15} strokeWidth={1.7} /></button>
+              <button type="button" className="orbit-section-add" title="New task" aria-label="New task" disabled={!ready} onClick={() => onNavigate("tasks", { openNewTask: true })}><Plus size={17} strokeWidth={1.7} /></button>
+            </div>
           </div>
-          {tasksExpanded && tasks.map((task) => {
+          {tasksExpanded && reorder.orderedTasks.map((task, index, ordered) => {
             const expanded = expandedTasks.includes(task.id);
             const target: Target = { kind: "task", projectId: projectId ?? "", taskId: task.id, name: task.name };
-            return <div key={task.id} className="orbit-task">
-              <div className="orbit-task-row">
+            const drop = reorder.dropTarget?.taskId === task.id && reorder.draggingId !== task.id ? ` is-drop-${reorder.dropTarget.placement}` : "";
+            // Touch devices can't drag; they reorder from the row menu instead.
+            const moveItems = isTouchDevice ? [
+              { id: "move-up", label: "Move up", icon: ArrowUp, disabled: index === 0, onClick: () => reorder.moveBy(task.id, -1) },
+              { id: "move-down", label: "Move down", icon: ArrowDown, disabled: index === ordered.length - 1, onClick: () => reorder.moveBy(task.id, 1) },
+            ] : [];
+            return <div key={task.id} className={`orbit-task${reorder.draggingId === task.id ? " is-dragging" : ""}${drop}`} {...reorder.dropTargetProps(task.id)}>
+              <div className="orbit-task-row" {...reorder.dragSourceProps(task.id, !isTouchDevice && ordered.length > 1)}>
                 <button type="button" className="orbit-task-toggle" aria-expanded={expanded} onClick={() => updateExpansion({ ...expansion, expandedTasks: expanded ? expandedTasks.filter((id) => id !== task.id) : [...expandedTasks, task.id] })}>
                   {expanded ? <FolderOpen size={17} strokeWidth={1.7} /> : <Folder size={17} strokeWidth={1.7} />}<span className="orbit-truncate">{task.name}</span>
                 </button>
                 <div className="orbit-row-menu"><DropdownMenu portal compact appearance="orbit" placement="bottom" ariaLabel={`More actions for ${task.name}`} triggerClassName="orbit-more-button" items={[
                   { id: "rename", label: "Rename", icon: Pencil, onClick: () => beginRename(target) },
+                  ...moveItems,
                   { id: "archive", label: "Archive", icon: Archive, onClick: () => void archiveTarget(target) },
-                  { id: "delete", label: "Delete", icon: Trash2, variant: "danger", dividerBefore: true, onClick: () => setDeleteTarget(target) },
+                  { id: "delete", label: "Delete", icon: Trash2, variant: "danger" as const, dividerBefore: true, onClick: () => setDeleteTarget(target) },
                 ]} /></div>
                 <button type="button" className="orbit-task-new" aria-label={`New chat in ${task.name}`} title="New chat" onClick={() => { if (!expanded) updateExpansion({ ...expansion, expandedTasks: [...expandedTasks, task.id] }); newChat(task.id); }}><SquarePen size={15} /></button>
               </div>
               {expanded && renderSessions(task.id)}
             </div>;
           })}
+          </div>
         </section>
         <footer className="orbit-footer">
           <button type="button" className={`orbit-row orbit-nav-row${activeItem === "settings" ? " is-selected" : ""}`} onClick={() => onItemClick("settings")}><Settings size={16} strokeWidth={1.6} /><span>Settings</span></button>
@@ -330,6 +414,7 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
         </form>
       </DialogShell>}
       {deleteTarget && <ConfirmDialog isOpen title={`Delete ${deleteTarget.kind}`} message={deleteTarget.kind === "task" ? `Delete “${deleteTarget.name}” and its associated workspace? This cannot be undone.` : `Delete “${deleteTarget.name}” from Grove? This cannot be undone.`} confirmLabel="Delete" variant="danger" actionsDisabled={actionPending} onCancel={() => setDeleteTarget(null)} onConfirm={() => void confirmDelete()} />}
+      <ArchivedDialog isOpen={archivedScope !== null} initialScope={archivedScope ?? "all"} onClose={() => setArchivedScope(null)} onSessionRestored={(taskId) => { if (projectId) void refreshSessions(projectId, taskId); }} />
       {pendingArchive && <ConfirmDialog isOpen title="Archive task" message={pendingArchive.message} confirmLabel="Archive" variant="warning" actionsDisabled={actionPending} onCancel={() => setPendingArchive(null)} onConfirm={() => void confirmArchive()} />}
     </aside>
   );

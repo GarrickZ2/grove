@@ -21,6 +21,7 @@ import { useConfig, useProject } from '../../../context';
 import { useIsMobile } from '../../../hooks';
 import { apiClient } from '../../../api/client';
 import { listPlugins, type Plugin } from '../../../api/plugins';
+import { useLinkedReviewProjects } from '../../../hooks/useLinkedReviewProjects';
 import {
   OPEN_PLUGIN_PANEL_EVENT,
   PLUGINS_CHANGED_EVENT,
@@ -245,6 +246,8 @@ export const FlexLayoutContainer = forwardRef<
   const taskProject = projects.find((p) => p.id === projectId) ?? selectedProject;
   const isStudio = taskProject?.projectType === 'studio';
   const taskIsGitRepo = taskProject?.isGitRepo;
+  const linkedReviewProjects = useLinkedReviewProjects(projectId, task.id);
+  const hasLinkedReview = linkedReviewProjects.length > 0;
 
   const layoutStorageKey = `grove-flexlayout-${projectId}-${task.id}`;
 
@@ -827,7 +830,7 @@ export const FlexLayoutContainer = forwardRef<
   // Derived entirely from the shared panel catalog — adding a panel/plugin in
   // the registry makes it appear here automatically (no per-layout list).
   const addPanelItems = useCallback((): DropdownItem[] => {
-    const catalog = buildPanelCatalog(plugins, { isStudio, terminalAvailable });
+    const catalog = buildPanelCatalog(plugins, { isStudio, terminalAvailable, hasLinkedReview });
     let prevCategory: string | null = null;
     return catalog.map((d) => {
       const isPlugin = d.key.startsWith(PLUGIN_PANEL_PREFIX);
@@ -849,7 +852,7 @@ export const FlexLayoutContainer = forwardRef<
         },
       };
     });
-  }, [plugins, isStudio, terminalAvailable, addPanel, addPluginPanel]);
+  }, [plugins, isStudio, terminalAvailable, hasLinkedReview, addPanel, addPluginPanel]);
 
   // Custom TabSet rendering ([+] add panel + maximize button)
   const onRenderTabSet = useCallback((tabSetNode: TabSetNode | BorderNode, renderValues: ITabSetRenderValues) => {
@@ -934,9 +937,10 @@ export const FlexLayoutContainer = forwardRef<
         />
       ),
       plugins,
+      linkedReviewProjects,
     };
     return <div style={flexWrapStyle(key)}>{renderPanel(key, ctx)}</div>;
-  }, [projectId, task, model, isStudio, terminalAvailable, orbit, isActive, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, isChatBusy, handleChatBecameIdle, handleBusyStateChange, taskIsGitRepo, plugins]);
+  }, [projectId, task, model, isStudio, terminalAvailable, orbit, isActive, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, isChatBusy, handleChatBecameIdle, handleBusyStateChange, taskIsGitRepo, plugins, linkedReviewProjects]);
 
   // Track empty state
   const [isEmpty, setIsEmpty] = useState(() => getAllTabs().length === 0);
@@ -1021,7 +1025,7 @@ export const FlexLayoutContainer = forwardRef<
                   <Terminal size={13} /> Terminal
                 </button>
               )}
-              {!isStudio && (
+              {(!isStudio || hasLinkedReview) && (
                 <button onClick={() => addPanel('review')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
                   <Code size={13} /> Review
                 </button>

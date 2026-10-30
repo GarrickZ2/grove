@@ -9,6 +9,7 @@ pub mod adapter;
 mod adapter_terminal;
 mod compaction;
 mod idle;
+mod input_attention;
 pub(crate) use idle::ActivityGuard;
 mod plans;
 mod session_info;
@@ -141,6 +142,8 @@ pub struct AcpSessionHandle {
     /// ACP elicitations are presented one at a time. Requests that arrive
     /// concurrently wait on this lock before they are exposed to the UI.
     pending_elicitation: Mutex<Option<PendingElicitation>>,
+    /// Grove ask_form requests remain pending across busy -> idle.
+    pending_ask_forms: Mutex<Vec<(String, crate::agent_graph::ask_form::AskFormInput)>>,
     elicitation_lock: tokio::sync::Mutex<()>,
     /// URL elicitations remain visible after the user consents to open them,
     /// until the Agent sends `elicitation/complete`.
@@ -1444,10 +1447,6 @@ fn set_initial_title_from_prompt(handle: &AcpSessionHandle, text: &str) {
     else {
         return;
     };
-    let default_title = format!("New Chat {}", chat.created_at.format("%Y-%m-%d %H:%M"));
-    if chat.title != default_title {
-        return;
-    }
     let history =
         crate::storage::chat_history::load_history(&handle.project_key, &handle.task_id, chat_id);
     if history.iter().any(|event| match event {
@@ -1467,7 +1466,7 @@ fn set_initial_title_from_prompt(handle: &AcpSessionHandle, text: &str) {
         &handle.project_key,
         &handle.task_id,
         chat_id,
-        &default_title,
+        &chat.title,
         &title,
     )
     .unwrap_or(false)
@@ -5077,6 +5076,7 @@ pub async fn get_or_start_session(
                     pending_permission: Mutex::new(None),
                     permission_lock: tokio::sync::Mutex::new(()),
                     pending_elicitation: Mutex::new(None),
+                    pending_ask_forms: Mutex::default(),
                     elicitation_lock: tokio::sync::Mutex::new(()),
                     active_url_elicitations: Mutex::new(HashMap::new()),
                     project_key: config.project_key.clone(),
@@ -9052,6 +9052,8 @@ impl AcpSessionHandle {
             return;
         }
 
+        self.update_input_attention(&update);
+
         // Keep a concise operational record of child interactions. The actual
         // form schema/answers remain transient, and history cannot reopen an
         // already answered or expired form.
@@ -10801,6 +10803,7 @@ pub fn snapshot_active_chats() -> Vec<crate::radio::ChatSnapshot> {
             chat_title,
             agent,
             status: status.to_string(),
+            waiting_for_input: handle.has_pending_input(),
             permission,
             prompt,
             todo_completed,
@@ -10859,6 +10862,7 @@ pub fn new_handle_for_test(
         pending_permission: Mutex::new(None),
         permission_lock: tokio::sync::Mutex::new(()),
         pending_elicitation: Mutex::new(None),
+        pending_ask_forms: Mutex::default(),
         elicitation_lock: tokio::sync::Mutex::new(()),
         active_url_elicitations: Mutex::new(HashMap::new()),
         project_key: project_key.to_string(),
@@ -11779,6 +11783,58 @@ mod tests {
         fn drop(&mut self) {
             crate::storage::set_grove_dir_override(None);
         }
+    }
+
+    #[tokio::test]
+    async fn first_user_prompt_titles_session_once_regardless_of_existing_title() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _dir_guard = ReadinessGroveDirGuard;
+        let project = format!("title-test-{}", uuid::Uuid::new_v4());
+        let task = "task";
+        let chat = "chat";
+        crate::storage::tasks::add_chat_session(
+            &project,
+            task,
+            crate::storage::tasks::ChatSession {
+                id: chat.into(),
+                title: "A title set before the first message".into(),
+                agent: "test".into(),
+                acp_session_id: None,
+                created_at: Utc::now(),
+                duty: None,
+                launch_mode: "acp".into(),
+            },
+        )
+        .unwrap();
+        let (handle, _, _guard) = new_handle_for_test(&project, &project, task, chat);
+        set_initial_title_from_prompt(&handle, "First user request");
+        let title = || {
+            crate::storage::tasks::get_chat_session(&project, task, chat)
+                .unwrap()
+                .unwrap()
+                .title
+        };
+        assert_eq!(title(), "First user request");
+
+        crate::storage::chat_history::append_event(
+            &project,
+            task,
+            chat,
+            &AcpUpdate::UserMessage {
+                message_id: None,
+                text: "First user request".into(),
+                client_message_id: None,
+                attachments: vec![],
+                sender: None,
+                terminal: false,
+            },
+        );
+        crate::storage::tasks::update_chat_title(&project, task, chat, "Renamed afterwards")
+            .unwrap();
+        set_initial_title_from_prompt(&handle, "Another user request");
+        assert_eq!(title(), "Renamed afterwards");
     }
 
     #[tokio::test]

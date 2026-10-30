@@ -974,6 +974,7 @@ pub struct DiffStatEntry {
     pub path: String,
     pub additions: u32,
     pub deletions: u32,
+    #[allow(dead_code)]
     pub is_binary: bool,
 }
 
@@ -1097,62 +1098,6 @@ pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>
     }
 
     Ok(entries)
-}
-
-/// 获取两个 ref 之间的变更文件统计（不含 working tree）
-pub fn diff_stat_range(
-    worktree_path: &str,
-    from_ref: &str,
-    to_ref: &str,
-) -> Result<Vec<DiffStatEntry>> {
-    let range = format!("{}..{}", from_ref, to_ref);
-    let numstat = git_cmd(worktree_path, &["diff", "--numstat", &range])?;
-    let name_status = git_cmd(worktree_path, &["diff", "--name-status", &range])?;
-
-    let status_map: std::collections::HashMap<String, char> = name_status
-        .lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 2 {
-                Some((
-                    git_unquote(parts[1]),
-                    parts[0].chars().next().unwrap_or('M'),
-                ))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    Ok(numstat
-        .lines()
-        .filter(|l| !l.is_empty())
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 3 {
-                let path = git_unquote(parts[2]);
-                let is_binary = parts[0].trim() == "-";
-                let status = status_map.get(&path).copied().unwrap_or('M');
-                Some(DiffStatEntry {
-                    status,
-                    path,
-                    additions: if is_binary {
-                        0
-                    } else {
-                        parts[0].parse().unwrap_or(0)
-                    },
-                    deletions: if is_binary {
-                        0
-                    } else {
-                        parts[1].parse().unwrap_or(0)
-                    },
-                    is_binary,
-                })
-            } else {
-                None
-            }
-        })
-        .collect())
 }
 
 /// 获取未提交文件数量
@@ -1562,7 +1507,10 @@ mod tests {
             .iter()
             .any(|entry| entry.path == "committed.txt" && entry.additions == 1));
         assert_eq!(log_target_to_head(&path, &base, 100).unwrap().len(), 1);
-        let range = diff_stat_range(&path, &base, "HEAD").unwrap();
+        let range = ReviewComparison::new(&path, &base, Some("HEAD"))
+            .unwrap()
+            .entries()
+            .unwrap();
         assert_eq!(range.len(), 1);
         assert_eq!(range[0].path, "committed.txt");
     }
@@ -1587,4 +1535,174 @@ mod tests {
         commit_file(&path, "local-ahead.txt");
         assert_eq!(effective_review_base(&path, "main"), "main");
     }
+}
+
+/// An isolated index and object store representing the current working tree.
+/// Neither the real index nor the repository's object database is modified.
+pub(crate) struct ReviewComparison {
+    path: String,
+    base: String,
+    to: Option<String>,
+    snapshot: Option<tempfile::TempDir>,
+    objects: Option<String>,
+}
+
+impl ReviewComparison {
+    pub(crate) fn new(path: &str, base: &str, to: Option<&str>) -> Result<Self> {
+        let mut comparison = Self {
+            path: path.to_owned(),
+            base: base.to_owned(),
+            to: to.map(str::to_owned),
+            snapshot: None,
+            objects: None,
+        };
+        if to.is_none() {
+            let objects = git_cmd(
+                path,
+                &[
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-path",
+                    "objects",
+                ],
+            )?;
+            let dir = tempfile::tempdir().map_err(|e| GroveError::git(e.to_string()))?;
+            std::fs::create_dir(dir.path().join("objects"))
+                .map_err(|e| GroveError::git(e.to_string()))?;
+            comparison.snapshot = Some(dir);
+            comparison.objects = Some(objects);
+            comparison.run(&["read-tree", "HEAD"])?;
+            comparison.run(&["add", "-A", "--", "."])?;
+        }
+        Ok(comparison)
+    }
+
+    fn run(&self, args: &[&str]) -> Result<String> {
+        let mut command = Command::new("git");
+        command
+            .current_dir(&self.path)
+            .args(args)
+            .stdin(Stdio::null());
+        if let Some(dir) = &self.snapshot {
+            command
+                .env("GIT_INDEX_FILE", dir.path().join("index"))
+                .env("GIT_OBJECT_DIRECTORY", dir.path().join("objects"))
+                .env(
+                    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                    self.objects.as_deref().unwrap_or(""),
+                );
+        }
+        let output = command
+            .output()
+            .map_err(|e| GroveError::git(e.to_string()))?;
+        if !output.status.success() {
+            return Err(GroveError::git(format!(
+                "git {} failed: {}",
+                args.first().unwrap_or(&""),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        String::from_utf8(output.stdout).map_err(|e| GroveError::git(e.to_string()))
+    }
+
+    fn diff(&self, options: &[&str], paths: &[&str]) -> Result<String> {
+        let mut args = vec![
+            "--literal-pathspecs",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--find-renames",
+        ];
+        args.extend_from_slice(options);
+        if self.snapshot.is_some() {
+            args.push("--cached");
+        }
+        args.push(&self.base);
+        if let Some(to) = &self.to {
+            args.push(to);
+        }
+        if !paths.is_empty() {
+            args.push("--");
+            args.extend_from_slice(paths);
+        }
+        self.run(&args)
+    }
+
+    pub(crate) fn entries(&self) -> Result<Vec<ReviewDiffEntry>> {
+        let status = self.diff(&["--name-status", "-z"], &[])?;
+        let numbers = self.diff(&["--numstat", "-z"], &[])?;
+        let mut stats = std::collections::HashMap::new();
+        let mut fields = numbers.split_terminator('\0');
+        while let Some(record) = fields.next() {
+            let mut parts = record.splitn(3, '\t');
+            let (Some(a), Some(d), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
+                continue;
+            };
+            let path = if path.is_empty() {
+                let _old = fields.next();
+                fields.next().unwrap_or("")
+            } else {
+                path
+            };
+            stats.insert(
+                path.to_owned(),
+                (a.parse().unwrap_or(0), d.parse().unwrap_or(0), a == "-"),
+            );
+        }
+        let untracked: std::collections::HashSet<String> = if self.snapshot.is_some() {
+            git_cmd(
+                &self.path,
+                &["ls-files", "--others", "--exclude-standard", "-z"],
+            )?
+            .split_terminator('\0')
+            .map(str::to_owned)
+            .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
+        let mut fields = status.split_terminator('\0');
+        let mut entries = Vec::new();
+        while let Some(status) = fields.next() {
+            let Some(first) = fields.next() else { break };
+            let kind = status.chars().next().unwrap_or('M');
+            let (old_path, path) = if kind == 'R' || kind == 'C' {
+                (
+                    Some(first.to_owned()),
+                    fields.next().unwrap_or("").to_owned(),
+                )
+            } else {
+                (None, first.to_owned())
+            };
+            let (additions, deletions, is_binary) =
+                stats.get(&path).copied().unwrap_or((0, 0, false));
+            let kind = if kind == 'A' && untracked.contains(&path) {
+                'U'
+            } else {
+                kind
+            };
+            entries.push(ReviewDiffEntry {
+                path,
+                old_path,
+                status: kind,
+                additions,
+                deletions,
+                is_binary,
+            });
+        }
+        Ok(entries)
+    }
+
+    pub(crate) fn file_diff(&self, path: &str, old_path: &str) -> Result<String> {
+        self.diff(&["-U3"], &[old_path, path])
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ReviewDiffEntry {
+    pub path: String,
+    pub old_path: Option<String>,
+    pub status: char,
+    pub additions: u32,
+    pub deletions: u32,
+    pub is_binary: bool,
 }

@@ -347,21 +347,26 @@ pub fn get_single_file_diff(
     file_path: &str,
     from_ref: Option<&str>,
     to_ref: Option<&str>,
+    old_path: Option<&str>,
 ) -> Result<DiffFile> {
-    let is_untracked = git::git_cmd(
-        worktree_path,
-        &[
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "--",
-            file_path,
-        ],
-    )
-    .map(|out| !out.trim().is_empty())
-    .unwrap_or(false);
-
-    let raw = if is_untracked {
+    let is_untracked = to_ref.is_none()
+        && git::git_cmd(
+            worktree_path,
+            &[
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "--",
+                file_path,
+            ],
+        )
+        .map(|out| !out.trim().is_empty())
+        .unwrap_or(false);
+    let raw = if let Some(old) = old_path {
+        let comparison =
+            git::ReviewComparison::new(worktree_path, from_ref.unwrap_or("HEAD"), to_ref)?;
+        comparison.file_diff(file_path, old)?
+    } else if is_untracked {
         let null_device = if cfg!(windows) { "NUL" } else { "/dev/null" };
         git::git_cmd_allow_exit1(
             worktree_path,

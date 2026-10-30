@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useIsPresent } from "framer-motion";
 import { Plus, GitBranch } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
@@ -18,6 +18,7 @@ import {
   useTaskOperations,
   buildCommands,
   useChatDeepLink,
+  useTaskReorder,
 } from "../../hooks";
 import { useCommand, useDefineCommand, useKeyboardScope, useHelpKeyDisplay, contextKeyService, useVoiceControlContext } from "../../keyboard";
 import {
@@ -61,6 +62,13 @@ interface TasksPageProps {
    *  can drop the `workspace` keyboard scope while the user is on
    *  another page. Defaults to true for backwards compatibility. */
   pageVisible?: boolean;
+}
+
+/** A TaskView fading out after a task switch is no longer active, so it hands
+ *  the shared Orbit toolbar slot to the incoming one instead of stacking. */
+function PresentTaskView({ isActive, ...props }: React.ComponentProps<typeof TaskView>) {
+  const isPresent = useIsPresent();
+  return <TaskView {...props} isActive={isActive && isPresent} />;
 }
 
 export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initialTaskFilter, initialShowDetail, restoringNavigation = false, onNavigationConsumed, onNavByIndex, initialOpenNewTask, exitWorkspaceSignal, pageVisible = true }: TasksPageProps) {
@@ -177,10 +185,14 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
   // Get tasks for current project (combine active and archived).
   // Backend already excludes Local Task from the tasks array; Local Task has
   // its own dedicated WorkPage route.
-  const activeTasks = (selectedProject?.tasks || []).filter(
-    (t) => t.status !== "archived"
+  const activeTasks = useMemo(
+    () => (selectedProject?.tasks || []).filter((t) => t.status !== "archived"),
+    [selectedProject],
   );
-  const tasks = filter === "archived" ? archivedTasks : activeTasks;
+  const reorder = useTaskReorder(selectedProject?.id, activeTasks, refreshSelectedProject, pageHandlers.showMessage);
+  const tasks = filter === "archived" ? archivedTasks : reorder.orderedTasks;
+  // Manual order applies to the whole active list; a filtered view would make drop positions ambiguous.
+  const canReorder = filter === "active" && !pageState.searchQuery;
 
   // Selecting a task explicitly also opens its detail in the mobile stack.
   // Share this between list clicks and navigation from other pages.
@@ -1000,6 +1012,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
                   onContextMenuTask={pageHandlers.handleContextMenu}
                   onFilterChange={(f) => { setFilter(f); pageHandlers.setSelectedTask(null); pageHandlers.setInWorkspace(false); }}
                   onSearchChange={pageHandlers.setSearchQuery}
+                  reorder={canReorder ? reorder : undefined}
                   fullWidth
                 />
               </motion.div>
@@ -1031,6 +1044,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
                   onContextMenuTask={pageHandlers.handleContextMenu}
                   onFilterChange={(f) => { setFilter(f); pageHandlers.setSelectedTask(null); pageHandlers.setInWorkspace(false); }}
                   onSearchChange={pageHandlers.setSearchQuery}
+                  reorder={canReorder ? reorder : undefined}
                 />
               </div>
 
@@ -1106,7 +1120,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
                   transition={{ duration: 0.35, ease: [0.25, 1, 0.5, 1] }}
                   className="absolute inset-0 flex gap-1"
                 >
-                  <TaskView
+                  <PresentTaskView
                     ref={taskViewRef}
                     isActive={pageVisible}
                     projectId={selectedProject.id}

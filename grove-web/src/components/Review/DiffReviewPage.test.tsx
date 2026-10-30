@@ -1,11 +1,11 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getDiffStats } from '../../api/review';
+import { getDiffStats, getSingleFileDiff } from '../../api/review';
 import { getCommits, getReviewComments, getTask, getTaskFiles } from '../../api/tasks';
 import { DiffReviewPage } from './DiffReviewPage';
 
-vi.mock('../../api/review', () => ({ getDiffStats: vi.fn() }));
+vi.mock('../../api/review', () => ({ getDiffStats: vi.fn(), getSingleFileDiff: vi.fn() }));
 vi.mock('../../api/tasks', () => ({
   getCommits: vi.fn(), getReviewComments: vi.fn(), getTask: vi.fn(), getTaskFiles: vi.fn(),
 }));
@@ -51,6 +51,30 @@ describe('Review diff failures', () => {
   async function render() {
     await act(async () => root.render(<DiffReviewPage projectId="project" taskId="task" />));
   }
+
+  it('loads rename results without repeatedly reloading the review', async () => {
+    let requests = 0;
+    vi.mocked(getDiffStats).mockImplementation(async () => {
+      requests += 1;
+      if (requests > 5) throw new Error('Repeated review reload');
+      return {
+        files: [{ path: 'README123.md', old_path: 'README.md', status: 'R', additions: 0, deletions: 0, is_binary: false }],
+        total_additions: 0, total_deletions: 0,
+      };
+    });
+    vi.mocked(getSingleFileDiff).mockResolvedValue({
+      old_path: 'README.md', new_path: 'README123.md', change_type: 'renamed',
+      hunks: [], is_binary: false, additions: 0, deletions: 0,
+    });
+
+    await render();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+    expect(requests).toBeLessThanOrEqual(2);
+    expect(vi.mocked(getCommits).mock.calls.length).toBeLessThanOrEqual(2);
+    expect(getSingleFileDiff).toHaveBeenCalledWith('project', 'task', 'README123.md', undefined, undefined, 'README.md');
+    expect(container.textContent).not.toContain('Repeated review reload');
+    expect(container.textContent).not.toContain('Loading...');
+  });
 
   it('shows the API error message and recovers when Retry succeeds', async () => {
     const message = "Failed to load diff: git diff failed: unknown revision 'main'";

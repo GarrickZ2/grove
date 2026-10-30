@@ -17,6 +17,10 @@ pub struct LinkedProjectItem {
     pub name: String,
     pub exists: bool,
     pub project_type: Option<String>,
+    pub is_git_repo: bool,
+    /// Task whose Code Review represents this project in an aggregated
+    /// Review panel. Only set for existing Repo projects (their Local Task).
+    pub review_task_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -50,11 +54,18 @@ fn resolve_items(
                 .find(|project| workspace::project_hash(&project.path) == id)
                 .map(|project| {
                     let directory = workspace::project_directory(project);
+                    let exists = directory.is_dir();
+                    let review_task_id = (exists
+                        && project.project_type == workspace::ProjectType::Repo
+                        && crate::model::loader::sync_local_task(&project.path))
+                    .then(|| tasks::LOCAL_TASK_ID.to_string());
                     LinkedProjectItem {
                         id: id.clone(),
                         name: project.name.clone(),
-                        exists: directory.is_dir(),
+                        exists,
                         project_type: Some(project.project_type.as_str().to_string()),
+                        is_git_repo: project.is_git_repo,
+                        review_task_id,
                     }
                 })
                 .unwrap_or_else(|| LinkedProjectItem {
@@ -62,6 +73,8 @@ fn resolve_items(
                     name: "Unavailable project".to_string(),
                     exists: false,
                     project_type: None,
+                    is_git_repo: false,
+                    review_task_id: None,
                 })
         })
         .collect();

@@ -55,6 +55,7 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 dirs = "5"
 uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 rpassword = "7"
@@ -162,7 +163,6 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32
 tauri-build = { version = "2", features = [], optional = true }
 
 [dev-dependencies]
-tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 # reqwest 已在 [dependencies] 声明（runtime 用），dev-dependencies 不再重复
 

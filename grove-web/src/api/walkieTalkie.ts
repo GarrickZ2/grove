@@ -35,6 +35,7 @@ export type NodeStatus =
   | "disconnected";
 
 export type RadioEvent =
+  | { type: "chat_input_status"; project_id: string; task_id: string; chat_id: string; waiting_for_input: boolean }
   | { type: "focus_task"; project_id: string; task_id: string; target?: TargetMode }
   | { type: "focus_target"; project_id: string; task_id: string; target: TargetMode }
   | { type: "terminal_input"; project_id: string; task_id: string; text: string }

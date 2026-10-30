@@ -29,6 +29,7 @@ import type { ArtifactPreviewRequest } from "../TaskInfoPanel/tabs";
 import { SketchPage } from "../../Studio/SketchPage";
 import { PluginFrame } from "../../Plugins/PluginFrame";
 import { commandRegistry, userKeymapStore, effectiveBindings, formatKeyDisplay } from "../../../keyboard";
+import type { LinkedReviewProject } from "../../../hooks/useLinkedReviewProjects";
 
 /** The real keybinding display for a panel's `panel.<key>.open` command,
  *  resolved from the live keymap (static catalog + runtime plugin commands +
@@ -74,6 +75,16 @@ export interface PanelRenderCtx {
   renderTerminal?: () => ReactNode;
   /** Installed plugins (for resolving `plugin:<id>` keys). */
   plugins?: Plugin[];
+  /** Linked Projects whose Code Review the Review panel can switch to. */
+  linkedReviewProjects?: LinkedReviewProject[];
+}
+
+/** What decides whether a panel applies to the current task. */
+export interface PanelAvailabilityCtx {
+  isStudio: boolean;
+  terminalAvailable: boolean;
+  /** The task links at least one Project with a reviewable Code Review. */
+  hasLinkedReview?: boolean;
 }
 
 /** How FlexLayout wraps the panel's content inside its tab: `fill` (flex,
@@ -89,7 +100,7 @@ export interface PanelDescriptor {
   color: string;
   category: PanelCategory;
   /** Whether this panel applies to the current task/project. */
-  available: (ctx: { isStudio: boolean; terminalAvailable: boolean }) => boolean;
+  available: (ctx: PanelAvailabilityCtx) => boolean;
   render: (ctx: PanelRenderCtx) => ReactNode;
 }
 
@@ -149,11 +160,14 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     icon: Code,
     color: "var(--color-highlight)",
     category: "aux",
-    available: (c) => !c.isStudio,
+    // Studio tasks have no Review of their own, but can review linked Projects.
+    available: (c) => !c.isStudio || !!c.hasLinkedReview,
     render: (ctx) => (
       <TaskCodeReview
         projectId={ctx.projectId}
         taskId={ctx.task.id}
+        hasOwnReview={!ctx.isStudio}
+        linkedProjects={ctx.linkedReviewProjects}
         navigateToFile={ctx.fileNavRequest ?? null}
         hideHeader
         fullscreen
@@ -297,7 +311,7 @@ function pluginDescriptor(plugin: Plugin): PanelDescriptor {
  *  filtered to those available for this project type. */
 export function buildPanelCatalog(
   plugins: Plugin[] | undefined,
-  filter: { isStudio: boolean; terminalAvailable: boolean },
+  filter: PanelAvailabilityCtx,
 ): PanelDescriptor[] {
   const pluginPanels = (plugins ?? [])
     .filter((p) => p.contributes?.panel)

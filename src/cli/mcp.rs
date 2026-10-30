@@ -429,6 +429,9 @@ impl ServerHandler for GroveMcpServer {
 pub struct SingleReply {
     /// The comment ID to reply to
     pub comment_id: u32,
+    /// The `project_id` of the review group this comment belongs to (from grove_read_review).
+    /// Omit for comments on the current task's own review.
+    pub project_id: Option<String>,
     /// Your reply message
     pub message: String,
     /// Set to true to mark the comment as resolved. Only the original comment creator can resolve.
@@ -470,6 +473,9 @@ pub struct CommentItem {
     pub end_line: Option<u32>,
     /// Comment content
     pub content: String,
+    /// The `project_id` of a linked project's review group (from grove_read_review). When set,
+    /// file_path is relative to that project's root. Omit to comment on the current task.
+    pub project_id: Option<String>,
 }
 
 /// Add comment parameters
@@ -919,7 +925,13 @@ struct ReviewCommentEntry {
 }
 
 #[derive(Debug, Serialize)]
-struct ReadReviewResult {
+struct ReviewGroupEntry {
+    project_id: String,
+    project_name: String,
+    /// "current" for this task's own review, "linked" for a linked project
+    scope: &'static str,
+    /// Root directory that file_path values in this group are relative to
+    path: String,
     open_count: usize,
     resolved_count: usize,
     outdated_count: usize,
@@ -927,7 +939,14 @@ struct ReadReviewResult {
 }
 
 #[derive(Debug, Serialize)]
+struct ReadReviewResult {
+    reviews: Vec<ReviewGroupEntry>,
+}
+
+#[derive(Debug, Serialize)]
 struct CreatedCommentEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_id: Option<String>,
     comment_id: u32,
     #[serde(rename = "type")]
     comment_type: String,
@@ -943,6 +962,8 @@ struct AddCommentResult {
 
 #[derive(Debug, Serialize)]
 struct ReplyResultEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_id: Option<String>,
     comment_id: u32,
     success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1465,7 +1486,7 @@ impl GroveMcpServer {
     /// Read review comments for the current task
     #[tool(
         name = "read_review",
-        description = "Read code review comments for the current Grove task. Returns comments with IDs, locations, content, and status (open/resolved/outdated). Use grove_reply_review to respond to comments."
+        description = "Read code review comments for the current Grove task and its linked projects. Returns review groups, one per project, each with a project_id, its root path, and comments with IDs, locations (relative to that path), content, and status (open/resolved/outdated). Use grove_reply_review to respond to comments; pass the group's project_id for comments in linked projects."
     )]
     async fn grove_read_review(
         &self,
@@ -1476,93 +1497,41 @@ impl GroveMcpServer {
 
         let project_key = workspace::project_hash(&project_path);
 
-        match comments::load_comments(&project_key, &task_id) {
-            Ok(data) if data.is_empty() => Ok(CallToolResult::success(vec![Content::text(
-                "No code review comments yet.",
-            )])),
-            Ok(mut data) => {
-                // Apply filters if provided
-                if let Some(ref query) = params.0.file_search {
-                    let query_lower = query.to_lowercase();
-                    data.comments.retain(|c| {
-                        if let Some(ref path) = c.file_path {
-                            path.to_lowercase().contains(&query_lower)
-                        } else {
-                            false
-                        }
-                    });
-                }
+        let current = current_review_scope(&project_key, &task_id);
+        let linked = linked_review_scopes(&project_key, &task_id);
+        // A Studio task has no Review surface of its own; only list it when
+        // something was written there anyway.
+        let include_current = !is_studio_project(&project_key);
 
-                if let Some(id) = params.0.comment_id {
-                    data.comments.retain(|c| c.id == id);
-                }
-
-                // 动态检测 outdated
-                let worktree = env::var("GROVE_WORKTREE").unwrap_or_default();
-                let target = env::var("GROVE_TARGET").unwrap_or_default();
-                if !worktree.is_empty() && !target.is_empty() {
-                    comments::apply_outdated_detection(&mut data, |file_path, side| {
-                        if side == "DELETE" {
-                            git::show_file(&worktree, &target, file_path).ok()
-                        } else {
-                            git::read_file(&worktree, file_path).ok()
-                        }
-                    });
-                }
-
-                let (open, resolved, outdated) = data.count_by_status();
-                let result = ReadReviewResult {
-                    open_count: open,
-                    resolved_count: resolved,
-                    outdated_count: outdated,
-                    comments: data
-                        .comments
-                        .iter()
-                        .filter(|c| c.status != comments::CommentStatus::Resolved)
-                        .map(|c| ReviewCommentEntry {
-                            comment_id: c.id,
-                            comment_type: match c.comment_type {
-                                comments::CommentType::Inline => "inline".to_string(),
-                                comments::CommentType::File => "file".to_string(),
-                                comments::CommentType::Project => "project".to_string(),
-                            },
-                            status: match c.status {
-                                comments::CommentStatus::Open => "open".to_string(),
-                                comments::CommentStatus::Resolved => "resolved".to_string(),
-                                comments::CommentStatus::Outdated => "outdated".to_string(),
-                            },
-                            file_path: c.file_path.clone(),
-                            side: c.side.clone(),
-                            start_line: c.start_line,
-                            end_line: c.end_line,
-                            content: c.content.clone(),
-                            agent: c.agent.clone(),
-                            model: c.model.clone(),
-                            role: c.role.clone(),
-                            replies: c
-                                .replies
-                                .iter()
-                                .map(|r| ReviewReplyEntry {
-                                    reply_id: r.id,
-                                    content: r.content.clone(),
-                                    agent: r.agent.clone(),
-                                    model: r.model.clone(),
-                                    role: r.role.clone(),
-                                })
-                                .collect(),
-                        })
-                        .collect(),
-                };
-
-                let json = serde_json::to_string_pretty(&result)
-                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-                Ok(CallToolResult::success(vec![Content::text(json)]))
+        let mut groups = Vec::new();
+        let mut has_any_comment = false;
+        for scope in std::iter::once(&current).chain(linked.iter()) {
+            let data =
+                comments::load_comments(&scope.project_key, &scope.task_id).map_err(|e| {
+                    McpError::internal_error(
+                        format!("Failed to read comments for {}: {}", scope.project_name, e),
+                        None,
+                    )
+                })?;
+            if scope.is_current && !include_current && data.is_empty() {
+                continue;
             }
-            Err(e) => Err(McpError::internal_error(
-                format!("Failed to read comments: {}", e),
-                None,
-            )),
+            has_any_comment |= !data.is_empty();
+            groups.push(build_review_group(scope, data, &params.0));
         }
+
+        // Linked groups are listed even when empty so the agent learns their
+        // project_id values for grove_add_comment.
+        if linked.is_empty() && !has_any_comment {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "No code review comments yet.",
+            )]));
+        }
+
+        let result = ReadReviewResult { reviews: groups };
+        let json = serde_json::to_string_pretty(&result)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
     /// Reply to review comments (supports batch)
@@ -1594,9 +1563,25 @@ impl GroveMcpServer {
         let mut reply_results: Vec<ReplyResultEntry> = Vec::new();
 
         for reply in &params.0.replies {
+            let scope =
+                match resolve_review_scope(&project_key, &task_id, reply.project_id.as_deref()) {
+                    Ok(scope) => scope,
+                    Err(e) => {
+                        reply_results.push(ReplyResultEntry {
+                            project_id: reply.project_id.clone(),
+                            comment_id: reply.comment_id,
+                            success: false,
+                            error: Some(e),
+                            resolved: None,
+                            resolve_error: None,
+                        });
+                        continue;
+                    }
+                };
+            let (project_key, task_id) = (scope.project_key.as_str(), scope.task_id.as_str());
             match comments::reply_comment(
-                &project_key,
-                &task_id,
+                project_key,
+                task_id,
                 reply.comment_id,
                 &reply.message,
                 &agent,
@@ -1607,13 +1592,13 @@ impl GroveMcpServer {
                     // Handle resolve if requested
                     let (resolved, resolve_error) = if reply.resolve == Some(true) {
                         // Load comment to check creator permission
-                        match comments::load_comments(&project_key, &task_id) {
+                        match comments::load_comments(project_key, task_id) {
                             Ok(data) => {
                                 match data.comments.iter().find(|c| c.id == reply.comment_id) {
                                     Some(comment) if comment.agent == agent && comment.role == role => {
                                         match comments::update_comment_status(
-                                            &project_key,
-                                            &task_id,
+                                            project_key,
+                                            task_id,
                                             reply.comment_id,
                                             comments::CommentStatus::Resolved,
                                         ) {
@@ -1638,6 +1623,7 @@ impl GroveMcpServer {
                     };
 
                     reply_results.push(ReplyResultEntry {
+                        project_id: scope.result_project_id(),
                         comment_id: reply.comment_id,
                         success: true,
                         error: None,
@@ -1647,6 +1633,7 @@ impl GroveMcpServer {
                 }
                 Ok(false) => {
                     reply_results.push(ReplyResultEntry {
+                        project_id: scope.result_project_id(),
                         comment_id: reply.comment_id,
                         success: false,
                         error: Some("comment not found".to_string()),
@@ -1656,6 +1643,7 @@ impl GroveMcpServer {
                 }
                 Err(e) => {
                     reply_results.push(ReplyResultEntry {
+                        project_id: scope.result_project_id(),
                         comment_id: reply.comment_id,
                         success: false,
                         error: Some(e.to_string()),
@@ -1685,7 +1673,7 @@ impl GroveMcpServer {
     /// project (overall). Use for code review, questions, improvements, or visualizing plans.
     #[tool(
         name = "add_comment",
-        description = "Create review comments. Three levels: 'inline' (specific lines), 'file' (entire file), 'project' (overall feedback). Use for code review, raising questions, suggesting improvements, or visualizing implementation plans by marking key points. Pass array with one item to create single comment, multiple items for batch."
+        description = "Create review comments. Three levels: 'inline' (specific lines), 'file' (entire file), 'project' (overall feedback). Use for code review, raising questions, suggesting improvements, or visualizing implementation plans by marking key points. Pass array with one item to create single comment, multiple items for batch. To comment on a linked project, set the item's project_id (listed by grove_read_review) and give file_path relative to that project's root."
     )]
     async fn grove_add_comment(
         &self,
@@ -1696,7 +1684,7 @@ impl GroveMcpServer {
 
         let project_key = workspace::project_hash(&project_path);
         validate_task_exists(&project_key, &task_id)?;
-        let worktree = env::var("GROVE_WORKTREE").unwrap_or_default();
+        let is_studio = is_studio_project(&project_key);
 
         // Resolve agent/model/role (ACP auto-detect or params fallback)
         let (agent, model, role) =
@@ -1707,6 +1695,33 @@ impl GroveMcpServer {
 
         // Process each comment
         for (idx, item) in params.0.comments.iter().enumerate() {
+            let scope = match resolve_review_scope(
+                &project_key,
+                &task_id,
+                item.project_id.as_deref(),
+            ) {
+                // A Studio task has no Review panel of its own: a comment
+                // written there would be invisible, so require a target.
+                Ok(scope) if scope.is_current && is_studio => {
+                    let linked = linked_review_scopes(&project_key, &task_id);
+                    errors.push(format!(
+                        "Comment #{}: this Studio task has no Code Review of its own; set project_id to a linked project. {}",
+                        idx + 1,
+                        describe_linked_scopes(&linked)
+                    ));
+                    continue;
+                }
+                Ok(scope) => scope,
+                Err(e) => {
+                    errors.push(format!("Comment #{}: {}", idx + 1, e));
+                    continue;
+                }
+            };
+            let (project_key, task_id, worktree) = (
+                scope.project_key.as_str(),
+                scope.task_id.as_str(),
+                scope.worktree.as_str(),
+            );
             // Parse comment type
             let comment_type = match item.comment_type.as_deref() {
                 Some("file") => comments::CommentType::File,
@@ -1723,7 +1738,7 @@ impl GroveMcpServer {
 
                             // Calculate anchor text
                             let anchor = if !worktree.is_empty() {
-                                git::read_file(&worktree, file_path)
+                                git::read_file(worktree, file_path)
                                     .ok()
                                     .and_then(|c| comments::extract_lines(&c, start, end))
                             } else {
@@ -1731,8 +1746,8 @@ impl GroveMcpServer {
                             };
 
                             comments::add_comment(
-                                &project_key,
-                                &task_id,
+                                project_key,
+                                task_id,
                                 comment_type,
                                 Some(file_path.clone()),
                                 Some("ADD".to_string()),
@@ -1752,8 +1767,8 @@ impl GroveMcpServer {
                 }
                 comments::CommentType::File => match item.file_path.as_ref() {
                     Some(file_path) => comments::add_comment(
-                        &project_key,
-                        &task_id,
+                        project_key,
+                        task_id,
                         comment_type,
                         Some(file_path.clone()),
                         None,
@@ -1769,8 +1784,8 @@ impl GroveMcpServer {
                     None => Err("file_path required for file comments".to_string()),
                 },
                 comments::CommentType::Project => comments::add_comment(
-                    &project_key,
-                    &task_id,
+                    project_key,
+                    task_id,
                     comment_type,
                     None,
                     None,
@@ -1805,6 +1820,7 @@ impl GroveMcpServer {
                         comments::CommentType::Project => "Project-level".to_string(),
                     };
                     created.push(CreatedCommentEntry {
+                        project_id: scope.result_project_id(),
                         comment_id: comment.id,
                         comment_type: type_str.to_string(),
                         location,
@@ -3375,6 +3391,204 @@ fn get_task_context() -> Option<(String, String)> {
     Some((task_id, project_path))
 }
 
+/// Filter one scope's comments, refresh outdated status, and shape the
+/// read_review group (resolved comments are counted but not listed).
+fn build_review_group(
+    scope: &ReviewScope,
+    mut data: comments::CommentsData,
+    params: &ReadReviewParams,
+) -> ReviewGroupEntry {
+    if let Some(ref query) = params.file_search {
+        let query_lower = query.to_lowercase();
+        data.comments.retain(|c| {
+            c.file_path
+                .as_ref()
+                .is_some_and(|path| path.to_lowercase().contains(&query_lower))
+        });
+    }
+
+    if let Some(id) = params.comment_id {
+        data.comments.retain(|c| c.id == id);
+    }
+
+    // 动态检测 outdated
+    if !scope.worktree.is_empty() && !scope.target.is_empty() {
+        comments::apply_outdated_detection(&mut data, |file_path, side| {
+            if side == "DELETE" {
+                git::show_file(&scope.worktree, &scope.target, file_path).ok()
+            } else {
+                git::read_file(&scope.worktree, file_path).ok()
+            }
+        });
+    }
+
+    let (open, resolved, outdated) = data.count_by_status();
+    ReviewGroupEntry {
+        project_id: scope.project_key.clone(),
+        project_name: scope.project_name.clone(),
+        scope: if scope.is_current {
+            "current"
+        } else {
+            "linked"
+        },
+        path: scope.worktree.clone(),
+        open_count: open,
+        resolved_count: resolved,
+        outdated_count: outdated,
+        comments: data
+            .comments
+            .iter()
+            .filter(|c| c.status != comments::CommentStatus::Resolved)
+            .map(|c| ReviewCommentEntry {
+                comment_id: c.id,
+                comment_type: match c.comment_type {
+                    comments::CommentType::Inline => "inline".to_string(),
+                    comments::CommentType::File => "file".to_string(),
+                    comments::CommentType::Project => "project".to_string(),
+                },
+                status: match c.status {
+                    comments::CommentStatus::Open => "open".to_string(),
+                    comments::CommentStatus::Resolved => "resolved".to_string(),
+                    comments::CommentStatus::Outdated => "outdated".to_string(),
+                },
+                file_path: c.file_path.clone(),
+                side: c.side.clone(),
+                start_line: c.start_line,
+                end_line: c.end_line,
+                content: c.content.clone(),
+                agent: c.agent.clone(),
+                model: c.model.clone(),
+                role: c.role.clone(),
+                replies: c
+                    .replies
+                    .iter()
+                    .map(|r| ReviewReplyEntry {
+                        reply_id: r.id,
+                        content: r.content.clone(),
+                        agent: r.agent.clone(),
+                        model: r.model.clone(),
+                        role: r.role.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+/// One Code Review an MCP review tool can read or write: the current task's
+/// own review, or a linked Repo project's Local Task review (the same review
+/// the user sees on that project's own page).
+struct ReviewScope {
+    project_key: String,
+    project_name: String,
+    task_id: String,
+    worktree: String,
+    target: String,
+    is_current: bool,
+}
+
+impl ReviewScope {
+    /// project_id echoed in tool results; None for the current task so
+    /// single-project output stays unchanged.
+    fn result_project_id(&self) -> Option<String> {
+        (!self.is_current).then(|| self.project_key.clone())
+    }
+}
+
+fn current_review_scope(project_key: &str, task_id: &str) -> ReviewScope {
+    let project_name = workspace::load_project_by_hash(project_key)
+        .ok()
+        .flatten()
+        .map(|p| p.name)
+        .or_else(|| env::var("GROVE_PROJECT_NAME").ok())
+        .unwrap_or_default();
+    ReviewScope {
+        project_key: project_key.to_string(),
+        project_name,
+        task_id: task_id.to_string(),
+        worktree: env::var("GROVE_WORKTREE").unwrap_or_default(),
+        target: env::var("GROVE_TARGET").unwrap_or_default(),
+        is_current: true,
+    }
+}
+
+/// Reviews of the Repo projects linked to the current task, in link order.
+fn linked_review_scopes(project_key: &str, task_id: &str) -> Vec<ReviewScope> {
+    let Ok(ids) = tasks::load_linked_project_ids(project_key, task_id) else {
+        return Vec::new();
+    };
+    let Ok(registered) = workspace::load_projects() else {
+        return Vec::new();
+    };
+    ids.into_iter()
+        .filter_map(|id| {
+            let project = registered
+                .iter()
+                .find(|p| workspace::project_hash(&p.path) == id)?;
+            if project.project_type != workspace::ProjectType::Repo
+                || !workspace::project_directory(project).is_dir()
+                || !crate::model::loader::sync_local_task(&project.path)
+            {
+                return None;
+            }
+            let local = tasks::get_task(&id, tasks::LOCAL_TASK_ID).ok().flatten()?;
+            Some(ReviewScope {
+                project_key: id,
+                project_name: project.name.clone(),
+                task_id: local.id,
+                worktree: local.worktree_path,
+                target: local.target,
+                is_current: false,
+            })
+        })
+        .collect()
+}
+
+fn describe_linked_scopes(linked: &[ReviewScope]) -> String {
+    if linked.is_empty() {
+        return "This task has no linked projects.".to_string();
+    }
+    let list = linked
+        .iter()
+        .map(|s| format!("{} ({})", s.project_key, s.project_name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("Available linked project_id values: {list}")
+}
+
+/// Resolve a tool call's optional `project_id` to the review it targets.
+/// None or the current project → current task; a linked project → its Local
+/// Task; anything else is rejected so tools can't reach unrelated projects.
+fn resolve_review_scope(
+    project_key: &str,
+    task_id: &str,
+    project_id: Option<&str>,
+) -> Result<ReviewScope, String> {
+    match project_id.map(str::trim).filter(|id| !id.is_empty()) {
+        None => Ok(current_review_scope(project_key, task_id)),
+        Some(id) if id == project_key => Ok(current_review_scope(project_key, task_id)),
+        Some(id) => {
+            let linked = linked_review_scopes(project_key, task_id);
+            let summary = describe_linked_scopes(&linked);
+            linked
+                .into_iter()
+                .find(|s| s.project_key == id)
+                .ok_or_else(|| {
+                    format!(
+                        "project_id {id} is neither the current project nor a linked project. {summary}"
+                    )
+                })
+        }
+    }
+}
+
+fn is_studio_project(project_key: &str) -> bool {
+    matches!(
+        workspace::load_project_by_hash(project_key),
+        Ok(Some(p)) if p.project_type == workspace::ProjectType::Studio
+    )
+}
+
 // ============================================================================
 // Server Entry Point
 // ============================================================================
@@ -4261,12 +4475,16 @@ mod tests {
         let resp = client.call_tool(6, "read_review", json!({})).await;
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         let review: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert_eq!(review["open_count"].as_u64(), Some(1));
+        let own = &review["reviews"][0];
+        assert_eq!(review["reviews"].as_array().unwrap().len(), 1);
+        assert_eq!(own["scope"].as_str(), Some("current"));
+        assert_eq!(own["project_id"].as_str(), Some(project_key.as_str()));
+        assert_eq!(own["open_count"].as_u64(), Some(1));
         assert_eq!(
-            review["comments"][0]["content"].as_str(),
+            own["comments"][0]["content"].as_str(),
             Some("Needs more tests")
         );
-        assert_eq!(review["comments"][0]["type"].as_str(), Some("project"));
+        assert_eq!(own["comments"][0]["type"].as_str(), Some("project"));
 
         // --- reply_review: reply to existing comment → success ---
         let resp = client
@@ -4302,6 +4520,83 @@ mod tests {
         assert!(
             resp.get("error").is_some(),
             "expected error for reply to nonexistent comment"
+        );
+
+        // --- linked project: its Local Task review joins read_review ---
+        let linked_repo = temp_home.join("linked-repo");
+        init_git_repo(&linked_repo);
+        let add = add_project_by_path_json(linked_repo.to_string_lossy().as_ref());
+        assert_eq!(add["success"].as_bool(), Some(true));
+        let linked_key = workspace::project_hash(add["path"].as_str().unwrap());
+        tasks::replace_linked_project_ids(
+            &project_key,
+            &task_id,
+            std::slice::from_ref(&linked_key),
+        )
+        .unwrap();
+
+        let resp = client.call_tool(10, "read_review", json!({})).await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let review: serde_json::Value = serde_json::from_str(text).unwrap();
+        let groups = review["reviews"].as_array().unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[1]["scope"].as_str(), Some("linked"));
+        assert_eq!(groups[1]["project_id"].as_str(), Some(linked_key.as_str()));
+        assert_eq!(groups[1]["comments"].as_array().unwrap().len(), 0);
+
+        // --- add_comment / reply_review with a linked project_id ---
+        let resp = client
+            .call_tool(
+                11,
+                "add_comment",
+                json!({
+                    "comments": [{"comment_type": "project", "content": "Linked note", "project_id": linked_key}]
+                }),
+            )
+            .await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let add_result: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            add_result["created"][0]["project_id"].as_str(),
+            Some(linked_key.as_str())
+        );
+        let linked_comment_id = add_result["created"][0]["comment_id"].as_u64().unwrap();
+
+        let resp = client
+            .call_tool(
+                12,
+                "reply_review",
+                json!({
+                    "replies": [{"comment_id": linked_comment_id, "project_id": linked_key, "message": "Ack"}]
+                }),
+            )
+            .await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let reply_result: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(reply_result["replies"][0]["success"].as_bool(), Some(true));
+
+        // Stored on the linked project's Local Task, not on this task.
+        let linked_data = comments::load_comments(&linked_key, tasks::LOCAL_TASK_ID).unwrap();
+        assert_eq!(linked_data.comments.len(), 1);
+        assert_eq!(linked_data.comments[0].content, "Linked note");
+        assert_eq!(linked_data.comments[0].replies.len(), 1);
+        let own_data = comments::load_comments(&project_key, &task_id).unwrap();
+        assert_eq!(own_data.comments.len(), 1);
+
+        // --- unrelated project_id → rejected ---
+        let resp = client
+            .call_tool(
+                13,
+                "add_comment",
+                json!({
+                    "comments": [{"comment_type": "project", "content": "x", "project_id": "0000000000000000"}]
+                }),
+            )
+            .await;
+        assert!(
+            resp.get("error").is_some(),
+            "expected error for unrelated project_id, got: {}",
+            serde_json::to_string(&resp).unwrap()
         );
 
         client.shutdown().await;

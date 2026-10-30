@@ -21,6 +21,18 @@ describe("session list state", () => {
     expect(promoteSession([a, b], "missing")).toEqual([a, b]);
   });
 
+  it("promotes a session only to the top of its pinned or unpinned group", () => {
+    const p1 = { id: "P1", title: "P1", pinned: true };
+    const p2 = { id: "P2", title: "P2", pinned: true };
+    expect(promoteSession([p1, p2, a, b], "B")).toEqual([p1, p2, b, a]);
+    expect(promoteSession([p1, p2, a, b], "P2")).toEqual([p2, p1, a, b]);
+  });
+
+  it("keeps a missing unpinned active session below the pinned ones", () => {
+    const p1 = { id: "P1", title: "P1", pinned: true };
+    expect(preserveActiveSessionInRefresh([p1, a], "B", b, false)).toEqual([p1, b, a]);
+  });
+
   it("allows recency ordering to change without replacing the active session", () => {
     expect(preserveActiveSessionInRefresh([b, a], "B", b, false)).toEqual([
       b,

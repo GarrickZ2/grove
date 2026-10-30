@@ -526,6 +526,22 @@ pub async fn recover_task(
     })
 }
 
+/// PUT /api/v1/projects/{id}/tasks/order
+pub async fn reorder_tasks(
+    Path(id): Path<String>,
+    Json(req): Json<ReorderTasksRequest>,
+) -> Result<StatusCode, StatusCode> {
+    let (_project, project_key) = common::find_project_by_id(&id)?;
+    tokio::task::spawn_blocking(move || tasks::reorder_tasks(&project_key, &req.task_ids))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|e| {
+            eprintln!("Failed to reorder tasks: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// PATCH /api/v1/projects/{id}/tasks/{taskId}
 pub async fn rename_task(
     Path((id, task_id)): Path<(String, String)>,

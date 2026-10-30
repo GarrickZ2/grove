@@ -535,7 +535,7 @@ function TreeNode({
       style={{ paddingLeft: depth * 12 + 12 }}
       onClick={() => onSelectFile(file.new_path)}
       onContextMenu={(e) => onContextMenu?.(e, file.new_path, false)}
-      title={file.is_virtual ? 'Planned file (not yet created)' : undefined}
+      title={file.is_virtual ? 'Planned file (not yet created)' : file.change_type === 'renamed' ? `${file.old_path} → ${file.new_path}` : undefined}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = 'copy';

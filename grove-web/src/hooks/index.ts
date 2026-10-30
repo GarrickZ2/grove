@@ -16,6 +16,8 @@ export { buildCommands } from "./useCommands";
 export { useAgentQuota } from "./useAgentQuota";
 export type { UseAgentQuotaResult } from "./useAgentQuota";
 
+export { useTaskReorder } from "./useTaskReorder";
+
 export { useTaskGroups } from "./useTaskGroups";
 export type { UseTaskGroupsResult } from "./useTaskGroups";
 

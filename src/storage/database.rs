@@ -189,6 +189,8 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             code_additions INTEGER NOT NULL DEFAULT 0,
             code_deletions INTEGER NOT NULL DEFAULT 0,
             files_changed  INTEGER NOT NULL DEFAULT 0,
+            -- user-defined sidebar order (ascending); NULL until placed
+            sort_position  INTEGER,
             PRIMARY KEY (project, id)
         );
 
@@ -429,7 +431,9 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             created_at     TEXT NOT NULL,
             updated_at     TEXT,
             launch_mode    TEXT NOT NULL DEFAULT 'acp',
-            archived_at    TEXT
+            archived_at    TEXT,
+            -- pinned to the top of its task's session list; NULL when not pinned
+            pinned_at      TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_session_task ON session(project, task_id);
 
@@ -855,6 +859,24 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         // metadata clear and must survive reconnects and process restarts.
         conn.execute_batch("UPDATE session SET updated_at = created_at WHERE updated_at IS NULL;")?;
     }
+    if conn
+        .execute_batch("ALTER TABLE tasks ADD COLUMN sort_position INTEGER;")
+        .is_ok()
+    {
+        // Seed the manual order from the previous recency order so the
+        // sidebar looks unchanged until the user drags something.
+        conn.execute_batch(
+            "UPDATE tasks SET sort_position = (
+                 SELECT rn * 1000 FROM (
+                     SELECT project AS p, id AS i,
+                            ROW_NUMBER() OVER (PARTITION BY project ORDER BY updated_at DESC) AS rn
+                     FROM tasks WHERE status = 'active'
+                 ) WHERE p = tasks.project AND i = tasks.id
+             )
+             WHERE status = 'active';",
+        )?;
+    }
+    add_column_if_missing(conn, "session", "pinned_at", "TEXT")?;
     add_column_if_missing(
         conn,
         "connects",

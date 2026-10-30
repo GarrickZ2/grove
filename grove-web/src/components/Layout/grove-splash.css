@@ -1,0 +1,74 @@
+/* Full-screen loading state that continues the sign-in page: same backdrop, the logo
+   breathing on a soft halo, and a thin indeterminate bar under the status line. */
+.grove-splash__mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.grove-splash__halo {
+  position: absolute;
+  inset: -28%;
+  border-radius: 9999px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--color-highlight) 22%, transparent), transparent 68%);
+  animation: grove-splash-halo 2.4s ease-in-out infinite;
+}
+
+.grove-splash__icon {
+  position: relative;
+  animation: grove-splash-breathe 2.4s ease-in-out infinite;
+}
+
+.grove-splash__track {
+  position: relative;
+  width: 160px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+
+.grove-splash__bar {
+  position: absolute;
+  inset-block: 0;
+  width: 40%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--color-highlight), transparent);
+  animation: grove-splash-bar 1.4s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.grove-splash__fade {
+  animation: grove-splash-fade 0.5s ease-out both;
+}
+
+@keyframes grove-splash-halo {
+  0%, 100% { opacity: 0.55; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+
+@keyframes grove-splash-breathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-3px) scale(1.03); }
+}
+
+@keyframes grove-splash-bar {
+  from { left: -40%; }
+  to { left: 100%; }
+}
+
+@keyframes grove-splash-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grove-splash__halo,
+  .grove-splash__icon,
+  .grove-splash__fade {
+    animation: none;
+  }
+
+  .grove-splash__bar {
+    animation-duration: 3s;
+  }
+}

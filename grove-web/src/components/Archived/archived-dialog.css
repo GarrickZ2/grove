@@ -1,0 +1,56 @@
+/* Archived dialog: Orbit's popover language (project switcher) at dialog size. */
+.orbit-archived { display: flex; flex-direction: column; height: min(560px, calc(100vh - 80px)); overflow: hidden; border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent); border-radius: 16px; background: var(--color-bg); box-shadow: 0 16px 48px rgba(0, 0, 0, .18); color: var(--color-text); }
+.orbit-archived-header { display: flex; flex: none; align-items: center; height: 48px; padding: 0 8px 0 18px; }
+.orbit-archived-header h2 { flex: 1; margin: 0; font-size: 15px; font-weight: 600; }
+.orbit-archived-header .orbit-icon-button:hover { color: var(--color-text); background: color-mix(in oklab, var(--color-text) 9%, transparent); }
+.orbit-archived-columns { display: flex; flex: 1; min-height: 0; border-top: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent); }
+
+.orbit-archived-list-pane { display: flex; flex-direction: column; width: 300px; flex: none; min-height: 0; padding: 10px 8px 0; border-right: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent); background: color-mix(in oklab, var(--color-bg) 97%, var(--color-text) 3%); }
+.orbit-archived-search { display: flex; flex: none; align-items: center; gap: 7px; height: 30px; margin: 0 2px; padding: 0 9px; border-radius: 8px; background: color-mix(in oklab, var(--color-text) 5%, transparent); color: var(--color-text-muted); }
+.orbit-archived-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--color-text); font-size: 13px; }
+.orbit-archived-search input::placeholder { color: var(--color-text-muted); }
+.orbit-archived-tabs { display: flex; flex: none; gap: 2px; margin: 6px 2px 2px; padding: 2px; border-radius: 8px; background: color-mix(in oklab, var(--color-text) 5%, transparent); }
+.orbit-archived-tabs button { flex: 1; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); font-size: 12px; font-weight: 500; cursor: pointer; }
+.orbit-archived-tabs button:hover { color: var(--color-text); }
+.orbit-archived-tabs button.is-selected { color: var(--color-text); background: var(--color-bg); box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-border) 80%, transparent), 0 1px 2px rgba(0, 0, 0, .06); }
+.orbit-archived-list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 10px; }
+.orbit-archived-group { display: flex; flex-direction: column; gap: 1px; }
+.orbit-archived-label { margin: 0; padding: 14px 10px 5px; color: var(--color-text-muted); font-size: 12px; font-weight: 500; }
+.orbit-archived-row { display: flex; width: 100%; min-width: 0; min-height: 34px; align-items: center; gap: 9px; padding: 4px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--color-text); font-size: 13.5px; text-align: left; cursor: pointer; }
+.orbit-archived-row:hover { background: color-mix(in oklab, var(--color-text) 7%, transparent); }
+.orbit-archived-row.is-selected { background: color-mix(in oklab, var(--color-text) 10%, transparent); }
+.orbit-archived-row-icon { display: inline-flex; flex: none; color: var(--color-text-muted); }
+.orbit-archived-row-text { display: flex; flex: 1; min-width: 0; flex-direction: column; line-height: 1.3; }
+.orbit-archived-row-owner { color: var(--color-text-muted); font-size: 11.5px; }
+.orbit-archived-row-time { flex: none; color: var(--color-text-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.orbit-archived-empty { display: flex; justify-content: center; margin: 0; padding: 36px 16px; color: var(--color-text-muted); font-size: 13px; text-align: center; }
+.orbit-archived-error { margin: 8px 10px 0; color: var(--color-error); font-size: 12px; }
+
+.orbit-archived-detail { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; }
+.orbit-archived-detail-body { display: flex; flex-direction: column; align-items: flex-start; padding: 32px 32px 24px; }
+.orbit-archived-back { display: none; }
+.orbit-archived-detail-icon { display: inline-flex; width: 40px; height: 40px; align-items: center; justify-content: center; border-radius: 11px; background: color-mix(in oklab, var(--color-text) 6%, transparent); color: var(--color-text-muted); }
+.orbit-archived-detail-title { margin: 14px 0 0; max-width: 100%; font-size: 18px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.orbit-archived-detail-meta { margin: 4px 0 0; color: var(--color-text-muted); font-size: 12.5px; }
+.orbit-archived-actions { display: flex; gap: 8px; margin-top: 24px; }
+.orbit-archived-primary, .orbit-archived-danger { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 13px; border: 0; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; }
+.orbit-archived-primary { background: var(--color-text); color: var(--color-bg); }
+.orbit-archived-primary:hover { background: color-mix(in oklab, var(--color-text) 86%, var(--color-bg)); }
+.orbit-archived-danger { background: transparent; color: var(--color-text-muted); }
+.orbit-archived-danger:hover { background: color-mix(in srgb, var(--color-error) 10%, transparent); color: var(--color-error); }
+.orbit-archived-primary:disabled, .orbit-archived-danger:disabled { opacity: .45; cursor: default; }
+.orbit-archived-hint { margin: 12px 0 0; color: var(--color-text-muted); font-size: 12px; }
+
+/* Narrow window / bottom sheet: one pane at a time, the detail slides over the list. */
+@media (max-width: 720px) {
+  .orbit-archived { height: min(640px, 82vh); border: 0; border-radius: 0; box-shadow: none; }
+  .orbit-archived-list-pane { width: 100%; border-right: 0; background: transparent; }
+  .orbit-archived-detail { display: none; }
+  .orbit-archived.is-detail .orbit-archived-list-pane { display: none; }
+  .orbit-archived.is-detail .orbit-archived-detail { display: block; }
+  .orbit-archived-detail-body { padding: 12px 20px 24px; }
+  .orbit-archived-back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 16px -6px; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); font-size: 13px; cursor: pointer; }
+  .orbit-archived-row { min-height: 42px; font-size: 15px; }
+  /* One pane: the list has no "current" row to mark. */
+  .orbit-archived-row.is-selected { background: transparent; }
+}

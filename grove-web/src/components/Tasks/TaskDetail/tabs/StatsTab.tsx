@@ -16,6 +16,10 @@ import {
 } from "../../../../api";
 import type { Task } from "../../../../data/types";
 import { useProject, useTheme } from "../../../../context";
+import {
+  LINKED_PROJECTS_CHANGED_EVENT,
+  type LinkedProjectsChangedDetail,
+} from "../../../../hooks/useLinkedReviewProjects";
 import { compactPath } from "../../../../utils/pathUtils";
 import { getProjectStyle } from "../../../../utils/projectStyle";
 import { ProjectTypeBadge } from "../../../ui/ProjectTypeBadge";
@@ -231,6 +235,9 @@ export function StatsTab({ projectId, task, variant = "default" }: StatsTabProps
     try {
       const result = await updateLinkedProjects(projectId, task.id, projectIds);
       setLinkedProjects(result.linked_projects);
+      window.dispatchEvent(new CustomEvent<LinkedProjectsChangedDetail>(LINKED_PROJECTS_CHANGED_EVENT, {
+        detail: { projectId, taskId: task.id, linkedProjects: result.linked_projects },
+      }));
     } catch (err) {
       console.error("Failed to update linked projects:", err);
       setLinksError("Failed to update linked projects");

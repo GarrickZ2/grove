@@ -39,6 +39,7 @@ export interface DiffFile {
 
 export interface DiffStatFile {
   path: string;
+  old_path?: string | null;
   status: 'A' | 'M' | 'D' | 'R' | 'U';
   additions: number;
   deletions: number;
@@ -76,10 +77,12 @@ export async function getSingleFileDiff(
   filePath: string,
   fromRef?: string,
   toRef?: string,
+  oldPath?: string,
 ): Promise<DiffFile> {
   let url = `/api/v1/projects/${projectId}/tasks/${taskId}/diff/file?path=${encodeURIComponent(filePath)}`;
   if (fromRef) url += `&from_ref=${encodeURIComponent(fromRef)}`;
   if (toRef) url += `&to_ref=${encodeURIComponent(toRef)}`;
+  if (oldPath) url += `&old_path=${encodeURIComponent(oldPath)}`;
   return apiClient.get<DiffFile>(url);
 }
 

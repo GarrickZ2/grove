@@ -1,6 +1,17 @@
-import { Archive, MoreVertical, Laptop, Zap, Code } from "lucide-react";
+import { Archive, MoreVertical, Laptop, Zap, Code, ChevronUp, ChevronDown } from "lucide-react";
 import { useIsMobile } from "../../../hooks";
+import type { DropPlacement } from "../../../hooks/useTaskReorder";
 import type { Task } from "../../../data/types";
+
+/** Manual-order wiring for one row; absent when the list can't be reordered. */
+export interface TaskListItemReorder {
+  dragProps: React.HTMLAttributes<HTMLElement> & { draggable?: boolean };
+  isDragging: boolean;
+  dropPlacement: DropPlacement | null;
+  /** Touch devices: undefined disables the button (first / last row). */
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+}
 
 interface TaskListItemProps {
   task: Task;
@@ -9,6 +20,7 @@ interface TaskListItemProps {
   onDoubleClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   notification?: { level: string };
+  reorder?: TaskListItemReorder;
 }
 
 function formatTimeAgo(date: Date): string {
@@ -35,7 +47,7 @@ function getNotificationColor(level: string): string {
   }
 }
 
-export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onContextMenu, notification }: TaskListItemProps) {
+export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onContextMenu, notification, reorder }: TaskListItemProps) {
   const { isMobile, isTouchDevice } = useIsMobile();
 
   return (
@@ -44,7 +56,14 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
       onClick={onClick}
       onDoubleClick={!isMobile && task.status !== "archived" ? onDoubleClick : undefined}
       onContextMenu={!isTouchDevice ? onContextMenu : undefined}
-      className={`w-full text-left px-3 py-2.5 transition-colors hover:bg-[var(--color-bg-tertiary)] ${
+      {...reorder?.dragProps}
+      className={`relative w-full text-left px-3 py-2.5 transition-colors hover:bg-[var(--color-bg-tertiary)] ${
+        reorder?.isDragging ? "opacity-40" : ""
+      } ${
+        reorder?.dropPlacement === "before" ? "shadow-[inset_0_2px_0_var(--color-highlight)]" : ""
+      } ${
+        reorder?.dropPlacement === "after" ? "shadow-[inset_0_-2px_0_var(--color-highlight)]" : ""
+      } ${
         isMobile ? "py-3" : ""
       } ${
         isSelected
@@ -105,6 +124,29 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
               <span className="text-xs text-[var(--color-text-muted)] whitespace-nowrap">
                 {formatTimeAgo(task.updatedAt)}
               </span>
+              {/* Mobile: up/down instead of drag */}
+              {isTouchDevice && reorder && (
+                <>
+                  <span
+                    role="button"
+                    aria-label="Move up"
+                    aria-disabled={!reorder.onMoveUp}
+                    onClick={(e) => { e.stopPropagation(); reorder.onMoveUp?.(); }}
+                    className={`p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors ${reorder.onMoveUp ? "" : "opacity-30 pointer-events-none"}`}
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </span>
+                  <span
+                    role="button"
+                    aria-label="Move down"
+                    aria-disabled={!reorder.onMoveDown}
+                    onClick={(e) => { e.stopPropagation(); reorder.onMoveDown?.(); }}
+                    className={`p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors ${reorder.onMoveDown ? "" : "opacity-30 pointer-events-none"}`}
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </span>
+                </>
+              )}
               {/* Mobile: three-dot menu button */}
               {isTouchDevice && onContextMenu && (
                 <button

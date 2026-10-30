@@ -1,18 +1,28 @@
 export interface SessionListItem {
   id: string;
+  /** Pinned sessions stay above the rest; each group is ordered by recency. */
+  pinned?: boolean;
+}
+
+/** Index of the first unpinned session: where a recent unpinned one goes. */
+function groupTop<T extends SessionListItem>(sessions: readonly T[], session: T): number {
+  return session.pinned ? 0 : sessions.filter((item) => item.pinned).length;
 }
 
 /**
  * Reflect local activity immediately instead of waiting for the backend's
- * touch -> radio event -> full-list refetch round trip.
+ * touch -> radio event -> full-list refetch round trip. A session only rises to
+ * the top of its own group, so pinned sessions stay above the rest.
  */
 export function promoteSession<T extends SessionListItem>(
   sessions: readonly T[],
   sessionId: string,
 ): T[] {
   const index = sessions.findIndex((session) => session.id === sessionId);
-  if (index <= 0) return [...sessions];
-  return [sessions[index], ...sessions.slice(0, index), ...sessions.slice(index + 1)];
+  if (index < 0) return [...sessions];
+  const rest = [...sessions.slice(0, index), ...sessions.slice(index + 1)];
+  const top = groupTop(rest, sessions[index]);
+  return [...rest.slice(0, top), sessions[index], ...rest.slice(top)];
 }
 
 /**
@@ -34,7 +44,8 @@ export function preserveActiveSessionInRefresh<T extends SessionListItem>(
   ) {
     return [...fresh];
   }
-  return [activeSession, ...fresh];
+  const top = groupTop(fresh, activeSession);
+  return [...fresh.slice(0, top), activeSession, ...fresh.slice(top)];
 }
 
 /** Runtime state is newer than a switch-time UI snapshot. */

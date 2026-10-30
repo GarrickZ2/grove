@@ -12,7 +12,9 @@ import { MobileHeader } from "./components/Layout/MobileHeader";
 import { MobileDrawer } from "./components/Layout/MobileDrawer";
 import { NotificationPopover } from "./components/Layout/NotificationPopover";
 import { OrbitSidebar } from "./components/Layout/OrbitSidebar";
+import { GroveSplash } from "./components/Layout/GroveSplash";
 import { OrbitPhoneHeader, ORBIT_PHONE_SHOW_CHAT_EVENT } from "./components/Layout/OrbitPhoneHeader";
+import { useOrbitDrawerSwipe } from "./components/Layout/useOrbitDrawerSwipe";
 import { OrbitNewChat } from "./components/Orbit/OrbitNewChat";
 import { ConnectDialog, SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
@@ -359,6 +361,10 @@ function AppContent() {
   // Orbit on a narrow desktop/tablet window: the forced-collapsed sidebar
   // opens as an overlay instead of pushing the workspace.
   const [orbitSidebarOverlayOpen, setOrbitSidebarOverlayOpen] = useState(false);
+  const orbitDrawerRef = useRef<HTMLDivElement>(null);
+  const orbitStageRef = useRef<HTMLDivElement>(null);
+  const orbitScrimRef = useRef<HTMLButtonElement>(null);
+  useOrbitDrawerSwipe({ enabled: orbitPhone, open: drawerOpen, onOpenChange: setDrawerOpen, drawerRef: orbitDrawerRef, pageRef: orbitStageRef, scrimRef: orbitScrimRef });
   const [mobileNotifOpen, setMobileNotifOpen] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const {
@@ -1435,11 +1441,7 @@ function AppContent() {
 
   // Show loading state
   if (isLoading) {
-    return (
-      <div className="flex h-screen bg-[var(--color-bg)] items-center justify-center">
-        <div className="w-8 h-8 border-2 border-[var(--color-highlight)] border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <GroveSplash label="Loading your workspace…" />;
   }
 
   // Show Welcome page
@@ -1721,7 +1723,7 @@ function AppContent() {
       </MobileDrawer>
       {/* Orbit on a phone: the sidebar slides in over the page, which dims behind it. */}
       {orbitPhone && (
-        <div className={`orbit-phone-drawer${drawerOpen ? " is-open" : ""}`} inert={!drawerOpen}>
+        <div ref={orbitDrawerRef} className={`orbit-phone-drawer${drawerOpen ? " is-open" : ""}`} inert={!drawerOpen}>
           <OrbitSidebar
             variant="drawer"
             activeItem={activeItem}
@@ -1736,7 +1738,7 @@ function AppContent() {
           />
         </div>
       )}
-      <div className={orbitPhone ? "orbit-phone-stage" : "contents"}>
+      <div ref={orbitStageRef} className={orbitPhone ? "orbit-phone-stage" : "contents"}>
       {orbitPhone && (
         <OrbitPhoneHeader
           title={orbitPhoneTitle}
@@ -1745,7 +1747,8 @@ function AppContent() {
           newDisabled={activeItem === "new"}
         />
       )}
-      {orbitPhone && drawerOpen && <button type="button" className="orbit-phone-scrim" aria-label="Close menu" onClick={() => setDrawerOpen(false)} />}
+      {/* Always present so a swipe can fade it in with the drawer. */}
+      {orbitPhone && <button ref={orbitScrimRef} type="button" className={`orbit-phone-scrim${drawerOpen ? " is-open" : ""}`} aria-label="Close menu" tabIndex={drawerOpen ? undefined : -1} aria-hidden={!drawerOpen || undefined} onClick={() => setDrawerOpen(false)} />}
       <AnimatePresence key="app-content" mode="wait">
         {tasksMode === "blitz" ? (
           <motion.div

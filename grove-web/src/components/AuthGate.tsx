@@ -13,6 +13,7 @@ import { hmacSha256Hex } from '../api/hmac';
 import { handRemoteAuthToShell } from '../utils/tauriShell';
 import { GroveHeroBackground } from './Layout/GroveHeroBackground';
 import { GroveIcon } from './Layout/GroveIcon';
+import { GroveSplash } from './Layout/GroveSplash';
 
 type AuthState = 'loading' | 'authenticated' | 'needs_auth' | 'connection_error';
 
@@ -178,12 +179,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   };
 
   if (authState === 'loading') return (
-    <div className="flex min-h-dvh items-center justify-center bg-[var(--color-bg)]">
-      <div className="flex flex-col items-center gap-6">
-        <div role="status" aria-label="Connecting" className="w-8 h-8 border-2 border-[var(--color-highlight)] border-t-transparent rounded-full animate-spin" />
-        {isIosClient && <a href="/_grove/" className="text-sm text-[var(--color-text-muted)] py-3">Switch server</a>}
-      </div>
-    </div>
+    <GroveSplash label="Connecting to Grove…">
+      {isIosClient && <a href="/_grove/" className="py-3 text-sm text-[var(--color-text-muted)]">Switch server</a>}
+    </GroveSplash>
   );
   if (authState === 'authenticated') return <>{children}</>;
 

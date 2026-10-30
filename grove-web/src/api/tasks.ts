@@ -153,6 +153,10 @@ export interface LinkedProjectItem {
   name: string;
   exists: boolean;
   project_type: string | null;
+  is_git_repo: boolean;
+  /** Task whose Code Review stands for this project in an aggregated Review
+   *  panel (its Local Task). Null when the project can't be reviewed. */
+  review_task_id: string | null;
 }
 
 export interface LinkedProjectsResponse {
@@ -245,6 +249,16 @@ export async function renameTask(
   return apiClient.patch<{ name: string }, TaskResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}`,
     { name }
+  );
+}
+
+/**
+ * Persist the sidebar order of a project's active tasks (top to bottom).
+ */
+export async function reorderTasks(projectId: string, taskIds: string[]): Promise<void> {
+  await apiClient.put<{ task_ids: string[] }, void>(
+    `/api/v1/projects/${projectId}/tasks/order`,
+    { task_ids: taskIds }
   );
 }
 
@@ -516,6 +530,8 @@ export interface ChatSessionResponse {
   history_path: string;
   /** "acp" (default) or "terminal". Snapshotted at chat creation, immutable. */
   launch_mode: string;
+  /** Pinned to the top of its task's session list. */
+  pinned?: boolean;
 }
 
 export interface ImportableSession {
@@ -600,6 +616,19 @@ export async function restoreChat(
   return apiClient.post<Record<string, never>, ChatSessionResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/restore`,
     {},
+  );
+}
+
+/** Pin a session to the top of its task's session list, or unpin it. */
+export async function setChatPinned(
+  projectId: string,
+  taskId: string,
+  chatId: string,
+  pinned: boolean,
+): Promise<ChatSessionResponse> {
+  return apiClient.put<{ pinned: boolean }, ChatSessionResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/pin`,
+    { pinned },
   );
 }
 
