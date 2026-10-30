@@ -47,7 +47,6 @@ export function OrbitProjectSelector({ onManageProjects, onAddProject, onProject
               const isSelected = selectedProject?.id === project.id;
               const isMissing = !project.exists;
               const notInitialized = !isMissing && project.projectType !== "studio" && !project.isGitRepo;
-              const taskCount = project.taskCount ?? project.tasks.length;
               return <button key={project.id} id={optionId(project.id)} ref={(node) => { itemRefs.current[project.id] = node; }} type="button" role="option" aria-selected={activeProjectId === project.id} title={isMissing ? `${project.name} (directory missing)` : project.name}
                 className={`orbit-project-option${activeProjectId === project.id ? " is-active" : ""}${isSelected ? " is-selected" : ""}${isMissing ? " is-missing" : ""}`}
                 onClick={() => handleSelectProject(project)} onMouseEnter={() => setActiveProjectId(project.id)}>
@@ -55,7 +54,7 @@ export function OrbitProjectSelector({ onManageProjects, onAddProject, onProject
                 <MiddleTruncatedText text={project.name} className="orbit-project-name" />
                 {isMissing ? <span className="orbit-project-flag is-error" title="Directory no longer exists on disk"><FolderX size={13} /></span>
                   : notInitialized ? <span className="orbit-project-flag is-warning" title="Not a Git repository yet"><AlertCircle size={13} /></span>
-                    : project.projectType !== "studio" && <span className="orbit-project-count" title={`${taskCount} task${taskCount !== 1 ? "s" : ""}`}>{taskCount}</span>}
+                    : null}
                 <span className="orbit-project-check">{isSelected && <Check size={14} />}</span>
               </button>;
             })}

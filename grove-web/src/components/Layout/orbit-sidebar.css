@@ -144,7 +144,6 @@
 .orbit-project-option.is-selected .orbit-project-name { font-weight: 500; }
 .orbit-project-option.is-missing { opacity: .5; }
 .orbit-project-option.is-missing .orbit-project-name { text-decoration: line-through; }
-.orbit-project-count { flex: none; color: var(--color-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .orbit-project-flag { flex: none; display: inline-flex; }
 .orbit-project-flag.is-error { color: var(--color-error); }
 .orbit-project-flag.is-warning { color: var(--color-warning); }
@@ -197,6 +196,7 @@
 /* Pin: revealed on hover beside the menu; a pinned session keeps it visible at the row's end. */
 .orbit-session-pin { position: absolute; top: 3px; right: 33px; display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
 .orbit-session-pin:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 9%, transparent); }
+.orbit-session-row.is-pinned .orbit-session-pin { color: var(--color-warning); }
 .orbit-session-row:hover .orbit-session-pin, .orbit-session-row:focus-within .orbit-session-pin, .orbit-session-row.is-pinned .orbit-session-pin { opacity: 1; pointer-events: auto; }
 .orbit-session-row.is-pinned:not(:hover):not(:focus-within) .orbit-session-pin { right: 3px; }
 .orbit-session-row.is-pinned .orbit-session { padding-right: 36px; }
