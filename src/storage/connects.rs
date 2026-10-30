@@ -76,8 +76,29 @@ fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Connect> {
 
 const SELECT: &str = "SELECT id,name,platform,domain,enabled,adapter_config_json,project_id,task_id,session_id,bound_chat_id,bound_user_id,created_at,updated_at FROM connects";
 
+/// Repair stale routing on read so both configuration views and inbound IM
+/// messages return to Auto New, including bindings saved before this repair.
+/// Match the whole target and only clear sessions confirmed missing/archived;
+/// an offline agent still has a valid session and must keep its history.
+fn reset_unavailable_sessions(conn: &rusqlite::Connection, id: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE connects SET session_id='', updated_at=?1
+         WHERE (?2 IS NULL OR id=?2) AND session_id<>''
+         AND NOT EXISTS (
+             SELECT 1 FROM session
+             WHERE session.session_id=connects.session_id
+               AND session.project=connects.project_id
+               AND session.task_id=connects.task_id
+               AND session.archived_at IS NULL
+         )",
+        params![now(), id],
+    )?;
+    Ok(())
+}
+
 pub fn list() -> Result<Vec<Connect>> {
     let conn = database::connection();
+    reset_unavailable_sessions(&conn, None)?;
     let mut stmt = conn.prepare(&format!("{SELECT} ORDER BY updated_at DESC"))?;
     let items = stmt
         .query_map([], row)?
@@ -91,6 +112,7 @@ pub fn list_enabled() -> Result<Vec<Connect>> {
 
 pub fn get(id: &str) -> Result<Option<Connect>> {
     let conn = database::connection();
+    reset_unavailable_sessions(&conn, Some(id))?;
     Ok(conn
         .query_row(&format!("{SELECT} WHERE id=?1"), [id], row)
         .optional()?)
@@ -171,4 +193,85 @@ pub fn bind_private_chat(id: &str, chat_id: &str, user_id: &str) -> Result<bool>
         params![id, chat_id, user_id],
     )?;
     Ok(changed > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::tasks;
+
+    struct GroveDirGuard;
+    impl Drop for GroveDirGuard {
+        fn drop(&mut self) {
+            crate::storage::set_grove_dir_override(None);
+        }
+    }
+
+    #[test]
+    fn reads_reset_deleted_and_archived_sessions_to_auto_new() {
+        let _lock = database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _guard = GroveDirGuard;
+
+        for read_list in [false, true] {
+            for archive in [false, true] {
+                let chat_id = tasks::generate_chat_id();
+                tasks::add_chat_session(
+                    "project",
+                    "task",
+                    tasks::ChatSession {
+                        id: chat_id.clone(),
+                        title: "Existing session".into(),
+                        agent: "codex-acp".into(),
+                        acp_session_id: None,
+                        created_at: Utc::now(),
+                        duty: None,
+                        launch_mode: "acp".into(),
+                    },
+                )
+                .unwrap();
+                let connection = create(ConnectInput {
+                    name: "Recovery test".into(),
+                    platform: "feishu".into(),
+                    domain: "feishu".into(),
+                    enabled: true,
+                    adapter_config: serde_json::json!({"app_secret": "keep-secret"}),
+                    project_id: "project".into(),
+                    task_id: "task".into(),
+                    session_id: chat_id.clone(),
+                })
+                .unwrap();
+                bind_private_chat(&connection.id, "chat", "user").unwrap();
+                let before = get(&connection.id).unwrap().unwrap();
+                // A saved session stays selected even with no running agent.
+                assert_eq!(before.session_id, chat_id);
+
+                if archive {
+                    tasks::archive_chat_session("project", "task", &chat_id).unwrap();
+                } else {
+                    tasks::delete_chat_session("project", "task", &chat_id).unwrap();
+                }
+                let recovered = if read_list {
+                    list()
+                        .unwrap()
+                        .into_iter()
+                        .find(|item| item.id == connection.id)
+                        .unwrap()
+                } else {
+                    get(&connection.id).unwrap().unwrap()
+                };
+                let mut expected = before;
+                expected.session_id.clear();
+                expected.updated_at = recovered.updated_at;
+                assert_eq!(recovered, expected);
+                // The reset is persisted; restoring an archive must not bind
+                // the connection back to that old conversation.
+                if archive {
+                    tasks::restore_chat_session("project", "task", &chat_id).unwrap();
+                }
+                assert!(get(&connection.id).unwrap().unwrap().session_id.is_empty());
+            }
+        }
+    }
 }

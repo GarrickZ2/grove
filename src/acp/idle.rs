@@ -478,6 +478,20 @@ mod tests {
         crate::storage::set_grove_dir_override(Some(temp.path().to_owned()));
         let (old, _updates, old_guard) = fixture();
         let chat = old.chat_id.as_deref().unwrap().to_owned();
+        crate::storage::tasks::add_chat_session(
+            "idle",
+            "task",
+            crate::storage::tasks::ChatSession {
+                id: chat.clone(),
+                title: "Idle test".into(),
+                agent: "claude-acp".into(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+                launch_mode: "acp".into(),
+            },
+        )
+        .unwrap();
         let connect = crate::storage::connects::create(crate::storage::connects::ConnectInput {
             name: "Idle test".into(),
             platform: "feishu".into(),

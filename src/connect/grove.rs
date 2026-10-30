@@ -555,13 +555,9 @@ pub async fn deliver_prompt(
                 .into(),
         );
     }
-    let session_id = if connect.session_id.is_empty() {
-        match create_session(&connect, None) {
-            Ok(session_id) => session_id,
-            Err(error) => return Err(format!("Grove Connect error: {error}")),
-        }
-    } else {
-        connect.session_id.clone()
+    let session_id = match create_session(&connect, None) {
+        Ok(session_id) => session_id,
+        Err(error) => return Err(format!("Grove Connect error: {error}")),
     };
 
     let waiting = adapter.mark_waiting(&inbound.external_message_id).await;
@@ -623,11 +619,7 @@ pub(crate) async fn ensure_routed_session(
     if connect.project_id.is_empty() || connect.task_id.is_empty() {
         return Err("This connection has no Grove target yet. Send /target to set it up.".into());
     }
-    let session_id = if connect.session_id.is_empty() {
-        create_session(connect, None)?
-    } else {
-        connect.session_id.clone()
-    };
+    let session_id = create_session(connect, None)?;
     crate::grove::ensure_session(&connect.project_id, &connect.task_id, &session_id).await
 }
 
@@ -641,7 +633,7 @@ pub(crate) async fn start_new_session(connect: &Connect, agent: &str) -> Result<
 pub fn create_session(connect: &Connect, agent_override: Option<&str>) -> Result<String, String> {
     let _creation = SESSION_CREATION.lock().unwrap();
     if agent_override.is_none() {
-        if let Ok(Some(fresh)) = connects::get(&connect.id) {
+        if let Some(fresh) = connects::get(&connect.id).map_err(|error| error.to_string())? {
             if !fresh.session_id.is_empty() {
                 return Ok(fresh.session_id);
             }
@@ -684,6 +676,62 @@ pub fn create_session(connect: &Connect, agent_override: Option<&str>) -> Result
 mod tests {
     use super::*;
     use crate::agent_graph::ask_form::{AskFormInput, FormQuestion};
+
+    #[test]
+    fn stale_targets_create_and_reuse_a_replacement_session() {
+        let _database_lock = crate::storage::database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        for archive in [false, true] {
+            let mut connection = connects::create(connects::ConnectInput {
+                name: "Stale Connect".into(),
+                platform: "feishu".into(),
+                domain: "feishu".into(),
+                enabled: true,
+                adapter_config: serde_json::json!({}),
+                project_id: "test-project".into(),
+                task_id: "test-task".into(),
+                session_id: String::new(),
+            })
+            .unwrap();
+            connection.session_id = create_session(&connection, None).unwrap();
+            if archive {
+                crate::storage::tasks::archive_chat_session(
+                    &connection.project_id,
+                    &connection.task_id,
+                    &connection.session_id,
+                )
+                .unwrap();
+            } else {
+                crate::storage::tasks::delete_chat_session(
+                    &connection.project_id,
+                    &connection.task_id,
+                    &connection.session_id,
+                )
+                .unwrap();
+            }
+
+            // Delivery may already hold the stale record when the session is
+            // removed. Resolve it again under the first-message creation lock.
+            let replacement = create_session(&connection, None).unwrap();
+            assert_ne!(replacement, connection.session_id);
+            assert!(crate::storage::tasks::get_chat_session(
+                &connection.project_id,
+                &connection.task_id,
+                &replacement,
+            )
+            .unwrap()
+            .is_some());
+            assert_eq!(create_session(&connection, None).unwrap(), replacement);
+            assert_eq!(
+                connects::get(&connection.id).unwrap().unwrap().session_id,
+                replacement
+            );
+        }
+
+        crate::storage::set_grove_dir_override(None);
+    }
 
     #[test]
     fn concurrent_first_messages_share_one_session() {
