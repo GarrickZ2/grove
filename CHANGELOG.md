@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-10-30
+
+### Added
+
+- **Session and task organization** — Pin sessions to the top, browse archived sessions and tasks, and reorder tasks by dragging.
+- **Linked project reviews** — Read, add, and reply to review comments across linked projects from Studio and Grove's MCP tools.
+- **Session attention** — Show pending input requests and unread completions in the Orbit sidebar.
+
+### Improved
+
+- **Orbit navigation** — Refine sidebar layout and startup screens, and support swipe gestures for the mobile drawer.
+- **Code review** — Refine diff styling and navigation between linked project reviews.
+
+### Fixed
+
+- **Rename diffs** — Detect committed and untracked file renames, retain pure renames, and display their original paths without changing the repository index.
+- **Chat drafts** — Preserve drafts when session navigation and background completion events overlap.
+- **Mobile composer** — Refit session options as agent controls load or change to prevent overflow.
+- **Message actions** — Show assistant message actions on the final response after a turn finishes.
+
 ## [0.12.12] - 2026-10-28
 
 ### Added
