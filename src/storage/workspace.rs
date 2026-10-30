@@ -127,7 +127,7 @@ pub fn load_projects() -> Result<Vec<RegisteredProject>> {
 /// Startup repair must use these keys directly rather than recomputing a hash
 /// from a path whose normalization rules may have changed since registration.
 pub(crate) fn load_project_hashes() -> Result<Vec<String>> {
-    let conn = crate::storage::database::connection();
+    let conn = crate::storage::database::try_connection()?;
     let mut stmt = conn.prepare("SELECT hash FROM projects ORDER BY added_at DESC")?;
     let hashes = stmt
         .query_map([], |row| row.get(0))?
@@ -146,7 +146,7 @@ pub fn load_archived_projects() -> Result<Vec<RegisteredProject>> {
 }
 
 fn load_projects_by_archived(archived: Option<bool>) -> Result<Vec<RegisteredProject>> {
-    let conn = crate::storage::database::connection();
+    let conn = crate::storage::database::try_connection()?;
     let mut stmt = conn.prepare(
         "SELECT hash, name, path, is_git_repo, added_at, project_type, archived
          FROM projects WHERE (?1 IS NULL OR archived = ?1) ORDER BY added_at DESC",
@@ -178,7 +178,7 @@ fn load_projects_by_archived(archived: Option<bool>) -> Result<Vec<RegisteredPro
 
 /// 根据 hash 加载单个项目
 pub fn load_project_by_hash(hash: &str) -> Result<Option<RegisteredProject>> {
-    let conn = crate::storage::database::connection();
+    let conn = crate::storage::database::try_connection()?;
     let result = conn.query_row(
         "SELECT name, path, is_git_repo, added_at, project_type, archived FROM projects WHERE hash = ?1",
         rusqlite::params![hash],
@@ -273,7 +273,7 @@ pub fn add_project_with_type(name: &str, path: &str, project_type: ProjectType) 
     };
     let hash = project_hash(&resolved_path);
 
-    let conn = crate::storage::database::connection();
+    let conn = crate::storage::database::try_connection()?;
 
     // 检查是否已存在
     let exists: bool = conn
@@ -330,7 +330,7 @@ pub fn upsert_project(name: &str, path: &str) -> Result<()> {
     let resolved_path = resolve_project_path(path)?;
     let hash = project_hash(&resolved_path);
 
-    let conn = crate::storage::database::connection();
+    let conn = crate::storage::database::try_connection()?;
 
     let exists: bool = conn
         .query_row(
@@ -383,7 +383,7 @@ pub fn remove_project(path: &str) -> Result<()> {
     let hash = project_hash(&resolved);
 
     {
-        let conn = crate::storage::database::connection();
+        let conn = crate::storage::database::try_connection()?;
         let tx = conn.unchecked_transaction()?;
         tx.execute(
             "DELETE FROM audio_config_project WHERE project_hash = ?1",
@@ -474,7 +474,7 @@ pub fn is_project_registered(path: &str) -> Result<bool> {
     let resolved_path = resolve_project_path(path)?;
     let hash = project_hash(&resolved_path);
 
-    let conn = crate::storage::database::connection();
+    let conn = crate::storage::database::try_connection()?;
     let exists: bool = conn
         .query_row(
             "SELECT 1 FROM projects WHERE hash = ?1 LIMIT 1",
@@ -499,7 +499,7 @@ pub fn create_studio_project(name: &str) -> Result<String> {
     // NOTE: DbGuard holds the global Mutex. It must be dropped before calling
     // add_project_with_type, which acquires the same Mutex (Mutex is not reentrant).
     {
-        let conn = crate::storage::database::connection();
+        let conn = crate::storage::database::try_connection()?;
         let already_exists: bool = conn
             .query_row(
                 "SELECT 1 FROM projects WHERE hash = ?1 LIMIT 1",
@@ -546,7 +546,7 @@ pub fn project_directory(project: &RegisteredProject) -> std::path::PathBuf {
 }
 
 pub fn rename_project(hash: &str, new_name: &str) -> Result<()> {
-    let conn = crate::storage::database::connection();
+    let conn = crate::storage::database::try_connection()?;
     let changes = conn.execute(
         "UPDATE projects SET name = ?1 WHERE hash = ?2",
         rusqlite::params![new_name, hash],
@@ -562,7 +562,7 @@ pub fn rename_project(hash: &str, new_name: &str) -> Result<()> {
 /// This updates only the project row. Tasks and every other project-scoped
 /// resource keep their existing state.
 pub fn set_project_archived(hash: &str, archived: bool) -> Result<()> {
-    let conn = crate::storage::database::connection();
+    let conn = crate::storage::database::try_connection()?;
     let changed = conn.execute(
         "UPDATE projects SET archived = ?1 WHERE hash = ?2",
         rusqlite::params![archived, hash],
@@ -578,7 +578,7 @@ pub fn set_is_git_repo(path: &str, is_git: bool) -> Result<()> {
     let resolved = resolve_project_path(path).unwrap_or_else(|_| path.to_string());
     let hash = project_hash(&resolved);
 
-    let conn = crate::storage::database::connection();
+    let conn = crate::storage::database::try_connection()?;
     conn.execute(
         "UPDATE projects SET is_git_repo = ?1 WHERE hash = ?2",
         rusqlite::params![is_git, &hash],

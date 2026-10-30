@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use super::grove_dir;
-use crate::error::Result;
+use crate::error::{GroveError, Result};
 
 pub const CURRENT_STORAGE_VERSION: &str = "2.8";
 
@@ -58,12 +58,20 @@ impl std::ops::Deref for DbGuard {
     }
 }
 
-/// Get the global database connection.
+/// Get the global database connection for callers that require initialized storage.
+/// Fallible storage operations should use `try_connection()` to report open errors.
+pub fn connection() -> DbGuard {
+    try_connection().unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Get the global database connection, returning initialization errors to the caller.
 ///
 /// If `grove_dir()` changed since last call (e.g. test overriding HOME),
 /// the connection is transparently re-opened at the new path.
-pub fn connection() -> DbGuard {
-    let mut guard = DB.lock().unwrap();
+pub fn try_connection() -> Result<DbGuard> {
+    let mut guard = DB
+        .lock()
+        .map_err(|_| GroveError::storage("Database connection lock is poisoned"))?;
     let expected = grove_dir().join("grove.db");
 
     let needs_open = match &*guard {
@@ -72,15 +80,32 @@ pub fn connection() -> DbGuard {
     };
 
     if needs_open {
-        let conn = open_at(&expected)
-            .unwrap_or_else(|e| panic!("Failed to open {}: {}", expected.display(), e));
+        let conn = open_at(&expected).map_err(|error| {
+            let permission_error = match &error {
+                GroveError::Io(error) => error.kind() == std::io::ErrorKind::PermissionDenied,
+                GroveError::Sqlite(error) => matches!(
+                    error.sqlite_error_code(),
+                    Some(rusqlite::ErrorCode::ReadOnly | rusqlite::ErrorCode::PermissionDenied)
+                ),
+                _ => false,
+            };
+            let hint = if permission_error {
+                " Check write access to the database file and its parent directory (including SQLite WAL/SHM files), and whether the filesystem or execution environment is read-only."
+            } else {
+                ""
+            };
+            GroveError::storage(format!(
+                "Failed to open {}: {error}.{hint}",
+                expected.display()
+            ))
+        })?;
         *guard = Some(DbState {
             path: expected,
             conn,
         });
     }
 
-    DbGuard(guard)
+    Ok(DbGuard(guard))
 }
 
 /// Open (or create) the database at a specific path and apply schema
@@ -2755,6 +2780,38 @@ pub fn migrate_v20_fix_empty_slots() -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn connection_open_failure_can_be_retried() {
+        let _lock = super::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let database = temp.path().join("grove.db");
+        std::fs::create_dir(&database).unwrap();
+
+        struct ResetDatabase;
+        impl Drop for ResetDatabase {
+            fn drop(&mut self) {
+                super::DB.lock().unwrap().take();
+                crate::storage::set_grove_dir_override(None);
+            }
+        }
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _reset = ResetDatabase;
+
+        for _ in 0..2 {
+            let error = super::try_connection().err().expect("Open must fail");
+            assert!(error.to_string().contains(&database.display().to_string()));
+        }
+        assert!(!super::DB.is_poisoned());
+
+        std::fs::remove_dir(&database).unwrap();
+        let conn = super::try_connection().unwrap();
+        assert_eq!(
+            conn.query_row("SELECT 1", [], |row| row.get::<_, i32>(0))
+                .unwrap(),
+            1
+        );
+    }
+
     #[test]
     fn v1_session_timestamp_migration_backfills_once_and_preserves_clears() {
         let temp = tempfile::tempdir().unwrap();
