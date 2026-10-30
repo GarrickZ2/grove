@@ -402,14 +402,14 @@ export const BottomOriginTurnList = forwardRef<
   return (
     <div
       ref={assignScroller}
-      className="task-chat-virtual-scroller relative z-0 h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-none"
+      className="task-chat-virtual-scroller chat-selection-layout relative z-0 h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-none"
       onScroll={handleScroll}
       onWheel={handleWheel}
     >
       {topContent}
       <div
         ref={canvasRef}
-        className="relative min-h-full"
+        className="chat-selection-layout relative min-h-full"
         style={{ height: layout.totalHeight }}
       >
         {mountedIndexes.map((index) => {
@@ -421,7 +421,7 @@ export const BottomOriginTurnList = forwardRef<
               key={turn.key}
               ref={(element) => observeTurn(element, turn.key)}
               data-turn-key={turn.key}
-              className="absolute inset-x-0"
+              className="chat-selection-layout absolute inset-x-0"
               style={{ top: position.top }}
             >
               {renderTurn(turn)}

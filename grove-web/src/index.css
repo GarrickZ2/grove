@@ -268,6 +268,13 @@ body.grove-scrolling .blitz-area ::-webkit-scrollbar-thumb {
   color: white;
 }
 
+/* WebKit paints selection gaps using the enclosing layout blocks' colors.
+   Keep transcript gutters and spacing transparent without disabling native
+   selection/copy. Content descendants still use the global ::selection rule. */
+.chat-selection-layout::selection {
+  background: transparent;
+}
+
 /* Tray popover: indeterminate progress bar sweep */
 @keyframes barSlide {
   0% {

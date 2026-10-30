@@ -10585,7 +10585,7 @@ export function TaskChat({
 
   const renderChatItem = (idx: number, item: RenderItem) => {
     const rowClassName =
-      "mx-auto flow-root w-full max-w-[920px] px-4 pt-3 sm:px-6";
+      "chat-selection-layout mx-auto flow-root w-full max-w-[920px] px-4 pt-3 sm:px-6";
     const dataItemIndex = idx;
     const measureKey = measuredHeightKey(item);
     if (item.kind === "single") {
@@ -11503,10 +11503,10 @@ export function TaskChat({
                 messagesViewportRef.current = element;
                 lastObservedScrollTopRef.current = element?.scrollTop ?? 0;
               }}
-              className="relative z-0 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-none"
+              className="chat-selection-layout relative z-0 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-none"
               onScroll={handleDirectListScroll}
             >
-              <div ref={directListContentRef} className="min-h-full">
+              <div ref={directListContentRef} className="chat-selection-layout min-h-full">
                 <TaskChatVirtuosoHeader context={virtuosoContext} />
                 {renderItems.map((item, idx) => (
                   <Fragment key={renderItemKey(item)}>
