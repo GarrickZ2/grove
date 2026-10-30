@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listChats, type ChatSessionResponse } from "../../../api";
 import type { RadioEventCallbacks } from "../../../hooks/useRadioEvents";
+import type { BottomOriginTurnListHandle } from "./BottomOriginTurnList";
 import { TaskChat } from "./TaskChat";
 
 const mocks = vi.hoisted(() => ({
@@ -11,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   config: { config: null },
   preview: { drafts: [] },
   availability: { baseAgents: [], customAgents: [], customAgentPersonas: [], acpAvailabilityLoaded: true },
+  hideTurnRows: false,
+  forceVirtualization: false,
+  virtualizationListeners: new Set<() => void>(),
 }));
 
 vi.mock("../../../api", () => ({
@@ -59,6 +63,25 @@ vi.mock("../../ui", () => ({
 }));
 vi.mock("../TaskDetail/XTerminal", () => ({ XTerminal: () => null }));
 vi.mock("../../Dialogs/ConfirmDialog", () => ({ ConfirmDialog: () => null }));
+vi.mock("./taskChatVirtualScroll", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./taskChatVirtualScroll")>();
+  return { ...actual, shouldVirtualizeTaskChat: (count: number, limit: number) => mocks.forceVirtualization || actual.shouldVirtualizeTaskChat(count, limit) };
+});
+vi.mock("./BottomOriginTurnList", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./BottomOriginTurnList")>();
+  const { forwardRef, useSyncExternalStore } = await import("react");
+  type Props = React.ComponentProps<typeof actual.BottomOriginTurnList>;
+  return {
+    ...actual,
+    BottomOriginTurnList: forwardRef<BottomOriginTurnListHandle, Props>(function RemountableTurnList(props, ref) {
+      const hidden = useSyncExternalStore((listener) => {
+        mocks.virtualizationListeners.add(listener);
+        return () => { mocks.virtualizationListeners.delete(listener); };
+      }, () => mocks.hideTurnRows);
+      return <actual.BottomOriginTurnList {...props} ref={ref} renderTurn={(turn) => hidden ? null : props.renderTurn(turn)} />;
+    }),
+  };
+});
 
 const chatA: ChatSessionResponse = {
   id: "A", title: "Session A", agent: "test", created_at: "2026-10-30T00:00:00Z",
@@ -102,6 +125,9 @@ describe("TaskChat draft isolation during session completion", () => {
   let root: Root;
 
   beforeEach(() => {
+    mocks.hideTurnRows = false;
+    mocks.forceVirtualization = false;
+    mocks.virtualizationListeners.clear();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     for (const name of ["localStorage", "sessionStorage"]) {
       const values = new Map<string, string>();
@@ -115,6 +141,7 @@ describe("TaskChat draft isolation during session completion", () => {
     }
     vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
     vi.stubGlobal("WebSocket", ChatSocket);
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     ChatSocket.instances.clear();
     Object.defineProperty(HTMLElement.prototype, "scrollTo", { configurable: true, value: () => {} });
     vi.mocked(listChats).mockResolvedValue([chatA, chatB]);
@@ -174,6 +201,104 @@ describe("TaskChat draft isolation during session completion", () => {
     });
     await refreshChats();
   }
+
+  it("retains timeline disclosures through row unmounts and completed-summary unmounts", async () => {
+    mocks.forceVirtualization = true;
+    await render();
+    await act(async () => {
+      const socket = ChatSocket.instances.get("A")!;
+      socket.receive({ type: "user_message", text: "Change files" });
+      socket.receive({ type: "busy", value: true });
+      socket.receive({ type: "tool_call", id: "read", name: "read_file", title: "Read", kind: "read", status: "completed", input: [{ label: "file_path", value: "src/read.ts" }] });
+      for (let i = 0; i < 7; i += 1) {
+        socket.receive({ type: "tool_call", id: `edit-${i}`, name: "edit_file", title: "Edit", kind: "edit", status: "completed", locations: [{ path: `src/file-${i}.ts` }], input: [{ label: "file_path", value: `src/file-${i}.ts` }], output: [], content: "@@ -1 +1 @@\n-before\n+after" });
+      }
+    });
+    const byTitle = (title: string) => [...container.querySelectorAll<HTMLButtonElement>("button[title]")].find((button) => button.title === title)!;
+    const byText = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === text)!;
+    const click = async (button: HTMLButtonElement) => {
+      expect(button).toBeDefined();
+      await act(async () => button.click());
+    };
+    expect(byTitle("Read 1 file")).toBeUndefined();
+    expect(byTitle("src/file-6.ts")).toBeDefined();
+    await click(byText("3 earlier steps"));
+    expect(byTitle("Read 1 file").getAttribute("aria-expanded")).toBe("false");
+    expect(byTitle("src/file-0.ts").getAttribute("aria-expanded")).toBe("false");
+    expect(byTitle("src/file-6.ts")).toBeUndefined();
+    await click(byText("1 more files"));
+    await click(byTitle("Read 1 file"));
+    await click(byTitle("read_file · src/read.ts"));
+    expect(byTitle("read_file · src/read.ts").getAttribute("aria-expanded")).toBe("true");
+    await click(byTitle("src/file-6.ts"));
+    expect(byTitle("read_file · src/read.ts").getAttribute("aria-expanded")).toBe("false");
+    const addedLine = [...container.querySelectorAll("pre span")].find((line) => line.textContent === "+after");
+    expect(addedLine?.classList.contains("text-[var(--color-success)]")).toBe(true);
+
+    const assertExpanded = () => {
+      expect(byText("Show fewer").getAttribute("aria-expanded")).toBe("true");
+      expect(byTitle("Read 1 file").getAttribute("aria-expanded")).toBe("true");
+      expect(byTitle("src/file-6.ts").getAttribute("aria-expanded")).toBe("true");
+      expect(byText("Show fewer files")).toBeDefined();
+    };
+    const remountRows = async () => {
+      await act(async () => {
+        mocks.hideTurnRows = true;
+        for (const listener of mocks.virtualizationListeners) listener();
+      });
+      expect(byTitle("Read 1 file")).toBeUndefined();
+      await act(async () => {
+        mocks.hideTurnRows = false;
+        for (const listener of mocks.virtualizationListeners) listener();
+      });
+    };
+    await remountRows();
+    assertExpanded();
+    await act(async () => ChatSocket.instances.get("A")!.receive({ type: "complete", stop_reason: "end_turn" }));
+    await click(byText("Worked"));
+    assertExpanded();
+    await remountRows();
+    assertExpanded();
+    await click(byText("Worked"));
+    await vi.waitFor(async () => {
+      await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); });
+      expect(byTitle("Read 1 file")).toBeUndefined();
+    });
+    await click(byText("Worked"));
+    assertExpanded();
+    await click(byText("Show fewer"));
+    expect(byTitle("Read 1 file")).toBeUndefined();
+    expect(byTitle("src/file-6.ts").getAttribute("aria-expanded")).toBe("true");
+    await click(byText("3 earlier steps"));
+    assertExpanded();
+  });
+
+  it("renders repeated shell calls with a count and abbreviated multiline text while retaining each input", async () => {
+    await render();
+    const command = '/bin/zsh -lc "\nfirst-command\n\nsecond-command\nthird-command"';
+    await act(async () => {
+      const socket = ChatSocket.instances.get("A")!;
+      socket.receive({ type: "user_message", text: "Run checks" });
+      socket.receive({ type: "busy", value: true });
+      for (let i = 0; i < 3; i += 1) {
+        socket.receive({ type: "tool_call", id: `call-${i}`, name: "exec_command", title: "Run", kind: "execute", status: i === 2 ? "running" : i === 0 ? "failed" : "completed", input: [{ label: "command", value: command }] });
+        socket.receive({ type: "tool_call", id: `guardian-${i}`, name: "Guardian Review", title: "Guardian Review", kind: "think", status: "completed" });
+      }
+    });
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>("button[title]")].filter((button) => button.title === command);
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent).toContain("first-command");
+    expect(buttons[0].textContent).toContain("+2 lines");
+    expect(buttons[0].textContent).toContain("×3");
+    expect(buttons[0].textContent).toContain("failed");
+    expect(buttons[0].textContent).not.toContain("/bin/zsh");
+    expect(buttons[0].classList.contains("text-[var(--color-error)]")).toBe(false);
+    expect(buttons[0].querySelector(".motion-safe\\:animate-pulse")).not.toBeNull();
+    expect(container.textContent).not.toContain("Guardian Review");
+    await act(async () => buttons[0].click());
+    const originalInputs = [...container.querySelectorAll("dd")].filter((field) => field.textContent === command);
+    expect(originalInputs).toHaveLength(3);
+  });
 
   it("preserves a live draft after opening an already-loaded session", async () => {
     await render();

@@ -9,7 +9,7 @@ import { useComposerInteractionBoundary } from "./useComposerInteractionBoundary
 import { BackgroundChatConnections, trackChatSocketSends, watchBackgroundChatConnections } from "./backgroundChatConnections";
 import { historyComposerPlans, reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
 import { PlanDocumentsPanel, type PlanMarkdownOptions } from "./PlanDocumentsPanel";
-import { buildRenderItems, buildSequentialRenderItems, type RenderItem, type WorkSummaryItem, type ToolSectionItem } from "./chatRenderItems";
+import { buildRenderItems, buildSequentialRenderItems, buildToolTimelineRows, backgroundToolLabel, timelineToolLabel, finalFailedTool, toolTimelineLegacyDiff, toolTimelineExpansionKey, toggleToolTimelineDetail, toolTimelineRowState, shellTimelineDisplay, toolTimelineWindow, type ToolTimelineRow, type RenderItem, type WorkSummaryItem, type ToolSectionItem } from "./chatRenderItems";
 import { SubagentsPanel } from "./SubagentsPanel";
 import { SubagentAvatar } from "./SubagentAvatar";
 import { SubagentCard } from "./SubagentCard";
@@ -18,14 +18,15 @@ import { CompactionDivider } from "./CompactionDivider";
 import { applyCompactionEvent, compactionSearchText, interruptCompactions, reconcileCompactionActivity, type CompactionMessage } from "./compactionReducer";
 import { SessionNotice } from "./SessionNotice";
 import { appendSessionNotice, sessionNoticeFromEvent, type SessionNoticeMessage } from "./sessionNotices";
-import { toolDisplayName, toolVerb, isEditTool, classifyActionKind, isBackgroundAction, type ActionKind } from "./toolCallIdentity";
+import { toolDisplayName, toolVerb, classifyActionKind, type ActionKind } from "./toolCallIdentity";
 import { AuthRequiredPanel, type AuthMethodOption } from "./AuthRequiredPanel";
 import { publishIosChatEvent } from "../../../ios/chatActivity";
 import {
+  createContext,
+  useContext,
   useState,
   useEffect,
   useLayoutEffect,
-  useId,
   useRef,
   useCallback,
   useMemo,
@@ -103,7 +104,6 @@ import {
   Button,
   ImageLightbox,
   MarkdownRenderer,
-  VSCodeIcon,
   FileMentionDropdown,
   AgentPickerMenuItems,
   DropdownMenu,
@@ -181,11 +181,6 @@ import { useChatSearch } from "./useChatSearch";
 import { useChatPositioning } from "./useChatPositioning";
 import { ChatListErrorBoundary } from "./ChatListErrorBoundary";
 import { useDeferredVirtuosoRangeValue } from "./useDeferredVirtuosoRangeValue";
-import {
-  extractDiffForEditPath,
-  extractEditToolPaths,
-} from "./editToolPaths";
-import { nextExpandedToolDetail } from "./toolDetailExpansion";
 import {
   extractThoughtStatus,
   shouldShowGenericThinking,
@@ -296,7 +291,7 @@ import { mentionStatus, projectMentionItems } from "./projectMentions";
 import { createFileChip } from "./fileMentionChip";
 import { nextMentionIndex } from "../../../utils/fileMention";
 import { openExternalUrl } from "../../../utils/openExternal";
-import { ansiToHtml, stripAnsi } from "../../../utils/ansi";
+import { ansiToHtml } from "../../../utils/ansi";
 import { fuzzyFindByName } from "../../../utils/fuzzySearch";
 import { useCommand, useContextKey, useVoiceControlContext } from "../../../keyboard";
 import { ORBIT_PHONE_TITLE_SLOT } from "../../Layout/OrbitPhoneHeader";
@@ -906,10 +901,10 @@ function SessionPinButton({
         event.stopPropagation();
         onToggle();
       }}
-      className={`group/pin shrink-0 rounded p-0.5 transition-all hover:text-[var(--color-highlight)] ${
+      className={`group/pin shrink-0 rounded p-0.5 transition-all ${
         pinned
-          ? "text-[var(--color-text)] opacity-100"
-          : `text-[var(--color-text-muted)] ${touch ? "opacity-60" : "opacity-0 group-hover:opacity-100"}`
+          ? "text-[var(--color-warning)] opacity-100"
+          : `text-[var(--color-text-muted)] hover:text-[var(--color-highlight)] ${touch ? "opacity-60" : "opacity-0 group-hover:opacity-100"}`
       }`}
       title={pinned ? "Unpin" : "Pin to top"}
       aria-label={pinned ? "Unpin session" : "Pin session to top"}
@@ -1114,9 +1109,7 @@ function renderItemKey(item: RenderItem): string {
       : `m-${item.sourceIndex ?? item.index}`
     : item.kind === "tool-section"
       ? `ts-${item.sectionId}`
-      : item.kind === "work-summary"
-        ? `ws-${item.sectionId}`
-        : `fs-${item.sectionId}`;
+      : `ws-${item.sectionId}`;
 }
 
 type TaskChatVirtuosoContext = {
@@ -1343,10 +1336,7 @@ function extractRenderItemText(item: RenderItem, expandedSections: Set<string>):
           .filter(Boolean)
           .join("\n");
     }
-  } else if (
-    item.kind === "tool-section" ||
-    item.kind === "file-change-summary"
-  ) {
+  } else if (item.kind === "tool-section") {
     return "";
   }
   if (!expandedSections.has(item.sectionId)) return "";
@@ -2379,6 +2369,15 @@ function DownloadingLabel({ startedAt, compact }: { startedAt: number; compact?:
 }
 
 // ─── Main Component ──────────────────────────────────────────────────────────
+
+type ToolTimelineExpansion = {
+  scopeId: string;
+  expandedSections: Set<string>;
+  toggleSection: (key: string) => void;
+  toggleDetail: (sectionId: string, rowKey: string) => void;
+};
+
+const ToolTimelineExpansionContext = createContext<ToolTimelineExpansion | null>(null);
 
 export function TaskChat({
   projectId,
@@ -6415,7 +6414,8 @@ export function TaskChat({
           break;
         case "tool_call":
           setMessages((prev) => reduceHistoryMessages(prev, msg));
-          // Default-expand: new section gets expanded once; existing section untouched
+          // Legacy bare section IDs are harmless: timeline disclosures only
+          // read namespaced keys and remain collapsed until explicitly opened.
           setAutoExpandSectionId((prev) => {
             if (prev === null) {
               // New section — default expand it once
@@ -10133,7 +10133,7 @@ export function TaskChat({
             height,
           );
           // The actively growing assistant row is not necessarily the final
-          // RenderItem: tool/file/work summaries can already follow it. Every
+          // RenderItem: tool/work summaries can already follow it. Every
           // mounted row resize therefore enters the one bottom gate. Detached
           // readers are rejected by scheduleBottomScroll before any scroll.
           if (changed) scheduleBottomScroll("auto");
@@ -10536,6 +10536,16 @@ export function TaskChat({
     });
   }, []);
 
+  const toggleTimelineDetail = useCallback((sectionId: string, rowKey: string) => {
+    setExpandedSections((previous) => toggleToolTimelineDetail(previous, sectionId, rowKey));
+  }, []);
+  const timelineExpansion = useMemo<ToolTimelineExpansion>(() => ({
+    scopeId: activeChatId ?? "",
+    expandedSections,
+    toggleSection,
+    toggleDetail: toggleTimelineDetail,
+  }), [activeChatId, expandedSections, toggleSection, toggleTimelineDetail]);
+
   const renderPendingInputActions = (input: PendingInput, queue = false) => {
     if (input.status === "accepted") return null;
     const waiting = input.status === "sending";
@@ -10633,30 +10643,7 @@ export function TaskChat({
           <ToolSectionView
             sectionId={item.sectionId}
             tools={item.tools}
-            expanded={expandedSections.has(item.sectionId)}
-            forceExpanded={false}
-            sectionFinished={idx < renderItems.length - 1 || !isBusy}
-            onToggleSection={toggleSection}
-            onFileClick={onNavigateToFile}
-          />
-        </MeasuredTaskChatRow>
-      );
-    }
-    if (item.kind === "work-summary") {
-      return (
-        <MeasuredTaskChatRow
-          className={rowClassName}
-          dataItemIndex={dataItemIndex}
-          dataRenderKey={measureKey}
-          measureKey={measureKey}
-          onObserve={observeMeasuredRow}
-        >
-          <WorkSummaryView
-            sectionId={item.sectionId}
-            items={item.items}
-            durationSeconds={item.durationSeconds}
-            expanded={expandedSections.has(item.sectionId)}
-            onToggleSection={toggleSection}
+            lastToolId={item.lastToolId}
             onFileClick={onNavigateToFile}
           />
         </MeasuredTaskChatRow>
@@ -10670,8 +10657,13 @@ export function TaskChat({
         measureKey={measureKey}
         onObserve={observeMeasuredRow}
       >
-        <FileChangeSummaryView
-          tools={item.tools}
+        <WorkSummaryView
+          sectionId={item.sectionId}
+          items={item.items}
+          lastToolId={item.lastToolId}
+          durationSeconds={item.durationSeconds}
+          expanded={expandedSections.has(item.sectionId)}
+          onToggleSection={toggleSection}
           onFileClick={onNavigateToFile}
         />
       </MeasuredTaskChatRow>
@@ -10744,6 +10736,7 @@ export function TaskChat({
   // ─── Full chat view ──────────────────────────────────────────────────────
 
   return (
+    <ToolTimelineExpansionContext.Provider value={timelineExpansion}>
     <motion.div
       ref={taskChatRootRef}
       data-grove-chat-panel="true"
@@ -13137,6 +13130,7 @@ export function TaskChat({
           document.body,
         )}
     </motion.div>
+    </ToolTimelineExpansionContext.Provider>
   );
 }
 
@@ -14211,392 +14205,13 @@ function SubagentActivity({ message, renderMessage, onFileClick, allowLocalFiles
   renderMessage: (message: ChatMessage, index: number) => ReactNode;
   onFileClick?: (path: string, line?: number) => Promise<boolean>;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const items = buildSequentialRenderItems(message.messages);
+  const live = message.state?.state === "running" || message.messages.some((entry) => (entry.type === "assistant" || entry.type === "thinking") && !entry.complete);
+  const items = buildSequentialRenderItems(message.messages, 0, live ? null : undefined);
   return <div className="space-y-4 pt-1"><PlanDocumentsPanel plans={sessionPlanDocuments(message.messages)} allowLocalFiles={allowLocalFiles} onFileClick={onFileClick} markdownProps={markdownProps} fileContext={fileContext} />{items.map((item, index) => {
     const key = `${message.sessionId}-${index}`;
-    return item.kind === "tool-section" ? <ToolSectionView key={key} sectionId={key} tools={item.tools} expanded={expanded.has(key)} forceExpanded={false} sectionFinished={index < items.length - 1 || message.state?.state !== "running"} onToggleSection={(id) => setExpanded((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onFileClick={onFileClick} />
+    return item.kind === "tool-section" ? <ToolSectionView key={key} sectionId={JSON.stringify(["subagent", message.sessionId, item.sectionId])} tools={item.tools} lastToolId={item.lastToolId} onFileClick={onFileClick} />
       : item.kind === "single" ? <div key={key}>{renderMessage(item.message, item.index)}</div> : null;
   })}</div>;
-}
-
-function getToolNavMode(message: ToolMessage): "diff" | "full" {
-  return isEditTool(message) ? "diff" : "full";
-}
-
-type ToolLocationChip = {
-  key: string;
-  label: string;
-  path: string;
-  line?: number;
-  isDirectory: boolean;
-  status?: string;
-  mode: "diff" | "full";
-};
-
-const KNOWN_FILE_BASENAMES = new Set([
-  "makefile",
-  "dockerfile",
-  "license",
-  "readme",
-  "procfile",
-  "gemfile",
-  "rakefile",
-  "justfile",
-  "brewfile",
-  ".gitignore",
-  ".gitattributes",
-  ".gitmodules",
-  ".env",
-  ".editorconfig",
-  ".npmrc",
-  ".nvmrc",
-  ".prettierrc",
-  ".eslintrc",
-  ".clang-format",
-  ".dockerignore",
-]);
-
-function getLocationLabel(path: string): string {
-  const normalized = path.replace(/\/+$/, "");
-  const parts = normalized.split("/");
-  return parts[parts.length - 1] || normalized;
-}
-
-function isIgnorableLocationLabel(label: string): boolean {
-  return label === "" || label === "." || label === "..";
-}
-
-function looksLikeFileLabel(label: string): boolean {
-  const lower = label.toLowerCase();
-  if (KNOWN_FILE_BASENAMES.has(lower)) return true;
-  if (label.startsWith(".") && label.length > 1) return true;
-  if (label.includes(".")) return true;
-  if (/[A-Z]/.test(label)) return true;
-  return false;
-}
-
-function isDirectoryLocation(
-  message: ToolMessage,
-  location: NonNullable<ToolMessage["locations"]>[number],
-): boolean {
-  const label = getLocationLabel(location.path);
-  if (isIgnorableLocationLabel(label)) return true;
-  if (location.line != null) return false;
-  if (location.path.endsWith("/")) return true;
-  if (isEditTool(message)) return false;
-  const verb = toolVerb(message);
-  if (verb === "read") return false;
-  if (looksLikeFileLabel(label)) return false;
-  return verb === "search" || verb === "list" || verb === "run";
-}
-
-function collectLocationChips(
-  tools: ToolSectionItem[],
-  predicate: (message: ToolMessage) => boolean,
-): ToolLocationChip[] {
-  const seen = new Set<string>();
-  const chips: ToolLocationChip[] = [];
-
-  for (const tool of tools) {
-    if (!predicate(tool.message)) continue;
-    for (const loc of tool.message.locations ?? []) {
-      const label = getLocationLabel(loc.path);
-      if (isIgnorableLocationLabel(label)) continue;
-      const isDirectory = isDirectoryLocation(tool.message, loc);
-      const key = `${isDirectory ? "dir" : "file"}:${label}:${loc.path}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      chips.push({
-        key,
-        label,
-        path: loc.path,
-        line: loc.line,
-        isDirectory,
-        status: tool.message.status,
-        mode: getToolNavMode(tool.message),
-      });
-    }
-  }
-
-  return chips;
-}
-
-function parseDiffStat(
-  content?: string,
-): { additions: number; deletions: number } | null {
-  if (!content) return null;
-  const lines = content.split("\n");
-  const looksLikeDiff = lines.some(
-    (line) =>
-      line.startsWith("@@ ") ||
-      line.startsWith("@@") ||
-      line.startsWith("diff --git ") ||
-      line.startsWith("+++ ") ||
-      line.startsWith("--- "),
-  );
-  if (!looksLikeDiff) return null;
-  let additions = 0;
-  let deletions = 0;
-  for (const line of lines) {
-    if (
-      line.startsWith("+++ ") ||
-      line.startsWith("--- ") ||
-      line.startsWith("@@") ||
-      line.startsWith("diff --git ") ||
-      line.startsWith("index ")
-    )
-      continue;
-    if (line.startsWith("+")) additions += 1;
-    else if (line.startsWith("-")) deletions += 1;
-  }
-  if (additions === 0 && deletions === 0) return null;
-  return { additions, deletions };
-}
-
-function formatActionCount(count: number): string | null {
-  if (count <= 0) return null;
-  return `${count} action${count !== 1 ? "s" : ""}`;
-}
-
-function formatInspectionCount(count: number): string | null {
-  if (count <= 0) return null;
-  return `${count} inspection step${count !== 1 ? "s" : ""}`;
-}
-
-function truncateChipLabel(label: string, maxLength = 64): string {
-  const singleLine = label.replace(/\s+/g, " ").trim();
-  if (singleLine.length <= maxLength) return singleLine;
-  return `${singleLine.slice(0, maxLength - 1)}…`;
-}
-
-/** Strip outermost code fence wrapper (```lang\n...\n```) if present */
-function stripWrappingFence(raw: string): string {
-  const lines = raw.split("\n");
-  if (
-    lines.length >= 3 &&
-    /^```\w*$/.test(lines[0].trim()) &&
-    lines[lines.length - 1].trim() === "```"
-  ) {
-    return lines.slice(1, -1).join("\n");
-  }
-  return raw;
-}
-
-function extractFailureReason(tools: ToolSectionItem[]): string | null {
-  for (const tool of tools) {
-    const m = tool.message;
-    if (m.status !== "error" && m.status !== "failed") continue;
-    const content = m.content?.trim();
-    if (!content) return `Failed during ${toolDisplayName(m)}`;
-    const stripped = stripWrappingFence(content)
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!stripped) return `Failed during ${toolDisplayName(m)}`;
-    return stripped.slice(0, 180);
-  }
-  return null;
-}
-
-function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean) {
-  const running = tools.filter((t) => t.message.status === "running").length;
-  const pending = tools.filter((t) => t.message.status === "pending").length;
-  const failed = tools.filter(
-    (t) => t.message.status === "error" || t.message.status === "failed",
-  ).length;
-  const cancelled = tools.filter(
-    (t) => t.message.status === "cancelled",
-  ).length;
-  const total = tools.length;
-  const succeeded = total - running - pending - failed - cancelled;
-  // Only compute terminal statuses when the section is truly finished
-  // (i.e. a new message/thinking/turn-end appeared after this tool section, or chat is idle)
-  const settled = sectionFinished && running === 0 && pending === 0;
-  const allFailed = settled && failed > 0 && succeeded === 0;
-  const allCancelled = settled && cancelled > 0 && succeeded === 0 && failed === 0;
-  const partialFailed = settled && failed > 0 && !allFailed;
-
-  // statusLabel: only show when it adds info beyond the title
-  const statusLabel =
-    !settled
-      ? ""
-      : partialFailed
-        ? `${failed} failed`
-        : cancelled > 0 && succeeded > 0
-          ? `${cancelled} cancelled`
-          : "";
-  const edits = tools.filter((t) => isEditTool(t.message));
-  const foregroundActions = tools.filter(
-    (t) => !isEditTool(t.message) && !isBackgroundAction(t.message),
-  );
-  const backgroundActions = tools.filter((t) => isBackgroundAction(t.message));
-
-  let title = "Working";
-  if (allFailed) title = "Action failed";
-  else if (allCancelled) title = "Actions cancelled";
-  else if (partialFailed) title = "Completed with errors";
-  else if (
-    tools.some((t) => toolVerb(t.message) === "permission")
-  )
-    title = "Waiting for permission";
-  else if (edits.length > 0)
-    title = running > 0 || !settled ? "Editing files" : "Edits applied";
-  else if (foregroundActions.length > 0)
-    title = running > 0 || !settled ? "Running actions" : "Actions complete";
-  else if (backgroundActions.length > 0)
-    title = running > 0 || !settled ? "Inspecting code" : "Inspection complete";
-
-  // Merge edits on the same file: accumulate +/- and keep the latest tool id/status
-  const editItems = (() => {
-    const merged = new Map<string, {
-      key: string;
-      toolId: string;
-      label: string;
-      fullPath: string;
-      diff: string;
-      additions: number;
-      deletions: number;
-      status: string;
-    }>();
-    for (const tool of edits) {
-      const editPaths = extractEditToolPaths({
-        locations: tool.message.locations,
-        input: tool.message.input,
-        content: tool.message.content,
-      });
-      const targets = editPaths.length > 0 ? editPaths : [""];
-      for (const fullPath of targets) {
-        const diff = extractDiffForEditPath(
-          tool.message.content,
-          fullPath,
-          targets,
-        );
-        const stat = parseDiffStat(diff);
-        const label =
-          fullPath.split("/").pop() ||
-          tool.message.title.replace(/^(Edit|Write)\s+/i, "");
-        const mergeKey = fullPath || label;
-        const existing = merged.get(mergeKey);
-        if (existing) {
-          existing.additions += stat?.additions ?? 0;
-          existing.deletions += stat?.deletions ?? 0;
-          if (diff && !existing.diff.includes(diff)) {
-            existing.diff = existing.diff
-              ? `${existing.diff}\n\n${diff}`
-              : diff;
-          }
-          existing.toolId = tool.message.id;
-          existing.status = tool.message.status;
-        } else {
-          merged.set(mergeKey, {
-            key: `${tool.message.id}:${mergeKey}`,
-            toolId: tool.message.id,
-            label,
-            fullPath,
-            diff,
-            additions: stat?.additions ?? 0,
-            deletions: stat?.deletions ?? 0,
-            status: tool.message.status,
-          });
-        }
-      }
-    }
-    return Array.from(merged.values());
-  })();
-
-  const buildChipItem = (tool: ToolSectionItem): ActionChipItem => {
-    const kind = classifyActionKind(tool.message);
-    const derived = toolDisplayName(tool.message);
-    return {
-      key: tool.message.id,
-      name: tool.message.name,
-      kind,
-      label: truncateChipLabel(stripAnsi(derived)),
-      content: tool.message.content ?? "",
-      locations: tool.message.locations ?? [],
-      status: tool.message.status,
-      input: tool.message.input,
-      output: tool.message.output,
-      hoverText: toolCallHoverText(tool.message.title, tool.message.input, tool.message.name),
-    };
-  };
-  const actionItems = foregroundActions.map(buildChipItem);
-  // Background tools without file locations (Bash, Grep with output_mode=content,
-  // MCP calls, ...) won't appear in the file-chip group above — surface them as
-  // action chips so the user can still see what was inspected and expand to read
-  // the output.
-  const inspectionActionItems = backgroundActions
-    .filter(
-      (t) =>
-        Boolean(t.message.name) || hasReadableToolInput(t.message.input) ||
-        hasReadableToolOutput(t.message.output, t.message.content ?? ""),
-    )
-    .map(buildChipItem);
-
-  const inspectionEntries = collectLocationChips(tools, isBackgroundAction);
-  const inspectionFiles = inspectionEntries.filter(
-    (entry) => !entry.isDirectory,
-  );
-  const actionEntries = collectLocationChips(
-    tools,
-    (message) => !isBackgroundAction(message) && !isEditTool(message),
-  );
-  const actionFiles = actionEntries.map((entry) => entry.label);
-
-  const totalActionCount = edits.length + actionItems.length;
-  const inspectionSectionSummary =
-    inspectionFiles.length > 0
-      ? `Reviewed ${inspectionFiles.length} file${inspectionFiles.length > 1 ? "s" : ""}`
-      : null;
-  const totalAffectedFiles = new Set([...actionFiles, ...editItems.map((e) => e.label)]).size;
-  const actionSectionSummary =
-    totalAffectedFiles > 0
-      ? `Action on ${totalAffectedFiles} file${totalAffectedFiles > 1 ? "s" : ""}`
-      : formatActionCount(totalActionCount);
-  const headerSummary =
-    backgroundActions.length > 0 &&
-    edits.length === 0 &&
-    foregroundActions.length === 0
-      ? (inspectionSectionSummary ??
-        formatInspectionCount(backgroundActions.length))
-      : (actionSectionSummary ?? formatActionCount(totalActionCount));
-
-  // Determine dominant section type for icon selection
-  const sectionType: "inspection" | "edit" | "action" =
-    edits.length > 0
-      ? "edit"
-      : backgroundActions.length > 0 &&
-          foregroundActions.length === 0
-        ? "inspection"
-        : "action";
-
-  return {
-    title,
-    statusLabel,
-    sectionType,
-    headerSummary,
-    actionSectionSummary,
-    editItems,
-    actionItems,
-    visibleActionItems: actionItems.slice(0, 4),
-    actionItemOverflow: Math.max(0, actionItems.length - 4),
-    inspectionSectionSummary,
-    inspectionEntries,
-    inspectionVisibleEntries: inspectionEntries.slice(0, 3),
-    inspectionOverflow: Math.max(0, inspectionEntries.length - 3),
-    inspectionActionItems,
-    visibleInspectionItems: inspectionActionItems.slice(0, 4),
-    inspectionItemOverflow: Math.max(0, inspectionActionItems.length - 4),
-    actionEntries,
-    actionVisibleEntries: actionEntries.slice(0, 3),
-    actionOverflow: Math.max(0, actionEntries.length - 3),
-    failureReason: extractFailureReason(tools),
-    pending,
-    running,
-    failed,
-    cancelled,
-  };
 }
 
 function getStatusChipClasses(status: string, muted = false): string {
@@ -15028,476 +14643,199 @@ function ActionChipList({
   );
 }
 
-function ExpandableFileChipGroup({
-  title,
-  summary,
-  visibleEntries,
-  allEntries,
-  expanded,
-  onToggleExpanded,
-  onFileClick,
-  muted = true,
-}: {
-  title: string;
-  summary?: string | null;
-  visibleEntries: ToolLocationChip[];
-  allEntries: ToolLocationChip[];
-  expanded: boolean;
-  onToggleExpanded: () => void;
-  onFileClick?: (
-    filePath: string,
-    line?: number,
-    mode?: "diff" | "full",
-  ) => Promise<boolean>;
-  muted?: boolean;
+/** Expanded timeline details reuse the same structured input/output renderers. */
+function ToolTimelineDetails({ message, path, onFileClick }: {
+  message: ToolMessage;
+  path?: string;
+  onFileClick?: (path: string, line?: number, mode?: "diff" | "full") => Promise<boolean>;
 }) {
-  const overflow = Math.max(0, allEntries.length - visibleEntries.length);
-  const renderEntry = (entry: ToolLocationChip) => (
-    <button
-      key={entry.key}
-      type="button"
-      disabled={entry.isDirectory}
-      onClick={() => {
-        if (!entry.isDirectory)
-          onFileClick?.(entry.path, entry.line, entry.mode);
-      }}
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] max-w-[320px] ${
-        entry.isDirectory
-          ? "bg-[color-mix(in_srgb,var(--color-bg-secondary)_80%,var(--color-bg))] text-[var(--color-text-muted)] border border-[color-mix(in_srgb,var(--color-border)_65%,transparent)] disabled:cursor-default disabled:opacity-85"
-          : getStatusChipClasses(entry.status ?? "completed", muted)
-      }`}
-      title={entry.path}
-    >
-      <VSCodeIcon
-        filename={entry.path.split("/").pop() || entry.label}
-        size={13}
-        isFolder={entry.isDirectory}
-      />
-      <span className="truncate">{entry.label}</span>
-    </button>
-  );
-
+  const kind = classifyActionKind(message);
+  const markdown = kind === "skill" || kind === "mcp";
+  const legacyDiff = message.output?.some((output) => output.type === "diff") ? undefined : toolTimelineLegacyDiff(message, path);
   return (
-    <div className="space-y-2">
-      <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-        {title}
-        {summary ? (
-          <span className="ml-2 normal-case tracking-normal text-[11px] opacity-80">
-            {summary}
-          </span>
-        ) : null}
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {visibleEntries.map(renderEntry)}
-        {overflow > 0 && (
-          <button
-            type="button"
-            onClick={onToggleExpanded}
-            className="inline-flex items-center rounded-full border border-[color-mix(in_srgb,var(--color-border)_65%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_80%,var(--color-bg))] px-2.5 py-1 text-[11px] text-[var(--color-text-muted)]"
-          >
-            {expanded ? "Show less" : `+${overflow} more`}
-          </button>
-        )}
-      </div>
-      {expanded && overflow > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {allEntries.slice(visibleEntries.length).map(renderEntry)}
+    <div className="space-y-3 py-2 text-[var(--color-text)]">
+      {message.locations && message.locations.length > 0 && onFileClick && (
+        <div className="flex flex-wrap gap-2">
+          {message.locations.map((location) => (
+            <button
+              key={`${location.path}:${location.line ?? ""}`}
+              type="button"
+              onClick={() => onFileClick(location.path, location.line, ["edit", "delete", "move"].includes(toolVerb(message)) ? "diff" : "full")}
+              className="inline-flex min-w-0 items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              title={location.path}
+            >
+              <span className="truncate">{location.path}</span>
+              <ExternalLink className="h-3 w-3 shrink-0" />
+            </button>
+          ))}
         </div>
       )}
+      {hasReadableToolInput(message.input) && (
+        <section>
+          <h4 className="mb-2 text-xs font-medium">Input</h4>
+          <ToolInputFields fields={message.input ?? []} />
+        </section>
+      )}
+      <section>
+        <h4 className="mb-2 text-xs font-medium">Output</h4>
+        {message.output && message.output.length > 0 ? (
+          <>
+            <ToolContentBlocks content={message.output} />
+            {legacyDiff && <DiffPreview diff={legacyDiff} />}
+          </>
+        ) : legacyDiff ? (
+          <DiffPreview diff={legacyDiff} />
+        ) : markdown && message.content ? (
+          <div className="text-[12px] leading-[1.45]"><MarkdownRenderer content={message.content} /></div>
+        ) : (
+          <pre
+            className="m-0 whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.5]"
+            dangerouslySetInnerHTML={{ __html: ansiToHtml(message.content ?? "") || (normalizedToolStatus(message.status) === "running" ? "Waiting for output…" : "No additional output.") }}
+          />
+        )}
+      </section>
     </div>
   );
 }
 
-/** Collapsible section that groups consecutive tool calls */
-const ToolSectionView = memo(function ToolSectionView({
-  sectionId,
-  tools,
-  expanded,
-  forceExpanded,
-  sectionFinished,
-  onToggleSection,
-  onFileClick,
-}: {
+/** Consecutive tools share a quiet rail; each row owns an input/output disclosure. */
+const ToolSectionView = memo(function ToolSectionView({ sectionId, tools, lastToolId, onFileClick }: {
   sectionId: string;
   tools: ToolSectionItem[];
-  expanded: boolean;
-  forceExpanded: boolean;
-  sectionFinished: boolean;
-  onToggleSection: (sectionId: string) => void;
-  onFileClick?: (
-    filePath: string,
-    line?: number,
-    mode?: "diff" | "full",
-  ) => Promise<boolean>;
+  lastToolId?: string;
+  onFileClick?: (filePath: string, line?: number, mode?: "diff" | "full") => Promise<boolean>;
 }) {
-  const sectionExpanded = forceExpanded || expanded;
-  const summary = useMemo(() => summarizeToolSection(tools, sectionFinished), [tools, sectionFinished]);
-  const [inspectionExpanded, setInspectionExpanded] = useState(false);
-  const [actionExpanded, setActionExpanded] = useState(false);
-  const [actionItemsExpanded, setActionItemsExpanded] = useState(false);
-  const [inspectionItemsExpanded, setInspectionItemsExpanded] = useState(false);
-  // This state intentionally lives inside ToolSectionView: each action block
-  // owns its own accordion, while all tool detail kinds within that block are
-  // mutually exclusive.
-  const [expandedDetailKey, setExpandedDetailKey] = useState<string | null>(null);
-  const toggleDetail = (key: string) =>
-    setExpandedDetailKey((current) => nextExpandedToolDetail(current, key));
-  const hasDetails =
-    summary.inspectionEntries.length > 0 ||
-    summary.inspectionActionItems.length > 0 ||
-    summary.editItems.length > 0 ||
-    summary.actionItems.length > 0 ||
-    summary.actionEntries.length > 0;
-  const DoneIcon =
-    summary.sectionType === "edit"
-      ? Pencil
-      : summary.sectionType === "inspection"
-        ? Eye
-        : Terminal;
-  const summaryIcon =
-    summary.running > 0 ? (
-      <Loader2 className="w-3.5 h-3.5 text-[var(--color-highlight)] animate-spin shrink-0" />
-    ) : summary.pending > 0 ? (
-      <Circle className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-    ) : summary.failed > 0 ? (
-      <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-error)] shrink-0" />
-    ) : summary.cancelled > 0 ? (
-      <X className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-    ) : (
-      <DoneIcon className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />
-    );
-  const collapsedSecondaryText = summary.failureReason ?? summary.headerSummary;
-  return (
-    <motion.div
-      layout
-      transition={{ duration: 0.2, ease: "easeOut" }}
-      className={`rounded-xl border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] transition-colors ${
-        sectionExpanded
-          ? "bg-[color-mix(in_srgb,var(--color-bg-secondary)_72%,transparent)] px-3 py-3"
-          : `bg-[color-mix(in_srgb,var(--color-bg-secondary)_62%,transparent)] px-3 py-2.5${hasDetails ? " hover:bg-[color-mix(in_srgb,var(--color-bg-secondary)_82%,transparent)]" : ""}`
-      }`}
-    >
-      <div
-        role={hasDetails ? "button" : undefined}
-        onClick={hasDetails ? () => onToggleSection(sectionId) : undefined}
-        className={`flex gap-2.5${sectionExpanded ? " items-start" : " items-center"}${hasDetails ? " cursor-pointer" : ""}`}
-      >
-        <div className={sectionExpanded ? "pt-0.5" : ""}>{summaryIcon}</div>
-        <div className="min-w-0 flex-1">
-          {!sectionExpanded ? (
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-sm font-medium text-[var(--color-text)]">
-                {summary.title}
-              </span>
-              {summary.statusLabel ? (
-                <span className="shrink-0 text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                  {summary.statusLabel}
-                </span>
-              ) : null}
-              {collapsedSecondaryText ? (
-                <span
-                  className={`min-w-0 truncate text-xs ${summary.failureReason ? "text-[color-mix(in_srgb,var(--color-warning)_95%,white_4%)]" : "text-[var(--color-text-muted)]"}`}
-                  title={collapsedSecondaryText}
-                >
-                  <span className="mr-1 text-[var(--color-text-muted)]">·</span>
-                  {collapsedSecondaryText}
-                </span>
-              ) : null}
-            </div>
-          ) : (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-[var(--color-text)]">
-                  {summary.title}
-                </span>
-                {summary.statusLabel ? (
-                  <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                    {summary.statusLabel}
-                  </span>
-                ) : null}
-              </div>
-              {summary.failureReason && (
-                <div className="mt-1 rounded-lg border border-[color-mix(in_srgb,var(--color-warning)_20%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_8%,transparent)] px-2.5 py-2 text-xs text-[color-mix(in_srgb,var(--color-warning)_95%,white_4%)] break-all min-w-0">
-                  {summary.failureReason}
-                </div>
-              )}
-              {!summary.failureReason && (
-                <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-                  {summary.headerSummary}
-                </div>
-              )}
-            </>
+  const rows = useMemo(() => buildToolTimelineRows(tools), [tools]);
+  const expansion = useContext(ToolTimelineExpansionContext);
+  if (!expansion) throw new Error("Tool timeline requires chat expansion state");
+  const stateSectionId = JSON.stringify([expansion.scopeId, sectionId]);
+  const expansionKey = (kind: "files" | "background" | "detail" | "earlier", rowKey = "") => toolTimelineExpansionKey(stateSectionId, kind, rowKey);
+  const filesExpanded = expansion.expandedSections.has(expansionKey("files"));
+  const backgroundExpanded = expansion.expandedSections.has(expansionKey("background"));
+  const detailKeys = rows.flatMap((row) => [row.key, ...(row.kind === "background" ? row.tools.map(({ message }) => `detail-${message.id}`) : [])]);
+  const expandedDetailKey = detailKeys.find((key) => expansion.expandedSections.has(expansionKey("detail", key))) ?? null;
+  const toggleDetail = (key: string) => expansion.toggleDetail(stateSectionId, key);
+  // Todo and mode controls keep their existing presentation outside the rail.
+  const segments: Array<{ key: string; rows: ToolTimelineRow[]; special?: ToolSectionItem }> = [];
+  for (const row of rows) {
+    const tool = row.tools[0];
+    const kind = classifyActionKind(tool.message);
+    if (tool.message.kind !== "think" && (kind === "todo" || kind === "switch_mode")) {
+      segments.push({ key: row.key, rows: [], special: tool });
+    } else {
+      const previous = segments.at(-1);
+      if (previous && !previous.special) previous.rows.push(row);
+      else segments.push({ key: row.key, rows: [row] });
+    }
+  }
+  const renderRow = (row: ToolTimelineRow, nested = false): ReactNode => {
+    const message = row.tools.at(-1)!.message;
+    const kind = classifyActionKind(message);
+    const { failed, running, hasFailure, cancelled } = toolTimelineRowState(row, lastToolId);
+    const expanded = row.kind === "background" ? backgroundExpanded : expandedDetailKey === row.key;
+    const path = row.path || timelineToolLabel(message);
+    const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+    const label = row.kind === "background" ? backgroundToolLabel(row.tools) : row.kind === "file" ? path : timelineToolLabel(message);
+    const shell = row.kind === "tool" && message.kind !== "think" && toolVerb(message) === "run" && kind !== "mcp" ? shellTimelineDisplay(label) : null;
+    return (
+      <div key={row.key}>
+        <button
+          type="button"
+          onClick={() => row.kind === "background" ? expansion.toggleSection(expansionKey("background")) : toggleDetail(row.key)}
+          aria-expanded={expanded}
+          title={label}
+          className={`relative -ml-1.5 flex w-[calc(100%+0.375rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-[3px] text-left text-[13px] transition-colors hover:bg-[var(--color-bg-secondary)] ${failed ? "text-[var(--color-error)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+        >
+          {!nested && (
+            <span aria-hidden="true" className={`absolute -left-[18px] top-[10px] h-[7px] w-[7px] rounded-full border ${failed ? "border-[var(--color-error)] bg-[var(--color-error)]" : running ? "border-[var(--color-highlight)] bg-[var(--color-highlight)] motion-safe:animate-pulse" : "border-[var(--color-text-muted)] bg-[var(--color-bg)]"}`} />
           )}
-        </div>
-        {hasDetails ? (
-          <motion.div
-            animate={{ rotate: sectionExpanded ? 90 : 0 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={`shrink-0 ${sectionExpanded ? "mt-0.5" : ""}`}
-          >
-            <ChevronRight className="w-3 h-3 text-[var(--color-text-muted)]" />
-          </motion.div>
-        ) : null}
+          {kind === "mcp" && row.kind === "tool" && (
+            <span className="shrink-0 rounded border border-[var(--color-border)] px-1 font-mono text-[10px] text-[var(--color-text-muted)]">MCP</span>
+          )}
+          {row.kind === "file" && <span className="shrink-0">{toolVerb(message) === "delete" ? "Delete" : toolVerb(message) === "move" ? "Move" : "Edit"}</span>}
+          {shell && <span className="shrink-0">Run</span>}
+          <span className={`min-w-0 flex-1 truncate ${row.kind === "file" || toolVerb(message) === "run" || kind === "mcp" ? "font-mono" : ""}`}>
+            {row.kind === "file" && slash >= 0 ? <><span className="opacity-60">{path.slice(0, slash + 1)}</span>{path.slice(slash + 1)}</> : shell?.text ?? label}
+          </span>
+          {shell && shell.additionalLines > 0 && <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-muted)]">+{shell.additionalLines} lines</span>}
+          {row.kind === "tool" && row.tools.length > 1 && <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-muted)]">×{row.tools.length}</span>}
+          {cancelled && !hasFailure && <span className="shrink-0 rounded border border-[var(--color-border)] px-1 font-mono text-[10px] text-[var(--color-text-muted)]">cancelled</span>}
+          {hasFailure && !failed && <span className="shrink-0 rounded border border-[var(--color-border)] px-1 font-mono text-[10px] text-[var(--color-text-muted)]">failed</span>}
+          {row.kind === "file" && row.hasDiffStat && (
+            <span className="ml-auto shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums">
+              <span className="text-[var(--color-success)]">+{row.additions}</span>{" "}
+              <span className="text-[var(--color-error)]">−{row.deletions}</span>
+            </span>
+          )}
+          <ChevronRight className={`h-3 w-3 shrink-0 opacity-60 transition-transform ${expanded ? "rotate-90" : ""}`} />
+        </button>
+        {expanded && (row.kind === "background" ? (
+          <div className="ml-2 py-1">
+            {row.tools.map((tool) => renderRow({ key: `detail-${tool.message.id}`, kind: "tool", tools: [tool], additions: 0, deletions: 0, hasDiffStat: false }, true))}
+          </div>
+        ) : (
+          <div className="space-y-3 pb-2">
+            {row.tools.map(({ message: tool }) => (
+              <div key={tool.id}>
+                {row.tools.length > 1 && <div className="mt-2 truncate font-mono text-xs text-[var(--color-text-muted)]" title={timelineToolLabel(tool)}>{timelineToolLabel(tool)}</div>}
+                <ToolTimelineDetails message={tool} path={row.path} onFileClick={onFileClick} />
+              </div>
+            ))}
+          </div>
+        ))}
       </div>
-
-      <AnimatePresence initial={false}>
-        {sectionExpanded && hasDetails && (
-          <motion.div
-            key="tool-section-body"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="overflow-hidden"
-          >
-            <div className="mt-3 border-t border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] pt-3 space-y-3">
-              {(summary.inspectionEntries.length > 0 ||
-                summary.inspectionActionItems.length > 0) && (
-                <div className="space-y-2">
-                  {summary.inspectionEntries.length > 0 && (
-                    <ExpandableFileChipGroup
-                      title="Inspection"
-                      summary={summary.inspectionSectionSummary}
-                      visibleEntries={summary.inspectionVisibleEntries}
-                      allEntries={summary.inspectionEntries}
-                      expanded={inspectionExpanded}
-                      onToggleExpanded={() => setInspectionExpanded((v) => !v)}
-                      onFileClick={onFileClick}
-                      muted
-                    />
-                  )}
-                  {(summary.visibleInspectionItems.length > 0 ||
-                    summary.inspectionItemOverflow > 0) && (
-                    <ActionChipList
-                      items={
-                        inspectionItemsExpanded
-                          ? summary.inspectionActionItems
-                          : summary.visibleInspectionItems
-                      }
-                      overflowCount={
-                        inspectionItemsExpanded
-                          ? 0
-                          : summary.inspectionItemOverflow
-                      }
-                      onShowMore={() => setInspectionItemsExpanded(true)}
-                      expandedKey={expandedDetailKey}
-                      onToggleExpand={toggleDetail}
-                      onFileClick={onFileClick}
-                    />
-                  )}
-                </div>
-              )}
-
-              {summary.editItems.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                    Edit
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {summary.editItems.map((item) => {
-                      const isExpanded = expandedDetailKey === item.key;
-                      const tool = tools.find(
-                        (t) => t.message.id === item.toolId,
-                      )?.message;
-                      const path = item.fullPath || tool?.locations?.[0]?.path;
-                      const hasDiff = item.diff.trim().length > 0;
-                      const hasToolDetails = Boolean(
-                        tool &&
-                          (Boolean(tool.name) || hasReadableToolInput(tool.input) ||
-                            hasReadableToolOutput(tool.output, tool.content ?? "")),
-                      );
-                      const canExpand = hasDiff || hasToolDetails;
-                      return (
-                        <div
-                          key={item.key}
-                          className={`inline-flex items-center gap-1 rounded-full pl-2.5 pr-1 py-1 text-[11px] transition-colors ${getStatusChipClasses(item.status)} ${
-                            isExpanded
-                              ? "ring-1 ring-[color-mix(in_srgb,var(--color-highlight)_55%,transparent)] bg-[color-mix(in_srgb,var(--color-highlight)_14%,var(--color-bg-secondary))]"
-                              : ""
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!canExpand) return;
-                              toggleDetail(item.key);
-                            }}
-                            disabled={!canExpand}
-                            className={`inline-flex items-center gap-1.5 ${canExpand ? "cursor-pointer" : "cursor-default"} max-w-[320px]`}
-                            title={path}
-                          >
-                            <VSCodeIcon filename={item.label} size={13} />
-                            <span className="truncate">{item.label}</span>
-                            {(item.additions > 0 || item.deletions > 0) && (
-                              <span className="text-[10px] shrink-0">
-                                <span className="text-[var(--color-success)]">
-                                  +{item.additions}
-                                </span>
-                                <span className="mx-0.5 text-[var(--color-text-muted)]">
-                                  /
-                                </span>
-                                <span className="text-[var(--color-error)]">
-                                  -{item.deletions}
-                                </span>
-                              </span>
-                            )}
-                            {canExpand ? (
-                              isExpanded ? (
-                                <ChevronUp className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />
-                              ) : (
-                                <ChevronDown className="h-3 w-3 shrink-0 text-[var(--color-text-muted)] opacity-70" />
-                              )
-                            ) : null}
-                          </button>
-                          {path && tool && (
-                            <button
-                              type="button"
-                              title="Open file"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onFileClick?.(
-                                  path,
-                                  undefined,
-                                  getToolNavMode(tool),
-                                );
-                              }}
-                              className="ml-0.5 inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[color-mix(in_srgb,var(--color-text)_8%,transparent)] hover:text-[var(--color-text)]"
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {summary.editItems
-                    .filter((item) => expandedDetailKey === item.key)
-                    .map((item) => {
-                      const tool = tools.find(
-                        (candidate) => candidate.message.id === item.toolId,
-                      )?.message;
-                      const status = normalizedToolStatus(
-                        tool?.status ?? item.status,
-                      );
-                      const hasInput = hasReadableToolInput(tool?.input);
-                      const hasOutput = hasReadableToolOutput(
-                        tool?.output,
-                        tool?.content ?? "",
-                      );
-                      const outputBody =
-                        tool?.output && tool.output.length > 0 ? (
-                          <ToolContentBlocks content={tool.output} />
-                        ) : item.diff.trim().length > 0 ? (
-                          <DiffPreview diff={item.diff} />
-                        ) : (
-                          <pre
-                            className="m-0 whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.5] text-[var(--color-text)]"
-                            dangerouslySetInnerHTML={{
-                              __html:
-                                ansiToHtml(tool?.content ?? "") ||
-                                (status === "running"
-                                  ? "Waiting for output…"
-                                  : "No additional output."),
-                            }}
-                          />
-                        );
-                      return (
-                        <div
-                          key={`${item.key}:diff`}
-                          className="overflow-hidden rounded-xl border border-[color-mix(in_srgb,var(--color-border)_65%,transparent)] bg-[var(--color-bg)]"
-                        >
-                          <div className="flex items-center gap-2 border-b border-[color-mix(in_srgb,var(--color-border)_55%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_55%,transparent)] px-3 py-2.5">
-                            <VSCodeIcon filename={item.label} size={13} />
-                            <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--color-text)]">
-                              {item.label}
-                            </span>
-                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--color-border)_65%,transparent)] bg-[var(--color-bg)] px-2 py-0.5 text-[10px] text-[var(--color-text-muted)]">
-                              <ToolStatusIcon
-                                status={status}
-                                className="h-2.5 w-2.5"
-                              />
-                              {toolStatusLabel(status)}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => toggleDetail(item.key)}
-                              className="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
-                              aria-label="Collapse details"
-                            >
-                              <ChevronUp className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                          <div className="space-y-4 px-3 py-3">
-                            {hasInput && (
-                              <section>
-                                <h4 className="mb-2 text-xs font-medium text-[var(--color-text)]">
-                                  Input
-                                </h4>
-                                <ToolInputFields fields={tool?.input ?? []} />
-                              </section>
-                            )}
-                            {hasOutput && (
-                              <section>
-                                <h4 className="mb-2 text-xs font-medium text-[var(--color-text)]">
-                                  Output
-                                </h4>
-                                <div
-                                  className={`rounded-lg border px-3 py-2.5 ${
-                                    status === "failed"
-                                      ? "border-[color-mix(in_srgb,var(--color-warning)_22%,var(--color-border))] bg-[color-mix(in_srgb,var(--color-warning)_5%,var(--color-bg))]"
-                                      : "border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_35%,transparent)]"
-                                  }`}
-                                >
-                                  {outputBody}
-                                </div>
-                              </section>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
-
-              {(summary.actionItems.length > 0 ||
-                summary.actionEntries.length > 0) && (
-                <div className="space-y-2">
-                  {summary.actionEntries.length > 0 && (
-                    <ExpandableFileChipGroup
-                      title="Action"
-                      summary={summary.actionSectionSummary}
-                      visibleEntries={summary.actionVisibleEntries}
-                      allEntries={summary.actionEntries}
-                      expanded={actionExpanded}
-                      onToggleExpanded={() => setActionExpanded((v) => !v)}
-                      onFileClick={onFileClick}
-                      muted
-                    />
-                  )}
-                  {(summary.visibleActionItems.length > 0 ||
-                    summary.actionItemOverflow > 0) && (
-                    <ActionChipList
-                      items={
-                        actionItemsExpanded
-                          ? summary.actionItems
-                          : summary.visibleActionItems
-                      }
-                      overflowCount={
-                        actionItemsExpanded ? 0 : summary.actionItemOverflow
-                      }
-                      onShowMore={() => setActionItemsExpanded(true)}
-                      expandedKey={expandedDetailKey}
-                      onToggleExpand={toggleDetail}
-                      onFileClick={onFileClick}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
+    );
+  };
+  return (
+    <div className="min-w-0 space-y-1">
+      {segments.map((segment) => {
+        if (segment.special) {
+          const message = segment.special.message;
+          const item: ActionChipItem = {
+            key: message.id, name: message.name, kind: classifyActionKind(message), label: toolDisplayName(message),
+            content: message.content ?? "", locations: message.locations ?? [], status: message.status,
+            input: message.input, output: message.output, hoverText: toolCallHoverText(message.title, message.input, message.name),
+          };
+          return <ActionChipList key={segment.key} items={[item]} overflowCount={0} onShowMore={() => {}} expandedKey={expandedDetailKey} onToggleExpand={toggleDetail} onFileClick={onFileClick} />;
+        }
+        const earlierExpanded = expansion.expandedSections.has(expansionKey("earlier", segment.key));
+        const window = toolTimelineWindow(segment.rows, earlierExpanded);
+        const fileRows = window.rows.filter((row) => row.kind === "file");
+        const runningFiles = fileRows.filter((row) => toolTimelineRowState(row).running);
+        const firstFiles = fileRows.filter((row) => !toolTimelineRowState(row).running).slice(0, Math.max(0, 6 - runningFiles.length));
+        const visibleFileKeys = new Set([...firstFiles, ...runningFiles].map((row) => row.key));
+        const hiddenFiles = filesExpanded ? [] : fileRows.filter((row) => !visibleFileKeys.has(row.key));
+        const hiddenKeys = new Set(hiddenFiles.map((row) => row.key));
+        const visibleRows = window.rows.filter((row) => !hiddenKeys.has(row.key));
+        const lastVisibleFileKey = visibleRows.filter((row) => row.kind === "file").at(-1)?.key;
+        return (
+          <div key={segment.key} className="relative ml-2 min-w-0 py-1 pl-5 before:absolute before:bottom-2.5 before:left-0 before:top-2.5 before:w-px before:bg-[var(--color-border)]">
+            {window.earlierCount > 0 && (
+              <button
+                type="button"
+                onClick={() => expansion.toggleSection(expansionKey("earlier", segment.key))}
+                aria-expanded={earlierExpanded}
+                className="relative -ml-1.5 flex w-[calc(100%+0.375rem)] items-center gap-2 rounded-md px-1.5 py-[3px] text-left text-[13px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
+              >
+                <span aria-hidden="true" className="absolute -left-[18px] top-[10px] h-[7px] w-[7px] rounded-full border border-[var(--color-text-muted)] bg-[var(--color-bg)]" />
+                <span>{earlierExpanded ? "Show fewer" : `${window.earlierCount} earlier steps`}</span>
+                <ChevronRight className={`h-3 w-3 shrink-0 opacity-60 ${earlierExpanded ? "rotate-90" : ""}`} />
+              </button>
+            )}
+            {visibleRows.map((row) => (
+              <Fragment key={row.key}>
+                {renderRow(row)}
+                {fileRows.length > 6 && row.key === lastVisibleFileKey && (
+                  <button type="button" onClick={() => expansion.toggleSection(expansionKey("files"))} aria-expanded={filesExpanded} className="py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                    {filesExpanded ? "Show fewer files" : `${hiddenFiles.length} more files`}
+                  </button>
+                )}
+              </Fragment>
+            ))}
+          </div>
+        );
+      })}
+    </div>
   );
 });
 
@@ -15516,6 +14854,7 @@ function formatWorkDuration(durationSeconds?: number): string | null {
 const WorkSummaryView = memo(function WorkSummaryView({
   sectionId,
   items,
+  lastToolId,
   durationSeconds,
   expanded,
   onToggleSection,
@@ -15523,6 +14862,7 @@ const WorkSummaryView = memo(function WorkSummaryView({
 }: {
   sectionId: string;
   items: WorkSummaryItem[];
+  lastToolId?: string;
   durationSeconds?: number;
   expanded: boolean;
   onToggleSection: (sectionId: string) => void;
@@ -15532,9 +14872,6 @@ const WorkSummaryView = memo(function WorkSummaryView({
     mode?: "diff" | "full",
   ) => Promise<boolean>;
 }) {
-  const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(
-    () => new Set(),
-  );
   const tools = useMemo<ToolSectionItem[]>(
     () =>
       items.flatMap(({ message, index }) =>
@@ -15542,10 +14879,7 @@ const WorkSummaryView = memo(function WorkSummaryView({
       ),
     [items],
   );
-  const toolSummary = useMemo(
-    () => (tools.length > 0 ? summarizeToolSection(tools, true) : null),
-    [tools],
-  );
+  const failedTool = finalFailedTool(tools, lastToolId);
   const detailItems = useMemo(() => {
     const result: Array<
       | { kind: "text"; item: WorkSummaryItem }
@@ -15570,32 +14904,23 @@ const WorkSummaryView = memo(function WorkSummaryView({
     return result;
   }, [items]);
   const duration = formatWorkDuration(durationSeconds);
-  const hasEdits = toolSummary?.editItems.length;
-  const onlyExploration =
-    tools.length > 0 && tools.every(({ message }) => isBackgroundAction(message));
-  const verb = hasEdits
-    ? "Worked"
-    : onlyExploration
-      ? "Explored"
-      : "Worked";
-  const title = duration ? `${verb} for ${duration}` : verb;
+  const title = duration ? `Worked for ${duration}` : "Worked";
 
   return (
     <motion.div layout className="text-[var(--color-text)]">
       <button
         type="button"
         onClick={() => onToggleSection(sectionId)}
-        className="group flex w-fit items-center gap-1.5 rounded-md py-1 text-left text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
+        className="group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
         aria-expanded={expanded}
       >
-        {onlyExploration ? (
-          <Eye className="h-3 w-3 shrink-0" />
-        ) : tools.length === 0 ? (
-          <Brain className="h-3 w-3 shrink-0" />
+        {failedTool ? (
+          <CircleAlert className="h-3 w-3 shrink-0 text-[var(--color-error)]" />
         ) : (
-          <CheckCircle2 className="h-3 w-3 shrink-0 text-[var(--color-success)]" />
+          <CheckCircle2 className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />
         )}
-        <span className="text-xs font-medium text-[var(--color-text-muted)]">{title}</span>
+        <span className="shrink-0 text-xs font-medium text-[var(--color-text-muted)]">{title}</span>
+        {failedTool && <span className="min-w-0 truncate text-xs text-[var(--color-error)]" title={timelineToolLabel(failedTool)}>· Failed: {timelineToolLabel(failedTool)}</span>}
         <ChevronRight
           className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
         />
@@ -15609,26 +14934,16 @@ const WorkSummaryView = memo(function WorkSummaryView({
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
-            <div className="ml-1 mt-1 space-y-2 border-l border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] pl-4">
+            <div className="mt-1 min-w-0 space-y-2">
               {detailItems.map((detailItem) => {
                 if (detailItem.kind === "tools") {
                   const toolSectionId = detailItem.tools[0].message.id;
                   return (
                   <ToolSectionView
                     key={`work-tool-${toolSectionId}`}
-                    sectionId={`${sectionId}-${toolSectionId}`}
+                    sectionId={toolSectionId}
                     tools={detailItem.tools}
-                    expanded={expandedToolIds.has(toolSectionId)}
-                    forceExpanded={false}
-                    sectionFinished
-                    onToggleSection={() =>
-                      setExpandedToolIds((previous) => {
-                        const next = new Set(previous);
-                        if (next.has(toolSectionId)) next.delete(toolSectionId);
-                        else next.add(toolSectionId);
-                        return next;
-                      })
-                    }
+                    lastToolId={lastToolId}
                     onFileClick={onFileClick}
                   />
                   );
@@ -15648,157 +14963,5 @@ const WorkSummaryView = memo(function WorkSummaryView({
         )}
       </AnimatePresence>
     </motion.div>
-  );
-});
-
-const FileChangeSummaryView = memo(function FileChangeSummaryView({
-  tools,
-  onFileClick,
-}: {
-  tools: ToolSectionItem[];
-  onFileClick?: (
-    filePath: string,
-    line?: number,
-    mode?: "diff" | "full",
-  ) => Promise<boolean>;
-}) {
-  const summary = useMemo(() => summarizeToolSection(tools, true), [tools]);
-  const [expanded, setExpanded] = useState(false);
-  const listRef = useRef<HTMLDivElement>(null);
-  const listId = useId();
-  const [collapsedLayout, setCollapsedLayout] = useState({
-    visibleCount: summary.editItems.length,
-    height: null as number | null,
-  });
-
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-
-    const measure = () => {
-      const chips = Array.from(list.children) as HTMLElement[];
-      let row = 0;
-      let rowTop = -1;
-      let visibleCount = 0;
-      let height = 0;
-      for (const chip of chips) {
-        if (chip.offsetTop !== rowTop) {
-          rowTop = chip.offsetTop;
-          row += 1;
-        }
-        if (row > 3) break;
-        visibleCount += 1;
-        height = Math.max(height, chip.offsetTop + chip.offsetHeight);
-      }
-      const collapsedHeight = visibleCount < chips.length ? height : null;
-      setCollapsedLayout((previous) =>
-        previous.visibleCount === visibleCount && previous.height === collapsedHeight
-          ? previous
-          : { visibleCount, height: collapsedHeight },
-      );
-    };
-
-    measure();
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", measure);
-      return () => window.removeEventListener("resize", measure);
-    }
-    // Keep all chips laid out so wrapping can be measured while collapsed.
-    // Measure outside observer delivery because the resulting height changes
-    // this same element and would otherwise cause resize-loop warnings.
-    let frame = 0;
-    const observer = new ResizeObserver(() => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        measure();
-      });
-    });
-    observer.observe(list);
-    return () => {
-      observer.disconnect();
-      cancelAnimationFrame(frame);
-    };
-  }, [summary.editItems]);
-
-  const hiddenCount = Math.max(0, summary.editItems.length - collapsedLayout.visibleCount);
-  const additions = summary.editItems.reduce(
-    (total, item) => total + item.additions,
-    0,
-  );
-  const deletions = summary.editItems.reduce(
-    (total, item) => total + item.deletions,
-    0,
-  );
-  if (summary.editItems.length === 0) return null;
-
-  return (
-    <div className="rounded-xl border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_62%,transparent)] px-3 py-2.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <Pencil className="h-3.5 w-3.5 shrink-0 text-[var(--color-success)]" />
-        <span className="text-xs font-medium text-[var(--color-text)]">
-          {summary.editItems.length} file
-          {summary.editItems.length === 1 ? "" : "s"} changed
-        </span>
-        {(additions > 0 || deletions > 0) && (
-          <span className="text-[11px] tabular-nums">
-            <span className="text-[var(--color-success)]">+{additions}</span>
-            <span className="mx-1 text-[var(--color-text-muted)]">/</span>
-            <span className="text-[var(--color-error)]">−{deletions}</span>
-          </span>
-        )}
-      </div>
-      <div
-        ref={listRef}
-        id={listId}
-        className={`relative mt-2 flex flex-wrap gap-1.5 ${!expanded && hiddenCount > 0 ? "overflow-hidden" : ""}`}
-        style={!expanded && collapsedLayout.height !== null ? { maxHeight: collapsedLayout.height } : undefined}
-      >
-        {summary.editItems.map((item, index) => (
-          <button
-            key={item.key}
-            type="button"
-            disabled={!item.fullPath}
-            tabIndex={!expanded && index >= collapsedLayout.visibleCount ? -1 : undefined}
-            aria-hidden={(!expanded && index >= collapsedLayout.visibleCount) || undefined}
-            onClick={() =>
-              item.fullPath && onFileClick?.(item.fullPath, undefined, "diff")
-            }
-            title={item.fullPath || item.label}
-            className={`inline-flex max-w-[320px] items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] ${
-              item.fullPath
-                ? `${getStatusChipClasses(item.status)} cursor-pointer hover:brightness-110`
-                : `${getStatusChipClasses(item.status)} cursor-default`
-            }`}
-          >
-            <VSCodeIcon filename={item.label} size={13} />
-            <span className="truncate">{item.label}</span>
-            {(item.additions > 0 || item.deletions > 0) && (
-              <span className="shrink-0 text-[10px] tabular-nums">
-                <span className="text-[var(--color-success)]">
-                  +{item.additions}
-                </span>
-                <span className="mx-0.5 text-[var(--color-text-muted)]">/</span>
-                <span className="text-[var(--color-error)]">
-                  −{item.deletions}
-                </span>
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-      {hiddenCount > 0 && (
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-controls={listId}
-          onClick={() => setExpanded((previous) => !previous)}
-          className="mt-2 inline-flex min-h-6 items-center gap-1 rounded-md px-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-        >
-          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          {expanded ? "Show less" : `+${hiddenCount} more`}
-        </button>
-      )}
-    </div>
   );
 });
