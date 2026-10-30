@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Minimize2 } from "lucide-react";
-import { useDefineCommand, useKeyboardScope } from "../../keyboard";
+import { useEscapeScope } from "../../keyboard/useEscapeScope";
 
 interface ImageLightboxProps {
   imageUrl?: string | null;
@@ -38,21 +38,10 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
 
   const handleClose = useCallback(() => { onClose(); reset(); }, [onClose, reset]);
 
-  // ESC to close — Scoped Command Registry: push the "lightbox" scope while
-  // open, define an inline catalog entry for the close binding. The scope
-  // sits at the top of the stack so it wins Escape over filePreview's
-  // layered handlers without needing stopImmediatePropagation.
+  // Each preview needs its own Escape scope and command: closed/keep-alive
+  // instances must not overwrite or unregister the visible preview's handler.
   const lightboxOpen = !!(imageUrl || svgContent);
-  useKeyboardScope("lightbox", lightboxOpen);
-  useDefineCommand({
-    id: "lightbox.close",
-    name: "Close Image Lightbox",
-    category: "Preview",
-    description: "Close the image lightbox overlay",
-    defaultBindings: [{ key: "Escape" }],
-    scope: "lightbox",
-    handler: handleClose,
-  });
+  useEscapeScope(lightboxOpen, handleClose);
 
   // Wheel zoom/pan — registered imperatively with { passive: false } so preventDefault works.
   // Re-registers when imageUrl/svgContent changes because containerRef.current is null until content renders.
