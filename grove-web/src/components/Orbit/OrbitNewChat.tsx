@@ -459,7 +459,10 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
                 addFiles(files);
               }}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                // WebKit can clear isComposing before the candidate-confirming
+                // Enter; keyCode 229 still identifies that IME event.
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   void send();
                 }
