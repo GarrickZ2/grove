@@ -235,12 +235,9 @@ function AppContent() {
     };
   }, []);
 
-  // Top-edge drag for Tauri Overlay title-bar mode. data-tauri-drag-region
-  // alone gives us double-click-maximize but NOT drag when the webview is
-  // loaded from an external URL (http://localhost) — drag silently fails
-  // after the first attempt. Bind a native (non-React) mousedown listener
-  // and call startDragging() ourselves. Native listener avoids the stale
-  // event-handler issue observed with React's synthetic events here.
+  // Drag fallback for externally loaded Tauri webviews. Only handle the
+  // first press: Tauri owns double-click maximization, which runs on mouseup
+  // on macOS. Starting another native drag on the second press consumes it.
   useEffect(() => {
     let win: { startDragging: () => Promise<void> } | null = null;
     let cancelled = false;
@@ -254,7 +251,7 @@ function AppContent() {
       });
 
     const handler = (e: MouseEvent) => {
-      if (!win || e.button !== 0 || e.defaultPrevented) return;
+      if (!win || e.button !== 0 || e.detail !== 1 || e.defaultPrevented) return;
       const target = e.target;
       if (!(target instanceof Element)) return;
       // Native dragging can consume the mouse-up needed for a button click,
@@ -1679,13 +1676,14 @@ function AppContent() {
           use z-50 or higher, otherwise this drag strip will swallow its
           mousedown events.
 
-          data-tauri-drag-region: gives us double-click-maximize for free.
+          data-tauri-drag-region="deep": native drag and double-click maximize,
+            including non-interactive descendants.
           data-window-drag-strip: picked up by the document-level mousedown
             listener in the parent useEffect to trigger startDragging(). */}
       <div
         className={`fixed top-0 left-0 right-0 h-6 z-[45] ${isMobile ? "hidden" : ""}`}
         style={!isMobile && orbit && globalConfig?.web.workspace_layout === "flex" && !orbitHeaderVisible ? { right: "auto", width: 256 } : undefined}
-        data-tauri-drag-region
+        data-tauri-drag-region="deep"
         data-window-drag-strip
       />
       <UpdateBanner />
@@ -1754,7 +1752,7 @@ function AppContent() {
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
             {!isMobile && orbit && <div className={`orbit-window-header${shouldAvoidTrafficLightsInIsland ? " has-mac-controls" : ""}${orbitHeaderVisible ? "" : " is-hidden"}`}>
-              <div className={`orbit-workspace-toolbar${effectiveSidebarMode === "collapsed" ? " is-collapsed" : ""}${shouldAvoidTrafficLightsInIsland ? " has-mac-controls" : ""}`} data-tauri-drag-region data-window-drag-strip>
+              <div className={`orbit-workspace-toolbar${effectiveSidebarMode === "collapsed" ? " is-collapsed" : ""}${shouldAvoidTrafficLightsInIsland ? " has-mac-controls" : ""}`} data-tauri-drag-region="deep" data-window-drag-strip>
                 <div id="orbit-workspace-toolbar" className="orbit-toolbar-slot" />
               </div>
             </div>}

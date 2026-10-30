@@ -25,7 +25,7 @@ interface OrbitPhoneHeaderProps {
 export function OrbitPhoneHeader({ title, onMenu, onNew, newDisabled }: OrbitPhoneHeaderProps) {
   return (
     // Empty header space drags the desktop window (App's mousedown handler skips buttons).
-    <header className={`orbit-phone-header${hasMacControls ? " has-mac-controls" : ""}`} data-tauri-drag-region data-window-drag-strip>
+    <header className={`orbit-phone-header${hasMacControls ? " has-mac-controls" : ""}`} data-tauri-drag-region="deep" data-window-drag-strip>
       <button type="button" className="orbit-phone-button" aria-label="Open menu" onClick={onMenu}><Menu size={20} strokeWidth={1.8} /></button>
       <div className="orbit-phone-title">
         <div id={ORBIT_PHONE_TITLE_SLOT} className="orbit-phone-title-slot" />

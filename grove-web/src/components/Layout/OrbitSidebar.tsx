@@ -327,8 +327,8 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
   return (
     <aside className={`orbit-sidebar${collapsed ? " is-collapsed" : ""}${hasMacControls ? " has-mac-controls" : ""}${variant ? ` is-${variant}` : ""}`} aria-label="Orbit sidebar">
       {/* A narrowed macOS window: the drawer's header starts below the traffic lights, on a strip that drags the window. */}
-      {drawer && hasMacControls && <div className="orbit-drawer-titlebar" data-tauri-drag-region data-window-drag-strip />}
-      {!drawer && <div className="orbit-titlebar" data-tauri-drag-region>
+      {drawer && hasMacControls && <div className="orbit-drawer-titlebar" data-tauri-drag-region="deep" data-window-drag-strip />}
+      {!drawer && <div className="orbit-titlebar" data-tauri-drag-region="deep">
         <div className="orbit-titlebar-actions">
           <button className="orbit-icon-button" type="button" title={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={onCollapse}>{collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button>
           {collapsed && <button className="orbit-icon-button" type="button" title="New task" aria-label="New task" disabled={!ready} onClick={() => onNavigate("tasks", { openNewTask: true })}><SquarePen size={17} /></button>}
