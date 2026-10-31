@@ -5,6 +5,7 @@
 .picker-menu__search { display: flex; flex: none; align-items: center; gap: 6px; margin: 2px 8px 4px; padding: 4px 8px; border-radius: 6px; background: var(--color-bg-secondary); }
 .picker-menu__search input { min-width: 0; flex: 1; border: 0; outline: none; background: transparent; color: var(--color-text); font-size: 12px; }
 .picker-menu__list { min-height: 0; flex: 1; overflow-y: auto; }
+.picker-menu__footer { flex: none; max-height: 45vh; overflow-y: auto; border-top: 1px solid var(--color-border); }
 .picker-menu__group { padding: 8px 12px 4px; color: var(--color-text-muted); font-size: 10px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; }
 .picker-menu__item { display: flex; width: 100%; align-items: center; gap: 8px; padding: 6px 12px; border: 0; background: transparent; color: var(--color-text-muted); font-size: 13px; text-align: left; cursor: pointer; }
 .picker-menu__item:hover { background: var(--color-bg-tertiary); color: var(--color-text); }

@@ -43,3 +43,7 @@ pub mod update;
 pub mod url_metadata;
 pub mod version;
 pub mod walkie_talkie;
+
+pub mod buddy_mcp;
+
+pub mod buddies;

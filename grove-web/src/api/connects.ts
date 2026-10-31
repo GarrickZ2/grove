@@ -12,6 +12,7 @@ export interface ConnectItem {
   project_id: string;
   task_id: string;
   session_id: string;
+  buddy_id?: string | null;
   bound_chat_id?: string;
   bound_user_id?: string;
   created_at: number;

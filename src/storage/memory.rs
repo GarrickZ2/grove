@@ -1385,6 +1385,18 @@ pub fn save_project_config_with_automation(
     config: &MemoryProjectConfig,
     automation: &super::automations::Automation,
 ) -> Result<()> {
+    let conn = database::connection();
+    let tx = conn.unchecked_transaction()?;
+    save_project_config_with_automation_on(&tx, config, automation)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(crate) fn save_project_config_with_automation_on(
+    conn: &rusqlite::Connection,
+    config: &MemoryProjectConfig,
+    automation: &super::automations::Automation,
+) -> Result<()> {
     validate_path_segment(&config.project_id, "project_id")?;
     if automation.id != config.organization_automation_id
         || automation.project != config.project_id
@@ -1400,19 +1412,17 @@ pub fn save_project_config_with_automation(
     } else {
         config.created_at.as_str()
     };
-    let conn = database::connection();
-    let tx = conn.unchecked_transaction()?;
-    let automation_exists: bool = tx.query_row(
+    let automation_exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ?1)",
         params![automation.id],
         |row| row.get(0),
     )?;
     if automation_exists {
-        super::automations::update_on(&tx, automation)?;
+        super::automations::update_on(conn, automation)?;
     } else {
-        super::automations::insert_on(&tx, automation)?;
+        super::automations::insert_on(conn, automation)?;
     }
-    tx.execute(
+    conn.execute(
         "INSERT INTO memory_project_configs (
             project_id, enabled, deep_organization, pending_log_threshold,
             organization_automation_id, last_input_through_at, created_at, updated_at
@@ -1434,7 +1444,6 @@ pub fn save_project_config_with_automation(
             now,
         ],
     )?;
-    tx.commit()?;
     Ok(())
 }
 

@@ -180,6 +180,13 @@
 .orbit-task-row:hover .orbit-task-toggle, .orbit-task-row:focus-within .orbit-task-toggle { padding-right: 66px; }
 .orbit-error { padding: 8px 10px; color: var(--color-text-muted); font-size: 11px; }
 .orbit-footer { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 8px 8px; border-top: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent); }
+.orbit-footer.has-buddies { flex-direction: column; align-items: stretch; }
+.orbit-footer-actions { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.orbit-footer-actions > .orbit-row { flex: 1; width: auto; min-width: 0; }
+.orbit-buddies-entry { color: var(--color-text-muted); }
+.orbit-buddies-entry > span:nth-child(2) { flex: 1; }
+.orbit-buddies-entry:hover { color: var(--color-text); }
+.orbit-buddies-entry > .orbit-buddies-chevron { color: var(--color-text-muted); }
 .orbit-session-row { position: relative; display: flex; align-items: center; min-width: 0; border-radius: 8px; }
 .orbit-session-row + .orbit-session-row,
 .orbit-task-row + .orbit-session-row { margin-top: var(--orbit-list-row-gap); }
@@ -288,7 +295,7 @@
 .orbit-sidebar.is-drawer .orbit-session-row.is-pinned:not(:hover):not(:focus-within) .orbit-session-pin { right: 35px; }
 .orbit-sidebar.is-drawer .orbit-task-row .orbit-task-toggle { padding-right: 72px; }
 .orbit-sidebar.is-drawer .orbit-footer { padding: 10px 12px 12px; border-top: 0; }
-.orbit-sidebar.is-drawer .orbit-footer > .orbit-row { width: auto; }
+.orbit-sidebar.is-drawer .orbit-footer-actions > .orbit-row { flex: none; width: auto; }
 .orbit-drawer-new { display: inline-flex; flex: none; align-items: center; gap: 6px; height: 42px; margin-left: auto; padding: 0 18px 0 14px; border: 0; border-radius: 999px; background: var(--color-text); color: var(--color-bg); font-size: 14px; font-weight: 500; cursor: pointer; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); }
 .orbit-drawer-new:disabled { opacity: .45; cursor: default; }
 .orbit-phone-stage { position: relative; z-index: 2; display: flex; min-height: 0; flex: 1; flex-direction: column; background: var(--color-bg); }

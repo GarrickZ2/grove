@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, type DependencyList } from "react";
+import { useCallback, useContext, useEffect, useRef, type DependencyList } from "react";
+import { InteractionContext } from "./InteractionContext";
 import { commandRegistry } from "./CommandRegistry";
 import type { CommandDef, KeyBinding, MenuContribution } from "./types";
 
@@ -47,8 +48,11 @@ export function useDefineCommand<TArgs = unknown>(
   deps: DependencyList = [],
 ): (args?: TArgs) => boolean {
   "use no memo";
+  const active = useContext(InteractionContext);
+  const activeRef = useRef(active);
   const inputRef = useRef(input);
   useEffect(() => {
+    activeRef.current = active;
     inputRef.current = input;
   });
 
@@ -70,12 +74,7 @@ export function useDefineCommand<TArgs = unknown>(
     return commandRegistry.contribute(
       def,
       (args) => inputRef.current.handler(args as TArgs),
-      input.enabled
-        ? () => {
-            const cur = inputRef.current.enabled;
-            return cur ? cur() : true;
-          }
-        : undefined,
+      () => activeRef.current && (inputRef.current.enabled?.() ?? true),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- caller deps + a few static fields
   }, [input.id, input.scope, ...deps]);

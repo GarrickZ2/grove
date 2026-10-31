@@ -1,3 +1,4 @@
+import { BuddyEntryIcon } from "../Buddy/BuddyEntryIcon";
 import { IosServerMenu } from "./IosServerMenu";
 import { isIosClient } from "../../utils/platform";
 import { useState, useRef, useEffect, useMemo, useCallback, createElement } from "react";
@@ -557,6 +558,7 @@ export function Sidebar({
         </div>
 
         <div className="space-y-0.5">
+          <NavButton item={{ id: "buddies", label: "Buddies", icon: BuddyEntryIcon }} isActive={false} onClick={() => handleItemClick("buddies")} collapsed={isCollapsed} />
           <NavButton
             item={{ id: "connect", label: "IM Connect", icon: Link2 }}
             isActive={connectOpen === true}
@@ -792,6 +794,7 @@ function IslandExpanded({
   onDismissHint,
 }: IslandExpandedProps) {
   const pages = useMemo(() => [
+    { id: "buddies", label: "Buddies", icon: <BuddyEntryIcon /> },
     ...navItems.map((item) => ({ id: item.id, label: item.label, icon: <item.icon className="w-4 h-4" /> })),
     ...(sidebarPlugins ?? []).map((plugin) => ({
       id: `plugin:${plugin.id}`,
@@ -1459,6 +1462,7 @@ function NavButton({ item, isActive, onClick, collapsed }: NavButtonProps) {
       whileHover={{ x: collapsed ? 0 : 2 }}
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
+      aria-label={item.label}
       title={collapsed ? item.label : undefined}
       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors duration-150
         ${collapsed ? "justify-center" : ""}

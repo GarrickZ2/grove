@@ -958,12 +958,26 @@ async fn deliver_to_session(
     );
     let sender = format!("agent:{}", caller_chat.id);
 
+    deliver_prompt(
+        &target_handle,
+        QueuedMessage::new(injected, Vec::new(), Some(sender), false, queued_config),
+    )
+    .await
+}
+
+/// Common transport, with caller-owned trusted metadata. It does not grant
+/// Graph permissions or create edges/tickets. Keeps the message id through queues.
+pub(crate) async fn deliver_prompt(
+    handle: &Arc<AcpSessionHandle>,
+    message: QueuedMessage,
+) -> AgentGraphResult<()> {
+    let _activity = handle.begin_activity()?;
     // Atomically claim the busy slot. compare_exchange closes the race where
     // two concurrent callers both observe is_busy=false and both fall through
     // to send_prompt — the second one would silently get treated as a queued
     // continuation by the cmd loop instead of an explicit queue entry the
     // user can see.
-    let claimed = target_handle
+    let claimed = handle
         .is_busy
         .compare_exchange(
             false,
@@ -973,22 +987,21 @@ async fn deliver_to_session(
         )
         .is_ok();
     if !claimed {
-        let messages = target_handle
-            .submit_queued_message(QueuedMessage::new(
-                injected,
-                Vec::new(),
-                Some(sender),
-                false,
-                queued_config,
-            ))
-            .await?;
-        target_handle.emit(AcpUpdate::QueueUpdate { messages });
+        let messages = handle.submit_queued_message(message).await?;
+        handle.emit(AcpUpdate::QueueUpdate { messages });
         return Ok(());
     }
 
     let send_res = tokio::time::timeout(
         Duration::from_secs(10),
-        target_handle.send_prompt(injected, Vec::new(), Some(sender), false, queued_config),
+        handle.send_tracked_prompt_with_id(
+            message.id,
+            message.text,
+            message.attachments,
+            message.sender,
+            message.terminal,
+            message.config,
+        ),
     )
     .await;
     match send_res {
@@ -997,11 +1010,11 @@ async fn deliver_to_session(
             // Release the claim so future calls aren't permanently blocked.
             // The cmd loop will re-assert is_busy when it actually picks up
             // the next prompt.
-            target_handle.release_prompt_claim();
+            handle.release_prompt_claim();
             Err(AgentGraphError::Internal(format!("send_prompt: {}", e)))
         }
         Err(_) => {
-            target_handle.release_prompt_claim();
+            handle.release_prompt_claim();
             Err(AgentGraphError::Timeout)
         }
     }
@@ -1082,6 +1095,8 @@ pub(crate) async fn ensure_target_handle(
     target_chat_id: &str,
 ) -> AgentGraphResult<(Arc<AcpSessionHandle>, acp::ActivityGuard)> {
     loop {
+        crate::storage::buddies::ensure_session_writable(target_chat_id)
+            .map_err(AgentGraphError::from)?;
         let handle = find_or_start_target_handle(project_key, task_id, target_chat_id).await?;
         if let Ok(activity) = handle.begin_activity() {
             return Ok((handle, activity));

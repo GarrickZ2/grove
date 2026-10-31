@@ -1,6 +1,10 @@
+import { BuddyOverlay } from "./components/Buddy/BuddyOverlay";
+import { BUDDY_NAVIGATE_EVENT } from "./components/Buddy/buddyNavigation";
+import { useBuddyOpen } from "./hooks/useBuddyOpen";
+import { BuddyLaunchContext } from "./components/Buddy/buddyLaunchContext";
 import { IosLiveActivity } from "./ios/IosLiveActivity";
 import { isIosClient } from "./utils/platform";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useContext, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -46,7 +50,6 @@ import { useReportDebugId } from "./perf/debugIdsStore";
 import { AuthGate } from "./components/AuthGate";
 import { OptionalPerfProfiler } from "./perf/profilerShim";
 import type { Task } from "./data/types";
-import { mockConfig } from "./data/mockData";
 import { getConfig, patchConfig, openIDE, openTerminal } from "./api";
 import { listMarketplace } from "./api/marketplace";
 import { setMarketplaceIcons } from "./utils/agentIcon";
@@ -151,7 +154,7 @@ const ORBIT_PAGE_TITLES: Record<string, string> = {
 
 // Main sidebar nav items for Cmd+1-8 and Option+Cmd+Up/Down cycling.
 // "settings" and "projects" are excluded as they are utility pages, not part of the main nav cycle.
-function AppContent() {
+function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   "use no memo";
   // AppContent uses two dynamic `import()` calls for code-splitting heavy
   // panels. React Compiler 1.0 can't lower dynamic imports, so we opt
@@ -162,6 +165,7 @@ function AppContent() {
   // user to confirm via ConfirmDialog (rendered below), then install and
   // broadcast to peer tabs. Runs on any landing page — the callback tab
   // can't be guaranteed to land on a sketch view.
+  const buddies = useContext(BuddyLaunchContext);
   const addLibrary = useAddLibraryHashHandler();
 
   const [restoredNavigation] = useState(readNavigationState);
@@ -1000,6 +1004,11 @@ function AppContent() {
   const handleNavigateRef = useRef(handleNavigate);
   useEffect(() => { handleNavigateRef.current = handleNavigate; });
   useEffect(() => {
+    const navigate = (event: Event) => { const { page, data } = (event as CustomEvent<{ page: string; data: Record<string, unknown> }>).detail; handleNavigateRef.current(page, data); };
+    window.addEventListener(BUDDY_NAVIGATE_EVENT, navigate);
+    return () => window.removeEventListener(BUDDY_NAVIGATE_EVENT, navigate);
+  }, []);
+  useEffect(() => {
     const openNew = (event: Event) => {
       const taskId = (event as CustomEvent<{ taskId?: string }>).detail?.taskId;
       handleNavigateRef.current("new", taskId ? { taskId } : undefined);
@@ -1337,6 +1346,7 @@ function AppContent() {
   // Register global command builder — uses refs internally, no re-renders
   const globalOptionsRef = useRef<UseCommandsOptions>(null!);
   const nextGlobalOptions: UseCommandsOptions = {
+    buddies,
     navigation: {
       onNavigate: setActiveItem,
       activeItem,
@@ -1384,14 +1394,16 @@ function AppContent() {
   }, [registerGlobalCommands]);
 
   const handleItemClick = useCallback((item: string) => {
-    if (item === "connect") {
+    if (item === "buddies") {
+      buddies.open();
+    } else if (item === "connect") {
       setConnectOpen(true);
     } else if (item === "tasks" && activeItem === "tasks" && inWorkspace) {
       setTasksExitSignal(prev => prev + 1);
     } else {
       setActiveItem(item);
     }
-  }, [activeItem, inWorkspace]);
+  }, [activeItem, inWorkspace, buddies]);
 
   const addProjectDialog = (
     <AddProjectDialog
@@ -1497,7 +1509,7 @@ function AppContent() {
       case "statistics":
         return <ProjectStatsPage projectId={selectedProject?.id} />;
       case "settings":
-        return <SettingsPage config={mockConfig} />;
+        return <SettingsPage />;
       case "new":
         return <OrbitNewChat key={(navigationData?.taskId as string | undefined) ?? "_local"} initialTaskId={navigationData?.taskId as string | undefined} onNavigate={handleNavigate} />;
       default: {
@@ -1789,7 +1801,7 @@ function AppContent() {
                 style={{ display: activeItem === "tasks" ? "block" : "none" }}
               >
                 <TasksPage
-                  pageVisible={activeItem === "tasks"}
+                  pageVisible={pageVisible && activeItem === "tasks"}
                   initialTaskId={activeItem === "tasks" ? navigationData?.taskId as string | undefined : undefined}
                   initialChatId={activeItem === "tasks" ? navigationData?.chatId as string | undefined : undefined}
                   initialViewMode={activeItem === "tasks" ? navigationData?.viewMode as string | undefined : undefined}
@@ -1810,7 +1822,7 @@ function AppContent() {
               >
                 {workEverVisited && (
                   <WorkPage
-                    pageVisible={activeItem === "work"}
+                    pageVisible={pageVisible && activeItem === "work"}
                     initialChatId={activeItem === "work" ? navigationData?.chatId as string | undefined : undefined}
                     onNavigationConsumed={() => setNavigationData(null)}
                   />
@@ -1843,8 +1855,8 @@ function AppContent() {
       </div>
       {addProjectDialog}
       <ConnectDialog isOpen={connectOpen} onClose={() => setConnectOpen(false)} />
-      <CommandPalette />
-      <ActionCommandPalette />
+      {pageVisible && <CommandPalette />}
+      {pageVisible && <ActionCommandPalette />}
       <ProjectCommandPalette
         isOpen={projectPaletteOpen}
         onClose={closeProjectPalette}
@@ -1868,6 +1880,7 @@ function AppContent() {
 }
 
 function App() {
+  const { open: buddyOpen, enter: openBuddies, exit: closeBuddies } = useBuddyOpen();
   // Check for /review/{projectId}/{taskId} path — render diff review directly
   const reviewMatch = window.location.pathname.match(/^\/review\/([^/]+)\/([^/]+)/);
   if (reviewMatch) {
@@ -1894,7 +1907,7 @@ function App() {
                     <PreviewCommentProvider>
                       <OptionalPerfProfiler id="App">
                         <GlobalAgentVoiceRuntime />
-                        <AppContent />
+                        <BuddyOverlay open={buddyOpen} onOpen={openBuddies} onExit={closeBuddies}><AppContent pageVisible={!buddyOpen} /></BuddyOverlay>
                         {isIosClient && <IosLiveActivity />}
                       </OptionalPerfProfiler>
                     </PreviewCommentProvider>

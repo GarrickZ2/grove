@@ -2009,14 +2009,10 @@ pub(crate) fn build_grove_env(
 
 /// Helper: resolve project key, path, name from project_id path param
 fn resolve_project_key(project_id: &str) -> Result<(String, String, String), AcpError> {
-    let projects = workspace::load_projects()
-        .map_err(|e| AcpError::Internal(format!("Failed to load projects: {}", e)))?;
-    let project = projects
-        .iter()
-        .find(|p| workspace::project_hash(&p.path) == project_id)
+    let project = workspace::load_project_by_hash(project_id)
+        .map_err(|e| AcpError::Internal(format!("Failed to load project: {}", e)))?
         .ok_or(AcpError::NotFound("Project not found".to_string()))?;
-    let project_key = workspace::project_hash(&project.path);
-    Ok((project_key, project.path.clone(), project.name.clone()))
+    Ok((project_id.to_string(), project.path, project.name))
 }
 
 fn require_chat_namespace(project_key: &str, task_id: &str) -> Result<(), AcpError> {
@@ -2102,6 +2098,8 @@ pub async fn set_chat_pinned(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
     Json(req): Json<SetChatPinnedRequest>,
 ) -> Result<Json<ChatSessionResponse>, AcpError> {
+    crate::storage::buddies::ensure_session_writable(&chat_id)
+        .map_err(|e| AcpError::BadRequest(e.to_string()))?;
     let (project_key, _, _) = resolve_project_key(&project_id)?;
     require_chat_namespace(&project_key, &task_id)?;
     let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
@@ -2142,6 +2140,16 @@ pub async fn list_archived_chats(
 pub async fn archive_chat(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
 ) -> Result<Json<ChatSessionResponse>, AcpError> {
+    if crate::storage::buddies::get_segment(&crate::storage::database::connection(), &chat_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
+        .is_some()
+    {
+        return Err(AcpError::BadRequest(
+            "Archive the Buddy instead of removing its Segment".into(),
+        ));
+    }
+    crate::storage::buddies::ensure_session_writable(&chat_id)
+        .map_err(|e| AcpError::BadRequest(e.to_string()))?;
     let (project_key, _, _) = resolve_project_key(&project_id)?;
     require_chat_namespace(&project_key, &task_id)?;
     // A Task may be left with no active sessions; clients that need one
@@ -2176,6 +2184,8 @@ pub async fn archive_chat(
 pub async fn restore_chat(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
 ) -> Result<Json<ChatSessionResponse>, AcpError> {
+    crate::storage::buddies::ensure_session_writable(&chat_id)
+        .map_err(|e| AcpError::BadRequest(e.to_string()))?;
     let (project_key, _, _) = resolve_project_key(&project_id)?;
     require_chat_namespace(&project_key, &task_id)?;
     let chat = tasks::get_chat_session_including_archived(&project_key, &task_id, &chat_id)
@@ -2372,6 +2382,8 @@ pub async fn update_chat(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
     Json(body): Json<UpdateChatRequest>,
 ) -> Result<Json<ChatSessionResponse>, AcpError> {
+    crate::storage::buddies::ensure_session_writable(&chat_id)
+        .map_err(|e| AcpError::BadRequest(e.to_string()))?;
     let (project_key, _, _) = resolve_project_key(&project_id)?;
 
     tasks::update_chat_title(&project_key, &task_id, &chat_id, &body.title)
@@ -2424,6 +2436,16 @@ pub async fn delete_chat(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
     Query(query): Query<DeleteChatQuery>,
 ) -> Result<StatusCode, AcpError> {
+    if crate::storage::buddies::get_segment(&crate::storage::database::connection(), &chat_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
+        .is_some()
+    {
+        return Err(AcpError::BadRequest(
+            "Archive the Buddy instead of removing its Segment".into(),
+        ));
+    }
+    crate::storage::buddies::ensure_session_writable(&chat_id)
+        .map_err(|e| AcpError::BadRequest(e.to_string()))?;
     let (project_key, _, _) = resolve_project_key(&project_id)?;
 
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
@@ -2610,6 +2632,8 @@ pub async fn upload_chat_attachment(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
     body: Result<Json<UploadAttachmentRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<UploadAttachmentResponse>, AcpError> {
+    crate::storage::buddies::ensure_session_writable(&chat_id)
+        .map_err(|e| AcpError::BadRequest(e.to_string()))?;
     let Json(body) = body.map_err(|error| {
         if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
             AcpError::PayloadTooLarge(
@@ -3309,6 +3333,8 @@ pub struct ReconnectChatResponse {
 pub async fn take_control(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
 ) -> Result<Json<TakeControlResponse>, AcpError> {
+    crate::storage::buddies::ensure_session_writable(&chat_id)
+        .map_err(|e| AcpError::BadRequest(e.to_string()))?;
     let (project_key, _, _) = resolve_project_key(&project_id)?;
 
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
@@ -3341,6 +3367,8 @@ pub async fn take_control(
 pub async fn reconnect_chat(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
 ) -> Result<Json<ReconnectChatResponse>, AcpError> {
+    crate::storage::buddies::ensure_session_writable(&chat_id)
+        .map_err(|e| AcpError::BadRequest(e.to_string()))?;
     let (project_key, _, _) = resolve_project_key(&project_id)?;
     let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?
@@ -3390,6 +3418,33 @@ pub async fn reconnect_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_project_resolution_does_not_depend_on_buddy_discovery() {
+        use crate::storage::{
+            buddies::{self, test_support},
+            database,
+        };
+        let _lock = database::test_lock().blocking_lock();
+        let _store = test_support::Store::new();
+        let conn = database::try_connection().unwrap();
+        let buddy = test_support::seed_buddy(&conn, "buddy-api");
+        buddies::archive(&conn, &buddy.id).unwrap();
+        drop(conn);
+        assert!(workspace::load_projects().unwrap().is_empty());
+        let (key, path, name) = resolve_project_key(&buddy.project_hash)
+            .unwrap_or_else(|_| panic!("Buddy project must resolve independently of discovery"));
+        assert_eq!(key, buddy.project_hash);
+        assert_eq!(
+            std::path::PathBuf::from(path),
+            buddies::project_directory(&buddy.id).unwrap()
+        );
+        assert_eq!(name, buddy.id);
+        assert!(matches!(
+            resolve_project_key("missing"),
+            Err(AcpError::NotFound(_))
+        ));
+    }
 
     #[test]
     fn subagent_wire_uses_the_same_tool_schema_inside_the_child_envelope() {

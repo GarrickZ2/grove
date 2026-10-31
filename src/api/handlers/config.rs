@@ -339,6 +339,14 @@ pub async fn get_config() -> Json<ConfigResponse> {
 pub async fn patch_config(
     Json(patch): Json<ConfigPatchRequest>,
 ) -> Result<Json<ConfigResponse>, StatusCode> {
+    if patch
+        .web
+        .as_ref()
+        .and_then(|web| web.interface.as_deref())
+        .is_some_and(|interface| !matches!(interface, "workbench" | "orbit"))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let _guard = CONFIG_WRITE_LOCK.lock().await;
     let mut config = config::load_config();
     let previous_agents =
@@ -437,9 +445,7 @@ pub async fn patch_config(
             config.web.workspace_layout = web_patch.workspace_layout;
         }
         if let Some(interface) = web_patch.interface {
-            if interface == "workbench" || interface == "orbit" {
-                config.web.interface = Some(interface);
-            }
+            config.web.interface = Some(interface);
         }
         if let Some(shortcut) = web_patch.show_hide_window_shortcut {
             let shortcut = shortcut.trim().to_string();
@@ -1004,4 +1010,43 @@ fn convert_icns_to_png(icns_path: &Path, output_path: &Path) -> Option<Vec<u8>> 
     }
 
     Some(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::{buddies::test_support::Store, database};
+
+    #[tokio::test]
+    async fn web_interface_accepts_workbench_and_orbit_but_rejects_buddy_without_writing() {
+        let _lock = database::test_lock().lock().await;
+        let _store = Store::new();
+        for interface in ["workbench", "orbit"] {
+            let request =
+                serde_json::from_value(serde_json::json!({"web":{"interface":interface}})).unwrap();
+            let response = patch_config(Json(request)).await.unwrap();
+            assert_eq!(response.0.web.interface.as_deref(), Some(interface));
+            assert_eq!(
+                config::load_config().web.interface.as_deref(),
+                Some(interface)
+            );
+        }
+        let path = crate::storage::grove_dir().join("config.toml");
+        let before = std::fs::read(&path).unwrap();
+        for interface in ["buddy", "unknown"] {
+            let request = serde_json::from_value(
+                serde_json::json!({"web":{"interface":interface,"terminal":"must-not-persist"}}),
+            )
+            .unwrap();
+            assert_eq!(
+                patch_config(Json(request)).await.unwrap_err(),
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert_eq!(
+                config::load_config().web.interface.as_deref(),
+                Some("orbit")
+            );
+        }
+    }
 }

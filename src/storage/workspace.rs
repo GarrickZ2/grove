@@ -17,6 +17,8 @@ pub enum ProjectType {
     Repo,
     /// Studio 项目（AI Agent 工作空间，无 git）
     Studio,
+    /// Persistent AI teammate, backed by a real directory without git.
+    Buddy,
 }
 
 impl ProjectType {
@@ -24,6 +26,7 @@ impl ProjectType {
         match self {
             ProjectType::Repo => "repo",
             ProjectType::Studio => "studio",
+            ProjectType::Buddy => "buddy",
         }
     }
 }
@@ -34,6 +37,7 @@ impl std::str::FromStr for ProjectType {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         Ok(match s {
             "studio" => ProjectType::Studio,
+            "buddy" => ProjectType::Buddy,
             _ => ProjectType::Repo,
         })
     }
@@ -118,9 +122,15 @@ fn resolve_project_path(path: &str) -> Result<String> {
     Ok(canonical)
 }
 
-/// 加载所有注册项目，包括已归档项目。
+/// 加载普通注册项目（不含 Buddy），包括已归档项目。
 pub fn load_projects() -> Result<Vec<RegisteredProject>> {
-    load_projects_by_archived(None)
+    load_projects_filtered(None, false)
+}
+
+/// Buddy discovery includes archived rows; callers choose the archive view.
+#[allow(dead_code)] // Consumed by the Buddy lifecycle/API in subsequent steps.
+pub fn load_buddy_projects() -> Result<Vec<RegisteredProject>> {
+    load_projects_filtered(None, true)
 }
 
 /// Load the persisted project identifiers used by tasks and group slots.
@@ -137,22 +147,23 @@ pub(crate) fn load_project_hashes() -> Result<Vec<String>> {
 
 /// 加载未归档的注册项目列表。
 pub fn load_active_projects() -> Result<Vec<RegisteredProject>> {
-    load_projects_by_archived(Some(false))
+    load_projects_filtered(Some(false), false)
 }
 
 /// 加载已归档的注册项目列表。
 pub fn load_archived_projects() -> Result<Vec<RegisteredProject>> {
-    load_projects_by_archived(Some(true))
+    load_projects_filtered(Some(true), false)
 }
 
-fn load_projects_by_archived(archived: Option<bool>) -> Result<Vec<RegisteredProject>> {
+fn load_projects_filtered(archived: Option<bool>, buddy: bool) -> Result<Vec<RegisteredProject>> {
     let conn = crate::storage::database::try_connection()?;
     let mut stmt = conn.prepare(
         "SELECT hash, name, path, is_git_repo, added_at, project_type, archived
-         FROM projects WHERE (?1 IS NULL OR archived = ?1) ORDER BY added_at DESC",
+         FROM projects WHERE (?1 IS NULL OR archived = ?1)
+         AND (project_type = 'buddy') = ?2 ORDER BY added_at DESC",
     )?;
     let projects = stmt
-        .query_map(rusqlite::params![archived], |row| {
+        .query_map(rusqlite::params![archived, buddy], |row| {
             let name: String = row.get(1)?;
             let path: String = row.get(2)?;
             let is_git: bool = row.get(3)?;
@@ -265,6 +276,14 @@ pub fn auto_register_cwd_if_git_repo() {
 
 /// 添加指定类型的项目
 pub fn add_project_with_type(name: &str, path: &str, project_type: ProjectType) -> Result<()> {
+    // Buddy creation must atomically include its persona, Segment and Memory.
+    // Do not let ordinary registration create an incomplete Buddy or route it
+    // through Studio's virtual-directory setup.
+    if project_type == ProjectType::Buddy {
+        return Err(crate::error::GroveError::invalid_data(
+            "Buddy projects must be created through the Buddy lifecycle",
+        ));
+    }
     let resolved_path = if project_type == ProjectType::Studio {
         // Studio 项目不走 git 路径解析，直接用传入路径
         path.to_string()
@@ -541,7 +560,7 @@ pub fn studio_project_dir(project_path: &str) -> std::path::PathBuf {
 pub fn project_directory(project: &RegisteredProject) -> std::path::PathBuf {
     match &project.project_type {
         ProjectType::Studio => studio_project_dir(&project.path),
-        ProjectType::Repo => std::path::PathBuf::from(&project.path),
+        ProjectType::Repo | ProjectType::Buddy => std::path::PathBuf::from(&project.path),
     }
 }
 
@@ -585,4 +604,96 @@ pub fn set_is_git_repo(path: &str, is_git: bool) -> Result<()> {
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::{
+        buddies::{self, test_support},
+        database,
+    };
+
+    #[test]
+    fn buddy_type_round_trips_without_changing_unknown_type_fallback() {
+        assert_eq!(ProjectType::Buddy.as_str(), "buddy");
+        assert_eq!("buddy".parse::<ProjectType>().unwrap(), ProjectType::Buddy);
+        assert_eq!(
+            serde_json::to_string(&ProjectType::Buddy).unwrap(),
+            "\"buddy\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ProjectType>("\"buddy\"").unwrap(),
+            ProjectType::Buddy
+        );
+        assert_eq!("unknown".parse::<ProjectType>().unwrap(), ProjectType::Repo);
+    }
+
+    #[test]
+    fn discovery_hides_buddies_but_identity_and_repair_queries_keep_them() {
+        let _lock = database::test_lock().blocking_lock();
+        let _store = test_support::Store::new();
+        let conn = database::try_connection().unwrap();
+        let buddy = test_support::seed_buddy(&conn, "buddy");
+        let archived = test_support::seed_buddy(&conn, "archived-buddy");
+        buddies::archive(&conn, &archived.id).unwrap();
+        for (name, kind, is_archived) in [
+            ("repo", "repo", false),
+            ("studio", "studio", false),
+            ("archived-repo", "repo", true),
+            ("archived-studio", "studio", true),
+        ] {
+            let path = format!("/test/{name}");
+            conn.execute(
+                "INSERT INTO projects (hash,name,path,project_type,archived,added_at)
+                VALUES (?1,?2,?3,?4,?5,'2026-10-30T00:00:00Z')",
+                rusqlite::params![project_hash(&path), name, path, kind, is_archived],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        assert_eq!(load_projects().unwrap().len(), 4);
+        let active = load_active_projects().unwrap();
+        assert_eq!(active.len(), 2);
+        assert!(active
+            .iter()
+            .all(|p| !p.archived && p.project_type != ProjectType::Buddy));
+        let inactive = load_archived_projects().unwrap();
+        assert_eq!(inactive.len(), 2);
+        assert!(inactive
+            .iter()
+            .all(|p| p.archived && p.project_type != ProjectType::Buddy));
+        let buddies = load_buddy_projects().unwrap();
+        assert_eq!(buddies.len(), 2);
+        assert!(buddies
+            .iter()
+            .all(|p| p.project_type == ProjectType::Buddy && !p.is_git_repo));
+        let project = load_project_by_hash(&buddy.project_hash).unwrap().unwrap();
+        let directory = buddies::project_directory(&buddy.id).unwrap();
+        assert!(directory.is_absolute());
+        assert_eq!(project_directory(&project), directory);
+        assert_eq!(project_hash(&project.path), buddy.project_hash);
+        assert!(
+            load_project_by_hash(&archived.project_hash)
+                .unwrap()
+                .unwrap()
+                .archived
+        );
+        assert!(load_project_hashes()
+            .unwrap()
+            .contains(&archived.project_hash));
+        assert_eq!(load_project_hashes().unwrap().len(), 6);
+        assert!(load_project_by_hash("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn ordinary_registration_cannot_create_partial_buddy_or_studio_directory() {
+        let _lock = database::test_lock().blocking_lock();
+        let _store = test_support::Store::new();
+        let path = buddies::project_directory("new").unwrap();
+        assert!(add_project_with_type("new", &path.to_string_lossy(), ProjectType::Buddy).is_err());
+        assert!(load_buddy_projects().unwrap().is_empty());
+        assert!(!path.exists());
+        assert!(!grove_dir().join("studios").exists());
+    }
 }

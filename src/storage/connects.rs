@@ -20,10 +20,18 @@ pub struct Connect {
     pub project_id: String,
     pub task_id: String,
     pub session_id: String,
+    #[serde(default)]
+    pub buddy_id: Option<String>,
     pub bound_chat_id: Option<String>,
     pub bound_user_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConnectTarget {
+    Buddy { buddy_id: String },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -37,9 +45,14 @@ pub struct ConnectInput {
     pub enabled: bool,
     #[serde(default)]
     pub adapter_config: Value,
+    #[serde(default)]
     pub project_id: String,
+    #[serde(default)]
     pub task_id: String,
+    #[serde(default)]
     pub session_id: String,
+    #[serde(default)]
+    pub target: Option<ConnectTarget>,
 }
 
 fn default_platform() -> String {
@@ -71,10 +84,11 @@ fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Connect> {
         bound_user_id: row.get(10)?,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
+        buddy_id: row.get(13)?,
     })
 }
 
-const SELECT: &str = "SELECT id,name,platform,domain,enabled,adapter_config_json,project_id,task_id,session_id,bound_chat_id,bound_user_id,created_at,updated_at FROM connects";
+const SELECT: &str = "SELECT id,name,platform,domain,enabled,adapter_config_json,project_id,task_id,CASE WHEN buddy_id IS NOT NULL THEN COALESCE((SELECT active_session_id FROM buddies WHERE buddies.id=connects.buddy_id),'') ELSE session_id END,bound_chat_id,bound_user_id,created_at,updated_at,buddy_id FROM connects";
 
 /// Repair stale routing on read so both configuration views and inbound IM
 /// messages return to Auto New, including bindings saved before this repair.
@@ -83,7 +97,7 @@ const SELECT: &str = "SELECT id,name,platform,domain,enabled,adapter_config_json
 fn reset_unavailable_sessions(conn: &rusqlite::Connection, id: Option<&str>) -> Result<()> {
     conn.execute(
         "UPDATE connects SET session_id='', updated_at=?1
-         WHERE (?2 IS NULL OR id=?2) AND session_id<>''
+         WHERE (?2 IS NULL OR id=?2) AND session_id<>'' AND buddy_id IS NULL
          AND NOT EXISTS (
              SELECT 1 FROM session
              WHERE session.session_id=connects.session_id
@@ -121,11 +135,14 @@ pub fn get(id: &str) -> Result<Option<Connect>> {
 pub fn create(input: ConnectInput) -> Result<Connect> {
     let id = uuid::Uuid::new_v4().to_string();
     let ts = now();
+    let buddy_id = input.target.as_ref().map(|target| match target {
+        ConnectTarget::Buddy { buddy_id } => buddy_id.as_str(),
+    });
     let adapter_config = serde_json::to_string(&input.adapter_config)?;
     let conn = database::connection();
     // Keep legacy credential columns populated as empty strings for databases
     // created before adapter_config_json was introduced.
-    conn.execute("INSERT INTO connects (id,name,platform,domain,enabled,adapter_config_json,app_id,app_secret,project_id,task_id,session_id,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,'','',?7,?8,?9,?10,?10)", params![id,input.name,input.platform,input.domain,input.enabled as i64,adapter_config,input.project_id,input.task_id,input.session_id,ts])?;
+    conn.execute("INSERT INTO connects (id,name,platform,domain,enabled,adapter_config_json,app_id,app_secret,project_id,task_id,session_id,created_at,updated_at,buddy_id) VALUES (?1,?2,?3,?4,?5,?6,'','',?7,?8,?9,?10,?10,?11)", params![id,input.name,input.platform,input.domain,input.enabled as i64,adapter_config,input.project_id,input.task_id,input.session_id,ts,buddy_id])?;
     drop(conn);
     Ok(get(&id)?.expect("created connect"))
 }
@@ -134,9 +151,12 @@ pub fn update(id: &str, input: ConnectInput) -> Result<Option<Connect>> {
     let Some(_) = get(id)? else {
         return Ok(None);
     };
+    let buddy_id = input.target.as_ref().map(|target| match target {
+        ConnectTarget::Buddy { buddy_id } => buddy_id.as_str(),
+    });
     let adapter_config = serde_json::to_string(&input.adapter_config)?;
     let conn = database::connection();
-    let changed = conn.execute("UPDATE connects SET name=?2,platform=?3,domain=?4,enabled=?5,adapter_config_json=?6,project_id=?7,task_id=?8,session_id=?9,updated_at=?10 WHERE id=?1", params![id,input.name,input.platform,input.domain,input.enabled as i64,adapter_config,input.project_id,input.task_id,input.session_id,now()])?;
+    let changed = conn.execute("UPDATE connects SET name=?2,platform=?3,domain=?4,enabled=?5,adapter_config_json=?6,project_id=?7,task_id=?8,session_id=?9,updated_at=?10,buddy_id=?11 WHERE id=?1", params![id,input.name,input.platform,input.domain,input.enabled as i64,adapter_config,input.project_id,input.task_id,input.session_id,now(),buddy_id])?;
     drop(conn);
     if changed == 0 {
         Ok(None)
@@ -153,7 +173,7 @@ pub fn delete(id: &str) -> Result<bool> {
 pub fn set_session(id: &str, session_id: &str) -> Result<bool> {
     let conn = database::connection();
     let changed = conn.execute(
-        "UPDATE connects SET session_id=?2, updated_at=?3 WHERE id=?1",
+        "UPDATE connects SET session_id=?2, updated_at=?3 WHERE id=?1 AND buddy_id IS NULL",
         params![id, session_id, now()],
     )?;
     Ok(changed > 0)
@@ -164,7 +184,7 @@ pub fn set_session(id: &str, session_id: &str) -> Result<bool> {
 pub fn set_routing(id: &str, project_id: &str, task_id: &str, session_id: &str) -> Result<bool> {
     let conn = database::connection();
     let changed = conn.execute(
-        "UPDATE connects SET project_id=?2, task_id=?3, session_id=?4, updated_at=?5 WHERE id=?1",
+        "UPDATE connects SET project_id=?2, task_id=?3, session_id=?4, buddy_id=NULL, updated_at=?5 WHERE id=?1",
         params![id, project_id, task_id, session_id, now()],
     )?;
     Ok(changed > 0)
@@ -232,6 +252,7 @@ mod tests {
                 )
                 .unwrap();
                 let connection = create(ConnectInput {
+                    target: None,
                     name: "Recovery test".into(),
                     platform: "feishu".into(),
                     domain: "feishu".into(),

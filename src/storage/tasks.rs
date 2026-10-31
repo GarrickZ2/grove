@@ -164,6 +164,10 @@ pub fn load_archived_tasks(project: &str) -> Result<Vec<Task>> {
 /// 添加单个任务
 pub fn add_task(project: &str, task: Task) -> Result<()> {
     let conn = crate::storage::database::connection();
+    add_task_on(&conn, project, task)
+}
+
+pub(crate) fn add_task_on(conn: &rusqlite::Connection, project: &str, task: Task) -> Result<()> {
     conn.execute(
         &format!("INSERT INTO tasks ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)", TASK_COLUMNS),
         params![
@@ -188,7 +192,7 @@ pub fn add_task(project: &str, task: Task) -> Result<()> {
         ],
     )?;
     if !task.is_local && task.status == TaskStatus::Active {
-        place_task_on_top(&conn, project, &task.id)?;
+        place_task_on_top(conn, project, &task.id)?;
     }
     Ok(())
 }
@@ -529,7 +533,7 @@ fn get_task_any(project: &str, task_id: &str) -> Result<Option<Task>> {
     Ok(task)
 }
 
-fn build_local_task(
+pub(crate) fn build_local_task(
     repo_path: &str,
     current_branch: &str,
     default_branch: &str,
@@ -677,7 +681,7 @@ fn row_to_chat_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatSession>
 pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSession>> {
     let conn = crate::storage::database::connection();
     let mut stmt = conn.prepare(
-        "SELECT session_id, title, agent, acp_session_id, created_at, duty, launch_mode
+        "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty, launch_mode
          FROM session
          WHERE project = ?1 AND task_id = ?2 AND archived_at IS NULL
          ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC",
@@ -694,7 +698,7 @@ pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSessio
 pub fn load_archived_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSession>> {
     let conn = crate::storage::database::connection();
     let mut stmt = conn.prepare(
-        "SELECT session_id, title, agent, acp_session_id, created_at, duty, launch_mode
+        "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty, launch_mode
          FROM session
          WHERE project = ?1 AND task_id = ?2 AND archived_at IS NOT NULL
          ORDER BY archived_at DESC",
@@ -785,6 +789,16 @@ pub fn load_acp_session_ids_for_agent(agent: &str) -> Result<std::collections::H
 /// 添加 ChatSession
 pub fn add_chat_session(project: &str, task_id: &str, chat: ChatSession) -> Result<()> {
     let conn = crate::storage::database::connection();
+    add_chat_session_on(&conn, project, task_id, chat)
+}
+
+pub(crate) fn add_chat_session_on(
+    conn: &rusqlite::Connection,
+    project: &str,
+    task_id: &str,
+    chat: ChatSession,
+) -> Result<()> {
+    super::buddies::ensure_session_writable_on(conn, &chat.id)?;
     let existing: Option<(String, String)> = conn
         .query_row(
             "SELECT project, task_id FROM session WHERE session_id = ?1",
@@ -973,7 +987,7 @@ pub fn get_chat_session(
     let conn = crate::storage::database::connection();
     let chat = conn
         .query_row(
-            "SELECT session_id, title, agent, acp_session_id, created_at, duty, launch_mode
+            "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty, launch_mode
              FROM session
              WHERE project = ?1 AND task_id = ?2 AND session_id = ?3 AND archived_at IS NULL",
             params![project, task_id, chat_id],
@@ -993,7 +1007,7 @@ pub fn get_chat_session_including_archived(
     let conn = crate::storage::database::connection();
     let chat = conn
         .query_row(
-            "SELECT session_id, title, agent, acp_session_id, created_at, duty, launch_mode
+            "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty, launch_mode
              FROM session
              WHERE project = ?1 AND task_id = ?2 AND session_id = ?3",
             params![project, task_id, chat_id],
@@ -1007,13 +1021,26 @@ pub fn get_chat_session_including_archived(
 /// agent_graph 工具用，agent 调工具时只携带 chat_id，需要据此定位 task 上下文。
 #[allow(dead_code)]
 pub fn find_chat_session(chat_id: &str) -> Result<Option<(String, String, ChatSession)>> {
+    find_chat_session_filtered(chat_id, false)
+}
+
+pub(crate) fn find_chat_session_any(
+    chat_id: &str,
+) -> Result<Option<(String, String, ChatSession)>> {
+    find_chat_session_filtered(chat_id, true)
+}
+
+fn find_chat_session_filtered(
+    chat_id: &str,
+    include_archived: bool,
+) -> Result<Option<(String, String, ChatSession)>> {
     let conn = crate::storage::database::connection();
     let row = conn
         .query_row(
-            "SELECT project, task_id, session_id, title, agent, acp_session_id, created_at, duty, launch_mode
+            "SELECT project, task_id, session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty, launch_mode
              FROM session
-             WHERE session_id = ?1 AND archived_at IS NULL",
-            params![chat_id],
+             WHERE session_id = ?1 AND (?2 OR archived_at IS NULL)",
+            params![chat_id, include_archived],
             |row| {
                 let project: String = row.get(0)?;
                 let task_id: String = row.get(1)?;

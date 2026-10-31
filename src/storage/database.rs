@@ -507,6 +507,60 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             updated_at    TEXT NOT NULL
         );
 
+        -- Persistent teammates, their immutable conversation segments and delegations.
+        CREATE TABLE IF NOT EXISTS buddies (
+            id TEXT PRIMARY KEY,
+            project_hash TEXT NOT NULL UNIQUE,
+            custom_agent_id TEXT NOT NULL,
+            avatar TEXT,
+            description TEXT NOT NULL DEFAULT '',
+            active_session_id TEXT,
+            sort_position INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS buddy_segments (
+            session_id TEXT PRIMARY KEY REFERENCES session(session_id) ON DELETE CASCADE,
+            buddy_id TEXT NOT NULL REFERENCES buddies(id) ON DELETE CASCADE,
+            seq INTEGER NOT NULL,
+            agent TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            UNIQUE (buddy_id, seq)
+        );
+        CREATE TABLE IF NOT EXISTS buddy_delegations (
+            id TEXT PRIMARY KEY,
+            buddy_id TEXT NOT NULL REFERENCES buddies(id) ON DELETE CASCADE,
+            from_session TEXT NOT NULL,
+            target_project TEXT NOT NULL,
+            target_task TEXT NOT NULL,
+            target_session TEXT NOT NULL,
+            title TEXT NOT NULL,
+            brief TEXT NOT NULL,
+            status TEXT NOT NULL,
+            last_result TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ix_buddy_delegations_buddy
+            ON buddy_delegations(buddy_id, updated_at DESC);
+
+        CREATE TRIGGER IF NOT EXISTS buddy_ended_session_update
+        BEFORE UPDATE ON session
+        WHEN EXISTS(SELECT 1 FROM buddy_segments WHERE session_id = OLD.session_id AND ended_at IS NOT NULL)
+        BEGIN SELECT RAISE(ABORT, 'buddy_segment_read_only'); END;
+        CREATE TRIGGER IF NOT EXISTS buddy_segment_session_delete
+        BEFORE DELETE ON session
+        WHEN EXISTS(SELECT 1 FROM buddy_segments WHERE session_id = OLD.session_id)
+        BEGIN SELECT RAISE(ABORT, 'buddy_segment_read_only'); END;
+
+        CREATE TRIGGER IF NOT EXISTS buddy_segment_session_archive
+        BEFORE UPDATE OF archived_at ON session
+        WHEN EXISTS(SELECT 1 FROM buddy_segments WHERE session_id = OLD.session_id) AND NEW.archived_at IS NOT OLD.archived_at
+        BEGIN SELECT RAISE(ABORT, 'Use Buddy archive instead of archiving its Segment'); END;
+
+
         -- Plugins registry. One row per installed/registered plugin (a folder
         -- containing plugin.json). `source` decides where local_path points and
         -- whether delete removes files:
@@ -794,6 +848,7 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             project_id TEXT NOT NULL,
             task_id TEXT NOT NULL,
             session_id TEXT NOT NULL,
+            buddy_id TEXT,
             bound_chat_id TEXT,
             bound_user_id TEXT,
             created_at INTEGER NOT NULL,
@@ -863,6 +918,7 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     )?;
 
     // Column migrations for existing databases
+    add_column_if_missing(conn, "connects", "buddy_id", "TEXT")?;
     // ALTER TABLE ADD COLUMN is not idempotent in SQLite, so we ignore errors
     let _ = conn.execute_batch(
         "ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'repo';",
@@ -2780,6 +2836,75 @@ pub fn migrate_v20_fix_empty_slots() -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn buddy_schema_is_idempotent_on_fresh_database() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        super::create_schema(&conn).unwrap();
+        super::create_schema(&conn).unwrap();
+        for table in ["buddies", "buddy_segments", "buddy_delegations"] {
+            assert_eq!(
+                conn.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                1
+            );
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('connects') WHERE name='buddy_id'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='ix_buddy_delegations_buddy'", [], |r| r.get::<_,i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn buddy_migration_preserves_existing_connect_and_later_binding() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE connects (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, platform TEXT NOT NULL,
+                domain TEXT NOT NULL DEFAULT 'feishu', enabled INTEGER NOT NULL DEFAULT 1,
+                adapter_config_json TEXT NOT NULL DEFAULT '{}', app_id TEXT NOT NULL, app_secret TEXT NOT NULL,
+                project_id TEXT NOT NULL, task_id TEXT NOT NULL, session_id TEXT NOT NULL,
+                bound_chat_id TEXT, bound_user_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+             );
+             INSERT INTO connects (id,name,platform,app_id,app_secret,project_id,task_id,session_id,created_at,updated_at)
+             VALUES ('old','Existing','feishu','','','project','task','chat',10,20);"
+        ).unwrap();
+        super::create_schema(&conn).unwrap();
+        let row = || {
+            conn.query_row("SELECT project_id,task_id,session_id,created_at,updated_at,buddy_id FROM connects WHERE id='old'", [], |r| {
+            Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,r.get::<_,Option<String>>(5)?))
+        }).unwrap()
+        };
+        assert_eq!(
+            row(),
+            ("project".into(), "task".into(), "chat".into(), 10, 20, None)
+        );
+        conn.execute("UPDATE connects SET buddy_id='buddy' WHERE id='old'", [])
+            .unwrap();
+        super::create_schema(&conn).unwrap();
+        assert_eq!(
+            row(),
+            (
+                "project".into(),
+                "task".into(),
+                "chat".into(),
+                10,
+                20,
+                Some("buddy".into())
+            )
+        );
+    }
+
     #[test]
     fn connection_open_failure_can_be_retried() {
         let _lock = super::test_lock().blocking_lock();

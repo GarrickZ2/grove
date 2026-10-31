@@ -83,14 +83,7 @@ let lastAgentSnapshot: {
   terminalLaunchableIds: Set<string>;
 } | undefined;
 
-interface SettingsPageProps {
-  config: {
-    agent: { command: string };
-    layout: { default: string };
-    hooks: { enabled: boolean; scriptPath: string };
-    mcp: { name: string; type: string; command: string; args: string[] };
-  };
-}
+const MCP_CONNECTION = { name: "grove", type: "stdio", command: "grove", args: ["mcp"] };
 
 interface SectionProps {
   id: string;
@@ -230,7 +223,7 @@ interface DependencyState {
   installCommand: string;
 }
 
-export function SettingsPage({ config }: SettingsPageProps) {
+export function SettingsPage() {
   const catalogRevision = useAgentCatalogRevision();
   const { theme, mode, lightThemeId, darkThemeId, customThemes, themes, setAppearance } = useTheme();
   const { config: currentGlobalConfig, updateAvailability, refresh: refreshGlobalConfig } = useConfig();
@@ -257,7 +250,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [isLoaded, setIsLoaded] = useState(false); // Prevent auto-save during initial load
 
   // Local state for Development Tools
-  const [agentCommand, setAgentCommand] = useState(config.agent.command);
+  const [agentCommand, setAgentCommand] = useState((currentGlobalConfig?.layout.agent_command ?? ""));
   const [ideCommand, setIdeCommand] = useState("");
   const [terminalCommand, setTerminalCommand] = useState("");
   const [applications, setApplications] = useState<AppInfo[]>([]);
@@ -298,7 +291,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const lastTerminalMuxRef = useRef<string>("tmux");
 
   // Layout state
-  const [selectedLayout, setSelectedLayout] = useState(config.layout.default);
+  const [selectedLayout, setSelectedLayout] = useState((currentGlobalConfig?.layout.default ?? ""));
   const [customLayouts, setCustomLayouts] = useState<CustomLayoutConfig[]>(defaultCustomLayouts);
   const [selectedCustomLayoutId, setSelectedCustomLayoutId] = useState<string | null>(defaultCustomLayouts[0]?.id || null);
   const [customLayoutsLoaded, setCustomLayoutsLoaded] = useState(false); // Track if custom layouts were loaded from API
@@ -450,7 +443,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // as a dependency. Kept outside try/catch so optional chaining and ternaries
   // don't bail out the React Compiler.
   const applyLoadedConfig = useCallback((cfg: Awaited<ReturnType<typeof getConfig>>) => {
-    const agentCmd = cfg.layout.agent_command || config.agent.command;
+    const agentCmd = cfg.layout.agent_command || (currentGlobalConfig?.layout.agent_command ?? "");
     setAgentCommand(agentCmd);
     setIdeCommand(cfg.web.ide || "");
     setTerminalCommand(cfg.web.terminal || "");
@@ -562,7 +555,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }
 
     setIsLoaded(true);
-  }, [config.agent.command]);
+  }, [currentGlobalConfig?.layout.agent_command]);
 
   // Load config from API
   const loadConfig = useCallback(async () => {
@@ -1187,9 +1180,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
     {
       mcpServers: {
         grove: {
-          type: config.mcp.type,
-          command: config.mcp.command,
-          args: config.mcp.args,
+          type: MCP_CONNECTION.type,
+          command: MCP_CONNECTION.command,
+          args: MCP_CONNECTION.args,
         },
       },
     },
@@ -1198,8 +1191,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
   );
 
   const codexConfig = `[mcp_servers.grove]
-command = "${config.mcp.command}"
-args = ${JSON.stringify(config.mcp.args)}
+command = "${MCP_CONNECTION.command}"
+args = ${JSON.stringify(MCP_CONNECTION.args)}
 env_vars = [
   "GROVE_TASK_ID",
   "GROVE_TASK_NAME",
@@ -2821,19 +2814,19 @@ env_vars = [
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="text-xs text-[var(--color-text-muted)] mb-1 select-none">Name</div>
-                  <code className="text-sm font-semibold text-[var(--color-highlight)]">{config.mcp.name}</code>
+                  <code className="text-sm font-semibold text-[var(--color-highlight)]">{MCP_CONNECTION.name}</code>
                 </div>
                 <div>
                   <div className="text-xs text-[var(--color-text-muted)] mb-1 select-none">Type</div>
-                  <code className="text-sm font-semibold text-[var(--color-text)]">{config.mcp.type}</code>
+                  <code className="text-sm font-semibold text-[var(--color-text)]">{MCP_CONNECTION.type}</code>
                 </div>
                 <div>
                   <div className="text-xs text-[var(--color-text-muted)] mb-1 select-none">Command</div>
-                  <code className="text-sm font-semibold text-[var(--color-text)]">{config.mcp.command}</code>
+                  <code className="text-sm font-semibold text-[var(--color-text)]">{MCP_CONNECTION.command}</code>
                 </div>
                 <div>
                   <div className="text-xs text-[var(--color-text-muted)] mb-1 select-none">Args</div>
-                  <code className="text-sm font-semibold text-[var(--color-text)]">{config.mcp.args.join(" ")}</code>
+                  <code className="text-sm font-semibold text-[var(--color-text)]">{MCP_CONNECTION.args.join(" ")}</code>
                 </div>
               </div>
             </div>

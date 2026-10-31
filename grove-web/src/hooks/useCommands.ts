@@ -1,4 +1,5 @@
 import {
+  Bot,
   LayoutGrid,
   Laptop,
   ListTodo,
@@ -43,6 +44,7 @@ function withRanking(command: Command, ranking: Command["ranking"]): Command {
 }
 
 export interface UseCommandsOptions {
+  buddies?: { open: (id?: string, create?: boolean) => void; leave?: () => void; items: { id: string; name: string; status: string }[] };
   // Navigation (optional - skip if not provided)
   navigation?: {
     onNavigate: (page: string) => void;
@@ -99,6 +101,12 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
 
     const commands: Command[] = [];
 
+    if (options.buddies) {
+      const { open, leave, items } = options.buddies;
+      commands.push({ id: "nav-buddies", name: leave ? "Leave Buddies" : "Open Buddies", category: "Navigation", icon: Bot, handler: leave ?? (() => open()), keywords: ["buddy", "bot", "teammate"] });
+      commands.push({ id: "buddy-new", name: "New Buddy", category: "Buddies", icon: Plus, handler: () => open(undefined, true) });
+      for (const item of items) commands.push({ id: `buddy-${item.id}`, name: `${item.name} · ${item.status}`, category: "Buddies", icon: Bot, handler: () => open(item.id), keywords: ["buddy", item.name, item.status] });
+    }
     // --- Navigation ---
     if (navigation) {
       const { onNavigate } = navigation;

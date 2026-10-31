@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useContext, useEffect } from "react";
+import { InteractionContext } from "./InteractionContext";
 import { keyboardManager } from "./KeyboardManager";
 
 /**
@@ -10,8 +11,9 @@ import { keyboardManager } from "./KeyboardManager";
  * naturally produce layered Escape behavior without priority fields.
  */
 export function useKeyboardScope(scopeId: string, active: boolean = true): void {
+  const visible = useContext(InteractionContext);
   useEffect(() => {
-    if (!active) return;
+    if (!active || !visible) return;
     return keyboardManager.pushScope(scopeId);
-  }, [scopeId, active]);
+  }, [scopeId, active, visible]);
 }

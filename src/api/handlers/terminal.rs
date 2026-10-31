@@ -53,16 +53,10 @@ pub async fn task_terminal_handler(
     let rows = query.rows.unwrap_or(24);
 
     // 1. Find project
-    let projects = workspace::load_projects()
-        .map_err(|e| TaskTerminalError::Internal(format!("Failed to load projects: {}", e)))?;
-
-    let project = projects
-        .iter()
-        .find(|p| workspace::project_hash(&p.path) == project_id)
-        .ok_or(TaskTerminalError::NotFound("Project not found".to_string()))?
-        .clone();
-
-    let project_key = workspace::project_hash(&project.path);
+    let project = workspace::load_project_by_hash(&project_id)
+        .map_err(|e| TaskTerminalError::Internal(format!("Failed to load project: {}", e)))?
+        .ok_or(TaskTerminalError::NotFound("Project not found".to_string()))?;
+    let project_key = project_id;
 
     // 2. Find task
     let task = tasks::get_task(&project_key, &task_id)

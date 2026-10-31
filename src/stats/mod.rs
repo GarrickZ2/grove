@@ -642,21 +642,12 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
         }
     };
 
-    let project_names: std::collections::HashMap<String, String> =
-        crate::storage::workspace::load_projects()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| {
-                let key = crate::storage::workspace::project_hash(&p.path);
-                (key, p.name)
-            })
-            .collect();
-
     raw.into_iter()
         .map(|(key, turns, tokens, input, cached, output, cost)| {
-            let name = project_names
-                .get(&key)
-                .cloned()
+            let name = crate::storage::workspace::load_project_by_hash(&key)
+                .ok()
+                .flatten()
+                .map(|p| p.name)
                 .unwrap_or_else(|| key.chars().take(8).collect());
             let agent_split = query_agent_split_for_project(&key, from_ts, to_ts);
             TopItem {

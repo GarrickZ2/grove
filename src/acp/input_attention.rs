@@ -1,7 +1,7 @@
 use super::{AcpSessionHandle, AcpUpdate};
 
 impl AcpSessionHandle {
-    pub(super) fn has_pending_input(&self) -> bool {
+    pub(crate) fn has_pending_input(&self) -> bool {
         !self.pending_ask_forms.lock().unwrap().is_empty()
             || self.pending_elicitation_snapshot().is_some()
     }

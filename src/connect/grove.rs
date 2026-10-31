@@ -51,6 +51,7 @@ enum AskFormState {
 
 #[derive(Clone)]
 struct PendingAskForm {
+    session_id: Option<String>,
     definition: crate::agent_graph::ask_form::AskFormInput,
     state: AskFormState,
     created_at: Instant,
@@ -158,6 +159,15 @@ pub fn shutdown(connection_id: &str) {
 }
 
 fn session_handle(connect: &Connect) -> Result<crate::grove::Session, String> {
+    let refreshed;
+    let connect = if connect.buddy_id.is_some() {
+        refreshed = connects::get(&connect.id)
+            .map_err(|e| e.to_string())?
+            .ok_or("Connect not found")?;
+        &refreshed
+    } else {
+        connect
+    };
     if connect.project_id.is_empty() || connect.task_id.is_empty() || connect.session_id.is_empty()
     {
         return Err("No active Grove session for this connection.".into());
@@ -166,16 +176,52 @@ fn session_handle(connect: &Connect) -> Result<crate::grove::Session, String> {
         .ok_or_else(|| "The Grove session is no longer running.".into())
 }
 
+// Buddy Agents may reuse protocol request IDs after a Segment change. Carry
+// the original Session in the opaque card ID, without changing adapter schemas.
+fn scoped_request_id(session: &str, request: &str) -> String {
+    if crate::storage::buddies::get_segment(&crate::storage::database::connection(), session)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        format!("buddy:{session}:{request}")
+    } else {
+        request.into()
+    }
+}
+
+fn request_session(
+    connect: &Connect,
+    request: &str,
+) -> Result<(crate::grove::Session, String), String> {
+    let handle = session_handle(connect)?;
+    if connect.buddy_id.is_none() {
+        return Ok((handle, request.into()));
+    }
+    let handle = handle.admit()?;
+    if let Some(scoped) = request.strip_prefix("buddy:") {
+        let (session, request) = scoped.split_once(':').ok_or("Invalid Buddy request")?;
+        if handle.session_id() != Some(session) {
+            return Err("This request belongs to a previous Buddy Session.".into());
+        }
+        Ok((handle, request.into()))
+    } else if connect.buddy_id.is_some() {
+        Err("This Buddy request is no longer active.".into())
+    } else {
+        Ok((handle, request.into()))
+    }
+}
+
 pub fn respond_permission(
     connect: &Connect,
     request_id: &str,
     option_id: &str,
 ) -> Result<(), String> {
-    let handle = session_handle(connect)?;
-    if !handle.pending_permission_accepts(request_id, option_id) {
+    let (handle, request_id) = request_session(connect, request_id)?;
+    if !handle.pending_permission_accepts(&request_id, option_id) {
         return Err("This permission response is no longer valid.".into());
     }
-    if handle.respond_permission(option_id.to_owned()) {
+    if handle.respond_permission(&request_id, option_id.to_owned()) {
         Ok(())
     } else {
         Err("This permission request is no longer active.".into())
@@ -188,7 +234,8 @@ pub fn respond_elicitation(
     accept: bool,
     fields: &HashMap<String, String>,
 ) -> Result<(), String> {
-    session_handle(connect)?.respond_turn_form(request_id, accept, fields)
+    let (handle, request_id) = request_session(connect, request_id)?;
+    handle.respond_turn_form(&request_id, accept, fields)
 }
 
 fn form_card(form: TurnForm) -> CardSpec {
@@ -216,7 +263,11 @@ fn form_card(form: TurnForm) -> CardSpec {
     })
 }
 
-fn stash_ask_form(form_id: &str, definition: &crate::agent_graph::ask_form::AskFormInput) {
+pub(crate) fn stash_ask_form(
+    form_id: &str,
+    definition: &crate::agent_graph::ask_form::AskFormInput,
+    session_id: Option<&str>,
+) {
     let mut pending = ASK_FORM_PENDING.lock().unwrap();
     let now = Instant::now();
     pending.retain(|_, form| now.duration_since(form.created_at) < ASK_FORM_PENDING_TTL);
@@ -235,6 +286,7 @@ fn stash_ask_form(form_id: &str, definition: &crate::agent_graph::ask_form::AskF
     pending.insert(
         form_id.to_string(),
         PendingAskForm {
+            session_id: session_id.map(str::to_owned),
             definition: definition.clone(),
             state: AskFormState::Open,
             created_at: now,
@@ -457,10 +509,11 @@ fn raw_form_dump(form_id: &str, fields: &HashMap<String, String>) -> String {
 }
 
 pub fn pending_elicitation_card(connect: &Connect, request_id: &str) -> Option<CardSpec> {
-    session_handle(connect)
-        .ok()?
-        .pending_turn_form(request_id)
-        .map(form_card)
+    let (handle, raw_id) = request_session(connect, request_id).ok()?;
+    handle.pending_turn_form(&raw_id).map(|mut form| {
+        form.request_id = request_id.into();
+        form_card(form)
+    })
 }
 
 fn store_inbound_attachments(
@@ -549,26 +602,61 @@ pub async fn deliver_prompt(
     inbound: InboundMessage,
     text: String,
 ) -> Result<(), String> {
+    deliver_prompt_checked(connect, adapter, inbound, text, None).await
+}
+
+pub(crate) async fn deliver_form_prompt(
+    connect: Connect,
+    adapter: AdapterRef,
+    inbound: InboundMessage,
+    text: String,
+    form_id: &str,
+) -> Result<(), String> {
+    let expected = ASK_FORM_PENDING
+        .lock()
+        .unwrap()
+        .get(form_id)
+        .and_then(|form| form.session_id.clone());
+    if connect.buddy_id.is_some() && expected.is_none() {
+        return Err("This Buddy form is no longer active.".into());
+    }
+    if let Some(buddy_id) = &connect.buddy_id {
+        let active = crate::buddy::get(buddy_id)
+            .map_err(|e| e.to_string())?
+            .active_session_id;
+        if expected != active {
+            return Err("This form belongs to a previous Session.".into());
+        }
+    }
+    deliver_prompt_checked(connect, adapter, inbound, text, expected).await
+}
+
+async fn deliver_prompt_checked(
+    connect: Connect,
+    adapter: AdapterRef,
+    inbound: InboundMessage,
+    text: String,
+    expected_session: Option<String>,
+) -> Result<(), String> {
     if connect.project_id.is_empty() || connect.task_id.is_empty() {
         return Err(
             "This connection is not linked to a Grove task yet. Send /target to choose a target."
                 .into(),
         );
     }
-    let session_id = match create_session(&connect, None) {
-        Ok(session_id) => session_id,
-        Err(error) => return Err(format!("Grove Connect error: {error}")),
-    };
-
     let waiting = adapter.mark_waiting(&inbound.external_message_id).await;
-    let session = match crate::grove::ensure_session(
-        &connect.project_id,
-        &connect.task_id,
-        &session_id,
-    )
-    .await
-    {
-        Ok(handle) => handle,
+    let routed = if let Some(buddy_id) = &connect.buddy_id {
+        crate::grove::ensure_buddy_session(buddy_id).await
+    } else {
+        match create_session(&connect, None) {
+            Ok(id) => crate::grove::ensure_session(&connect.project_id, &connect.task_id, &id)
+                .await
+                .map(|session| (id, session)),
+            Err(error) => Err(error),
+        }
+    };
+    let (session_id, session) = match routed {
+        Ok(value) => value,
         Err(error) => {
             adapter
                 .clear_status(&inbound.external_message_id, &waiting)
@@ -576,6 +664,15 @@ pub async fn deliver_prompt(
             return Err(format!("Grove Connect error: {error}"));
         }
     };
+    if expected_session
+        .as_deref()
+        .is_some_and(|expected| expected != session_id)
+    {
+        adapter
+            .clear_status(&inbound.external_message_id, &waiting)
+            .await;
+        return Err("This form belongs to a previous Session.".into());
+    }
     let attachments = match store_inbound_attachments(&connect, &session_id, inbound.attachments) {
         Ok(attachments) => attachments,
         Err(error) => {
@@ -616,6 +713,11 @@ pub async fn deliver_prompt(
 pub(crate) async fn ensure_routed_session(
     connect: &Connect,
 ) -> Result<crate::grove::Session, String> {
+    if let Some(buddy_id) = &connect.buddy_id {
+        return crate::grove::ensure_buddy_session(buddy_id)
+            .await
+            .map(|(_, session)| session);
+    }
     if connect.project_id.is_empty() || connect.task_id.is_empty() {
         return Err("This connection has no Grove target yet. Send /target to set it up.".into());
     }
@@ -624,6 +726,9 @@ pub(crate) async fn ensure_routed_session(
 }
 
 pub(crate) async fn start_new_session(connect: &Connect, agent: &str) -> Result<String, String> {
+    if connect.buddy_id.is_some() {
+        return Err("Buddy 只有一条对话".into());
+    }
     let mut next = connect.clone();
     next.session_id = create_session(connect, Some(agent))?;
     ensure_routed_session(&next).await?;
@@ -631,6 +736,20 @@ pub(crate) async fn start_new_session(connect: &Connect, agent: &str) -> Result<
 }
 
 pub fn create_session(connect: &Connect, agent_override: Option<&str>) -> Result<String, String> {
+    let current = connects::get(&connect.id).map_err(|e| e.to_string())?;
+    if let Some(buddy_id) = current
+        .as_ref()
+        .and_then(|c| c.buddy_id.as_deref())
+        .or(connect.buddy_id.as_deref())
+    {
+        if agent_override.is_some() {
+            return Err("Buddy 只有一条对话".into());
+        }
+        return crate::buddy::get(buddy_id)
+            .map_err(|e| e.to_string())?
+            .active_session_id
+            .ok_or_else(|| "Buddy has no active Segment".into());
+    }
     let _creation = SESSION_CREATION.lock().unwrap();
     if agent_override.is_none() {
         if let Some(fresh) = connects::get(&connect.id).map_err(|error| error.to_string())? {
@@ -685,6 +804,7 @@ mod tests {
 
         for archive in [false, true] {
             let mut connection = connects::create(connects::ConnectInput {
+                target: None,
                 name: "Stale Connect".into(),
                 platform: "feishu".into(),
                 domain: "feishu".into(),
@@ -741,6 +861,7 @@ mod tests {
         crate::storage::set_grove_dir_override(Some(grove_dir.clone()));
 
         let connection = connects::create(connects::ConnectInput {
+            target: None,
             name: "Concurrent Connect".into(),
             platform: "feishu".into(),
             domain: "feishu".into(),
@@ -803,7 +924,7 @@ mod tests {
     #[test]
     fn invalid_ask_form_response_keeps_form_open_for_retry() {
         let form_id = format!("test-form-{}", uuid::Uuid::new_v4());
-        stash_ask_form(&form_id, &number_form());
+        stash_ask_form(&form_id, &number_form(), None);
 
         let fields = HashMap::from([(String::from("percentage"), String::from("not-a-number"))]);
         let error = ask_form_response_text(&form_id, &fields).expect_err("invalid number");
@@ -821,7 +942,7 @@ mod tests {
     #[test]
     fn ask_form_submission_is_claimed_once_and_decline_cleans_up() {
         let form_id = format!("test-form-{}", uuid::Uuid::new_v4());
-        stash_ask_form(&form_id, &number_form());
+        stash_ask_form(&form_id, &number_form(), None);
 
         let fields = HashMap::from([(String::from("percentage"), String::from("80"))]);
         ask_form_response_text(&form_id, &fields).expect("first submission");
@@ -830,7 +951,7 @@ mod tests {
         complete_ask_form(&form_id);
 
         let declined_id = format!("test-form-{}", uuid::Uuid::new_v4());
-        stash_ask_form(&declined_id, &number_form());
+        stash_ask_form(&declined_id, &number_form(), None);
         dismiss_ask_form(&declined_id);
         assert!(pending_ask_form_card(&declined_id).is_none());
     }
@@ -927,7 +1048,7 @@ pub async fn handle_turn_event(
                 return;
             };
             let card = CardSpec::Permission(PermissionCard {
-                request_id,
+                request_id: scoped_request_id(&session_id, &request_id),
                 description: permission.description,
                 options: permission
                     .options
@@ -950,10 +1071,11 @@ pub async fn handle_turn_event(
                 eprintln!("[connect] failed to deliver permission card: {error}");
             }
         }
-        TurnEvent::FormRequired { form } => {
+        TurnEvent::FormRequired { mut form } => {
             let Some((_, route)) = routes(&message_ids).pop() else {
                 return;
             };
+            form.request_id = scoped_request_id(&session_id, &form.request_id);
             let card = form_card(form);
             if let Some(progress) = &route.progress {
                 progress.status("Waiting for input");
@@ -973,7 +1095,7 @@ pub async fn handle_turn_event(
             let Some((_, route)) = routes(&message_ids).pop() else {
                 return;
             };
-            stash_ask_form(&form_id, &definition);
+            stash_ask_form(&form_id, &definition, Some(&session_id));
             let card = CardSpec::AskForm(super::commands::AskFormCard {
                 form_id,
                 definition,
@@ -1093,5 +1215,53 @@ pub async fn handle_turn_event(
             }
             clear_routes(&routes).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod buddy_request_tests {
+    use super::*;
+    use crate::storage::{
+        buddies::test_support::{seed_buddy, Store},
+        database, tasks,
+    };
+    #[tokio::test]
+    async fn reused_protocol_request_ids_cannot_cross_segments() {
+        let _lock = database::test_lock().lock().await;
+        let _store = Store::new();
+        let buddy = seed_buddy(&database::connection(), "request-scope");
+        let old = buddy.active_session_id.as_deref().unwrap();
+        let connection = connects::create(serde_json::from_value(serde_json::json!({
+            "name":"Buddy IM", "project_id":buddy.project_hash, "task_id":"_local", "session_id":old,
+            "target":{"kind":"buddy","buddy_id":buddy.id}
+        })).unwrap()).unwrap();
+        let old_request = scoped_request_id(old, "reused-request-id");
+        let next = crate::buddy::switch_on(
+            &database::connection(),
+            &buddy,
+            "codex-acp",
+            Default::default(),
+        )
+        .unwrap();
+        let current = next.active_session_id.as_deref().unwrap();
+        let key = format!("{}:_local:{current}", buddy.project_hash);
+        let (handle, _, _guard) = crate::acp::new_handle_for_test(
+            &key,
+            &buddy.project_hash,
+            tasks::LOCAL_TASK_ID,
+            current,
+        );
+        assert!(request_session(&connection, &old_request).is_err());
+        assert!(request_session(&connection, "reused-request-id").is_err());
+        let (admitted, request) = request_session(
+            &connection,
+            &scoped_request_id(current, "reused-request-id"),
+        )
+        .unwrap();
+        assert_eq!(request, "reused-request-id");
+        assert_eq!(admitted.session_id(), Some(current));
+        assert!(!handle.try_retire_for_buddy_switch());
+        drop(admitted);
+        assert!(handle.try_retire_for_buddy_switch());
     }
 }

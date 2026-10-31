@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
+import { DialogLayerContext } from "./dialogLayerContext";
+import { InteractionContext } from "../../keyboard/InteractionContext";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useIsMobile } from "../../hooks";
@@ -54,14 +56,18 @@ interface DialogShellProps {
  * and as a bottom sheet on mobile.
  */
 export function DialogShell({
-  isOpen,
+  isOpen: requestedOpen,
   onClose,
   children,
   maxWidth = "max-w-md",
-  zIndex = 50,
+  zIndex: requestedLayer,
   variant = "responsive",
   swipeToClose = false,
 }: DialogShellProps) {
+  const active = useContext(InteractionContext);
+  const parentLayer = useContext(DialogLayerContext);
+  const zIndex = requestedLayer ?? parentLayer;
+  const isOpen = requestedOpen && active;
   const swipeStartRef = useRef<number | null>(null);
   const { isMobile: isNarrow } = useIsMobile();
   // `centered` callers opt out of the width-based bottom-sheet entirely.
@@ -166,7 +172,7 @@ export function DialogShell({
                   >
                     <div className="w-10 h-1 rounded-full bg-[var(--color-border)]" />
                   </div>
-                  {children}
+                  <DialogLayerContext.Provider value={zIndex + 10}>{children}</DialogLayerContext.Provider>
                 </div>
               </motion.div>
             </div>
@@ -182,7 +188,7 @@ export function DialogShell({
               className={`fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full ${maxWidth}`}
               style={{ zIndex }}
             >
-              {children}
+              <DialogLayerContext.Provider value={zIndex + 10}>{children}</DialogLayerContext.Provider>
             </motion.div>
           )}
         </>

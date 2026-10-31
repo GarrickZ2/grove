@@ -315,24 +315,7 @@ impl AgentGraphMcpService {
         Parameters(input): Parameters<AppendMemoryLogInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let (project_id, task_id, chat) = caller_session_from_parts(&parts)?;
-        if !memory::project_memory_enabled(&project_id).map_err(memory_mcp_error)? {
-            return Err(McpError::invalid_request(
-                "Project Memory is not enabled for this project".to_string(),
-                None,
-            ));
-        }
-        memory::append_log(&memory::NewMemoryLog {
-            project_id: &project_id,
-            task_id: &task_id,
-            chat_id: Some(&chat.id),
-            agent: Some(&chat.agent),
-            title: &input.title,
-            tags: &input.tags,
-            description: &input.description,
-        })
-        .map_err(memory_mcp_error)?;
-        structured_json_success(&AppendMemoryLogOutput { saved: true })
+        shared_grove_memory_append_log_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     #[tool(
@@ -345,24 +328,7 @@ impl AgentGraphMcpService {
         Parameters(input): Parameters<MemoryRecallInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let project_id = working_memory_project(&parts)?;
-        let tags = input
-            .tags
-            .into_iter()
-            .map(|tag| memory::MemoryTagFilter {
-                key: tag.key,
-                value: tag.value,
-            })
-            .collect::<Vec<_>>();
-        let page = memory::recall_entities(
-            &project_id,
-            input.query.as_deref(),
-            &tags,
-            input.cursor.as_deref(),
-            memory_bounded_limit(input.limit, 10, 50, "limit")?,
-        )
-        .map_err(memory_mcp_error)?;
-        structured_json_success(&map_memory_page(page, MemoryRecallItem::from))
+        shared_grove_memory_recall_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     #[tool(
@@ -375,21 +341,7 @@ impl AgentGraphMcpService {
         Parameters(input): Parameters<MemoryReadInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let project_id = working_memory_project(&parts)?;
-        let result = memory::read_entity(
-            &project_id,
-            &input.entity_id,
-            input.via_relation_id.as_deref(),
-            memory_bounded_limit_allow_zero(input.related_limit, 3, 10, "related_limit")?,
-        )
-        .map_err(memory_mcp_error)?
-        .ok_or_else(|| {
-            McpError::invalid_request(
-                format!("Memory Entity {} was not found", input.entity_id),
-                None,
-            )
-        })?;
-        structured_json_success(&MemoryReadOutput::from(result))
+        shared_grove_memory_read_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     #[tool(
@@ -402,15 +354,7 @@ impl AgentGraphMcpService {
         Parameters(input): Parameters<MemoryRelatedInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let project_id = working_memory_project(&parts)?;
-        let page = memory::list_related_memories(
-            &project_id,
-            &input.entity_id,
-            input.cursor.as_deref(),
-            memory_bounded_limit(input.limit, 10, 50, "limit")?,
-        )
-        .map_err(memory_mcp_error)?;
-        structured_json_success(&map_memory_page(page, RelatedMemoryItem::from))
+        shared_grove_memory_get_related_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     #[tool(
@@ -423,15 +367,7 @@ impl AgentGraphMcpService {
         Parameters(input): Parameters<MemoryRecentLogsInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let project_id = working_memory_project(&parts)?;
-        let page = memory::list_logs(
-            &project_id,
-            input.query.as_deref(),
-            input.cursor.as_deref(),
-            memory_bounded_limit(input.limit, 20, 100, "limit")?,
-        )
-        .map_err(memory_mcp_error)?;
-        structured_json_success(&map_memory_page(page, MemoryLogItem::from))
+        shared_grove_memory_get_recent_logs_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     #[tool(
@@ -540,8 +476,7 @@ impl AgentGraphMcpService {
         Parameters(input): Parameters<crate::speech::SpeakInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let (_, _, chat) = caller_session_from_parts(&parts)?;
-        structured_json_success(&crate::speech::speak(&chat.id, &input.text))
+        shared_grove_agent_speak_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     #[tool(
@@ -553,11 +488,7 @@ impl AgentGraphMcpService {
         Parameters(input): Parameters<ask_form::AskFormInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let cx = caller_context_from_parts(&parts)?;
-        match ask_form::grove_ask_form(&cx, input).await {
-            Ok(out) => json_success(&out),
-            Err(e) => Ok(tool_error(e)),
-        }
+        shared_grove_ask_form_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     // ── Browser tools ────────────────────────────────────────────────────────
@@ -578,38 +509,7 @@ impl AgentGraphMcpService {
         Parameters(input): Parameters<BrowserOpenInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let cfg = config::load_config();
-        if !cfg.browser_control.enabled {
-            return Err(McpError::invalid_request(
-                "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-                None,
-            ));
-        }
-        let group_name = if cfg.browser_control.auto_groups {
-            Some(caller_task_name_from_parts(&parts)?)
-        } else {
-            None
-        };
-        let timeout_ms = browser_timeout_ms(input.timeout_ms);
-        let wait_for = input
-            .wait_for
-            .map(serde_json::to_value)
-            .transpose()
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        crate::api::handlers::extension::browser_open(
-            &input.url,
-            group_name.as_deref(),
-            wait_for,
-            timeout_ms,
-        )
-        .await
-        .map_err(|e| McpError::internal_error(e, None))
-        .and_then(|mut res| {
-            if let Some(obj) = res.as_object_mut() {
-                obj.remove("groupId");
-            }
-            json_success(&res)
-        })
+        shared_grove_browser_open_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     /// Reload an existing tab instead of opening a duplicate tab.
@@ -620,23 +520,9 @@ impl AgentGraphMcpService {
     async fn grove_browser_reload_tool(
         &self,
         Parameters(input): Parameters<BrowserReloadInput>,
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        ensure_browser_control_enabled()?;
-        let timeout_ms = browser_timeout_ms(input.timeout_ms);
-        let wait_for = input
-            .wait_for
-            .map(serde_json::to_value)
-            .transpose()
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        crate::api::handlers::extension::browser_reload(
-            input.tab_id,
-            input.bypass_cache.unwrap_or(false),
-            wait_for,
-            timeout_ms,
-        )
-        .await
-        .map_err(|e| McpError::internal_error(e, None))
-        .and_then(|res| json_success(&res))
+        shared_grove_browser_reload_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     /// Navigate an existing tab without creating a duplicate.
@@ -647,30 +533,9 @@ impl AgentGraphMcpService {
     async fn grove_browser_navigate_tool(
         &self,
         Parameters(input): Parameters<BrowserNavigateInput>,
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        ensure_browser_control_enabled()?;
-        if matches!(input.action, BrowserNavigateAction::Goto) && input.url.is_none() {
-            return Err(McpError::invalid_params(
-                "url is required when action is goto".to_string(),
-                None,
-            ));
-        }
-        let timeout_ms = browser_timeout_ms(input.timeout_ms);
-        let wait_for = input
-            .wait_for
-            .map(serde_json::to_value)
-            .transpose()
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        crate::api::handlers::extension::browser_navigate(
-            input.tab_id,
-            input.action.as_str(),
-            input.url.as_deref(),
-            wait_for,
-            timeout_ms,
-        )
-        .await
-        .map_err(|e| McpError::internal_error(e, None))
-        .and_then(|res| json_success(&res))
+        shared_grove_browser_navigate_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     /// Close a browser tab.
@@ -681,12 +546,9 @@ impl AgentGraphMcpService {
     async fn grove_browser_close_tool(
         &self,
         Parameters(input): Parameters<BrowserTabInput>,
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        ensure_browser_control_enabled()?;
-        crate::api::handlers::extension::browser_close(input.tab_id)
-            .await
-            .map_err(|e| McpError::internal_error(e, None))
-            .and_then(|res| json_success(&res))
+        shared_grove_browser_close_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     /// Wait for a browser/page condition without performing another action.
@@ -697,15 +559,9 @@ impl AgentGraphMcpService {
     async fn grove_browser_wait_tool(
         &self,
         Parameters(input): Parameters<BrowserWaitInput>,
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        ensure_browser_control_enabled()?;
-        let timeout_ms = browser_timeout_ms(input.timeout_ms);
-        let wait_for = serde_json::to_value(input.wait_for)
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        crate::api::handlers::extension::browser_wait(input.tab_id, wait_for, timeout_ms)
-            .await
-            .map_err(|e| McpError::internal_error(e, None))
-            .and_then(|res| json_success(&res))
+        shared_grove_browser_wait_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     /// Take an accessibility-tree snapshot of a specific browser tab
@@ -716,18 +572,9 @@ impl AgentGraphMcpService {
     async fn grove_browser_snapshot_tool(
         &self,
         Parameters(input): Parameters<BrowserSnapshotInput>,
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let cfg = config::load_config();
-        if !cfg.browser_control.enabled {
-            return Err(McpError::invalid_request(
-                "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-                None,
-            ));
-        }
-        crate::api::handlers::extension::browser_snapshot(input.tab_id)
-            .await
-            .map_err(|e| McpError::internal_error(e, None))
-            .and_then(|res| json_success(&res))
+        shared_grove_browser_snapshot_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     /// Perform a DOM interaction on a specific browser tab
@@ -738,29 +585,9 @@ impl AgentGraphMcpService {
     async fn grove_browser_interact_tool(
         &self,
         Parameters(input): Parameters<BrowserInteractInput>,
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let cfg = config::load_config();
-        if !cfg.browser_control.enabled {
-            return Err(McpError::invalid_request(
-                "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-                None,
-            ));
-        }
-        crate::api::handlers::extension::browser_interact(
-            input.tab_id,
-            &input.action,
-            &input.target,
-            input.value.as_deref(),
-            input
-                .wait_for
-                .map(serde_json::to_value)
-                .transpose()
-                .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
-            browser_timeout_ms(input.timeout_ms),
-        )
-        .await
-        .map_err(|e| McpError::internal_error(e, None))
-        .and_then(|res| json_success(&res))
+        shared_grove_browser_interact_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     /// Extract text or HTML content from a specific browser tab
@@ -771,22 +598,9 @@ impl AgentGraphMcpService {
     async fn grove_browser_extract_tool(
         &self,
         Parameters(input): Parameters<BrowserExtractInput>,
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let cfg = config::load_config();
-        if !cfg.browser_control.enabled {
-            return Err(McpError::invalid_request(
-                "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-                None,
-            ));
-        }
-        crate::api::handlers::extension::browser_extract(
-            input.tab_id,
-            &input.extract_type,
-            input.target.as_deref(),
-        )
-        .await
-        .map_err(|e| McpError::internal_error(e, None))
-        .and_then(|res| json_success(&res))
+        shared_grove_browser_extract_tool(caller_session_from_parts(&parts)?, input).await
     }
 
     /// Capture a screenshot of a specific browser tab
@@ -797,90 +611,9 @@ impl AgentGraphMcpService {
     async fn grove_browser_screenshot_tool(
         &self,
         Parameters(input): Parameters<BrowserScreenshotInput>,
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let cfg = config::load_config();
-        if !cfg.browser_control.enabled {
-            return Err(McpError::invalid_request(
-                "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-                None,
-            ));
-        }
-        let timeout_ms = browser_timeout_ms(input.timeout_ms);
-        let wait_for = input
-            .wait_for
-            .map(serde_json::to_value)
-            .transpose()
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        let res = crate::api::handlers::extension::browser_screenshot(
-            crate::api::handlers::extension::BrowserScreenshotRequest {
-                tab_id: input.tab_id,
-                wait_for,
-                timeout_ms,
-            },
-        )
-        .await
-        .map_err(|e| McpError::internal_error(e, None))?;
-        // 扩展返回 { success, screenshot: "data:image/png;base64,...." } 或
-        // { success: false, error: "..." }。MCP image content 要求纯 base64 + mime
-        // type 分开，不能把 dataUrl 整段塞进 text —— 那样客户端按 token 计字数,
-        // 一张 PNG 几十万字符直接顶爆上下文窗口。
-        if res.get("success").and_then(|v| v.as_bool()) == Some(false) {
-            let err = res
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("screenshot failed")
-                .to_string();
-            return Err(McpError::internal_error(err, None));
-        }
-        let data_url = res
-            .get("screenshot")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                McpError::internal_error(
-                    "extension returned no `screenshot` field".to_string(),
-                    None,
-                )
-            })?;
-        // Strip "data:<mime>;base64," prefix to get raw base64 payload.
-        // Refusing malformed data URLs avoids silently shipping a base64
-        // string that doesn't actually decode to a valid image — the client
-        // would render garbage.
-        let (mime, b64) = match data_url.split_once(",") {
-            Some((header, body)) if header.starts_with("data:") && header.contains(";base64") => {
-                // Extract just the media type (drop any `;param=...` and the
-                // `;base64` suffix). `data:;base64,...` is legal — fall
-                // back to image/png in that case rather than emitting an
-                // empty mime that confuses the MCP client.
-                let after_data = header.trim_start_matches("data:");
-                let mime = after_data
-                    .split(';')
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                let mime = if mime.is_empty() {
-                    "image/png".to_string()
-                } else {
-                    mime
-                };
-                (mime, body.to_string())
-            }
-            _ => {
-                return Err(McpError::internal_error(
-                    "extension returned malformed screenshot payload (expected data:<mime>;base64,<...>)"
-                        .to_string(),
-                    None,
-                ));
-            }
-        };
-        let mut metadata = res.clone();
-        if let Some(object) = metadata.as_object_mut() {
-            object.remove("screenshot");
-        }
-        Ok(CallToolResult::success(vec![
-            Content::text(metadata.to_string()),
-            Content::image(b64, mime),
-        ]))
+        shared_grove_browser_screenshot_tool(caller_session_from_parts(&parts)?, input).await
     }
 }
 
@@ -1227,8 +960,8 @@ fn caller_session_from_parts(
         })
 }
 
-fn working_memory_project(parts: &Parts) -> Result<String, McpError> {
-    let (project_id, _, _) = caller_session_from_parts(parts)?;
+fn shared_memory_project(caller: &TrustedSession) -> Result<String, McpError> {
+    let project_id = caller.0.clone();
     if !memory::project_memory_enabled(&project_id).map_err(memory_mcp_error)? {
         return Err(McpError::invalid_request(
             "Project Memory is not enabled for this project".to_string(),
@@ -1283,9 +1016,8 @@ fn memory_bounded_limit_allow_zero(
 /// 反查失败一律报错（caller_unknown / task_not_found），不静默 fallback —— 多
 /// agent 并发场景下静默 fallback 会把 tab 堆到错误的 group 里，调试代价远高于
 /// 直接报错。
-fn caller_task_name_from_parts(parts: &Parts) -> Result<String, McpError> {
-    let cx = caller_context_from_parts(parts)?;
-    let chat_id = cx.caller_chat_id.clone();
+fn shared_task_name(caller: &TrustedSession) -> Result<String, McpError> {
+    let chat_id = caller.2.id.clone();
     let lookup = crate::storage::tasks::session_to_task(&chat_id).map_err(|e| {
         McpError::internal_error(format!("session_to_task lookup failed: {e}"), None)
     })?;
@@ -1466,11 +1198,14 @@ pub fn build_router() -> Router {
     // Mount under `/mcp/{token}` and the trailing-slash variant. rmcp's service
     // doesn't read the URL path itself; we read it inside the tool handlers.
     let svc_clone = svc.clone();
+    let buddy_svc = super::buddy_mcp::streamable_service();
     let memory_svc = super::memory_mcp::streamable_service();
     let memory_svc_clone = memory_svc.clone();
     Router::new()
         .route_service("/mcp/{token}", svc)
         .route_service("/mcp/{token}/", svc_clone)
+        .route_service("/buddy-mcp/{token}", buddy_svc.clone())
+        .route_service("/buddy-mcp/{token}/", buddy_svc)
         .route_service("/memory-mcp/{token}", memory_svc)
         .route_service("/memory-mcp/{token}/", memory_svc_clone)
 }
@@ -2073,4 +1808,544 @@ mod tests {
         unregister_token(token);
         server.abort();
     }
+}
+
+/// Resolved by the owning transport, never accepted as a tool argument.
+pub(crate) type TrustedSession = (String, String, tasks::ChatSession);
+
+pub(crate) fn shared_tools(project: &str) -> Vec<Tool> {
+    let memory_enabled = memory::project_memory_enabled(project).unwrap_or(false);
+    let browser_enabled = config::load_config().browser_control.enabled;
+    AgentGraphMcpService::tool_router()
+        .list_all()
+        .into_iter()
+        .filter(|tool| {
+            let name = tool.name.as_ref();
+            (memory_enabled && WORKING_MEMORY_TOOLS.contains(&name))
+                || (browser_enabled && name.starts_with("browser_"))
+                || matches!(name, "ask_form" | "speak")
+        })
+        .collect()
+}
+
+pub(crate) async fn call_shared_tool(
+    name: &str,
+    caller: TrustedSession,
+    arguments: serde_json::Value,
+) -> Result<CallToolResult, McpError> {
+    match name {
+        "memory_append_log" => {
+            shared_grove_memory_append_log_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "memory_recall" => {
+            shared_grove_memory_recall_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "memory_read" => {
+            shared_grove_memory_read_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "memory_get_related" => {
+            shared_grove_memory_get_related_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "memory_get_recent_logs" => {
+            shared_grove_memory_get_recent_logs_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "speak" => {
+            shared_grove_agent_speak_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "ask_form" => {
+            shared_grove_ask_form_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "browser_open" => {
+            shared_grove_browser_open_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "browser_reload" => {
+            shared_grove_browser_reload_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "browser_navigate" => {
+            shared_grove_browser_navigate_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "browser_close" => {
+            shared_grove_browser_close_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "browser_wait" => {
+            shared_grove_browser_wait_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "browser_snapshot" => {
+            shared_grove_browser_snapshot_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "browser_interact" => {
+            shared_grove_browser_interact_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "browser_extract" => {
+            shared_grove_browser_extract_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        "browser_screenshot" => {
+            shared_grove_browser_screenshot_tool(
+                caller,
+                serde_json::from_value(arguments)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            )
+            .await
+        }
+        _ => Err(McpError::invalid_params("Unknown Buddy tool", None)),
+    }
+}
+
+async fn shared_grove_memory_append_log_tool(
+    caller: TrustedSession,
+    input: AppendMemoryLogInput,
+) -> Result<CallToolResult, McpError> {
+    let (project_id, task_id, chat) = caller.clone();
+    if !memory::project_memory_enabled(&project_id).map_err(memory_mcp_error)? {
+        return Err(McpError::invalid_request(
+            "Project Memory is not enabled for this project".to_string(),
+            None,
+        ));
+    }
+    memory::append_log(&memory::NewMemoryLog {
+        project_id: &project_id,
+        task_id: &task_id,
+        chat_id: Some(&chat.id),
+        agent: Some(&chat.agent),
+        title: &input.title,
+        tags: &input.tags,
+        description: &input.description,
+    })
+    .map_err(memory_mcp_error)?;
+    structured_json_success(&AppendMemoryLogOutput { saved: true })
+}
+
+async fn shared_grove_memory_recall_tool(
+    caller: TrustedSession,
+    input: MemoryRecallInput,
+) -> Result<CallToolResult, McpError> {
+    let project_id = shared_memory_project(&caller)?;
+    let tags = input
+        .tags
+        .into_iter()
+        .map(|tag| memory::MemoryTagFilter {
+            key: tag.key,
+            value: tag.value,
+        })
+        .collect::<Vec<_>>();
+    let page = memory::recall_entities(
+        &project_id,
+        input.query.as_deref(),
+        &tags,
+        input.cursor.as_deref(),
+        memory_bounded_limit(input.limit, 10, 50, "limit")?,
+    )
+    .map_err(memory_mcp_error)?;
+    structured_json_success(&map_memory_page(page, MemoryRecallItem::from))
+}
+
+async fn shared_grove_memory_read_tool(
+    caller: TrustedSession,
+    input: MemoryReadInput,
+) -> Result<CallToolResult, McpError> {
+    let project_id = shared_memory_project(&caller)?;
+    let result = memory::read_entity(
+        &project_id,
+        &input.entity_id,
+        input.via_relation_id.as_deref(),
+        memory_bounded_limit_allow_zero(input.related_limit, 3, 10, "related_limit")?,
+    )
+    .map_err(memory_mcp_error)?
+    .ok_or_else(|| {
+        McpError::invalid_request(
+            format!("Memory Entity {} was not found", input.entity_id),
+            None,
+        )
+    })?;
+    structured_json_success(&MemoryReadOutput::from(result))
+}
+
+async fn shared_grove_memory_get_related_tool(
+    caller: TrustedSession,
+    input: MemoryRelatedInput,
+) -> Result<CallToolResult, McpError> {
+    let project_id = shared_memory_project(&caller)?;
+    let page = memory::list_related_memories(
+        &project_id,
+        &input.entity_id,
+        input.cursor.as_deref(),
+        memory_bounded_limit(input.limit, 10, 50, "limit")?,
+    )
+    .map_err(memory_mcp_error)?;
+    structured_json_success(&map_memory_page(page, RelatedMemoryItem::from))
+}
+
+async fn shared_grove_memory_get_recent_logs_tool(
+    caller: TrustedSession,
+    input: MemoryRecentLogsInput,
+) -> Result<CallToolResult, McpError> {
+    let project_id = shared_memory_project(&caller)?;
+    let page = memory::list_logs(
+        &project_id,
+        input.query.as_deref(),
+        input.cursor.as_deref(),
+        memory_bounded_limit(input.limit, 20, 100, "limit")?,
+    )
+    .map_err(memory_mcp_error)?;
+    structured_json_success(&map_memory_page(page, MemoryLogItem::from))
+}
+
+async fn shared_grove_agent_speak_tool(
+    caller: TrustedSession,
+    input: crate::speech::SpeakInput,
+) -> Result<CallToolResult, McpError> {
+    let (_, _, chat) = caller.clone();
+    structured_json_success(&crate::speech::speak(&chat.id, &input.text))
+}
+
+async fn shared_grove_ask_form_tool(
+    caller: TrustedSession,
+    input: ask_form::AskFormInput,
+) -> Result<CallToolResult, McpError> {
+    let cx = ToolContext::new(caller.2.id.clone());
+    match ask_form::grove_ask_form(&cx, input).await {
+        Ok(out) => json_success(&out),
+        Err(e) => Ok(tool_error(e)),
+    }
+}
+
+async fn shared_grove_browser_open_tool(
+    caller: TrustedSession,
+    input: BrowserOpenInput,
+) -> Result<CallToolResult, McpError> {
+    let cfg = config::load_config();
+    if !cfg.browser_control.enabled {
+        return Err(McpError::invalid_request(
+            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
+            None,
+        ));
+    }
+    let group_name = if cfg.browser_control.auto_groups {
+        Some(shared_task_name(&caller)?)
+    } else {
+        None
+    };
+    let timeout_ms = browser_timeout_ms(input.timeout_ms);
+    let wait_for = input
+        .wait_for
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+    crate::api::handlers::extension::browser_open(
+        &input.url,
+        group_name.as_deref(),
+        wait_for,
+        timeout_ms,
+    )
+    .await
+    .map_err(|e| McpError::internal_error(e, None))
+    .and_then(|mut res| {
+        if let Some(obj) = res.as_object_mut() {
+            obj.remove("groupId");
+        }
+        json_success(&res)
+    })
+}
+
+async fn shared_grove_browser_reload_tool(
+    _caller: TrustedSession,
+    input: BrowserReloadInput,
+) -> Result<CallToolResult, McpError> {
+    ensure_browser_control_enabled()?;
+    let timeout_ms = browser_timeout_ms(input.timeout_ms);
+    let wait_for = input
+        .wait_for
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+    crate::api::handlers::extension::browser_reload(
+        input.tab_id,
+        input.bypass_cache.unwrap_or(false),
+        wait_for,
+        timeout_ms,
+    )
+    .await
+    .map_err(|e| McpError::internal_error(e, None))
+    .and_then(|res| json_success(&res))
+}
+
+async fn shared_grove_browser_navigate_tool(
+    _caller: TrustedSession,
+    input: BrowserNavigateInput,
+) -> Result<CallToolResult, McpError> {
+    ensure_browser_control_enabled()?;
+    if matches!(input.action, BrowserNavigateAction::Goto) && input.url.is_none() {
+        return Err(McpError::invalid_params(
+            "url is required when action is goto".to_string(),
+            None,
+        ));
+    }
+    let timeout_ms = browser_timeout_ms(input.timeout_ms);
+    let wait_for = input
+        .wait_for
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+    crate::api::handlers::extension::browser_navigate(
+        input.tab_id,
+        input.action.as_str(),
+        input.url.as_deref(),
+        wait_for,
+        timeout_ms,
+    )
+    .await
+    .map_err(|e| McpError::internal_error(e, None))
+    .and_then(|res| json_success(&res))
+}
+
+async fn shared_grove_browser_close_tool(
+    _caller: TrustedSession,
+    input: BrowserTabInput,
+) -> Result<CallToolResult, McpError> {
+    ensure_browser_control_enabled()?;
+    crate::api::handlers::extension::browser_close(input.tab_id)
+        .await
+        .map_err(|e| McpError::internal_error(e, None))
+        .and_then(|res| json_success(&res))
+}
+
+async fn shared_grove_browser_wait_tool(
+    _caller: TrustedSession,
+    input: BrowserWaitInput,
+) -> Result<CallToolResult, McpError> {
+    ensure_browser_control_enabled()?;
+    let timeout_ms = browser_timeout_ms(input.timeout_ms);
+    let wait_for = serde_json::to_value(input.wait_for)
+        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+    crate::api::handlers::extension::browser_wait(input.tab_id, wait_for, timeout_ms)
+        .await
+        .map_err(|e| McpError::internal_error(e, None))
+        .and_then(|res| json_success(&res))
+}
+
+async fn shared_grove_browser_snapshot_tool(
+    _caller: TrustedSession,
+    input: BrowserSnapshotInput,
+) -> Result<CallToolResult, McpError> {
+    let cfg = config::load_config();
+    if !cfg.browser_control.enabled {
+        return Err(McpError::invalid_request(
+            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
+            None,
+        ));
+    }
+    crate::api::handlers::extension::browser_snapshot(input.tab_id)
+        .await
+        .map_err(|e| McpError::internal_error(e, None))
+        .and_then(|res| json_success(&res))
+}
+
+async fn shared_grove_browser_interact_tool(
+    _caller: TrustedSession,
+    input: BrowserInteractInput,
+) -> Result<CallToolResult, McpError> {
+    let cfg = config::load_config();
+    if !cfg.browser_control.enabled {
+        return Err(McpError::invalid_request(
+            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
+            None,
+        ));
+    }
+    crate::api::handlers::extension::browser_interact(
+        input.tab_id,
+        &input.action,
+        &input.target,
+        input.value.as_deref(),
+        input
+            .wait_for
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+        browser_timeout_ms(input.timeout_ms),
+    )
+    .await
+    .map_err(|e| McpError::internal_error(e, None))
+    .and_then(|res| json_success(&res))
+}
+
+async fn shared_grove_browser_extract_tool(
+    _caller: TrustedSession,
+    input: BrowserExtractInput,
+) -> Result<CallToolResult, McpError> {
+    let cfg = config::load_config();
+    if !cfg.browser_control.enabled {
+        return Err(McpError::invalid_request(
+            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
+            None,
+        ));
+    }
+    crate::api::handlers::extension::browser_extract(
+        input.tab_id,
+        &input.extract_type,
+        input.target.as_deref(),
+    )
+    .await
+    .map_err(|e| McpError::internal_error(e, None))
+    .and_then(|res| json_success(&res))
+}
+
+async fn shared_grove_browser_screenshot_tool(
+    _caller: TrustedSession,
+    input: BrowserScreenshotInput,
+) -> Result<CallToolResult, McpError> {
+    let cfg = config::load_config();
+    if !cfg.browser_control.enabled {
+        return Err(McpError::invalid_request(
+            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
+            None,
+        ));
+    }
+    let timeout_ms = browser_timeout_ms(input.timeout_ms);
+    let wait_for = input
+        .wait_for
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+    let res = crate::api::handlers::extension::browser_screenshot(
+        crate::api::handlers::extension::BrowserScreenshotRequest {
+            tab_id: input.tab_id,
+            wait_for,
+            timeout_ms,
+        },
+    )
+    .await
+    .map_err(|e| McpError::internal_error(e, None))?;
+    // 扩展返回 { success, screenshot: "data:image/png;base64,...." } 或
+    // { success: false, error: "..." }。MCP image content 要求纯 base64 + mime
+    // type 分开，不能把 dataUrl 整段塞进 text —— 那样客户端按 token 计字数,
+    // 一张 PNG 几十万字符直接顶爆上下文窗口。
+    if res.get("success").and_then(|v| v.as_bool()) == Some(false) {
+        let err = res
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("screenshot failed")
+            .to_string();
+        return Err(McpError::internal_error(err, None));
+    }
+    let data_url = res
+        .get("screenshot")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            McpError::internal_error("extension returned no `screenshot` field".to_string(), None)
+        })?;
+    // Strip "data:<mime>;base64," prefix to get raw base64 payload.
+    // Refusing malformed data URLs avoids silently shipping a base64
+    // string that doesn't actually decode to a valid image — the client
+    // would render garbage.
+    let (mime, b64) = match data_url.split_once(",") {
+        Some((header, body)) if header.starts_with("data:") && header.contains(";base64") => {
+            // Extract just the media type (drop any `;param=...` and the
+            // `;base64` suffix). `data:;base64,...` is legal — fall
+            // back to image/png in that case rather than emitting an
+            // empty mime that confuses the MCP client.
+            let after_data = header.trim_start_matches("data:");
+            let mime = after_data
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let mime = if mime.is_empty() {
+                "image/png".to_string()
+            } else {
+                mime
+            };
+            (mime, body.to_string())
+        }
+        _ => {
+            return Err(McpError::internal_error(
+                    "extension returned malformed screenshot payload (expected data:<mime>;base64,<...>)"
+                        .to_string(),
+                    None,
+                ));
+        }
+    };
+    let mut metadata = res.clone();
+    if let Some(object) = metadata.as_object_mut() {
+        object.remove("screenshot");
+    }
+    Ok(CallToolResult::success(vec![
+        Content::text(metadata.to_string()),
+        Content::image(b64, mime),
+    ]))
 }

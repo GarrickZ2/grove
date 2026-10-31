@@ -627,13 +627,8 @@ fn build_full_snapshot() -> Vec<GroupSnapshot> {
         let b_main = b.id == taskgroups::MAIN_GROUP_ID;
         b_main.cmp(&a_main)
     });
-    let projects = workspace::load_projects().unwrap_or_default();
-
-    // Build a project-name lookup by project hash
-    let project_names: HashMap<String, String> = projects
-        .iter()
-        .map(|p| (workspace::project_hash(&p.path), p.name.clone()))
-        .collect();
+    // Resolve the owner of each persisted slot independently of discovery.
+    let mut project_names: HashMap<String, String> = HashMap::new();
     groups
         .into_iter()
         .map(|mut group| {
@@ -645,9 +640,15 @@ fn build_full_snapshot() -> Vec<GroupSnapshot> {
                 let agent_status = check_agent_status(&slot.project_id, &slot.task_id);
                 let task_name = resolve_task_name(&slot.project_id, &slot.task_id);
                 let project_name = project_names
-                    .get(&slot.project_id)
-                    .cloned()
-                    .unwrap_or_else(|| slot.project_id.clone());
+                    .entry(slot.project_id.clone())
+                    .or_insert_with(|| {
+                        workspace::load_project_by_hash(&slot.project_id)
+                            .ok()
+                            .flatten()
+                            .map(|p| p.name)
+                            .unwrap_or_else(|| slot.project_id.clone())
+                    })
+                    .clone();
                 slot_statuses.insert(
                     display_position,
                     SlotStatus {

@@ -2,6 +2,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OrbitSidebar } from "./OrbitSidebar";
+import { BuddyLaunchContext } from "../Buddy/buddyLaunchContext";
+import { createBuddiesMock } from "../../api/buddies.mock";
 import { archiveChat, createChat, listChats, reorderTasks, updateChatTitle } from "../../api";
 import type { NodeStatus } from "../../api/walkieTalkie";
 
@@ -40,6 +42,23 @@ describe("Orbit sidebar", () => {
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
   });
   afterEach(() => { act(() => root.unmount()); container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
+  it("opens Buddies from desktop and mobile drawer entries and shows waiting attention", async () => {
+    const click = vi.fn();
+    for (const drawer of [false, true]) {
+      await act(async () => root.render(<BuddyLaunchContext.Provider value={{ items: createBuddiesMock().list(), open: vi.fn() }}><OrbitSidebar variant={drawer ? "drawer" : undefined} activeItem="dashboard" collapsed={false} onCollapse={vi.fn()} onItemClick={click} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} /></BuddyLaunchContext.Provider>));
+      const entry = container.querySelector<HTMLButtonElement>('.orbit-footer [aria-label="Buddies"]')!;
+      expect(entry.querySelector('[aria-label="Buddies need approval"]')).not.toBeNull();
+      expect(container.querySelector(".orbit-footer")?.firstElementChild).toBe(entry);
+      expect(entry.querySelector(".lucide-sprout")).not.toBeNull();
+      const settings = [...container.querySelectorAll<HTMLButtonElement>(".orbit-footer button")].find(button => button.textContent === "Settings")!;
+      const connect = container.querySelector<HTMLButtonElement>('.orbit-footer [aria-label="IM Connect"]')!;
+      expect(settings.parentElement).toBe(connect.parentElement);
+      expect(connect.parentElement?.className).toBe("orbit-footer-actions");
+      act(() => entry.click());
+      expect(click).toHaveBeenLastCalledWith("buddies");
+    }
+    expect(click).toHaveBeenCalledTimes(2);
+  });
   it("lists Work sessions directly, groups task sessions, and opens the correct task", async () => {
     await act(async () => root.render(<OrbitSidebar activeItem="dashboard" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));
     expect(container.textContent).toContain("Work conversation");

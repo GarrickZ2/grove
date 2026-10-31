@@ -129,6 +129,8 @@ pub struct FinishRegistration {
     pub task_id: String,
     #[serde(default)]
     pub session_id: String,
+    #[serde(default)]
+    pub target: Option<connects::ConnectTarget>,
 }
 
 fn default_true() -> bool {
@@ -144,6 +146,7 @@ pub async fn finish_registration(
             "registration is not authorized yet".into(),
         ))?;
     let create = connects::ConnectInput {
+        target: input.target,
         name: input.name,
         platform,
         domain,
@@ -225,6 +228,9 @@ fn reauthorize(
     input.project_id = previous.project_id;
     input.task_id = previous.task_id;
     input.session_id = previous.session_id;
+    input.target = previous
+        .buddy_id
+        .map(|buddy_id| connects::ConnectTarget::Buddy { buddy_id });
     crate::connect::adapter::validate_config(
         &input.platform,
         &input.domain,

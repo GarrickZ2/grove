@@ -809,6 +809,9 @@ pub async fn handle_host_call(plugin_id: &str, method: &str, params: Value) -> R
             let updated = crate::connect::update(
                 id,
                 ConnectInput {
+                    target: current.buddy_id.map(|buddy_id| {
+                        crate::storage::connects::ConnectTarget::Buddy { buddy_id }
+                    }),
                     name: current.name,
                     platform: current.platform,
                     domain: current.domain,

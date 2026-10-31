@@ -1,3 +1,4 @@
+import type { Buddy } from "../../api/buddies";
 import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 // Create/edit dialog for one Automation.
 //
@@ -50,6 +51,7 @@ import type {
 import type { ChatSessionResponse, TaskResponse } from "../../api/tasks";
 
 interface AutomationDialogProps {
+  buddy?: Buddy;
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
@@ -162,6 +164,7 @@ function describeCron(cron: string): { text: string; valid: boolean } {
 }
 
 export function AutomationDialog({
+  buddy,
   isOpen,
   onClose,
   projectId,
@@ -192,6 +195,7 @@ export function AutomationDialog({
 
   // ── form state ────────────────────────────────────────────────────────
   const [name, setName] = useState("");
+  const [eventTriggers, setEventTriggers] = useState(initial?.event_triggers?.join(", ") ?? "");
   const [enabled, setEnabled] = useState(true);
   const [prompt, setPrompt] = useState("");
 
@@ -245,13 +249,14 @@ export function AutomationDialog({
      * batched form-init on dialog open; collapses into one commit. */
     if (initial) {
       setName(initial.name);
+      setEventTriggers(initial.event_triggers?.join(", ") ?? "");
       setEnabled(initial.enabled);
       setPrompt(initial.prompt);
       setTaskMode(initial.task_mode);
       setTaskId(initial.task_id ?? "");
       setNewTaskName(initial.task_template?.name ?? "");
       setNewTaskTarget(initial.task_template?.target ?? "");
-      setSessionMode(initial.session_mode);
+      setSessionMode(initial.session_mode === "buddy_active" ? "existing" : initial.session_mode);
       setChatId(initial.chat_id ?? "");
       setNewSessionAgent(initial.session_template?.agent ?? "");
       setAgentConfig(initial.agent_config);
@@ -282,6 +287,7 @@ export function AutomationDialog({
       setCustomCron(initial.schedule_cron);
     } else {
       setName("");
+      setEventTriggers("");
       setEnabled(true);
       setPrompt("");
       setTaskMode("new");
@@ -309,7 +315,7 @@ export function AutomationDialog({
   // Capability snapshots are persisted by the Agent marketplace, so loading
   // them is fast and does not need to start an Agent just to build this form.
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || buddy) return;
     let alive = true;
     void Promise.resolve().then(() => {
       if (!alive) return;
@@ -333,11 +339,11 @@ export function AutomationDialog({
     return () => {
       alive = false;
     };
-  }, [isOpen, catalogRevision]);
+  }, [isOpen, catalogRevision, buddy]);
 
   // Load tasks for the "existing" picker.
   useEffect(() => {
-    if (!isOpen || taskMode !== "existing") return;
+    if (!isOpen || buddy || taskMode !== "existing") return;
     let alive = true;
     listTasks(projectId)
       .then((data) => {
@@ -349,7 +355,7 @@ export function AutomationDialog({
     return () => {
       alive = false;
     };
-  }, [isOpen, taskMode, projectId]);
+  }, [isOpen, taskMode, projectId, buddy]);
 
   // Load chats for the "existing" picker. Depend on the resolved task id
   // (either an existing task selection or — once new task is created at
@@ -357,7 +363,7 @@ export function AutomationDialog({
   // existing-task + existing-session combos).
   useEffect(() => {
     let alive = true;
-    if (!isOpen || sessionMode !== "existing" || !taskId) {
+    if (!isOpen || buddy || sessionMode !== "existing" || !taskId) {
       void Promise.resolve().then(() => {
         if (alive) setChats([]);
       });
@@ -375,13 +381,13 @@ export function AutomationDialog({
     return () => {
       alive = false;
     };
-  }, [isOpen, sessionMode, taskId, projectId]);
+  }, [isOpen, sessionMode, taskId, projectId, buddy]);
 
   // Branch list for the New Task → Target Branch picker. setState calls
   // (including the loading flag) are deferred to a microtask so they don't
   // trip `react-hooks/set-state-in-effect`.
   useEffect(() => {
-    if (!isOpen || isStudio || taskMode !== "new") return;
+    if (!isOpen || buddy || isStudio || taskMode !== "new") return;
     let alive = true;
     void Promise.resolve().then(() => {
       if (!alive) return;
@@ -400,7 +406,7 @@ export function AutomationDialog({
     return () => {
       alive = false;
     };
-  }, [isOpen, taskMode, projectId, isStudio]);
+  }, [isOpen, taskMode, projectId, isStudio, buddy]);
 
   const updateBranchDropdownPos = useCallback(() => {
     if (!branchTriggerRef.current) return;
@@ -542,30 +548,30 @@ export function AutomationDialog({
     if (!name.trim()) return setError("Name is required");
     if (!prompt.trim()) return setError("Prompt is required");
     if (!cronInfo.valid) return setError("Invalid cron expression");
-    if (taskMode === "existing" && !taskId) return setError("Pick an existing task");
-    if (taskMode === "new" && !newTaskName.trim()) return setError("Task name is required");
-    if (sessionMode === "existing" && !chatId) return setError("Pick an existing session");
-    if (sessionMode === "new" && !newSessionAgent.trim()) return setError("Agent is required");
+    if (!buddy && taskMode === "existing" && !taskId) return setError("Pick an existing task");
+    if (!buddy && taskMode === "new" && !newTaskName.trim()) return setError("Task name is required");
+    if (!buddy && sessionMode === "existing" && !chatId) return setError("Pick an existing session");
+    if (!buddy && sessionMode === "new" && !newSessionAgent.trim()) return setError("Agent is required");
 
     const payload: AutomationUpsert = {
       name: name.trim(),
       enabled,
-      agent_config: effectiveAgentConfig,
-      task_mode: taskMode,
-      task_id: taskMode === "existing" ? taskId : undefined,
+      agent_config: buddy?.agent_config ?? effectiveAgentConfig,
+      task_mode: buddy ? "existing" : taskMode,
+      task_id: buddy ? buddy.local_task_id : taskMode === "existing" ? taskId : undefined,
       task_template:
-        taskMode === "new"
+        !buddy && taskMode === "new"
           ? { name: newTaskName.trim(), target: newTaskTarget.trim() || undefined }
           : undefined,
-      session_mode: sessionMode,
-      chat_id: sessionMode === "existing" ? chatId : undefined,
+      session_mode: buddy ? "buddy_active" : sessionMode,
+      chat_id: buddy ? undefined : sessionMode === "existing" ? chatId : undefined,
       session_template:
-        sessionMode === "new"
+        !buddy && sessionMode === "new"
           ? { agent: newSessionAgent.trim() }
           : undefined,
       prompt,
       schedule_cron: cronExpr,
-      event_triggers: initial?.event_triggers ?? [],
+      event_triggers: buddy ? eventTriggers.split(",").map(value => value.trim()).filter(Boolean) : initial?.event_triggers ?? [],
     };
 
     setSubmitting(true);
@@ -612,7 +618,7 @@ export function AutomationDialog({
             </div>
             <div>
               <h2 className="text-lg font-semibold text-[var(--color-text)] leading-tight">
-                {initial ? "Edit Automation" : "New Automation"}
+                {buddy ? initial ? "Edit routine" : "New routine" : initial ? "Edit Automation" : "New Automation"}
               </h2>
               <p className="mt-0.5 hidden text-xs text-[var(--color-text-muted)] sm:block">
                 Scheduled prompts sent into a chat session.
@@ -621,6 +627,7 @@ export function AutomationDialog({
           </div>
           <button
             onClick={onClose}
+            type="button" aria-label={buddy ? "Close routine" : "Close Automation"}
             className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] transition-colors"
           >
             <X className="w-5 h-5" />
@@ -652,7 +659,7 @@ export function AutomationDialog({
           </div>
 
           {/* Task — single horizontal row */}
-          <Section icon={<ListTodo className="w-3.5 h-3.5" />} title="Task">
+          {!buddy && <><Section icon={<ListTodo className="w-3.5 h-3.5" />} title="Task">
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
               <div className="w-full sm:w-auto sm:flex-shrink-0">
                 <LabelRow>Mode</LabelRow>
@@ -863,8 +870,11 @@ export function AutomationDialog({
           </Section>
 
           {/* Prompt */}
+          </>}
+          {buddy && <label className="buddy-form">On event<input aria-label="Routine event triggers" value={eventTriggers} onChange={event => setEventTriggers(event.target.value)} placeholder="task.finished, task.merged" /></label>}
           <Section icon={<Wand2 className="w-3.5 h-3.5" />} title="Prompt">
             <textarea
+              aria-label="Prompt"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Summarize today's commits in 3 bullet points."

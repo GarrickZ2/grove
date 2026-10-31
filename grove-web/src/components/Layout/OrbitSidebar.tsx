@@ -1,6 +1,7 @@
+import { BuddyEntryIcon, BuddyWaitingCount } from "../Buddy/BuddyEntryIcon";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
-  Bell, Blocks, Brain, BarChart2, ChevronDown, Folder, FolderOpen,
+  Bell, Blocks, Brain, BarChart2, ChevronDown, ChevronRight, Folder, FolderOpen,
   LayoutDashboard, Layers, MonitorSmartphone, MoreHorizontal, PanelLeftClose, PanelLeftOpen,
   Plus, Repeat, Search, Settings, Sparkles, SquarePen, Pencil, Archive, Trash2, ArrowUp, ArrowDown, Pin, PinOff,
 } from "lucide-react";
@@ -400,10 +401,13 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
           })}
           </div>
         </section>
-        <footer className="orbit-footer">
+        <footer className="orbit-footer has-buddies">
+          <button type="button" className="orbit-row orbit-nav-row orbit-buddies-entry" onClick={() => onItemClick("buddies")} aria-label="Buddies"><BuddyEntryIcon /><span>Buddies</span><BuddyWaitingCount /><ChevronRight className="orbit-buddies-chevron" size={14} strokeWidth={1.6} /></button>
+          <div className="orbit-footer-actions">
           <button type="button" className={`orbit-row orbit-nav-row${activeItem === "settings" ? " is-selected" : ""}`} onClick={() => onItemClick("settings")}><Settings size={16} strokeWidth={1.6} /><span>Settings</span></button>
           <button type="button" className="orbit-icon-button" title="IM Connect" aria-label="IM Connect" onClick={() => onItemClick("connect")}><MonitorSmartphone size={17} strokeWidth={1.6} /></button>
           {drawer && <button type="button" className="orbit-drawer-new" disabled={!ready} onClick={() => newChat("_local")}><Plus size={17} strokeWidth={1.8} /><span>New session</span></button>}
+          </div>
         </footer>
       </>}
       {renameTarget && <DialogShell isOpen onClose={() => setRenameTarget(null)}>

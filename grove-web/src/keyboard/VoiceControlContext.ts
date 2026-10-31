@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
+import { InteractionContext } from "./InteractionContext";
 
 class VoiceControlContextRegistry {
   private providers = new Map<string, () => Record<string, unknown>>();
@@ -40,6 +41,7 @@ export function useVoiceControlContext(
   key: string,
   provider: () => Record<string, unknown>
 ): void {
+  const active = useContext(InteractionContext);
   // Store provider in a ref so callers don't need to wrap in useCallback.
   // The registry always calls the latest version; registration itself only
   // fires when `key` changes, not on every render.
@@ -49,6 +51,7 @@ export function useVoiceControlContext(
   });
 
   useEffect(() => {
+    if (!active) return;
     return voiceControlContextRegistry.register(key, () => providerRef.current());
-  }, [key]);
+  }, [key, active]);
 }

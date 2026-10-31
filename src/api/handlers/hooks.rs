@@ -32,6 +32,39 @@ pub struct HooksListResponse {
     pub total: u32,
 }
 
+#[cfg(test)]
+mod buddy_tests {
+    use super::*;
+    use crate::storage::{buddies::test_support, database};
+
+    #[tokio::test]
+    async fn hidden_buddy_hooks_are_not_deleted_as_orphans() {
+        let _lock = database::test_lock().lock().await;
+        let _store = test_support::Store::new();
+        let buddy = {
+            let conn = database::try_connection().unwrap();
+            test_support::seed_buddy(&conn, "notification-owner")
+        };
+        let saved = hooks::HooksFile {
+            tasks: HashMap::from([(
+                tasks::LOCAL_TASK_ID.to_string(),
+                hooks::HookEntry {
+                    level: NotificationLevel::Notice,
+                    timestamp: Utc::now(),
+                    message: Some("Please review".into()),
+                    chat_id: buddy.active_session_id,
+                },
+            )]),
+        };
+        hooks::save_hooks(&buddy.project_hash, &saved).unwrap();
+        assert!(workspace::load_projects().unwrap().is_empty());
+        let response = list_all_hooks().await.unwrap().0;
+        assert_eq!(response.hooks.len(), 1);
+        assert_eq!(response.hooks[0].project_name, buddy.id);
+        assert_eq!(hooks::load_all_hooks().len(), 1);
+    }
+}
+
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -46,11 +79,16 @@ pub async fn list_all_hooks() -> Result<Json<HooksListResponse>, StatusCode> {
         }));
     }
 
-    let projects = workspace::load_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_names: HashMap<String, String> = projects
-        .iter()
-        .map(|project| (workspace::project_hash(&project.path), project.name.clone()))
-        .collect();
+    // Discovery excludes Buddy projects; resolve the actual notification owner
+    // before deciding a hook is orphaned. A read error must not trigger cleanup.
+    let mut project_names: HashMap<String, Option<String>> = HashMap::new();
+    for record in &records {
+        if !project_names.contains_key(&record.project_key) {
+            let project = workspace::load_project_by_hash(&record.project_key)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            project_names.insert(record.project_key.clone(), project.map(|p| p.name));
+        }
+    }
 
     let mut all_hooks: Vec<HookEntryResponse> = Vec::new();
     // `None` value means we tried to load this project's tasks and failed —
@@ -61,7 +99,10 @@ pub async fn list_all_hooks() -> Result<Json<HooksListResponse>, StatusCode> {
     let mut stale_notifications = Vec::new();
 
     for record in records {
-        let Some(project_name) = project_names.get(&record.project_key) else {
+        let Some(project_name) = project_names
+            .get(&record.project_key)
+            .and_then(Option::as_ref)
+        else {
             // Project no longer registered — drop the orphan hook so it doesn't
             // sit in the DB forever.
             stale_notifications.push((record.project_key, record.task_id));

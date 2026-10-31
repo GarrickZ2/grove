@@ -46,6 +46,19 @@ fn storage(error: impl std::fmt::Display) -> ConnectionError {
     ConnectionError::Storage(error.to_string())
 }
 
+fn normalize_target(input: &mut connects::ConnectInput) -> Result<(), ConnectionError> {
+    if let Some(connects::ConnectTarget::Buddy { buddy_id }) = &input.target {
+        let buddy =
+            crate::buddy::get(buddy_id).map_err(|e| ConnectionError::Invalid(e.to_string()))?;
+        input.project_id = buddy.project_hash;
+        input.task_id = tasks::LOCAL_TASK_ID.into();
+        input.session_id = buddy
+            .active_session_id
+            .ok_or_else(|| ConnectionError::Invalid("Buddy has no active Segment".into()))?;
+    }
+    Ok(())
+}
+
 pub fn validate(input: &connects::ConnectInput, existing: bool) -> Result<(), ConnectionError> {
     super::adapter::validate_config(
         &input.platform,
@@ -195,7 +208,8 @@ pub fn create(input: connects::ConnectInput) -> Result<connects::Connect, Connec
 /// Persists a fully validated Connect without starting its external adapter.
 /// Registration flows use this to finish every DB write before opening the
 /// platform connection.
-pub fn persist(input: connects::ConnectInput) -> Result<connects::Connect, ConnectionError> {
+pub fn persist(mut input: connects::ConnectInput) -> Result<connects::Connect, ConnectionError> {
+    normalize_target(&mut input)?;
     validate(&input, false)?;
     connects::create(input).map_err(storage)
 }
@@ -204,8 +218,9 @@ pub fn persist(input: connects::ConnectInput) -> Result<connects::Connect, Conne
 /// the provider's form. Keep Core target validation without applying the
 /// form's required-field rules to a different setup mode.
 pub fn persist_authorized(
-    input: connects::ConnectInput,
+    mut input: connects::ConnectInput,
 ) -> Result<connects::Connect, ConnectionError> {
+    normalize_target(&mut input)?;
     if input.platform.starts_with("plugin:") {
         if crate::plugins::connect_provider::find(&input.platform).is_none() {
             return Err(ConnectionError::Invalid(
@@ -230,6 +245,7 @@ pub fn update(
 ) -> Result<connects::Connect, ConnectionError> {
     let previous = get(id)?;
     let mut input = input;
+    normalize_target(&mut input)?;
     let current_config = (previous.platform == input.platform).then_some(&previous.adapter_config);
     input.adapter_config = super::adapter::merge_config(
         &input.platform,
@@ -283,4 +299,36 @@ pub async fn verify_credentials(
     super::adapter::verify_config(platform, domain, adapter_config)
         .await
         .map_err(ConnectionError::Adapter)
+}
+
+#[cfg(test)]
+mod buddy_tests {
+    use super::*;
+    #[test]
+    fn buddy_target_normalizes_before_validation_and_survives_update() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let _store = crate::storage::buddies::test_support::Store::new();
+        let buddy = crate::storage::buddies::test_support::seed_buddy(
+            &crate::storage::database::connection(),
+            "binding",
+        );
+        let mut input: connects::ConnectInput = serde_json::from_value(
+            serde_json::json!({"name":"Buddy", "target":{"kind":"buddy","buddy_id":buddy.id}}),
+        )
+        .unwrap();
+        normalize_target(&mut input).unwrap();
+        validate_target(&input).unwrap();
+        assert_eq!(input.project_id, buddy.project_hash);
+        assert_eq!(input.task_id, tasks::LOCAL_TASK_ID);
+        let connection = connects::create(input.clone()).unwrap();
+        input.name = "Renamed".into();
+        let updated = connects::update(&connection.id, input).unwrap().unwrap();
+        assert_eq!(updated.buddy_id.as_deref(), Some(buddy.id.as_str()));
+        assert_eq!(updated.session_id, buddy.active_session_id.unwrap());
+        let mut bad: connects::ConnectInput = serde_json::from_value(
+            serde_json::json!({"name":"Buddy", "target":{"kind":"buddy","buddy_id":"missing"}}),
+        )
+        .unwrap();
+        assert!(normalize_target(&mut bad).is_err());
+    }
 }

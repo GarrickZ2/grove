@@ -23,6 +23,8 @@ pub use crate::agent_config::AgentConfigSelection;
 pub enum TargetMode {
     New,
     Existing,
+    #[serde(rename = "buddy_active")]
+    BuddyActive,
 }
 
 impl TargetMode {
@@ -30,11 +32,13 @@ impl TargetMode {
         match self {
             TargetMode::New => "new",
             TargetMode::Existing => "existing",
+            TargetMode::BuddyActive => "buddy_active",
         }
     }
     fn parse(s: &str) -> Self {
         match s {
             "existing" => TargetMode::Existing,
+            "buddy_active" => TargetMode::BuddyActive,
             _ => TargetMode::New,
         }
     }
@@ -313,12 +317,34 @@ pub fn get(id: &str) -> Result<Option<Automation>> {
     Ok(row)
 }
 
+fn validate_buddy_target_on(conn: &rusqlite::Connection, a: &Automation) -> Result<()> {
+    if a.task_mode == TargetMode::BuddyActive {
+        return Err(GroveError::invalid_data(
+            "buddy_active is only a session_mode",
+        ));
+    }
+    if a.session_mode == TargetMode::BuddyActive
+        && (a.task_mode != TargetMode::Existing
+            || a.task_id.as_deref() != Some(super::tasks::LOCAL_TASK_ID)
+            || a.chat_id.is_some()
+            || a.session_template.is_some()
+            || a.task_template.is_some()
+            || super::buddies::get_by_project(conn, &a.project)?.is_none())
+    {
+        return Err(GroveError::invalid_data(
+            "buddy_active requires this Buddy's Local Task and no fixed Session",
+        ));
+    }
+    Ok(())
+}
+
 pub fn insert(a: &Automation) -> Result<()> {
     let conn = super::database::connection();
     insert_on(&conn, a)
 }
 
 pub(crate) fn insert_on(conn: &rusqlite::Connection, a: &Automation) -> Result<()> {
+    validate_buddy_target_on(conn, a)?;
     conn.execute(
         &format!(
             "INSERT INTO automations ({COLUMNS})
@@ -361,6 +387,7 @@ pub fn update(a: &Automation) -> Result<()> {
 }
 
 pub(crate) fn update_on(conn: &rusqlite::Connection, a: &Automation) -> Result<()> {
+    validate_buddy_target_on(conn, a)?;
     conn.execute(
         "UPDATE automations SET
             name=?1, enabled=?2, handler_key=?3, agent_config_json=?4,

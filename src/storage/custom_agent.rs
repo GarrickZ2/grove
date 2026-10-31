@@ -152,7 +152,7 @@ pub fn try_get_persona(agent: &str) -> Result<Option<CustomAgent>> {
 /// Canonicalizes legacy ids first so inbound HTTP requests carrying
 /// `claude` / `gh-copilot` / etc. resolve to their post-v2.6 canonical
 /// rows.
-fn is_known_base_agent(id: &str) -> bool {
+pub(crate) fn is_known_base_agent(id: &str) -> bool {
     let canonical = crate::storage::installed_agents::canonicalize_agent_id(id);
     let registry = crate::storage::agent_registry::get();
     if registry.agents.iter().any(|a| a.id == canonical) {
@@ -195,6 +195,17 @@ pub fn create(input: CustomAgentInput) -> Result<CustomAgent> {
         ));
     }
     let conn = crate::storage::database::connection();
+    let agent = create_on(&conn, input)?;
+    drop(conn);
+    crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
+    Ok(agent)
+}
+
+/// Caller validates the base Agent before acquiring the database connection.
+pub(crate) fn create_on(
+    conn: &rusqlite::Connection,
+    input: CustomAgentInput,
+) -> Result<CustomAgent> {
     let id = format!("ca-{}", uuid::Uuid::new_v4());
     let now = Utc::now();
     let now_s = now.to_rfc3339();
@@ -216,8 +227,6 @@ pub fn create(input: CustomAgentInput) -> Result<CustomAgent> {
             now_s,
         ],
     )?;
-    drop(conn);
-    crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
     Ok(CustomAgent {
         id,
         name: input.name,
@@ -251,9 +260,23 @@ pub fn update(id: &str, patch: CustomAgentPatch) -> Result<Option<CustomAgent>> 
     let conn = crate::storage::database::connection();
     let tx = conn.unchecked_transaction()?;
 
+    let result = update_on(&tx, id, patch)?;
+    tx.commit()?;
+    drop(conn);
+    if result.is_some() {
+        crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
+    }
+    Ok(result)
+}
+
+pub(crate) fn update_on(
+    conn: &rusqlite::Connection,
+    id: &str,
+    patch: CustomAgentPatch,
+) -> Result<Option<CustomAgent>> {
     let sql = format!("SELECT {} FROM custom_agent WHERE id = ?1", SELECT_COLS);
     let existing_opt: Option<CustomAgent> = {
-        let mut stmt = tx.prepare(&sql)?;
+        let mut stmt = conn.prepare(&sql)?;
         stmt.query_row(params![id], row_to_agent).optional()?
     };
     let Some(mut existing) = existing_opt else {
@@ -288,7 +311,7 @@ pub fn update(id: &str, patch: CustomAgentPatch) -> Result<Option<CustomAgent>> 
     let updated_s = existing.updated_at.to_rfc3339();
     let agent_config_json = serde_json::to_string(&existing.agent_config)?;
 
-    let n = tx.execute(
+    let n = conn.execute(
         "UPDATE custom_agent SET
             name = ?2, base_agent = ?3, agent_config_json = ?4, model = ?5,
             mode = ?6, effort = ?7, duty = ?8, system_prompt = ?9, updated_at = ?10
@@ -306,15 +329,7 @@ pub fn update(id: &str, patch: CustomAgentPatch) -> Result<Option<CustomAgent>> 
             updated_s,
         ],
     )?;
-    tx.commit()?;
-    drop(conn);
-    if n == 0 {
-        // 并发 delete 在 SELECT 与 UPDATE 之间发生
-        Ok(None)
-    } else {
-        crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
-        Ok(Some(existing))
-    }
+    Ok((n != 0).then_some(existing))
 }
 
 /// 删除。返回 true 表示有行被删除。

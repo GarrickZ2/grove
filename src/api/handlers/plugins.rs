@@ -1524,14 +1524,10 @@ fn resolve_task_root(
     project_id: &str,
     task_id: &str,
 ) -> Result<std::path::PathBuf, (StatusCode, Json<ApiError>)> {
-    let projects = crate::storage::workspace::load_projects()
-        .map_err(|e| ApiError::internal(format!("failed to load projects: {}", e)))?;
-    let project = projects
-        .iter()
-        .find(|p| crate::storage::workspace::project_hash(&p.path) == project_id)
+    crate::storage::workspace::load_project_by_hash(project_id)
+        .map_err(|e| ApiError::internal(format!("failed to load project: {}", e)))?
         .ok_or_else(|| ApiError::not_found("project not found"))?;
-    let project_key = crate::storage::workspace::project_hash(&project.path);
-    let task = crate::storage::tasks::get_task(&project_key, task_id)
+    let task = crate::storage::tasks::get_task(project_id, task_id)
         .map_err(|e| ApiError::internal(format!("failed to load task: {}", e)))?
         .ok_or_else(|| ApiError::not_found("task not found"))?;
     Ok(std::path::PathBuf::from(&task.worktree_path))

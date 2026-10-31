@@ -96,6 +96,24 @@ pub(crate) async fn ensure_session(
     })
 }
 
+pub(crate) async fn ensure_buddy_session(buddy_id: &str) -> Result<(String, Session), String> {
+    let (buddy, handle, activity) = crate::buddy::delegations::active_handle(buddy_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    handle
+        .wait_until_ready(crate::agent_graph::tools::ACP_SESSION_READY_TIMEOUT)
+        .await?;
+    Ok((
+        buddy
+            .active_session_id
+            .ok_or("Buddy has no active Segment")?,
+        Session {
+            handle,
+            _activity: Some(Arc::new(activity)),
+        },
+    ))
+}
+
 pub(crate) fn snapshot(
     project_id: &str,
     task_id: &str,
@@ -106,6 +124,17 @@ pub(crate) fn snapshot(
 }
 
 impl Session {
+    pub(crate) fn admit(mut self) -> Result<Self, String> {
+        self._activity = Some(Arc::new(
+            self.handle.begin_activity().map_err(|e| e.to_string())?,
+        ));
+        Ok(self)
+    }
+
+    pub(crate) fn session_id(&self) -> Option<&str> {
+        self.handle.chat_id()
+    }
+
     pub(crate) fn prepare_prompt(
         &self,
         text: String,
@@ -123,8 +152,8 @@ impl Session {
             .pending_permission_accepts(request_id, option_id)
     }
 
-    pub(crate) fn respond_permission(&self, option_id: String) -> bool {
-        self.handle.respond_permission(option_id)
+    pub(crate) fn respond_permission(&self, request_id: &str, option_id: String) -> bool {
+        self.handle.respond_permission_for(request_id, option_id)
     }
 
     pub(crate) fn pending_turn_form(&self, request_id: &str) -> Option<crate::radio::TurnForm> {

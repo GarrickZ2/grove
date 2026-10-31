@@ -1,3 +1,5 @@
+import type { Buddy } from "../../api/buddies";
+import { BuddyRoutines } from "../Buddy/BuddySidePanel/BuddyRoutines";
 // Automation listing for the current project.
 //
 // Card-style rows over a Skills/Tasks-page-ish header. Delete confirmation
@@ -8,7 +10,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import cronstrue from "cronstrue";
+import { describeSchedule, formatRelative } from "./automationFormat";
+import { ToggleSwitch } from "./ToggleSwitch";
 import {
   Plus,
   Repeat,
@@ -52,6 +55,7 @@ import {
 import { AutomationDialog } from "./AutomationDialog";
 
 interface AutomationPageProps {
+  buddy?: Buddy;
   /** Open the chat session that an automation run resolved to. Wired up
    *  from App.tsx via setActiveItem("tasks") + setNavigationData. */
   onOpenChat?: (taskId: string, chatId: string) => void;
@@ -71,7 +75,7 @@ function managedAutomationOwner(handlerKey: string) {
   return "Grove";
 }
 
-export function AutomationPage({
+function ProjectAutomationPage({
   onOpenChat,
   onOpenManagedAutomation,
 }: AutomationPageProps = {}) {
@@ -553,14 +557,7 @@ function AutomationCard({
   ownerLabel,
   onOpenOwner,
 }: CardProps) {
-  let scheduleDescription = automation.schedule_cron;
-  try {
-    scheduleDescription = cronstrue.toString(automation.schedule_cron, {
-      use24HourTimeFormat: true,
-    });
-  } catch {
-    // fall through with the raw expression
-  }
+  const scheduleDescription = describeSchedule(automation.schedule_cron);
 
   const lastRun = automation.last_run_at
     ? new Date(automation.last_run_at * 1000)
@@ -1231,40 +1228,6 @@ function ModeChip({ text }: { text: string }) {
   );
 }
 
-function ToggleSwitch({
-  value,
-  onChange,
-  disabled = false,
-}: {
-  value: boolean;
-  onChange: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onChange}
-      disabled={disabled}
-      title={disabled ? "Saving…" : value ? "Disable" : "Enable"}
-      className={`mt-1 flex-shrink-0 ${disabled ? "cursor-wait opacity-50" : ""}`}
-    >
-      <span
-        className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${
-          value ? "bg-[var(--color-highlight)]" : "bg-[var(--color-bg-tertiary)]"
-        }`}
-      >
-        <motion.span
-          layout
-          transition={{ type: "spring", stiffness: 500, damping: 30 }}
-          className={`block w-4 h-4 rounded-full bg-white shadow-sm absolute top-0.5 ${
-            value ? "left-[18px]" : "left-0.5"
-          }`}
-        />
-      </span>
-    </button>
-  );
-}
-
 function IconButton({
   children,
   onClick,
@@ -1313,24 +1276,7 @@ function useNow(intervalMs: number = 60_000): number {
 
 // Render a date as a short relative-or-absolute string. Anything within a
 // day rolls up to "in 3h" / "5m ago"; further out we just show a short date.
-function formatRelative(d: Date): string {
-  const now = Date.now();
-  const diffMs = d.getTime() - now;
-  const absMs = Math.abs(diffMs);
-  const isFuture = diffMs > 0;
-  const min = 60_000;
-  const hour = 3_600_000;
-  const day = 86_400_000;
-  if (absMs < min) return isFuture ? "in <1m" : "<1m ago";
-  if (absMs < hour) {
-    const m = Math.round(absMs / min);
-    return isFuture ? `in ${m}m` : `${m}m ago`;
-  }
-  if (absMs < day) {
-    const h = Math.round(absMs / hour);
-    return isFuture ? `in ${h}h` : `${h}h ago`;
-  }
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
-    " " +
-    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+export function AutomationPage(props: AutomationPageProps = {}) {
+  return props.buddy ? <BuddyRoutines key={props.buddy.id} buddy={props.buddy} /> : <ProjectAutomationPage {...props} />;
 }

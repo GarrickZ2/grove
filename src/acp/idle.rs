@@ -54,6 +54,9 @@ impl AcpSessionHandle {
 
     fn reserve_activity(&self, observer: bool) -> crate::error::Result<ActivityGuard> {
         let mut state = self.idle.lock().unwrap();
+        if let Some(chat) = self.chat_id.as_deref() {
+            crate::storage::buddies::ensure_session_writable(chat)?;
+        }
         if state.retiring {
             return Err(crate::error::GroveError::Session(
                 "ACP session is retiring".into(),
@@ -102,6 +105,66 @@ impl AcpSessionHandle {
                 .pending_queue
                 .try_lock()
                 .map_or(true, |q| !q.is_empty())
+            || self
+                .pending_permission
+                .try_lock()
+                .map_or(true, |p| p.is_some())
+            || self
+                .pending_elicitation
+                .try_lock()
+                .map_or(true, |p| p.is_some())
+            || self
+                .active_url_elicitations
+                .try_lock()
+                .map_or(true, |p| !p.is_empty())
+            || self.pending_auth.try_lock().map_or(true, |p| p.is_some())
+            || self
+                .terminal_auth
+                .try_lock()
+                .map_or(true, |p| p.active.is_some() || p.reconnecting)
+            || self
+                .pending_auth_retry
+                .try_lock()
+                .map_or(true, |p| p.is_some())
+            || self
+                .terminal_kill_tx
+                .try_lock()
+                .map_or(true, |p| p.is_some())
+            || self
+                .active_tool_calls
+                .try_lock()
+                .map_or(true, |p| !p.is_empty())
+            || self
+                .subagents
+                .try_lock()
+                .map_or(true, |s| s.has_active_children())
+        {
+            return false;
+        }
+        idle.retiring = true;
+        true
+    }
+
+    /// Explicit Buddy switch shares admission with every asynchronous command.
+    /// Observers may remain attached; they do not constitute pending work.
+    pub(crate) fn try_retire_for_buddy_switch(&self) -> bool {
+        let mut idle = self.idle.lock().unwrap();
+        if idle.retiring
+            || idle.operations != 0
+            || !matches!(*self.readiness.borrow(), SessionReadiness::Ready)
+            || self
+                .active_turn_message_ids
+                .try_lock()
+                .map_or(true, |ids| !ids.is_empty())
+            || self.is_busy.load(std::sync::atomic::Ordering::Acquire)
+            || self
+                .pending_queue
+                .try_lock()
+                .map_or(true, |q| !q.is_empty())
+            || self
+                .pending_ask_forms
+                .try_lock()
+                .map_or(true, |p| !p.is_empty())
             || self
                 .pending_permission
                 .try_lock()
@@ -248,6 +311,11 @@ mod tests {
         // slow config/attachment preparation before a busy claim is made.
         age(&handle);
         assert!(!handle.try_retire_idle(Instant::now()));
+        // Keep this accepted input queued deliberately; idle submissions now
+        // drain immediately when a preceding turn finished during middleware.
+        target
+            .queue_paused
+            .store(true, std::sync::atomic::Ordering::Release);
         target
             .submit_queued_message(QueuedMessage::new(
                 "accepted once".into(),
@@ -493,6 +561,7 @@ mod tests {
         )
         .unwrap();
         let connect = crate::storage::connects::create(crate::storage::connects::ConnectInput {
+            target: None,
             name: "Idle test".into(),
             platform: "feishu".into(),
             domain: "feishu".into(),

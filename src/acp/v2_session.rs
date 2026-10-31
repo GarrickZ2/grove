@@ -500,7 +500,8 @@ async fn drive(
                         }
                         break;
                     },
-                    AcpCommand::Cancel => {
+                    command @ (AcpCommand::Cancel | AcpCommand::CancelPrompts(_)) => {
+                        if !command.cancels_prompt(turn.as_ref().map(|turn| turn.message_ids.as_slice()).unwrap_or(&[])) { continue; }
                         state.handle.cancel_current_turn_state();
                         connection.send_notification(v2::CancelSessionNotification::new(opened.id.clone()))?;
                     }
@@ -757,7 +758,10 @@ async fn handle_command(
                 state.handle.retry_prompt_after_auth(retry);
             }
         }
-        AcpCommand::Prompt { .. } | AcpCommand::Cancel | AcpCommand::Kill => unreachable!(),
+        AcpCommand::Prompt { .. }
+        | AcpCommand::Cancel
+        | AcpCommand::CancelPrompts(_)
+        | AcpCommand::Kill => unreachable!(),
     }
 }
 
@@ -862,7 +866,7 @@ async fn await_start_auth(
             AcpCommand::ListSessions { reply, .. } => {
                 let _ = reply.send(Err("Authentication required".into()));
             }
-            AcpCommand::Cancel => {}
+            AcpCommand::Cancel | AcpCommand::CancelPrompts(_) => {}
         }
     }
     Ok(false)

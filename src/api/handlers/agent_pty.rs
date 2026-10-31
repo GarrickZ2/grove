@@ -54,14 +54,10 @@ pub async fn agent_pty_handler(
     let rows = query.rows.unwrap_or(24).clamp(5, 200);
 
     // Resolve project hash
-    let projects = workspace::load_projects()
-        .map_err(|e| AgentPtyError::Internal(format!("load_projects: {}", e)))?;
-    let project = projects
-        .iter()
-        .find(|p| workspace::project_hash(&p.path) == project_id)
-        .ok_or_else(|| AgentPtyError::NotFound("Project not found".to_string()))?
-        .clone();
-    let project_key = workspace::project_hash(&project.path);
+    let project = workspace::load_project_by_hash(&project_id)
+        .map_err(|e| AgentPtyError::Internal(format!("load_project: {}", e)))?
+        .ok_or_else(|| AgentPtyError::NotFound("Project not found".to_string()))?;
+    let project_key = project_id;
 
     // Resolve task (worktree path = cwd for agent)
     let task = tasks::get_task(&project_key, &task_id)

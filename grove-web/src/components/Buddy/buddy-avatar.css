@@ -1,0 +1,15 @@
+.buddy-av{position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;vertical-align:middle;box-sizing:border-box;line-height:0;box-shadow:inset 0 -.08em .14em rgba(0,0,0,.14),inset 0 .06em .1em rgba(255,255,255,.4)}
+/* Eyes are sized in em off the avatar's own font-size; keep caller rules such as `.card span span{font-size}` from reaching them. */
+.buddy-av .buddy-av__eyes,.buddy-av .buddy-av__eye{font-size:inherit;line-height:0}
+.buddy-av__eyes{display:flex;gap:.1em;transform:translate(.07em,-.07em)}
+.buddy-av__eye{display:block;width:.11em;height:.22em;border-radius:.06em;background:#fff}
+.buddy-av.is-idle .buddy-av__eye{animation:buddy-av-blink 4.6s infinite}
+.buddy-av.is-working{animation:buddy-av-bob 1.4s ease-in-out infinite}
+.buddy-av.is-working .buddy-av__eyes{animation:buddy-av-look 2.8s ease-in-out infinite}
+.buddy-av.is-waiting{animation:buddy-av-hop 1.8s ease-in-out infinite}
+.buddy-av.is-waiting .buddy-av__eye{width:.13em;height:.26em}
+@keyframes buddy-av-blink{0%,93%,100%{transform:scaleY(1)}96%{transform:scaleY(.15)}}
+@keyframes buddy-av-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-.05em)}}
+@keyframes buddy-av-look{0%,100%{transform:translate(.07em,-.07em)}35%{transform:translate(.15em,-.07em)}65%{transform:translate(-.02em,-.05em)}}
+@keyframes buddy-av-hop{0%,64%,100%{transform:translateY(0) scale(1,1)}72%{transform:translateY(0) scale(1.08,.9)}82%{transform:translateY(-.12em) scale(.95,1.06)}92%{transform:translateY(0) scale(1.03,.97)}}
+@media (prefers-reduced-motion: reduce){.buddy-av,.buddy-av *{animation:none !important}}

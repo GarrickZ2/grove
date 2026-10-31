@@ -52,16 +52,13 @@ pub async fn get_project_statistics(
     Path(id): Path<String>,
     Query(query): Query<StatisticsQuery>,
 ) -> Result<Json<StatisticsResponse>, StatusCode> {
-    let projects = workspace::load_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project = projects
-        .into_iter()
-        .find(|p| workspace::project_hash(&p.path) == id)
+    workspace::load_project_by_hash(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let project_key = workspace::project_hash(&project.path);
 
     let (from, to, bucket) = resolve_range(&query);
     Ok(Json(stats::aggregate(
-        &Scope::Project(project_key),
+        &Scope::Project(id),
         from,
         to,
         bucket,

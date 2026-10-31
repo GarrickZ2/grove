@@ -1,3 +1,5 @@
+import { registerChatSocket } from "../../../api/chatSockets";
+
 export const BACKGROUND_CHAT_IDLE_MS = 10 * 60 * 1000;
 
 /** Owns intentional detachment independently of WebSocket onclose callbacks.
@@ -69,6 +71,7 @@ export class BackgroundChatConnections {
 
 /** Wrap this socket only, so every send path shares the same activity clock. */
 export function trackChatSocketSends(socket: WebSocket, activity: () => void) {
+  registerChatSocket(socket);
   const send = socket.send.bind(socket);
   socket.send = (data) => {
     send(data);

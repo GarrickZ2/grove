@@ -33,7 +33,7 @@ export interface Automation {
   task_mode: TargetMode;
   task_id?: string;
   task_template?: TaskTemplate;
-  session_mode: TargetMode;
+  session_mode: TargetMode | "buddy_active";
   chat_id?: string;
   session_template?: SessionTemplate;
   prompt: string;
@@ -79,7 +79,7 @@ export interface AutomationUpsert {
   task_mode: TargetMode;
   task_id?: string;
   task_template?: TaskTemplate;
-  session_mode: TargetMode;
+  session_mode: TargetMode | "buddy_active";
   chat_id?: string;
   session_template?: SessionTemplate;
   prompt: string;

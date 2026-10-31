@@ -7,6 +7,7 @@
 
 pub mod adapter;
 mod adapter_terminal;
+mod buddy_config;
 mod compaction;
 mod idle;
 mod input_attention;
@@ -339,6 +340,7 @@ enum AcpCommand {
         config: Option<QueuedConfig>,
     },
     Cancel,
+    CancelPrompts(Vec<String>),
     Kill,
     /// 用户点击登录后触发。method_id 来自 initialize 响应 auth_methods[i].id,
     /// 由前端从 `AuthRequired` update 中拿到再原样回传。
@@ -391,6 +393,16 @@ pub struct ListedSession {
     pub cwd: String,
     pub title: Option<String>,
     pub updated_at: Option<String>,
+}
+
+impl AcpCommand {
+    fn cancels_prompt(&self, active_ids: &[String]) -> bool {
+        match self {
+            Self::Cancel => true,
+            Self::CancelPrompts(ids) => ids.iter().any(|id| active_ids.contains(id)),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1138,7 +1150,7 @@ fn validate_prompt_content(
 }
 
 /// 队列合并发送模式：Separate = 逐条按原队列顺序发送（默认）；
-/// Compact = 自动弹出时把队列中所有消息合并成一条发送。
+/// Compact = 自动弹出时把队首起连续、sender 相同的消息合并成一条发送。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueMode {
@@ -1368,6 +1380,7 @@ pub struct LoopbackMcpServer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpServerPolicy {
+    Buddy,
     /// Grove's normal working-session MCPs plus any explicitly supplied servers.
     WorkingSession,
     /// Only the servers explicitly supplied by the caller.
@@ -1554,14 +1567,19 @@ fn working_project_kind_instruction(config: &AcpStartConfig) -> Option<&'static 
     crate::storage::workspace::load_project_by_hash(&config.project_key)
         .ok()
         .flatten()
-        .map(|project| match project.project_type {
-            crate::storage::workspace::ProjectType::Studio => WORKING_STUDIO_INSTRUCTION,
+        .and_then(|project| match project.project_type {
+            crate::storage::workspace::ProjectType::Studio => Some(WORKING_STUDIO_INSTRUCTION),
             crate::storage::workspace::ProjectType::Repo
                 if config.task_id == crate::storage::tasks::LOCAL_TASK_ID =>
             {
-                WORKING_CODING_LOCAL_INSTRUCTION
+                Some(WORKING_CODING_LOCAL_INSTRUCTION)
             }
-            crate::storage::workspace::ProjectType::Repo => WORKING_CODING_WORKTREE_INSTRUCTION,
+            crate::storage::workspace::ProjectType::Repo => {
+                Some(WORKING_CODING_WORKTREE_INSTRUCTION)
+            }
+            // Buddy has no Repo/Studio directory contract. Segment-specific
+            // bootstrap is supplied by the Buddy lifecycle.
+            crate::storage::workspace::ProjectType::Buddy => None,
         })
 }
 
@@ -1621,6 +1639,9 @@ fn session_bootstrap_instruction(
     config: &AcpStartConfig,
     agent_runtime_available: bool,
 ) -> Option<(&'static str, String)> {
+    if config.mcp_server_policy == McpServerPolicy::Buddy {
+        return Some(("buddy", crate::buddy::bootstrap(config)));
+    }
     if config.mcp_server_policy == McpServerPolicy::WorkingSession && config.chat_id.is_some() {
         return Some((
             "working_session",
@@ -1863,7 +1884,10 @@ async fn build_mcp_servers_filtered(
             ));
         }
     }
-    if policy == McpServerPolicy::WorkingSession {
+    if matches!(
+        policy,
+        McpServerPolicy::WorkingSession | McpServerPolicy::Buddy
+    ) {
         // Inject stdio MCP servers contributed by installed plugins, forwarding the
         // task/project context env (so a plugin's MCP server has the same "current
         // context" the panel gets from host.getInfo).
@@ -4974,10 +4998,20 @@ async fn drive_terminal(
 ///
 /// 如果 session key 已存在，复用现有会话（返回新的 broadcast subscriber）。
 /// 否则启动新会话，会话线程由模块自行管理（独立于 WebSocket 连接）。
+pub(crate) fn session_start_pending(key: &str) -> bool {
+    STARTING_SESSIONS.lock().unwrap().contains(key)
+}
+
 pub async fn get_or_start_session(
     key: String,
-    config: AcpStartConfig,
+    mut config: AcpStartConfig,
 ) -> crate::error::Result<(Arc<AcpSessionHandle>, broadcast::Receiver<AcpUpdate>)> {
+    let _buddy_gate = if let Some(chat) = config.chat_id.as_deref() {
+        crate::buddy::lock_session(chat).await?
+    } else {
+        None
+    };
+    crate::buddy::configure_start(&mut config)?;
     // Serialize concurrent get_or_start for the same key. Without this, two
     // callers can both pass the read check below before either gets a chance
     // to insert, then both spawn full ACP subprocesses; the second insert
@@ -5303,11 +5337,19 @@ async fn run_acp_session(
     // 这样 `grove mcp-bridge`（agent 自己孩子的孩子，比如 Trae 不接受 ACP 注入
     // 的 MCP 时由用户在 Trae mcp 配置里指向我们）只要从 env 读 GROVE_MCP_TOKEN
     // / GROVE_MCP_PORT 就能找到 listener，不依赖 ACP NewSessionRequest.
-    let agent_graph_token: Option<String> = config.chat_id.as_ref().map(|chat_id| {
-        let token = uuid::Uuid::new_v4().to_string();
-        crate::api::handlers::agent_graph_mcp::register_token(&token, chat_id);
-        token
-    });
+    let agent_graph_token: Option<String> = config
+        .chat_id
+        .as_ref()
+        .filter(|_| config.mcp_server_policy != McpServerPolicy::ExplicitOnly)
+        .map(|chat_id| {
+            let token = uuid::Uuid::new_v4().to_string();
+            if config.mcp_server_policy == McpServerPolicy::Buddy {
+                crate::api::handlers::buddy_mcp::register_token(&token, chat_id);
+            } else if config.mcp_server_policy == McpServerPolicy::WorkingSession {
+                crate::api::handlers::agent_graph_mcp::register_token(&token, chat_id);
+            }
+            token
+        });
     if let Some(token) = agent_graph_token.as_deref() {
         config
             .env_vars
@@ -5325,10 +5367,24 @@ async fn run_acp_session(
         fn drop(&mut self) {
             if let Some(t) = self.0.take() {
                 let _ = crate::api::handlers::agent_graph_mcp::unregister_token(&t);
+                crate::api::handlers::buddy_mcp::unregister_token(&t);
             }
         }
     }
     let _early_token_guard = EarlyTokenGuard(agent_graph_token.clone());
+    if config.mcp_server_policy == McpServerPolicy::Buddy {
+        if let Some(url) = agent_graph_token
+            .as_deref()
+            .and_then(crate::api::handlers::buddy_mcp::build_mcp_url)
+        {
+            config.additional_mcp_servers.push(LoopbackMcpServer {
+                name: "grove_buddy".into(),
+                url,
+                route: "buddy-mcp".into(),
+                session_instruction: None,
+            });
+        }
+    }
 
     let cmd_rx = Arc::new(tokio::sync::Mutex::new(cmd_rx));
     let mut negotiated_version = None;
@@ -6278,7 +6334,7 @@ async fn drive_session(
                                         .to_string(),
                                 ));
                             }
-                            Some(AcpCommand::Cancel | AcpCommand::RetryAuthentication) => {}
+                            Some(AcpCommand::Cancel | AcpCommand::CancelPrompts(_) | AcpCommand::RetryAuthentication) => {}
                             Some(AcpCommand::ListSessions { reply, .. }) => {
                                 let _ = reply.send(Err("session/list unavailable during authentication".into()));
                             }
@@ -6372,7 +6428,7 @@ async fn drive_session(
                                         .to_string(),
                                 ));
                             }
-                            Some(AcpCommand::Cancel | AcpCommand::RetryAuthentication) => {}
+                            Some(AcpCommand::Cancel | AcpCommand::CancelPrompts(_) | AcpCommand::RetryAuthentication) => {}
                             Some(AcpCommand::ListSessions { reply, .. }) => {
                                 let _ = reply.send(Err("session/list unavailable during authentication".into()));
                             }
@@ -7511,7 +7567,8 @@ async fn drive_session(
                         }
                         Some(inner_cmd) = cmd_rx.recv() => {
                             match inner_cmd {
-                                AcpCommand::Cancel => {
+                                command @ (AcpCommand::Cancel | AcpCommand::CancelPrompts(_)) => {
+                                    if !command.cancels_prompt(&message_ids) { continue; }
                                     handle.cancel_current_turn_state();
                                     // cancel 是 Notification, send_notification 是同步 API.
                                     // 多次 Cancel 都允许通过 (用户连点 Send Now / 多 WS 同时 cancel),
@@ -7830,7 +7887,7 @@ async fn drive_session(
 
                 handle.drain_queue_if_ready();
             }
-            AcpCommand::Cancel => {
+            AcpCommand::Cancel | AcpCommand::CancelPrompts(_) => {
                 // Agent 空闲时收到 Cancel,忽略
             }
             AcpCommand::SetMode { mode_id, reply } => {
@@ -8001,7 +8058,7 @@ async fn drive_session(
                                             .to_string(),
                                     ));
                                 }
-                                Some(AcpCommand::Cancel | AcpCommand::RetryAuthentication) => {}
+                                Some(AcpCommand::Cancel | AcpCommand::CancelPrompts(_) | AcpCommand::RetryAuthentication) => {}
                                 Some(AcpCommand::ListSessions { reply, .. }) => {
                                     let _ = reply.send(Err("session/list unavailable during authentication".into()));
                                 }
@@ -8739,6 +8796,16 @@ impl AcpSessionHandle {
             ),
             _ => return,
         };
+        // A queued input can fail in middleware while another turn is active.
+        // Its terminal event must not erase the active turn's ownership.
+        let ends_active_turn = terminal
+            && (matches!(update, AcpUpdate::SessionEnded)
+                || self
+                    .active_turn_message_ids
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|id| message_ids.contains(id)));
         broadcast_radio_event(RadioEvent::Turn {
             project_id: self.project_key.clone(),
             task_id: self.task_id.clone(),
@@ -8746,7 +8813,7 @@ impl AcpSessionHandle {
             message_ids,
             event,
         });
-        if terminal {
+        if ends_active_turn {
             self.active_turn_message_ids.lock().unwrap().clear();
             self.last_turn_reply.lock().unwrap().clear();
             if matches!(update, AcpUpdate::SessionEnded) {
@@ -8936,7 +9003,24 @@ impl AcpSessionHandle {
     /// drop（future 被取消）导致 tx.send 失败，用户的选择已经发生过，
     /// 仍然要记录到 history，保证切回来时前端能正确 resolve 对应 dialog。
     pub fn respond_permission(&self, option_id: String) -> bool {
-        let Some((id, tx)) = self.pending_permission.lock().unwrap().take() else {
+        self.respond_permission_matching(None, option_id)
+    }
+
+    pub(crate) fn respond_permission_for(&self, expected_id: &str, option_id: String) -> bool {
+        self.respond_permission_matching(Some(expected_id), option_id)
+    }
+
+    fn respond_permission_matching(&self, expected_id: Option<&str>, option_id: String) -> bool {
+        let pending = {
+            let mut pending = self.pending_permission.lock().unwrap();
+            if expected_id
+                .is_some_and(|expected| pending.as_ref().is_none_or(|(id, _)| id != expected))
+            {
+                return false;
+            }
+            pending.take()
+        };
+        let Some((id, tx)) = pending else {
             return false;
         };
         // Drop the cached snapshot payload — the request is no longer pending.
@@ -9390,17 +9474,10 @@ impl AcpSessionHandle {
                 // don't have to round-trip storage. Lookups are cheap and
                 // happen only on actual transitions, not on every message.
                 let project_name =
-                    crate::storage::workspace::load_projects()
+                    crate::storage::workspace::load_project_by_hash(&self.project_key)
                         .ok()
-                        .and_then(|projs| {
-                            projs
-                                .iter()
-                                .find(|p| {
-                                    crate::storage::workspace::project_hash(&p.path)
-                                        == self.project_key
-                                })
-                                .map(|p| p.name.clone())
-                        });
+                        .flatten()
+                        .map(|p| p.name);
                 let task_name = crate::storage::tasks::load_tasks(&self.project_key)
                     .ok()
                     .and_then(|tasks| {
@@ -9542,6 +9619,9 @@ impl AcpSessionHandle {
 
         // broadcast
         let session_ready = matches!(&update, AcpUpdate::SessionReady { .. });
+        if let Some(chat) = self.chat_id.as_deref() {
+            crate::buddy::preview::invalidate(chat);
+        }
         let _ = self.update_tx.send(update);
         if session_ready {
             // session/load suppresses transcript replay, but its final child
@@ -9694,6 +9774,10 @@ impl AcpSessionHandle {
     /// Allocate a Grove prompt id without entering the ACP command loop.
     /// External adapters use this to register their mapping before starting
     /// the prompt, so a very fast Turn event cannot race the mapping insert.
+    pub(crate) fn chat_id(&self) -> Option<&str> {
+        self.chat_id.as_deref()
+    }
+
     pub fn prepare_prompt(
         &self,
         text: String,
@@ -9896,6 +9980,19 @@ impl AcpSessionHandle {
             .send(AcpCommand::Cancel)
             .await
             .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
+    }
+
+    /// Checked by the command loop against the turn it is actually driving,
+    /// so a late Routine cancellation cannot stop a later human prompt.
+    pub(crate) async fn cancel_prompts(
+        &self,
+        message_ids: Vec<String>,
+    ) -> crate::error::Result<()> {
+        let _activity = self.begin_activity()?;
+        self.cmd_tx
+            .send(AcpCommand::CancelPrompts(message_ids))
+            .await
+            .map_err(|_| crate::error::GroveError::Session("ACP session closed".into()))
     }
 
     fn cancel_current_turn_state(&self) {
@@ -10168,7 +10265,11 @@ impl AcpSessionHandle {
         )
         .await?;
         msg.processed_text = Some(processed_text);
-        Ok(self.queue_message(msg))
+        self.queue_message(msg);
+        // The previous turn can finish while Submit middleware is awaited.
+        // Re-check readiness after insertion or this prompt can wait forever.
+        self.drain_queue_if_ready();
+        Ok(self.get_queue())
     }
 
     /// 删除队列中指定位置的消息，返回更新后的队列
@@ -10311,9 +10412,9 @@ impl AcpSessionHandle {
     /// 结束当前一轮任务后，按 `queue_mode` 取出待发送内容（auto-send 专用）。
     ///
     /// - `Separate`（默认）：取队首一条，行为与之前完全一致。
-    /// - `Compact`：把整条队列 drain 出来合并成一条消息 —— sender/config/terminal
-    ///   取队首那条的，text 用换行 join，attachments 依次 extend。队列为空或只有
-    ///   一条时退化为跟 `Separate` 相同的单条逻辑，不做特殊合并。
+    /// - `Compact`：只合并队首起连续、sender 相同的消息，其余留在队列。
+    ///   sender/config/terminal 取队首那条的，text 用换行 join，attachments
+    ///   依次 extend。分组只有一条时原样返回，不做特殊合并。
     ///
     /// 返回 `(合并/单条消息, 若发送失败需要原样放回队列的原始消息列表)`。
     /// 调用方发送失败时，把第二个元素里的消息按原顺序插回队首。
@@ -10324,7 +10425,12 @@ impl AcpSessionHandle {
             QueueMode::Compact => {
                 let drained: Vec<QueuedMessage> = {
                     let mut q = self.pending_queue.lock().unwrap();
-                    std::mem::take(&mut *q)
+                    let first_sender = &q.first()?.sender;
+                    let count = q
+                        .iter()
+                        .take_while(|message| &message.sender == first_sender)
+                        .count();
+                    q.drain(..count).collect()
                 };
                 if drained.is_empty() {
                     return None;
@@ -10720,14 +10826,7 @@ pub fn snapshot_active_chats() -> Vec<crate::radio::ChatSnapshot> {
 
     // Lazily cache storage lookups so N sessions in the same project/task don't
     // re-read the same tables N times.
-    let project_names: HashMap<String, String> = crate::storage::workspace::load_projects()
-        .map(|projs| {
-            projs
-                .into_iter()
-                .map(|p| (crate::storage::workspace::project_hash(&p.path), p.name))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut project_names: HashMap<String, Option<String>> = HashMap::new();
     // (project_key, task_id) -> task_name
     let mut task_names: HashMap<(String, String), Option<String>> = HashMap::new();
     // (project_key, task_id, chat_id) -> (title, agent)
@@ -10742,6 +10841,16 @@ pub fn snapshot_active_chats() -> Vec<crate::radio::ChatSnapshot> {
         };
         let project_key = handle.project_key.clone();
         let task_id = handle.task_id.clone();
+
+        let project_name = project_names
+            .entry(project_key.clone())
+            .or_insert_with(|| {
+                crate::storage::workspace::load_project_by_hash(&project_key)
+                    .ok()
+                    .flatten()
+                    .map(|p| p.name)
+            })
+            .clone();
 
         let task_name = task_names
             .entry((project_key.clone(), task_id.clone()))
@@ -10798,7 +10907,7 @@ pub fn snapshot_active_chats() -> Vec<crate::radio::ChatSnapshot> {
             chat_id,
             project_id: project_key.clone(),
             task_id: task_id.clone(),
-            project_name: project_names.get(&project_key).cloned(),
+            project_name,
             task_name,
             chat_title,
             agent,
@@ -12327,14 +12436,114 @@ mod tests {
         let key = format!("compact-message-id-test-{}", uuid::Uuid::new_v4());
         let (handle, _updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
         handle.set_queue_mode(QueueMode::Compact);
-        let first = QueuedMessage::new("one".into(), vec![], None, false, None);
-        let second = QueuedMessage::new("two".into(), vec![], None, false, None);
+        let first = QueuedMessage::new("one".into(), vec![], Some("buddy:one".into()), false, None)
+            .with_processed_text("processed one".into());
+        let second =
+            QueuedMessage::new("two".into(), vec![], Some("buddy:one".into()), false, None)
+                .with_processed_text("processed two".into());
         let expected = vec![first.id.clone(), second.id.clone()];
         handle.queue_message(first);
         handle.queue_message(second);
 
-        let (merged, _) = handle.pop_queue_for_auto_send().expect("merged queue");
+        let (merged, originals) = handle.pop_queue_for_auto_send().expect("merged queue");
         assert_eq!(merged.message_ids, expected);
+        assert_eq!(merged.text, "one\ntwo");
+        assert_eq!(merged.delivery_text(), "processed one\nprocessed two");
+        assert_eq!(merged.sender.as_deref(), Some("buddy:one"));
+        assert_eq!(
+            originals
+                .iter()
+                .map(|message| message.id.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert!(handle.pop_queue_for_auto_send().is_none());
+    }
+
+    #[tokio::test]
+    async fn compact_queue_drains_only_contiguous_equal_senders_in_order() {
+        let key = format!("compact-senders-{}", uuid::Uuid::new_v4());
+        let (handle, _, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        handle.set_queue_mode(QueueMode::Compact);
+        let batches = [
+            (None, vec!["user one", "user two"]),
+            (Some("automation:one"), vec!["routine one", "routine two"]),
+            (None, vec!["user three"]),
+            (Some("buddy:one"), vec!["result one", "result two"]),
+            (Some("buddy:two"), vec!["another Buddy"]),
+            (Some("automation:two"), vec!["another Routine"]),
+            (Some("automation:three"), vec!["different Routine"]),
+            (None, vec!["user four", "user five"]),
+        ];
+        let mut expected_ids = Vec::new();
+        for (sender, texts) in &batches {
+            let mut ids = Vec::new();
+            for text in texts {
+                let message = QueuedMessage::new(
+                    (*text).into(),
+                    vec![],
+                    sender.map(str::to_owned),
+                    false,
+                    None,
+                );
+                ids.push(message.id.clone());
+                handle.queue_message(message);
+            }
+            expected_ids.push(ids);
+        }
+        let mut remaining: usize = batches.iter().map(|(_, texts)| texts.len()).sum();
+        for ((sender, texts), ids) in batches.iter().zip(expected_ids) {
+            let (message, originals) = handle.pop_queue_for_auto_send().unwrap();
+            assert_eq!(message.sender.as_deref(), *sender);
+            assert_eq!(message.text, texts.join("\n"));
+            assert_eq!(message.message_ids, ids);
+            assert_eq!(originals.len(), texts.len());
+            assert!(originals
+                .iter()
+                .all(|message| message.sender.as_deref() == *sender));
+            remaining -= texts.len();
+            assert_eq!(handle.get_queue().len(), remaining);
+        }
+        assert!(handle.pop_queue_for_auto_send().is_none());
+    }
+
+    #[tokio::test]
+    async fn single_compact_message_and_separate_messages_remain_unchanged() {
+        let key = format!("queue-unchanged-{}", uuid::Uuid::new_v4());
+        let (handle, _, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        for mode in [QueueMode::Compact, QueueMode::Separate] {
+            handle.set_queue_mode(mode);
+            let first = QueuedMessage::new(
+                "one".into(),
+                vec![ContentBlockData::Text {
+                    text: "attachment".into(),
+                }],
+                Some("same-sender".into()),
+                true,
+                Some(handle.snapshot_config()),
+            )
+            .with_processed_text("processed one".into());
+            let expected = serde_json::to_value(&first).unwrap();
+            handle.queue_message(first);
+            if mode == QueueMode::Separate {
+                handle.queue_message(QueuedMessage::new(
+                    "two".into(),
+                    vec![],
+                    Some("same-sender".into()),
+                    false,
+                    None,
+                ));
+            }
+            let (message, originals) = handle.pop_queue_for_auto_send().unwrap();
+            assert_eq!(serde_json::to_value(message).unwrap(), expected);
+            assert_eq!(originals.len(), 1);
+            assert_eq!(serde_json::to_value(&originals[0]).unwrap(), expected);
+            if mode == QueueMode::Separate {
+                assert_eq!(handle.get_queue().len(), 1);
+                assert_eq!(handle.pop_queue_for_auto_send().unwrap().0.text, "two");
+            }
+            assert!(handle.pop_queue_for_auto_send().is_none());
+        }
     }
 
     #[tokio::test]

@@ -395,15 +395,26 @@ pub fn ensure_system_groups() -> Result<()> {
 /// operation reliable and idempotent, while preserving an explicit custom
 /// group assignment if one already exists.
 pub fn ensure_task_assignment(project_id: &str, task_id: &str, is_local: bool) -> Result<bool> {
+    let conn = crate::storage::database::connection();
+    let tx = conn.unchecked_transaction()?;
+    let changed = ensure_task_assignment_on(&tx, project_id, task_id, is_local)?;
+    tx.commit()?;
+    Ok(changed)
+}
+
+pub(crate) fn ensure_task_assignment_on(
+    conn: &rusqlite::Connection,
+    project_id: &str,
+    task_id: &str,
+    is_local: bool,
+) -> Result<bool> {
     let target_group_id = if is_local {
         LOCAL_GROUP_ID
     } else {
         MAIN_GROUP_ID
     };
-    let conn = crate::storage::database::connection();
-    let tx = conn.unchecked_transaction()?;
 
-    tx.execute(
+    conn.execute(
         "INSERT OR IGNORE INTO task_groups (id, name, color, created_at) VALUES (?1, ?2, NULL, ?3)",
         params![
             target_group_id,
@@ -412,27 +423,25 @@ pub fn ensure_task_assignment(project_id: &str, task_id: &str, is_local: bool) -
         ],
     )?;
 
-    let already_assigned: bool = tx.query_row(
+    let already_assigned: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM task_group_slots WHERE project_id = ?1 AND task_id = ?2)",
         params![project_id, task_id],
         |row| row.get(0),
     )?;
     if already_assigned {
-        tx.commit()?;
         return Ok(false);
     }
 
-    let next_position: i64 = tx.query_row(
+    let next_position: i64 = conn.query_row(
         "SELECT COALESCE(MAX(position), 0) + ?2 FROM task_group_slots WHERE group_id = ?1",
         params![target_group_id, POSITION_STEP as i64],
         |row| row.get(0),
     )?;
-    tx.execute(
+    conn.execute(
         "INSERT INTO task_group_slots (group_id, position, project_id, task_id, target_chat_id) \
          VALUES (?1, ?2, ?3, ?4, NULL)",
         params![target_group_id, next_position, project_id, task_id],
     )?;
-    tx.commit()?;
     Ok(true)
 }
 

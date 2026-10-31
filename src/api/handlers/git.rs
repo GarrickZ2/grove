@@ -100,11 +100,8 @@ pub struct CreateBranchRequest {
 
 /// Find project by ID (hash)
 fn find_project_path(id: &str) -> Result<String, StatusCode> {
-    let projects = workspace::load_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    projects
-        .into_iter()
-        .find(|p| workspace::project_hash(&p.path) == id)
+    workspace::load_project_by_hash(id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map(|p| p.path)
         .ok_or(StatusCode::NOT_FOUND)
 }

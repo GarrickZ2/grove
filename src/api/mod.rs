@@ -112,6 +112,26 @@ pub fn create_api_router() -> Router {
             "/config/applications/icon",
             get(handlers::config::get_app_icon),
         )
+        .route(
+            "/buddies",
+            get(handlers::buddies::list).post(handlers::buddies::create),
+        )
+        .route("/buddies/order", patch(handlers::buddies::order))
+        .route(
+            "/buddies/{id}",
+            get(handlers::buddies::get)
+                .patch(handlers::buddies::update)
+                .delete(handlers::buddies::archive),
+        )
+        .route("/buddies/{id}/agent", post(handlers::buddies::switch_agent))
+        .route(
+            "/buddies/{id}/delegations",
+            get(handlers::buddies::delegations),
+        )
+        .route(
+            "/buddies/{id}/delegations/{did}/cancel",
+            post(handlers::buddies::cancel),
+        )
         // Custom Agent (Persona) API
         .route(
             "/custom-agents",

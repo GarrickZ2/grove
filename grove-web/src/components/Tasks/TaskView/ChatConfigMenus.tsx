@@ -17,6 +17,7 @@ export type ChatDropdownOption = {
 
 export const SessionSettingsMenu = ({
   ref,
+  menuRef,
   options,
   open,
   disabled,
@@ -25,6 +26,7 @@ export const SessionSettingsMenu = ({
   onSelect,
 }: {
   ref: React.RefObject<HTMLDivElement | null>;
+  menuRef?: React.RefObject<HTMLDivElement | null>;
   options: SessionConfigOption[];
   open: boolean;
   disabled: boolean;
@@ -144,6 +146,7 @@ export const SessionSettingsMenu = ({
       {open && !disabled && menuAnchor && typeof document !== "undefined" &&
         createPortal(
         <div
+          ref={menuRef}
           data-session-settings-menu
           className="fixed z-[1000] flex w-80 flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg"
           style={{
@@ -300,6 +303,8 @@ export const SessionSettingsMenu = ({
 /** Reusable dropdown selector for bottom toolbar */
 export const DropdownSelect = ({
   ref,
+  portal = false,
+  menuRef,
   label,
   icon,
   options,
@@ -312,6 +317,8 @@ export const DropdownSelect = ({
   onSelect,
 }: {
   ref: React.RefObject<HTMLDivElement | null>;
+  portal?: boolean;
+  menuRef?: React.RefObject<HTMLDivElement | null>;
   label: string;
   icon?: ReactNode;
   options: ChatDropdownOption[];
@@ -342,6 +349,8 @@ export const DropdownSelect = ({
       </button>
       {open && !disabled && (
         <PickerMenu
+          anchorRef={portal ? ref : undefined}
+          menuRef={menuRef}
           items={options.map((option) => ({ id: option.value, label: option.label, description: option.description, group: option.group }))}
           selectedId={value}
           onSelect={onSelect}

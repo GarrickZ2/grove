@@ -43,6 +43,7 @@ mod tests {
 
     fn connection() -> Connect {
         connects::create(connects::ConnectInput {
+            target: None,
             name: "Startup test".into(),
             platform: "feishu".into(),
             domain: "feishu".into(),
@@ -53,6 +54,117 @@ mod tests {
             session_id: String::new(),
         })
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn buddy_binding_routes_after_switch_and_rejects_previous_form() {
+        use crate::storage::{
+            buddies::test_support::{seed_buddy, Store},
+            connects::ConnectTarget,
+            database,
+        };
+        let _lock = database::test_lock().lock().await;
+        let _store = Store::new();
+        let buddy = seed_buddy(&database::connection(), "im");
+        let connection = connects::create(connects::ConnectInput {
+            target: Some(ConnectTarget::Buddy {
+                buddy_id: buddy.id.clone(),
+            }),
+            name: "Buddy IM".into(),
+            platform: "feishu".into(),
+            domain: "feishu".into(),
+            enabled: true,
+            adapter_config: serde_json::json!({}),
+            project_id: buddy.project_hash.clone(),
+            task_id: "_local".into(),
+            session_id: buddy.active_session_id.clone().unwrap(),
+        })
+        .unwrap();
+        let form = crate::agent_graph::ask_form::AskFormInput {
+            title: "Old question".into(),
+            description: None,
+            questions: Vec::new(),
+        };
+        crate::connect::grove::stash_ask_form(
+            "old-buddy-form",
+            &form,
+            Some(&connection.session_id),
+        );
+        let current = crate::buddy::switch_on(
+            &database::connection(),
+            &buddy,
+            "codex-acp",
+            Default::default(),
+        )
+        .unwrap();
+        let chat = current.active_session_id.as_deref().unwrap();
+        let key = format!("{}:_local:{chat}", current.project_hash);
+        let (_, mut updates, _guard) =
+            crate::acp::new_handle_for_test(&key, &current.project_hash, "_local", chat);
+        assert_eq!(
+            connects::get(&connection.id).unwrap().unwrap().session_id,
+            chat
+        );
+        assert_eq!(
+            crate::connect::grove::create_session(&connection, None).unwrap(),
+            chat
+        );
+        assert!(
+            crate::connect::grove::start_new_session(&connection, "codex-acp")
+                .await
+                .unwrap_err()
+                .contains("Buddy 只有一条对话")
+        );
+        assert!(!connects::set_session(&connection.id, "replacement").unwrap());
+        let inbound = || InboundMessage {
+            external_message_id: "external".into(),
+            conversation_id: "conversation".into(),
+            sender_id: "user".into(),
+            text: "hello".into(),
+            attachments: Vec::new(),
+        };
+        let adapter: AdapterRef = std::sync::Arc::new(TestAdapter::default());
+        crate::connect::grove::deliver_prompt(
+            connection.clone(),
+            adapter.clone(),
+            inbound(),
+            "hello".into(),
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let crate::acp::AcpUpdate::UserMessage { text, .. } =
+                    updates.recv().await.unwrap()
+                {
+                    assert_eq!(text, "hello");
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        let error = crate::connect::grove::deliver_form_prompt(
+            connection.clone(),
+            adapter,
+            inbound(),
+            "old answer".into(),
+            "old-buddy-form",
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("previous Session"));
+        crate::connect::grove::dismiss_ask_form("old-buddy-form");
+        database::connection()
+            .execute(
+                "UPDATE connects SET session_id='missing' WHERE id=?1",
+                [&connection.id],
+            )
+            .unwrap();
+        assert_eq!(
+            connects::get(&connection.id).unwrap().unwrap().session_id,
+            chat
+        );
     }
 
     #[tokio::test]
@@ -250,7 +362,15 @@ pub async fn handle_action(
                 text: text.clone(),
                 attachments: Vec::new(),
             };
-            match super::grove::deliver_prompt(current, adapter.clone(), inbound, text).await {
+            match super::grove::deliver_form_prompt(
+                current,
+                adapter.clone(),
+                inbound,
+                text,
+                form_id,
+            )
+            .await
+            {
                 Ok(()) => {
                     super::grove::complete_ask_form(form_id);
                     Ok(ActionResult::notice(

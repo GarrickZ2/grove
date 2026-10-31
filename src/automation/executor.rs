@@ -149,7 +149,7 @@ pub async fn run_with_payload(
     };
 
     // 2. Resolve chat session -------------------------------------------
-    let chat_id = match resolve_chat(automation, &task_id) {
+    let mut chat_id = match resolve_chat(automation, &task_id) {
         Ok(id) => id,
         Err(e) => return fail(&run_id, "resolve_session", &e, Some(&task_id), None),
     };
@@ -177,20 +177,49 @@ pub async fn run_with_payload(
     }
 
     // 3. Ensure the ACP subprocess is up ---------------------------------
-    let (handle, _activity) =
-        match ensure_target_handle(&automation.project, &task_id, &chat_id).await {
-            Ok(h) => h,
-            Err(e) => {
-                return fail(
-                    &run_id,
-                    "spawn_acp",
-                    &format!("ensure session: {e}"),
-                    Some(&task_id),
-                    Some(&chat_id),
-                );
+    let target = if automation.session_mode == TargetMode::BuddyActive {
+        let buddy = crate::storage::buddies::get_by_project(
+            &crate::storage::database::connection(),
+            &automation.project,
+        )
+        .ok()
+        .flatten();
+        if let Some(buddy) = buddy {
+            match crate::buddy::delegations::active_handle(&buddy.id).await {
+                Ok((current, handle, activity)) => {
+                    chat_id = current.active_session_id.unwrap();
+                    Ok((handle, activity))
+                }
+                Err(e) => Err(crate::agent_graph::error::AgentGraphError::Internal(
+                    e.to_string(),
+                )),
             }
-        };
+        } else {
+            Err(crate::agent_graph::error::AgentGraphError::TargetNotFound)
+        }
+    } else {
+        ensure_target_handle(&automation.project, &task_id, &chat_id).await
+    };
+    let (handle, _activity) = match target {
+        Ok(h) => h,
+        Err(e) => {
+            return fail(
+                &run_id,
+                "spawn_acp",
+                &format!("ensure session: {e}"),
+                Some(&task_id),
+                Some(&chat_id),
+            );
+        }
+    };
 
+    // Cancellation and final admission share a gate. Startup remains outside
+    // it so a user can cancel while an Agent is connecting.
+    let _buddy_run_gate = if automation.session_mode == TargetMode::BuddyActive {
+        Some(crate::buddy::lock(&format!("routine-run:{run_id}")).await)
+    } else {
+        None
+    };
     // 4. Subscribe BEFORE handing the prompt to ACP. The agent could emit
     //    UserMessage + Complete within microseconds for a short prompt; if
     //    we subscribed after, those events go to no listener and the run
@@ -201,11 +230,11 @@ pub async fn run_with_payload(
     //     window where a user-cancel could land *after* we stamped the
     //     ids but *before* we actually queued the prompt — without this,
     //     the row would be `cancelled` in the DB while the executor goes
-    //     on to send_prompt and the agent runs. Still racy against a
-    //     cancel that fires between this check and the send below, but
-    //     that window is microseconds.
-    if let Ok(Some(r)) = automations::get_run(&run_id) {
-        if r.status != "queued" {
+    //     on to send_prompt and the agent runs. Buddy Routines also hold
+    //     the admission gate through submission, excluding a later cancel.
+    match automations::get_run(&run_id) {
+        Ok(Some(r)) if r.status == "queued" => {}
+        Ok(Some(r)) => {
             return RunOutcome {
                 run_id,
                 status: r.status,
@@ -213,6 +242,37 @@ pub async fn run_with_payload(
                 resolved_task_id: Some(task_id),
                 resolved_chat_id: Some(chat_id),
             };
+        }
+        // A cancelled Run may already have been deleted while startup was
+        // pending. Missing/unreadable state never authorizes a fresh prompt.
+        Ok(None) => {
+            return RunOutcome::failed_run(
+                &run_id,
+                "Run no longer exists",
+                Some(task_id),
+                Some(chat_id),
+            )
+        }
+        Err(error) => {
+            return fail(
+                &run_id,
+                "read_run",
+                &error.to_string(),
+                Some(&task_id),
+                Some(&chat_id),
+            )
+        }
+    }
+
+    if automation.session_mode == TargetMode::BuddyActive {
+        if let Err(error) = automations::mark_run_resolved(&run_id, &task_id, &chat_id) {
+            return fail(
+                &run_id,
+                "stamp_resolved",
+                &error.to_string(),
+                Some(&task_id),
+                Some(&chat_id),
+            );
         }
     }
 
@@ -222,11 +282,20 @@ pub async fn run_with_payload(
     //    pending queue only on `Complete`, so an idle session would hold
     //    a queued prompt forever (Bug 1). If we lose (something else is
     //    running), enqueue and let the end-of-turn drain pick it up.
-    let snapshot = automation
-        .agent_config
-        .queued_config()
-        .unwrap_or_else(|| handle.snapshot_config());
+    let snapshot = if automation.session_mode == TargetMode::BuddyActive {
+        handle.snapshot_buddy_config()
+    } else {
+        automation
+            .agent_config
+            .queued_config()
+            .unwrap_or_else(|| handle.snapshot_config())
+    };
     let sender = format!("automation:{}", run_id);
+    let message_id = if automation.session_mode == TargetMode::BuddyActive {
+        sender.clone()
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
     let claimed = handle
         .is_busy
         .compare_exchange(
@@ -238,7 +307,8 @@ pub async fn run_with_payload(
         .is_ok();
     if claimed {
         match handle
-            .send_prompt(
+            .send_tracked_prompt_with_id(
+                message_id.clone(),
                 automation.prompt.clone(),
                 Vec::new(),
                 Some(sender.clone()),
@@ -264,13 +334,15 @@ pub async fn run_with_payload(
             }
         }
     } else {
-        let qmsg = QueuedMessage::new(
+        let mut qmsg = QueuedMessage::new(
             automation.prompt.clone(),
             Vec::new(),
             Some(sender.clone()),
             false,
             Some(snapshot),
         );
+        qmsg.id = message_id.clone();
+        qmsg.message_ids = vec![message_id];
         let updated = match handle.submit_queued_message(qmsg).await {
             Ok(updated) => updated,
             Err(error) => {
@@ -508,7 +580,7 @@ async fn run_handler(automation: &Automation, trigger: consumer::TriggerContext)
         remote_auth: resolved_agent.auth_header,
         suppress_initial_connecting: true,
         import_session: false,
-        persona_injection: None,
+        persona_injection: crate::buddy::memory_persona(automation),
     };
     let (handle, rx) =
         match crate::acp::get_or_start_session(session_key.clone(), start_config).await {
@@ -821,6 +893,14 @@ fn agent_snapshot(a: &Automation) -> String {
             .as_ref()
             .map(|t| t.agent.clone())
             .unwrap_or_default(),
+        TargetMode::BuddyActive => crate::storage::buddies::get_by_project(
+            &crate::storage::database::connection(),
+            &a.project,
+        )
+        .ok()
+        .flatten()
+        .map(|b| b.custom_agent_id)
+        .unwrap_or_default(),
         TargetMode::Existing => match (&a.chat_id, &a.task_id) {
             // Look up the chat's actual agent so the run row's snapshot
             // reflects the persona the user will see when they open the
@@ -961,6 +1041,7 @@ async fn wait_for_completion(
 
 fn resolve_task(a: &Automation) -> Result<String, String> {
     match a.task_mode {
+        TargetMode::BuddyActive => Err("buddy_active is only a session_mode".into()),
         TargetMode::Existing => {
             let task_id = a.task_id.clone().ok_or("existing mode requires task_id")?;
             tasks::get_task(&a.project, &task_id)
@@ -1025,6 +1106,18 @@ fn resolve_task(a: &Automation) -> Result<String, String> {
 
 fn resolve_chat(a: &Automation, task_id: &str) -> Result<String, String> {
     match a.session_mode {
+        TargetMode::BuddyActive => {
+            if a.task_mode != TargetMode::Existing || task_id != tasks::LOCAL_TASK_ID {
+                return Err("buddy_active requires Buddy Local Task".into());
+            }
+            crate::storage::buddies::get_by_project(
+                &crate::storage::database::connection(),
+                &a.project,
+            )
+            .map_err(|e| e.to_string())?
+            .and_then(|b| b.active_session_id)
+            .ok_or_else(|| "Buddy has no active Segment".into())
+        }
         TargetMode::Existing => {
             let chat_id = a.chat_id.clone().ok_or("existing mode requires chat_id")?;
             tasks::get_chat_session(&a.project, task_id, &chat_id)

@@ -296,6 +296,21 @@ pub fn append_event(project: &str, task_id: &str, chat_id: &str, event: &AcpUpda
 }
 
 pub fn append_event_to_path(path: &Path, event: &AcpUpdate) {
+    // Artifact histories outside persisted chat directories have no Segment.
+    let conn = path
+        .starts_with(super::grove_dir().join("projects"))
+        .then(super::database::connection);
+    if let Some(conn) = conn.as_ref() {
+        if let Some(chat_id) = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+        {
+            if super::buddies::ensure_session_writable_on(conn, chat_id).is_err() {
+                return;
+            }
+        }
+    }
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -567,6 +582,9 @@ pub fn copy_history(
     if !src.exists() {
         return Ok(());
     }
+    let conn = super::database::connection();
+    super::buddies::ensure_session_writable_on(&conn, dst_chat_id)
+        .map_err(std::io::Error::other)?;
     let dst = history_file_path(project, task_id, dst_chat_id);
     if let Some(parent) = dst.parent() {
         fs::create_dir_all(parent)?;
@@ -577,6 +595,11 @@ pub fn copy_history(
 
 /// 清空 chat 历史文件（新 session 时调用）
 pub fn clear_history(project: &str, task_id: &str, chat_id: &str) {
+    let conn = super::database::connection();
+    if super::buddies::ensure_session_writable_on(&conn, chat_id).is_err() {
+        return;
+    }
+
     let path = history_file_path(project, task_id, chat_id);
     if path.exists() {
         let _ = fs::remove_file(&path);
@@ -600,6 +623,11 @@ pub fn compact_history(project: &str, task_id: &str, chat_id: &str) {
 
 /// 原子性重写 history.jsonl
 fn write_history(project: &str, task_id: &str, chat_id: &str, events: &[AcpUpdate]) {
+    let conn = super::database::connection();
+    if super::buddies::ensure_session_writable_on(&conn, chat_id).is_err() {
+        return;
+    }
+
     let path = history_file_path(project, task_id, chat_id);
     let tmp = path.with_extension("jsonl.tmp");
 

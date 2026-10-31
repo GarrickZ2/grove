@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useContext, useEffect } from "react";
+import { InteractionContext } from "./InteractionContext";
 import { contextKeyService } from "./ContextKeyService";
 
 /**
@@ -13,12 +14,13 @@ import { contextKeyService } from "./ContextKeyService";
  * ref-counting at this layer (use distinct key names instead).
  */
 export function useContextKey(name: string, value: boolean, enabled: boolean = true): void {
+  const active = useContext(InteractionContext);
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !active) return;
     const key = contextKeyService.createKey<boolean>(name, false);
     key.set(value);
     return () => {
       key.reset();
     };
-  }, [name, value, enabled]);
+  }, [name, value, enabled, active]);
 }

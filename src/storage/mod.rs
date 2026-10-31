@@ -4,6 +4,7 @@ pub mod agent_registry;
 pub mod ai;
 pub mod auth_devices;
 pub mod automations;
+pub mod buddies;
 pub mod chat_attachments;
 pub mod chat_history;
 pub mod comments;

@@ -9,6 +9,7 @@ mod app_icons;
 #[cfg(not(windows))]
 mod async_ops_state;
 mod automation;
+mod buddy;
 mod check;
 mod cli;
 #[cfg(not(windows))]

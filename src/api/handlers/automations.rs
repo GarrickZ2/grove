@@ -108,6 +108,7 @@ fn target_mode_str(m: TargetMode) -> String {
     match m {
         TargetMode::New => "new".to_string(),
         TargetMode::Existing => "existing".to_string(),
+        TargetMode::BuddyActive => "buddy_active".to_string(),
     }
 }
 
@@ -115,6 +116,7 @@ fn parse_target_mode(s: &str) -> Result<TargetMode, (StatusCode, String)> {
     match s {
         "new" => Ok(TargetMode::New),
         "existing" => Ok(TargetMode::Existing),
+        "buddy_active" => Ok(TargetMode::BuddyActive),
         other => Err((
             StatusCode::BAD_REQUEST,
             format!("invalid mode '{}': expected 'new' or 'existing'", other),
@@ -226,6 +228,25 @@ fn validate_input(
     }
     let task_mode = parse_target_mode(&req.task_mode)?;
     let session_mode = parse_target_mode(&req.session_mode)?;
+    if task_mode == TargetMode::BuddyActive {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "buddy_active is only a session_mode".into(),
+        ));
+    }
+    if session_mode == TargetMode::BuddyActive
+        && (task_mode != TargetMode::Existing
+            || req.task_id.as_deref() != Some(crate::storage::tasks::LOCAL_TASK_ID)
+            || req.chat_id.is_some()
+            || req.session_template.is_some()
+            || req.task_template.is_some())
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "buddy_active requires the Buddy Local Task without a fixed Session".into(),
+        ));
+    }
+
     match task_mode {
         TargetMode::Existing if req.task_id.as_deref().unwrap_or("").is_empty() => {
             return Err((
@@ -299,6 +320,19 @@ pub async fn create(
     let (_, project_key) =
         find_project_by_id(&project_id).map_err(|s| (s, "project not found".to_string()))?;
     let (task_mode, session_mode) = validate_input(&req)?;
+    if session_mode == TargetMode::BuddyActive
+        && crate::storage::buddies::get_by_project(
+            &crate::storage::database::connection(),
+            &project_key,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .is_none()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "buddy_active requires a Buddy Project".into(),
+        ));
+    }
 
     let now = Utc::now().timestamp();
     let next_run_at =
@@ -369,6 +403,19 @@ pub async fn update(
     }
     ensure_user_managed(&existing)?;
     let (task_mode, session_mode) = validate_input(&req)?;
+    if session_mode == TargetMode::BuddyActive
+        && crate::storage::buddies::get_by_project(
+            &crate::storage::database::connection(),
+            &project_key,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .is_none()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "buddy_active requires a Buddy Project".into(),
+        ));
+    }
 
     let cron_changed = existing.schedule_cron != req.schedule_cron;
     // Re-enabling an automation the scheduler previously system-disabled
@@ -553,6 +600,12 @@ pub async fn cancel_run(
         return Err((StatusCode::NOT_FOUND, "run not found".into()));
     }
 
+    let _buddy_run_gate = if parent.session_mode == TargetMode::BuddyActive {
+        Some(crate::buddy::lock(&format!("routine-run:{run_id}")).await)
+    } else {
+        None
+    };
+
     // Claim the cancellation atomically. Whoever wins this race owns the
     // ACP side-effects — the watcher's UPDATE will no-op against the
     // resulting `cancelled` status.
@@ -601,7 +654,13 @@ pub async fn cancel_run(
         let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
         let sender_tag = format!("automation:{}", run_id);
         if let Some(handle) = crate::acp::get_session_handle(&session_key) {
-            if prior_status == "queued" {
+            if parent.session_mode == TargetMode::BuddyActive {
+                handle.dequeue_messages_by_sender(&sender_tag);
+                handle.emit(crate::acp::AcpUpdate::QueueUpdate {
+                    messages: handle.get_queue(),
+                });
+                let _ = handle.cancel_prompts(vec![sender_tag]).await;
+            } else if prior_status == "queued" {
                 let removed = handle.dequeue_messages_by_sender(&sender_tag);
                 if removed > 0 {
                     // Mirror dequeue_message_by_id callers elsewhere:

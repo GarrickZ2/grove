@@ -288,10 +288,7 @@ struct TaskInfo {
 }
 
 fn resolve_task(project_id: &str, task_id: &str) -> Option<TaskInfo> {
-    let projects = crate::storage::workspace::load_projects().ok()?;
-    let p = projects
-        .iter()
-        .find(|p| crate::storage::workspace::project_hash(&p.path) == project_id)?;
+    let p = crate::storage::workspace::load_project_by_hash(project_id).ok()??;
     let task = crate::storage::tasks::get_task(project_id, task_id).ok()??;
     Some(TaskInfo {
         worktree: task.worktree_path,
@@ -301,6 +298,27 @@ fn resolve_task(project_id: &str, task_id: &str) -> Option<TaskInfo> {
         project_name: p.name.clone(),
         project_path: p.path.clone(),
     })
+}
+
+#[cfg(test)]
+mod buddy_tests {
+    use super::*;
+
+    #[test]
+    fn plugin_context_resolves_hidden_buddy_project() {
+        use crate::storage::{buddies::test_support, database, tasks::LOCAL_TASK_ID, workspace};
+        let _lock = database::test_lock().blocking_lock();
+        let _store = test_support::Store::new();
+        let buddy = {
+            let conn = database::try_connection().unwrap();
+            test_support::seed_buddy(&conn, "plugin-owner")
+        };
+        assert!(workspace::load_projects().unwrap().is_empty());
+        let context = resolve_task(&buddy.project_hash, LOCAL_TASK_ID).unwrap();
+        assert_eq!(context.project_name, buddy.id);
+        assert_eq!(context.worktree, context.project_path);
+        assert!(resolve_task(&buddy.project_hash, "missing").is_none());
+    }
 }
 
 async fn spawn(

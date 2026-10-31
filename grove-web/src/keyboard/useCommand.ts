@@ -1,4 +1,5 @@
-import { useEffect, useRef, type DependencyList } from "react";
+import { InteractionContext } from "./InteractionContext";
+import { useContext, useEffect, useRef, type DependencyList } from "react";
 import { commandRegistry } from "./CommandRegistry";
 import type { CommandHandler } from "./types";
 
@@ -70,9 +71,12 @@ function useHandlerRegistration(
   enabled: (() => boolean) | undefined,
   deps: DependencyList | undefined,
 ): void {
+  const active = useContext(InteractionContext);
   const handlerRef = useRef(handler);
   const enabledRef = useRef(enabled);
+  const activeRef = useRef(active);
   useEffect(() => {
+    activeRef.current = active;
     handlerRef.current = handler;
     enabledRef.current = enabled;
   });
@@ -81,20 +85,23 @@ function useHandlerRegistration(
     return commandRegistry.registerHandler(
       id,
       (args) => handlerRef.current(args),
-      enabled
-        ? () => {
+      () => activeRef.current && (enabled
+        ? (() => {
             const cur = enabledRef.current;
             return cur ? cur() : true;
-          }
-        : undefined,
+          })()
+        : true),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- caller deps
   }, [id, ...(deps ?? [])]);
 }
 
 function useLegacyDefRegistration(def: LegacyCommandDef, deps: DependencyList): void {
+  const active = useContext(InteractionContext);
+  const activeRef = useRef(active);
   const defRef = useRef(def);
   useEffect(() => {
+    activeRef.current = active;
     defRef.current = def;
   });
 
@@ -110,12 +117,12 @@ function useLegacyDefRegistration(def: LegacyCommandDef, deps: DependencyList): 
         passThroughTextInput: def.passThroughTextInput,
       },
       () => defRef.current.handler(),
-      def.enabled
-        ? () => {
+      () => activeRef.current && (def.enabled
+        ? (() => {
             const cur = defRef.current.enabled;
             return cur ? cur() : true;
-          }
-        : undefined,
+          })()
+        : true),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- caller deps
   }, deps);
@@ -127,8 +134,11 @@ function useLegacyDefRegistration(def: LegacyCommandDef, deps: DependencyList): 
  */
 export function useCommands(defs: LegacyCommandDef[], deps: DependencyList = []): void {
   "use no memo";
+  const active = useContext(InteractionContext);
+  const activeRef = useRef(active);
   const defsRef = useRef(defs);
   useEffect(() => {
+    activeRef.current = active;
     defsRef.current = defs;
   });
 
@@ -145,12 +155,12 @@ export function useCommands(defs: LegacyCommandDef[], deps: DependencyList = [])
           passThroughTextInput: def.passThroughTextInput,
         },
         () => defsRef.current[index]?.handler(),
-        def.enabled
-          ? () => {
+        () => activeRef.current && (def.enabled
+          ? (() => {
               const cur = defsRef.current[index]?.enabled;
               return cur ? cur() : true;
-            }
-          : undefined,
+            })()
+          : true),
       ),
     );
     return () => {
