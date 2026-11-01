@@ -41,9 +41,11 @@ fn view(buddy: db::Buddy, details: bool) -> Result<Value, GroveError> {
     let persona = custom_agent::get(&buddy.custom_agent_id)?
         .ok_or_else(|| GroveError::not_found("Buddy persona not found"))?;
     let preview = buddy::preview::get(&buddy);
+    let (running, waiting) = db::count_open_delegations(&database::connection(), &buddy.id)?;
     let mut value = json!({"id":buddy.id,"project_hash":buddy.project_hash,"name":persona.name,"avatar":buddy.avatar,"description":buddy.description,
         "agent":persona.base_agent,"active_session_id":buddy.active_session_id,"sort_position":buddy.sort_position,
-        "status":preview.status,"last_message_preview":preview.last_message_preview,"last_activity_at":preview.last_activity_at});
+        "status":preview.status,"last_message_preview":preview.last_message_preview,"last_activity_at":preview.last_activity_at,
+        "running_delegations":running,"waiting_delegations":waiting});
     if details {
         let object = value.as_object_mut().unwrap();
         object.extend(serde_json::from_value::<serde_json::Map<String,Value>>(json!({"role":persona.duty,"system_prompt":persona.system_prompt,
@@ -145,6 +147,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn buddy_personas_stay_out_of_custom_agent_surfaces() {
+        use axum::response::IntoResponse;
+        let _lock = database::test_lock().lock().await;
+        let _store = Store::new();
+        let buddy = seed_buddy(&database::connection(), "hidden");
+        assert!(custom_agent::get(&buddy.custom_agent_id).unwrap().is_some());
+        assert!(!custom_agent::list()
+            .unwrap()
+            .iter()
+            .any(|agent| agent.id == buddy.custom_agent_id));
+        let deleted =
+            crate::api::handlers::custom_agent::delete(Path(buddy.custom_agent_id.clone()))
+                .await
+                .into_response();
+        assert_eq!(deleted.status(), StatusCode::NOT_FOUND);
+        assert!(custom_agent::get(&buddy.custom_agent_id).unwrap().is_some());
+    }
+
+    #[tokio::test]
     async fn rest_creation_profile_order_and_archive_preserve_segments() {
         let _lock = database::test_lock().lock().await;
         let _store = Store::new();
@@ -187,6 +208,8 @@ mod tests {
         let Json(listed) = list(Query(ListQuery::default())).await.unwrap();
         assert_eq!(listed[0]["id"], second.id);
         assert_eq!(listed[1]["id"], id);
+        assert_eq!(listed[0]["running_delegations"], 0);
+        assert_eq!(listed[0]["waiting_delegations"], 0);
         assert_eq!(
             archive(Path(id.clone())).await.unwrap(),
             StatusCode::NO_CONTENT

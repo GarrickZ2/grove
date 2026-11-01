@@ -147,7 +147,7 @@ describe('Connect runtime status refresh', () => {
     vi.mocked(getProject).mockResolvedValue({ local_task: { id: 'local', name: 'Local task', status: 'idle' } } as ProjectResponse);
     vi.mocked(listTasks).mockResolvedValue([{ id: 't1', name: 'Saved task', status: 'idle' }] as TaskResponse[]);
     vi.mocked(listChats).mockResolvedValue([{ id: 's1', title: 'Saved session', agent: 'codex' }] as ChatSessionResponse[]);
-    vi.mocked(updateConnect).mockImplementation(async (_, input) => ({ ...saved, ...input }));
+    vi.mocked(updateConnect).mockImplementation(async (_, input) => ({ ...saved, ...input, target: saved.target }));
     return saved;
   }
 
@@ -324,5 +324,21 @@ describe('Connect runtime status refresh', () => {
     await act(async () => resolvePending([connection('online')]));
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
     expect(listConnects).toHaveBeenCalledTimes(count + 1);
+  });
+  it('locks to one Buddy: no sidebar, its single connection, and no target picker', async () => {
+    const mine = { ...connection('online'), id: 'mine', name: 'Buddy Feishu', buddy_id: 'b1' };
+    vi.mocked(listConnects).mockResolvedValue([connection('online'), mine]);
+    await act(async () => root.render(<ConnectDialog isOpen onClose={() => {}} lock={{ buddyId: 'b1', name: 'Atlas' }} />));
+    expect(container.querySelector('nav[aria-label="Connections"]')).toBeNull();
+    expect(container.textContent).toContain('Buddy Feishu');
+    expect(container.textContent).toContain('Messages go to Atlas');
+    expect(container.textContent).not.toContain('Messages route to');
+  });
+
+  it('starts a locked dialog on the new-connection flow when the Buddy has none', async () => {
+    vi.mocked(listConnects).mockResolvedValue([connection('online')]);
+    await act(async () => root.render(<ConnectDialog isOpen onClose={() => {}} lock={{ buddyId: 'b1', name: 'Atlas' }} />));
+    expect(container.textContent).toContain('Choose where you want to talk to Atlas.');
+    expect(container.textContent).not.toContain('Local');
   });
 });

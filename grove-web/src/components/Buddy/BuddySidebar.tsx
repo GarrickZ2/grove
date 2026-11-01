@@ -4,8 +4,8 @@ import type { BuddySummary } from "../../api/buddies";
 import { DialogShell } from "../ui/DialogShell";
 import { BuddyListItem } from "./BuddyListItem";
 
-export function BuddySidebar({ items, selectedId, onSelect, onCreate, onGlobalSettings, onBuddySettings, onArchive, onReorder, phone = false, error, loading = false, onRetry, exit }: {
-  exit?: React.ReactNode; items: BuddySummary[]; selectedId: string; onSelect: (id: string) => void; onCreate: () => void;
+export function BuddySidebar({ items, unread, selectedId, onSelect, onCreate, onGlobalSettings, onBuddySettings, onArchive, onReorder, phone = false, error, loading = false, onRetry, exit, toggle }: {
+  exit?: React.ReactNode; toggle?: React.ReactNode; items: BuddySummary[]; unread?: Set<string>; selectedId: string; onSelect: (id: string) => void; onCreate: () => void;
   onGlobalSettings: () => void; onBuddySettings: (id: string) => void; onArchive: (id: string) => void;
   onReorder: (ids: string[]) => void; phone?: boolean; error?: string | null; loading?: boolean; onRetry?: () => void;
 }) {
@@ -21,11 +21,11 @@ export function BuddySidebar({ items, selectedId, onSelect, onCreate, onGlobalSe
     ids.splice(ids.indexOf(target), 0, source); onReorder(ids);
   };
   return <aside className="buddy-sidebar" aria-label="Buddies">
-    <div className="buddy-sidebar-top" data-tauri-drag-region="deep" data-window-drag-strip>{exit}</div>
+    <div className="buddy-sidebar-top" data-tauri-drag-region="deep" data-window-drag-strip>{exit}{toggle}</div>
     <div className="buddy-sidebar-heading"><h1>Buddies</h1>{items.length > 8 && <button type="button" className="orbit-icon-button" aria-label="Search Buddies" aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setQuery(""); }}><Search size={16} /></button>}<button type="button" className="buddy-icon-button" aria-label="Create Buddy" onClick={onCreate}><Plus /></button></div>
     {searchOpen && <label className="buddy-search"><Search size={15} /><input aria-label="Search Buddies" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} /></label>}
     {error && <p role="alert">{error}<button type="button" className="buddy-button" onClick={onRetry}>Retry</button></p>}
-    <div className="buddy-list">{filtered.map((buddy) => <BuddyListItem key={buddy.id} buddy={buddy} selected={buddy.id === selectedId} avatarSize={phone ? 44 : 30} onSelect={() => onSelect(buddy.id)} onMenu={() => setMenuId(buddy.id)} onDrag={() => { dragged.current = buddy.id; }} onDrop={() => drop(buddy.id)} />)}
+    <div className="buddy-list">{filtered.map((buddy) => <BuddyListItem key={buddy.id} buddy={buddy} selected={buddy.id === selectedId} unread={unread?.has(buddy.id)} avatarSize={phone ? 44 : 30} onSelect={() => onSelect(buddy.id)} onMenu={() => setMenuId(buddy.id)} onDrag={() => { dragged.current = buddy.id; }} onDrop={() => drop(buddy.id)} />)}
       {!filtered.length && <p className="buddy-muted">{loading ? "Loading Buddies…" : query ? "No matching Buddies" : "Create your first Buddy"}</p>}
     </div>
     <footer className="orbit-footer"><button className="orbit-row orbit-nav-row" type="button" onClick={onGlobalSettings}><Settings size={18} />Settings</button></footer>

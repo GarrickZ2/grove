@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CheckCircle2, Loader2, X } from "lucide-react";
 import { Button, Combobox, DialogShell, DrawerShell } from "../ui";
 import { ConfirmDialog } from "../Dialogs/ConfirmDialog";
@@ -21,6 +21,7 @@ import {
   type McpAccessDraft,
 } from "./McpAgentAccess";
 import { ExtensionIdentityIcon } from "./ExtensionIdentityIcon";
+import { BuddyAvatar } from "../Buddy/BuddyAvatar";
 import { AgentIcon } from "./AgentIcon";
 import {
   McpAuthFields,
@@ -38,6 +39,7 @@ import {
   type McpAuthOptions,
 } from "./useMcpConnection";
 import { useMcpBindings } from "./useMcpBindings";
+import { useMcpBuddyTargets } from "./useMcpBuddyTargets";
 import { useMcpDialogFocus } from "./useMcpDialogFocus";
 import { requiresMcpAuthorization } from "./mcpManagementState";
 import {
@@ -85,9 +87,10 @@ export function AddMcpDialog({
     scope: projectPath ? "project" : "global",
     agentIds: [],
   });
+  const buddies = useMcpBuddyTargets();
   const [completed, setCompleted] = useState<{
     name: string;
-    agents: InstalledAgentConfig[];
+    targets: { id: string; name: string; icon: ReactNode }[];
     scope: string;
   } | null>(null);
   useEffect(() => {
@@ -118,6 +121,7 @@ export function AddMcpDialog({
     draft: accessDraft,
     onChange: setAccessDraft,
     agents,
+    buddies,
     projectPath,
     loading: loadingAgents,
     error: agentError,
@@ -158,7 +162,28 @@ export function AddMcpDialog({
     setCompleted({
       name: String(manifest.name),
       scope: accessDraft.scope,
-      agents: agents.filter((agent) => accessDraft.agentIds.includes(agent.id)),
+      targets:
+        accessDraft.scope === "buddy"
+          ? buddies
+              .filter((buddy) => accessDraft.agentIds.includes(buddy.id))
+              .map((buddy) => ({
+                id: buddy.id,
+                name: buddy.name,
+                icon: (
+                  <BuddyAvatar
+                    id={buddy.buddyId}
+                    avatar={buddy.avatar}
+                    size={18}
+                  />
+                ),
+              }))
+          : agents
+              .filter((agent) => accessDraft.agentIds.includes(agent.id))
+              .map((agent) => ({
+                id: agent.id,
+                name: agent.name,
+                icon: <AgentIcon iconId={agent.id} size={18} />,
+              })),
     });
   };
   const setup: SetupProps = { access, onCreate, definitionLocked };
@@ -200,25 +225,36 @@ export function AddMcpDialog({
                 <div>
                   <h3 className="text-base font-semibold">{completed.name}</h3>
                   <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-                    Configured for {completed.agents.length}{" "}
-                    {completed.agents.length === 1 ? "Agent" : "Agents"}.
+                    Configured for {completed.targets.length}{" "}
+                    {completed.scope === "buddy"
+                      ? completed.targets.length === 1
+                        ? "Buddy"
+                        : "Buddies"
+                      : completed.targets.length === 1
+                        ? "Agent"
+                        : "Agents"}
+                    .
                   </p>
                 </div>
               </div>
               <div>
                 <p className="text-xs font-medium">Available in</p>
                 <p className="mt-2 break-all text-sm">
-                  {completed.scope === "global" ? "All projects" : projectPath}
+                  {completed.scope === "global"
+                    ? "All projects"
+                    : completed.scope === "buddy"
+                      ? "Selected Buddies"
+                      : projectPath}
                 </p>
               </div>
               <div className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">
-                {completed.agents.map((agent) => (
+                {completed.targets.map((target) => (
                   <div
-                    key={agent.id}
+                    key={target.id}
                     className="flex items-center gap-3 px-4 py-3"
                   >
-                    <AgentIcon iconId={agent.id} size={18} />
-                    <span className="text-sm">{agent.name}</span>
+                    {target.icon}
+                    <span className="text-sm">{target.name}</span>
                     <CheckCircle2 className="ml-auto h-4 w-4 text-[var(--color-success)]" />
                   </div>
                 ))}
@@ -674,6 +710,7 @@ export function McpManagementDrawer({
       label: `${String(value.registryType ?? "Package")} · ${String(value.identifier ?? "")}`,
     })),
   ];
+  const buddies = useMcpBuddyTargets();
   const editor = useMcpBindings({
     repoKey: artifact.repo_key,
     repoPath: artifact.repo_path,
@@ -898,6 +935,7 @@ export function McpManagementDrawer({
                 else editor.updateDraft({ agentIds: next.agentIds });
               }}
               agents={agents}
+              buddies={buddies}
               projectPath={projectPath}
               loading={!editor.loaded && !editor.error}
               error={!editor.loaded ? editor.error : null}

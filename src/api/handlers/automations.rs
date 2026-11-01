@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 use crate::automation::cron_util;
 use crate::automation::executor;
 use crate::storage::automations::{
-    self, AgentConfigSelection, Automation, AutomationRun, SessionTemplate, TargetMode,
-    TaskTemplate, TASK_PROMPT_HANDLER,
+    self, AgentConfigSelection, Automation, AutomationRun, ScheduleWindow, SessionTemplate,
+    TargetMode, TaskTemplate, TASK_PROMPT_HANDLER,
 };
 
 use super::common::find_project_by_id;
@@ -64,6 +64,8 @@ pub struct AutomationDto {
     pub prompt: String,
     pub schedule_cron: String,
     pub event_triggers: Vec<String>,
+    #[serde(flatten)]
+    pub window: ScheduleWindow,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_run_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,6 +96,7 @@ impl From<Automation> for AutomationDto {
             prompt: a.prompt,
             schedule_cron: a.schedule_cron,
             event_triggers: a.event_triggers,
+            window: a.window,
             last_run_at: a.last_run_at,
             last_run_status: a.last_run_status,
             last_run_error: a.last_run_error,
@@ -145,6 +148,8 @@ pub struct UpsertAutomation {
     pub agent_config: Option<AgentConfigSelection>,
     #[serde(default)]
     pub event_triggers: Vec<String>,
+    #[serde(flatten, default)]
+    pub window: ScheduleWindow,
 }
 
 fn default_true() -> bool {
@@ -223,7 +228,7 @@ fn validate_input(
     if req.prompt.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "prompt is required".into()));
     }
-    if let Err(e) = cron_util::validate(&req.schedule_cron) {
+    if let Err(e) = cron_util::validate_schedule(&req.schedule_cron, req.window) {
         return Err((StatusCode::BAD_REQUEST, e));
     }
     let task_mode = parse_target_mode(&req.task_mode)?;
@@ -301,6 +306,24 @@ fn validate_input(
     Ok((task_mode, session_mode))
 }
 
+/// Next fire time for a schedule being saved. Enabling a one-time or
+/// end-bounded schedule that has nothing left to run is rejected so the user
+/// picks a future time instead of saving a routine that silently never fires.
+fn next_bounded_run(
+    cron: &str,
+    window: ScheduleWindow,
+    enabled: bool,
+) -> Result<Option<i64>, (StatusCode, String)> {
+    let next = cron_util::next_scheduled(cron, window).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if enabled && next.is_none() && window.is_bounded() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "this schedule has no future runs — pick a later time or end date".into(),
+        ));
+    }
+    Ok(next)
+}
+
 pub async fn list(
     Path(project_id): Path<String>,
 ) -> Result<Json<AutomationListResponse>, (StatusCode, String)> {
@@ -335,8 +358,7 @@ pub async fn create(
     }
 
     let now = Utc::now().timestamp();
-    let next_run_at =
-        cron_util::next_unix(&req.schedule_cron).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let next_run_at = next_bounded_run(&req.schedule_cron, req.window, req.enabled)?;
 
     let automation = Automation {
         id: automations::generate_id(),
@@ -363,6 +385,7 @@ pub async fn create(
         prompt: req.prompt,
         schedule_cron: req.schedule_cron,
         event_triggers: req.event_triggers,
+        window: req.window,
         last_run_at: None,
         last_run_status: None,
         last_run_error: None,
@@ -417,7 +440,7 @@ pub async fn update(
         ));
     }
 
-    let cron_changed = existing.schedule_cron != req.schedule_cron;
+    let cron_changed = existing.schedule_cron != req.schedule_cron || existing.window != req.window;
     // Re-enabling an automation the scheduler previously system-disabled
     // (cron with no future occurrence → `disable_with_error` cleared
     // next_run_at) should re-advance the schedule. Without this, the toggle
@@ -440,10 +463,11 @@ pub async fn update(
     existing.prompt = req.prompt;
     existing.schedule_cron = req.schedule_cron;
     existing.event_triggers = req.event_triggers;
+    existing.window = req.window;
     existing.updated_at = Utc::now().timestamp();
     if cron_changed || needs_revival {
-        existing.next_run_at = cron_util::next_unix(&existing.schedule_cron)
-            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        existing.next_run_at =
+            next_bounded_run(&existing.schedule_cron, existing.window, existing.enabled)?;
         // Clear the stale "disabled because cron has no future" error so
         // the UI stops showing it once we've successfully re-advanced.
         if needs_revival && existing.next_run_at.is_some() {

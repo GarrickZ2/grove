@@ -1,7 +1,7 @@
 import { createElement, type ReactNode } from "react";
 import { agentIconComponent, resolveAgentIcon } from "../../../utils/agentIcon";
 import { openExternalUrl } from "../../../utils/openExternal";
-import type { GroveMetaEnvelope } from "../../../utils/groveMeta";
+import { parseGroveMetaSegments, type GroveMetaEnvelope } from "../../../utils/groveMeta";
 
 /**
  * Single-tag, type-dispatched renderer for `<grove-meta>` envelopes.
@@ -368,6 +368,22 @@ function renderReviewCommentCard(env: GroveMetaEnvelope): ReactNode {
   );
 }
 
+/** Who sent a Buddy message (hand-off, follow-up, notice), read from its
+ * `buddy_message` envelope. The sender line above the bubble shows this, so
+ * the envelope itself renders nothing inside the message. */
+export function buddyMessageSender(content: string): { id: string; name: string; avatar: string | null } | null {
+  for (const segment of parseGroveMetaSegments(content)) {
+    if (segment.kind !== "meta" || segment.envelope.type !== "buddy_message") continue;
+    const data = segment.envelope.data as { buddy_id?: unknown; name?: unknown; avatar?: unknown };
+    return {
+      id: typeof data.buddy_id === "string" ? data.buddy_id : "",
+      name: typeof data.name === "string" && data.name ? data.name : "Buddy",
+      avatar: typeof data.avatar === "string" ? data.avatar : null,
+    };
+  }
+  return null;
+}
+
 export const GROVE_META_RENDERERS: Record<string, Renderer> = {
   grove_session_init: () => null,
   mention_spawn: (env) => renderMentionSpawn(env),
@@ -376,6 +392,7 @@ export const GROVE_META_RENDERERS: Record<string, Renderer> = {
   agent_inject_send: (env) => renderAgentInjectBadge(env, "send"),
   agent_inject_reply: (env) => renderAgentInjectBadge(env, "reply"),
   user_remind: (env) => renderUserRemindBadge(env),
+  buddy_message: () => null,
   preview_comment: (env) => renderPreviewCommentCard(env),
   browser_tab: (env) => renderBrowserTab(env),
   review_comment: (env) => renderReviewCommentCard(env),

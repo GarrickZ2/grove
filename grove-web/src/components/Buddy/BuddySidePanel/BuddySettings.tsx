@@ -6,7 +6,7 @@ import { BuddyAgentFields } from "../BuddyAgentFields";
 import { BuddyAvatarPicker } from "../BuddyAvatarPicker";
 import { resolveBuddyAvatar } from "../buddyAvatarConfig";
 import { buddyAgentSelection } from "../buddyAgentSelection";
-import { BuddyConnects } from "./BuddyConnects";
+import { BuddyMcpServers } from "./BuddyMcpServers";
 
 export function BuddySettings({ buddy, onChanged, onArchive }: { buddy: Buddy; onChanged: (buddy: Buddy) => void; onArchive: () => void }) {
   const { agents, error: agentsError, loading: agentsLoading, retry: retryAgents } = useBuddyAgents();
@@ -30,21 +30,24 @@ export function BuddySettings({ buddy, onChanged, onArchive }: { buddy: Buddy; o
     finally { setBusy(false); }
   };
   const pendingName = agents.find((agent) => agent.id === pendingAgent)?.name ?? pendingAgent;
-  return <section className="buddy-panel-section buddy-form" aria-label="Buddy settings">
-    <form className="buddy-form" onSubmit={(event) => { event.preventDefault(); void save({ name: name.trim(), role, description: role, system_prompt: prompt }); }}>
+  const dirty = name.trim() !== buddy.name || role !== buddy.role || prompt !== buddy.system_prompt;
+  return <section className="buddy-panel-section buddy-settings" aria-label="Buddy settings">
+    <fieldset disabled={busy} className="buddy-settings-avatar"><BuddyAvatarPicker value={resolveBuddyAvatar(buddy.id, buddy.avatar)} onChange={(value) => void save({ avatar: JSON.stringify(value) })} /></fieldset>
+    <form className="buddy-form buddy-settings-group" aria-labelledby="buddy-settings-profile" onSubmit={(event) => { event.preventDefault(); void save({ name: name.trim(), role, description: role, system_prompt: prompt }); }}>
+      <h3 id="buddy-settings-profile" className="buddy-field-label">Profile</h3>
       <label>Name<input required value={name} onChange={(event) => setName(event.target.value)} /></label>
       <label>Role<input value={role} onChange={(event) => setRole(event.target.value)} /></label>
-      <label>System prompt<textarea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label>
-      <button type="submit" className="buddy-button" disabled={busy || !name.trim()}>Save details</button>
+      <label>Instructions <span className="buddy-muted">(optional)</span><textarea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label>
+      {dirty && <div className="buddy-settings-save"><button type="button" className="buddy-button" disabled={busy} onClick={() => { setName(buddy.name); setRole(buddy.role); setPrompt(buddy.system_prompt); }}>Discard</button><button type="submit" className="buddy-button is-primary" disabled={busy || !name.trim()}>Save</button></div>}
     </form>
-    <h3>Agent</h3>
-    <BuddyAgentFields key={buddy.agent} loading={agentsLoading} agents={agents} agent={buddy.agent} config={buddyAgentSelection(buddy, agents.find((item) => item.id === buddy.agent))} onAgent={(id) => setPendingAgent(id === buddy.agent ? null : id)} onConfig={(config) => void save({ agent_config: config })} disabled={busy || !!agentsError} agentDisabled={buddy.status !== "idle"} confirmAgentChange
-      confirmation={pendingAgent && <div className="buddy-agent-confirm"><p>Switch to <strong>{pendingName}</strong>? This starts a new context. {pendingName} reads the earlier chat when it needs to. Memory, routines and IM stay as they are.</p><div className="buddy-actions"><button type="button" className="buddy-button" onClick={() => setPendingAgent(null)} disabled={busy}>Cancel</button><button type="button" className="buddy-button is-primary" disabled={busy || agentsLoading || !!agentsError || buddy.status !== "idle" || !agents.some((item) => item.id === pendingAgent)} onClick={() => void switchAgent()}>Switch to {pendingName}</button></div></div>} />
-    <p className="buddy-muted">Agent settings apply now. A new Agent starts a new context.</p>
-    {buddy.status !== "idle" && <p className="buddy-muted">Stop the current turn to switch Agent</p>}
+    <div className="buddy-field-group buddy-settings-group" role="group" aria-labelledby="buddy-settings-agent">
+      <h3 id="buddy-settings-agent" className="buddy-field-label">Agent</h3>
+      <div className="buddy-agent-panel"><BuddyAgentFields key={buddy.agent} loading={agentsLoading} agents={agents} agent={buddy.agent} config={buddyAgentSelection(buddy, agents.find((item) => item.id === buddy.agent))} onAgent={(id) => setPendingAgent(id === buddy.agent ? null : id)} onConfig={(config) => void save({ agent_config: config })} disabled={busy || !!agentsError} agentDisabled={buddy.status !== "idle"} confirmAgentChange
+        confirmation={pendingAgent && <div className="buddy-agent-confirm"><p>Switch to <strong>{pendingName}</strong>? This starts a new context. {pendingName} reads the earlier chat when it needs to. Memory, routines and IM stay as they are.</p><div className="buddy-actions"><button type="button" className="buddy-button" onClick={() => setPendingAgent(null)} disabled={busy}>Cancel</button><button type="button" className="buddy-button is-primary" disabled={busy || agentsLoading || !!agentsError || buddy.status !== "idle" || !agents.some((item) => item.id === pendingAgent)} onClick={() => void switchAgent()}>Switch to {pendingName}</button></div></div>} /></div>
+      {buddy.status !== "idle" && <p className="buddy-muted">Stop the current turn to switch Agent.</p>}
+    </div>
+    <BuddyMcpServers buddy={buddy} />
     {(error || agentsError) && <p role="alert">{error || agentsError}{agentsError && <button type="button" className="buddy-button" onClick={() => void retryAgents()}>Retry Agents</button>}</p>}
-    <fieldset disabled={busy}><BuddyAvatarPicker value={resolveBuddyAvatar(buddy.id, buddy.avatar)} onChange={(value) => void save({ avatar: JSON.stringify(value) })} /></fieldset>
-    <BuddyConnects buddy={buddy} />
-    <button type="button" className="buddy-button is-danger" onClick={onArchive}>Archive Buddy</button>
+    <div className="buddy-settings-group buddy-settings-danger"><div><h3 className="buddy-field-label">Archive Buddy</h3><p className="buddy-muted">History and memory are kept.</p></div><button type="button" className="buddy-button is-danger" aria-label="Archive Buddy" onClick={onArchive}>Archive</button></div>
   </section>;
 }

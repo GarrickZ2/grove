@@ -9,7 +9,9 @@ export interface McpBindingDraft {
   values: Record<string, string>;
   runtime: { kind: "remote" | "package"; index: number };
 }
-export type McpScope = "global" | "project";
+export type McpScope = "global" | "project" | "buddy";
+/** Buddy-scope bindings list Buddies, so ids never mix with Agent ids. */
+export const MCP_SCOPES: McpScope[] = ["global", "project", "buddy"];
 
 export function needsMcpAgentSetup(artifact: ExtensionArtifact): boolean {
   return (

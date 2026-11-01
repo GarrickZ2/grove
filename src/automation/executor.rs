@@ -1196,5 +1196,7 @@ fn resolve_chat(a: &Automation, task_id: &str) -> Result<String, String> {
 /// expression has no future occurrences (rare — usually a fixed past date).
 /// Interpreted in the system local timezone — see `cron_util::next_unix`.
 pub fn advance_next_run(a: &Automation) -> Option<i64> {
-    cron_util::next_unix(&a.schedule_cron).ok().flatten()
+    cron_util::next_scheduled(&a.schedule_cron, a.window)
+        .ok()
+        .flatten()
 }

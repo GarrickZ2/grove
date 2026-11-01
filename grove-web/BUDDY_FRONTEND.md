@@ -129,3 +129,23 @@ pnpm run build
 - API / hooks：buddies / mock、buddyResources、buddySessionConnection、chatSockets、useBuddies、useBuddySession、useBuddyComposer、useBuddyAgents、useBuddyResource、useBuddyBackSwipe。
 - 共享页面：SettingsPage、AutomationPage / AutomationDialog 及抽取文件、MemoryPage 及抽取文件、FormPill / surveyAnswers、backgroundChatConnections。
 - 对应 Vitest 测试与本记录。
+
+## 第二批实现记录
+
+依据 `docs/design/buddy-frontend.md` §6、§7、§9、§13 第二批。
+
+- **委派计数**：后端列表 / 详情直接返回 `running_delegations`、`waiting_delegations`（`storage::buddies::count_open_delegations`），前端不再为每个 Buddy 额外请求委派列表。
+- **委派列表**：`useBuddyDelegations` 在 Buddy 摘要变化、委派目标 Session 的 `chat_status` 事件时刷新，存在 running / waiting 时每 10s 兜底刷新。BuddyApp 通过 `BuddyDelegationsContext` 共享给对话与面板。
+- **委派卡**：`delegate` 工具调用在 Timeline 中生成 `delegation` 行；委派 ID 取自工具结果 JSON，取不到时按创建顺序匹配。状态只取委派列表：Running（扫光 + 已运行时长）/ Needs you / Done / Failed / Cancelled，点击打开 Delegations 页签对应项。
+- **subagent 请求**：委派处于 waiting 时，`useDelegationRequests` 以只读方式订阅目标 Session（复用 `connectBuddySession`，不改其队列模式），在对话底部与 Delegations 页签内渲染审批卡 / 问题卡并标注来源，响应经该 Session 的连接发送；离开 waiting 后关闭订阅。本 Buddy 与 subagent 共用 `requestHandlers`。
+- **Delegations 页签**：Needs you / Running / Done 分组；展开显示 brief、内嵌待处理请求、结果 markdown、Cancel（确认）与 "Open in Orbit / Workbench"。
+- **导航**：`BuddyNavigationContext.navigate` 支持任意目标 Session；活动行展开后提供 "Open session in …"，Memory 页签底部提供 "Open Memory page for this Buddy"。
+- **未读**：按 `last_activity_at` 与本地最后查看时间（`grove-buddy-seen`）比较；首次出现的 Buddy 视为已读。侧栏行加粗并显示未读点。subagent 等待时列表预览、头部状态与入口徽标同样提示。
+
+未包含：系统通知 / tray 推送（§9 第一条）仍待接入现有通知系统；真实 Agent 的委派全链路仍需在桌面应用中手动验收。
+
+### 后续调整
+
+- Buddy MCP 工具去掉 `buddy_` 前缀（服务名已是 `grove_buddy`，原先 Agent 看到的是 `mcp__grove_buddy__buddy_*`），改为 `list_projects`、`delegate`、`create_routine` 等；前端仍识别旧名称以兼容旧历史。
+- 修复 Buddy MCP 列表类工具：MCP `structuredContent` 必须是 JSON 对象，数组结果改为 JSON 文本返回，避免客户端校验失败。
+- 活动行只显示状态：进行中为友好的步骤描述（不暴露工具名、路径、命令），结束后为 "Worked for …"，不再展开步骤，也不提供打开 Session 的入口。

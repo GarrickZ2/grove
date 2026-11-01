@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{GroveError, Result};
 
 pub use crate::agent_config::AgentConfigSelection;
+pub use crate::automation::cron_util::ScheduleWindow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -88,6 +89,9 @@ pub struct Automation {
     pub schedule_cron: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub event_triggers: Vec<String>,
+    /// One-shot / start / end bounds for `schedule_cron`.
+    #[serde(flatten, default)]
+    pub window: ScheduleWindow,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -255,7 +259,8 @@ fn bound_live_value(value: &mut serde_json::Value) {
 const COLUMNS: &str = "id, project, name, enabled, handler_key, agent_config_json,
      task_mode, task_id, task_template, session_mode, chat_id, session_template, prompt, schedule_cron,
      event_triggers_json,
-     last_run_at, last_run_status, last_run_error, next_run_at, created_at, updated_at";
+     last_run_at, last_run_status, last_run_error, next_run_at, created_at, updated_at,
+     run_once_at, starts_at, ends_at";
 
 fn row_to_automation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Automation> {
     let agent_config_json: String = row.get(5)?;
@@ -285,6 +290,11 @@ fn row_to_automation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Automation> {
         prompt: row.get(12)?,
         schedule_cron: row.get(13)?,
         event_triggers: serde_json::from_str(&event_triggers_json).unwrap_or_default(),
+        window: ScheduleWindow {
+            run_once_at: row.get(21)?,
+            starts_at: row.get(22)?,
+            ends_at: row.get(23)?,
+        },
         last_run_at: row.get(15)?,
         last_run_status: row.get(16)?,
         last_run_error: row.get(17)?,
@@ -348,7 +358,7 @@ pub(crate) fn insert_on(conn: &rusqlite::Connection, a: &Automation) -> Result<(
     conn.execute(
         &format!(
             "INSERT INTO automations ({COLUMNS})
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)"
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)"
         ),
         params![
             a.id,
@@ -376,6 +386,9 @@ pub(crate) fn insert_on(conn: &rusqlite::Connection, a: &Automation) -> Result<(
             a.next_run_at,
             a.created_at,
             a.updated_at,
+            a.window.run_once_at,
+            a.window.starts_at,
+            a.window.ends_at,
         ],
     )?;
     Ok(())
@@ -393,7 +406,8 @@ pub(crate) fn update_on(conn: &rusqlite::Connection, a: &Automation) -> Result<(
             name=?1, enabled=?2, handler_key=?3, agent_config_json=?4,
             task_mode=?5, task_id=?6, task_template=?7,
             session_mode=?8, chat_id=?9, session_template=?10, prompt=?11,
-            schedule_cron=?12, event_triggers_json=?13, next_run_at=?14, updated_at=?15
+            schedule_cron=?12, event_triggers_json=?13, next_run_at=?14, updated_at=?15,
+            run_once_at=?17, starts_at=?18, ends_at=?19
          WHERE id=?16",
         params![
             a.name,
@@ -416,6 +430,9 @@ pub(crate) fn update_on(conn: &rusqlite::Connection, a: &Automation) -> Result<(
             a.next_run_at,
             a.updated_at,
             a.id,
+            a.window.run_once_at,
+            a.window.starts_at,
+            a.window.ends_at,
         ],
     )?;
     Ok(())
@@ -473,6 +490,19 @@ pub fn disable_with_error(id: &str, reason: &str) -> Result<()> {
     Ok(())
 }
 
+/// Disable a bounded automation (one-time, or past its end time) whose
+/// schedule has run its course. Unlike [`disable_with_error`] this is a
+/// normal outcome, so no error is recorded.
+pub fn finish_schedule(id: &str) -> Result<()> {
+    let conn = super::database::connection();
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "UPDATE automations SET enabled = 0, next_run_at = NULL, updated_at = ?1 WHERE id = ?2",
+        params![now, id],
+    )?;
+    Ok(())
+}
+
 pub fn load_due(now: i64) -> Result<Vec<Automation>> {
     let conn = super::database::connection();
     let mut stmt = conn.prepare(&format!(
@@ -499,22 +529,33 @@ pub fn recompute_all_next_runs() -> Result<usize> {
 
 fn recompute_all_next_runs_on(conn: &rusqlite::Connection) -> Result<usize> {
     let schedules = {
-        let mut stmt = conn.prepare("SELECT id, schedule_cron FROM automations")?;
+        let mut stmt = conn.prepare(
+            "SELECT id, schedule_cron, run_once_at, starts_at, ends_at FROM automations",
+        )?;
         let rows = stmt
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    ScheduleWindow {
+                        run_once_at: row.get(2)?,
+                        starts_at: row.get(3)?,
+                        ends_at: row.get(4)?,
+                    },
+                ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         rows
     };
 
     let mut next_runs = Vec::with_capacity(schedules.len());
-    for (id, schedule) in schedules {
-        let next = crate::automation::cron_util::next_unix(&schedule).map_err(|error| {
-            GroveError::storage(format!(
-                "invalid persisted automation cron for {id}: {error}"
-            ))
-        })?;
+    for (id, schedule, window) in schedules {
+        let next =
+            crate::automation::cron_util::next_scheduled(&schedule, window).map_err(|error| {
+                GroveError::storage(format!(
+                    "invalid persisted automation cron for {id}: {error}"
+                ))
+            })?;
         next_runs.push((id, next));
     }
 
@@ -1435,6 +1476,7 @@ mod tests {
             prompt: "Organize Memory".to_string(),
             schedule_cron: "0 2 * * *".to_string(),
             event_triggers: Vec::new(),
+            window: Default::default(),
             last_run_at: None,
             last_run_status: None,
             last_run_error: None,

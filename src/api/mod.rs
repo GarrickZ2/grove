@@ -2012,6 +2012,7 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
     // scheduled tick.
     start_automation_runtime();
     crate::connect::start();
+    crate::buddy::delegations::start();
 
     // Start the in-process agent_graph MCP listener (loopback-only). Failure to
     // bind is non-fatal — the rest of the server still boots; ACP sessions will

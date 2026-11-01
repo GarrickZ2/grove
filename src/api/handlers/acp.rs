@@ -2871,6 +2871,9 @@ pub async fn chat_ws_handler(
 pub struct HistoryQuery {
     pub offset: Option<usize>,
     pub recent_turns: Option<usize>,
+    /// Page backwards: only consider history before this index. Pair with
+    /// `recent_turns`; the response's `start` is the cursor for the next page.
+    pub before: Option<usize>,
     #[serde(default = "default_true")]
     pub include_media: bool,
     #[serde(default = "default_true")]
@@ -2885,6 +2888,8 @@ fn default_true() -> bool {
 pub(crate) struct HistoryResponse {
     events: Vec<serde_json::Value>,
     total: usize,
+    /// Index in the full history where this window begins.
+    start: usize,
     omitted_turns: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     context: Option<HistoryContext>,
@@ -3272,20 +3277,23 @@ pub async fn get_chat_history(
             busy: Some(false),
         },
     };
-    let history = chat_history::load_history(&project_key, &task_id, &chat_id);
-    let total = history.len();
+    let full = chat_history::load_history(&project_key, &task_id, &chat_id);
+    let total = full.len();
+    // An earlier page is finished history: no pending permission or context.
+    let paging_back = params.before.is_some();
+    let history = &full[..params.before.unwrap_or(total).min(total)];
     let offset = params.offset.unwrap_or(0).min(total);
     let (start, omitted_turns) = if offset == 0 {
-        history_start_for_recent_turns(&history, params.recent_turns.unwrap_or(0).min(10_000))
+        history_start_for_recent_turns(history, params.recent_turns.unwrap_or(0).min(10_000))
     } else {
         (offset, 0)
     };
     // Incremental polling also needs identity for a previously omitted child
     // that resumes activity; reducers upsert the metadata without moving cards.
     let window = history_window(
-        &history,
+        history,
         start,
-        if offset == 0 {
+        if offset == 0 && !paging_back {
             pending_permission.as_deref()
         } else {
             None
@@ -3305,11 +3313,12 @@ pub async fn get_chat_history(
         .collect();
 
     let session = acp::read_session_metadata(&project_key, &task_id, &chat_id);
-    let context = (offset == 0).then(|| history_context(&history, start));
+    let context = (offset == 0 && !paging_back).then(|| history_context(history, start));
 
     Ok(Json(HistoryResponse {
         events,
         total,
+        start,
         omitted_turns,
         context,
         session,

@@ -692,6 +692,22 @@ pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSessio
     Ok(chats)
 }
 
+/// Every active Session of a Project as (task_id, session_id, title), newest first.
+pub fn list_project_sessions(project: &str) -> Result<Vec<(String, String, String)>> {
+    let conn = crate::storage::database::connection();
+    let mut stmt = conn.prepare(
+        "SELECT task_id, session_id, title FROM session
+         WHERE project = ?1 AND archived_at IS NULL
+         ORDER BY COALESCE(updated_at, created_at) DESC",
+    )?;
+    let rows = stmt
+        .query_map(params![project], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Load archived sessions for the dedicated read-only SessionList section.
 /// Normal discovery paths intentionally use `load_chat_sessions` and therefore
 /// cannot see these rows until they are restored.

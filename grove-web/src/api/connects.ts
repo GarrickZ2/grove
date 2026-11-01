@@ -38,6 +38,8 @@ export interface ConnectInput {
   project_id: string;
   task_id: string;
   session_id: string;
+  /** Binds the connection to a Buddy; the backend then routes to its current Segment. */
+  target?: { kind: 'buddy'; buddy_id: string };
 }
 
 export interface ConnectPlatform {
@@ -78,4 +80,4 @@ export const beginConnectRegistration = (domain: string, platform = 'feishu') =>
 export const getConnectRegistration = (id: string) => apiClient.get<ConnectRegistration>(`/api/v1/connects/registration/${id}`);
 export const submitConnectRegistration = (id: string, input: Record<string, unknown>) => apiClient.post<Record<string, unknown>, ConnectRegistration>(`/api/v1/connects/registration/${id}`, input);
 export const cancelConnectRegistration = (id: string) => apiClient.delete(`/api/v1/connects/registration/${id}`);
-export const finishConnectRegistration = (input: { flow_id: string; name: string; enabled: boolean; connection_id?: string; project_id?: string; task_id?: string; session_id?: string }) => apiClient.post<typeof input, ConnectItem>('/api/v1/connects/registration/finish', input);
+export const finishConnectRegistration = (input: { flow_id: string; name: string; enabled: boolean; connection_id?: string; project_id?: string; task_id?: string; session_id?: string; target?: ConnectInput['target'] }) => apiClient.post<typeof input, ConnectItem>('/api/v1/connects/registration/finish', input);

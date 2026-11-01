@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { Plus, Send, Square, X } from "lucide-react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { ArrowUp, Plus, Square, X } from "lucide-react";
 import type { Buddy } from "../../api/buddies";
 import { useBuddyComposer } from "../../hooks/useBuddyComposer";
 import { errorMessage } from "../../utils/errorMessage";
@@ -11,6 +11,14 @@ export function BuddyComposer({ buddy, onSent, initialText = "" }: { buddy: Budd
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  // Grow with the draft until the CSS max-height, then scroll inside.
+  useLayoutEffect(() => {
+    const element = input.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
+  }, [text]);
   const { send, stop, sending, connected } = useBuddyComposer(buddy, onSent);
   const hasContent = !!text.trim() || files.length > 0;
   const showStop = buddy.status !== "idle" && !hasContent;
@@ -31,13 +39,14 @@ export function BuddyComposer({ buddy, onSent, initialText = "" }: { buddy: Budd
     {error && <p role="alert">{error}</p>}
     <form className="buddy-composer" aria-label={`Message ${buddy.name}`} onSubmit={(event) => { event.preventDefault(); void submit(); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!sending) setFiles((current) => [...current, ...Array.from(event.dataTransfer.files)]); }}>
       <input ref={fileInput} type="file" multiple hidden aria-label="Attach files" onChange={(event) => { setFiles((current) => [...current, ...Array.from(event.target.files ?? [])]); event.target.value = ""; }} />
-      <button type="button" className="buddy-composer-circle" aria-label="Add attachment" disabled={sending} onClick={() => fileInput.current?.click()}><Plus size={18} /></button>
-      <textarea rows={1} aria-label={`Message ${buddy.name}`} placeholder={`Message ${buddy.name}`} value={text} disabled={sending} onChange={(event) => changeText(event.target.value)} onKeyDown={(event) => {
+      <textarea ref={input} rows={1} aria-label={`Message ${buddy.name}`} placeholder={`Message ${buddy.name}`} value={text} disabled={sending} onChange={(event) => changeText(event.target.value)} onKeyDown={(event) => {
         if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void submit(); }
       }} />
-
-      {showStop ? <button type="button" className="buddy-composer-circle is-primary" aria-label="Stop response" title="Stop response" disabled={sending || !connected} onClick={() => void cancel()}><Square size={16} /></button>
-        : <button type="submit" className="buddy-composer-circle is-primary" aria-label="Send message" disabled={sending || !connected || !hasContent}><Send size={17} /></button>}
+      <div className="buddy-composer-toolbar">
+        <button type="button" className="buddy-composer-circle" aria-label="Add attachment" title="Add attachment" disabled={sending} onClick={() => fileInput.current?.click()}><Plus size={18} /></button>
+        {showStop ? <button type="button" className="buddy-composer-circle is-primary" aria-label="Stop response" title="Stop response" disabled={sending || !connected} onClick={() => void cancel()}><Square size={12} fill="currentColor" /></button>
+          : <button type="submit" className="buddy-composer-circle is-primary" aria-label="Send message" disabled={sending || !connected || !hasContent}><ArrowUp size={17} strokeWidth={2.25} /></button>}
+      </div>
     </form>
   </div>;
 }

@@ -1954,9 +1954,18 @@ async fn load_standalone_mcp_servers(
     let Some(agent_id) = base_env.get("GROVE_AGENT_ID") else {
         return Ok(Vec::new());
     };
+    // Buddy-bound servers apply to the Buddy's own Segments and to the
+    // lightweight delegations that share its Local Task.
+    let buddy_id = base_env.get("GROVE_PROJECT_KEY").and_then(|key| {
+        crate::storage::buddies::get_by_project(&crate::storage::database::connection(), key)
+            .ok()
+            .flatten()
+            .map(|buddy| buddy.id)
+    });
     let mut configs = crate::storage::extensions::resolve_effective_mcp_configs_for_transports(
         agent_id,
         base_env.get("GROVE_PROJECT").map(String::as_str),
+        buddy_id.as_deref(),
         allowed_transports,
     )?;
     if let Some((stdio, http)) = allowed_transports {
@@ -8969,6 +8978,22 @@ impl AcpSessionHandle {
 
     /// Whether an option belongs to the currently pending permission request.
     /// External surfaces use this before resolving the one-shot request.
+    /// The option behind `option_id` on the live request `expected_id`.
+    pub(crate) fn pending_permission_option(
+        &self,
+        expected_id: &str,
+        option_id: &str,
+    ) -> Option<crate::radio::PermissionOptionInfo> {
+        if self.pending_permission_id().as_deref() != Some(expected_id) {
+            return None;
+        }
+        self.last_permission_info
+            .lock()
+            .ok()
+            .and_then(|info| info.clone())
+            .and_then(|info| info.options.into_iter().find(|o| o.option_id == option_id))
+    }
+
     pub fn pending_permission_accepts(&self, expected_id: &str, option_id: &str) -> bool {
         if self.pending_permission_id().as_deref() != Some(expected_id) {
             return false;

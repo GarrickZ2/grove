@@ -47,21 +47,35 @@ async fn run_tick() -> Result<(), String> {
         return Ok(());
     }
 
-    // Partition due rows: those with a valid future occurrence get their
-    // `next_run_at` advanced (de-dup gate so a slow executor doesn't make
-    // the same automation fire twice on the next tick); those whose cron
-    // has no future occurrences get disabled — otherwise they'd stay due
-    // forever and we'd spawn the executor every 30s.
+    // Partition due rows:
+    // - a valid future occurrence → advance `next_run_at` (de-dup gate so a
+    //   slow executor doesn't make the same automation fire twice on the
+    //   next tick);
+    // - a bounded schedule (one-time, or past its end time) with nothing
+    //   left → fire this final run, then disable it as finished;
+    // - an unbounded cron with no future occurrences → disable with an
+    //   error, otherwise it would stay due forever and spawn every 30s.
     let mut advances: Vec<(String, i64)> = Vec::with_capacity(due.len());
+    let mut finished: Vec<String> = Vec::new();
     let mut dead: Vec<String> = Vec::new();
     for a in &due {
         match executor::advance_next_run(a) {
             Some(next) => advances.push((a.id.clone(), next)),
+            None if a.window.is_bounded() => finished.push(a.id.clone()),
             None => dead.push(a.id.clone()),
         }
     }
     let refs: Vec<(&str, i64)> = advances.iter().map(|(id, n)| (id.as_str(), *n)).collect();
     automations::claim_due(now, &refs).map_err(|e| e.to_string())?;
+    let mut fire: HashSet<String> = advances.into_iter().map(|(id, _)| id).collect();
+    for id in finished {
+        match automations::finish_schedule(&id) {
+            Ok(()) => {
+                fire.insert(id);
+            }
+            Err(e) => awarn!("finish schedule {id}: {e}"),
+        }
+    }
     for id in &dead {
         if let Err(e) = automations::disable_with_error(
             id,
@@ -71,11 +85,11 @@ async fn run_tick() -> Result<(), String> {
         }
     }
 
-    // Only fire automations whose `next_run_at` was successfully advanced.
-    // The detached spawn keeps a single hung run from stalling future ticks.
-    let advanced: HashSet<&str> = advances.iter().map(|(id, _)| id.as_str()).collect();
+    // Only fire automations whose `next_run_at` was successfully advanced or
+    // cleared. The detached spawn keeps a single hung run from stalling
+    // future ticks.
     for automation in due {
-        if !advanced.contains(automation.id.as_str()) {
+        if !fire.contains(&automation.id) {
             continue;
         }
         tokio::spawn(async move {

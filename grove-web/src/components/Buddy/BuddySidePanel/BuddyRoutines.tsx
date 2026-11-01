@@ -5,7 +5,7 @@ import type { Automation } from "../../../api/automations";
 import { listBuddyRoutines, runBuddyRoutine, setBuddyRoutineEnabled, saveBuddyRoutine, deleteBuddyRoutine } from "../../../api/buddyResources";
 import { useBuddyResource } from "../../../hooks/useBuddyResource";
 import { errorMessage } from "../../../utils/errorMessage";
-import { describeSchedule, formatRelative } from "../../Automation/automationFormat";
+import { describeAutomationSchedule, describeSchedule, formatRelative, scheduleEnded } from "../../Automation/automationFormat";
 import { ToggleSwitch } from "../../Automation/ToggleSwitch";
 import { AutomationDialog } from "../../Automation/AutomationDialog";
 import { ConfirmDialog } from "../../Dialogs";
@@ -38,7 +38,7 @@ export function BuddyRoutines({ buddy, onMemory }: { buddy: Buddy; onMemory?: ()
     {loading && !data && <p className="buddy-muted">Loading routines…</p>}
     {(error || failure) && <p role="alert">{error || failure}<button type="button" onClick={() => void refresh()}>Retry</button></p>}{feedback && <p role="status" className="buddy-muted">{feedback}</p>}
     {data?.map(routine => routine.handler_key !== "builtin.task_prompt" ? <div className="buddy-system-routine" key={routine.id}><Lock size={14} /><div><strong>Memory organization</strong><p>{describeSchedule(routine.schedule_cron)} · {routine.enabled ? "Enabled" : "Paused"}</p></div><button type="button" onClick={onMemory}>Memory tab</button></div> : <article className="buddy-routine-card" key={routine.id}><div className="buddy-routine-heading"><ToggleSwitch value={routine.enabled} onChange={() => void perform(routine, "toggle")} disabled={busy !== null} label={`Enable ${routine.name}`} /><h3>{routine.name}</h3></div>
-      <p className="buddy-muted"><Calendar size={13} /> {describeSchedule(routine.schedule_cron)} · {routine.enabled ? routine.next_run_at ? `next ${formatRelative(new Date(routine.next_run_at * 1000))}` : "No next run scheduled" : "paused"}{routine.event_triggers?.length ? ` · On event: ${routine.event_triggers.join(", ")}` : ""}</p><RoutineDescription text={routine.prompt} />
+      <p className="buddy-muted"><Calendar size={13} /> {describeAutomationSchedule(routine)} · {routine.enabled ? routine.next_run_at ? `next ${formatRelative(new Date(routine.next_run_at * 1000))}` : "No next run scheduled" : scheduleEnded(routine) ? routine.run_once_at ? "completed" : "ended" : "paused"}{routine.event_triggers?.length ? ` · On event: ${routine.event_triggers.join(", ")}` : ""}</p><RoutineDescription text={routine.prompt} />
       <div className="buddy-routine-actions"><button type="button" className="orbit-icon-button" aria-label={`Run ${routine.name} now`} disabled={busy !== null} onClick={() => void perform(routine, "run")}><Play size={15} /></button><button type="button" className="orbit-icon-button" aria-label={`Edit ${routine.name}`} onClick={() => setEditing(routine)}><Pencil size={15} /></button><button type="button" className="orbit-icon-button" aria-label={`Delete ${routine.name}`} onClick={() => setDeleting(routine)}><Trash2 size={15} /></button></div>
     </article>)}
     {data?.length === 0 && <p className="buddy-muted">No routines yet.</p>}

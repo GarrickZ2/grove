@@ -17,8 +17,11 @@ pub fn emit(project_id: impl Into<String>, event: impl Into<String>, payload: se
                 return;
             }
         };
+        let now = chrono::Utc::now().timestamp();
         for automation in items.into_iter().filter(|automation| {
-            automation.enabled && automation.event_triggers.iter().any(|item| item == &event)
+            automation.enabled
+                && automation.window.contains(now)
+                && automation.event_triggers.iter().any(|item| item == &event)
         }) {
             let payload = payload.clone();
             tokio::spawn(async move {

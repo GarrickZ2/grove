@@ -10,7 +10,7 @@ import { BuddyRoutines } from "../Buddy/BuddySidePanel/BuddyRoutines";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { describeSchedule, formatRelative } from "./automationFormat";
+import { describeAutomationSchedule, formatRelative, scheduleEnded } from "./automationFormat";
 import { ToggleSwitch } from "./ToggleSwitch";
 import {
   Plus,
@@ -218,6 +218,9 @@ function ProjectAutomationPage({
         prompt: a.prompt,
         schedule_cron: a.schedule_cron,
         event_triggers: a.event_triggers,
+        run_once_at: a.run_once_at,
+        starts_at: a.starts_at,
+        ends_at: a.ends_at,
       };
       await updateAutomation(projectId, a.id, payload);
       void refresh();
@@ -557,7 +560,8 @@ function AutomationCard({
   ownerLabel,
   onOpenOwner,
 }: CardProps) {
-  const scheduleDescription = describeSchedule(automation.schedule_cron);
+  const scheduleDescription = describeAutomationSchedule(automation);
+  const ended = scheduleEnded(automation);
 
   const lastRun = automation.last_run_at
     ? new Date(automation.last_run_at * 1000)
@@ -624,9 +628,16 @@ function AutomationCard({
           <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
             <Calendar className="w-3.5 h-3.5 text-[var(--color-highlight)]" />
             <span className="min-w-0 break-words leading-5">{scheduleDescription}</span>
-            <code className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-muted)] sm:ml-1">
-              {automation.schedule_cron}
-            </code>
+            {!automation.run_once_at && (
+              <code className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-muted)] sm:ml-1">
+                {automation.schedule_cron}
+              </code>
+            )}
+            {ended && (
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]">
+                {automation.run_once_at ? "Completed" : "Ended"}
+              </span>
+            )}
           </div>
 
           {/* Last / Next pills */}

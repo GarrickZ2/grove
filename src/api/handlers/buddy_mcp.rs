@@ -89,7 +89,7 @@ impl ServerHandler for BuddyMcpService {
         let handle = crate::acp::get_session_handle(&key)
             .ok_or_else(|| McpError::invalid_request("Buddy runtime is no longer active", None))?;
         let _activity = handle.begin_activity().map_err(internal)?;
-        if request.name.starts_with("buddy_") {
+        if self.tool_router.has_route(&request.name) {
             let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
             self.tool_router.call(call).await
         } else {
@@ -144,11 +144,36 @@ mod tests {
             .into_iter()
             .map(|t| t.name.to_string())
             .collect();
-        assert!(names.iter().any(|name| name == "buddy_send"));
-        assert!(names.iter().all(|name| name.starts_with("buddy_")));
+        assert!(names.iter().any(|name| name == "send"));
+        assert!(names.iter().all(|name| !name.starts_with("buddy_")));
+        // call_tool dispatches by registered name; shared tools must never shadow it.
+        let router = BuddyMcpService::tool_router();
+        assert!(names.iter().all(|name| router.has_route(name)));
+        assert!([
+            "memory_recall",
+            "memory_append_log",
+            "ask_form",
+            "speak",
+            "browser_open"
+        ]
+        .iter()
+        .all(|name| !router.has_route(name)));
         assert!(!names
             .iter()
             .any(|name| name == "set_title" || name == "grove_complete_task"));
+    }
+
+    #[test]
+    fn list_results_are_text_because_structured_content_must_be_an_object() {
+        let list = success(vec![serde_json::json!({"id":"p"})]).unwrap();
+        assert!(list.structured_content.is_none());
+        let text = serde_json::to_value(&list.content).unwrap().to_string();
+        assert!(text.contains("\\\"id\\\": \\\"p\\\""), "{text}");
+        let object = success(serde_json::json!({"deleted":true})).unwrap();
+        assert_eq!(
+            object.structured_content,
+            Some(serde_json::json!({"deleted":true}))
+        );
     }
 
     #[test]
@@ -173,10 +198,16 @@ mod tests {
     }
 }
 
+/// MCP `structuredContent` must be a JSON object; clients reject arrays and
+/// scalars. Lists therefore go out as pretty JSON text, like Agent Graph tools.
 fn success(value: impl serde::Serialize) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::structured(
-        serde_json::to_value(value).map_err(internal)?,
-    ))
+    let value = serde_json::to_value(value).map_err(internal)?;
+    if value.is_object() {
+        return Ok(CallToolResult::structured(value));
+    }
+    Ok(CallToolResult::success(vec![Content::text(
+        serde_json::to_string_pretty(&value).map_err(internal)?,
+    )]))
 }
 #[derive(Deserialize, JsonSchema)]
 struct ProjectInput {
@@ -188,11 +219,6 @@ struct TaskInput {
     task: String,
 }
 #[derive(Deserialize, JsonSchema)]
-struct ReadSessionInput {
-    session: String,
-    tail: Option<usize>,
-}
-#[derive(Deserialize, JsonSchema)]
 struct CreateTaskInput {
     project: String,
     name: String,
@@ -200,8 +226,31 @@ struct CreateTaskInput {
 }
 #[derive(Deserialize, JsonSchema)]
 struct SendInput {
-    session: String,
+    /// What to say. For a new Session, this is the full brief.
     text: String,
+    /// An existing Session ID to message.
+    #[serde(default)]
+    session: Option<String>,
+    /// Start a new Session instead.
+    #[serde(default)]
+    new: Option<NewSessionInput>,
+    /// Report the outcome back to you (default true). false just delivers.
+    #[serde(default = "follow_default")]
+    follow: bool,
+}
+fn follow_default() -> bool {
+    true
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct NewSessionInput {
+    title: String,
+    target: crate::buddy::delegations::Target,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct FollowupId {
+    id: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -218,8 +267,8 @@ struct RoutineUpdate {
 #[tool_router]
 impl BuddyMcpService {
     #[tool(
-        name = "buddy_routine_create",
-        description = "Create a recurring prompt for this Buddy. Runs always use the current Segment and Agent settings."
+        name = "create_routine",
+        description = "Create a scheduled prompt for this Buddy: recurring (schedule_cron, optionally bounded by starts_at / ends_at) or one-time (run_once_at). Timestamps are unix seconds. Runs always use the current Segment and Agent settings."
     )]
     async fn routine_create(
         &self,
@@ -230,7 +279,7 @@ impl BuddyMcpService {
         success(crate::buddy::routines::save(&buddy, None, input).map_err(internal)?)
     }
     #[tool(
-        name = "buddy_routine_list",
+        name = "list_routines",
         description = "List this Buddy's user-managed Routines. Memory organization is managed separately."
     )]
     async fn routine_list(
@@ -241,8 +290,8 @@ impl BuddyMcpService {
         success(crate::buddy::routines::list(&buddy).map_err(internal)?)
     }
     #[tool(
-        name = "buddy_routine_update",
-        description = "Update a Routine owned by this Buddy."
+        name = "update_routine",
+        description = "Update a Routine owned by this Buddy. This replaces the whole Routine: always pass name, prompt and either schedule_cron or run_once_at; pass enabled, event_triggers, starts_at and ends_at deliberately to keep or change them."
     )]
     async fn routine_update(
         &self,
@@ -255,7 +304,7 @@ impl BuddyMcpService {
         )
     }
     #[tool(
-        name = "buddy_routine_delete",
+        name = "delete_routine",
         description = "Delete a Routine owned by this Buddy. Cannot delete Memory organization."
     )]
     async fn routine_delete(
@@ -268,7 +317,7 @@ impl BuddyMcpService {
         success(serde_json::json!({"deleted":true}))
     }
     #[tool(
-        name = "buddy_routine_run",
+        name = "run_routine",
         description = "Trigger this Buddy's Routine now, using the current Segment."
     )]
     async fn routine_run(
@@ -284,26 +333,57 @@ impl BuddyMcpService {
         )
     }
     #[tool(
-        name = "buddy_delegate",
-        description = "Delegate a whole piece of work to a new ordinary Agent Session. self is for light research; task or new_task places code changes in the target Project. Results return automatically while Grove is running."
+        name = "send",
+        description = "Send work or a message to a Session and, by default, get its outcome back. Pass session to message an existing Session (any Task or Project), or new to start one: target self for light research in your Local Task, task for an existing Task, new_task to create one; code changes belong in a Task of the target Project. Results, failures and requests waiting for approval or input come back to you as messages; do not poll."
     )]
-    async fn delegate(
+    async fn send(
         &self,
-        Parameters(input): Parameters<crate::buddy::delegations::DelegateInput>,
+        Parameters(input): Parameters<SendInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
         let (buddy, session) = caller(&parts)?;
-        success(
-            crate::buddy::delegations::delegate(&buddy, &session, input)
+        let result = match (input.session, input.new) {
+            (Some(target), None) if input.follow => {
+                let (followup, message_id) =
+                    crate::buddy::delegations::follow(&buddy, &session, &target, &input.text)
+                        .await
+                        .map_err(internal)?;
+                serde_json::json!({"message_id":message_id,"followup":followup})
+            }
+            (Some(target), None) => {
+                let message_id = crate::buddy::tools::send(&buddy, &target, &input.text)
+                    .await
+                    .map_err(internal)?;
+                serde_json::json!({"message_id":message_id})
+            }
+            (None, Some(new)) => {
+                let followup = crate::buddy::delegations::delegate(
+                    &buddy,
+                    &session,
+                    crate::buddy::delegations::DelegateInput {
+                        title: new.title,
+                        brief: input.text,
+                        target: new.target,
+                    },
+                )
                 .await
-                .map_err(internal)?,
-        )
+                .map_err(internal)?;
+                serde_json::json!({"message_id":followup.round_message_id,"followup":followup})
+            }
+            _ => {
+                return Err(McpError::invalid_params(
+                    "Pass exactly one of session or new",
+                    None,
+                ))
+            }
+        };
+        success(result)
     }
     #[tool(
-        name = "buddy_delegations",
-        description = "List this Buddy's delegations and their last observed status/result. After restart, status is historical: inspect the target Session and explicitly send or cancel as needed; Grove never replays the brief automatically."
+        name = "list_followups",
+        description = "List the Sessions you are following and their last status/result. After a Grove restart, unfinished ones are marked interrupted; check the Session and send again if needed."
     )]
-    async fn delegations(
+    async fn followups(
         &self,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
@@ -317,16 +397,57 @@ impl BuddyMcpService {
         )
     }
     #[tool(
-        name = "buddy_list_projects",
+        name = "cancel_followup",
+        description = "Stop a follow-up: cancels the target Session's current turn and drops your queued messages there."
+    )]
+    async fn cancel_followup(
+        &self,
+        Parameters(input): Parameters<FollowupId>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        let (buddy, _) = caller(&parts)?;
+        success(
+            crate::buddy::delegations::cancel(&buddy.id, &input.id)
+                .await
+                .map_err(internal)?,
+        )
+    }
+    #[tool(
+        name = "respond",
+        description = "Answer a request a followed Session is waiting on, using the request_id from its waiting notice. option_id answers a permission (one-time options only); fields answers a form, decline refuses it. Only answer on the user's behalf when they asked you to or it is clearly safe; otherwise tell the user what is being asked."
+    )]
+    async fn respond(
+        &self,
+        Parameters(input): Parameters<crate::buddy::delegations::RespondInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        let (buddy, _) = caller(&parts)?;
+        success(crate::buddy::delegations::respond(&buddy, input).map_err(internal)?)
+    }
+    #[tool(
+        name = "create_project",
+        description = "Create a Project. kind studio needs only a name. kind coding needs a source: new (empty folder name inside parent_dir, optionally git init), existing (register a folder), or clone (a Git URL, cloned into Grove's folder). Local folders must be inside the user's home; confirm the folder with the user first."
+    )]
+    async fn create_project(
+        &self,
+        Parameters(input): Parameters<crate::buddy::tools::CreateProjectInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        caller(&parts)?;
+        success(
+            crate::buddy::tools::create_project(input)
+                .await
+                .map_err(internal)?,
+        )
+    }
+    #[tool(
+        name = "list_projects",
         description = "List all registered ordinary Projects, including archived Projects. Buddy Projects are hidden."
     )]
     async fn list_projects(&self) -> Result<CallToolResult, McpError> {
         success(crate::storage::workspace::load_projects().map_err(internal)?)
     }
-    #[tool(
-        name = "buddy_list_tasks",
-        description = "List active Tasks in a Project."
-    )]
+    #[tool(name = "list_tasks", description = "List active Tasks in a Project.")]
     async fn list_tasks(
         &self,
         Parameters(input): Parameters<ProjectInput>,
@@ -334,7 +455,7 @@ impl BuddyMcpService {
         success(crate::storage::tasks::load_tasks(&input.project).map_err(internal)?)
     }
     #[tool(
-        name = "buddy_list_sessions",
+        name = "list_sessions",
         description = "List a Task's Sessions and their idle, running or waiting status."
     )]
     async fn list_sessions(
@@ -344,17 +465,27 @@ impl BuddyMcpService {
         success(crate::buddy::tools::list_sessions(&input.project, &input.task).map_err(internal)?)
     }
     #[tool(
-        name = "buddy_read_session",
-        description = "Read any Session's metadata, absolute history path and total line count. Optionally return the last 0 to 200 user/assistant messages."
+        name = "read_session",
+        description = "Read a Session as numbered entries (user and assistant messages; Grove envelopes removed), newest page first. Page with before/after using the returned cursors. include_tools adds one line per tool call and the files touched. history_path is the raw event log for grep when you need detail."
     )]
     async fn read_session(
         &self,
-        Parameters(input): Parameters<ReadSessionInput>,
+        Parameters(input): Parameters<crate::buddy::tools::ReadSessionInput>,
     ) -> Result<CallToolResult, McpError> {
-        success(crate::buddy::tools::read_session(&input.session, input.tail).map_err(internal)?)
+        success(crate::buddy::tools::read_session(input).map_err(internal)?)
     }
     #[tool(
-        name = "buddy_create_task",
+        name = "search_sessions",
+        description = "Find messages containing some words in one Session or across a Project's Sessions. Each match gives the Session and entry index; read around it with read_session (before = index + 1)."
+    )]
+    async fn search_sessions(
+        &self,
+        Parameters(input): Parameters<crate::buddy::tools::SearchSessionsInput>,
+    ) -> Result<CallToolResult, McpError> {
+        success(crate::buddy::tools::search_sessions(input).map_err(internal)?)
+    }
+    #[tool(
+        name = "create_task",
         description = "Create a Task in a Repo or Studio Project, optionally with notes. Code changes must run in a Task of the target Project."
     )]
     async fn create_task(
@@ -367,20 +498,5 @@ impl BuddyMcpService {
             crate::buddy::tools::create_task(&buddy, &input.project, input.name, input.notes)
                 .map_err(internal)?,
         )
-    }
-    #[tool(
-        name = "buddy_send",
-        description = "Send a message to any writable Session, including a Session in another Task or Project. Busy Sessions queue the message. Ended Buddy Segments are read-only."
-    )]
-    async fn send(
-        &self,
-        Parameters(input): Parameters<SendInput>,
-        Extension(parts): Extension<Parts>,
-    ) -> Result<CallToolResult, McpError> {
-        let (buddy, _) = caller(&parts)?;
-        let message_id = crate::buddy::tools::send(&buddy, &input.session, &input.text)
-            .await
-            .map_err(internal)?;
-        success(serde_json::json!({"message_id": message_id}))
     }
 }

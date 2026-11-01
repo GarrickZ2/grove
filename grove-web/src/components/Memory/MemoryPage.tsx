@@ -131,14 +131,16 @@ const DEFAULT_DRAFT: MemoryConfigInput = {
 
 interface MemoryPageProps {
   buddy?: Buddy;
+  /** Shows this project's Memory without changing the selected project (Buddy's own Project stays out of the shell). */
+  projectId?: string;
   /** Opens the Runs tab with the run whose session is this chat (e.g. from Automation's "Open session"). */
   initialRunChatId?: string;
 }
 
-function ProjectMemoryPage({ initialRunChatId }: MemoryPageProps = {}) {
+function ProjectMemoryPage({ initialRunChatId, projectId: explicitProjectId }: MemoryPageProps = {}) {
   const catalogRevision = useAgentCatalogRevision();
   const { selectedProject } = useProject();
-  const projectId = selectedProject?.id ?? null;
+  const projectId = explicitProjectId ?? selectedProject?.id ?? null;
   const [tab, setTab] = useState<Tab>(initialRunChatId ? "runs" : "overview");
   const [config, setConfig] = useState<MemoryConfig | null>(null);
   const [overview, setOverview] = useState<MemoryOverview>(EMPTY_OVERVIEW);

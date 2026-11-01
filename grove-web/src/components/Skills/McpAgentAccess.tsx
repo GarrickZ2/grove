@@ -1,8 +1,10 @@
 import { Loader2 } from "lucide-react";
 import type { InstalledAgentConfig } from "../../api/marketplace";
 import { Button } from "../ui";
+import { BuddyAvatar } from "../Buddy/BuddyAvatar";
 import { AgentIcon } from "./AgentIcon";
 import type { McpScope } from "./mcpManagementState";
+import type { McpBuddyTarget } from "./useMcpBuddyTargets";
 
 export interface McpAccessDraft {
   scope: McpScope;
@@ -13,6 +15,8 @@ export interface McpAccessOptions {
   draft: McpAccessDraft;
   onChange: (draft: McpAccessDraft) => void;
   agents: InstalledAgentConfig[];
+  /** Offered as a separate scope; bindings follow the Buddy across engines. */
+  buddies?: McpBuddyTarget[];
   projectPath: string | null;
   loading?: boolean;
   error?: string | null;
@@ -25,6 +29,7 @@ export function McpAgentAccess({
   draft,
   onChange,
   agents,
+  buddies = [],
   projectPath,
   loading,
   error,
@@ -32,6 +37,23 @@ export function McpAgentAccess({
   disabled,
   dirtyScopes = [],
 }: McpAccessOptions) {
+  const buddyScope = draft.scope === "buddy";
+  const scopes: McpScope[] = buddies.length
+    ? ["global", "project", "buddy"]
+    : ["global", "project"];
+  const targets = buddyScope
+    ? buddies.map((buddy) => ({
+        id: buddy.id,
+        name: buddy.name,
+        icon: (
+          <BuddyAvatar id={buddy.buddyId} avatar={buddy.avatar} size={18} />
+        ),
+      }))
+    : agents.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        icon: <AgentIcon iconId={agent.id} size={18} />,
+      }));
   return (
     <section className="space-y-3" aria-label="Agent access">
       <div>
@@ -42,7 +64,8 @@ export function McpAgentAccess({
           </span>
         </div>
         <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-          Choose where this server is available and which Agents can use it.
+          Choose where this server is available and which Agents or Buddies
+          can use it.
         </p>
       </div>
       <div>
@@ -51,7 +74,7 @@ export function McpAgentAccess({
           className="flex rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 p-1"
           aria-label="Binding scope"
         >
-          {(["global", "project"] as const).map((scope) => (
+          {scopes.map((scope) => (
             <button
               key={scope}
               type="button"
@@ -59,10 +82,21 @@ export function McpAgentAccess({
               disabled={
                 disabled || loading || (scope === "project" && !projectPath)
               }
-              onClick={() => onChange({ ...draft, scope })}
+              onClick={() =>
+                onChange({
+                  scope,
+                  // Agent and Buddy selections are different id spaces.
+                  agentIds:
+                    (scope === "buddy") === buddyScope ? draft.agentIds : [],
+                })
+              }
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-highlight)] disabled:opacity-40 ${draft.scope === scope ? "bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
             >
-              {scope === "global" ? "All projects" : "Current project"}
+              {scope === "global"
+                ? "All projects"
+                : scope === "project"
+                  ? "Current project"
+                  : "Buddies"}
               {dirtyScopes.includes(scope) && (
                 <span
                   className="h-1.5 w-1.5 rounded-full bg-[var(--color-highlight)]"
@@ -81,12 +115,18 @@ export function McpAgentAccess({
           </p>
         )}
       </div>
-      {loading ? (
+      {buddyScope && (
+        <p className="text-xs text-[var(--color-text-muted)]">
+          Only the selected Buddies can use this server, whichever Agent they
+          run on.
+        </p>
+      )}
+      {loading && !buddyScope ? (
         <p className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] px-4 py-5 text-xs text-[var(--color-text-muted)]">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           Loading Agents…
         </p>
-      ) : error ? (
+      ) : error && !buddyScope ? (
         <div className="space-y-2 rounded-xl border border-[var(--color-border)] p-4">
           <p role="alert" className="text-xs text-[var(--color-error)]">
             {error}
@@ -95,30 +135,30 @@ export function McpAgentAccess({
             Retry loading Agents
           </Button>
         </div>
-      ) : agents.length ? (
+      ) : targets.length ? (
         <div className="max-h-52 divide-y divide-[var(--color-border)] overflow-y-auto rounded-xl border border-[var(--color-border)]">
-          {agents.map((agent) => (
+          {targets.map((target) => (
             <label
-              key={agent.id}
+              key={target.id}
               className="flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-[var(--color-bg-secondary)]/50"
             >
               <input
                 type="checkbox"
                 className="h-4 w-4 shrink-0 accent-[var(--color-highlight)]"
                 disabled={disabled}
-                checked={draft.agentIds.includes(agent.id)}
+                checked={draft.agentIds.includes(target.id)}
                 onChange={(event) =>
                   onChange({
                     ...draft,
                     agentIds: event.target.checked
-                      ? [...draft.agentIds, agent.id]
-                      : draft.agentIds.filter((id) => id !== agent.id),
+                      ? [...draft.agentIds, target.id]
+                      : draft.agentIds.filter((id) => id !== target.id),
                   })
                 }
               />
-              <AgentIcon iconId={agent.id} size={18} />
+              {target.icon}
               <span className="min-w-0 flex-1 truncate text-sm">
-                {agent.name}
+                {target.name}
               </span>
             </label>
           ))}
@@ -130,10 +170,11 @@ export function McpAgentAccess({
       )}
       <p className="text-xs leading-5 text-[var(--color-text-muted)]">
         {draft.agentIds.length === 0
-          ? "Select at least one Agent to enable this server. "
+          ? `Select at least one ${buddyScope ? "Buddy" : "Agent"} to enable this server. `
           : ""}
-        Takes effect when an Agent next connects. Reconnect an existing Agent to
-        apply changes.
+        {buddyScope
+          ? "Takes effect when a Buddy next connects. Restart a running Buddy's Agent in its Settings to apply changes."
+          : "Takes effect when an Agent next connects. Reconnect an existing Agent to apply changes."}
       </p>
     </section>
   );

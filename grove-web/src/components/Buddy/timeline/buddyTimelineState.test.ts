@@ -30,11 +30,51 @@ it("renders ACP v2 text via the existing reducer", () => {
 it("keeps routine replies in separate turns without displaying the routine prompt", () => {
   const state = run([{ type: "message_chunk", text: "First" }, { type: "complete" }, { type: "user_message", sender: "routine", text: "Internal prompt" }, { type: "message_chunk", text: "Second" }]);
   expect(state.messages.filter(m => m.type === "assistant").map(m => m.content)).toEqual(["First", "Second"]);
-  expect(JSON.stringify(state.messages)).not.toContain("Internal prompt");
+  // The prompt is kept (hidden) so the timeline can mark where it arrived.
+  expect(state.messages[1]).toMatchObject({ type: "user", sender: "routine", content: "Internal prompt" });
 });
 it("only displays an elicitation answer after the server accepts it", () => {
   const start = [{ type: "elicitation_request", request_id: "e", agent_name: "Agent", request: { mode: "form", message: "Name" } }, { type: "buddy_answer", id: "e", text: "Alice" }];
   expect(run(start).messages).toHaveLength(0);
   expect(run([...start, { type: "elicitation_validation_error", request_id: "e", message: "Try again" }]).messages).toHaveLength(0);
   expect(run([...start, { type: "elicitation_resolved", request_id: "e", action: "accept" }]).messages[0]).toMatchObject({ type: "user", content: "Alice" });
+});
+it("adds one delegation row per buddy_delegate call and reads its id from the tool result", () => {
+  const result = JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ id: "del-1", buddy_id: "b", status: "running" }) }] });
+  const state = run([{ type: "prompt_started" }, { type: "tool_call", id: "t", title: "mcp__grove-buddy__buddy_delegate", input: [{ label: "title", value: "Audit auth" }] }, { type: "tool_call_update", id: "t", status: "completed", content: result }, { type: "tool_call", id: "l", title: "mcp__grove-buddy__buddy_delegations" }, { type: "complete" }]);
+  const delegations = state.rows.filter(row => row.kind === "delegation");
+  expect(delegations).toEqual([{ kind: "delegation", id: "delegation-t", title: "Audit auth", delegationId: "del-1", failed: false }]);
+});
+it("adds a delegation row only for a send that starts a new Session", () => {
+  const result = JSON.stringify({ message_id: "m", followup: { id: "fu-1", status: "running" } });
+  const state = run([
+    { type: "v2_tool_update", update: { toolCallId: "n", title: "mcp__grove_buddy__send", rawInput: { text: "Audit auth", new: { title: "Audit auth", target: { kind: "self" } } }, status: "completed", rawOutput: result } },
+    { type: "v2_tool_update", update: { toolCallId: "e", title: "mcp__grove_buddy__send", rawInput: { text: "status?", session: "s" }, status: "completed" } },
+  ]);
+  expect(state.rows.filter(row => row.kind === "delegation")).toEqual([{ kind: "delegation", id: "delegation-n", title: "Audit auth", delegationId: "fu-1", failed: false }]);
+});
+it("marks a delegation row failed when the delegate tool fails", () => {
+  const state = run([{ type: "v2_tool_update", update: { toolCallId: "v", title: "buddy_delegate", rawInput: { title: "Fix CI" }, status: "failed" } }]);
+  expect(state.rows.find(row => row.kind === "delegation")).toMatchObject({ title: "Fix CI", failed: true, delegationId: undefined });
+});
+it("recognizes renamed Buddy tools and names routine events after the routine", () => {
+  const state = run([{ type: "tool_call", id: "d", title: "mcp__grove_buddy__delegate", input: [{ label: "title", value: "Fix CI" }] }, { type: "tool_call", id: "r", title: "mcp__grove_buddy__create_routine", input: [{ label: "name", value: "Daily check" }] }, { type: "tool_call_update", id: "r", status: "completed" }, { type: "tool_call", id: "l", title: "mcp__grove_buddy__list_delegations" }]);
+  expect(state.rows.filter(row => row.kind === "delegation").map(row => row.id)).toEqual(["delegation-d"]);
+  expect(state.rows.find(row => row.kind === "event")).toMatchObject({ text: "Created routine · Daily check" });
+});
+it("times a replayed turn without prompt_started or tools from its complete stamp", () => {
+  const state = [{ type: "user_message", text: "Hi" }, { type: "message_chunk", text: "Hello" }, { type: "complete", start_ts: 100, end_ts: 172 }].reduce((value, event) => reduceBuddyEvent(value, event, 5_000), emptyBuddyTimeline());
+  expect(state.messages[1]).toMatchObject({ startTs: 100, endTs: 172 });
+});
+it("takes turn timing and send times from backend stamps, not the replay clock", () => {
+  const state = [
+    { type: "user_message", text: "Hi", client_message_id: "c1" },
+    { type: "user_message_time", sent_at: 1_793_505_584_895, client_message_id: "c1" },
+    { type: "prompt_started" },
+    { type: "message_chunk", text: "Hello" },
+    { type: "complete", start_ts: 1_793_505_584, end_ts: 1_793_505_656 },
+  ].reduce((value, event) => reduceBuddyEvent(value, event, 5_000), emptyBuddyTimeline());
+  expect(state.rows.find(row => row.kind === "activity")).toMatchObject({ started: 1_793_505_584_000, ended: 1_793_505_656_000 });
+  expect(state.messages[0]).toMatchObject({ sentAt: 1_793_505_584_895 });
+  expect(state.messages[1]).toMatchObject({ startTs: 1_793_505_584, endTs: 1_793_505_656 });
 });

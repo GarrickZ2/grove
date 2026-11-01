@@ -51,7 +51,6 @@ import {
   Loader2,
   CheckCircle2,
   Check,
-  Copy,
   Circle,
   CircleAlert,
   Brain,
@@ -124,7 +123,8 @@ import {
   buildGroveMetaTag,
   parseGroveMetaSegments,
 } from "../../../utils/groveMeta";
-import { renderGroveMetaEnvelope } from "./groveMetaRenderers";
+import { buddyMessageSender, renderGroveMetaEnvelope } from "./groveMetaRenderers";
+import { BuddyAvatar } from "../../Buddy/BuddyAvatar";
 import { composerPresenceUpdate } from "./composerPresence";
 import { FormPill } from "./FormPill";
 import { PendingQueueAttachments } from "./PendingQueueAttachments";
@@ -205,6 +205,7 @@ import { useActiveChatId } from "./useActiveChatId";
 import { useLiveSessionMessages } from "./useLiveSessionMessages";
 import { useTypewriter } from "./useTypewriter";
 import { showMessageActions } from "./messageActions";
+import { MessageActions } from "./MessageActionsBar";
 import { useIsMobile } from "../../../hooks/useIsMobile";
 import { CHAT_HISTORY_PREFERENCES_CHANGED, CHAT_HISTORY_PREFERENCES_KEY, loadChatHistoryPreferences } from "./chatHistoryPreferences";
 import {
@@ -256,7 +257,6 @@ import { contextUsagePercent } from "./contextUsage";
 import { ChatComposerPanel } from "./ChatComposerPanel";
 import { MobileComposerStatus } from "./MobileComposerStatus";
 import { mobileComposerPanelTitles, type MobileComposerPanel } from "./mobileComposerPanels";
-import { formatDuration, formatTokens } from "../../Stats/formatters";
 import { collectReadMemoryIds } from "./memoryRead";
 import {
   quotaBadgePercent,
@@ -4042,6 +4042,7 @@ export function TaskChat({
         Icon: MessageSquare,
       };
     }
+    if (sender.startsWith("buddy:")) return { label: "Buddy", Icon: Bot };
     return { label: sender, Icon: Bot };
   };
 
@@ -13555,39 +13556,6 @@ function AgentContentBlocks({
   );
 }
 
-function MessageActions({ text, timestamp, usage, startTs, endTs, now, alignRight = false }: {
-  text: string; timestamp?: number; usage?: TurnUsageData; startTs?: number; endTs?: number; now: number; alignRight?: boolean;
-}) {
-  const [copied, setCopied] = useState(false);
-  const date = timestamp == null ? undefined : new Date(timestamp);
-  const minutes = date ? Math.max(0, Math.floor((now - date.getTime()) / 60000)) : 0;
-  const sameDay = date?.toDateString() === new Date(now).toDateString();
-  const time = date && (sameDay && minutes < 1 ? "just now" : sameDay && minutes < 60 ? `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago` : date.toLocaleString(undefined, sameDay ? { hour: "numeric", minute: "2-digit" } : { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));
-  const duration = startTs != null && endTs != null && endTs >= startTs ? formatDuration(endTs - startTs) : undefined;
-  const copy = async () => {
-    let success = false;
-    if (window.isSecureContext && navigator.clipboard?.writeText) {
-      try { await navigator.clipboard.writeText(text); success = true; } catch { /* Try selection-based copying. */ }
-    }
-    if (!success) {
-      const textarea = document.createElement("textarea");
-      const focused = document.activeElement as HTMLElement | null;
-      textarea.value = text;
-      textarea.style.position = "fixed";
-      textarea.style.top = "-9999px";
-      document.body.appendChild(textarea);
-      try { textarea.select(); success = document.execCommand("copy"); } catch { success = false; } finally { textarea.remove(); focused?.focus({ preventScroll: true }); }
-    }
-    if (success) { setCopied(true); window.setTimeout(() => setCopied(false), 2000); }
-  };
-  return <div className={`mt-1 flex min-h-6 items-center gap-2 text-xs text-[var(--color-text-muted)] opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100 ${alignRight ? "justify-end" : "justify-start"}`}>
-    {time && <span title={date?.toLocaleString()}>{time}</span>}
-    {usage && <span title={`Input ${usage.inputTokens.toLocaleString()}, output ${usage.outputTokens.toLocaleString()} tokens`}>{formatTokens(usage.totalTokens)} tokens</span>}
-    {duration && <span>{duration}</span>}
-    <button type="button" title={copied ? "Copied" : "Copy message"} aria-label={copied ? "Copied" : "Copy message"} className="rounded p-1 hover:text-[var(--color-text)] focus-visible:opacity-100" onClick={() => void copy()}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
-  </div>;
-}
-
 /** Individual message rendering */
 const MessageItem = memo(function MessageItem({
   message,
@@ -13746,9 +13714,17 @@ const MessageItem = memo(function MessageItem({
       }
       return (
         <div className="group/message flex items-end justify-end gap-1" onMouseEnter={() => setHoverTime(Date.now())} onFocus={() => setHoverTime(Date.now())}>
-          {delivery && <div className="shrink-0" title={deliveryError}>{delivery}</div>}
           <div className="max-w-[80%] min-w-0">
             {message.sender && (() => {
+              const buddy = message.sender.startsWith("buddy:") ? buddyMessageSender(message.content) : null;
+              if (buddy) {
+                return (
+                  <div className="text-[11px] text-[var(--color-text-muted)] text-right mb-1 px-1 flex items-center justify-end gap-1.5">
+                    <BuddyAvatar id={buddy.id} avatar={buddy.avatar} size={14} />
+                    <span className="truncate max-w-[200px] font-medium text-[var(--color-text)]">{buddy.name}</span>
+                  </div>
+                );
+              }
               const resolved = resolveSender?.(message.sender) ?? {
                 label: message.sender,
                 Icon: Bot,
@@ -13764,7 +13740,12 @@ const MessageItem = memo(function MessageItem({
                 </div>
               );
             })()}
-            <div className="rounded-2xl px-3.5 py-2.5 bg-[color-mix(in_srgb,var(--color-bg-tertiary)_78%,transparent)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-sm text-[var(--color-text)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
+            <div className="relative rounded-2xl px-3.5 py-2.5 bg-[color-mix(in_srgb,var(--color-bg-tertiary)_78%,transparent)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-sm text-[var(--color-text)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
+              {delivery && (
+                <div className="absolute right-full top-1/2 mr-1 -translate-y-1/2" title={deliveryError}>
+                  {delivery}
+                </div>
+              )}
               {message.attachments?.map((att, i) =>
                 !att.data && (att.type === "image" || att.type === "audio") ? (
                   <OmittedMedia key={i} label={att.label || att.type} />

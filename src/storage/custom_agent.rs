@@ -103,11 +103,12 @@ fn row_to_agent(row: &rusqlite::Row<'_>) -> rusqlite::Result<CustomAgent> {
 const SELECT_COLS: &str =
     "id, name, base_agent, agent_config_json, model, mode, effort, duty, system_prompt, created_at, updated_at";
 
-/// 列出所有 custom agent（按 created_at 升序）
+/// 列出所有 custom agent（按 created_at 升序）。Buddy persona 属于 Buddy 本身，
+/// 不作为可选的 custom agent 出现（Agent 选择器、Agent Graph 可派生列表等）。
 pub fn list() -> Result<Vec<CustomAgent>> {
     let conn = crate::storage::database::connection();
     let sql = format!(
-        "SELECT {} FROM custom_agent ORDER BY created_at ASC",
+        "SELECT {} FROM custom_agent WHERE id NOT IN (SELECT custom_agent_id FROM buddies) ORDER BY created_at ASC",
         SELECT_COLS
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -127,6 +128,16 @@ pub fn get(id: &str) -> Result<Option<CustomAgent>> {
     stmt.query_row(params![id], row_to_agent)
         .optional()
         .map_err(Into::into)
+}
+
+/// Whether this persona backs a Buddy. Those are managed through the Buddy API only.
+pub fn is_buddy_persona(id: &str) -> Result<bool> {
+    let conn = crate::storage::database::connection();
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM buddies WHERE custom_agent_id = ?1)",
+        params![id],
+        |row| row.get(0),
+    )?)
 }
 
 /// Persona id prefix. Server-generated ids are always `ca-<uuid>`; the prefix

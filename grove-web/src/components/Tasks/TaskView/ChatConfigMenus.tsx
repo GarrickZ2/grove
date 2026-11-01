@@ -313,6 +313,7 @@ export const DropdownSelect = ({
   disabled = false,
   loading = false,
   placement = "up-right",
+  menuMaxHeight,
   onToggle,
   onSelect,
 }: {
@@ -327,6 +328,7 @@ export const DropdownSelect = ({
   disabled?: boolean;
   loading?: boolean;
   placement?: "up-left" | "up-right";
+  menuMaxHeight?: number;
   onToggle: () => void;
   onSelect: (value: string) => void;
 }) => {
@@ -355,6 +357,7 @@ export const DropdownSelect = ({
           selectedId={value}
           onSelect={onSelect}
           placement={placement}
+          maxHeight={menuMaxHeight}
           onEscape={onToggle}
         />
       )}

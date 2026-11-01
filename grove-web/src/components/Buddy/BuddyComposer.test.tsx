@@ -108,7 +108,7 @@ describe("Buddy composer and header", () => {
   });
   it("shows working counts and accessible panel controls", () => {
     const panel = vi.fn();
-    act(() => root.render(<BuddyConversationHeader buddy={{ ...buddy, status: "working", running_delegations: 1 }} panelOpen={false} onPanel={panel} onSettings={vi.fn()} />));
+    act(() => root.render(<BuddyConversationHeader buddy={{ ...buddy, status: "working", running_delegations: 1 }} panelOpen={false} onPanel={panel} />));
     expect(host.textContent).toContain("Working · 1 delegation running");
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="Open Buddy panel"]')!.click()); expect(panel).toHaveBeenCalledOnce();
   });

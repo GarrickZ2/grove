@@ -4,7 +4,7 @@ import { elicitationToSurvey, type SurveyAnswers } from "../../Tasks/TaskView/fo
 import { blankAnswer, answerValue, buildSubmittedMarkdown, validationError, type LocalAnswer } from "../../Tasks/TaskView/surveyAnswers";
 import type { Question } from "./buddyTimelineState";
 
-export function QuestionCard({ question, connected, onSubmit, onSkip, onOpen }: { question: Question; connected: boolean; onSubmit: (answers: SurveyAnswers, markdown: string) => Promise<void>; onSkip: () => void; onOpen: () => void }) {
+export function QuestionCard({ question, connected, onSubmit, onSkip, onOpen, source }: { question: Question; connected: boolean; onSubmit: (answers: SurveyAnswers, markdown: string) => Promise<void>; onSkip: () => void; onOpen: () => void; source?: string }) {
   const definition = question.definition ?? (question.snapshot ? elicitationToSurvey(question.snapshot) : null);
   const [answers, setAnswers] = useState<Record<string, LocalAnswer>>(() => Object.fromEntries((definition?.questions ?? []).map(q => [q.id, blankAnswer(q)])));
   const [error, setError] = useState<string | null>(null);
@@ -19,8 +19,8 @@ export function QuestionCard({ question, connected, onSubmit, onSkip, onOpen }: 
     catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send answers."); }
     finally { setSending(false); }
   };
-  if (!definition) return <section className="buddy-card"><h3>{question.snapshot?.request.message || "Information requested"}</h3><button type="button" className="buddy-button" disabled={!connected} onClick={onOpen}><ExternalLink size={14} />{question.snapshot?.opened ? "Open again" : "Open request"}</button><button type="button" className="buddy-button" disabled={!connected} onClick={onSkip}>Cancel</button></section>;
-  return <form className="buddy-card buddy-question" aria-label={definition.title} onSubmit={event => { event.preventDefault(); void submit(); }}><h3>{definition.title}</h3>{definition.description && <p>{definition.description}</p>}
+  if (!definition) return <section className="buddy-card"><h3>{question.snapshot?.request.message || "Information requested"}</h3>{source && <p className="buddy-request-source">{source}</p>}<button type="button" className="buddy-button" disabled={!connected} onClick={onOpen}><ExternalLink size={14} />{question.snapshot?.opened ? "Open again" : "Open request"}</button><button type="button" className="buddy-button" disabled={!connected} onClick={onSkip}>Cancel</button></section>;
+  return <form className="buddy-card buddy-question" aria-label={definition.title} onSubmit={event => { event.preventDefault(); void submit(); }}><h3>{definition.title}</h3>{source && <p className="buddy-request-source">{source}</p>}{definition.description && <p>{definition.description}</p>}
     <fieldset disabled={!connected || sending}>{definition.questions.map(q => {
       const answer = answers[q.id] ?? blankAnswer(q);
       return <div key={q.id} className="buddy-question-field"><label htmlFor={`buddy-question-${question.id}-${q.id}`}>{q.title}{q.required ? " *" : ""}</label>{q.description && <small>{q.description}</small>}

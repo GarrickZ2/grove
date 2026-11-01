@@ -3,11 +3,15 @@
 .buddy-av .buddy-av__eyes,.buddy-av .buddy-av__eye{font-size:inherit;line-height:0}
 .buddy-av__eyes{display:flex;gap:.1em;transform:translate(.07em,-.07em)}
 .buddy-av__eye{display:block;width:.11em;height:.22em;border-radius:.06em;background:#fff}
-.buddy-av.is-idle .buddy-av__eye{animation:buddy-av-blink 4.6s infinite}
+/* Idle: slow breathing squash plus an occasional sway; --buddy-phase desyncs Buddies shown together. */
+.buddy-av{transform-origin:50% 92%}
+.buddy-av.is-idle{animation:buddy-av-idle 5.2s ease-in-out infinite;animation-delay:calc(var(--buddy-phase,0) * -5.2s)}
+.buddy-av.is-idle .buddy-av__eye{animation:buddy-av-blink 4.6s infinite;animation-delay:calc(var(--buddy-phase,0) * -4.6s)}
 .buddy-av.is-working{animation:buddy-av-bob 1.4s ease-in-out infinite}
 .buddy-av.is-working .buddy-av__eyes{animation:buddy-av-look 2.8s ease-in-out infinite}
 .buddy-av.is-waiting{animation:buddy-av-hop 1.8s ease-in-out infinite}
 .buddy-av.is-waiting .buddy-av__eye{width:.13em;height:.26em}
+@keyframes buddy-av-idle{0%,100%{transform:none}18%{transform:scale(1.035,.965)}32%{transform:translateY(-.025em) scale(.98,1.025)}46%{transform:none}66%{transform:rotate(-3deg)}80%{transform:rotate(2deg)}90%{transform:rotate(-.5deg)}}
 @keyframes buddy-av-blink{0%,93%,100%{transform:scaleY(1)}96%{transform:scaleY(.15)}}
 @keyframes buddy-av-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-.05em)}}
 @keyframes buddy-av-look{0%,100%{transform:translate(.07em,-.07em)}35%{transform:translate(.15em,-.07em)}65%{transform:translate(-.02em,-.05em)}}

@@ -60,19 +60,21 @@ export function BuddyAgentFields({ agents, agent, config, onAgent, onConfig, dis
   };
   return <div className="buddy-agent-fields" ref={root}>
     <div className="buddy-agent-menu">
-      <button ref={agentRef} type="button" className="buddy-button" disabled={disabled || loading || agentDisabled || !agents.length} aria-expanded={menu === "agent"} onClick={() => setMenu(menu === "agent" ? null : "agent")}><span className="buddy-agent-brand">{createElement(agentIconComponent(agent), { size: 16 })}</span><span>Agent · {loading ? "Loading…" : selected?.name ?? (agent || "Choose")}</span><ChevronDown size={14} /></button>
+      <button ref={agentRef} type="button" className="buddy-button" disabled={disabled || loading || agentDisabled || !agents.length} aria-expanded={menu === "agent"} onClick={() => setMenu(menu === "agent" ? null : "agent")}><span className="buddy-agent-brand">{createElement(agentIconComponent(agent), { size: 16 })}</span><span><span className="buddy-agent-prefix">Agent · </span>{loading ? "Loading…" : selected?.name ?? (agent || "Choose")}</span><ChevronDown size={14} /></button>
       {menu === "agent" && !loading && !disabled && !agentDisabled && <PickerMenu anchorRef={agentRef} menuRef={menuRef} footer={confirmation} items={agents.map((item) => ({ id: item.id, label: item.name, icon: createElement(agentIconComponent(item.id), { size: 16 }) }))} selectedId={agent} onSelect={(id) => { onAgent(id); if (!confirmAgentChange) setMenu(null); }} onEscape={() => setMenu(null)} />}
     </div>
+    <div className="buddy-agent-options">
     {supported.map(({ key, option, icon }) => {
       if (!option) return null;
       const values = configDropdownValues(option).map((item) => ({ label: item.name, value: item.value, description: item.description, group: item.group }));
       const value = String(overrides[option.id] ?? (key === "mode" && config.source === "modes" ? config.mode_id : option.currentValue));
       const options: ChatDropdownOption[] = [...values];
       if (value && !values.some((item) => item.value === value)) options.push({ label: value, value });
-      return <DropdownSelect key={key} ref={key === "model" ? modelRef : key === "mode" ? modeRef : effortRef} icon={icon} portal menuRef={menuRef} label={option.name} options={options} value={value} open={menu === key} disabled={disabled || loading} placement="up-left" onToggle={() => setMenu(menu === key ? null : key)} onSelect={(next) => setOption(option, next)} />;
+      return <DropdownSelect key={key} ref={key === "model" ? modelRef : key === "mode" ? modeRef : effortRef} icon={icon} portal menuRef={menuRef} label={option.name} options={options} value={value} open={menu === key} disabled={disabled || loading} placement="up-left" menuMaxHeight={280} onToggle={() => setMenu(menu === key ? null : key)} onSelect={(next) => setOption(option, next)} />;
     })}
-    {modes.length > 0 && <DropdownSelect ref={modeRef} icon={<ShieldCheck size={12} />} portal menuRef={menuRef} label="Mode" options={modes.map(([value, label]) => ({ value, label }))} value={config.source === "modes" ? config.mode_id : snapshot?.modes?.current ?? modes[0][0]} open={menu === "mode"} disabled={disabled || loading} placement="up-left" onToggle={() => setMenu(menu === "mode" ? null : "mode")} onSelect={(mode_id) => { onConfig({ source: "modes", agent_id: agent, mode_id }); setMenu(null); }} />}
+    {modes.length > 0 && <DropdownSelect ref={modeRef} icon={<ShieldCheck size={12} />} portal menuRef={menuRef} label="Mode" options={modes.map(([value, label]) => ({ value, label }))} value={config.source === "modes" ? config.mode_id : snapshot?.modes?.current ?? modes[0][0]} open={menu === "mode"} disabled={disabled || loading} placement="up-left" menuMaxHeight={280} onToggle={() => setMenu(menu === "mode" ? null : "mode")} onSelect={(mode_id) => { onConfig({ source: "modes", agent_id: agent, mode_id }); setMenu(null); }} />}
     {settingsOptions.length > 0 && <SessionSettingsMenu ref={settingsRef} menuRef={menuRef} options={settingsOptions} open={menu === "settings"} disabled={disabled || loading} pendingConfigIds={NO_PENDING_CONFIG} onToggle={() => setMenu(menu === "settings" ? null : "settings")} onSelect={setOption} />}
+    </div>
     {!loading && !agents.length && !disabled && <p className="buddy-muted">No installed Agents. Install an Agent in Grove Settings.</p>}
     {!loading && selected && !snapshot && <p className="buddy-muted">Configuration options become available after this Agent connects in Grove.</p>}
     {!loading && selected && snapshot && !configOptions.length && !modes.length && <p className="buddy-muted">This Agent does not expose configuration options.</p>}

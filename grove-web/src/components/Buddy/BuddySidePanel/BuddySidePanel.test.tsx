@@ -33,7 +33,6 @@ describe("Buddy side panel", () => {
   });
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
   const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === text || item.getAttribute("aria-label") === text)!;
-  const field = (label: string) => [...host.querySelectorAll("label")].find((item) => item.firstChild?.textContent === label)!.querySelector("input")!;
   const input = (element: HTMLInputElement, value: string) => act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(element, value); element.dispatchEvent(new Event("input", { bubbles: true })); });
 
   it("requires explicit Agent confirmation and starts a new Segment", async () => {
@@ -78,6 +77,47 @@ describe("Buddy side panel", () => {
     expect(buddiesMock.routines(buddy.id).find(item => item.name === "Weekly review")).toMatchObject({ task_id: "_local", session_mode: "buddy_active", agent_config: buddy.agent_config, event_triggers: ["task.finished"] });
     expect(document.querySelector('[aria-label="Close routine"]')).toBeNull();
   });
+  async function draftRoutine(name: string) {
+    await act(async () => button("Routines").click());
+    await act(async () => button("New routine").click());
+    const dialog = [...document.querySelectorAll('[role="dialog"]')].at(-1)!;
+    input(dialog.querySelector<HTMLInputElement>('input[placeholder="Daily standup summary"]')!, name);
+    act(() => { const textarea = dialog.querySelector("textarea")!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Do it"); textarea.dispatchEvent(new Event("input", { bubbles: true })); });
+    return dialog;
+  }
+  // Day 28 of the month after `base`: visible after one "Next month" click
+  // from a calendar opened on `base`'s month.
+  const nextMonthDay = (base = new Date()) => new Date(base.getFullYear(), base.getMonth() + 1, 28);
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  it("bounds a recurring routine with an end date", async () => {
+    const dialog = await draftRoutine("Until year end");
+    const day = nextMonthDay();
+    act(() => button("Active period").click());
+    act(() => button("Next month").click());
+    act(() => button(iso(day)).click());
+    expect(button("Active period").textContent).toMatch(/^Until /);
+    await act(async () => [...dialog.querySelectorAll("button")].find(item => item.textContent === "Create")!.click());
+    const saved = buddiesMock.routines(buddy.id).find(item => item.name === "Until year end")!;
+    expect(saved.ends_at).toBe(Math.floor(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).getTime() / 1000));
+    expect(saved.starts_at).toBeUndefined();
+    expect(saved.schedule_cron).toBe("0 9 * * *");
+  });
+  it("creates a one-time routine", async () => {
+    const dialog = await draftRoutine("Remind once");
+    act(() => [...dialog.querySelectorAll("button")].find(item => item.textContent?.trim() === "Daily")!.click());
+    act(() => [...document.querySelectorAll("button")].find(item => item.textContent?.trim() === "Once")!.click());
+    expect(document.querySelector('[aria-label="Active period"]')).toBeNull();
+    // The one-time picker opens on its default date, tomorrow.
+    const day = nextMonthDay(new Date(Date.now() + 86400000));
+    act(() => button("Run date").click());
+    act(() => button("Next month").click());
+    act(() => button(iso(day)).click());
+    expect(dialog.textContent).toContain("Once on");
+    await act(async () => [...dialog.querySelectorAll("button")].find(item => item.textContent === "Create")!.click());
+    const saved = buddiesMock.routines(buddy.id).find(item => item.name === "Remind once")!;
+    expect(saved.run_once_at).toBe(Math.floor(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0).getTime() / 1000));
+    expect(saved.schedule_cron).toBe("");
+  });
   it("opens a memory document and searches within this Buddy", async () => {
     await act(async () => button("Memory").click());
     await act(async () => [...host.querySelectorAll<HTMLButtonElement>(".buddy-memory-list button")].find((item) => item.textContent?.includes("Docs's working notes"))!.click());
@@ -100,15 +140,5 @@ describe("Buddy side panel", () => {
     await act(async () => confirm.click());
     expect(buddiesMock.logs(buddy.id)).toHaveLength(0);
     expect(host.textContent).toContain("Logs · 0");
-  });
-  it("creates a connection locked to the Buddy and keeps credentials out of mock storage", async () => {
-    act(() => button("Add connection").click());
-    input(field("Name"), "Docs");
-    const forms = host.querySelectorAll("form"); const connectForm = forms[forms.length - 1];
-    const inputs = connectForm.querySelectorAll<HTMLInputElement>("input");
-    input(inputs[0], "Docs IM"); input(inputs[1], "app"); input(inputs[2], "secret");
-    await act(async () => connectForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-    expect(buddiesMock.connects(buddy.id)[0]).toMatchObject({ name: "Docs IM", project_id: buddy.project_hash, session_id: buddy.active_session_id, adapter_config: {} });
-    expect(host.textContent).toContain("Docs IM");
   });
 });

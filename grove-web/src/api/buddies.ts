@@ -8,6 +8,8 @@ export type BuddyAgentConfig = AgentConfigSelection;
 
 export interface BuddySummary {
   id: string;
+  /** The Buddy's own Project. It is never shown in the shell; links to it open the Buddy instead. */
+  project_hash: string;
   name: string;
   avatar: string | null;
   description: string;
@@ -18,6 +20,8 @@ export interface BuddySummary {
   last_activity_at: string | null;
   active_session_id: string;
   running_delegations: number;
+  /** Delegations whose subagent is waiting on a permission, form, or answer. */
+  waiting_delegations: number;
 }
 
 export interface BuddySegment {
@@ -29,7 +33,6 @@ export interface BuddySegment {
 }
 
 export interface Buddy extends BuddySummary {
-  project_hash: string;
   local_task_id: string;
   role: string;
   system_prompt: string;
@@ -58,39 +61,45 @@ export interface SwitchBuddyAgentInput {
   agent_config?: BuddyAgentConfig;
 }
 
+export type BuddyDelegationStatus = "running" | "waiting" | "done" | "failed" | "cancelled";
+
 export interface BuddyDelegation {
   id: string;
   title: string;
-  status: "running" | "waiting" | "done" | "failed" | "cancelled";
+  brief: string;
+  status: BuddyDelegationStatus;
+  from_session: string;
   target_project: string;
   target_task: string;
   target_session: string;
   last_result: string | null;
+  created_at: string;
   updated_at: string;
+  completed_at: string | null;
 }
 
 const BASE = "/api/v1/buddies";
 const buddyPath = (id: string) => `${BASE}/${encodeURIComponent(id)}`;
 
-type BuddyWire = Omit<Buddy, "local_task_id" | "running_delegations" | "role"> & {
+type BuddyWire = Omit<Buddy, "local_task_id" | "running_delegations" | "waiting_delegations" | "role"> & {
   role: string | null;
   local_task_id?: string;
   running_delegations?: number;
+  waiting_delegations?: number;
 };
 
-async function summary(wire: BuddyWire): Promise<BuddySummary> {
-  const running = wire.running_delegations ?? (await listBuddyDelegations(wire.id)).filter((item) => item.status === "running").length;
-  return { ...wire, running_delegations: running };
+function summary(wire: BuddyWire): BuddySummary {
+  return { ...wire, running_delegations: wire.running_delegations ?? 0, waiting_delegations: wire.waiting_delegations ?? 0 };
 }
-async function detail(wire: BuddyWire): Promise<Buddy> {
-  return { ...wire, ...await summary(wire), role: wire.role ?? "", system_prompt: wire.system_prompt ?? "", agent_config: wire.agent_config ?? { source: "default", agent_id: wire.agent },
+function detail(wire: BuddyWire): Buddy {
+  return { ...wire, ...summary(wire), role: wire.role ?? "", system_prompt: wire.system_prompt ?? "", agent_config: wire.agent_config ?? { source: "default", agent_id: wire.agent },
     // Buddy creation uses the existing LOCAL_TASK_ID; no separate task API.
     local_task_id: wire.local_task_id ?? "_local" };
 }
 
 export async function listBuddies(): Promise<BuddySummary[]> {
   if (BUDDIES_MOCK_ENABLED) return buddiesMock.list();
-  return Promise.all((await apiClient.get<BuddyWire[]>(BASE)).map(summary));
+  return (await apiClient.get<BuddyWire[]>(BASE)).map(summary);
 }
 
 export async function getBuddy(id: string): Promise<Buddy> {
@@ -130,5 +139,5 @@ export async function listBuddyDelegations(id: string): Promise<BuddyDelegation[
 
 export async function cancelBuddyDelegation(id: string, delegationId: string): Promise<void> {
   if (BUDDIES_MOCK_ENABLED) return buddiesMock.cancelDelegation(id, delegationId);
-  await apiClient.post<undefined, void>(`${buddyPath(id)}/delegations/${encodeURIComponent(delegationId)}/cancel`);
+  await apiClient.post<undefined, BuddyDelegation>(`${buddyPath(id)}/delegations/${encodeURIComponent(delegationId)}/cancel`);
 }

@@ -145,8 +145,8 @@ Buddy 不复用 `TaskChat` 的消息渲染。新增 `BuddyTimeline`，消费当�
 | 一个 turn 内的工具调用、思考、计划 | 合并为一行活动（见下） |
 | 本 Buddy 的权限请求 | 审批卡 |
 | `ask_form` / elicitation | 问题卡 |
-| `buddy_delegate` 工具调用 | 运行中委派卡（结果到达后被结果卡替代） |
-| `buddy_routine_*` 工具调用 | 居中事件行 "Created routine · {name}" 等 |
+| `delegate` 工具调用 | 运行中委派卡（结果到达后被结果卡替代） |
+| `create_routine` / `update_routine` / `delete_routine` 工具调用 | 居中事件行 "Created routine · {name}" 等 |
 | 委派状态投递（带 delegation meta）、Routine 触发的 prompt、其他 Buddy / Session / Automation 发来的 prompt | **不显示**。判定：`UserMessage.sender` 非空且不是 `connect`（`buddy:*`、`agent:*`、`automation:*` 等）。Buddy 照常收到并处理，只显示它的回复；回复前不加来源标签 |
 | 委派处于 waiting（来自委派列表状态，不依赖投递消息） | 订阅该委派的 `target_session`，按其待处理请求渲染审批卡 / 问题卡，标注来源 subagent |
 | IM 消息（sender `connect`） | 用户气泡 + 平台小图标 |
@@ -178,7 +178,7 @@ Buddy 不复用 `TaskChat` 的消息渲染。新增 `BuddyTimeline`，消费当�
 
 ### 委派卡与呈现
 
-- 委派卡：由 Buddy 的 `buddy_delegate` 工具调用生成。一行卡片，8px 状态点 + 标题 + 状态文字（Running 带扫光动画 "Subagent working · 2m"；Done 显示 "Done"，点击打开 Delegations 页签对应项；Failed / Cancelled 为红 / 灰）。状态取委派列表，不依赖投递消息。
+- 委派卡：由 Buddy 的 `delegate` 工具调用生成。一行卡片，8px 状态点 + 标题 + 状态文字（Running 带扫光动画 "Subagent working · 2m"；Done 显示 "Done"，点击打开 Delegations 页签对应项；Failed / Cancelled 为红 / 灰）。状态取委派列表，不依赖投递消息。
 - 结果呈现：委派结果本身不进对话，由 Buddy 在回复里整理呈现。助手 markdown 的列表、表格、勾选清单、附件按卡片化样式渲染（白底圆角 12px 容器包裹表格与清单，附件为文件小卡）。
 
 ### Composer
@@ -307,4 +307,4 @@ Archive：确认对话框说明数据保留，Routine 与 IM 不会自动停止�
 
 ## 14. 待确认
 
-1. 轻委派的 subagent session 只在 Delegations 页签与对话卡片中出现，不在任何列表里列出 session 本身。后端 `buddy_list_sessions` 暂不过滤。
+1. 轻委派的 subagent session 只在 Delegations 页签与对话卡片中出现，不在任何列表里列出 session 本身。后端 `list_sessions` 暂不过滤。

@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { CalendarClock, X } from "lucide-react";
 import type { BuddyTemplate } from "./buddyTemplates";
 import { createBuddyRoutine } from "../../api/buddyResources";
 import { useState } from "react";
@@ -40,17 +40,26 @@ export function CreateBuddyDialog({ onClose, onCreate, template }: { template?: 
     catch (reason) { setError(errorMessage(reason)); setSaving(false); }
   };
   return <DialogShell isOpen onClose={() => { if (!saving) onClose(); }} maxWidth="max-w-[540px]">
-    <form className="buddy-dialog buddy-form" onSubmit={(event) => { event.preventDefault(); void submit(); }} aria-label="Create Buddy">
+    <form className="buddy-dialog buddy-form buddy-create-dialog" onSubmit={(event) => { event.preventDefault(); void submit(); }} aria-label="Create Buddy">
       <div className="buddy-dialog-heading"><h2>Create Buddy</h2><button type="button" className="orbit-icon-button" aria-label="Close create Buddy" disabled={saving} onClick={onClose}><X size={18} /></button></div>
-      <fieldset disabled={saving || created} className="buddy-form">
+      <div className="buddy-create-body"><fieldset disabled={saving || created} className="buddy-form">
         <BuddyAvatarPicker value={avatar} onChange={setAvatar} />
         <label>Name<input required value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
         <label>Role<input value={role} onChange={(event) => setRole(event.target.value)} placeholder="Keeps Grove docs in sync with what ships" /></label>
         <label>Instructions <span className="buddy-muted">(optional)</span><textarea rows={4} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label>
-        {routine && <p className="buddy-muted">From template: adds the routine {routine.name} · {routine.time} <button type="button" onClick={() => setRoutine(undefined)}>Remove</button></p>}
-        <BuddyAgentFields loading={agentsLoading} disabled={!!agentError} agents={agents} agent={agent} config={selection} onAgent={(id) => { setAgent(id); setConfig(null); }} onConfig={setConfig} />
-        <p className="buddy-muted">Delegated work and memory upkeep use the same Agent.</p>
-      </fieldset>
+        <div className="buddy-field-group" role="group" aria-labelledby="create-buddy-agent-label">
+          <span id="create-buddy-agent-label" className="buddy-field-label">Agent</span>
+          <div className="buddy-agent-panel"><BuddyAgentFields loading={agentsLoading} disabled={!!agentError} agents={agents} agent={agent} config={selection} onAgent={(id) => { setAgent(id); setConfig(null); }} onConfig={setConfig} /></div>
+          <p className="buddy-muted">Delegated work and memory upkeep use the same Agent.</p>
+        </div>
+        {routine && <div className="buddy-field-group" role="group" aria-labelledby="create-buddy-routine-label">
+          <span id="create-buddy-routine-label" className="buddy-field-label">Routine</span>
+          <div className="buddy-template-routine"><span className="buddy-template-routine-icon" aria-hidden="true"><CalendarClock size={16} /></span>
+            <span className="buddy-template-routine-copy"><strong>{routine.name}</strong><small>{/^\d+ \d+ \* \* \*$/.test(routine.cron) ? `Every day at ${routine.time}` : routine.time} · from template</small></span>
+            <button type="button" className="buddy-icon-button" aria-label={`Remove routine ${routine.name}`} title="Remove routine" onClick={() => setRoutine(undefined)}><X size={15} /></button>
+          </div>
+        </div>}
+      </fieldset></div>
       {(error || agentError) && <p role="alert">{error || agentError}{agentError && <button type="button" className="buddy-button" onClick={() => void retryAgents()}>Retry Agents</button>}</p>}
       <div className="buddy-actions"><button className="buddy-button" type="button" disabled={saving} onClick={onClose}>{created ? "Done" : "Cancel"}</button><button className="buddy-button is-primary" type="submit" disabled={saving || created || !canCreate}>{saving ? "Creating…" : "Create Buddy"}</button></div>
     </form>

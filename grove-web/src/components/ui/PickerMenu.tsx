@@ -29,13 +29,15 @@ interface PickerMenuProps {
   searchPlaceholder?: string;
   /** Escape inside the search field: clears the query first, then asks the owner to close. */
   onEscape?: () => void;
+  /** Cap for anchored menus; narrow side panels want a shorter list. */
+  maxHeight?: number;
 }
 
 /**
  * The one dropdown list used by Orbit's selectors and the chat composer's
  * config pills, so they all look and behave the same.
  */
-export function PickerMenu({ items, selectedId, onSelect, placement = "down-left", searchPlaceholder = "Search", onEscape, anchorRef, menuRef, footer }: PickerMenuProps) {
+export function PickerMenu({ items, selectedId, onSelect, placement = "down-left", searchPlaceholder = "Search", onEscape, anchorRef, menuRef, footer, maxHeight = 480 }: PickerMenuProps) {
   const [query, setQuery] = useState("");
   const ownRef = useRef<HTMLDivElement>(null);
   const container = menuRef ?? ownRef;
@@ -62,14 +64,14 @@ export function PickerMenu({ items, selectedId, onSelect, placement = "down-left
       const width = viewport?.width ?? window.innerWidth, height = viewport?.height ?? window.innerHeight;
       const below = Math.max(0, topEdge + height - rect.bottom - margin - gap);
       const above = Math.max(0, rect.top - topEdge - margin - gap);
-      const desired = Math.min(320, menu.scrollHeight);
+      const desired = Math.min(320, maxHeight, menu.scrollHeight);
       const up = placement.startsWith("up") ? above >= desired || above > below : below < desired && above > below;
       const menuWidth = Math.min(320, Math.max(260, rect.width), width - margin * 2);
       Object.assign(menu.style, {
         position: "fixed", width: `${menuWidth}px`, minWidth: "0", maxWidth: `${width - margin * 2}px`,
         left: `${Math.max(leftEdge + margin, Math.min(placement === "up-right" ? rect.right - menuWidth : rect.left, leftEdge + width - margin - menuWidth))}px`, right: "auto",
         top: up ? "auto" : `${rect.bottom + gap}px`, bottom: up ? `${window.innerHeight - rect.top + gap}px` : "auto",
-        maxHeight: `${Math.min(480, up ? above : below)}px`, zIndex: String(layer + 1),
+        maxHeight: `${Math.min(maxHeight, up ? above : below)}px`, zIndex: String(layer + 1),
       });
     };
     position();
@@ -86,7 +88,7 @@ export function PickerMenu({ items, selectedId, onSelect, placement = "down-left
       window.visualViewport?.removeEventListener("resize", position);
       window.visualViewport?.removeEventListener("scroll", position);
     };
-  }, [anchorRef, container, placement, layer, footer]);
+  }, [anchorRef, container, placement, layer, footer, maxHeight]);
 
   const content = (
     <div ref={container} className={`picker-menu picker-menu--${placement}`}>

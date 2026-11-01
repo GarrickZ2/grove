@@ -1,9 +1,13 @@
 import { useCallback, useRef, useState } from "react";
-import { ChevronLeft, Settings, X } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { ChevronLeft, PanelLeftClose, PanelLeftOpen, Settings, X } from "lucide-react";
 import { TabletAsDesktopContext, useIsMobile } from "../../hooks/useIsMobile";
 import { useBuddyBackSwipe } from "../../hooks/useBuddyBackSwipe";
 import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { useBuddies } from "../../hooks/useBuddies";
+import { useBuddyDelegations, useDelegationRequests } from "../../hooks/useBuddyDelegations";
+import { useBuddyUnread } from "../../hooks/useBuddyUnread";
+import { BuddyDelegationsContext } from "./delegations/buddyDelegationsContext";
 import { useRadioEvents } from "../../hooks/useRadioEvents";
 import { BUDDIES_MOCK_ENABLED } from "../../api/buddies.mock";
 import { SettingsPage } from "../Config/SettingsPage";
@@ -52,15 +56,25 @@ export function BuddyApp({ onExit = () => {}, request }: { onExit?: () => void; 
   const [archiveId, setArchiveId] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const reduceMotion = useReducedMotion();
   const [panelOpen, setPanelOpen] = useState(() => readBuddyPreference("panel-open", "false") === "true");
-  const [panelTab, setPanelTab] = useState<BuddyPanelTab>("routines");
+  const [panelTab, setPanelTab] = useState<BuddyPanelTab>("delegations");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readBuddyPreference("sidebar-collapsed", "false") === "true");
+  const toggleSidebar = () => { setSidebarCollapsed(!sidebarCollapsed); writeBuddyPreference("sidebar-collapsed", String(!sidebarCollapsed)); };
+  const [focusedDelegation, setFocusedDelegation] = useState<string | null>(null);
   const shownPanel = phone ? sheetOpen : panelOpen;
-  const select = (id: string) => { data.select(id); setConversationOpen(true); };
-  const openSettings = (id: string) => {
-    select(id); setPanelTab("settings");
+  // Only the Buddy just created plays its arrival; any other selection ends it.
+  const [arrivedId, setArrivedId] = useState<string | null>(null);
+  const select = (id: string) => { data.select(id); setConversationOpen(true); if (id !== arrivedId) setArrivedId(null); };
+  const showPanel = (tab: BuddyPanelTab) => {
+    setPanelTab(tab);
     if (phone) setSheetOpen(true);
     else { setPanelOpen(true); writeBuddyPreference("panel-open", "true"); }
   };
+  const openSettings = (id: string) => { select(id); showPanel("settings"); };
+  const delegations = useBuddyDelegations(data.buddy);
+  const requests = useDelegationRequests(delegations.items);
+  const delegationContext = { ...delegations, requests, focused: focusedDelegation, show: (id: string) => { setFocusedDelegation(id); showPanel("delegations"); } };
   const togglePanel = () => {
     if (phone) setSheetOpen(!sheetOpen);
     else { setPanelOpen(!panelOpen); writeBuddyPreference("panel-open", String(!panelOpen)); }
@@ -78,19 +92,27 @@ export function BuddyApp({ onExit = () => {}, request }: { onExit?: () => void; 
   };
   const exit = <button type="button" className="buddy-exit" aria-label="Back to Grove" title="Back to Grove" onClick={onExit}><ChevronLeft size={16} />Grove</button>;
   const single = data.items.length === 1;
+  // Phones navigate between list and conversation instead of collapsing.
+  // Collapse only while a conversation header can offer the way back.
+  const collapsed = data.items.length >= 2 && !phone && sidebarCollapsed && !!data.buddy;
+  const listShown = data.items.length >= 2 && !collapsed;
+  const sidebarToggle = (open: boolean) => <button type="button" className="orbit-icon-button buddy-icon-button" title={open ? "Collapse sidebar" : "Expand sidebar"} aria-label={open ? "Collapse sidebar" : "Expand sidebar"} aria-expanded={open} onClick={toggleSidebar}>{open ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}</button>;
   const empty = !data.loading && data.items.length === 0;
   const showConversation = conversationOpen || single;
-  return <TabletAsDesktopContext.Provider value={true}><div className={`buddy-app${hasMacControls ? " has-mac-controls" : ""}${phone ? " is-phone" : ""}${showConversation || empty ? " is-conversation-open" : ""}${single ? " is-single" : ""}`}>
+  // Desktop always shows the selected conversation; phones only once it is opened.
+  const unread = useBuddyUnread(data.items, !phone || showConversation ? data.selectedId : "");
+  return <TabletAsDesktopContext.Provider value={true}><BuddyDelegationsContext.Provider value={delegationContext}><div className={`buddy-app${hasMacControls ? " has-mac-controls" : ""}${phone ? " is-phone" : ""}${showConversation || empty ? " is-conversation-open" : ""}${single ? " is-single" : ""}${collapsed ? " is-sidebar-collapsed" : ""}`}>
     {!BUDDIES_MOCK_ENABLED && <BuddyEvents data={data} />}
-    {data.items.length >= 2 && <BuddySidebar exit={exit} loading={data.loading} error={phone && !conversationOpen ? error || data.error : null} onRetry={() => { setError(null); void data.refresh(); }} items={data.items} selectedId={data.selectedId} phone={phone} onSelect={select} onCreate={() => createFrom()} onGlobalSettings={() => setSettings(true)} onBuddySettings={openSettings} onArchive={setArchiveId} onReorder={(ids) => { void data.reorder(ids).catch((reason) => setError(errorMessage(reason))); }} />}
+    {listShown && <BuddySidebar exit={exit} toggle={phone ? undefined : sidebarToggle(true)} loading={data.loading} error={phone && !conversationOpen ? error || data.error : null} onRetry={() => { setError(null); void data.refresh(); }} items={data.items} unread={unread} selectedId={data.selectedId} phone={phone} onSelect={select} onCreate={() => createFrom()} onGlobalSettings={() => setSettings(true)} onBuddySettings={openSettings} onArchive={setArchiveId} onReorder={(ids) => { void data.reorder(ids).catch((reason) => setError(errorMessage(reason))); }} />}
     <main ref={pageRef} className="buddy-main">{(error || data.error) && <div role="alert">{error || data.error}<button type="button" onClick={() => { setError(null); void data.refresh(); }}>Retry</button></div>}
-      {empty ? <><header className="buddy-zero-header" data-tauri-drag-region="deep" data-window-drag-strip>{exit}<button type="button" className="orbit-icon-button" aria-label="Grove settings" onClick={() => setSettings(true)}><Settings size={18} /></button></header><BuddyOnboarding onCreate={createFrom} /></> : data.buddy ? <><BuddyConversationHeader buddy={data.buddy} leading={single ? exit : undefined} switcher={single ? <BuddySwitcher buddy={data.buddy} onCreate={() => createFrom()} onTemplates={() => setTemplatesOpen(true)} /> : undefined} phone={phone && !single} onBack={back} panelOpen={shownPanel} onSettings={() => openSettings(data.selectedId)} onPanel={togglePanel} /><BuddyConversation key={`${data.buddy.id}-${data.buddy.active_session_id}`} buddy={data.buddy} onChanged={() => { void data.refreshItem(data.selectedId); }} /></> : <div className="buddy-empty"><h2>{data.loading ? "Loading Buddies…" : "Choose a Buddy"}</h2></div>}
+      {empty ? <div className="buddy-zero"><div className="buddy-zero-backdrop" aria-hidden="true"><span /><span /><span /></div><header className="buddy-zero-header" data-tauri-drag-region="deep" data-window-drag-strip>{exit}<button type="button" className="orbit-icon-button" aria-label="Grove settings" onClick={() => setSettings(true)}><Settings size={18} /></button></header><BuddyOnboarding onCreate={createFrom} /></div> : data.buddy ? <><BuddyConversationHeader buddy={data.buddy} leading={single ? exit : collapsed ? <>{exit}{sidebarToggle(false)}</> : undefined} switcher={single ? <BuddySwitcher buddy={data.buddy} onCreate={() => createFrom()} onTemplates={() => setTemplatesOpen(true)} /> : undefined} phone={phone && !single} onBack={back} panelOpen={shownPanel} onPanel={togglePanel} /><BuddyConversation key={`${data.buddy.id}-${data.buddy.active_session_id}`} buddy={data.buddy} arriving={data.buddy.id === arrivedId} onChanged={() => { void data.refreshItem(data.selectedId); }} /></> : <div className="buddy-empty"><h2>{data.loading ? "Loading Buddies…" : "Choose a Buddy"}</h2></div>}
     </main>
-    {!phone && panelOpen && data.buddy && <BuddySidePanel buddy={data.buddy} tab={panelTab} onTab={setPanelTab} onChanged={data.accept} onArchive={() => setArchiveId(data.selectedId)} onClose={togglePanel} />}
-    {phone && <DialogShell isOpen={sheetOpen && !!data.buddy} onClose={() => setSheetOpen(false)} swipeToClose><div className="buddy-sheet">{data.buddy && <BuddySidePanel buddy={data.buddy} tab={panelTab} onTab={setPanelTab} onChanged={data.accept} onArchive={() => setArchiveId(data.selectedId)} onClose={() => setSheetOpen(false)} />}</div></DialogShell>}
+    {/* The shell animates its width so the conversation eases aside while the panel slides in from the right. */}
+    <AnimatePresence initial={false}>{!phone && panelOpen && data.buddy && <motion.div key="buddy-side-panel" className="buddy-side-panel-shell" initial={{ width: 0 }} animate={{ width: "auto" }} exit={{ width: 0 }} transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.2, 0.7, 0.3, 1] }}><BuddySidePanel buddy={data.buddy} tab={panelTab} onTab={setPanelTab} onChanged={data.accept} onArchive={() => setArchiveId(data.selectedId)} onClose={togglePanel} /></motion.div>}</AnimatePresence>
+    {phone && <DialogShell isOpen={sheetOpen && !!data.buddy} onClose={() => setSheetOpen(false)} swipeToClose><div className="buddy-sheet">{data.buddy && <BuddySidePanel buddy={data.buddy} tab={panelTab} onTab={setPanelTab} onChanged={data.accept} onArchive={() => setArchiveId(data.selectedId)} onClose={() => setSheetOpen(false)} closable />}</div></DialogShell>}
     {templatesOpen && <DialogShell isOpen onClose={() => setTemplatesOpen(false)} maxWidth="max-w-[800px]"><div className="buddy-dialog"><button type="button" className="orbit-icon-button" aria-label="Close templates" onClick={() => setTemplatesOpen(false)}><X /></button><BuddyOnboarding onCreate={createFrom} /></div></DialogShell>}
-    {creating && <CreateBuddyDialog template={template} onClose={() => setCreating(false)} onCreate={async (input) => { const buddy = await data.create(input); setConversationOpen(true); return buddy; }} />}
+    {creating && <CreateBuddyDialog template={template} onClose={() => setCreating(false)} onCreate={async (input) => { const buddy = await data.create(input); setArrivedId(buddy.id); setConversationOpen(true); return buddy; }} />}
     {settings && <div className="buddy-global-settings" role="dialog" aria-modal="true" aria-label="Grove settings"><button type="button" className="buddy-icon-button buddy-global-close" aria-label="Close Grove settings" onClick={() => setSettings(false)}><X /></button><SettingsPage /></div>}
     <DialogShell isOpen={archiveId !== null} onClose={() => { if (!archiving) setArchiveId(null); }}><div className="buddy-dialog"><h2>Archive Buddy?</h2><p>Your data and conversation history are kept. Routines and IM connections will not stop automatically.</p>{error && <p role="alert">{error}</p>}<div className="buddy-actions"><button type="button" className="buddy-button" disabled={archiving} onClick={() => setArchiveId(null)}>Cancel</button><button type="button" className="buddy-button is-danger" disabled={archiving} onClick={() => void archive()}>Archive Buddy</button></div></div></DialogShell>
-  </div></TabletAsDesktopContext.Provider>;
+  </div></BuddyDelegationsContext.Provider></TabletAsDesktopContext.Provider>;
 }

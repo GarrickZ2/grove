@@ -25,6 +25,10 @@ import {
   Calendar,
   AlertTriangle,
   Check,
+  ChevronLeft,
+  ChevronRight,
+  CalendarRange,
+  Zap,
 } from "lucide-react";
 import { DialogShell } from "../ui/DialogShell";
 import { Button } from "../ui/Button";
@@ -46,8 +50,10 @@ import type {
   AgentConfigSelection,
   Automation,
   AutomationUpsert,
+  ScheduleWindow,
   TargetMode,
 } from "../../api/automations";
+import { describeAutomationSchedule, describeWindow } from "./automationFormat";
 import type { ChatSessionResponse, TaskResponse } from "../../api/tasks";
 
 interface AutomationDialogProps {
@@ -59,7 +65,7 @@ interface AutomationDialogProps {
   onSubmit: (input: AutomationUpsert) => Promise<void>;
 }
 
-type ScheduleKind = "hourly" | "daily" | "weekly" | "custom";
+type ScheduleKind = "once" | "hourly" | "daily" | "weekly" | "custom";
 
 function detectScheduleKind(cron: string): ScheduleKind {
   const parts = cron.trim().split(/\s+/);
@@ -92,6 +98,7 @@ const WEEKDAYS: { value: number; label: string }[] = [
 // "Custom" option to set `scheduleKind = "custom"` and surface the cron
 // input below — not enter Combobox's escape hatch.
 const FREQUENCY_OPTIONS: ComboboxOption[] = [
+  { id: "freq-once", label: "Once", value: "once" },
   { id: "freq-hourly", label: "Hourly", value: "hourly" },
   { id: "freq-daily", label: "Daily", value: "daily" },
   { id: "freq-weekly", label: "Weekly", value: "weekly" },
@@ -125,6 +132,24 @@ const MINUTE_QUARTER_OPTIONS: ComboboxOption[] = [0, 15, 30, 45].map((m) => ({
   label: String(m).padStart(2, "0"),
   value: String(m),
 }));
+
+// `<input type="date">` speaks local "YYYY-MM-DD"; the backend speaks unix
+// seconds. Both directions stay in local time so "Dec 31" means the user's
+// Dec 31, matching how cron schedules are interpreted.
+function toDateInput(ts: number): string {
+  const d = new Date(ts * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function fromDateInput(value: string, hour = 0, minute = 0, second = 0): number | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return undefined;
+  const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), hour, minute, second);
+  return Math.floor(d.getTime() / 1000);
+}
+
+const TEXT_INPUT_CLASS =
+  "rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] transition-all duration-200 focus:border-[var(--color-highlight)] focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)]";
 
 function buildHourlyCron(everyN: number, minute: number): string {
   const m = Math.max(0, Math.min(59, minute));
@@ -220,6 +245,12 @@ export function AutomationDialog({
   const [weeklyHour, setWeeklyHour] = useState(9);
   const [weeklyMinute, setWeeklyMinute] = useState(0);
   const [customCron, setCustomCron] = useState("0 9 * * *");
+  const [onceDate, setOnceDate] = useState("");
+  const [onceHour, setOnceHour] = useState(9);
+  const [onceMinute, setOnceMinute] = useState(0);
+  // Recurring window, as local date strings; empty = unbounded.
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
 
   // ── async loaded data ─────────────────────────────────────────────────
   const [tasks, setTasks] = useState<TaskResponse[]>([]);
@@ -284,7 +315,20 @@ export function AutomationDialog({
         setWeeklyMinute(parseIntSafe(parts[0], 0));
         setWeeklyDays(parts[4].split(",").map((d) => parseIntSafe(d, 0)));
       }
-      setCustomCron(initial.schedule_cron);
+      setCustomCron(initial.schedule_cron || "0 9 * * *");
+      if (initial.run_once_at) {
+        const at = new Date(initial.run_once_at * 1000);
+        setScheduleKind("once");
+        setOnceDate(toDateInput(initial.run_once_at));
+        setOnceHour(at.getHours());
+        setOnceMinute(at.getMinutes());
+      } else {
+        setOnceDate(toDateInput(Date.now() / 1000 + 86400));
+        setOnceHour(9);
+        setOnceMinute(0);
+      }
+      setStartDate(initial.starts_at ? toDateInput(initial.starts_at) : "");
+      setEndDate(initial.ends_at ? toDateInput(initial.ends_at) : "");
     } else {
       setName("");
       setEventTriggers("");
@@ -307,6 +351,11 @@ export function AutomationDialog({
       setWeeklyHour(9);
       setWeeklyMinute(0);
       setCustomCron("0 9 * * *");
+      setOnceDate(toDateInput(Date.now() / 1000 + 86400));
+      setOnceHour(9);
+      setOnceMinute(0);
+      setStartDate("");
+      setEndDate("");
     }
     setError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -448,6 +497,8 @@ export function AutomationDialog({
   // ── derived: assembled cron ──────────────────────────────────────────
   const cronExpr = useMemo(() => {
     switch (scheduleKind) {
+      case "once":
+        return "";
       case "hourly":
         return buildHourlyCron(hourlyN, hourlyMinute);
       case "daily":
@@ -470,6 +521,27 @@ export function AutomationDialog({
   ]);
 
   const cronInfo = useMemo(() => describeCron(cronExpr), [cronExpr]);
+
+  const scheduleWindow: ScheduleWindow = useMemo(() => {
+    if (scheduleKind === "once") {
+      return { run_once_at: fromDateInput(onceDate, onceHour, onceMinute) };
+    }
+    return {
+      starts_at: startDate ? fromDateInput(startDate) : undefined,
+      ends_at: endDate ? fromDateInput(endDate, 23, 59, 59) : undefined,
+    };
+  }, [scheduleKind, onceDate, onceHour, onceMinute, startDate, endDate]);
+
+  const scheduleInfo = useMemo(() => {
+    if (scheduleKind === "once") {
+      return scheduleWindow.run_once_at
+        ? { text: describeAutomationSchedule({ schedule_cron: "", ...scheduleWindow }), valid: true }
+        : { text: "Pick a date", valid: false };
+    }
+    if (!cronInfo.valid) return cronInfo;
+    const window = describeWindow(scheduleWindow);
+    return { text: window ? `${cronInfo.text}, ${window}` : cronInfo.text, valid: true };
+  }, [scheduleKind, scheduleWindow, cronInfo]);
 
   // ── option lists for Combobox ─────────────────────────────────────────
   // Task options for the Existing-task picker. `listTasks` doesn't return the
@@ -547,7 +619,16 @@ export function AutomationDialog({
     setError(null);
     if (!name.trim()) return setError("Name is required");
     if (!prompt.trim()) return setError("Prompt is required");
-    if (!cronInfo.valid) return setError("Invalid cron expression");
+    const nowSeconds = Date.now() / 1000;
+    if (scheduleKind === "once") {
+      if (!scheduleWindow.run_once_at) return setError("Pick a date for the one-time run");
+      if (enabled && scheduleWindow.run_once_at <= nowSeconds) return setError("Pick a time in the future");
+    } else {
+      if (!cronInfo.valid) return setError("Invalid cron expression");
+      const { starts_at, ends_at } = scheduleWindow;
+      if (starts_at && ends_at && starts_at >= ends_at) return setError("End date must be on or after the start date");
+      if (enabled && ends_at && ends_at <= nowSeconds) return setError("End date is in the past");
+    }
     if (!buddy && taskMode === "existing" && !taskId) return setError("Pick an existing task");
     if (!buddy && taskMode === "new" && !newTaskName.trim()) return setError("Task name is required");
     if (!buddy && sessionMode === "existing" && !chatId) return setError("Pick an existing session");
@@ -571,6 +652,7 @@ export function AutomationDialog({
           : undefined,
       prompt,
       schedule_cron: cronExpr,
+      ...scheduleWindow,
       event_triggers: buddy ? eventTriggers.split(",").map(value => value.trim()).filter(Boolean) : initial?.event_triggers ?? [],
     };
 
@@ -871,7 +953,6 @@ export function AutomationDialog({
 
           {/* Prompt */}
           </>}
-          {buddy && <label className="buddy-form">On event<input aria-label="Routine event triggers" value={eventTriggers} onChange={event => setEventTriggers(event.target.value)} placeholder="task.finished, task.merged" /></label>}
           <Section icon={<Wand2 className="w-3.5 h-3.5" />} title="Prompt">
             <textarea
               aria-label="Prompt"
@@ -896,25 +977,25 @@ export function AutomationDialog({
             trailing={
               <div
                 className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-md border max-w-full ${
-                  cronInfo.valid
+                  scheduleInfo.valid
                     ? "bg-[var(--color-highlight)]/5 border-[var(--color-highlight)]/30"
                     : "bg-[var(--color-error)]/5 border-[var(--color-error)]/30"
                 }`}
               >
                 <Calendar
                   className={`w-3.5 h-3.5 flex-shrink-0 ${
-                    cronInfo.valid
+                    scheduleInfo.valid
                       ? "text-[var(--color-highlight)]"
                       : "text-[var(--color-error)]"
                   }`}
                 />
                 <span
                   className={`text-xs truncate ${
-                    cronInfo.valid ? "text-[var(--color-text)]" : "text-[var(--color-error)]"
+                    scheduleInfo.valid ? "text-[var(--color-text)]" : "text-[var(--color-error)]"
                   }`}
-                  title={cronInfo.text}
+                  title={scheduleInfo.text}
                 >
-                  {cronInfo.text}
+                  {scheduleInfo.text}
                 </span>
               </div>
             }
@@ -928,6 +1009,20 @@ export function AutomationDialog({
                   onChange={(v) => setScheduleKind(v as ScheduleKind)}
                 />
               </div>
+
+              {scheduleKind === "once" && (
+                <>
+                  <span className="text-sm text-[var(--color-text-muted)]">On</span>
+                  <DatePicker value={onceDate} onChange={setOnceDate} />
+                  <span className="text-sm text-[var(--color-text-muted)]">at</span>
+                  <InlineTime
+                    hour={onceHour}
+                    minute={onceMinute}
+                    onHour={setOnceHour}
+                    onMinute={setOnceMinute}
+                  />
+                </>
+              )}
 
               {scheduleKind === "hourly" && (
                 <>
@@ -984,14 +1079,47 @@ export function AutomationDialog({
 
               {scheduleKind === "custom" && (
                 <input
+                  aria-label="Cron expression"
                   value={customCron}
                   onChange={(e) => setCustomCron(e.target.value)}
                   placeholder="0 9 * * *"
-                  className="w-full min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] transition-all duration-200 focus:border-[var(--color-highlight)] focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)]"
+                  className="min-w-[8rem] flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] transition-all duration-200 focus:border-[var(--color-highlight)] focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)]"
                 />
               )}
+
+              {/* Optional start / end bounds for recurring schedules,
+                  folded into one chip so the row stays a single line. */}
+              {scheduleKind !== "once" && (
+                <div className="ml-auto">
+                  <ScheduleWindowPicker
+                    startDate={startDate}
+                    endDate={endDate}
+                    onChange={(start, end) => {
+                      setStartDate(start);
+                      setEndDate(end);
+                    }}
+                  />
+                </div>
+              )}
             </div>
+
           </Section>
+
+          {buddy && (
+            <Section
+              icon={<Zap className="w-3.5 h-3.5" />}
+              title="Also run on events"
+              trailing={<span className="text-xs text-[var(--color-text-muted)]">Optional · comma-separated</span>}
+            >
+              <input
+                aria-label="Routine event triggers"
+                value={eventTriggers}
+                onChange={(event) => setEventTriggers(event.target.value)}
+                placeholder="task.finished, task.merged"
+                className={`w-full ${TEXT_INPUT_CLASS} font-mono`}
+              />
+            </Section>
+          )}
 
           {error && (
             <div className="flex items-start gap-2 px-3 py-2 text-sm rounded-lg bg-[var(--color-error)]/10 border border-[var(--color-error)]/30 text-[var(--color-error)]">
@@ -1450,6 +1578,270 @@ function summarizeWeekdays(days: number[]): string {
   return WEEKDAYS.filter((d) => set.has(d.value))
     .map((d) => d.label)
     .join(", ");
+}
+
+const CALENDAR_WEEKDAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+const CALENDAR_WIDTH = 284;
+
+function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function parseIsoDate(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : null;
+}
+
+function shortDate(value: string): string {
+  const d = parseIsoDate(value);
+  if (!d) return value;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) });
+}
+
+/// Calendar popover pinned under (or above) its trigger, right-aligned when
+/// the trigger sits at the end of a row.
+function CalendarPopover({
+  open,
+  onClose,
+  triggerRef,
+  align,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  triggerRef: React.RefObject<HTMLElement | null>;
+  align: "left" | "right";
+  children: React.ReactNode;
+}) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const pos = useAnchoredPopover(open, triggerRef, popoverRef, 340, onClose);
+  if (!open || !pos) return null;
+  const preferred = align === "right" ? pos.left + pos.width - CALENDAR_WIDTH : pos.left;
+  const left = Math.max(8, Math.min(preferred, window.innerWidth - CALENDAR_WIDTH - 8));
+  return createPortal(
+    <motion.div
+      ref={popoverRef}
+      initial={{ opacity: 0, y: pos.bottom !== undefined ? 6 : -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      style={{ ...popoverStyle(pos), left, width: CALENDAR_WIDTH }}
+      className="overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 shadow-lg"
+    >
+      {children}
+    </motion.div>,
+    document.body,
+  );
+}
+
+/// Month grid. Dates are local "YYYY-MM-DD" strings, which also compare
+/// correctly as plain strings for range shading.
+function CalendarGrid({
+  selected,
+  rangeStart,
+  rangeEnd,
+  onPick,
+}: {
+  selected?: string;
+  rangeStart?: string;
+  rangeEnd?: string;
+  onPick: (value: string) => void;
+}) {
+  const [month, setMonth] = useState(() => {
+    const base = parseIsoDate(selected ?? "") ?? new Date();
+    return new Date(base.getFullYear(), base.getMonth(), 1);
+  });
+  const today = isoDate(new Date());
+  const days = useMemo(() => {
+    const offset = (month.getDay() + 6) % 7; // Monday-first
+    const first = new Date(month.getFullYear(), month.getMonth(), 1 - offset);
+    return Array.from({ length: 42 }, (_, i) => {
+      const d = new Date(first.getFullYear(), first.getMonth(), first.getDate() + i);
+      return { iso: isoDate(d), day: d.getDate(), inMonth: d.getMonth() === month.getMonth() };
+    });
+  }, [month]);
+  const shift = (delta: number) => setMonth((m) => new Date(m.getFullYear(), m.getMonth() + delta, 1));
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-sm font-semibold text-[var(--color-text)]">
+          {month.toLocaleDateString(undefined, { year: "numeric", month: "long" })}
+        </span>
+        <div className="flex items-center gap-0.5">
+          <button type="button" aria-label="Previous month" onClick={() => shift(-1)} className="rounded-md p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]">
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button type="button" aria-label="Next month" onClick={() => shift(1)} className="rounded-md p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]">
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-y-1 text-center">
+        {CALENDAR_WEEKDAYS.map((label) => (
+          <span key={label} className="py-1 text-[10px] font-medium uppercase text-[var(--color-text-muted)]">{label}</span>
+        ))}
+        {days.map(({ iso, day, inMonth }) => {
+          const isSelected = iso === selected || iso === rangeStart || iso === rangeEnd;
+          const inRange = !!rangeStart && !!rangeEnd && iso > rangeStart && iso < rangeEnd;
+          return (
+            <button
+              key={iso}
+              type="button"
+              aria-label={iso}
+              aria-pressed={isSelected}
+              onClick={() => onPick(iso)}
+              className={`flex h-8 items-center justify-center text-xs transition-colors ${
+                inRange ? "w-full" : "mx-auto w-8 rounded-md"
+              } ${
+                isSelected
+                  ? "bg-[var(--color-highlight)] font-semibold text-white"
+                  : inRange
+                    ? "bg-[var(--color-highlight)]/10 text-[var(--color-text)]"
+                    : inMonth
+                      ? "text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                      : "text-[var(--color-text-muted)]/50 hover:bg-[var(--color-bg-tertiary)]"
+              } ${iso === today && !isSelected ? "ring-1 ring-inset ring-[var(--color-highlight)]/60" : ""}`}
+            >
+              {day}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/// Single-date trigger for one-time runs, matching the SimpleSelect trigger.
+function DatePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  return (
+    <div className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label="Run date"
+        onClick={() => setOpen((o) => !o)}
+        className={`inline-flex items-center gap-2 rounded-lg border bg-[var(--color-bg-secondary)] px-3 py-2 text-sm transition-all duration-200 ${
+          open
+            ? "border-[var(--color-highlight)] ring-1 ring-[var(--color-highlight)]"
+            : "border-[var(--color-border)] hover:border-[var(--color-text-muted)]"
+        }`}
+      >
+        <Calendar className="h-3.5 w-3.5 text-[var(--color-highlight)]" />
+        <span className={value ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}>
+          {value ? shortDate(value) : "Pick a date"}
+        </span>
+      </button>
+      <CalendarPopover open={open} onClose={() => setOpen(false)} triggerRef={triggerRef} align="left">
+        <CalendarGrid
+          selected={value}
+          onPick={(picked) => {
+            onChange(picked);
+            setOpen(false);
+          }}
+        />
+      </CalendarPopover>
+    </div>
+  );
+}
+
+/// Compact "active period" chip for recurring schedules. Unset reads as a
+/// quiet "No date limit"; the popover edits start and end on one calendar.
+function ScheduleWindowPicker({
+  startDate,
+  endDate,
+  onChange,
+}: {
+  startDate: string;
+  endDate: string;
+  onChange: (start: string, end: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<"start" | "end">("end");
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const label = startDate && endDate
+    ? `${shortDate(startDate)} – ${shortDate(endDate)}`
+    : startDate
+      ? `From ${shortDate(startDate)}`
+      : endDate
+        ? `Until ${shortDate(endDate)}`
+        : "No date limit";
+  const active = !!(startDate || endDate);
+
+  const pick = (picked: string) => {
+    if (editing === "start") {
+      onChange(picked, endDate && endDate < picked ? "" : endDate);
+      setEditing("end");
+    } else if (startDate && picked < startDate) {
+      onChange(picked, endDate);
+    } else {
+      onChange(startDate, picked);
+    }
+  };
+
+  const segment = (key: "start" | "end", title: string, value: string, empty: string) => (
+    <button
+      type="button"
+      aria-label={key === "start" ? "Edit start date" : "Edit end date"}
+      onClick={() => setEditing(key)}
+      className={`flex min-w-0 flex-1 flex-col items-start rounded-lg px-2.5 py-1.5 text-left transition-colors ${
+        editing === key
+          ? "bg-[var(--color-highlight)]/10 ring-1 ring-inset ring-[var(--color-highlight)]/40"
+          : "hover:bg-[var(--color-bg-tertiary)]"
+      }`}
+    >
+      <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">{title}</span>
+      <span className={`truncate text-sm ${value ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+        {value ? shortDate(value) : empty}
+      </span>
+    </button>
+  );
+
+  return (
+    <div className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label="Active period"
+        onClick={() => setOpen((o) => !o)}
+        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs transition-colors ${
+          open
+            ? "bg-[var(--color-bg-tertiary)] text-[var(--color-text)]"
+            : active
+              ? "text-[var(--color-highlight)] hover:bg-[var(--color-highlight)]/10"
+              : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
+        }`}
+      >
+        <CalendarRange className="h-3.5 w-3.5" />
+        <span>{label}</span>
+      </button>
+      <CalendarPopover open={open} onClose={() => setOpen(false)} triggerRef={triggerRef} align="right">
+        <div className="mb-3 flex items-stretch gap-1">
+          {segment("start", "Starts", startDate, "Now")}
+          {segment("end", "Ends", endDate, "Never")}
+        </div>
+        <CalendarGrid rangeStart={startDate || undefined} rangeEnd={endDate || undefined} onPick={pick} />
+        <div className="mt-3 flex items-center justify-between border-t border-[var(--color-border)] pt-2.5">
+          <button
+            type="button"
+            disabled={!active}
+            onClick={() => onChange("", "")}
+            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="rounded-md bg-[var(--color-highlight)] px-3 py-1 text-xs font-medium text-white hover:opacity-90"
+          >
+            Done
+          </button>
+        </div>
+      </CalendarPopover>
+    </div>
+  );
 }
 
 function InlineTime({

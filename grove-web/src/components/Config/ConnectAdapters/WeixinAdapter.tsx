@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import wechatLogo from './assets/wechat.svg';
 import { Button, Input } from '../../ui';
 import { ManualCredentials, QrAuthorization } from './QrAuthorization';
 import type { AuthorizationProps, SettingsProps } from './types';
@@ -35,6 +34,3 @@ export function WeixinSettings({ busy, reauthorize }: SettingsProps) {
   </section>;
 }
 
-export function WeixinMark({ size }: { size: number }) {
-  return <div className="flex shrink-0 items-center justify-center" style={{ width: size + 12, height: size + 12 }}><img src={wechatLogo} alt="" width={size} height={size} /></div>;
-}

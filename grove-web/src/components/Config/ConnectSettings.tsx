@@ -10,6 +10,7 @@ import { ConfirmDialog } from '../Dialogs';
 import { Button, DialogShell, Input, Switch } from '../ui';
 import { useConnectTargets } from './useConnectTargets';
 import { getConnectFrontendAdapter } from './ConnectAdapters/registry';
+import { PlatformMark } from './PlatformMark';
 
 type NewStep = 'platform' | 'qr' | 'manual';
 const newDraft = (domain = 'feishu', platform = 'feishu'): ConnectInput => ({ name: `${platform} Connect`, platform, domain, enabled: true, adapter_config: {}, project_id: '', task_id: '', session_id: '' });
@@ -21,7 +22,10 @@ function draftFromItem(item: ConnectItem, fieldKeys: string[]): ConnectInput {
 
 function savedTarget(item: ConnectItem) { return { id: item.id, project_id: item.project_id, task_id: item.task_id, session_id: item.session_id }; }
 
-export function ConnectDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+/** A dialog locked to one Buddy manages its single connection, bound to that Buddy; there is no sidebar or target to choose. */
+export interface ConnectLock { buddyId: string; name: string }
+
+export function ConnectDialog({ isOpen, onClose, lock }: { isOpen: boolean; onClose: () => void; lock?: ConnectLock }) {
   const [items, setItems] = useState<ConnectItem[] | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const refreshRef = useRef({ active: false, request: 0 });
@@ -60,13 +64,14 @@ export function ConnectDialog({ isOpen, onClose }: { isOpen: boolean; onClose: (
       window.clearTimeout(timer);
     };
   }, [isOpen, load]);
-  return <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-6xl">
+  return <DialogShell isOpen={isOpen} onClose={onClose} maxWidth={lock ? "max-w-3xl" : "max-w-6xl"}>
     {refreshError && <div role="status" className="p-3 text-xs text-[var(--color-error)]">Could not refresh connection status: {refreshError}. Retrying automatically.</div>}
-    {items ? <ConnectManager items={items} onItemsChange={load} onClose={onClose} /> : <div className="p-6 text-sm text-[var(--color-text-muted)]">Loading connections…</div>}
+    {items ? <ConnectManager items={lock ? items.filter((item) => item.buddy_id === lock.buddyId) : items} lock={lock} onItemsChange={load} onClose={onClose} /> : <div className="p-6 text-sm text-[var(--color-text-muted)]">Loading connections…</div>}
   </DialogShell>;
 }
 
-function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[]; onItemsChange: () => Promise<void>; onClose: () => void }) {
+function ConnectManager({ items, onItemsChange, onClose, lock }: { items: ConnectItem[]; onItemsChange: () => Promise<void>; onClose: () => void; lock?: ConnectLock }) {
+  const lockTarget = lock ? { target: { kind: 'buddy' as const, buddy_id: lock.buddyId } } : {};
   const { isMobile } = useIsMobile();
   const [platforms, setPlatforms] = useState<ConnectPlatform[]>([]);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
@@ -86,7 +91,8 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
   const registrationTarget = useRef<ConnectItem | null>(null);
   const registrationName = useRef('');
   const selectedIdRef = useRef<string | 'new'>(selectedId);
-  const selected = useMemo(() => items.find((item) => item.id === selectedId), [items, selectedId]);
+  // A Buddy has a single connection: show it when present, otherwise the new-connection flow.
+  const selected = useMemo(() => lock ? items[0] : items.find((item) => item.id === selectedId), [lock, items, selectedId]);
 
   // Polling can discover an IM-created session or another target update. Sync
   // only when the user hasn't changed the target since that stored snapshot.
@@ -143,7 +149,7 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
     setBusy(true);
     setError(null);
     try {
-      const created = await finishConnectRegistration({ flow_id: authorized.id, name: connectionName || `${authorized.platform} Connect`, enabled: true, connection_id: registrationTarget.current?.id });
+      const created = await finishConnectRegistration({ flow_id: authorized.id, name: connectionName || `${authorized.platform} Connect`, enabled: true, connection_id: registrationTarget.current?.id, ...lockTarget });
       await onItemsChange();
       if (epoch === registrationEpoch.current) chooseExisting(created);
     } catch (cause) {
@@ -191,7 +197,7 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
     setError(null);
     try {
       await verifyConnectCredentials({ platform: draft.platform, domain: draft.domain, adapter_config: draft.adapter_config });
-      const created = await createConnect({ ...draft, project_id: '', task_id: '', session_id: '' });
+      const created = await createConnect({ ...draft, project_id: '', task_id: '', session_id: '', ...lockTarget });
       await onItemsChange();
       chooseExisting(created);
     } catch (cause) {
@@ -228,14 +234,14 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow]);
 
-  return <div className={`flex min-h-0 flex-col overflow-hidden bg-[var(--color-bg)] ${isMobile ? 'h-[min(780px,calc(100dvh-5rem))]' : 'h-[min(780px,calc(100vh-3rem))] min-h-[560px] rounded-2xl border border-[var(--color-border)] shadow-2xl'}`}>
+  return <div className={`flex min-h-0 flex-col overflow-hidden bg-[var(--color-bg)] ${isMobile ? (lock ? 'max-h-[calc(100dvh-5rem)]' : 'h-[min(780px,calc(100dvh-5rem))]') : `${lock ? 'max-h-[min(780px,calc(100vh-3rem))]' : 'h-[min(780px,calc(100vh-3rem))] min-h-[560px]'} rounded-2xl border border-[var(--color-border)] shadow-2xl`}`}>
     <header className={`flex h-16 shrink-0 items-center gap-3 border-b border-[var(--color-border)] ${isMobile ? 'px-4' : 'px-5'}`}>
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#3370ff] to-[#5ed3ff]/80 shadow-sm shadow-[#3370ff]/30"><Link2 className="h-4 w-4 text-white" /></div>
-      <div className="min-w-0 flex-1"><h1 className="text-base font-semibold text-[var(--color-text)]">IM Connect</h1><p className="truncate text-xs text-[var(--color-text-muted)]">External messages, native Grove Sessions</p></div>
+      <div className="min-w-0 flex-1"><h1 className="text-base font-semibold text-[var(--color-text)]">IM Connect</h1><p className="truncate text-xs text-[var(--color-text-muted)]">{lock ? `Messages go to ${lock.name}` : 'External messages, native Grove Sessions'}</p></div>
       <button type="button" aria-label="Close IM Connect" onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
     </header>
     <div className={`flex min-h-0 flex-1 ${isMobile ? 'flex-col' : 'flex-row'}`}>
-      <aside className={`shrink-0 bg-[var(--color-bg-secondary)]/60 p-3 ${isMobile ? 'border-b border-[var(--color-border)]' : 'w-[300px] overflow-y-auto border-r border-[var(--color-border)]'}`}>
+      {!lock && <aside className={`shrink-0 bg-[var(--color-bg-secondary)]/60 p-3 ${isMobile ? 'border-b border-[var(--color-border)]' : 'w-[300px] overflow-y-auto border-r border-[var(--color-border)]'}`}>
         <nav aria-label="Connections" className={isMobile ? 'flex items-center gap-2 overflow-x-auto overscroll-x-contain' : 'space-y-1'}>
           <button type="button" onClick={chooseNew} aria-label="New connection" aria-pressed={selectedId === 'new'} className={`flex min-h-11 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors ${isMobile ? '' : 'mb-3 w-full py-3'} ${selectedId === 'new' ? 'border-[var(--color-highlight)]/30 bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]' : 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]'}`}><Plus className="h-4 w-4" />{isMobile ? 'New' : 'New connection'}</button>
           {items.map((item) => <button type="button" key={item.id} onClick={() => chooseExisting(item)} aria-pressed={selectedId === item.id} className={`group relative flex min-h-11 items-center gap-2.5 rounded-lg py-2 pl-2.5 pr-3 text-left transition-colors ${isMobile ? 'max-w-[240px] shrink-0 border' : 'w-full border border-transparent'} ${selectedId === item.id ? 'border-[var(--color-highlight)]/30 bg-[var(--color-highlight)]/10' : 'border-transparent hover:bg-[var(--color-bg-tertiary)]/60'}`}>
@@ -244,13 +250,13 @@ function ConnectManager({ items, onItemsChange, onClose }: { items: ConnectItem[
             <StatusDot state={item.runtime.state} />
           </button>)}
         </nav>
-      </aside>
-      <main className={`min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain ${isMobile ? 'p-4 pb-[max(1rem,env(safe-area-inset-bottom))]' : 'p-6'}`}>{selected && step !== 'qr' ? <ExistingDetail item={selected} draft={draft} setDraft={setDraft} projects={projects} {...targetOptions} busy={busy} setBusy={setBusy} error={error} setError={setError} onChanged={onItemsChange} onDeleted={chooseNew} reauthorize={() => startQr(selected.domain, selected.platform, selected.name, selected)} /> : <NewConnection isMobile={isMobile} step={step} setStep={setStep} platforms={platforms} draft={draft} setDraft={setDraft} flow={flow} busy={busy} error={error} startQr={startQr} verifyManual={verifyManual} submitRegistration={submitRegistration} cancelRegistration={cancelRegistration} />}</main>
+      </aside>}
+      <main className={`min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain ${isMobile ? 'p-4 pb-[max(1rem,env(safe-area-inset-bottom))]' : 'p-6'}`}>{selected && step !== 'qr' ? <ExistingDetail lock={lock} item={selected} draft={draft} setDraft={setDraft} projects={projects} {...targetOptions} busy={busy} setBusy={setBusy} error={error} setError={setError} onChanged={onItemsChange} onDeleted={chooseNew} reauthorize={() => startQr(selected.domain, selected.platform, selected.name, selected)} /> : <NewConnection lock={lock} isMobile={isMobile} step={step} setStep={setStep} platforms={platforms} draft={draft} setDraft={setDraft} flow={flow} busy={busy} error={error} startQr={startQr} verifyManual={verifyManual} submitRegistration={submitRegistration} cancelRegistration={cancelRegistration} />}</main>
     </div>
   </div>;
 }
 
-interface NewProps { isMobile: boolean; step: NewStep; setStep: (step: NewStep) => void; platforms: ConnectPlatform[]; draft: ConnectInput; setDraft: React.Dispatch<React.SetStateAction<ConnectInput>>; flow: ConnectRegistration | null; busy: boolean; error: string | null; startQr: (domain?: string, platform?: string, connectionName?: string) => Promise<void>; verifyManual: () => Promise<void>; submitRegistration: (input: Record<string, unknown>) => Promise<void>; cancelRegistration: () => void }
+interface NewProps { lock?: ConnectLock; isMobile: boolean; step: NewStep; setStep: (step: NewStep) => void; platforms: ConnectPlatform[]; draft: ConnectInput; setDraft: React.Dispatch<React.SetStateAction<ConnectInput>>; flow: ConnectRegistration | null; busy: boolean; error: string | null; startQr: (domain?: string, platform?: string, connectionName?: string) => Promise<void>; verifyManual: () => Promise<void>; submitRegistration: (input: Record<string, unknown>) => Promise<void>; cancelRegistration: () => void }
 function NewConnection(props: NewProps) {
   const { isMobile, step, setStep, platforms, draft, setDraft, flow, busy, error } = props;
   const selectedPlatform = platforms.find((platform) => platform.id === draft.platform);
@@ -258,7 +264,7 @@ function NewConnection(props: NewProps) {
   if (step === 'platform') {
     const available = platforms.filter((platform) => platform.available);
     const upcoming = platforms.filter((platform) => !platform.available);
-    return <Page title="New connection" description="Choose where you want to talk to Grove.">
+    return <Page title="New connection" description={`Choose where you want to talk to ${props.lock?.name ?? 'Grove'}.`}>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">{available.map((platform) => <button type="button" key={platform.id} disabled={busy} onClick={() => { const domain = platform.id; const name = `${platform.name} Connect`; setDraft({ ...newDraft(domain, platform.id), name }); if (platform.setup_modes.some((mode) => mode === 'qr' || mode === 'oauth')) void props.startQr(domain, platform.id, name); else setStep('manual'); }} className={`group relative flex items-center overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-left transition-all enabled:hover:border-[var(--color-highlight)]/40 ${isMobile ? 'min-h-[84px] gap-3 p-4' : 'min-h-[104px] gap-4 p-5 enabled:hover:-translate-y-0.5 enabled:hover:shadow-lg enabled:hover:shadow-black/20'}`}>
         <div className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-[#3370ff]/10 blur-2xl" />
         <PlatformMark id={platform.id} size={isMobile ? 32 : 48} />
@@ -292,8 +298,8 @@ function NewConnection(props: NewProps) {
   }
 }
 
-interface ExistingProps { item: ConnectItem; draft: ConnectInput; setDraft: React.Dispatch<React.SetStateAction<ConnectInput>>; projects: ProjectListItem[]; tasks: TaskResponse[]; sessions: ChatSessionResponse[]; tasksLoading: boolean; sessionsLoading: boolean; targetError: string | null; reloadTargets: () => void; busy: boolean; setBusy: (value: boolean) => void; error: string | null; setError: (value: string | null) => void; onChanged: () => Promise<void>; onDeleted: () => void; reauthorize: () => Promise<void> }
-function ExistingDetail({ item, draft, setDraft, projects, tasks, sessions, tasksLoading, sessionsLoading, targetError, reloadTargets, busy, setBusy, error, setError, onChanged, onDeleted, reauthorize }: ExistingProps) {
+interface ExistingProps { lock?: ConnectLock; item: ConnectItem; draft: ConnectInput; setDraft: React.Dispatch<React.SetStateAction<ConnectInput>>; projects: ProjectListItem[]; tasks: TaskResponse[]; sessions: ChatSessionResponse[]; tasksLoading: boolean; sessionsLoading: boolean; targetError: string | null; reloadTargets: () => void; busy: boolean; setBusy: (value: boolean) => void; error: string | null; setError: (value: string | null) => void; onChanged: () => Promise<void>; onDeleted: () => void; reauthorize: () => Promise<void> }
+function ExistingDetail({ lock, item, draft, setDraft, projects, tasks, sessions, tasksLoading, sessionsLoading, targetError, reloadTargets, busy, setBusy, error, setError, onChanged, onDeleted, reauthorize }: ExistingProps) {
   const adapter = getConnectFrontendAdapter(item.platform);
   const AdapterSettings = adapter.Settings;
   const connectionDetail = adapter.connectionDetail?.(item);
@@ -304,7 +310,7 @@ function ExistingDetail({ item, draft, setDraft, projects, tasks, sessions, task
     setDraft(next);
     setBusy(true);
     setError(null);
-    try { await updateConnect(item.id, next); await onChanged(); } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); }
+    try { await updateConnect(item.id, lock ? { ...next, target: { kind: 'buddy', buddy_id: lock.buddyId } } : next); await onChanged(); } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); }
   };
   const target = item.target;
   const projectId = draft.project_id;
@@ -348,7 +354,7 @@ function ExistingDetail({ item, draft, setDraft, projects, tasks, sessions, task
     description={<span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--color-text-muted)]"><StatusLabel state={item.runtime.state} detail={item.runtime.detail} /><span>·</span><RegionBadge domain={item.domain} label={adapter.regionLabel} />{connectionDetail !== undefined && <><span>·</span><span className="font-mono text-xs">{connectionDetail}</span></>}{item.bound_chat_id && <span className="rounded-full bg-[var(--color-success)]/10 px-2 py-0.5 text-xs text-[var(--color-success)]">Chat bound</span>}</span>}
     trailing={<Switch checked={draft.enabled} onChange={toggle} label="Enable connection" />}
     ><div className="space-y-4">
-    <section className={`space-y-3 rounded-xl border p-4 ${item.project_id && item.task_id ? 'border-[var(--color-border)]' : 'border-[var(--color-highlight)]/40 bg-[var(--color-highlight)]/5'}`}>
+    {lock ? <section className="rounded-xl border border-[var(--color-border)] p-4"><div className="text-sm font-medium text-[var(--color-text)]">Messages go to {lock.name}</div><p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">Incoming messages join {lock.name}'s conversation and follow it across Agent switches.</p></section> : <section className={`space-y-3 rounded-xl border p-4 ${item.project_id && item.task_id ? 'border-[var(--color-border)]' : 'border-[var(--color-highlight)]/40 bg-[var(--color-highlight)]/5'}`}>
       <div>
         <div className="text-sm font-medium text-[var(--color-text)]">Messages route to</div>
         <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">Incoming IM messages enter this session and reuse its queue and agent. Changes apply immediately.</p>
@@ -359,7 +365,7 @@ function ExistingDetail({ item, draft, setDraft, projects, tasks, sessions, task
       {targetError && <div className="text-xs text-[var(--color-error)]">{targetError}<Button variant="ghost" size="sm" onClick={reloadTargets}>Reload targets</Button></div>}
       {item.session_id && <p className="text-xs text-[var(--color-text-muted)]">Agent {target.agent || 'unknown'} · {target.queue_mode === 'compact' ? 'Compact queue' : 'Separate queue'} · {target.model ?? 'session default model'}{target.mode ? ` · ${target.mode}${target.thought_level ? `/${target.thought_level}` : ''}` : ''}</p>}
       {!item.session_id && item.task_id && <p className="text-xs text-[var(--color-text-muted)]">A new session is created with the task's default agent when the first IM message arrives.</p>}
-    </section>
+    </section>}
     {AdapterSettings && <AdapterSettings key={item.id} item={item} draft={routedDraft} busy={busy} save={save} reauthorize={reauthorize} />}
     {item.runtime.detail && <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 text-xs text-[var(--color-text-muted)]">
       <div className="whitespace-pre-wrap break-words">{item.runtime.detail}</div>
@@ -482,19 +488,6 @@ function TargetSelect({ value, placeholder, disabled, options, onSelect }: { val
   </>;
 }
 
-const TELEGRAM_PATH = 'M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z';
-const SLACK_PATH = 'M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z';
-const DISCORD_PATH = 'M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z';
-
-function PlatformMark({ id, size }: { id: string; size: number }) {
-  const Mark = getConnectFrontendAdapter(id).Mark;
-  if (Mark) return <Mark size={size} />;
-  if (id === 'telegram') return <div className="flex shrink-0 items-center justify-center rounded-xl bg-[#26a5e4]/12" style={{ width: size + 12, height: size + 12 }}><svg width={size} height={size} viewBox="0 0 24 24"><path d={TELEGRAM_PATH} fill="#26A5E4" /></svg></div>;
-  if (id === 'slack') return <div className="flex shrink-0 items-center justify-center rounded-xl bg-[#e01e5a]/10" style={{ width: size + 12, height: size + 12 }}><svg width={size} height={size} viewBox="0 0 24 24"><path d={SLACK_PATH} fill="#E01E5A" /></svg></div>;
-  if (id === 'discord') return <div className="flex shrink-0 items-center justify-center rounded-xl bg-[#5865f2]/12" style={{ width: size + 12, height: size + 12 }}><svg width={size} height={size} viewBox="0 0 24 24"><path d={DISCORD_PATH} fill="#5865F2" /></svg></div>;
-  if (id.startsWith('plugin:')) return <div className="flex shrink-0 items-center justify-center rounded-xl bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]" style={{ width: size + 12, height: size + 12 }}><Link2 style={{ width: size, height: size }} /></div>;
-  return <div className="flex shrink-0 items-center justify-center rounded-xl" style={{ width: size + 12, height: size + 12, background: 'linear-gradient(135deg, rgba(94,211,255,0.16), rgba(51,112,255,0.12))' }}><Link2 size={size} /></div>;
-}
 
 function StatusDot({ state }: { state: string }) { return <span className={`h-2 w-2 shrink-0 rounded-full ${state === 'online' ? 'bg-[var(--color-success)] shadow-[0_0_4px_var(--color-success)]' : state === 'error' ? 'bg-[var(--color-error)] shadow-[0_0_4px_var(--color-error)]' : 'bg-[var(--color-text-muted)]'}`} />; }
 function StatusLabel({ state, detail }: { state: string; detail?: string }) { return <span title={detail} className="inline-flex items-center gap-2"><StatusDot state={state} /><span className="capitalize">{state}</span></span>; }

@@ -48,6 +48,11 @@ function tryParseEnvelope(jsonText: string): GroveMetaEnvelope | null {
     return null;
   }
   if (!parsed || typeof parsed !== "object") return null;
+  // Buddy messages sent before the v1 envelope: {"kind":"buddy_message",...}.
+  const legacy = parsed as Record<string, unknown>;
+  if (legacy.kind === "buddy_message" && legacy.v === undefined) {
+    return { v: 1, type: "buddy_message", data: legacy, systemPrompt: "" };
+  }
   const raw = parsed as RawEnvelope;
   if (
     typeof raw.v !== "number" ||

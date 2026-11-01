@@ -23,7 +23,16 @@ export interface SessionTemplate {
   title?: string;
 }
 
-export interface Automation {
+/// Optional bounds on `schedule_cron`. `run_once_at` makes the schedule
+/// one-shot (cron ignored); `starts_at` / `ends_at` bound a recurring cron.
+/// All unix seconds. Mirrors `cron_util::ScheduleWindow`.
+export interface ScheduleWindow {
+  run_once_at?: number;
+  starts_at?: number;
+  ends_at?: number;
+}
+
+export interface Automation extends ScheduleWindow {
   id: string;
   project: string;
   name: string;
@@ -72,7 +81,7 @@ export interface AutomationRun {
   result?: Record<string, unknown>;
 }
 
-export interface AutomationUpsert {
+export interface AutomationUpsert extends ScheduleWindow {
   name: string;
   enabled: boolean;
   agent_config: AgentConfigSelection;

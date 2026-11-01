@@ -63,6 +63,16 @@ pub async fn list() -> impl IntoResponse {
     }
 }
 
+/// Buddy personas are not user-facing custom agents; editing or deleting one
+/// here would break its Buddy, so they read as missing.
+fn reject_buddy_persona(id: &str) -> std::result::Result<(), (StatusCode, String)> {
+    match custom_agent::is_buddy_persona(id) {
+        Ok(false) => Ok(()),
+        Ok(true) => Err((StatusCode::NOT_FOUND, "Custom agent not found".to_string())),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    }
+}
+
 fn validate_name(name: &str) -> std::result::Result<(), (StatusCode, String)> {
     if name.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "name is required".to_string()));
@@ -95,6 +105,7 @@ pub async fn update(
     Path(id): Path<String>,
     Json(patch): Json<CustomAgentPatch>,
 ) -> impl IntoResponse {
+    reject_buddy_persona(&id)?;
     if let Some(ref name) = patch.name {
         validate_name(name)?;
     }
@@ -153,6 +164,7 @@ fn map_persona_error(e: &crate::error::GroveError) -> (StatusCode, String) {
 
 /// DELETE /api/v1/custom-agents/{id}
 pub async fn delete(Path(id): Path<String>) -> impl IntoResponse {
+    reject_buddy_persona(&id)?;
     // Refuse delete while any chat still references this persona — otherwise
     // those chats would be bricked with "Unknown agent: ca-..." on next
     // connect (review #1).

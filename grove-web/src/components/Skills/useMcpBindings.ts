@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { installMcp, listMcpInstallations } from "../../api/extensions";
 import {
+  MCP_SCOPES,
   bindingDraft,
   sameBindingDraft,
   type McpBindingDraft,
@@ -43,6 +44,7 @@ export function useMcpBindings({
         const value = {
           global: bindingDraft(relevant, "global", projectPath, fallback),
           project: bindingDraft(relevant, "project", projectPath, fallback),
+          buddy: bindingDraft(relevant, "buddy", projectPath, fallback),
         };
         setDrafts(value);
         setSaved(value);
@@ -98,7 +100,9 @@ export function useMcpBindings({
         current ? { ...current, [scope]: snapshot } : current,
       );
       setNotice(
-        "Agent access saved. Reconnect existing Agents to apply changes.",
+        scope === "buddy"
+          ? "Buddy access saved. Restart a running Buddy's Agent in its Settings to apply changes."
+          : "Agent access saved. Reconnect existing Agents to apply changes.",
       );
       return true;
     } catch (cause) {
@@ -111,7 +115,7 @@ export function useMcpBindings({
 
   const dirtyScopes =
     drafts && saved
-      ? (["global", "project"] as const).filter(
+      ? MCP_SCOPES.filter(
           (key) => !sameBindingDraft(drafts[key], saved[key]),
         )
       : [];
@@ -132,7 +136,7 @@ export function useMcpBindings({
     notice,
     loaded: drafts !== null,
     savedAgentCount: saved
-      ? saved.global.agentIds.length + saved.project.agentIds.length
+      ? MCP_SCOPES.reduce((count, key) => count + saved[key].agentIds.length, 0)
       : 0,
     dirty: dirtyScopes.includes(scope),
     dirtyScopes,

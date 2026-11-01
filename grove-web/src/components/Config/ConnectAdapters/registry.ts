@@ -1,6 +1,7 @@
 import { FeishuAuthorization, FeishuSettings } from './FeishuAdapter';
 import { ProviderAuthorization } from './ProviderAdapter';
-import { WeixinAuthorization, WeixinSettings, WeixinMark } from './WeixinAdapter';
+import { WeixinAuthorization, WeixinSettings } from './WeixinAdapter';
+import { WeixinMark } from './WeixinMark';
 import { FeishuMark } from './FeishuMark';
 import { ADVANCED_CONFIG_FIELDS } from './feishuConfig';
 import type { ConnectFrontendAdapter } from './types';

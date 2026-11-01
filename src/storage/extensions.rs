@@ -249,16 +249,30 @@ pub fn list_mcp_installations() -> Result<Vec<McpInstallation>> {
         .map_err(Into::into)
 }
 
+/// Buddy bindings follow the Buddy across engine switches, so they are keyed
+/// by Buddy rather than by ACP Agent.
+pub const BUDDY_SCOPE: &str = "buddy";
+
+pub fn buddy_target(buddy_id: &str) -> String {
+    format!("buddy:{buddy_id}")
+}
+
 pub fn effective_mcp_installations(
     agent_id: &str,
     project_path: Option<&str>,
+    buddy_id: Option<&str>,
 ) -> Result<Vec<McpInstallation>> {
+    let buddy = buddy_id.map(buddy_target);
     Ok(list_mcp_installations()?
         .into_iter()
-        .filter(|i| i.enabled && i.agent_id == agent_id)
+        .filter(|i| i.enabled)
         .filter(|i| {
-            i.scope == "global"
-                || (i.scope == "project" && project_path == Some(i.project_path.as_str()))
+            if i.scope == BUDDY_SCOPE {
+                return buddy.as_deref() == Some(i.agent_id.as_str());
+            }
+            i.agent_id == agent_id
+                && (i.scope == "global"
+                    || (i.scope == "project" && project_path == Some(i.project_path.as_str())))
         })
         .collect())
 }
@@ -293,16 +307,17 @@ pub fn resolve_effective_mcp_configs(
     agent_id: &str,
     project_path: Option<&str>,
 ) -> Result<Vec<ResolvedMcpConfig>> {
-    resolve_effective_mcp_configs_for_transports(agent_id, project_path, None)
+    resolve_effective_mcp_configs_for_transports(agent_id, project_path, None, None)
 }
 
 pub fn resolve_effective_mcp_configs_for_transports(
     agent_id: &str,
     project_path: Option<&str>,
+    buddy_id: Option<&str>,
     allowed: Option<(bool, bool)>,
 ) -> Result<Vec<ResolvedMcpConfig>> {
     let mut out = Vec::new();
-    for installation in effective_mcp_installations(agent_id, project_path)? {
+    for installation in effective_mcp_installations(agent_id, project_path, buddy_id)? {
         let selected_kind = installation.runtime.get("kind").and_then(|v| v.as_str());
         if let Some((stdio, http)) = allowed {
             if (selected_kind == Some("remote") && !http)
@@ -563,6 +578,48 @@ mod tests {
             )
             .is_err());
         }
+    }
+
+    #[test]
+    fn buddy_bindings_follow_the_buddy_regardless_of_engine() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let _guard = GroveDirGuard;
+        let runtime = serde_json::json!({"kind": "remote", "index": 0});
+        save_mcp_installations(
+            "trading",
+            "remote",
+            "test-source",
+            BUDDY_SCOPE,
+            "",
+            &[buddy_target("finance")],
+            &runtime,
+            &serde_json::json!({}),
+        )
+        .unwrap();
+        save_mcp_installations(
+            "docs",
+            "remote",
+            "test-source",
+            "global",
+            "",
+            &["claude-acp".into()],
+            &runtime,
+            &serde_json::json!({}),
+        )
+        .unwrap();
+        let repos = |agent: &str, buddy: Option<&str>| {
+            effective_mcp_installations(agent, None, buddy)
+                .unwrap()
+                .into_iter()
+                .map(|i| i.repo_key)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(repos("codex-acp", Some("finance")), ["trading"]);
+        assert_eq!(repos("claude-acp", Some("finance")), ["trading", "docs"]);
+        assert_eq!(repos("claude-acp", Some("research")), ["docs"]);
+        assert_eq!(repos("claude-acp", None), ["docs"]);
     }
 
     #[test]

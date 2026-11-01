@@ -229,6 +229,9 @@ mod concurrency_tests {
                 schedule_cron: "0 9 * * *".into(),
                 enabled: true,
                 event_triggers: Vec::new(),
+                run_once_at: None,
+                starts_at: None,
+                ends_at: None,
             },
         )
         .unwrap();
@@ -292,6 +295,9 @@ mod concurrency_tests {
                 schedule_cron: "0 9 * * *".into(),
                 enabled: true,
                 event_triggers: Vec::new(),
+                run_once_at: None,
+                starts_at: None,
+                ends_at: None,
             },
         )
         .unwrap();
@@ -383,134 +389,60 @@ mod concurrency_tests {
         assert_eq!(rx.await.unwrap(), "allow");
     }
     #[tokio::test]
-    async fn slow_buddy_startup_does_not_block_delegate_events_or_deliver_stale_waiting() {
-        use crate::storage::buddies::{self as db, test_support::delegation, DelegationStatus};
+    async fn buddy_answers_only_followed_waiting_requests_and_never_always() {
+        use crate::buddy::delegations::{respond, RespondInput};
+        use crate::storage::buddies::{
+            self as db,
+            test_support::{delegation, seed_buddy},
+            DelegationStatus,
+        };
         let _lock = database::test_lock().lock().await;
         let _store = Store::new();
-        let buddy = seed_buddy(&database::connection(), "slow-notify");
-        let d = delegation(&database::connection(), &buddy, "slow-notify-work");
+        let buddy = seed_buddy(&database::connection(), "respond");
+        let d = delegation(&database::connection(), &buddy, "respond-work");
         db::insert_delegation(&database::connection(), &d).unwrap();
         let key = format!(
             "{}:{}:{}",
             d.target_project, d.target_task, d.target_session
         );
-        let (target, _, _target_guard) =
+        let (handle, _, _guard) =
             new_handle_for_test(&key, &d.target_project, &d.target_task, &d.target_session);
-        target
-            .is_busy
-            .store(true, std::sync::atomic::Ordering::Release);
-        let chat = buddy.active_session_id.as_deref().unwrap();
-        let key = format!("{}:_local:{chat}", buddy.project_hash);
-        let (owner, _, _owner_guard) =
-            new_handle_for_test(&key, &buddy.project_hash, tasks::LOCAL_TASK_ID, chat);
-        owner.readiness.send_replace(SessionReadiness::Starting);
-        owner
-            .is_busy
-            .store(true, std::sync::atomic::Ordering::Release);
-        let id = crate::buddy::delegations::send_round(&buddy, &d, "work", None)
-            .await
-            .unwrap();
-        target.emit(AcpUpdate::PromptStarted {
-            message_ids: vec![id],
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *handle.pending_permission.lock().unwrap() = Some(("perm".into(), tx));
+        *handle.last_permission_info.lock().unwrap() = Some(crate::radio::PermissionInfo {
+            description: "git push".into(),
+            options: ["allow_once", "allow_always"]
+                .map(|kind| crate::radio::PermissionOptionInfo {
+                    option_id: kind.into(),
+                    name: kind.into(),
+                    kind: kind.into(),
+                })
+                .to_vec(),
         });
-        target.emit(AcpUpdate::AskForm {
-            form_id: "form".into(),
-            definition: serde_json::from_value(
-                serde_json::json!({"title":"Question","questions":[]}),
-            )
-            .unwrap(),
-        });
-        tokio::task::yield_now().await;
-        target.emit(
-            serde_json::from_value(serde_json::json!({"type":"user_message","text":"answer"}))
-                .unwrap(),
-        );
-        // More updates than the broadcast channel capacity, while notification
-        // is blocked on readiness. The observer must keep consuming them.
-        for _ in 0..400 {
-            target.emit(AcpUpdate::MessageChunk {
-                message_id: None,
-                text: "x".into(),
-            });
-            tokio::task::yield_now().await;
-        }
-        target.emit(AcpUpdate::Complete {
-            stop_reason: "end_turn".into(),
-            usage: None,
-            start_ts: None,
-            end_ts: None,
-            cost: None,
-        });
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while crate::buddy::delegations::get(&buddy.id, &d.id)
-                .unwrap()
-                .status
-                != DelegationStatus::Done
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
+        let answer = |option: &str| RespondInput {
+            session: d.target_session.clone(),
+            request_id: "perm".into(),
+            option_id: Some(option.into()),
+            fields: None,
+            decline: false,
+        };
+        // Running, not waiting: refused.
+        assert!(respond(&buddy, answer("allow_once")).is_err());
+        db::update_delegation_status(
+            &database::connection(),
+            &buddy.id,
+            &d.id,
+            DelegationStatus::Running,
+            DelegationStatus::Waiting,
+            None,
+        )
         .unwrap();
-        assert_eq!(
-            crate::buddy::delegations::get(&buddy.id, &d.id)
-                .unwrap()
-                .last_result
-                .unwrap(),
-            "x".repeat(400)
-        );
-        assert!(owner.get_queue().is_empty());
-        owner.readiness.send_replace(SessionReadiness::Ready);
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while owner.get_queue().is_empty() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        tokio::task::yield_now().await;
-        assert_eq!(owner.get_queue().len(), 1);
-        assert!(owner.get_queue()[0].text.contains("\"status\":\"done\""));
-        owner.clear_queue();
-        owner.readiness.send_replace(SessionReadiness::Starting);
-        let id = crate::buddy::delegations::send_round(&buddy, &d, "more work", None)
-            .await
-            .unwrap();
-        target.emit(AcpUpdate::PromptStarted {
-            message_ids: vec![id],
-        });
-        target.emit(AcpUpdate::AskForm {
-            form_id: "cancel-form".into(),
-            definition: serde_json::from_value(
-                serde_json::json!({"title":"Question","questions":[]}),
-            )
-            .unwrap(),
-        });
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while crate::buddy::delegations::get(&buddy.id, &d.id)
-                .unwrap()
-                .status
-                != DelegationStatus::Waiting
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        crate::buddy::delegations::cancel(&buddy.id, &d.id)
-            .await
-            .unwrap();
-        owner.readiness.send_replace(SessionReadiness::Ready);
-        for _ in 0..10 {
-            tokio::task::yield_now().await;
-        }
-        assert!(owner.get_queue().is_empty());
-        assert_eq!(
-            crate::buddy::delegations::get(&buddy.id, &d.id)
-                .unwrap()
-                .status,
-            DelegationStatus::Cancelled
-        );
+        assert!(respond(&buddy, answer("allow_always")).is_err());
+        let other = seed_buddy(&database::connection(), "respond-other");
+        assert!(respond(&other, answer("allow_once")).is_err());
+        let updated = respond(&buddy, answer("allow_once")).unwrap();
+        assert_eq!(updated.status, DelegationStatus::Running);
+        assert_eq!(rx.await.unwrap(), "allow_once");
     }
     #[tokio::test]
     async fn switch_waits_for_turn_finalization_after_busy_becomes_false() {

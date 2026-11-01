@@ -38,6 +38,7 @@ function seedBuddies(): Buddy[] {
     last_activity_at: MOCK_NOW,
     active_session_id: `${seed.id}-session-1`,
     running_delegations: seed.status === "working" ? 1 : 0,
+    waiting_delegations: 0,
     project_hash: `${seed.id}-project`,
     local_task_id: "_local",
     segments: [{ session_id: `${seed.id}-session-1`, seq: 1, agent: seed.agent, started_at: MOCK_NOW, ended_at: null }],
@@ -69,9 +70,9 @@ export function createBuddiesMock() {
   let order = [...buddies.keys()];
   const delegations = new Map<string, BuddyDelegation[]>([
     ["mock-release", [{
-      id: "mock-release-check", title: "Check release readiness", status: "running",
-      target_project: "mock-release-project", target_task: "mock-release-task",
-      target_session: "mock-release-delegation-session", last_result: null, updated_at: MOCK_NOW,
+      id: "mock-release-check", title: "Check release readiness", brief: "Confirm CI, changelog, and version bump are ready.", status: "running",
+      from_session: "mock-release-session-1", target_project: "mock-release-project", target_task: "mock-release-task",
+      target_session: "mock-release-delegation-session", last_result: null, created_at: MOCK_NOW, updated_at: MOCK_NOW, completed_at: null,
     }]],
   ]);
 
@@ -169,10 +170,10 @@ export function createBuddiesMock() {
       return order.filter((id) => !archived.has(id)).map((id) => {
         const buddy = get(id);
         return {
-          id: buddy.id, name: buddy.name, avatar: buddy.avatar, description: buddy.description,
+          id: buddy.id, project_hash: buddy.project_hash, name: buddy.name, avatar: buddy.avatar, description: buddy.description,
           agent: buddy.agent, status: buddy.status, last_message_preview: buddy.last_message_preview,
           last_activity_at: buddy.last_activity_at, active_session_id: buddy.active_session_id,
-          running_delegations: buddy.running_delegations,
+          running_delegations: buddy.running_delegations, waiting_delegations: buddy.waiting_delegations,
         };
       });
     },
@@ -188,7 +189,7 @@ export function createBuddiesMock() {
         description: input.description ?? "", role: input.role ?? "", system_prompt: input.system_prompt ?? "",
         agent_config: mergeConfig({ source: "default", agent_id: input.agent }, input.agent_config),
         status: "idle", last_message_preview: "", last_activity_at: null,
-        active_session_id: sessionId, running_delegations: 0,
+        active_session_id: sessionId, running_delegations: 0, waiting_delegations: 0,
         project_hash: `${id}-project`, local_task_id: "_local",
         segments: [{ session_id: sessionId, seq: 1, agent: input.agent, started_at: now, ended_at: null }],
       };
@@ -243,6 +244,7 @@ export function createBuddiesMock() {
       if (!delegation) fail(404, "delegation_not_found", "Delegation not found");
       if (delegation.status !== "running" && delegation.status !== "waiting") return;
       if (delegation.status === "running") buddy.running_delegations = Math.max(0, buddy.running_delegations - 1);
+      else buddy.waiting_delegations = Math.max(0, buddy.waiting_delegations - 1);
       delegation.status = "cancelled";
       delegation.updated_at = new Date().toISOString();
     },

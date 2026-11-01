@@ -15,9 +15,42 @@
 
 use std::str::FromStr;
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, TimeZone};
 use cron::Schedule;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+
+/// Optional time bounds layered on top of the cron expression.
+///
+/// - `run_once_at` makes the schedule one-shot: it fires once at that instant
+///   and the cron expression is ignored.
+/// - `starts_at` / `ends_at` bound a recurring cron to an inclusive window
+///   ("every Friday, until Dec 31"). Domain events honour the same window.
+///
+/// All values are unix seconds. Once a bounded schedule has no future
+/// occurrence the scheduler fires the final due run and disables the
+/// automation instead of flagging it as broken.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduleWindow {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_once_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starts_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ends_at: Option<i64>,
+}
+
+impl ScheduleWindow {
+    pub fn is_bounded(&self) -> bool {
+        self.run_once_at.is_some() || self.starts_at.is_some() || self.ends_at.is_some()
+    }
+
+    /// Whether `ts` falls inside the recurring window. One-shot schedules
+    /// accept events until they have fired (the scheduler then disables them).
+    pub fn contains(&self, ts: i64) -> bool {
+        self.starts_at.is_none_or(|start| ts >= start) && self.ends_at.is_none_or(|end| ts <= end)
+    }
+}
 
 fn standard_weekday(value: &str) -> Result<u32, String> {
     let ordinal = match value.to_ascii_lowercase().as_str() {
@@ -138,6 +171,52 @@ pub fn next_after(expr: &str, after: DateTime<Local>) -> Result<Option<DateTime<
     Ok(schedule.after(&after).next())
 }
 
+/// Validate a cron expression together with its window. One-shot schedules
+/// ignore the cron expression entirely, so it may be empty.
+pub fn validate_schedule(expr: &str, window: ScheduleWindow) -> Result<(), String> {
+    if window.run_once_at.is_some() {
+        if window.starts_at.is_some() || window.ends_at.is_some() {
+            return Err("a one-time schedule cannot also have a start or end time".to_string());
+        }
+        return Ok(());
+    }
+    validate(expr)?;
+    if let (Some(start), Some(end)) = (window.starts_at, window.ends_at) {
+        if start >= end {
+            return Err("schedule end time must be after its start time".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Next firing time strictly after `after`, honouring the window.
+pub fn next_scheduled_after(
+    expr: &str,
+    window: ScheduleWindow,
+    after: DateTime<Local>,
+) -> Result<Option<i64>, String> {
+    if let Some(at) = window.run_once_at {
+        return Ok((at > after.timestamp()).then_some(at));
+    }
+    // `next_after` is strictly-after, so step one second back to make an
+    // occurrence exactly at `starts_at` eligible.
+    let floor = match window.starts_at {
+        Some(start) if start - 1 > after.timestamp() => Local
+            .timestamp_opt(start - 1, 0)
+            .single()
+            .ok_or_else(|| format!("invalid schedule start time: {start}"))?,
+        _ => after,
+    };
+    Ok(next_after(expr, floor)?
+        .map(|dt| dt.timestamp())
+        .filter(|next| window.ends_at.is_none_or(|end| *next <= end)))
+}
+
+/// Next firing time strictly after now (system local time), honouring the window.
+pub fn next_scheduled(expr: &str, window: ScheduleWindow) -> Result<Option<i64>, String> {
+    next_scheduled_after(expr, window, Local::now())
+}
+
 /// Next firing time strictly after `now` (system local time) as unix seconds.
 pub fn next_unix(expr: &str) -> Result<Option<i64>, String> {
     Ok(next_after(expr, Local::now())?.map(|dt| dt.timestamp()))
@@ -205,6 +284,78 @@ mod tests {
         assert_eq!(translate_weekday_field("5-7").unwrap(), "1,6,7");
         assert_eq!(translate_weekday_field("*/2").unwrap(), "1,3,5,7");
         assert_eq!(translate_weekday_field("MON-FRI").unwrap(), "2,3,4,5,6");
+    }
+
+    fn local(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<Local> {
+        Local.with_ymd_and_hms(y, mo, d, h, mi, 0).single().unwrap()
+    }
+
+    #[test]
+    fn one_time_schedule_fires_once_and_ignores_cron() {
+        let at = local(2026, 12, 31, 14, 30).timestamp();
+        let window = ScheduleWindow {
+            run_once_at: Some(at),
+            ..Default::default()
+        };
+        validate_schedule("", window).expect("cron is ignored for one-time runs");
+        let before = local(2026, 12, 1, 0, 0);
+        assert_eq!(next_scheduled_after("", window, before).unwrap(), Some(at));
+        let after = local(2026, 12, 31, 14, 30);
+        assert_eq!(next_scheduled_after("", window, after).unwrap(), None);
+        assert!(validate_schedule(
+            "",
+            ScheduleWindow {
+                ends_at: Some(at),
+                ..window
+            }
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn window_bounds_recurring_schedule() {
+        // Fridays at 09:00, from Nov 10 until Dec 31 2026.
+        let window = ScheduleWindow {
+            run_once_at: None,
+            starts_at: Some(local(2026, 11, 10, 0, 0).timestamp()),
+            ends_at: Some(local(2026, 12, 31, 23, 59).timestamp()),
+        };
+        validate_schedule("0 9 * * 5", window).unwrap();
+        let next = next_scheduled_after("0 9 * * 5", window, local(2026, 11, 1, 0, 0))
+            .unwrap()
+            .unwrap();
+        assert_eq!(next, local(2026, 11, 13, 9, 0).timestamp());
+        let last = next_scheduled_after("0 9 * * 5", window, local(2026, 12, 20, 0, 0))
+            .unwrap()
+            .unwrap();
+        assert_eq!(last, local(2026, 12, 25, 9, 0).timestamp());
+        assert_eq!(
+            next_scheduled_after("0 9 * * 5", window, local(2026, 12, 25, 9, 0)).unwrap(),
+            None
+        );
+        assert!(window.contains(local(2026, 12, 1, 0, 0).timestamp()));
+        assert!(!window.contains(local(2027, 1, 1, 0, 0).timestamp()));
+    }
+
+    #[test]
+    fn start_time_on_an_occurrence_is_inclusive() {
+        let start = local(2026, 11, 13, 9, 0).timestamp();
+        let window = ScheduleWindow {
+            starts_at: Some(start),
+            ..Default::default()
+        };
+        let next = next_scheduled_after("0 9 * * *", window, local(2026, 11, 1, 0, 0))
+            .unwrap()
+            .unwrap();
+        assert_eq!(next, start);
+        assert!(validate_schedule(
+            "0 9 * * *",
+            ScheduleWindow {
+                ends_at: Some(start),
+                ..window
+            }
+        )
+        .is_err());
     }
 
     #[test]

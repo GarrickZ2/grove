@@ -117,7 +117,7 @@ Session 之间以 `buddy_segments` 区分：Buddy Local Task 下的 session，�
 你接手了这个 Buddy 的对话。之前的 Segment：
 - seq 1, agent claude-code, 2026-10-01 ~ 2026-10-28, session <id>
 - seq 2, agent codex, 2026-10-28 ~ 2026-10-30, session <id>
-用 buddy_read_session 读取前任聊天记录。最近 20 条消息如下：……
+用 read_session 读取前任聊天记录。最近 20 条消息如下：……
 ```
 
 最近 N 条从上一个 Segment 的 `history.jsonl` 尾部取，只取 user / assistant 文本，跳过工具事件。N 默认 20。
@@ -148,7 +148,7 @@ Buddy 只挂自己的 server，避免和 `grove mcp` 的同名能力（建 Task�
 `session_bootstrap_instruction` 新增 Buddy 分支，用 `BUDDY_INSTRUCTION` 替代 `WORKING_GROVE_INSTRUCTION`。要点：
 
 - 你是用户的长期队友，Grove 里所有 Project / Task / Session 对你可见。
-- 一两步能完成的事自己做（查邮件、看状态、回消息）；需要一整段 Session 的工作（大量读代码、长篇总结、改代码）用 `buddy_delegate` 委派，自己负责整合结果。
+- 一两步能完成的事自己做（查邮件、看状态、回消息）；需要一整段 Session 的工作（大量读代码、长篇总结、改代码）用 `delegate` 委派，自己负责整合结果。
 - 改代码必须委派到目标 Project 的 Task，不在 Buddy 目录下改别的仓库。
 - 跨对话要记住的东西写进 Memory；重复性工作用 Routine。
 - 有前任 Segment 时附交接段。
@@ -174,15 +174,17 @@ Segment 用 Buddy 专属 `custom_agent`，权限沿用 Agent 自己的配置，�
 
 | 工具 | 说明 | 复用 |
 |---|---|---|
-| `buddy_list_projects` | 所有已注册 Project（不含 Buddy） | `workspace::load_projects` |
-| `buddy_list_tasks` | 某 Project 下 active Task | `tasks::load_tasks` |
-| `buddy_list_sessions` | 某 Task 下 Session，含状态（idle / running / waiting） | `tasks::load_chat_sessions` + ACP handle 状态 |
-| `buddy_read_session` | 返回 session 元信息、`history.jsonl` 绝对路径、总行数；可选 `tail` 返回最近 N 条文本 | 参照 `memory_get_recent_chats` 的返回形态 |
-| `buddy_create_task` | 在目标 Project 建 Task，`created_by = buddy:<id>`，可写 notes | Repo 用 `operations::tasks::create_task`，Studio 用 `create_studio_task`，notes 用现有存储接口 |
-| `buddy_delegate` | 见 §5 | |
-| `buddy_send` | 给可写 Session 发一条消息，sender 标为 Buddy；目标忙则排队；结束 Segment 拒绝写入 | 从 `agent_graph::tools::deliver_to_session` 抽出的共用投递与排队逻辑 |
-| `buddy_delegations` | 列出本 Buddy 的委派及状态 | |
-| `buddy_routine_create / list / update / delete / run` | 管理本 Buddy 的 Automation，`task_mode=existing`、`session_mode=buddy_active` | `storage::automations` |
+| `list_projects` | 所有已注册 Project（不含 Buddy） | `workspace::load_projects` |
+| `list_tasks` | 某 Project 下 active Task | `tasks::load_tasks` |
+| `list_sessions` | 某 Task 下 Session，含状态（idle / running / waiting） | `tasks::load_chat_sessions` + ACP handle 状态 |
+| `read_session` | 按编号条目分页读取（`limit` / `before` / `after`），剥掉 `<grove-meta>`；`include_tools` 附带工具一行摘要和涉及文件；同时返回 `history.jsonl` 路径与格式说明 | `buddy::session_entries` |
+| `search_sessions` | 在单个 Session 或整个 Project 的 Session 里按关键词找消息，返回条目编号与片段 | `buddy::session_entries` |
+| `create_project` | 新建 Studio 项目；或新建 / 注册 / 克隆 Coding 项目（本地目录必须在用户 home 内） | `workspace::create_studio_project`、`operations::projects` |
+| `create_task` | 在目标 Project 建 Task，`created_by = buddy:<id>`，可写 notes | Repo 用 `operations::tasks::create_task`，Studio 用 `create_studio_task`，notes 用现有存储接口 |
+| `send` | 合并了原 `delegate` 与 `send_message`：`session` 发给已有 Session，`new` 新开 Session（self / task / new_task）；`follow` 默认 true，结果与等待请求经 Radio 跟进回传；不能发给自己的 Segment | `buddy::delegations`（见 §5） |
+| `list_followups` / `cancel_followup` | 列出 / 停止正在跟进的 Session | `buddy_delegations` 表 |
+| `respond` | 代答跟进中且处于 waiting 的请求：权限只能选一次性选项，表单可填写或拒绝 | `respond_permission_for`、`respond_turn_form` |
+| `create_routine / list / update / delete / run` | 管理本 Buddy 的 Automation，`task_mode=existing`、`session_mode=buddy_active` | `storage::automations` |
 | `memory_recall / read / append_log / get_related / get_recent_logs` | 作用域为 Buddy 的 project | `agent_graph_mcp.rs` 现有实现，按 caller project 解析 |
 | `ask_form`、`speak` | 同 working session | `agent_graph_mcp.rs` |
 | `browser_*` | 同 working session | `agent_graph_mcp.rs` |
@@ -194,7 +196,9 @@ Segment 用 Buddy 专属 `custom_agent`，权限沿用 Agent 自己的配置，�
 
 ## 5. 委派
 
-`buddy_delegate` 入参：
+> 更新：跟进改为订阅 Radio `Turn` 事件（`buddy::delegations::start()` 启动的单一订阅者），不再挂在目标 Session 的 handle 上，目标重连不会丢；`buddy_delegations.round_message_id` 记录当前轮次，Grove 启动时把未结束的行标为 interrupted。下文 `delegate` 现为 `send` 的 `new` 形态。
+
+`delegate` 入参：
 
 ```jsonc
 {
@@ -227,11 +231,11 @@ Subagent 配置：复用 Buddy 的 base_agent 和按 §3 优先级解析的运�
    - 收到对应响应或后续用户输入后恢复 running；新一轮清空文本累积。错误 / 断开置 failed，取消置 cancelled；晚到的 Complete 不覆盖失败或取消。
 4. 投递内容带 `<grove-meta>`（delegation_id、target_session、status），供前端消费，本任务不实现前端卡片。每次投递重新解析 Buddy 当前 Segment，并与换 Agent 的接纳锁协调；Buddy 忙时走共用队列。
    - 等待中的审批 / 提问由前端订阅目标 session（现有 history 与 WebSocket 会回放当前待处理请求）后在 Buddy 对话里渲染与响应，后端不附带请求快照、不新增接口。
-5. Buddy 后续 `buddy_send` 给同一 subagent 追加指令时，在投递前准备该轮监听和状态转换，成功接纳后跟踪新一轮结果；失败不能把旧 done 记录永久改成 running。去重、取消和通知使用条件更新，避免重复 Complete 重复回传。
+5. Buddy 后续 `send_message` 给同一 subagent 追加指令时，在投递前准备该轮监听和状态转换，成功接纳后跟踪新一轮结果；失败不能把旧 done 记录永久改成 running。去重、取消和通知使用条件更新，避免重复 Complete 重复回传。
 
 ### 重启恢复边界
 
-watcher 在内存，委派状态在数据库。按用户确认，沿用 Agent Graph 的简化边界：重启不扫描恢复 watcher，不自动标 failed、不恢复 Agent、不重发 brief，也不新增等待原因持久化。保留最后一次观测的状态，由用户或 Buddy 查看目标 Session 后显式继续或取消；该状态不表示重启后 Agent 仍在运行。后续显式 `buddy_send` 会为新一轮重新订阅。
+watcher 在内存，委派状态在数据库。按用户确认，沿用 Agent Graph 的简化边界：重启不扫描恢复 watcher，不自动标 failed、不恢复 Agent、不重发 brief，也不新增等待原因持久化。保留最后一次观测的状态，由用户或 Buddy 查看目标 Session 后显式继续或取消；该状态不表示重启后 Agent 仍在运行。后续显式 `send_message` 会为新一轮重新订阅。
 
 和上一版讨论的差异：之前计划放开 Agent Graph 跨 task 限制让 subagent 主动 `graph_reply`。改为 watcher 后不碰 Agent Graph 现有校验，subagent 也不需要配合协议，按 turn 完成自动回传。
 
@@ -256,7 +260,7 @@ watcher 在内存，委派状态在数据库。按用户确认，沿用 Agent Gr
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/buddies` | 列表：id、name、avatar、description、agent、status（working / waiting / idle）、last_message_preview、last_activity_at、active_session_id |
+| GET | `/buddies` | 列表：id、name、avatar、description、agent、status（working / waiting / idle）、last_message_preview、last_activity_at、active_session_id、running_delegations、waiting_delegations |
 | POST | `/buddies` | 创建：name、avatar、description、role、system_prompt、agent、agent_config、兼容 model/mode/effort。按 §1 原子完成创建 |
 | GET | `/buddies/{id}` | 详情 + segments 列表 |
 | PATCH | `/buddies/{id}` | 改名字、头像、描述、role、system_prompt、agent_config、兼容 model/mode/effort；按 §3 配置优先级，不换 Agent |
@@ -321,7 +325,7 @@ watcher 在内存，委派状态在数据库。按用户确认，沿用 Agent Gr
 
 - 顺序为只读工具 → 建 Task / 发送工具 → memory / ask_form / speak / browser 共用实现。Repo/Studio 分别调用现有建 Task 路径。
 - 抽取底层投递，维持 Graph 上层原有同 task、edge、pending-message 语义；补跨 Task Buddy 投递及忙时排队测试。
-- `buddy_delegate` / 委派管理和 Routine 工具分别在第 4、5 步接入，不在本步发布会返回“未实现”的工具。
+- `delegate` / 委派管理和 Routine 工具分别在第 4、5 步接入，不在本步发布会返回“未实现”的工具。
 - 测试参照 `agent_graph/tools.rs` 的隔离 DB 与 mock handle、`memory_mcp.rs` 的 schema/身份测试：非法或过期 token、已结束 caller、跨项目只读、history tail/行数、工具作用域、sender 与元数据、无 persona 泄漏、原 Graph 跨 task 请求仍被拒绝。
 - §11 第 2、3 项在对应工具处保留 TODO，不实现前端展示或额外访问限制。
 
@@ -377,7 +381,7 @@ cargo test
 ## 11. 待确认
 
 1. **删除 Buddy**：本次用户已明确只实现归档（`projects.archived = 1`，数据保留）。硬删不实施。现有 Project 归档只更新项目行，不自动暂停 Automation 或 Connect；不得自行将“归档”扩展成停止/解绑全部资源，若产品需要该行为再确认。
-2. **轻委派的 subagent session 在哪展示**：侧边面板还是同时在对话流展示仍待确认，不在本后端任务中决定。原文没有指定新的过滤默认值；本次保留 §4 的按 Task 列出 Session 语义，不额外引入轻委派过滤，并在 `buddy_list_sessions` 留 TODO。这个兼容行为不代表前端展示方案已定案。
-3. **`buddy_read_session` 读私有内容**：保持 MVP 可读取任意 Session 完整记录的默认行为，包括用户与其他 Agent 的对话；不新增 Project 授权限制，在工具入口留 TODO，后续再决定权限模型。
+2. **轻委派的 subagent session 在哪展示**：侧边面板还是同时在对话流展示仍待确认，不在本后端任务中决定。原文没有指定新的过滤默认值；本次保留 §4 的按 Task 列出 Session 语义，不额外引入轻委派过滤，并在 `list_sessions` 留 TODO。这个兼容行为不代表前端展示方案已定案。
+3. **`read_session` 读私有内容**：保持 MVP 可读取任意 Session 完整记录的默认行为，包括用户与其他 Agent 的对话；不新增 Project 授权限制，在工具入口留 TODO，后续再决定权限模型。
 
 §5 的重启边界已按用户最新回复确认采用简化机制，不新增自动恢复或失败标记。

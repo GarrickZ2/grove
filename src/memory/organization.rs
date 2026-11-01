@@ -201,6 +201,7 @@ mod tests {
             prompt: ORGANIZATION_PROMPT.to_string(),
             schedule_cron: "0 2 * * *".to_string(),
             event_triggers: Vec::new(),
+            window: Default::default(),
             last_run_at: None,
             last_run_status: None,
             last_run_error: None,

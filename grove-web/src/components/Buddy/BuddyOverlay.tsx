@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CommandPaletteProvider, useCommandPalette } from "../../context/CommandPaletteContext";
-import { useConfig, useProject } from "../../context";
+import { useProject } from "../../context";
 import { getProject } from "../../api/projects";
-import { BUDDY_NAVIGATE_EVENT, BuddyNavigationContext } from "./buddyNavigation";
-import type { Buddy } from "../../api/buddies";
+import { BUDDY_NAVIGATE_EVENT, BuddyNavigationContext, type BuddyNavigationTarget } from "./buddyNavigation";
 import { useBuddies } from "../../hooks/useBuddies";
 import { useRadioEvents } from "../../hooks/useRadioEvents";
 import { buildCommands } from "../../hooks/useCommands";
@@ -32,13 +31,15 @@ export function BuddyOverlay({ open, onOpen, onExit, children }: { open: boolean
     overlay.current?.focus();
     return () => { if (previous?.isConnected) previous.focus(); };
   }, [open]);
-  const { config } = useConfig();
   const { applySelectedProject } = useProject();
-  const interfaceName = config?.web.interface === "orbit" ? "Orbit" : "Workbench";
-  const navigate = async (page: "tasks" | "memory", buddy: Buddy) => {
-    const project = await getProject(buddy.project_hash);
+  const interfaceName = "Grove";
+  const navigate = async (target: BuddyNavigationTarget) => {
+    const project = await getProject(target.projectId);
     applySelectedProject(project);
-    window.dispatchEvent(new CustomEvent(BUDDY_NAVIGATE_EVENT, { detail: { page, data: { projectId: buddy.project_hash, taskId: buddy.local_task_id, chatId: buddy.active_session_id } } }));
+    // The shell's project list has no Tasks loaded yet, so say here whether the
+    // Task exists; otherwise Orbit treats it as unknown and lands on the New page.
+    const taskKnown = target.taskId === "_local" || project.local_task?.id === target.taskId || project.tasks.some(task => task.id === target.taskId);
+    window.dispatchEvent(new CustomEvent(BUDDY_NAVIGATE_EVENT, { detail: { page: "tasks", data: { ...target, taskKnown, viewMode: "terminal" } } }));
     onExit();
   };
   const [request, setRequest] = useState<{ id?: string; create?: boolean; revision: number }>({ revision: 0 });

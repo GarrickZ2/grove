@@ -793,9 +793,13 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // events arriving in the gap.
   const projectsRef = useRef(projects);
   const selectProjectRef = useRef(selectProject);
+  const buddiesRef = useRef(buddies);
   useEffect(() => {
     projectsRef.current = projects;
   }, [projects]);
+  useEffect(() => {
+    buddiesRef.current = buddies;
+  }, [buddies]);
   useEffect(() => {
     selectProjectRef.current = selectProject;
   }, [selectProject]);
@@ -818,6 +822,8 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
     const applyNavigate = (p: NavigatePayload) => {
       console.log("[BlitzNav] applyNavigate (tray/Radio)", p, { tasksMode: tasksModeRef.current });
       const { route, project_id, task_id, chat_id } = p;
+      const buddy = buddiesRef.current.items.find((item) => item.project_hash === project_id);
+      if (buddy) { buddiesRef.current.open(buddy.id); return; }
       const project = project_id
         ? projectsRef.current.find((pr) => pr.id === project_id)
         : undefined;
@@ -960,6 +966,9 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   }, [orbitHandoffAt]);
   const handleNavigate = (page: string, data?: Record<string, unknown>) => {
     console.log("[BlitzNav] handleNavigate (notification)", { page, data, tasksMode });
+    // A Buddy's own Project never opens in the shell; show that Buddy instead.
+    const buddy = buddies.items.find((item) => item.project_hash === data?.projectId);
+    if (buddy) { buddies.open(buddy.id); return; }
     let targetProject = selectedProject;
     if (data?.projectId) {
       const found = projects.find((p) => p.id === data.projectId);
@@ -976,7 +985,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
     // Orbit has no Tasks list page: a Tasks target without a known Task (or a
     // new-task request) lands on the New page instead of the Classic list.
     if (orbit && page === "tasks" && !data?.openNewTask) {
-      const known = data?.taskId === "_local" || targetProject?.tasks?.some((task) => task.id === data?.taskId);
+      const known = data?.taskKnown === true || data?.taskId === "_local" || targetProject?.tasks?.some((task) => task.id === data?.taskId);
       if (!known) {
         setActiveItem("new");
         setNavigationData(null);

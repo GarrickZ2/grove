@@ -50,8 +50,9 @@ export interface McpAuthFlow {
 export interface McpInstallation {
   repo_key: string;
   repo_path: string;
+  /** An ACP Agent id, or `buddy:<id>` for Buddy-scoped bindings. */
   agent_id: string;
-  scope: "global" | "project";
+  scope: "global" | "project" | "buddy";
   project_path: string;
   runtime: { kind: "remote" | "package"; index: number };
   values: Record<string, string>;
@@ -110,7 +111,7 @@ export async function updateMcpDisplayName(input: {
 export async function installMcp(input: {
   repo_key: string;
   repo_path: string;
-  scope: "global" | "project";
+  scope: "global" | "project" | "buddy";
   project_path?: string;
   agent_ids: string[];
   runtime: { kind: "remote" | "package"; index: number };

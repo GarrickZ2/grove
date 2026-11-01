@@ -31,7 +31,7 @@ describe("Buddy API mock switch", () => {
     const api = await import("./buddies");
     const id = "buddy/with space";
     const path = "/api/v1/buddies/buddy%2Fwith%20space";
-    const detail = { id, name: "Docs", agent: "codex", running_delegations: 0, local_task_id: "_local", role: "", system_prompt: "", agent_config: { source: "default", agent_id: "codex" } };
+    const detail = { id, name: "Docs", agent: "codex", running_delegations: 0, waiting_delegations: 0, local_task_id: "_local", role: "", system_prompt: "", agent_config: { source: "default", agent_id: "codex" } };
     vi.mocked(apiClient.get).mockResolvedValueOnce([detail]).mockResolvedValueOnce(detail).mockResolvedValueOnce([]);
     vi.mocked(apiClient.post).mockResolvedValue(detail);
     vi.mocked(apiClient.patch).mockResolvedValue(detail);

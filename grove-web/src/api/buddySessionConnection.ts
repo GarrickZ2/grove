@@ -1,10 +1,9 @@
 import { appendHmacToUrl, getApiHost } from "./client";
-import { getChatHistory } from "./tasks";
+import { getChatHistory, reconnectChat } from "./tasks";
 import { getChatSocket, registerChatSocket } from "./chatSockets";
 import { watchChatConnection, withConnectionDeadline } from "../components/Tasks/TaskView/chatConnectionAttempt";
 import type { Buddy } from "./buddies";
 import type { BuddyEvent } from "../components/Buddy/timeline/buddyTimelineState";
-import type { BuddySegmentHistory } from "../components/Buddy/timeline/buddySegmentHistory";
 
 /** Remove only the overlapping persisted tail; readiness and pending snapshots still replay. */
 export function afterHistory(history: BuddyEvent[], buffered: BuddyEvent[]): BuddyEvent[] {
@@ -20,15 +19,21 @@ export function afterHistory(history: BuddyEvent[], buffered: BuddyEvent[]): Bud
   return buffered;
 }
 
-/** Attach to the same session protocol as TaskChat. Never create another session. */
-export function connectBuddySession(buddy: Buddy, callbacks: { history: (events: BuddyEvent[], busy: boolean, previous: BuddySegmentHistory[]) => void; event: (event: BuddyEvent) => void; ready: (ready: boolean) => void; error: (message: string) => void }) {
+type SessionIdentity = Pick<Buddy, "project_hash" | "local_task_id" | "active_session_id">;
+
+/** Attach to the same session protocol as TaskChat. Never create another session.
+ *  `compact` is only for the Buddy's own Segment; observed subagent sessions keep their queue mode.
+ *  With `recentTurns`, only the latest turns load; `history` gets the index they start at, so the
+ *  rest (and earlier Segments) can be paged in on demand. */
+export function connectBuddySession(buddy: SessionIdentity, callbacks: { history: (events: BuddyEvent[], busy: boolean, start: number) => void; event: (event: BuddyEvent) => void; ready: (ready: boolean) => void; error: (message: string) => void }, { compact = true, recentTurns }: { compact?: boolean; recentTurns?: number } = {}) {
   let stopped = false, socket: WebSocket | null = null, owned = false, releaseWatch: (() => void) | undefined;
+  const queueMode = () => { if (compact) socket?.send(JSON.stringify({ type: "set_queue_mode", mode: "compact" })); };
   let hydrated = false;
   const buffered: BuddyEvent[] = [];
   const received = (raw: MessageEvent) => {
     let event: BuddyEvent;
     try { event = JSON.parse(raw.data) as BuddyEvent; } catch { return; }
-    if (event.type === "session_ready") { socket?.send(JSON.stringify({ type: "set_queue_mode", mode: "compact" })); callbacks.ready(true); }
+    if (event.type === "session_ready") { queueMode(); callbacks.ready(true); }
     if (event.type === "session_ended") callbacks.ready(false);
     if (!hydrated) buffered.push(event); else callbacks.event(event);
   };
@@ -42,20 +47,11 @@ export function connectBuddySession(buddy: Buddy, callbacks: { history: (events:
         if (stopped) return;
         socket = new WebSocket(url); owned = true; registerChatSocket(socket);
         releaseWatch = watchChatConnection(socket, callbacks.error, () => {});
-      } else { socket.send(JSON.stringify({ type: "set_queue_mode", mode: "compact" })); callbacks.ready(true); }
+      } else { queueMode(); callbacks.ready(true); }
       socket.addEventListener("message", received); socket.addEventListener("close", closed);
-      const previous = (buddy.segments ?? []).filter(segment => segment.session_id !== buddy.active_session_id && segment.ended_at).sort((a, b) => a.seq - b.seq);
-      const [history, previousResults] = await withConnectionDeadline(() => Promise.all([
-        getChatHistory(buddy.project_hash, buddy.local_task_id, buddy.active_session_id),
-        Promise.allSettled(previous.map(async segment => ({
-          session_id: segment.session_id,
-          ended_at: segment.ended_at!,
-          events: (await getChatHistory(buddy.project_hash, buddy.local_task_id, segment.session_id)).events as BuddyEvent[],
-        }))),
-      ]), 20000, "Could not load conversation history.");
+      const history = await withConnectionDeadline(() => getChatHistory(buddy.project_hash, buddy.local_task_id, buddy.active_session_id, 0, recentTurns ? { recentTurns } : {}), 20000, "Could not load conversation history.");
       if (stopped) return;
-      callbacks.history(history.events as BuddyEvent[], history.runtime?.busy ?? false, previousResults.flatMap(result => result.status === "fulfilled" ? [result.value] : []));
-      if (previousResults.some(result => result.status === "rejected")) callbacks.error("Some earlier conversation history could not be loaded. Reconnect to retry.");
+      callbacks.history(history.events as BuddyEvent[], history.runtime?.busy ?? false, history.start ?? 0);
       if (owned) callbacks.event({ type: "buddy_reconcile" });
       for (const event of afterHistory(history.events as BuddyEvent[], buffered)) callbacks.event(event);
       hydrated = true;
@@ -68,4 +64,19 @@ export function connectBuddySession(buddy: Buddy, callbacks: { history: (events:
     }
   })();
   return () => { stopped = true; releaseWatch?.(); socket?.removeEventListener("message", received); socket?.removeEventListener("close", closed); if (owned) socket?.close(); };
+}
+
+const AGENT_RESTARTED = "grove:buddy-agent-restarted";
+
+/** Restart the Buddy's ACP process, keeping its conversation. The next
+ *  connection resumes the session with fresh MCP servers and instructions. */
+export async function restartBuddyAgent(buddy: SessionIdentity): Promise<void> {
+  await reconnectChat(buddy.project_hash, buddy.local_task_id, buddy.active_session_id);
+  window.dispatchEvent(new CustomEvent(AGENT_RESTARTED, { detail: buddy.active_session_id }));
+}
+
+export function onBuddyAgentRestarted(sessionId: string, listener: () => void): () => void {
+  const handle = (event: Event) => { if ((event as CustomEvent<string>).detail === sessionId) listener(); };
+  window.addEventListener(AGENT_RESTARTED, handle);
+  return () => window.removeEventListener(AGENT_RESTARTED, handle);
 }

@@ -28,32 +28,24 @@ it("sets compact on readiness, buffers live events during history load, and rele
   expect(callbacks.event).not.toHaveBeenCalled();
   expect(socket!.send).toHaveBeenCalledWith(JSON.stringify({ type: "set_queue_mode", mode: "compact" }));
   resolve({ events: [], total: 0, runtime: { active: true, busy: true }, session: null });
-  await vi.waitFor(() => expect(callbacks.history).toHaveBeenCalledWith([], true, []));
+  await vi.waitFor(() => expect(callbacks.history).toHaveBeenCalledWith([], true, 0));
   expect(callbacks.event).toHaveBeenCalledWith({ type: "permission_request", id: "request" });
   dispose(); expect(socket!.close).toHaveBeenCalledOnce();
 });
 
-it.each([false, true])("loads ended Segments in sequence with only an active socket (history failure: %s)", async failure => {
+it("loads only the recent turns of the active Segment and reports where they start", async () => {
   const sockets: FakeSocket[] = [];
   class FakeSocket extends EventTarget { send = vi.fn(); close = vi.fn(); url: string; constructor(url: string) { super(); this.url = url; sockets.push(this); } }
   vi.stubGlobal("WebSocket", FakeSocket);
-  const previous = [
-    { session_id: "old-1", seq: 1, agent: "first", started_at: "2026-10-30T01:00:00Z", ended_at: "2026-10-30T02:00:00Z" },
-    { session_id: "old-2", seq: 2, agent: "second", started_at: "2026-10-30T02:00:00Z", ended_at: "2026-10-30T03:00:00Z" },
-  ];
-  vi.mocked(getChatHistory).mockImplementation(async (_project, _task, session) => {
-    if (failure && session === "old-2") throw new Error("History unavailable");
-    return { events: session === "current" ? [] : [{ type: "message_chunk", text: session }], total: session === "current" ? 0 : 1, runtime: { active: session === "current", busy: false }, session: null };
-  });
+  vi.mocked(getChatHistory).mockResolvedValue({ events: [{ type: "message_chunk", text: "Recent" }], total: 40, start: 31, runtime: { active: true, busy: false }, session: null });
   const callbacks = { history: vi.fn(), event: vi.fn(), ready: vi.fn(), error: vi.fn() };
-  const dispose = connectBuddySession({ project_hash: "p", local_task_id: "_local", active_session_id: "current", segments: [...previous].reverse() } as Buddy, callbacks);
+  const dispose = connectBuddySession({ project_hash: "p", local_task_id: "_local", active_session_id: "current" }, callbacks, { recentTurns: 20 });
   await vi.waitFor(() => expect(callbacks.history).toHaveBeenCalledOnce());
-  expect(getChatHistory).toHaveBeenCalledTimes(3);
-  expect(callbacks.history).toHaveBeenCalledWith([], false, previous.filter(segment => !failure || segment.session_id !== "old-2").map(segment => ({ session_id: segment.session_id, ended_at: segment.ended_at, events: [{ type: "message_chunk", text: segment.session_id }] })));
-  expect(sockets).toHaveLength(1);
+  // Ended Segments are paged in later, on demand.
+  expect(getChatHistory).toHaveBeenCalledOnce();
+  expect(getChatHistory).toHaveBeenCalledWith("p", "_local", "current", 0, { recentTurns: 20 });
+  expect(callbacks.history).toHaveBeenCalledWith([{ type: "message_chunk", text: "Recent" }], false, 31);
   expect(sockets[0].url).toContain("/chats/current/ws");
-  if (failure) expect(callbacks.error).toHaveBeenCalledWith("Some earlier conversation history could not be loaded. Reconnect to retry.");
-  else expect(callbacks.error).not.toHaveBeenCalled();
   sockets[0].dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "message_chunk", text: "Live answer" }) }));
   expect(callbacks.event).toHaveBeenLastCalledWith({ type: "message_chunk", text: "Live answer" });
   dispose();

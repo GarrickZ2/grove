@@ -28,7 +28,9 @@ describe("BuddyAvatar", () => {
     const avatar = host.querySelector<HTMLElement>(".buddy-av")!;
     expect(avatar.dataset.shape).toBe(shape);
     expect(avatar.dataset.color).toBe(color);
-    expect(avatar.style.borderRadius).toBe(BUDDY_AVATAR_RADIUS[shape]);
+    // Rounded shapes use border-radius; the rest are SVG masks.
+    if (BUDDY_AVATAR_RADIUS[shape]) expect(avatar.style.borderRadius).toBe(BUDDY_AVATAR_RADIUS[shape]);
+    else expect(avatar.getAttribute("style")).toContain("mask");
     expect(avatar.querySelectorAll(".buddy-av__eyes > .buddy-av__eye")).toHaveLength(2);
     expect(avatar.getAttribute("aria-hidden")).toBe("true");
   });

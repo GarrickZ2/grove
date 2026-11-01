@@ -25,7 +25,7 @@ import {
   Plus,
   Settings2,
   Brain,
-  Link2,
+  MonitorSmartphone,
 } from "lucide-react";
 import type { Plugin } from "../../api/plugins";
 import { PluginIcon } from "../Plugins/PluginIcon";
@@ -559,18 +559,28 @@ export function Sidebar({
 
         <div className="space-y-0.5">
           <NavButton item={{ id: "buddies", label: "Buddies", icon: BuddyEntryIcon }} isActive={false} onClick={() => handleItemClick("buddies")} collapsed={isCollapsed} />
-          <NavButton
-            item={{ id: "connect", label: "IM Connect", icon: Link2 }}
-            isActive={connectOpen === true}
-            onClick={() => handleItemClick("connect")}
-            collapsed={isCollapsed}
-          />
-          <NavButton
-            item={{ id: "settings", label: "Settings", icon: Settings }}
-            isActive={activeItem === "settings"}
-            onClick={() => handleItemClick("settings")}
-            collapsed={isCollapsed}
-          />
+          {/* IM Connect sits beside Settings as an icon, matching the Orbit footer. */}
+          <div className={isCollapsed ? "space-y-0.5" : "flex items-center gap-1"}>
+            <div className="min-w-0 flex-1">
+              <NavButton
+                item={{ id: "settings", label: "Settings", icon: Settings }}
+                isActive={activeItem === "settings"}
+                onClick={() => handleItemClick("settings")}
+                collapsed={isCollapsed}
+              />
+            </div>
+            <motion.button
+              whileTap={{ scale: 0.96 }}
+              onClick={() => handleItemClick("connect")}
+              title="IM Connect"
+              aria-label="IM Connect"
+              aria-pressed={connectOpen === true}
+              className={`flex h-10 shrink-0 items-center justify-center rounded-xl transition-colors duration-150 ${isCollapsed ? "w-full" : "w-10"} ${connectOpen ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+              style={connectOpen ? { backgroundColor: "color-mix(in oklab, var(--color-highlight) 18%, transparent)" } : undefined}
+            >
+              <MonitorSmartphone className="h-[18px] w-[18px]" strokeWidth={1.8} />
+            </motion.button>
+          </div>
         </div>
 
         {/* Collapsed mode only needs the expand action. */}

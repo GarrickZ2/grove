@@ -334,8 +334,11 @@ pub async fn install_mcp(Json(req): Json<InstallMcpRequest>) -> impl IntoRespons
         Ok(None) => return ApiError::response(StatusCode::NOT_FOUND, "MCP artifact not found"),
         Err(e) => return ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
-    if req.scope != "global" && req.scope != "project" {
-        return ApiError::response(StatusCode::BAD_REQUEST, "scope must be global or project");
+    if req.scope != "global" && req.scope != "project" && req.scope != extensions::BUDDY_SCOPE {
+        return ApiError::response(
+            StatusCode::BAD_REQUEST,
+            "scope must be global, project or buddy",
+        );
     }
     let project_path = if req.scope == "project" {
         match req.project_path.as_deref().filter(|p| !p.is_empty()) {
@@ -351,15 +354,26 @@ pub async fn install_mcp(Json(req): Json<InstallMcpRequest>) -> impl IntoRespons
         ""
     };
     for id in &req.agent_ids {
-        if crate::storage::installed_agents::get(id)
-            .ok()
-            .flatten()
-            .is_none()
-        {
-            return ApiError::response(
-                StatusCode::BAD_REQUEST,
-                format!("ACP Agent is not installed: {id}"),
-            );
+        let known = if req.scope == extensions::BUDDY_SCOPE {
+            id.strip_prefix("buddy:").is_some_and(|buddy| {
+                crate::storage::buddies::get(&crate::storage::database::connection(), buddy)
+                    .ok()
+                    .flatten()
+                    .is_some()
+            })
+        } else {
+            crate::storage::installed_agents::get(id)
+                .ok()
+                .flatten()
+                .is_some()
+        };
+        if !known {
+            let kind = if req.scope == extensions::BUDDY_SCOPE {
+                "Buddy not found"
+            } else {
+                "ACP Agent is not installed"
+            };
+            return ApiError::response(StatusCode::BAD_REQUEST, format!("{kind}: {id}"));
         }
     }
     match extensions::save_mcp_installations(

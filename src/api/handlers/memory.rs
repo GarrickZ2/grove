@@ -179,6 +179,7 @@ pub async fn update_config(
             prompt: ORGANIZATION_PROMPT.to_string(),
             schedule_cron: input.schedule_cron.clone(),
             event_triggers: Vec::new(),
+            window: Default::default(),
             last_run_at: None,
             last_run_status: None,
             last_run_error: None,

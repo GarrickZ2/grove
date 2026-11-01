@@ -3,7 +3,7 @@ import type { Buddy } from "./buddies";
 import { BUDDIES_MOCK_ENABLED, buddiesMock } from "./buddies.mock";
 import { deleteAutomation, createAutomation, listAutomations, triggerAutomation, updateAutomation, type Automation, type AutomationUpsert } from "./automations";
 import { getMemoryOverview, getMemoryEntity, listMemoryEntities } from "./memory";
-import { createConnect, listConnects, listConnectPlatforms, verifyConnectCredentials, type ConnectInput } from "./connects";
+import { listConnects } from "./connects";
 
 export async function listBuddyRoutines(buddy: Buddy) {
   return BUDDIES_MOCK_ENABLED ? buddiesMock.routines(buddy.id) : listAutomations(buddy.project_hash);
@@ -15,6 +15,7 @@ export async function setBuddyRoutineEnabled(buddy: Buddy, routine: Automation, 
     task_id: routine.task_id, task_template: routine.task_template, session_mode: routine.session_mode,
     chat_id: routine.chat_id, session_template: routine.session_template, prompt: routine.prompt,
     schedule_cron: routine.schedule_cron, event_triggers: routine.event_triggers,
+    run_once_at: routine.run_once_at, starts_at: routine.starts_at, ends_at: routine.ends_at,
   });
 }
 export async function runBuddyRoutine(buddy: Buddy, id: string) {
@@ -32,16 +33,6 @@ export async function listBuddyConnects(buddy: Buddy) {
   if (BUDDIES_MOCK_ENABLED) return buddiesMock.connects(buddy.id);
   return (await listConnects()).filter((item) => item.buddy_id === buddy.id || item.project_id === buddy.project_hash);
 }
-export async function listBuddyConnectPlatforms() {
-  return listConnectPlatforms();
-}
-export async function createBuddyConnect(buddy: Buddy, input: Pick<ConnectInput, "name" | "platform" | "domain" | "adapter_config">) {
-  const target = { ...input, enabled: true, target: { kind: "buddy" as const, buddy_id: buddy.id }, project_id: buddy.project_hash, task_id: buddy.local_task_id, session_id: buddy.active_session_id };
-  if (BUDDIES_MOCK_ENABLED) return buddiesMock.createConnect(buddy.id, target);
-  await verifyConnectCredentials(input);
-  return createConnect(target);
-}
-
 export async function createBuddyRoutine(buddy: Buddy, template: { name: string; prompt: string; cron: string }) {
   const input = { name: template.name, prompt: template.prompt, schedule_cron: template.cron, enabled: true, agent_config: buddy.agent_config, task_mode: "existing" as const, task_id: buddy.local_task_id, session_mode: "buddy_active" as const, event_triggers: [] };
   if (BUDDIES_MOCK_ENABLED) return buddiesMock.saveRoutine(buddy.id, input);

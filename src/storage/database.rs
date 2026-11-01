@@ -826,7 +826,10 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             last_run_error   TEXT,
             next_run_at      INTEGER,
             created_at       INTEGER NOT NULL,
-            updated_at       INTEGER NOT NULL
+            updated_at       INTEGER NOT NULL,
+            run_once_at      INTEGER,              -- one-shot fire time; cron ignored
+            starts_at        INTEGER,              -- recurring window start (inclusive)
+            ends_at          INTEGER               -- recurring window end (inclusive)
         );
         CREATE INDEX IF NOT EXISTS ix_automations_project
             ON automations(project, updated_at DESC);
@@ -919,6 +922,8 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
 
     // Column migrations for existing databases
     add_column_if_missing(conn, "connects", "buddy_id", "TEXT")?;
+    // The latest Buddy message a follow-up waits on; lets startup reconcile it.
+    add_column_if_missing(conn, "buddy_delegations", "round_message_id", "TEXT")?;
     // ALTER TABLE ADD COLUMN is not idempotent in SQLite, so we ignore errors
     let _ = conn.execute_batch(
         "ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'repo';",
@@ -1056,6 +1061,11 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch(
         "ALTER TABLE automations ADD COLUMN event_triggers_json TEXT NOT NULL DEFAULT '[]';",
     );
+    for column in ["run_once_at", "starts_at", "ends_at"] {
+        let _ = conn.execute_batch(&format!(
+            "ALTER TABLE automations ADD COLUMN {column} INTEGER;"
+        ));
+    }
     let _ = conn.execute_batch(
         "ALTER TABLE custom_agent ADD COLUMN agent_config_json TEXT NOT NULL DEFAULT '{\"source\":\"default\"}';",
     );

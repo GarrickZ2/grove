@@ -1129,6 +1129,8 @@ interface ChatHistoryResponse {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   events: any[];
   total: number;
+  /** Index in the full history where this window begins. */
+  start?: number;
   omitted_turns?: number;
   runtime?: { active: boolean; busy: boolean | null };
   context?: {
@@ -1144,6 +1146,8 @@ interface ChatHistoryResponse {
 
 export interface ChatHistoryOptions {
   recentTurns?: number;
+  /** Page backwards: only history before this index (use a previous `start`). */
+  before?: number;
   includeMedia?: boolean;
   includeToolDetails?: boolean;
 }
@@ -1168,6 +1172,7 @@ export async function getChatHistory(
 ): Promise<ChatHistoryResponse> {
   const query = new URLSearchParams({ offset: String(offset) });
   if (options.recentTurns) query.set('recent_turns', String(options.recentTurns));
+  if (options.before !== undefined) query.set('before', String(options.before));
   if (options.includeMedia === false) query.set('include_media', 'false');
   if (options.includeToolDetails === false) query.set('include_tool_details', 'false');
   return apiClient.get<ChatHistoryResponse>(

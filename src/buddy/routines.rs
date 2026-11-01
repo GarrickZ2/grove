@@ -1,6 +1,6 @@
 use crate::error::{GroveError, Result};
 use crate::storage::{
-    automations::{self, Automation, TargetMode},
+    automations::{self, Automation, ScheduleWindow, TargetMode},
     buddies::Buddy,
     tasks,
 };
@@ -12,11 +12,35 @@ use serde::Deserialize;
 pub struct RoutineInput {
     pub name: String,
     pub prompt: String,
+    /// Standard 5-field cron in the machine's local timezone. Ignored (may be
+    /// empty) when `run_once_at` is set.
+    #[serde(default)]
     pub schedule_cron: String,
     #[serde(default = "enabled")]
     pub enabled: bool,
     #[serde(default)]
     pub event_triggers: Vec<String>,
+    /// One-time Routine: fire once at this unix timestamp (seconds), then
+    /// disable itself. Cannot be combined with starts_at / ends_at.
+    #[serde(default)]
+    pub run_once_at: Option<i64>,
+    /// Recurring Routine: do not fire before this unix timestamp (seconds).
+    #[serde(default)]
+    pub starts_at: Option<i64>,
+    /// Recurring Routine: stop after this unix timestamp (seconds); the
+    /// Routine disables itself once no occurrence is left.
+    #[serde(default)]
+    pub ends_at: Option<i64>,
+}
+
+impl RoutineInput {
+    fn window(&self) -> ScheduleWindow {
+        ScheduleWindow {
+            run_once_at: self.run_once_at,
+            starts_at: self.starts_at,
+            ends_at: self.ends_at,
+        }
+    }
 }
 fn enabled() -> bool {
     true
@@ -41,7 +65,8 @@ pub fn save(buddy: &Buddy, id: Option<&str>, input: RoutineInput) -> Result<Auto
     if input.name.trim().is_empty() || input.prompt.trim().is_empty() {
         return Err(GroveError::invalid_data("name and prompt are required"));
     }
-    crate::automation::cron_util::validate(&input.schedule_cron)
+    let window = input.window();
+    crate::automation::cron_util::validate_schedule(&input.schedule_cron, window)
         .map_err(GroveError::invalid_data)?;
     let now = Utc::now().timestamp();
     let mut routine = if let Some(id) = id {
@@ -63,6 +88,7 @@ pub fn save(buddy: &Buddy, id: Option<&str>, input: RoutineInput) -> Result<Auto
             prompt: String::new(),
             schedule_cron: String::new(),
             event_triggers: Vec::new(),
+            window: ScheduleWindow::default(),
             last_run_at: None,
             last_run_status: None,
             last_run_error: None,
@@ -76,10 +102,17 @@ pub fn save(buddy: &Buddy, id: Option<&str>, input: RoutineInput) -> Result<Auto
     routine.schedule_cron = input.schedule_cron;
     routine.enabled = input.enabled;
     routine.event_triggers = input.event_triggers;
+    routine.window = window;
     routine.updated_at = now;
     routine.next_run_at = if routine.enabled {
-        crate::automation::cron_util::next_unix(&routine.schedule_cron)
-            .map_err(GroveError::invalid_data)?
+        let next = crate::automation::cron_util::next_scheduled(&routine.schedule_cron, window)
+            .map_err(GroveError::invalid_data)?;
+        if next.is_none() && window.is_bounded() {
+            return Err(GroveError::invalid_data(
+                "this schedule has no future runs — pick a later time or end date",
+            ));
+        }
+        next
     } else {
         None
     };
@@ -110,6 +143,9 @@ mod tests {
             schedule_cron: "0 9 * * *".into(),
             enabled: true,
             event_triggers: Vec::new(),
+            run_once_at: None,
+            starts_at: None,
+            ends_at: None,
         }
     }
     #[tokio::test]

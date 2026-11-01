@@ -86,6 +86,9 @@ pub struct Delegation {
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
+    /// The Buddy message the current round waits on.
+    #[serde(default)]
+    pub round_message_id: Option<String>,
 }
 
 /// Non-Segment sessions retain their ordinary behavior. Only the current,
@@ -110,7 +113,7 @@ pub(crate) fn ensure_session_writable(session_id: &str) -> Result<()> {
 
 const BUDDY_COLUMNS: &str = "id, project_hash, custom_agent_id, avatar, description, active_session_id, sort_position, created_at, updated_at";
 const SEGMENT_COLUMNS: &str = "session_id, buddy_id, seq, agent, started_at, ended_at";
-const DELEGATION_COLUMNS: &str = "id, buddy_id, from_session, target_project, target_task, target_session, title, brief, status, last_result, created_at, updated_at, completed_at";
+const DELEGATION_COLUMNS: &str = "id, buddy_id, from_session, target_project, target_task, target_session, title, brief, status, last_result, created_at, updated_at, completed_at, round_message_id";
 
 fn buddy_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Buddy> {
     Ok(Buddy {
@@ -152,6 +155,7 @@ fn delegation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Delegation> {
         created_at: row.get(10)?,
         updated_at: row.get(11)?,
         completed_at: row.get(12)?,
+        round_message_id: row.get(13)?,
     })
 }
 
@@ -380,7 +384,7 @@ pub fn insert_delegation(conn: &Connection, delegation: &Delegation) -> Result<(
             "New delegation requires matching sessions and running status",
         ));
     }
-    conn.execute(&format!("INSERT INTO buddy_delegations ({DELEGATION_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,NULL)"),
+    conn.execute(&format!("INSERT INTO buddy_delegations ({DELEGATION_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,NULL,NULL)"),
         params![delegation.id,delegation.buddy_id,delegation.from_session,delegation.target_project,
             delegation.target_task,delegation.target_session,delegation.title,delegation.brief,
             delegation.status.as_str(),delegation.last_result,delegation.created_at,delegation.updated_at])?;
@@ -405,6 +409,55 @@ pub fn list_delegations(conn: &Connection, buddy_id: &str) -> Result<Vec<Delegat
         .query_map([buddy_id], delegation_row)?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows)
+}
+
+/// Open follow-ups across Buddies, for startup reconciliation.
+pub fn list_open_delegations(conn: &Connection) -> Result<Vec<Delegation>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {DELEGATION_COLUMNS} FROM buddy_delegations WHERE status IN ('running','waiting')"
+    ))?;
+    let rows = stmt
+        .query_map([], delegation_row)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// The follow-up this Buddy already keeps for a Session, if any.
+pub fn find_delegation_for_session(
+    conn: &Connection,
+    buddy_id: &str,
+    session: &str,
+) -> Result<Option<Delegation>> {
+    Ok(conn
+        .query_row(
+            &format!("SELECT {DELEGATION_COLUMNS} FROM buddy_delegations WHERE buddy_id=?1 AND target_session=?2 ORDER BY updated_at DESC LIMIT 1"),
+            params![buddy_id, session],
+            delegation_row,
+        )
+        .optional()?)
+}
+
+/// Start a new round: the follow-up is running again and waits on `message_id`.
+pub fn start_delegation_round(
+    conn: &Connection,
+    buddy_id: &str,
+    id: &str,
+    message_id: &str,
+) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE buddy_delegations SET status='running',round_message_id=?3,updated_at=?4,completed_at=NULL
+         WHERE buddy_id=?1 AND id=?2 AND status<>'cancelled'",
+        params![buddy_id, id, message_id, Utc::now().to_rfc3339()],
+    )? > 0)
+}
+
+/// Open delegation counts for list views: (running, waiting).
+pub fn count_open_delegations(conn: &Connection, buddy_id: &str) -> Result<(i64, i64)> {
+    Ok(conn.query_row(
+        "SELECT COALESCE(SUM(status='running'),0), COALESCE(SUM(status='waiting'),0) FROM buddy_delegations WHERE buddy_id=?1",
+        [buddy_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?)
 }
 
 /// Conditional persistence only; turn ordering/recovery belong to the watcher.
@@ -536,6 +589,7 @@ pub(crate) mod test_support {
             created_at: "2026-10-30T00:00:00Z".into(),
             updated_at: "2026-10-30T00:00:00Z".into(),
             completed_at: None,
+            round_message_id: None,
         }
     }
 }
@@ -715,6 +769,37 @@ mod tests {
             get_delegation(&conn, "a", "d").unwrap().unwrap().status,
             DelegationStatus::Cancelled
         );
+    }
+
+    #[test]
+    fn open_delegation_counts_track_running_and_waiting() {
+        let _lock = database::test_lock().blocking_lock();
+        let _store = Store::new();
+        let conn = database::try_connection().unwrap();
+        let buddy = seed_buddy(&conn, "a");
+        assert_eq!(count_open_delegations(&conn, &buddy.id).unwrap(), (0, 0));
+        for id in ["r", "w", "d"] {
+            insert_delegation(&conn, &delegation(&conn, &buddy, id)).unwrap();
+        }
+        update_delegation_status(
+            &conn,
+            &buddy.id,
+            "w",
+            DelegationStatus::Running,
+            DelegationStatus::Waiting,
+            None,
+        )
+        .unwrap();
+        update_delegation_status(
+            &conn,
+            &buddy.id,
+            "d",
+            DelegationStatus::Running,
+            DelegationStatus::Done,
+            Some("ok"),
+        )
+        .unwrap();
+        assert_eq!(count_open_delegations(&conn, &buddy.id).unwrap(), (1, 1));
     }
 
     #[test]
