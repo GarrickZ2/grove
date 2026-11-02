@@ -1035,6 +1035,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             return { ...prev, chatVisible: false };
           });
         },
+        showChat: () => {
+          setStateTagged((prev) => prev.chatVisible ? prev : { ...prev, chatVisible: true });
+        },
         selectTabByIndex: () => {
           // IDE Layout has no tab concept — Cmd+1..9 should fall through to
           // the outer sidebar navigation instead of trying to focus an aux

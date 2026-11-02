@@ -389,9 +389,7 @@
 .buddy-composer.is-orbit{--boc-glow-1:var(--color-highlight);--boc-glow-2:var(--color-accent,var(--color-info));--boc-glow-3:color-mix(in oklab,var(--boc-glow-2) 50%,#8b5cf6)}
 @supports (color:oklch(from red l c h)){.buddy-composer.is-orbit{--boc-glow-3:oklch(from var(--boc-glow-2) l c calc(h + 55))}}
 .buddy-composer.is-orbit>.buddy-oc-orbit{position:absolute;inset:-1px;z-index:0;border-radius:18px;pointer-events:none}
-.buddy-composer.is-orbit>.buddy-oc-orbit.is-bloom{inset:-3px;border-radius:20px;filter:blur(9px);opacity:.85}
 .buddy-oc-orbit i{position:absolute;inset:0;border-radius:inherit;padding:1.5px;background:conic-gradient(from var(--buddy-oc-ang),transparent 0 56%,color-mix(in oklab,var(--boc-glow-1) 85%,transparent) 70%,var(--boc-glow-2) 82%,var(--boc-glow-3) 91%,transparent 98%);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:buddy-oc-orbit 3.2s linear infinite}
-.buddy-oc-orbit.is-bloom i{padding:4px}
 @keyframes buddy-oc-orbit{to{--buddy-oc-ang:360deg}}
 .buddy-composer.is-orbit>*{position:relative;z-index:1}
 .buddy-composer.is-orbit textarea{font-size:14px;padding:14px 22px 8px;box-sizing:border-box}
@@ -415,7 +413,7 @@
 .buddy-oc-orb-ic.is-spin svg{animation:buddy-spin 900ms linear infinite}
 .buddy-oc-orb[data-icon=arrow] .is-arrow,.buddy-oc-orb[data-icon=stop] .is-stop,.buddy-oc-orb[data-icon=spin] .is-spin{opacity:1;transform:none}
 .buddy-composer.is-orbit :is(.buddy-oc-tool,.buddy-oc-orb):focus-visible{outline:2px solid var(--color-highlight);outline-offset:2px}
-@media(max-width:767px){.buddy-app.is-phone .buddy-composer.is-orbit{padding:0;border-radius:22px}.buddy-app.is-phone .buddy-composer.is-orbit>.buddy-oc-orbit{border-radius:22px}.buddy-app.is-phone .buddy-composer.is-orbit>.buddy-oc-orbit.is-bloom{border-radius:24px}.buddy-app.is-phone .buddy-oc-orb{width:40px;height:40px;margin:2px}.buddy-app.is-phone .buddy-oc-orb-ic svg{width:17px;height:17px}.buddy-app.is-phone .buddy-oc-orb-ic.is-stop svg{width:12px;height:12px}.buddy-app.is-phone .buddy-composer.is-orbit textarea{font-size:16px}.buddy-app.is-phone .buddy-oc-hint{display:none}.buddy-app.is-phone .buddy-oc-tool{width:44px;height:44px}.buddy-app.is-phone .buddy-oc-tool svg{width:19px;height:19px}}
+@media(max-width:767px){.buddy-app.is-phone .buddy-composer.is-orbit{padding:0;border-radius:22px}.buddy-app.is-phone .buddy-composer.is-orbit>.buddy-oc-orbit{border-radius:22px}.buddy-app.is-phone .buddy-oc-orb{width:40px;height:40px;margin:2px}.buddy-app.is-phone .buddy-oc-orb-ic svg{width:17px;height:17px}.buddy-app.is-phone .buddy-oc-orb-ic.is-stop svg{width:12px;height:12px}.buddy-app.is-phone .buddy-composer.is-orbit textarea{font-size:16px}.buddy-app.is-phone .buddy-oc-hint{display:none}.buddy-app.is-phone .buddy-oc-tool{width:44px;height:44px}.buddy-app.is-phone .buddy-oc-tool svg{width:19px;height:19px}}
 @media(prefers-reduced-motion:reduce){.buddy-composer.is-orbit,.buddy-composer.is-orbit *,.buddy-composer.is-orbit::before{animation:none!important;transition:none!important}}
 .buddy-overlay:focus{outline:none}
 /* Inline code wraps at spaces first and only splits a token longer than the line (the shared renderer uses break-all). */

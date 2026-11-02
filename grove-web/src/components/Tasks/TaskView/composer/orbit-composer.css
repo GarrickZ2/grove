@@ -76,23 +76,22 @@
 @supports (color: oklch(from red l c h)) {
   .oc-shell { --oc-glow-3: oklch(from var(--oc-glow-2) l c calc(h + 55)); }
 }
-.oc-shell.is-running { box-shadow: 0 0 0 4px color-mix(in oklab, var(--oc-glow-2) 8%, transparent), 0 24px 60px -30px rgb(0 0 0 / 45%), 0 0 70px -20px color-mix(in oklab, var(--oc-glow-2) 50%, transparent); }
-/* The arc is masked to the border ring; the bloom blurs a wider copy of it,
-   so the glow travels with the light instead of sitting still. */
+.oc-shell.is-running { box-shadow: 0 0 0 3px color-mix(in oklab, var(--oc-glow-2) 5%, transparent), 0 24px 60px -30px rgb(0 0 0 / 45%), 0 0 56px -24px color-mix(in oklab, var(--oc-glow-2) 24%, transparent); }
+/* The arc is masked to the border ring. No blurred bloom copy: WebKit paints a
+   filter on a masked layer as a hard-edged rectangle around the composer. */
 .oc-shell > .oc-orbit { position: absolute; inset: -1px; z-index: 0; border-radius: 18px; pointer-events: none; }
-.oc-shell > .oc-orbit.is-bloom { inset: -3px; border-radius: 20px; filter: blur(9px); opacity: .85; }
 .oc-orbit i {
   position: absolute;
   inset: 0;
   border-radius: inherit;
   padding: 1.5px;
-  background: conic-gradient(from var(--oc-ang), transparent 0 56%, color-mix(in oklab, var(--oc-glow-1) 85%, transparent) 70%, var(--oc-glow-2) 82%, var(--oc-glow-3) 91%, transparent 98%);
+  background: conic-gradient(from var(--oc-ang), transparent 0 60%, color-mix(in oklab, var(--oc-glow-1) 45%, transparent) 72%, color-mix(in oklab, var(--oc-glow-2) 65%, transparent) 83%, color-mix(in oklab, var(--oc-glow-3) 50%, transparent) 91%, transparent 98%);
+  opacity: .8;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
-  animation: oc-orbit 3.2s linear infinite;
+  animation: oc-orbit 6s linear infinite;
 }
-.oc-orbit.is-bloom i { padding: 4px; }
 @keyframes oc-orbit { to { --oc-ang: 360deg; } }
 .oc-shell > * { position: relative; z-index: 1; }
 
@@ -391,7 +390,6 @@
 .oc-phone-dock { padding-bottom: 2px; }
 .oc-shell.is-phone { border-radius: 22px; }
 .oc-shell.is-phone > .oc-orbit { border-radius: 22px; }
-.oc-shell.is-phone > .oc-orbit.is-bloom { border-radius: 24px; }
 .oc-shell.is-phone .oc-status { gap: 6px; padding: 6px 8px; border-radius: 21px 21px 0 0; }
 .oc-shell.is-phone .oc-chip { height: 32px; padding: 0 11px; font-size: 12.5px; }
 .oc-shell.is-phone .oc-chip-label { max-width: 46vw; }

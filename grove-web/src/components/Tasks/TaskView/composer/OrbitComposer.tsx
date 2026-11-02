@@ -49,7 +49,6 @@ export function OrbitComposer({ shellRef, className = "", running, phone = false
       onDrop={onDrop}
     >
       {/* Running light: a sharp arc, and a blurred copy of it as its bloom. */}
-      {running && <span className="oc-orbit is-bloom" aria-hidden="true"><i /></span>}
       {running && <span className="oc-orbit" aria-hidden="true"><i /></span>}
       {statusBar}
       {tray && <div className="oc-tray">{tray}</div>}

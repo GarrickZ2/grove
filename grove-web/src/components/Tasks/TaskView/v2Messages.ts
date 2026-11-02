@@ -1,6 +1,6 @@
 import type { ChatMessage, ServerEvent } from "./TaskChat";
 import type { AgentContentBlock } from "./agentContentBlocks";
-import { reduceMessageChunk, reduceUserMessage } from "./messageChunks";
+import { currentTurnStart, reduceMessageChunk, reduceUserMessage } from "./messageChunks";
 import { scanThought, thoughtStatusContent } from "./v2ThoughtStatus";
 
 type RawBlock = Record<string, unknown>;
@@ -89,7 +89,9 @@ export function reduceV2Message(messages: ChatMessage[], event: ServerEvent): Ch
     : [];
   const text = blocks.filter((block) => block.type === "text").map((block) => block.text).join("");
   const type = user ? "user" : thought ? "thinking" : "assistant";
-  const index = messages.findIndex((message) => message.type === type && message.messageId === id);
+  const start = user ? 0 : currentTurnStart(messages);
+  const offset = messages.slice(start).findIndex((message) => message.type === type && message.messageId === id);
+  const index = offset < 0 ? -1 : start + offset;
   if (index >= 0) return messages.map((message, i) => {
     if (i !== index) return message;
     if (message.type === "thinking") { const thoughtScan = scanThought(undefined, text); return { ...message, thoughtScan, content: thoughtStatusContent(thoughtScan) }; }

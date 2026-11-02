@@ -28,6 +28,17 @@ describe("ACP v1 message identities", () => {
     expect(messages[2]).toMatchObject({ messageId: "b", content: "two", complete: false });
   });
 
+  it("starts a new row when an Agent reuses an ID from an earlier turn", () => {
+    let messages = reduceMessageChunk([], text("msg_1", "old answer"));
+    messages = reduceUserMessage(messages, { type: "user_message", text: "again" }, []);
+    messages = reduceMessageChunk(messages, text("msg_1", "new answer"));
+    expect(messages).toMatchObject([
+      { type: "assistant", messageId: "msg_1", content: "old answer" },
+      { type: "user", content: "again" },
+      { type: "assistant", messageId: "msg_1", content: "new answer" },
+    ]);
+  });
+
   it("keeps structured blocks ordered in the message identified by the Agent", () => {
     let messages = reduceMessageChunk([], text("a", "before"));
     messages = reduceMessageChunk([...messages, tool], image("a"));

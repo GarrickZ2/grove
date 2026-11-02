@@ -36,6 +36,8 @@ export interface IDELayoutHandle {
   focusAuxPanel: (type: AuxPanelType) => void;
   focusInfoPanel: (type: InfoTabType) => void;
   focusChat: () => void;
+  /** Show Chat without toggling; other open panels stay as they are. */
+  showChat: () => void;
   selectTabByIndex: (index: number) => "handled" | "no_tabs" | "out_of_range";
   selectAdjacentTab: (delta: number) => boolean;
   closeActiveTab: () => void;

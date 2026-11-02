@@ -346,7 +346,7 @@ const MentionRow = memo(function MentionRow({
           className="shrink-0"
         />
       )}
-      {item.category && (
+      {item.category && item.category !== "category_selector" && (
         <span className="shrink-0 rounded-sm border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
           {item.category}
         </span>

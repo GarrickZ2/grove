@@ -203,7 +203,9 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
       } else if ((INFO_PANEL_TYPES as readonly string[]).includes(type)) {
         ideLayoutRef.current?.focusInfoPanel(type as InfoTabType);
       } else if (type === "chat") {
-        ideLayoutRef.current?.focusChat();
+        // "ensure" (e.g. selecting a Session) only reveals Chat; "add" keeps the toggle.
+        if (flexAction === "ensure") ideLayoutRef.current?.showChat();
+        else ideLayoutRef.current?.focusChat();
       }
     } else {
       const ref = layoutRef.current;
