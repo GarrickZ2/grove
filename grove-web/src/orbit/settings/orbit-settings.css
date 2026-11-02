@@ -108,6 +108,9 @@
 .ost-badge-warn{color:var(--o-warn);background:color-mix(in oklab,var(--o-warn) 16%,transparent)}
 .ost-badge-icon{width:12px;height:12px;color:var(--o-muted);flex-shrink:0}
 .ost-error{color:var(--o-error)}
+/* Notifications: "Send test" inline feedback */
+.ost-test-note{font-size:12px;color:var(--o-muted);white-space:nowrap}
+.ost-test-note.is-error{color:var(--o-error)}
 .ost-warn{color:var(--o-warn)}
 .ost-warn-icon{width:16px;height:16px;color:var(--o-warn);flex-shrink:0;margin:0 7px}
 .ost-hidden{display:none}

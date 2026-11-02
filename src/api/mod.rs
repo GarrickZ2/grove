@@ -360,6 +360,12 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/chats/archived",
             get(handlers::acp::list_archived_chats),
         )
+        // Dashboard "Needs you": answer a simple pending elicitation inline.
+        .route(
+            "/projects/{id}/tasks/{taskId}/chats/{chatId}/pending-form",
+            get(handlers::tasks::pending_form::get_pending_form)
+                .post(handlers::tasks::pending_form::answer_pending_form),
+        )
         .route(
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/archive",
             post(handlers::acp::archive_chat),
@@ -519,6 +525,11 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/resource/link",
             post(handlers::projects::create_resource_link)
                 .patch(handlers::projects::update_resource_link),
+        )
+        .route(
+            "/projects/{id}/linked-projects",
+            get(handlers::projects::get_project_linked_projects)
+                .put(handlers::projects::update_project_linked_projects),
         )
         .route(
             "/projects/{id}/agent-context",
@@ -840,6 +851,7 @@ pub fn create_api_router() -> Router {
             get(handlers::hooks::list_all_hooks).delete(handlers::hooks::clear_all_hooks),
         )
         .route("/hooks/preview", post(handlers::hooks::preview_sound))
+        .route("/hooks/test", post(handlers::hooks::send_test_notification))
         .route(
             "/projects/{id}/hooks/{taskId}",
             delete(handlers::hooks::dismiss_hook),

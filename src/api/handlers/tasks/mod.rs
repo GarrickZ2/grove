@@ -7,6 +7,7 @@ pub mod git_ops;
 pub mod graph;
 pub mod linked_projects;
 pub mod notes;
+pub mod pending_form;
 pub mod review;
 pub mod sketch_events;
 pub mod sketch_ws;

@@ -194,6 +194,20 @@ pub async fn preview_sound(Json(req): Json<PreviewSoundRequest>) -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
+/// POST /hooks/test — render one test notification (sound + banner per
+/// config) on the server's machine. No hook record, no radio event: real
+/// task state, the bell inbox and other surfaces are untouched. The response
+/// says what happened so Settings can explain a silent result.
+pub async fn send_test_notification(
+) -> Result<Json<crate::notification_renderer::TestPlan>, StatusCode> {
+    // The first banner may build the native notifier app; keep it off the
+    // async workers.
+    tokio::task::spawn_blocking(crate::notification_renderer::render_test)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 /// POST /hooks/report — attention-fact intake for same-machine producers.
 ///
 /// The `grove hooks` CLI runs inside a task's tmux session: a short-lived

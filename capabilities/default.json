@@ -27,6 +27,7 @@
     "allow-toggle-tray-popover-visibility",
     "allow-tray-update-theme-icons",
     "allow-set-remote-auth",
-    "allow-configure-desktop-tray"
+    "allow-configure-desktop-tray",
+    "allow-play-sound"
   ]
 }

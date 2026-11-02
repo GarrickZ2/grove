@@ -184,3 +184,117 @@ fn default_label(kind: HookKind) -> &'static str {
         HookKind::External => "Notification",
     }
 }
+
+// ── Test notification ──────────────────────────────────────────────────────
+
+/// Title / body of the Settings "Send test" banner. Clearly a test: it names
+/// no task and is never persisted to the bell inbox.
+pub const TEST_TITLE: &str = "Grove - Test notification";
+pub const TEST_BODY: &str = "Notifications are working. This was a test; no task was affected.";
+
+/// What a test notification does on this machine, decided from config only.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct TestPlan {
+    /// "sent" — rendered here; "disabled" — notifications are switched off;
+    /// "client" — this server renders nothing (headless), the client must.
+    pub status: &'static str,
+    pub banner: bool,
+    pub sound: Option<String>,
+}
+
+/// Pure policy for the test notification. Mirrors [`render`] for a
+/// turn-complete fact (the most common real notification): the master switch
+/// gates everything, the response sound plays when enabled. The per-event
+/// "show done" switch is deliberately not applied — a test that silently
+/// does nothing because one event type is muted would read as broken.
+pub fn plan_test(cfg: &crate::storage::config::Config, os_render_disabled: bool) -> TestPlan {
+    if os_render_disabled {
+        return TestPlan {
+            status: "client",
+            banner: false,
+            sound: None,
+        };
+    }
+    if !cfg.notifications.notification_enabled {
+        return TestPlan {
+            status: "disabled",
+            banner: false,
+            sound: None,
+        };
+    }
+    let hooks_cfg = &cfg.hooks;
+    let sound = hooks_cfg.response_sound_enabled.then(|| {
+        if hooks_cfg.response_sound.is_empty() {
+            "Glass".to_string()
+        } else {
+            hooks_cfg.response_sound.clone()
+        }
+    });
+    TestPlan {
+        status: "sent",
+        banner: true,
+        sound,
+    }
+}
+
+/// Render one test notification through the same sound + banner primitives
+/// real attention facts use. Nothing is persisted or broadcast on the radio,
+/// so no task state, inbox entry, plugin or phone sees it. The banner carries
+/// no project/task, so clicking it only brings Grove to the front.
+pub fn render_test() -> TestPlan {
+    let plan = plan_test(
+        &crate::storage::config::load_config(),
+        hooks::os_render_disabled(),
+    );
+    if let Some(sound) = plan.sound.as_deref() {
+        hooks::play_sound(sound);
+    }
+    if plan.banner {
+        hooks::send_banner(TEST_TITLE, TEST_BODY, "", "", None, false, None, None);
+    }
+    plan
+}
+
+#[cfg(test)]
+mod test_notification_tests {
+    use super::*;
+    use crate::storage::config::Config;
+
+    #[test]
+    fn test_plan_follows_master_switch_and_response_sound() {
+        let mut cfg = Config::default();
+        cfg.notifications.notification_enabled = true;
+        cfg.hooks.response_sound_enabled = true;
+        cfg.hooks.response_sound = "Ping".into();
+        assert_eq!(
+            plan_test(&cfg, false),
+            TestPlan {
+                status: "sent",
+                banner: true,
+                sound: Some("Ping".into())
+            }
+        );
+
+        cfg.hooks.response_sound.clear();
+        assert_eq!(plan_test(&cfg, false).sound.as_deref(), Some("Glass"));
+
+        cfg.hooks.response_sound_enabled = false;
+        let plan = plan_test(&cfg, false);
+        assert!(plan.banner);
+        assert_eq!(plan.sound, None);
+
+        // Muting one event type doesn't silence the test.
+        cfg.notifications.notification_show_done = false;
+        assert_eq!(plan_test(&cfg, false).status, "sent");
+
+        cfg.notifications.notification_enabled = false;
+        assert_eq!(plan_test(&cfg, false).status, "disabled");
+        assert!(!plan_test(&cfg, false).banner);
+
+        // Headless server: the client renders.
+        cfg.notifications.notification_enabled = true;
+        let plan = plan_test(&cfg, true);
+        assert_eq!(plan.status, "client");
+        assert!(!plan.banner && plan.sound.is_none());
+    }
+}

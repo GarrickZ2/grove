@@ -1,11 +1,13 @@
-import { useState, type CSSProperties } from "react";
-import { Volume2 } from "lucide-react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Send, Volume2 } from "lucide-react";
 import { Combobox } from "../../../components/ui";
 import { useTheme } from "../../../context";
 import { appIconAssetUrl } from "../../../data/appIcons";
 import {
   previewNotificationSound,
   requestBrowserNotificationPermission,
+  sendTestNotification,
+  type TestNotificationOutcome,
 } from "../../../notifications/desktopNotifier";
 import { soundOptions } from "../../../components/Config/settingsConstants";
 import { clampRetentionValue, RETENTION_MAX, RETENTION_MIN } from "../../../components/Config/notificationRetention";
@@ -20,6 +22,47 @@ const PREVIEW_COPY: Record<PreviewKind, { title: string; body: string }> = {
   elicitation: { title: "Input requested", body: "An agent needs you to answer a form or open a link." },
   done: { title: "Turn completed", body: "An agent finished responding to your prompt." },
 };
+
+type TestState = "idle" | "sending" | TestNotificationOutcome | "error";
+
+const TEST_FEEDBACK: Partial<Record<TestState, { text: string; error?: boolean }>> = {
+  sending: { text: "Sending…" },
+  sent: { text: "Sent" },
+  disabled: { text: "System notifications are off", error: true },
+  blocked: { text: "Blocked by the browser", error: true },
+  unavailable: { text: "Restart Grove to enable test notifications", error: true },
+  error: { text: "Couldn’t send the test", error: true },
+};
+
+/** "Send test": one clearly labelled notification through the real pipeline. */
+function SendTestButton({ disabled }: { disabled: boolean }) {
+  const [state, setState] = useState<TestState>("idle");
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const send = async () => {
+    window.clearTimeout(timer.current);
+    setState("sending");
+    let next: TestState;
+    try {
+      next = await sendTestNotification();
+    } catch {
+      next = "error";
+    }
+    setState(next);
+    timer.current = window.setTimeout(() => setState("idle"), next === "sent" ? 2500 : 5000);
+  };
+  const feedback = TEST_FEEDBACK[state];
+  return (
+    <>
+      {feedback ? (
+        <span className={`ost-test-note${feedback.error ? " is-error" : ""}`} role="status">{feedback.text}</span>
+      ) : null}
+      <Button variant="secondary" size="sm" disabled={disabled || state === "sending"} onClick={() => void send()}>
+        <Send />Send test
+      </Button>
+    </>
+  );
+}
 
 function Dot({ tone }: { tone: "warn" | "info" | "accent" }) {
   const color = tone === "warn" ? "var(--o-warn)" : tone === "info" ? "var(--o-info)" : "var(--o-accent)";
@@ -145,6 +188,13 @@ export function NotificationsPage({ settings }: SettingsPageProps) {
               if (enabled) void requestBrowserNotificationPermission();
             }}
           />
+        </Row>
+        <Row
+          dim={!systemNotifEnabled}
+          title="Test notification"
+          description="Sends one banner and sound with your settings. No task is affected."
+        >
+          <SendTestButton disabled={!systemNotifEnabled} />
         </Row>
         <Row title="Menu bar" description="Persistent popover anchored to the menu bar icon.">
           <Toggle checked={trayEnabled} onChange={setTrayEnabled} label="Menu bar" />

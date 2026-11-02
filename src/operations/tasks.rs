@@ -744,6 +744,16 @@ fn create_task_inner(
 
     tasks::add_task(project_key, task.clone())?;
 
+    // User-created Tasks start with a copy of the Project's default linked
+    // Projects. Other creators (agent / automation / buddy) are intentionally
+    // left without links until that behaviour is decided. A copy failure must
+    // not undo an already-created worktree, so it is logged, not propagated.
+    if created_by == "user" {
+        if let Err(error) = tasks::copy_project_linked_projects_to_task(project_key, &slug) {
+            eprintln!("[tasks] Failed to copy Project linked projects into task {slug}: {error}");
+        }
+    }
+
     Ok(CreateTaskResult {
         task,
         worktree_path: task_path_str,
@@ -1071,6 +1081,27 @@ mod studio_local_tests {
         assert!(tasks::archive_task(&key, tasks::LOCAL_TASK_ID).is_err());
         assert!(tasks::remove_task(&key, tasks::LOCAL_TASK_ID).is_err());
         assert!(tasks::get_task(&key, &regular.task.id).unwrap().is_some());
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    #[test]
+    fn only_user_created_tasks_copy_project_linked_projects() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+        let path = workspace::create_studio_project("Linked defaults").unwrap();
+        let key = workspace::project_hash(&path);
+        tasks::replace_project_linked_project_ids(&key, &["other".into()]).unwrap();
+
+        let user = create_studio_task(&path, &key, "By user".into(), "tmux", "user").unwrap();
+        let agent = create_studio_task(&path, &key, "By agent".into(), "tmux", "agent").unwrap();
+        assert_eq!(
+            tasks::load_linked_project_ids(&key, &user.task.id).unwrap(),
+            ["other"]
+        );
+        assert!(tasks::load_linked_project_ids(&key, &agent.task.id)
+            .unwrap()
+            .is_empty());
         crate::storage::set_grove_dir_override(None);
     }
 }

@@ -8397,7 +8397,7 @@ async fn connect_remote_agent(
     Ok((agent_read.compat(), agent_write.compat_write()))
 }
 
-fn turn_form(snapshot: &ElicitationRequestSnapshot) -> Option<crate::radio::TurnForm> {
+pub(crate) fn turn_form(snapshot: &ElicitationRequestSnapshot) -> Option<crate::radio::TurnForm> {
     use crate::radio::{TurnForm, TurnFormField, TurnFormFieldKind};
 
     let request = serde_json::to_value(&snapshot.request).ok()?;
@@ -8950,6 +8950,23 @@ impl AcpSessionHandle {
             .lock()
             .ok()
             .and_then(|pending| pending.as_ref().map(|pending| pending.snapshot.clone()))
+    }
+
+    /// Install a pending native elicitation on a test handle.
+    #[cfg(test)]
+    pub(crate) fn set_pending_elicitation_for_test(
+        &self,
+        snapshot: ElicitationRequestSnapshot,
+    ) -> tokio::sync::oneshot::Receiver<ElicitationResponseData> {
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        self.pending_elicitation
+            .lock()
+            .unwrap()
+            .replace(PendingElicitation {
+                snapshot,
+                response_tx,
+            });
+        response_rx
     }
 
     pub fn active_url_elicitation_snapshots(&self) -> Vec<ElicitationRequestSnapshot> {

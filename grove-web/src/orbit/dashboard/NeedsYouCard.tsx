@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, ArrowUpRight, Bell, CheckCircle2, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { Button, Card, shortAgo } from "../ui";
 import { labelFor, type PermissionOption } from "../../utils/permissionOptions";
 import type { NeedsYouItem, NeedsYouKind } from "./dashboardModel";
+import type { InlineForm } from "./usePendingForms";
 
 const KIND_ICON: Record<NeedsYouKind, typeof Bell> = {
   permission: ShieldAlert,
@@ -20,10 +22,13 @@ interface NeedsYouCardProps {
   onAnswer: (item: NeedsYouItem, option: PermissionOption) => void;
   onOpen: (item: NeedsYouItem) => void;
   onDismiss: (item: NeedsYouItem) => void;
+  /** The input request's simple form when it can be answered in place. */
+  formFor?: (item: NeedsYouItem) => InlineForm | null;
+  onAnswerForm?: (item: NeedsYouItem, form: InlineForm, value: string) => void;
 }
 
 /** Things waiting on the user, answerable in place where the backend allows it. */
-export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss }: NeedsYouCardProps) {
+export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss, formFor, onAnswerForm }: NeedsYouCardProps) {
   return (
     <Card
       className={`odb-inbox${items.length ? "" : " is-clear"}`}
@@ -34,6 +39,8 @@ export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss }: NeedsY
         <AnimatePresence initial={false}>
           {items.map((item) => {
             const Icon = KIND_ICON[item.kind];
+            const form = item.kind === "input" && onAnswerForm ? formFor?.(item) ?? null : null;
+            const title = form?.message || item.title;
             return (
               <motion.div
                 key={item.id}
@@ -47,7 +54,7 @@ export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss }: NeedsY
                 <div className="odb-item-in">
                   <span className={`odb-kind is-${item.kind}`}><Icon aria-hidden="true" /></span>
                   <span className="odb-item-copy">
-                    <b title={item.title}>{item.title}</b>
+                    <b title={title}>{title}</b>
                     <span>
                       {item.source}
                       {item.code ? <> · <code className="oui-mono" title={item.code}>{item.code}</code></> : null}
@@ -69,6 +76,13 @@ export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss }: NeedsY
                           </Button>
                         ))}
                         <Button variant="ghost" iconOnly size="sm" aria-label="Open session" title="Open session for all options" onClick={() => onOpen(item)}>
+                          <ArrowUpRight />
+                        </Button>
+                      </>
+                    ) : form && onAnswerForm ? (
+                      <>
+                        <InlineAnswer form={form} onAnswer={(value) => onAnswerForm(item, form, value)} />
+                        <Button variant="ghost" iconOnly size="sm" aria-label="Open session" title="Open session" onClick={() => onOpen(item)}>
                           <ArrowUpRight />
                         </Button>
                       </>
@@ -98,6 +112,52 @@ export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss }: NeedsY
         ) : null}
       </div>
     </Card>
+  );
+}
+
+/** One simple field answered in place: Yes / No, a few choices, or short text. */
+function InlineAnswer({ form, onAnswer }: { form: InlineForm; onAnswer: (value: string) => void }) {
+  const [text, setText] = useState("");
+  const { field } = form;
+  if (field.kind === "boolean") {
+    return (
+      <>
+        <Button variant="secondary" size="sm" onClick={() => onAnswer("false")}>No</Button>
+        <Button variant="secondary" size="sm" onClick={() => onAnswer("true")}>Yes</Button>
+      </>
+    );
+  }
+  if (field.kind === "choice") {
+    return (
+      <>
+        {field.options.map((option) => (
+          <Button key={option} variant="secondary" size="sm" title={option} onClick={() => onAnswer(option)}>
+            {option.length > 14 ? `${option.slice(0, 13)}…` : option}
+          </Button>
+        ))}
+      </>
+    );
+  }
+  const value = text.trim();
+  const canSend = value.length > 0 || !field.required;
+  return (
+    <form
+      className="odb-answer"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (canSend) onAnswer(value);
+      }}
+    >
+      <input
+        className="oui-field"
+        value={text}
+        placeholder={field.label}
+        aria-label={field.label}
+        title={field.description ?? undefined}
+        onChange={(event) => setText(event.target.value)}
+      />
+      <Button type="submit" variant="primary" size="sm" disabled={!canSend}>Send</Button>
+    </form>
   );
 }
 

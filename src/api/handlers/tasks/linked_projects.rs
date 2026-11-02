@@ -9,7 +9,7 @@ use crate::storage::{tasks, workspace};
 
 use super::super::common;
 
-const MAX_LINKED_PROJECTS: usize = 32;
+pub(crate) const MAX_LINKED_PROJECTS: usize = 32;
 
 #[derive(Debug, Serialize)]
 pub struct LinkedProjectItem {
@@ -33,7 +33,10 @@ pub struct UpdateLinkedProjectsRequest {
     pub project_ids: Vec<String>,
 }
 
-fn api_error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<ApiError>) {
+pub(crate) fn api_error(
+    status: StatusCode,
+    message: impl Into<String>,
+) -> (StatusCode, Json<ApiError>) {
     (
         status,
         Json(ApiError {
@@ -42,7 +45,7 @@ fn api_error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Jso
     )
 }
 
-fn resolve_items(
+pub(crate) fn resolve_items(
     ids: Vec<String>,
     registered: &[workspace::RegisteredProject],
 ) -> LinkedProjectsResponse {
@@ -107,26 +110,42 @@ pub async fn update_linked_projects(
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "Task not found"))?;
 
-    if request.project_ids.len() > MAX_LINKED_PROJECTS {
-        return Err(api_error(
-            StatusCode::BAD_REQUEST,
-            format!("A task can link at most {MAX_LINKED_PROJECTS} projects"),
-        ));
-    }
-
     let registered = workspace::load_projects()
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let normalized = normalize_linked_ids(request.project_ids, &project_key, &registered, "task")?;
+
+    tasks::replace_linked_project_ids(&project_key, &task_id, &normalized)
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(resolve_items(normalized, &registered)))
+}
+
+/// Shared validation for Task- and Project-level linked Project sets:
+/// size cap, no self-link, every ID must be a registered Project, duplicates
+/// are collapsed while preserving the first-seen order. `owner` is the noun
+/// used in error messages ("task" / "project").
+pub(crate) fn normalize_linked_ids(
+    project_ids: Vec<String>,
+    own_project_key: &str,
+    registered: &[workspace::RegisteredProject],
+    owner: &str,
+) -> Result<Vec<String>, (StatusCode, Json<ApiError>)> {
+    if project_ids.len() > MAX_LINKED_PROJECTS {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            format!("A {owner} can link at most {MAX_LINKED_PROJECTS} projects"),
+        ));
+    }
     let registered_ids: HashSet<String> = registered
         .iter()
         .map(|project| workspace::project_hash(&project.path))
         .collect();
     let mut seen = HashSet::new();
-    let mut normalized = Vec::with_capacity(request.project_ids.len());
-    for id in request.project_ids {
-        if id == project_key {
+    let mut normalized = Vec::with_capacity(project_ids.len());
+    for id in project_ids {
+        if id == own_project_key {
             return Err(api_error(
                 StatusCode::BAD_REQUEST,
-                "A task cannot link its own project",
+                format!("A {owner} cannot link its own project"),
             ));
         }
         if !registered_ids.contains(&id) {
@@ -139,8 +158,5 @@ pub async fn update_linked_projects(
             normalized.push(id);
         }
     }
-
-    tasks::replace_linked_project_ids(&project_key, &task_id, &normalized)
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    Ok(Json(resolve_items(normalized, &registered)))
+    Ok(normalized)
 }

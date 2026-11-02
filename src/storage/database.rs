@@ -240,6 +240,16 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS ix_task_linked_projects_task
             ON task_linked_projects (project, task_id, position);
 
+        -- Project-level default linked Projects. A new user-created Task copies
+        -- this set into task_linked_projects once at creation; afterwards the
+        -- two sets are independent (no live inheritance).
+        CREATE TABLE IF NOT EXISTS project_linked_projects (
+            project           TEXT    NOT NULL,
+            linked_project_id TEXT    NOT NULL,
+            position          INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (project, linked_project_id)
+        );
+
         -- Task Groups
         CREATE TABLE IF NOT EXISTS task_groups (
             id         TEXT PRIMARY KEY,

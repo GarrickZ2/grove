@@ -195,6 +195,20 @@ export function getAppIconUrl(app: AppInfo): string {
   return `/api/v1/config/applications/icon?path=${encodeURIComponent(app.path)}`;
 }
 
+/** What the server did with a test notification (see `POST /hooks/test`). */
+export interface TestNotificationResult {
+  /** sent: rendered on the server's machine; disabled: notifications are off;
+   *  client: the server renders nothing (headless), the client must. */
+  status: 'sent' | 'disabled' | 'client';
+  banner: boolean;
+  sound: string | null;
+}
+
+/** Ask the server to render one test notification. Nothing is persisted. */
+export async function sendTestNotification(): Promise<TestNotificationResult> {
+  return apiClient.post<Record<string, never>, TestNotificationResult>('/api/v1/hooks/test', {});
+}
+
 export async function previewHookSound(sound: string): Promise<void> {
   return apiClient.post<{ sound: string }, void>('/api/v1/hooks/preview', { sound });
 }

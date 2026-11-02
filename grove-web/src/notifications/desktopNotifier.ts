@@ -18,7 +18,11 @@
 // `renders_os_notifications` boolean remains a fallback for older servers.
 
 import { getVersion } from "../api/version";
-import { getConfig, previewHookSound as previewBackendSound } from "../api/config";
+import {
+  getConfig,
+  previewHookSound as previewBackendSound,
+  sendTestNotification as sendBackendTestNotification,
+} from "../api/config";
 import type { HooksConfig, NotificationsConfig } from "../api/config";
 import type { RadioEvent } from "../api/walkieTalkie";
 import { invokeQuiet, isTauriShell, isRemoteMode } from "../utils/tauriShell";
@@ -60,8 +64,8 @@ let policyCache: { notifications: NotificationsConfig; hooks: HooksConfig } | nu
   null;
 let policyFetchedAt = 0;
 
-async function loadPolicy() {
-  if (policyCache && Date.now() - policyFetchedAt < CONFIG_TTL_MS) {
+async function loadPolicy(fresh = false) {
+  if (!fresh && policyCache && Date.now() - policyFetchedAt < CONFIG_TTL_MS) {
     return policyCache;
   }
   try {
@@ -345,4 +349,59 @@ export function renderHookNotification(event: HookAddedEvent): void {
       // A notification must never break the app that hosts it.
     }
   })();
+}
+
+// ─── Test notification (Settings "Send test") ───────────────────────────────
+
+/** Outcome of a test notification, for Settings feedback. `unavailable`:
+ *  the server predates the test endpoint (restart Grove); `blocked`: the
+ *  browser denied notification permission. */
+export type TestNotificationOutcome = "sent" | "disabled" | "blocked" | "unavailable";
+
+const TEST_TITLE_LABEL = "Test notification";
+const TEST_BODY = "Notifications are working. This was a test; no task was affected.";
+
+/** Render the test on this client through the same sound + banner path real
+ *  hook events use. It names no project or task and is never persisted. */
+async function renderTestHere(): Promise<TestNotificationOutcome> {
+  const policy = await loadPolicy(true);
+  if (!policy) throw new Error("Couldn’t load notification settings");
+  if (!policy.notifications.notification_enabled) return "disabled";
+  const sound = pickSound("turn_complete", policy.hooks);
+  if (sound) playSound(sound);
+  if (!isTauriShell && typeof window !== "undefined" && "Notification" in window && Notification.permission === "denied") {
+    return "blocked";
+  }
+  showBanner({
+    type: "hook_added",
+    project_id: "",
+    task_id: "",
+    kind: "turn_complete",
+    label: TEST_TITLE_LABEL,
+    task_name: TEST_BODY,
+  } as HookAddedEvent);
+  return "sent";
+}
+
+/**
+ * Send one test notification to wherever this surface's notifications render:
+ * the server's in-process renderer for a local GUI / `grove web`, or this
+ * client for remote GUI / browser sessions (same routing as real events).
+ */
+export async function sendTestNotification(): Promise<TestNotificationOutcome> {
+  // A remote browser needs permission from this click's gesture.
+  if (isLikelyRemoteBrowser()) void requestBrowserNotificationPermission();
+  if (await engineActive()) return renderTestHere();
+  let result: unknown;
+  try {
+    result = await sendBackendTestNotification();
+  } catch (error) {
+    if ((error as { status?: number })?.status === 404 || error instanceof SyntaxError) return "unavailable";
+    throw error;
+  }
+  // An older server answers the unknown route with the SPA's index.html.
+  const status = (result as { status?: unknown } | null)?.status;
+  if (status === "sent" || status === "disabled") return status;
+  if (status === "client") return renderTestHere();
+  return "unavailable";
 }

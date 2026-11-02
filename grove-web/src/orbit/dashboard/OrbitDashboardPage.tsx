@@ -1,15 +1,12 @@
-import { useCallback, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ArrowDown, ArrowUp, BarChart2, Code2, GitBranch,
   GitCommit, Plus, RefreshCw, Sparkles, TerminalSquare,
 } from "lucide-react";
 import { useDashboardState } from "../../components/Dashboard/useDashboardState";
 import { DashboardDialogs } from "../../components/Dashboard/DashboardDialogs";
-import { summarizeWeeklyTokens } from "../../components/Dashboard/weeklyTokens";
-import { computeDelta, formatTokens } from "../../components/Stats/formatters";
-import { agentColor } from "../../components/Stats/agentColors";
 import { useNotifications, useProject, useTheme } from "../../context";
-import { resolveAgentIcon, usePersonaRegistry } from "../../utils/agentIcon";
+import { usePersonaRegistry } from "../../utils/agentIcon";
 import { getProjectStyle } from "../../utils/projectStyle";
 import { shortenPath } from "../../utils/path";
 import type { PermissionOption } from "../../utils/permissionOptions";
@@ -20,9 +17,13 @@ import { NeedsYouCard } from "./NeedsYouCard";
 import { InFlightCard } from "./InFlightCard";
 import { buildNeedsYou, sortInFlight, taskActivity, type NeedsYouItem, type TaskActivity } from "./dashboardModel";
 import { resolvePermission, useLiveChats } from "./useLiveChats";
+import { answerPendingForm, usePendingForms, type InlineForm } from "./usePendingForms";
 import { useInFlightDetails } from "./useInFlightDetails";
 import { useAgentContext } from "./useAgentContext";
 import { AgentContextCard } from "./AgentContextCard";
+import { useProjectLinks } from "./useProjectLinks";
+import { ProjectLinksCard } from "./ProjectLinksCard";
+import { WeeklyUsage } from "./WeeklyUsage";
 import { useNewTaskShortcut } from "./useNewTaskShortcut";
 import { useRecentSessions } from "./useRecentSessions";
 import { RecentSessionsCard } from "./RecentSessionsCard";
@@ -63,6 +64,7 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
   const recent = useRecentSessions(projectId, sessionTaskIds);
   const taskNames = useMemo(() => new Map(tasks.map((task) => [task.id, task.name])), [tasks]);
   const context = useAgentContext(selectedProject);
+  const projectLinks = useProjectLinks(projectId);
 
   const activity = useMemo(() => {
     const map = new Map<string, TaskActivity>();
@@ -74,6 +76,8 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
     if (!projectId) return [];
     return buildNeedsYou(projectId, chats, notifications, taskNames).filter((item) => answering.get(item.id) !== item.at);
   }, [projectId, taskNames, chats, notifications, answering]);
+
+  const pendingForms = usePendingForms(needsYou);
 
   const openNewTask = useCallback(() => onNavigate("tasks", { openNewTask: true }), [onNavigate]);
   const newTaskKeys = useNewTaskShortcut(openNewTask, !!selectedProject && (selectedProject.isGitRepo || selectedProject.projectType === "studio"));
@@ -121,14 +125,27 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
     }
   };
 
+  const answerForm = async (item: NeedsYouItem, form: InlineForm, value: string) => {
+    // Same optimistic collapse as permissions; the input status confirms it.
+    setAnswering((previous) => new Map(previous).set(item.id, item.at));
+    try {
+      await answerPendingForm(item, form, value);
+    } catch (error) {
+      showMessage((error as Error)?.message || "Couldn’t send the answer");
+      setAnswering((previous) => {
+        const next = new Map(previous);
+        next.delete(item.id);
+        return next;
+      });
+      void pendingForms.reload(item);
+    }
+  };
+
   const behind = currentStatus.behind;
   const ahead = currentStatus.ahead;
   const changes = currentStatus.unstaged;
   const pushDisabled = !currentStatus.hasRemote || isOperating || (currentStatus.hasOrigin && ahead === 0);
 
-  const weekly = summarizeWeeklyTokens(tokenStats);
-  const trend = computeDelta(tokenStats?.current.kpi.tokens_total, tokenStats?.previous.kpi.tokens_total);
-  const hasUsage = weekly.series.some((day) => day.total > 0);
 
   const toast = operationMessage ? (
     <span key={messageCount} className="odb-toast" role="status"><DrawnCheck />{operationMessage}</span>
@@ -227,6 +244,8 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
               onAnswer={(item, option) => void answer(item, option)}
               onOpen={(item) => openTask(item.taskId, item.chatId)}
               onDismiss={(item) => void dismissNotification(item.projectId, item.taskId)}
+              formFor={pendingForms.formFor}
+              onAnswerForm={(item, form, value) => void answerForm(item, form, value)}
             />
           </div>
           <div className="oui-rise odb-fill-wrap" style={{ animationDelay: "140ms" }}>
@@ -259,6 +278,7 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
 
         <div className="odb-col">
           <AgentContextCard context={context} onNavigate={(page) => onNavigate(page)} />
+          <ProjectLinksCard view={projectLinks} linkable={linkable} />
 
           <Card
             className="odb-usage oui-rise"
@@ -268,59 +288,7 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
             hint="last 7 days"
             actions={<Button variant="ghost" iconOnly size="sm" aria-label="Open statistics" title="Statistics" onClick={() => onNavigate("statistics")}><BarChart2 /></Button>}
           >
-            <div className="odb-use-num">
-              <b>{formatTokens(weekly.total)}</b>
-              <span>
-                tokens · {formatTokens(Math.round(weekly.total / 7))} / day
-                {trend.pct != null && trend.pct !== 0 ? (
-                  <em className={trend.direction > 0 ? "is-up" : "is-down"} title="Versus the previous 7 days">
-                    {trend.pct === Infinity ? "new" : `${trend.pct > 0 ? "+" : ""}${Math.round(trend.pct)}%`}
-                  </em>
-                ) : null}
-              </span>
-            </div>
-            <div className={`odb-chart${hasUsage ? "" : " is-empty"}`} role="img" aria-label={hasUsage ? `Daily tokens; busiest day ${weekly.dayLabels[weekly.peakIdx]}` : "No usage this week"}>
-              {weekly.series.map((day, index) => (
-                <div
-                  key={index}
-                  className={`odb-bar${index === 6 ? " is-today" : ""}`}
-                  title={`${weekly.dayLabels[index]} · ${day.total ? `${formatTokens(day.total)} tokens` : "no activity"}`}
-                >
-                  <div className="odb-bar-track">
-                    <div
-                      className={`odb-bar-fill${day.total ? "" : " is-zero"}`}
-                      style={{ height: day.total ? `${Math.max(4, (day.total / weekly.peak) * 100)}%` : undefined, animationDelay: `${250 + index * 50}ms` }}
-                    >
-                      {day.segments.map((segment) => (
-                        <span key={segment.agent} style={{ flexGrow: segment.tokens, background: agentColor(segment.agent) }} />
-                      ))}
-                    </div>
-                  </div>
-                  <small>{weekly.dayLabels[index]}</small>
-                </div>
-              ))}
-            </div>
-            {hasUsage ? (
-              <div className="odb-use-break oui-scroll">
-                <div className="odb-use-peak">
-                  Busiest day <b>{weekly.dayLabels[weekly.peakIdx]}</b> · {formatTokens(weekly.maxValue)} tokens
-                </div>
-                {weekly.agents.map((row, index) => {
-                  const info = resolveAgentIcon(row.agent);
-                  const AgentIcon = info.Component;
-                  const share = row.tokens / weekly.total;
-                  return (
-                    <div key={row.agent} className="odb-agent-row" style={{ "--odb-agent": agentColor(row.agent), animationDelay: `${300 + index * 50}ms` } as CSSProperties}>
-                      <span className="odb-agent-ic"><AgentIcon size={13} /></span>
-                      <span className="odb-agent-name oui-truncate" title={row.agent}>{info.label}</span>
-                      <span className="odb-agent-share" aria-hidden="true"><i style={{ width: `${Math.max(2, share * 100)}%` }} /></span>
-                      <span className="odb-agent-tok">{formatTokens(row.tokens)}</span>
-                      <span className="odb-agent-pct">{Math.round(share * 100)}%</span>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
+            <WeeklyUsage stats={tokenStats} />
           </Card>
 
         </div>

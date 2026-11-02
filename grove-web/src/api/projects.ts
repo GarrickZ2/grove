@@ -3,7 +3,7 @@
 import { apiClient } from './client';
 import { createStudioFileApi } from './studio-factory';
 import type { StudioFileEntry, StudioWorkDirEntry } from './studio-types';
-import type { TaskResponse } from './tasks';
+import type { LinkedProjectsResponse, TaskResponse } from './tasks';
 
 // ============================================================================
 // Types
@@ -306,6 +306,22 @@ export async function getInstructions(id: string): Promise<{ content: string }> 
 
 export async function updateInstructions(id: string, content: string): Promise<{ content: string }> {
   return apiClient.put<{ content: string }, { content: string }>(`/api/v1/projects/${id}/instructions`, { content });
+}
+
+/**
+ * The Project's default linked Projects. New user-created tasks copy this set
+ * once at creation; existing tasks are never changed by it.
+ */
+export async function getProjectLinkedProjects(id: string): Promise<LinkedProjectsResponse> {
+  return apiClient.get<LinkedProjectsResponse>(`/api/v1/projects/${id}/linked-projects`);
+}
+
+/** Replace the Project's default linked Project set. */
+export async function updateProjectLinkedProjects(id: string, projectIds: string[]): Promise<LinkedProjectsResponse> {
+  return apiClient.put<{ project_ids: string[] }, LinkedProjectsResponse>(
+    `/api/v1/projects/${id}/linked-projects`,
+    { project_ids: projectIds },
+  );
 }
 
 export async function getMemory(id: string): Promise<{ content: string }> {

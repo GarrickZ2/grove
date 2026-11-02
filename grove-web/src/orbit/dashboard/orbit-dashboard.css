@@ -94,6 +94,9 @@
 .odb-kind.is-critical{background:color-mix(in oklab,var(--o-error) 12%,transparent);color:var(--o-error)}
 .odb-kind.is-notice{background:var(--o-accent-soft);color:var(--o-accent)}
 .odb-item-copy{flex:1;min-width:0}
+/* Needs you: short-text answer in place */
+.odb-answer{display:flex;align-items:center;gap:6px}
+.odb-answer .oui-field{width:150px;height:26px}
 .odb-item-copy b{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .odb-item-copy>span{display:block;margin-top:2px;font-size:12px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .odb-item-copy code{font-size:11.5px;padding:0 4px;border-radius:4px;background:var(--o-selected);color:var(--o-text)}
@@ -199,6 +202,10 @@ div.odb-src-row{cursor:default}
    flexed list to its content inside a non-flexing card, so pin it. */
 .odb-ctx .oui-card-list{flex:none;overflow:visible;max-height:none}
 .odb-usage{flex:1 1 auto;min-height:224px}
+/* Project default linked projects: compact, sized to its rows. */
+.odb-plinks{flex:none}
+.odb-plinks-in{padding:0 12px 10px 16px}
+.odb-plinks-hint{margin-top:4px;font-size:11.5px;color:var(--o-muted)}
 .odb-use-num{padding:0 16px;flex-shrink:0}
 .odb-use-num b{font-size:22px;font-weight:650;letter-spacing:-.03em}
 .odb-use-num span{display:block;margin-top:2px;font-size:12px;color:var(--o-muted);white-space:nowrap}

@@ -427,6 +427,59 @@ pub fn replace_linked_project_ids(
     Ok(())
 }
 
+/// Project-level default linked Project IDs, in user-defined order.
+///
+/// These are only a template: a new user-created Task copies them once via
+/// [`copy_project_linked_projects_to_task`]; nothing reads them live.
+pub fn load_project_linked_project_ids(project: &str) -> Result<Vec<String>> {
+    let conn = crate::storage::database::connection();
+    let mut stmt = conn.prepare(
+        "SELECT linked_project_id FROM project_linked_projects
+         WHERE project = ?1 ORDER BY position, linked_project_id",
+    )?;
+    let ids = stmt
+        .query_map(params![project], |row| row.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(ids)
+}
+
+/// Atomically replace the Project's default linked Project IDs.
+pub fn replace_project_linked_project_ids(
+    project: &str,
+    linked_project_ids: &[String],
+) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM project_linked_projects WHERE project = ?1",
+        params![project],
+    )?;
+    for (position, linked_project_id) in linked_project_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO project_linked_projects
+             (project, linked_project_id, position) VALUES (?1, ?2, ?3)",
+            params![project, linked_project_id, position as i64],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Seed a freshly created Task's linked Projects from its Project's default
+/// set. This is a one-time copy: later edits on either side stay independent.
+/// A self-link is skipped defensively; unregistered IDs are copied as-is and
+/// handled by the ACP resolver exactly like a Task-level stale link.
+pub fn copy_project_linked_projects_to_task(project: &str, task_id: &str) -> Result<()> {
+    let ids: Vec<String> = load_project_linked_project_ids(project)?
+        .into_iter()
+        .filter(|id| id != project)
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    replace_linked_project_ids(project, task_id, &ids)
+}
+
 /// 更新任务的 target branch
 pub fn update_task_target(project: &str, task_id: &str, new_target: &str) -> Result<()> {
     let conn = crate::storage::database::connection();
@@ -1576,6 +1629,70 @@ created_at = "2025-01-01T00:00:00Z"
         // Recovering an already-active task must not move it.
         recover_task(&project, "b").unwrap();
         assert_eq!(ordered(), ["c", "a", "b"]);
+
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    #[test]
+    fn project_linked_projects_are_copied_once_then_independent() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        let project = format!("project-{}", uuid::Uuid::new_v4().simple());
+        let task = |id: &str| Task {
+            id: id.to_string(),
+            name: id.to_string(),
+            branch: id.to_string(),
+            target: "main".to_string(),
+            worktree_path: String::new(),
+            initial_commit: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            status: TaskStatus::Active,
+            multiplexer: "tmux".to_string(),
+            session_name: String::new(),
+            created_by: "user".to_string(),
+            archived_at: None,
+            code_additions: 0,
+            code_deletions: 0,
+            files_changed: 0,
+            is_local: false,
+        };
+
+        // An existing Task is not touched when the Project set changes.
+        add_task(&project, task("old")).unwrap();
+        replace_project_linked_project_ids(&project, &["b".into(), "a".into()]).unwrap();
+        assert_eq!(
+            load_project_linked_project_ids(&project).unwrap(),
+            ["b", "a"]
+        );
+        assert!(load_linked_project_ids(&project, "old").unwrap().is_empty());
+
+        // A new Task copies the set in order.
+        add_task(&project, task("new")).unwrap();
+        copy_project_linked_projects_to_task(&project, "new").unwrap();
+        assert_eq!(
+            load_linked_project_ids(&project, "new").unwrap(),
+            ["b", "a"]
+        );
+
+        // Editing either side afterwards does not affect the other.
+        replace_project_linked_project_ids(&project, &["c".into()]).unwrap();
+        assert_eq!(
+            load_linked_project_ids(&project, "new").unwrap(),
+            ["b", "a"]
+        );
+        replace_linked_project_ids(&project, "new", &["a".into()]).unwrap();
+        assert_eq!(load_project_linked_project_ids(&project).unwrap(), ["c"]);
+
+        // An empty Project set leaves a new Task without links.
+        replace_project_linked_project_ids(&project, &[]).unwrap();
+        add_task(&project, task("empty")).unwrap();
+        copy_project_linked_projects_to_task(&project, "empty").unwrap();
+        assert!(load_linked_project_ids(&project, "empty")
+            .unwrap()
+            .is_empty());
 
         crate::storage::set_grove_dir_override(None);
     }

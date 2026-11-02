@@ -429,6 +429,10 @@ pub fn remove_project(path: &str) -> Result<()> {
             "DELETE FROM tasks WHERE project = ?1",
             rusqlite::params![&hash],
         )?;
+        tx.execute(
+            "DELETE FROM project_linked_projects WHERE project = ?1",
+            rusqlite::params![&hash],
+        )?;
 
         // Project-level Automations and Memory have no FK to `projects`.
         // Remove the Memory-owned association first (it intentionally
