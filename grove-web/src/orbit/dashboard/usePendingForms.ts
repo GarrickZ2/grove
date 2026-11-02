@@ -17,8 +17,8 @@ export interface InlineForm {
   };
 }
 
-/** More choices than this open the session instead of crowding the row. */
-export const MAX_INLINE_CHOICES = 3;
+/** More choices than this open the session (permission requests have at most 4). */
+export const MAX_INLINE_CHOICES = 4;
 
 const formPath = (item: NeedsYouItem) =>
   `/api/v1/projects/${encodeURIComponent(item.projectId)}/tasks/${encodeURIComponent(item.taskId)}/chats/${encodeURIComponent(item.chatId ?? "")}/pending-form`;
@@ -70,10 +70,13 @@ export function usePendingForms(items: NeedsYouItem[]) {
   return { formFor, reload: load };
 }
 
-/** Answer the pending request. Throws with the server's message on failure. */
-export async function answerPendingForm(item: NeedsYouItem, form: InlineForm, value: string) {
-  await apiClient.post<{ request_id: string; action: "accept"; value: string }, { status?: string }>(
+/** Answer (or, with `null`, decline) the pending request. Throws with the
+ *  server's message on failure. */
+export async function answerPendingForm(item: NeedsYouItem, form: InlineForm, value: string | null) {
+  await apiClient.post<{ request_id: string; action: "accept" | "decline"; value?: string }, { status?: string }>(
     formPath(item),
-    { request_id: form.request_id, action: "accept", value },
+    value === null
+      ? { request_id: form.request_id, action: "decline" }
+      : { request_id: form.request_id, action: "accept", value },
   );
 }

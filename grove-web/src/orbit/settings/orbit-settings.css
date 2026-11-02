@@ -206,7 +206,7 @@
   .ost-kbd{display:none}
   .ost-nlist{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;margin:0 -16px;padding:0 16px}
   .ost-nlist::-webkit-scrollbar{display:none}
-  .ost-nitem{width:auto;flex-shrink:0}
+  .ost-nitem{width:auto;flex-shrink:0;height:40px}
   .ost-sep{width:1px;height:16px;margin:7px 4px;flex-shrink:0}
   .ost-subs{display:none}
   .ost-content{flex:1 1 auto;min-height:0}

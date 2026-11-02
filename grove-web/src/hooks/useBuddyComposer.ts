@@ -4,6 +4,7 @@ import { BUDDIES_MOCK_ENABLED, buddiesMock } from "../api/buddies.mock";
 import { getChatSocket, sendSessionInput, subscribeChatSockets } from "../api/chatSockets";
 import { uploadChatAttachment } from "../api/tasks";
 import { prepareFileAttachment, type Attachment } from "../components/Tasks/TaskView/chatAttachments";
+import { sentPops } from "../components/Tasks/TaskView/conversation/sentPop";
 
 function fileData(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -33,7 +34,10 @@ export function useBuddyComposer(buddy: Buddy, onSent: () => void) {
           attachments.push({ type: "resource_link", uri: saved.uri, name: saved.name, mime_type: saved.mime_type, size: saved.size });
         } else attachments.push({ type: prepared.type, data: prepared.data, mime_type: prepared.mimeType, name: prepared.name });
       }
-      await sendSessionInput(socket, { text, attachments, id: crypto.randomUUID(), busy: buddy.status !== "idle" }, controller.signal);
+      const id = crypto.randomUUID();
+      // Orbit pops this message's bubble in when it appears (sentPop).
+      sentPops.record(id, { queued: buddy.status !== "idle" });
+      await sendSessionInput(socket, { text, attachments, id, busy: buddy.status !== "idle" }, controller.signal);
       onSent();
     } finally { inFlight.current = false; if (!controller.signal.aborted) setSending(false); }
   };

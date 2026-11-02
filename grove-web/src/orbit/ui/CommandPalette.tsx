@@ -5,6 +5,7 @@ import { Search } from "lucide-react";
 import "../tokens.css";
 import "./orbit-ui.css";
 import "./overlays.css";
+import { hasMacWindowControls } from "./windowControls";
 
 /* Orbit command palette (Raycast style): a frosted panel high on the screen
    with a large borderless query field, grouped rows with a sliding accent
@@ -58,7 +59,7 @@ function PaletteLayer({
   const present = useIsPresent();
   return (
     <MotionConfig reducedMotion="user">
-      <div className={`orbit-ui oui-pal-root${present ? "" : " is-leaving"}`} style={{ zIndex }}>
+      <div className={`orbit-ui oui-pal-root${hasMacWindowControls ? " has-mac-controls" : ""}${present ? "" : " is-leaving"}`} style={{ zIndex }}>
         <motion.div
           className="oui-pal-scrim"
           initial={{ opacity: 0 }}

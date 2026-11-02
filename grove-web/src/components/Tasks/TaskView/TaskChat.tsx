@@ -7,13 +7,13 @@ import { resolveAuthenticationMessages } from "./authenticationState";
 import { compactConversationText } from "./conversationPreview";
 import { useComposerInteractionBoundary } from "./useComposerInteractionBoundary";
 import { BackgroundChatConnections, trackChatSocketSends, watchBackgroundChatConnections } from "./backgroundChatConnections";
-import { historyComposerPlans, reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
+import { historyComposerPlans, planDocumentTitle, reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
 import { PlanDocumentsPanel, type PlanMarkdownOptions } from "./PlanDocumentsPanel";
 import { buildRenderItems, buildSequentialRenderItems, buildToolTimelineRows, backgroundToolLabel, timelineToolLabel, finalFailedTool, toolTimelineLegacyDiff, toolTimelineExpansionKey, toggleToolTimelineDetail, toolTimelineRowState, shellTimelineDisplay, toolTimelineWindow, type ToolTimelineRow, type RenderItem, type WorkSummaryItem, type ToolSectionItem } from "./chatRenderItems";
 import { SubagentsPanel } from "./SubagentsPanel";
 import { SubagentAvatar } from "./SubagentAvatar";
 import { SubagentCard } from "./SubagentCard";
-import { flattenSubagentMessages, mapSubagentMessages, reduceSubagentEvent, resetSubagentActivity, type SubagentMessage, type SessionExchangeMessage } from "./subagents";
+import { flattenSubagentMessages, mapSubagentMessages, reduceSubagentEvent, resetSubagentActivity, subagentStatus, type SubagentMessage, type SessionExchangeMessage } from "./subagents";
 import { CompactionDivider } from "./CompactionDivider";
 import { applyCompactionEvent, compactionSearchText, interruptCompactions, reconcileCompactionActivity, type CompactionMessage } from "./compactionReducer";
 import { SessionNotice } from "./SessionNotice";
@@ -125,6 +125,7 @@ import {
   parseGroveMetaSegments,
 } from "../../../utils/groveMeta";
 import { buddyMessageSender, renderGroveMetaEnvelope } from "./groveMetaRenderers";
+import { buildReviewCommentMessage, buildReviewCommentsMessage, isReviewCommentBatch, publishActiveChatAgent } from "./reviewCommentPrompt";
 import { BuddyAvatar } from "../../Buddy/BuddyAvatar";
 import { composerPresenceUpdate } from "./composerPresence";
 import { FormPill } from "./FormPill";
@@ -256,6 +257,13 @@ import { AgentQuotaCard, AgentQuotaPopover } from "./AgentQuotaPopover";
 import { ContextUsageDetails, ContextUsagePill } from "./ContextUsagePill";
 import { contextUsagePercent } from "./contextUsage";
 import { ChatComposerPanel } from "./ChatComposerPanel";
+import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
+import { OrbitComposer, OrbitPlanSteps, OrbitSendOrb, OrbitStatusBar, OrbitTrayHead } from "./composer/OrbitComposer";
+import { OrbitCommentsTray, OrbitMemoryTray, OrbitQueueTray } from "./composer/OrbitTrays";
+import { OrbitComposerSheet } from "./composer/OrbitSheet";
+import { OrbitSetupChip, type SetupField, type SetupToggle } from "./composer/OrbitSetupChip";
+import { OrbitUsageRing } from "./composer/OrbitUsageRing";
+import { orbitTrayForPanel, resolveOrbAction, useComposerStatus, type AskKind, type OrbitTray } from "./composer/composerStatus";
 import { MobileComposerStatus } from "./MobileComposerStatus";
 import { mobileComposerPanelTitles, type MobileComposerPanel } from "./mobileComposerPanels";
 import { collectReadMemoryIds } from "./memoryRead";
@@ -290,6 +298,7 @@ import type { ChatSessionResponse, CustomAgentServer, ImportableSession } from "
 import { useProjectMentions } from "./useProjectMentions";
 import { mentionStatus, projectMentionItems } from "./projectMentions";
 import { createFileChip } from "./fileMentionChip";
+import { dragCarriesGroveFiles, endGroveFileDrag, groveDragCount, groveDropPaths } from "../../../utils/groveFileDrag";
 import { nextMentionIndex } from "../../../utils/fileMention";
 import { openExternalUrl } from "../../../utils/openExternal";
 import { ansiToHtml } from "../../../utils/ansi";
@@ -297,6 +306,15 @@ import { fuzzyFindByName } from "../../../utils/fuzzySearch";
 import { useCommand, useContextKey, useVoiceControlContext } from "../../../keyboard";
 import { ORBIT_PHONE_TITLE_SLOT } from "../../Layout/OrbitPhoneHeader";
 import "./task-chat.css";
+import "./conversation/orbit-conversation.css";
+import { OrbitConversationContext, useOrbitConversation } from "./conversation/OrbitConversationContext";
+import { OrbitTurnRail } from "./conversation/OrbitTurnRail";
+import { OrbitLiveWorkHeader, OrbitSettledWorkHeader } from "./conversation/OrbitLiveWork";
+import { OrbitPermissionRecord, OrbitPermissionRequest } from "./conversation/OrbitPermissionCard";
+import { isStalePermissionError, resolveStalePermission, stalePermissionId } from "./conversation/permissionCard";
+import { liveGroupTail, summarizeLiveWork } from "./conversation/liveWork";
+import { SentPopContext, sentPops, useSentPop } from "./conversation/sentPop";
+import { playComposerSendOut } from "./composer/sendOut";
 
 // ─── Queue send mode persistence (localStorage) ───────────────────────────
 // Flat, global key (not per-project/per-chat) — the user picks one mode and
@@ -1118,7 +1136,13 @@ type TaskChatVirtuosoContext = {
   limitedHistoryTurns: number;
   inputAreaHeight: number;
   showThinking: boolean;
+  bottomFadePad?: number;
 };
+
+/** Extra transcript padding for Orbit's bottom fade, which rises 40px
+ * (--ocv-fade) above the input area: the last line ends in the fade's
+ * nearly transparent upper part. */
+const ORBIT_BOTTOM_FADE_PX = 24;
 
 function TaskChatVirtuosoHeader({
   context,
@@ -1148,7 +1172,7 @@ function TaskChatVirtuosoFooter({
       )}
       <div
         style={{
-          height: `calc(${context.inputAreaHeight + 16}px + var(--grove-kb-inset, 0px))`,
+          height: `calc(${context.inputAreaHeight + 16 + (context.bottomFadePad ?? 0)}px + var(--grove-kb-inset, 0px))`,
         }}
       />
     </div>
@@ -2437,6 +2461,8 @@ export function TaskChat({
   } = useActiveChatId(null);
   useReportDebugId("chatId", activeChatId);
   const [orbitMenuTarget, setOrbitMenuTarget] = useState<HTMLElement | null>(null);
+  /** Per chat: the permission request id we last responded to. */
+  const lastPermissionResponseRef = useRef(new Map<string, string>());
   useEffect(() => {
     if (!orbitHeader || !activeChatId) {
       setOrbitMenuTarget(null);
@@ -2454,6 +2480,7 @@ export function TaskChat({
   }, [orbitHeader, activeChatId]);
   // Orbit on a phone: no chat header; the visible Session titles the app's top bar.
   const orbitPhone = orbitHeader && isPhoneLayout;
+  const orbitUi = useOrbitInterface();
   const [orbitPhoneTitleTarget, setOrbitPhoneTitleTarget] = useState<HTMLElement | null>(null);
   useEffect(() => {
     setOrbitPhoneTitleTarget(orbitPhone && pageActive ? document.getElementById(ORBIT_PHONE_TITLE_SLOT) : null);
@@ -3279,6 +3306,8 @@ export function TaskChat({
   }, [activeChatId, pendingInputs]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  /** Files in an internal drag over the composer, for "Drop 3 files". */
+  const [dragFileCount, setDragFileCount] = useState(1);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
@@ -3539,14 +3568,14 @@ export function TaskChat({
   // Terminal-mode chat: agent CLI runs under a PTY (no ACP). Messages area
   // becomes xterm.js; chatbox input writes to PTY stdin instead of session/prompt.
   const isTerminalLaunchMode = activeChat?.launch_mode === "terminal";
-  const connectionStatus = activeChatId ? chatConnectionStatuses[activeChatId] ?? "disconnected" : "disconnected";
+  const connectionStatus = isRemoteSession ? "read_only" : activeChatId ? chatConnectionStatuses[activeChatId] ?? "disconnected" : "disconnected";
   const connectionPending = connectionStatus === "connecting" || connectionStatus === "reconnecting";
   const connectionLabel = connectionPending && activeChatId && connectionStages[activeChatId]
     ? `${chatConnectionLabels[connectionStatus]} · ${connectionStages[activeChatId]}`
     : connectionStatus === "connected" && activeChatId && !isTerminalLaunchMode && !isTerminalMode && chatProtocolVersions[activeChatId]
       ? `${chatConnectionLabels[connectionStatus]} · v${chatProtocolVersions[activeChatId]}`
       : chatConnectionLabels[connectionStatus];
-  const connectionDotClass = isViewingArchived || connectionStatus === "disconnected"
+  const connectionDotClass = isViewingArchived || connectionStatus === "disconnected" || connectionStatus === "read_only"
     ? "bg-[var(--color-text-muted)]"
     : connectionStatus === "connected"
       ? "bg-[var(--color-success)]"
@@ -3718,6 +3747,7 @@ export function TaskChat({
   const showMobileComposerPill =
     isPhoneLayout &&
     !orbitPhone &&
+    !orbitUi &&
     !mobileComposerOpen &&
     (!composerPanelOpen || mobileDetailsPanelOpen) &&
     !activePermissionMessage &&
@@ -3750,6 +3780,111 @@ export function TaskChat({
     setShowPreviewComments(false);
     if (isPhoneLayout) openMobileDetails("subagents");
   }, [activeChatId, isPhoneLayout, openMobileDetails]);
+
+  // ─── Orbit composer (desktop) ─────────────────────────────────────────
+  // Same panel state as Workbench, presented as one status zone with trays.
+  // Phones keep their existing composer.
+  // The conversation's Orbit presentation stays desktop-only; the composer is
+  // Orbit on phones too (trays, setup and usage as bottom sheets).
+  const orbitComposer = orbitUi && !isPhoneLayout;
+  const orbitShell = orbitUi;
+  const orbitPhoneShell = orbitUi && isPhoneLayout;
+  const orbitActiveTray = orbitShell ? orbitTrayForPanel(activeComposerPanel) : null;
+  const setOrbitTray = useCallback((tray: OrbitTray | null) => {
+    if (isPhoneLayout && tray !== "ask") {
+      // Phone: a tray is the existing details sheet for that panel.
+      setShowAuthPanel(false);
+      setShowPermissionPanel(false);
+      setShowFormPanel(false);
+      if (!tray || !activeChatId) {
+        closeMobileDetails();
+        return;
+      }
+      const panel: MobileComposerPanel = tray === "plan" ? (hasTodoPanel ? "todo" : "plan") : tray === "queue" ? "pending" : tray === "comments" ? "previewComments" : tray;
+      if (tray === "subagents") {
+        setSubagentSelection((previous) => ({ chatId: activeChatId, id: previous.chatId === activeChatId ? previous.id : undefined }));
+        setShowSubagents(true);
+      }
+      const editable = editableRef.current;
+      if (editable) saveChatDraft(activeChatId, pendingQueueEditRef.current?.draft.html ?? editable.innerHTML);
+      editable?.blur();
+      setMobileDetails({ chatId: activeChatId, panel });
+      return;
+    }
+    if (isPhoneLayout) setMobileDetails(null);
+    if (tray === "subagents") {
+      setSubagentSelection((previous) => ({ chatId: activeChatId ?? null, id: previous.chatId === activeChatId ? previous.id : undefined }));
+    }
+    setShowSubagents(tray === "subagents");
+    setShowPendingQueue(tray === "queue");
+    setShowMemoryPanel(tray === "memory");
+    // Todos and plan documents share the Plan tray.
+    setShowPlan(tray === "plan");
+    setShowPlanFile(tray === "plan");
+    setShowPreviewComments(tray === "comments");
+    // An agent request reopens from its chip; any other tray sets it aside.
+    setShowAuthPanel(tray === "ask");
+    setShowPermissionPanel(tray === "ask");
+    setShowFormPanel(tray === "ask");
+  }, [activeChatId, closeMobileDetails, hasTodoPanel, isPhoneLayout]);
+  const orbitAskKind: AskKind | null = activeAuthMessage
+    ? "auth"
+    : activePermissionMessage
+      ? "permission"
+      : activeSurveyMessage
+        ? activeSurveyMessage.type === "elicitation" && activeSurveyMessage.snapshot.request.mode === "url" ? "external" : "survey"
+        : null;
+  const orbitComposerStatus = useComposerStatus(orbitShell && !isReadOnlyHistory ? {
+    running: isBusy,
+    planEntries: displayedPlanEntries,
+    planDocTitle: nativePlans.length > 0
+      ? planDocumentTitle(nativePlans[nativePlans.length - 1], nativePlans.length - 1)
+      : planFileContent ? planFilePath.split("/").pop() || "Plan" : null,
+    subagents: subagents.map((agent) => ({ sessionId: agent.sessionId, status: subagentStatus(agent, isConnected) })),
+    queue: { count: pendingQueueRows.length, failed: pendingQueueRows.filter((row) => row.input?.status === "failed").length },
+    memoryCount: readMemories.length,
+    commentCount: taskPreviewCommentDrafts.length,
+    ask: orbitAskKind,
+  } : null);
+  // Same handlers as the Workbench footer menus.
+  const selectOrbitModel = useCallback((value: string) => {
+    if (matchedSessionConfig.model) requestConfigOptionChange(matchedSessionConfig.model, value);
+    else setSelectedModel(value);
+  }, [matchedSessionConfig, requestConfigOptionChange]);
+  const selectOrbitMode = useCallback((value: string) => {
+    if (matchedSessionConfig.mode) requestConfigOptionChange(matchedSessionConfig.mode, value);
+    else requestLegacyModeChange(value);
+  }, [matchedSessionConfig, requestConfigOptionChange, requestLegacyModeChange]);
+  const selectOrbitThinking = useCallback((value: string) => {
+    if (matchedSessionConfig.thinking) requestConfigOptionChange(matchedSessionConfig.thinking, value);
+    else setThoughtLevel(value);
+  }, [matchedSessionConfig, requestConfigOptionChange]);
+  const orbitSetup = useMemo(() => {
+    const fields: SetupField[] = [];
+    const toggles: SetupToggle[] = [];
+    if (!orbitShell || isTerminalLaunchMode) return { fields, toggles };
+    if (modelOptions.length > 0) {
+      fields.push({ id: "model", kind: "model", label: matchedSessionConfig.model?.name ?? "Model", options: modelOptions, value: selectedModel, loading: !!matchedSessionConfig.model && pendingConfigIds.has(matchedSessionConfig.model.id), onSelect: selectOrbitModel });
+    }
+    if (modeOptions.length > 0) {
+      fields.push({ id: "mode", kind: "mode", label: matchedSessionConfig.mode?.name ?? "Mode", options: modeOptions, value: permissionLevel, loading: matchedSessionConfig.mode ? pendingConfigIds.has(matchedSessionConfig.mode.id) : pendingConfigIds.has("__legacy_mode"), onSelect: selectOrbitMode });
+    }
+    if (thoughtLevelOptions.length > 0 && thoughtLevelConfigId) {
+      fields.push({ id: "thinking", kind: "thinking", label: matchedSessionConfig.thinking?.name ?? "Thinking", options: thoughtLevelOptions, value: thoughtLevel, loading: !!matchedSessionConfig.thinking && pendingConfigIds.has(matchedSessionConfig.thinking.id), onSelect: selectOrbitThinking });
+    }
+    for (const option of additionalSessionConfigOptions) {
+      if (option.type === "boolean") {
+        toggles.push({ id: option.id, label: option.name, description: option.description, value: option.currentValue, loading: pendingConfigIds.has(option.id), onToggle: (value) => requestConfigOptionChange(option, value) });
+      } else {
+        fields.push({
+          id: option.id, kind: "option", label: option.name,
+          options: configDropdownValues(option).map((value) => ({ value: value.value, label: value.name, description: value.description, group: value.group })),
+          value: option.currentValue, loading: pendingConfigIds.has(option.id), onSelect: (value) => requestConfigOptionChange(option, value),
+        });
+      }
+    }
+    return { fields, toggles };
+  }, [orbitShell, isTerminalLaunchMode, modelOptions, modeOptions, thoughtLevelOptions, thoughtLevelConfigId, matchedSessionConfig, selectedModel, permissionLevel, thoughtLevel, pendingConfigIds, additionalSessionConfigOptions, selectOrbitModel, selectOrbitMode, selectOrbitThinking, requestConfigOptionChange]);
 
   // When a permission message appears, force the permission panel open and
   // close any rival panels. When it goes away, close the panel. Done via
@@ -5275,6 +5410,7 @@ export function TaskChat({
         sendAgentVoiceState(chatId, loadAgentVoiceState(projectId, taskId, chatId));
       };
 
+      let observingRemoteSession = false;
       ws.onmessage = (event) => {
         // Ignore messages already queued by a socket that Reconnect replaced.
         // Otherwise a late `session_ended` from the old owner can downgrade
@@ -5284,6 +5420,18 @@ export function TaskChat({
         try {
           const data = JSON.parse(event.data);
           if (data?.type === "heartbeat") return;
+          if (data?.type === "remote_session") {
+            // The server closes this socket after handing us off to HTTP
+            // observation. Handle ownership immediately, even during hydration.
+            observingRemoteSession = true;
+            cancelPendingReconnectRef.current(chatId);
+            reconnectAttemptRef.current.delete(chatId);
+            setChatConnectionStatus(chatId, "read_only");
+            setConnectionErrors((previous) => ({ ...previous, [chatId]: "" }));
+            if (chatId === getActiveChatId()) handleServerMessageRef.current(data);
+            else handleServerMessageForCacheRef.current(chatId, data);
+            return;
+          }
           backgroundConnections.recordActivity(chatId, Date.now());
           publishIosChatEvent(projectId, taskId, chatId, data, chatsRef.current.find(c => c.id === chatId)?.title);
           if (data?.type === "input_accepted" && typeof data.client_message_id === "string") {
@@ -5472,6 +5620,17 @@ export function TaskChat({
         // been installed. Never let that stale callback delete or downgrade
         // the new connection.
         if (wsMapRef.current.get(chatId) !== ws) return;
+        if (observingRemoteSession) {
+          wsMapRef.current.delete(chatId);
+          lastWsMessageAtRef.current.delete(chatId);
+          intentionalCloseRef.current.delete(chatId);
+          cancelPendingReconnectRef.current(chatId);
+          // Preserve the loaded history and cursor: polling needs both.
+          const runtime = historyRuntimeRef.current.get(chatId);
+          if (runtime) runtime.connected = false;
+          if (wsRef.current === ws) wsRef.current = null;
+          return;
+        }
         // Surface close code/reason — a silently-permanent "Connecting…" is
         // usually a proxy/tunnel dropping the WS upgrade (code 1006, no close
         // frame) rather than an app-level close. Without this there's no
@@ -5575,6 +5734,7 @@ export function TaskChat({
 
       ws.onerror = (event) => {
         if (wsMapRef.current.get(chatId) !== ws) return;
+        if (observingRemoteSession) return;
         if (!wsSessionEverReadyRef.current.get(chatId)) setChatConnectionStatus(chatId, "failed");
         console.warn(`[grove ws] chat ${chatId} error`, event);
         if (chatId === getActiveChatId()) {
@@ -6205,6 +6365,12 @@ export function TaskChat({
     };
   }, [backgroundConnections]);
 
+  // Review's "Send N comments to <agent>?" reads the active chat's agent label.
+  useEffect(() => {
+    publishActiveChatAgent(agentLabel);
+  }, [agentLabel]);
+  useEffect(() => () => publishActiveChatAgent(null), []);
+
   // Clear the global active-chat pointer when this TaskChat unmounts. The
   // per-change sync is already handled by useActiveChatId.setActiveChatId
   // (it writes __groveActiveChatId + dispatches on every switch), so we don't
@@ -6580,20 +6746,13 @@ export function TaskChat({
           // request") and the live-id mismatch ("Permission request X is no
           // longer pending"). Both mean the panel we're rendering is gone
           // server-side; collapse it locally so the user isn't stuck.
-          const isStalePermission =
-            msgText.includes("No pending permission") ||
-            msgText.includes("is no longer pending");
-          if (isStalePermission) {
-            // The permission we tried to respond to no longer exists on the backend.
-            // Resolve all unresolved permissions as cancelled so the UI unblocks.
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.type === "permission" && !m.resolved
-                  ? { ...m, resolved: "Cancelled" }
-                  : m,
-              ),
-            );
-            setShowPermissionPanel(false);
+          if (isStalePermissionError(msgText)) {
+            // The request we responded to no longer exists on the backend.
+            // Settle only that one: the backend serialises permissions, so a
+            // newer request may already be waiting and must stay answerable.
+            const chatId = getActiveChatId();
+            const staleId = stalePermissionId(msgText, chatId ? lastPermissionResponseRef.current.get(chatId) : undefined);
+            setMessages((prev) => resolveStalePermission(prev, staleId));
           } else {
             setMessages((prev) => [
               ...prev,
@@ -6774,6 +6933,9 @@ export function TaskChat({
           break;
         case "remote_session":
           // Session is owned by another process — enter read-only observation mode
+          setIsConnected(false);
+          setConnectPhase(null);
+          setConnectPhaseStartedAt(null);
           setIsRemoteSession(true);
           setRemoteOwnerName(msg.agent_name || "Unknown");
           break;
@@ -6818,16 +6980,17 @@ export function TaskChat({
       if (!cached) state.messages = resolveMessages(chatId, state.messages);
       let messagesChanged = false;
       switch (msg.type) {
+        case "remote_session":
+          state.isConnected = false;
+          state.isRemoteSession = true;
+          state.remoteOwnerName = msg.agent_name || "Unknown";
+          break;
         case "error": {
           const msgText = msg.message ?? "";
-          const isStalePermission =
-            msgText.includes("No pending permission") ||
-            msgText.includes("is no longer pending");
-          if (isStalePermission) {
-            state.messages = state.messages.map((message) =>
-              message.type === "permission" && !message.resolved
-                ? { ...message, resolved: "Cancelled" }
-                : message,
+          if (isStalePermissionError(msgText)) {
+            state.messages = resolveStalePermission(
+              state.messages,
+              stalePermissionId(msgText, lastPermissionResponseRef.current.get(chatId)),
             );
           } else {
             state.messages = [
@@ -7180,6 +7343,7 @@ export function TaskChat({
       if (!res.session) {
         setIsRemoteSession(false);
         setRemoteOwnerName("");
+        setChatConnectionStatus(chatId, "disconnected");
       }
     };
     const timer = setInterval(loadLatest, 5000);
@@ -7190,7 +7354,7 @@ export function TaskChat({
       clearInterval(timer);
       pollingTimerRef.current = null;
     };
-  }, [isRemoteSession, activeChatId, projectId, taskId, historyPreferences]);
+  }, [isRemoteSession, activeChatId, projectId, taskId, historyPreferences, setChatConnectionStatus]);
 
   // ─── Chat switching ────────────────────────────────────────────────────
 
@@ -7800,38 +7964,18 @@ export function TaskChat({
         return;
       }
 
-      // 1. Build line/location labels
-      const lineRange = comment.start_line
-        ? comment.start_line === comment.end_line
-          ? `L${comment.start_line}`
-          : `L${comment.start_line}-L${comment.end_line}`
-        : "";
-      const locLabel = comment.file_path
-        ? `${comment.file_path.split("/").pop() || comment.file_path}${lineRange ? ":" + lineRange : ""}`
-        : "Project-level";
-
-      // 2. Build grove-meta payload
-      const metaType = "review_comment";
-      const metaData = {
-        id: comment.id,
-        commentType: comment.comment_type || "inline",
-        filePath: comment.file_path || "",
-        startLine: comment.start_line,
-        endLine: comment.end_line,
-        content: comment.content,
-        agent: comment.agent || "",
-        status: comment.status || "open"
-      };
-      
-      const systemPrompt = `Please address Code Review Comment #${comment.id} on ${locLabel}. Comment: "${comment.content}". Use the grove_reply_review tool to reply and set resolve: true when addressed.`;
-
-      const text = buildGroveMetaTag(metaType, metaData, systemPrompt);
+      // A batch (`{ comments }`, "send all open") goes out as ONE message and
+      // reads the live busy flag; a single comment keeps its original path.
+      const batch = isReviewCommentBatch(comment);
+      if (batch && comment.comments.length === 0) return;
+      const text = batch ? buildReviewCommentsMessage(comment.comments) : buildReviewCommentMessage(comment);
+      const busy = batch ? busyRef.current : isBusy;
 
       // 3. Send over WebSocket
-      const msgType = isBusy ? "queue_message" : "prompt";
+      const msgType = busy ? "queue_message" : "prompt";
       if (
         shouldFollowTaskChatSend(
-          isBusy,
+          busy,
           followStateRef.current === "following",
         )
       ) {
@@ -8234,6 +8378,8 @@ export function TaskChat({
       submittedAt: Date.now(),
     };
     pendingAttachmentsRef.current.set(input.id, attachments);
+    // Orbit pops this message's bubble in when it appears (conversation/sentPop).
+    sentPops.record(input.id, { queued: input.mode === "queue_message" });
     if (inputLocation(input) === "timeline") {
       updateLocalInputPlacements(activeChatId, (items) => [...items, { id: input.id, position: messageTimeline.endPosition }]);
     } else {
@@ -8246,6 +8392,7 @@ export function TaskChat({
     if (composerEmptyTimerRef.current) clearTimeout(composerEmptyTimerRef.current);
     draftSaveTimerRef.current = null;
     composerEmptyTimerRef.current = null;
+    if (orbitComposer) playComposerSendOut(el);
     el.innerHTML = "";
     clearChatDraft(activeChatId);
     const cached = perChatStateRef.current.get(activeChatId);
@@ -8264,7 +8411,7 @@ export function TaskChat({
     requestBottom("auto");
     promoteChatForLocalActivity(activeChatId);
     void dispatchPendingInput(activeChatId, input.id);
-  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, finishComposerAfterSend, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, getActiveChatId, onUserMessageSent, dispatchPendingInput, pendingInputMode, openInputQueue]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, finishComposerAfterSend, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, getActiveChatId, onUserMessageSent, dispatchPendingInput, pendingInputMode, openInputQueue, orbitComposer]);
 
   const handleSend = useCallback(async () => {
     if (!activeChatId || sendingAttemptRef.current.has(activeChatId)) return;
@@ -8809,8 +8956,12 @@ export function TaskChat({
    * live pending permission so a stale dialog (rendered from history but
    * already cancelled by reconcile) can't be silently accepted. */
   const handlePermissionResponse = useCallback(
-    (optionId: string, requestId: string) => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    (optionId: string, requestId: string): boolean => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
+      // Remember which request we answered, so a stale-request error settles
+      // only that one and never a newer request the agent is waiting on.
+      const chatId = getActiveChatId();
+      if (chatId) lastPermissionResponseRef.current.set(chatId, requestId);
       wsRef.current.send(
         JSON.stringify({
           type: "permission_response",
@@ -8818,8 +8969,9 @@ export function TaskChat({
           option_id: optionId,
         }),
       );
+      return true;
     },
-    [],
+    [getActiveChatId],
   );
 
   /** AuthRequired banner login click. 乐观把对应消息切到 in_progress,
@@ -9673,20 +9825,12 @@ export function TaskChat({
    * the Review sidebar). Falls back to appending at the editor end if
    * the point isn't inside the editable region.
    */
-  const insertFileChipAtPoint = useCallback(
-    (filePath: string, clientX: number, clientY: number) => {
+  /** Insert file chips at the drop point, in order: each later chip follows
+   *  the previous one (the caret lands after each chip's trailing space). */
+  const insertFileChipsAtPoint = useCallback(
+    (filePaths: readonly string[], clientX: number, clientY: number) => {
       const el = editableRef.current;
-      if (!el) return;
-      const matched = filteredFiles.find((f) => f.path === filePath);
-      const chip = createFileChip(
-        filePath,
-        false,
-        matched?.displayName,
-        matched?.category,
-        matched?.favIconUrl,
-        matched?.category === "Project Root" ? matched.sessionId : undefined,
-        theme.accentPalette,
-      );
+      if (!el || filePaths.length === 0) return;
 
       // Resolve a Range at the drop point. caretRangeFromPoint is WebKit/Blink;
       // caretPositionFromPoint is the standard. Try both.
@@ -9716,17 +9860,29 @@ export function TaskChat({
       }
 
       el.focus();
-      range!.insertNode(chip);
-
-      // Place caret after the chip with a trailing space for ergonomics.
-      const space = document.createTextNode(' ');
-      chip.parentNode?.insertBefore(space, chip.nextSibling);
-      const newRange = document.createRange();
-      newRange.setStartAfter(space);
-      newRange.collapse(true);
+      let at = range!;
+      for (const filePath of filePaths) {
+        const matched = filteredFiles.find((f) => f.path === filePath);
+        const chip = createFileChip(
+          filePath,
+          false,
+          matched?.displayName,
+          matched?.category,
+          matched?.favIconUrl,
+          matched?.category === "Project Root" ? matched.sessionId : undefined,
+          theme.accentPalette,
+        );
+        at.insertNode(chip);
+        // Place caret after the chip with a trailing space for ergonomics.
+        const space = document.createTextNode(' ');
+        chip.parentNode?.insertBefore(space, chip.nextSibling);
+        at = document.createRange();
+        at.setStartAfter(space);
+        at.collapse(true);
+      }
       const sel = window.getSelection();
       sel?.removeAllRanges();
-      sel?.addRange(newRange);
+      sel?.addRange(at);
 
       checkContent();
     },
@@ -9736,12 +9892,13 @@ export function TaskChat({
   /** Drag & drop handlers */
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    // If the drag carries a grove file path, advertise copy semantics so
+    // If the drag carries grove file paths, advertise copy semantics so
     // the cursor reflects "drop = insert".
     const types = e.dataTransfer.types;
-    if (types && Array.from(types).includes('application/x-grove-file-path')) {
+    if (dragCarriesGroveFiles(types)) {
       e.dataTransfer.dropEffect = 'copy';
     }
+    setDragFileCount(groveDragCount(types));
     setIsDragging(true);
   }, []);
 
@@ -9757,10 +9914,12 @@ export function TaskChat({
       setIsDragging(false);
       if (pendingQueueEditRef.current?.attemptId) return;
 
-      // Path drag from Review sidebar — insert a file chip at the drop point.
-      const grovePath = e.dataTransfer.getData('application/x-grove-file-path');
-      if (grovePath) {
-        insertFileChipAtPoint(grovePath, e.clientX, e.clientY);
+      // Internal path drag (file tree, artifacts, review sidebar): insert
+      // one chip per path at the drop point, in order, without repeats.
+      const grovePaths = groveDropPaths(e.dataTransfer);
+      endGroveFileDrag();
+      if (grovePaths.length > 0) {
+        insertFileChipsAtPoint(grovePaths, e.clientX, e.clientY);
         return;
       }
 
@@ -9773,7 +9932,7 @@ export function TaskChat({
         else void addFileAsAttachment(file);
       });
     },
-    [promptCaps.image, promptCaps.audio, addFileAsAttachment, insertFileChipAtPoint],
+    [promptCaps.image, promptCaps.audio, addFileAsAttachment, insertFileChipsAtPoint],
   );
 
   // Re-check hasContent when attachments change
@@ -10058,10 +10217,10 @@ export function TaskChat({
   );
 
   const renderItems = useMemo(
-    () => buildRenderItems(messageTimeline.messages, isBusy).map((item) => item.kind === "single"
+    () => buildRenderItems(messageTimeline.messages, isBusy, { groupLiveWork: orbitComposer }).map((item) => item.kind === "single"
       ? { ...item, sourceIndex: messageTimeline.sourceIndices[item.index] }
       : item),
-    [messageTimeline, isBusy],
+    [messageTimeline, isBusy, orbitComposer],
   );
   // The minimap is deliberately derived from the same `messages` state that
   // renders the chat. It is therefore immediately available for loaded
@@ -10585,6 +10744,7 @@ export function TaskChat({
     );
   };
 
+  const liveTail = useMemo(() => liveGroupTail(renderItems), [renderItems]);
   const renderChatItem = (idx: number, item: RenderItem) => {
     const rowClassName =
       "chat-selection-layout mx-auto flow-root w-full max-w-[920px] px-4 pt-3 sm:px-6";
@@ -10667,6 +10827,10 @@ export function TaskChat({
           expanded={expandedSections.has(item.sectionId)}
           onToggleSection={toggleSection}
           onFileClick={onNavigateToFile}
+          live={item.live}
+          startedAt={item.startedAt}
+          awaitingApproval={item.awaitingApproval}
+          atTail={idx === liveTail.index && liveTail.atTail}
         />
       </MeasuredTaskChatRow>
     );
@@ -10674,11 +10838,15 @@ export function TaskChat({
 
   // Keep the Header/Footer component types stable. Updating context changes
   // their content without unmounting Virtuoso's measured boundary elements.
+  // Orbit's live work group names "Thinking" itself when it is the tail.
+  const liveWorkAtTail = liveTail.atTail;
   const virtuosoContext: TaskChatVirtuosoContext = {
     hiddenMessageCount,
     limitedHistoryTurns: activeChatId ? limitedHistoryTurnsByChat[activeChatId] ?? 0 : 0,
     inputAreaHeight: transcriptFooterState.inputAreaHeight,
-    showThinking: transcriptFooterState.showThinking,
+    showThinking: transcriptFooterState.showThinking && !liveWorkAtTail,
+    // Orbit's bottom fade rises above the input area; keep the last line clear of it.
+    bottomFadePad: orbitComposer && !isReadOnlyHistory ? ORBIT_BOTTOM_FADE_PX : 0,
   };
 
   // ─── Collapsed mode ──────────────────────────────────────────────────────
@@ -10735,9 +10903,861 @@ export function TaskChat({
     />
   ) : null;
 
+  // Composer panel bodies, shared by the Workbench panel and the Orbit trays.
+  const planDocumentBody = nativePlans.length > 0 ? (
+                        <PlanDocumentsPanel key={activeChatId} plans={nativePlans} allowLocalFiles={!isRemoteSession} onFileClick={onNavigateToFile} fileContext={{ projectId, taskId }} markdownProps={{ onImageClick: setLightboxUrl, onMermaidClick: setLightboxSvg, onD2Click: setLightboxSvg, sketchContext: isStudioProject ? { projectId, taskId } : undefined }} />
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                              {planFilePath.split("/").pop()}
+                            </div>
+                            <button
+                              onClick={handleSavePlanToNote}
+                              disabled={isSavingToNote}
+                              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
+                              title="Save plan to task note"
+                            >
+                              {isSavingToNote ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : saveToNoteDone ? (
+                                <CheckCircle2 className="h-3 w-3" />
+                              ) : (
+                                <Bookmark className="h-3 w-3" />
+                              )}
+                              <span>{saveToNoteDone ? "Saved" : "Save To Note"}</span>
+                            </button>
+                          </div>
+                          <MarkdownRenderer
+                            content={planFileContent}
+                            onFileClick={onNavigateToFile}
+                            onMermaidClick={setLightboxSvg}
+                            onD2Click={setLightboxSvg}
+                            onImageClick={setLightboxUrl}
+                            sketchContext={isStudioProject ? { projectId, taskId: taskId } : undefined}
+                          />
+                        </div>
+  );
+
+  const composerPanelBody = (
+                    <div className={`${activeComposerPanel === "permission" ? "flex max-h-[min(360px,48vh)] flex-col overflow-hidden" : mobileDetailsPanelOpen ? "mobile-composer-sheet-content" : activeComposerPanel === "subagents" && selectedSubagentId ? "max-h-[min(560px,58vh)] overflow-y-auto overscroll-contain" : "max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain"} ${activeComposerPanel === "previewComments" || activeComposerPanel === "subagents" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
+                      {activeComposerPanel === "quota" && (
+                        agentQuota ? <AgentQuotaCard usage={agentQuota} refreshing={quotaRefreshing} onRefresh={refreshAgentQuota} /> : <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">Quota data is unavailable.</p>
+                      )}
+                      {activeComposerPanel === "context" && (
+                        contextUsage && contextUsage.size > 0 ? <ContextUsageDetails usage={contextUsage} hasCompactCommand={hasCompactCommand} onCompact={() => { closeMobileDetails(); handleCompact(); }} /> : <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">Context usage is unavailable.</p>
+                      )}
+                      {activeComposerPanel === "todo" && (
+                        <div className="space-y-1">
+                          {displayedPlanEntries.length === 0 && <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">No todos.</p>}
+                          {displayedPlanEntries.map((entry, i) => (
+                            <div
+                              key={`${entry.priority ?? "legacy"}:${entry.content}:${i}`}
+                              className={`flex items-center gap-2 rounded-md px-1.5 py-1 text-sm ${
+                                entry.status === "in_progress"
+                                  ? "bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)]"
+                                  : ""
+                              }`}
+                            >
+                              {entry.status === "completed" ? (
+                                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[var(--color-success)]" />
+                              ) : entry.status === "in_progress" ? (
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-highlight)]" />
+                              ) : (
+                                <Circle className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
+                              )}
+                              <span
+                                className={`min-w-0 flex-1 ${
+                                  entry.status === "completed"
+                                    ? "text-[var(--color-text-muted)] line-through"
+                                    : entry.status === "in_progress"
+                                      ? "font-medium text-[var(--color-highlight)]"
+                                      : "text-[var(--color-text)]"
+                                }`}
+                              >
+                                {entry.content}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {activeComposerPanel === "memory" && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 px-0.5">
+                            <Database className="h-3.5 w-3.5 text-[var(--color-highlight)]" />
+                            <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                              Read Memory · {readMemories.length}
+                            </div>
+                          </div>
+                          <div className="space-y-1.5">
+                            {readMemories.map((memory) => (
+                              <div
+                                key={memory.entity_id}
+                                className="rounded-xl border border-[color-mix(in_srgb,var(--color-border)_65%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_72%,transparent)] px-3 py-2.5"
+                              >
+                                <div className="flex min-w-0 items-start justify-between gap-3">
+                                  <div className="min-w-0 text-sm font-medium leading-5 text-[var(--color-text)]">
+                                    {memory.title}
+                                  </div>
+                                  <span
+                                    className="max-w-28 shrink-0 truncate font-mono text-[9px] text-[var(--color-text-muted)] opacity-60"
+                                    title={memory.entity_id}
+                                  >
+                                    {memory.entity_id}
+                                  </span>
+                                </div>
+                                {memory.tags.length > 0 && (
+                                  <div className="mt-2 flex flex-wrap gap-1">
+                                    {memory.tags.map((tag) => (
+                                      <span
+                                        key={`${tag.key}:${tag.value}`}
+                                        title={`${tag.key}: ${tag.value}`}
+                                        className="rounded-full bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)] px-1.5 py-0.5 text-[9px] text-[var(--color-highlight)]"
+                                      >
+                                        {tag.value}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {activeComposerPanel === "plan" && planDocumentBody}
+
+                      {activeComposerPanel === "subagents" && (
+                        <SubagentsPanel
+                          agents={subagents} selectedId={selectedSubagentId} connected={isConnected}
+                          onSelect={(id) => setSubagentSelection({ chatId: activeChatId ?? null, id })}
+                          onClose={() => { setShowSubagents(false); closeMobileDetails(); }}
+                          onCancel={isRemoteSession ? undefined : (sessionId) => { if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: "cancel_subagent", session_id: sessionId })); }}
+                          onOpenRequest={(kind) => { closeMobileDetails(); setShowSubagents(false); setShowPermissionPanel(kind === "permission"); setShowFormPanel(kind === "elicitation"); }}
+                          renderActivity={(agent) => (
+                            <MessageItem message={agent} index={0} isBusy={isBusy} subagentDetail subagentConnected={isConnected} planFilesLocal={!isRemoteSession} onOpenSubagent={openSubagentPanel}
+                              agentLabel={agentLabel} projectId={projectId} taskId={taskId} activeChatId={activeChatId ?? undefined}
+                              previewCommentDrafts={[]} onAddPreviewComment={addPreviewCommentDraft} onUpdatePreviewComment={updatePreviewCommentDraft} onRemovePreviewComment={removePreviewCommentDraft}
+                              isStudio={isStudioProject} onPermissionResponse={handlePermissionResponse} onFileClick={onNavigateToFile} onImageClick={setLightboxUrl} onMermaidClick={setLightboxSvg} onD2Click={setLightboxSvg} onInsertReference={insertAttachmentReference} />
+                          )}
+                        />
+                      )}
+
+                      {activeComposerPanel === "pending" && (
+                        <div>
+                          <div className={`flex items-center gap-2 px-0.5 ${isPhoneLayout ? "min-h-10" : "h-5"}`}>
+                            <div className="text-[9px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)] opacity-55">
+                              Pending · {pendingQueueRows.length}
+                            </div>
+                            <div className="ml-auto inline-flex items-center gap-2 text-[9px]">
+                              {(
+                                [
+                                  {
+                                    id: "separate" as const,
+                                    label: "Separate",
+                                    title: "Send queued messages one at a time",
+                                  },
+                                  {
+                                    id: "compact" as const,
+                                    label: "Compact",
+                                    title: "Merge all queued messages into one when auto-sent",
+                                  },
+                                ]
+                              ).map((opt) => (
+                                <button
+                                  key={opt.id}
+                                  onClick={() => handleSetQueueMode(opt.id)}
+                                  title={opt.title}
+                                  className={`rounded px-1 py-0.5 transition-colors ${
+                                    queueMode === opt.id
+                                      ? "text-[var(--color-highlight)]"
+                                      : "text-[var(--color-text-muted)] opacity-60 hover:opacity-100"
+                                  }`}
+                                >
+                                  {opt.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          {pendingQueueRows.length === 0 && <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">No pending messages.</p>}
+                          {pendingQueueRows.map((msg, i) => (
+                            <div
+                              key={pendingMessageKeys[i] ?? `idx-${i}`}
+                              className={`flex items-center gap-2 rounded-lg px-0.5 text-sm transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_3%,transparent)] ${isPhoneLayout ? "min-h-12 py-2" : "min-h-7"}`}
+                            >
+                              <span className="w-4 shrink-0 text-right text-xs text-[var(--color-text-muted)]">
+                                {i + 1}
+                              </span>
+                              <>
+                                  <PendingQueueAttachments
+                                    attachments={msg.attachments ?? []}
+                                    onImageClick={setLightboxUrl}
+                                  />
+                                  <span
+                                    className={`flex-1 min-w-0 text-[var(--color-text)] ${isPhoneLayout ? "whitespace-pre-wrap break-words leading-5" : "truncate"}`}
+                                    title={msg.input?.error ?? msg.text}
+                                  >
+                                    {msg.text || (msg.attachments?.length === 1
+                                      ? msg.attachments[0].name || msg.attachments[0].label || "Attachment"
+                                      : msg.attachments?.every((attachment) => attachment.type === "image") && msg.attachments.length > 0
+                                        ? `${msg.attachments.length} images`
+                                        : `${msg.attachments?.length ?? 0} attachments`)}
+                                  </span>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    {editingPendingId === msg.id ? (
+                                      <>
+                                        <span className="rounded-full bg-[color-mix(in_srgb,var(--color-highlight)_12%,transparent)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-highlight)]">{isSavingPendingEdit ? "Saving…" : "Editing"}</span>
+                                        <button type="button" onClick={handleCancelPendingEdit} disabled={isSavingPendingEdit} className="rounded px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">Cancel</button>
+                                        <button type="button" onClick={() => handleDeletePending(msg.id)} disabled={isSavingPendingEdit || !isConnected} className="rounded px-1.5 py-0.5 text-xs text-[var(--color-error)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">Delete</button>
+                                      </>
+                                    ) : msg.input && (msg.input.status !== "accepted" || !msg.input.serverQueued) ? renderPendingInputActions(msg.input, true) : (
+                                      <>
+                                        {msg.id === pendingMessages[0]?.id && (
+                                          <button
+                                            onClick={() => handleSendNow()}
+                                            disabled={isCancelling || !!editingPendingId}
+                                            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title={isCancelling ? "Cancelling…" : "Send Now"}
+                                          >
+                                            {isCancelling ? (
+                                              <Loader2 className="h-3 w-3 animate-spin" />
+                                            ) : (
+                                              <Send className="h-3 w-3" />
+                                            )}
+                                            <span>Now</span>
+                                          </button>
+                                        )}
+                                        <button
+                                          onClick={() => handleEditPending(msg)}
+                                          disabled={!isConnected || !msg.id || !!editingPendingId}
+                                          className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] disabled:opacity-50"
+                                          title="Edit"
+                                        >
+                                          <Pencil className="h-3 w-3" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeletePending(msg.id)}
+                                          className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-error)]"
+                                          title="Delete"
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                              </>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {activeComposerPanel === "previewComments" && (
+                        <div>
+                          <div className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-[color-mix(in_srgb,var(--color-border)_55%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_94%,transparent)] px-3 py-2.5 backdrop-blur-md">
+                            <div className="flex items-center gap-1.5">
+                              <MessageSquarePlus className="h-3.5 w-3.5 text-[var(--color-highlight)]" />
+                              <span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+                                Comments
+                              </span>
+                              <span className="rounded-full bg-[color-mix(in_srgb,var(--color-highlight)_14%,transparent)] px-1.5 py-px text-[10px] font-medium leading-none text-[var(--color-highlight)]">
+                                {taskPreviewCommentDrafts.length}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => sendPreviewComments(taskPreviewCommentDrafts)}
+                              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold text-white shadow-sm transition-transform hover:scale-[1.02]"
+                              style={{ background: "var(--color-highlight)" }}
+                            >
+                              <Send className="h-3 w-3" />
+                              Send all
+                            </button>
+                          </div>
+                          <div className="space-y-1.5 px-2.5 py-2.5">
+                            {taskPreviewCommentDrafts.map((draft, idx) => {
+                              const fileLabel = draft.source === "chat"
+                                ? `Conversation · message ${draft.filePath.split("-").pop()}`
+                                : draft.fileName || draft.filePath.split("/").pop() || draft.filePath;
+                              const dir = draft.source === "chat"
+                                ? ""
+                                : draft.filePath.slice(0, Math.max(0, draft.filePath.length - fileLabel.length - 1));
+                              const selectedText = draft.locator.text?.trim();
+                              const contextLabel = selectedText
+                                ? `“${selectedText}”`
+                                : draft.locator.selector || draft.locator.tagName;
+                              const isEditing = editingPreviewCommentId === draft.id;
+                              return (
+                                <div
+                                  key={draft.id}
+                                  className="group relative flex gap-2.5 rounded-xl border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-bg)_75%,transparent)] p-2 pl-2.5 transition-colors hover:border-[color-mix(in_srgb,var(--color-highlight)_40%,var(--color-border))]"
+                                >
+                                  <div
+                                    className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-sm"
+                                    style={{ background: "var(--color-highlight)" }}
+                                    title="Marker shown in preview"
+                                  >
+                                    {idx + 1}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    {isEditing ? (
+                                      <textarea
+                                        autoFocus
+                                        rows={3}
+                                        value={editingPreviewCommentText}
+                                        onChange={(event) => setEditingPreviewCommentText(event.target.value)}
+                                        onKeyDown={(event) => {
+                                          if (event.key === "Escape") {
+                                            event.preventDefault();
+                                            setEditingPreviewCommentId(null);
+                                            setEditingPreviewCommentText("");
+                                          }
+                                          if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && editingPreviewCommentText.trim()) {
+                                            event.preventDefault();
+                                            updatePreviewCommentDraft(draft.id, { comment: editingPreviewCommentText.trim() });
+                                            setEditingPreviewCommentId(null);
+                                            setEditingPreviewCommentText("");
+                                          }
+                                        }}
+                                        className="w-full resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 text-[12px] leading-snug text-[var(--color-text)] outline-none focus:border-[var(--color-highlight)]"
+                                      />
+                                    ) : (
+                                      <div className="line-clamp-2 whitespace-pre-wrap break-words text-[12px] leading-snug text-[var(--color-text)]">
+                                        {draft.comment}
+                                      </div>
+                                    )}
+                                    <div className="mt-1 flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+                                      <span className="truncate font-medium text-[var(--color-text)]" title={draft.filePath}>
+                                        {fileLabel}
+                                      </span>
+                                      {dir && (
+                                        <span className="truncate opacity-60" title={draft.filePath}>
+                                          · {dir}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div
+                                      className={`mt-1 line-clamp-2 text-[10px] leading-4 text-[var(--color-text-muted)] opacity-80 ${selectedText ? "" : "font-mono"}`}
+                                      title={contextLabel}
+                                    >
+                                      {contextLabel}
+                                    </div>
+                                    {isEditing && (
+                                      <div className="mt-2 flex items-center justify-end gap-1.5">
+                                        <button
+                                          onClick={() => {
+                                            setEditingPreviewCommentId(null);
+                                            setEditingPreviewCommentText("");
+                                          }}
+                                          className="rounded-md px-2 py-1 text-[10px] font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          disabled={!editingPreviewCommentText.trim()}
+                                          onClick={() => {
+                                            updatePreviewCommentDraft(draft.id, { comment: editingPreviewCommentText.trim() });
+                                            setEditingPreviewCommentId(null);
+                                            setEditingPreviewCommentText("");
+                                          }}
+                                          className="rounded-md px-2 py-1 text-[10px] font-semibold text-[var(--color-highlight)] hover:bg-[color-mix(in_srgb,var(--color-highlight)_12%,transparent)] disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                          Save
+                                        </button>
+                                        <button
+                                          disabled={!editingPreviewCommentText.trim()}
+                                          onClick={() => {
+                                            const comment = editingPreviewCommentText.trim();
+                                            if (!comment) return;
+                                            setEditingPreviewCommentId(null);
+                                            setEditingPreviewCommentText("");
+                                            sendPreviewComments([{ ...draft, comment }]);
+                                          }}
+                                          className="inline-flex items-center gap-1 rounded-md bg-[var(--color-highlight)] px-2 py-1 text-[10px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                          <Send className="h-3 w-3" />
+                                          Send
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {!isEditing && <div className="flex shrink-0 items-start gap-1 opacity-70 transition-opacity group-hover:opacity-100">
+                                    <button
+                                      onClick={() => {
+                                        setEditingPreviewCommentId(draft.id);
+                                        setEditingPreviewCommentText(draft.comment);
+                                      }}
+                                      className="rounded-md p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
+                                      title="Edit comment"
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                    </button>
+                                    <button
+                                      onClick={() => sendPreviewComments([draft])}
+                                      className="rounded-md p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-highlight)_12%,transparent)] hover:text-[var(--color-highlight)]"
+                                      title="Send this comment"
+                                    >
+                                      <Send className="h-3 w-3" />
+                                    </button>
+                                    <button
+                                      onClick={() => removePreviewCommentDraft(draft.id)}
+                                      className="rounded-md p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)] hover:text-[var(--color-error)]"
+                                      title="Remove"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {activeComposerPanel === "auth" && activeAuthMessage && (
+                        <AuthRequiredPanel
+                          message={activeAuthMessage}
+                          index={activeAuthMessageIndex}
+                          agentLabel={agentLabel}
+                          onAuthLogin={handleAuthLogin}
+                          onAuthRetry={handleAuthRetry}
+                          projectId={projectId}
+                          taskId={taskId}
+                          chatId={activeChatId ?? undefined}
+                          onTerminalEnd={handleAuthTerminalEnd}
+                        />
+                      )}
+
+                      {activeComposerPanel === "permission" &&
+                        activePermissionMessage && (
+                          orbitShell
+                            ? <OrbitPermissionRequest key={activePermissionMessage.id} message={activePermissionMessage} onRespond={handlePermissionResponse} />
+                            : <PermissionCard key={activePermissionMessage.id} message={activePermissionMessage} onRespond={handlePermissionResponse} composer isPhoneLayout={isPhoneLayout} />
+                        )}
+                      {activeComposerPanel === "ask_form" &&
+                        activeSurveyMessage && (
+                          activeSurveyMessage.type === "ask_form" ? (
+                            <FormPill
+                              key={activeSurveyMessage.id}
+                              definition={activeSurveyMessage.definition}
+                              disabled={!isConnected}
+                              onSubmit={({ markdown }) => {
+                                sendFormResponse(markdown);
+                                resolveAskForm(activeSurveyMessage.id);
+                              }}
+                              onDismiss={() => resolveAskForm(activeSurveyMessage.id)}
+                            />
+                          ) : activeSurveyMessage.snapshot.request.mode === "form" ? (
+                            (() => {
+                              const definition = elicitationToSurvey(activeSurveyMessage.snapshot);
+                              return definition ? (
+                                <FormPill
+                                  key={activeSurveyMessage.id}
+                                  definition={definition}
+                                  agentName={activeSurveyMessage.snapshot.agent_name}
+                                  requestMessage={activeSurveyMessage.snapshot.request.message}
+                                  disabled={!isConnected}
+                                  externalError={activeSurveyMessage.error}
+                                  onChange={() => clearElicitationError(activeSurveyMessage.id)}
+                                  onSubmit={({ answers }) => respondElicitation(
+                                    activeSurveyMessage.id,
+                                    "accept",
+                                    answers,
+                                  )}
+                                  onDecline={() => respondElicitation(activeSurveyMessage.id, "decline")}
+                                  onDismiss={() => respondElicitation(activeSurveyMessage.id, "cancel")}
+                                />
+                              ) : (
+                                <div className="space-y-3 text-sm text-[var(--color-text)]">
+                                  <p>This Agent requested a form Grove cannot safely display.</p>
+                                  <Button variant="ghost" size="sm" onClick={() => respondElicitation(activeSurveyMessage.id, "cancel")}>Cancel</Button>
+                                </div>
+                              );
+                            })()
+                          ) : (
+                            <ElicitationUrlPill
+                              key={activeSurveyMessage.id}
+                              agentName={activeSurveyMessage.snapshot.agent_name}
+                              message={activeSurveyMessage.snapshot.request.message}
+                              url={activeSurveyMessage.snapshot.request.url ?? ""}
+                              opened={!!activeSurveyMessage.snapshot.opened}
+                              disabled={!isConnected && !activeSurveyMessage.snapshot.opened}
+                              onOpen={() => {
+                                const url = activeSurveyMessage.snapshot.request.url;
+                                if (!url) return;
+                                openExternalUrl(url);
+                                if (!activeSurveyMessage.snapshot.opened) {
+                                  respondElicitation(activeSurveyMessage.id, "accept");
+                                }
+                              }}
+                              onDecline={() => respondElicitation(activeSurveyMessage.id, "decline")}
+                              onCancel={() => respondElicitation(activeSurveyMessage.id, "cancel")}
+                            />
+                          )
+                        )}
+                    </div>
+  );
+
+  // Composer pieces shared by the Workbench bubble and the Orbit composer.
+  const composerDropOverlay = isDragging && (
+                  <div className="chatbox-drop-overlay" aria-hidden>
+                    <div className="chatbox-drop-overlay-inner">
+                      <Paperclip className="w-4 h-4" />
+                      <span>{dragFileCount > 1 ? `Drop ${dragFileCount} files` : "Drop to mention this file"}</span>
+                    </div>
+                  </div>
+  );
+  const agentVoiceControl = (
+                      <div className="agent-voice-menu-root relative shrink-0" ref={agentVoiceMenuRef}>
+                        <div className={`inline-flex h-7 items-center overflow-hidden rounded-full border border-transparent bg-[var(--color-bg)] transition-colors ${agentVoiceState.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                          <button
+                            type="button"
+                            onClick={() => setShowAgentVoiceMenu((visible) => !visible)}
+                            disabled={!isConnected}
+                            aria-pressed={agentVoiceState.enabled}
+                            aria-label={agentVoiceState.enabled
+                              ? `Agent Voice enabled with ${activeSpeakingProfile?.name ?? "selected profile"}`
+                              : "Configure Agent Voice for this Session"}
+                            className={`inline-flex h-full min-w-0 items-center justify-center gap-1.5 transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-45 ${agentVoiceState.enabled ? "max-w-36 px-2" : "w-7 px-0"}`}
+                            title={agentVoiceState.enabled
+                              ? `Agent Voice: ${activeSpeakingProfile?.name ?? "On"}`
+                              : "Agent Voice"}
+                          >
+                            {agentVoicePlayback === "queued" ? (
+                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-highlight)]" />
+                            ) : agentVoicePlayback === "playing" ? (
+                              <AudioWaveform className="h-3.5 w-3.5 shrink-0 animate-pulse text-[var(--color-highlight)]" strokeWidth={2} />
+                            ) : agentVoiceState.enabled && activeSpeakingProfile ? (
+                              <VoiceIdentityIcon kind="profile" id={activeSpeakingProfile.id} size="xs" />
+                            ) : (
+                              <AudioWaveform className="h-3.5 w-3.5" strokeWidth={1.8} />
+                            )}
+                            {agentVoiceState.enabled && (
+                              <span className="min-w-0 truncate text-xs font-medium">
+                                {agentVoicePlayback === "queued" ? "Preparing…" : activeSpeakingProfile?.name ?? "Voice"}
+                              </span>
+                            )}
+                          </button>
+                          {agentVoicePlayback === "playing" && activeChatId && (
+                            <button
+                              type="button"
+                              aria-label="Stop Agent Voice playback"
+                              title="Stop speaking"
+                              onClick={() => {
+                                cancelAgentVoiceForSession(activeChatId);
+                                setShowAgentVoiceMenu(false);
+                              }}
+                              className="flex h-4 w-7 shrink-0 items-center justify-center border-l border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-error)]"
+                            >
+                              <Square className="h-2.5 w-2.5 fill-current" />
+                            </button>
+                          )}
+                        </div>
+                        {showAgentVoiceMenu && (
+                          <div data-agent-voice-menu className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-xl">
+                            <div className="border-b border-[var(--color-border)] px-3 py-2.5">
+                              <div className="text-xs font-semibold text-[var(--color-text)]">Agent Voice</div>
+                              <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">Session-specific voice output</div>
+                            </div>
+                            <div className="max-h-64 overflow-y-auto p-1.5">
+                              {speakingProfiles.length === 0 ? (
+                                <div className="px-3 py-4 text-center">
+                                  <div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]">
+                                    <AudioWaveform className="h-4 w-4" strokeWidth={1.8} />
+                                  </div>
+                                  <div className="mt-2 text-xs font-medium text-[var(--color-text)]">No Speaking Profiles</div>
+                                  <div className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">Create a voice setup before enabling Agent Voice.</div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowAgentVoiceMenu(false);
+                                      window.sessionStorage.setItem("grove:ai-settings-tab", "agent_voice");
+                                      window.dispatchEvent(new CustomEvent("grove:open-ai-settings"));
+                                    }}
+                                    className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text)] transition-colors hover:border-[var(--color-highlight)] hover:text-[var(--color-highlight)]"
+                                  >
+                                    Configure Agent Voice
+                                  </button>
+                                </div>
+                              ) : speakingProfiles.map((profile) => (
+                                <button
+                                  key={profile.id}
+                                  type="button"
+                                  onClick={() => {
+                                    updateAgentVoiceState({ enabled: true, speakingProfileId: profile.id });
+                                    setShowAgentVoiceMenu(false);
+                                  }}
+                                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${agentVoiceState.enabled && profile.id === agentVoiceState.speakingProfileId ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]" : "text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]"}`}
+                                >
+                                  <VoiceIdentityIcon kind="profile" id={profile.id} size="xs" />
+                                  <span className="min-w-0 flex-1 truncate">{profile.name}</span>
+                                  <span className="text-[10px] text-[var(--color-text-muted)]">{profile.maxCharacters} chars</span>
+                                </button>
+                              ))}
+                            </div>
+                            {agentVoiceState.enabled && (
+                              <div className="border-t border-[var(--color-border)] p-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    updateAgentVoiceState({ enabled: false, speakingProfileId: agentVoiceState.speakingProfileId });
+                                    setShowAgentVoiceMenu(false);
+                                  }}
+                                  className="w-full rounded-lg px-2.5 py-2 text-left text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
+                                >
+                                  Turn off for this Session
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+  );
+  const composerAttachments = (
+    <>
+                {editingPendingId && pendingEditError && (
+                  <div role="alert" className="mb-2 break-words px-3 text-xs text-[var(--color-error)]">
+                    {pendingEditError}
+                  </div>
+                )}
+
+                {attachments.length > 0 && (
+                  <div className="mb-2 flex gap-2 flex-wrap select-none">
+                    {attachments.map((att, i) => (
+                      <div
+                        key={i}
+                        className="group relative flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 pr-7 max-w-full"
+                      >
+                        {att.type === "image" && att.previewUrl ? (
+                          <img
+                            src={att.previewUrl}
+                            className="w-8 h-8 object-cover rounded-md border border-[var(--color-border)] shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                            alt={att.label}
+                            title={att.label}
+                            onClick={() => setLightboxUrl(att.previewUrl!)}
+                          />
+                        ) : att.type === "audio" ? (
+                          <div className="w-8 h-8 rounded-md border border-[var(--color-border)] flex items-center justify-center bg-[var(--color-bg-tertiary)] shrink-0">
+                            <Mic className="w-4 h-4 text-[var(--color-text-muted)]" />
+                          </div>
+                        ) : att.type === "resource" ? (
+                          <div className="w-8 h-8 rounded-md border border-[var(--color-border)] flex items-center justify-center bg-[var(--color-bg-tertiary)] shrink-0">
+                            <Paperclip className="w-4 h-4 text-[var(--color-text-muted)]" />
+                          </div>
+                        ) : null}
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-[var(--color-text)] truncate max-w-40">
+                            {att.label}
+                          </div>
+                          <div className="text-[10px] text-[var(--color-text-muted)] truncate max-w-40">
+                            {att.name}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => removeAttachment(i)}
+                          disabled={isSavingPendingEdit}
+                          className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-error)] text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+    </>
+  );
+  const composerEditor = (
+                <div
+                  className={`relative flex ${isTerminalMode ? "items-start" : ""}`}
+                >
+                  {isTerminalMode && (
+                    <span className="shrink-0 pl-4 pt-2 text-sm leading-7 font-mono text-[var(--color-text-muted)] select-none">
+                      $&nbsp;
+                    </span>
+                  )}
+                  <div className="relative flex-1">
+                    {!hasContent && !isInputFocused && (
+                      <div
+                        className={`pointer-events-none absolute top-2 text-sm leading-7 text-[var(--color-text-muted)] select-none ${
+                          isTerminalMode ? "left-0 right-4" : "left-4 right-4"
+                        }`}
+                      >
+                        {isPhoneLayout
+                          ? `Message ${agentLabel}…`
+                          : activePermissionMessage
+                            ? "Handle permission above to continue"
+                            : !isConnected
+                              ? "Waiting for connection..."
+                              : isTerminalMode
+                                ? "Enter shell command\u2026"
+                                : isBusy
+                                  ? orbitShell ? "Add a follow-up \u2014 it queues until this turn ends" : "Queue a message\u2026"
+                                  : "Ask anything… use @ for mentions, / for commands"}
+                      </div>
+                    )}
+                    <div
+                      ref={editableRef}
+                      contentEditable={
+                        !isRemoteSession && !activePermissionMessage && !isSavingPendingEdit
+                      }
+                      suppressContentEditableWarning
+                      onInput={handleInput}
+                      onKeyDown={handleKeyDown}
+                      onMouseDown={handleEditableMouseDown}
+                      onFocus={() => setIsInputFocused(true)}
+                      onBlur={() => setIsInputFocused(false)}
+                      onPaste={handlePaste}
+                      onCompositionStart={() => {
+                        composingRef.current = true;
+                      }}
+                      onCompositionEnd={() => {
+                        composingRef.current = false;
+                        handleInput();
+                      }}
+                      className={`overflow-y-auto py-2 text-sm leading-6 text-[var(--color-text)] focus:outline-none flex-1 ${
+                        isTerminalMode ? "pr-4" : "px-4"
+                      } ${
+                        isInputExpanded
+                          ? "min-h-[32vh] max-h-[56vh]"
+                          : "min-h-[56px] max-h-32"
+                      } ${isRemoteSession || activePermissionMessage ? "opacity-50 cursor-not-allowed" : ""} ${
+                        isTerminalMode ? "font-mono" : ""
+                      }`}
+                      style={{
+                        overflowWrap: "anywhere",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    />
+                  </div>
+                </div>
+  );
+  const orbitTrayBody = orbitActiveTray === "plan" ? (
+    <>
+      <OrbitTrayHead title="Plan" detail={hasTodoPanel ? `${planEntries.filter((entry) => entry.status === "completed").length} of ${planEntries.length} done` : nativePlans.length === 0 && planFileContent ? planFilePath.split("/").pop() : undefined} onClose={() => setOrbitTray(null)}>
+        {nativePlans.length === 0 && !!planFileContent && (
+          <button type="button" className="oc-tray-action" onClick={handleSavePlanToNote} disabled={isSavingToNote} title="Save plan to task note">
+            {isSavingToNote ? <Loader2 className="animate-spin" /> : saveToNoteDone ? <CheckCircle2 /> : <Bookmark />}
+            {saveToNoteDone ? "Saved" : "Save to note"}
+          </button>
+        )}
+      </OrbitTrayHead>
+      {hasTodoPanel && <OrbitPlanSteps entries={displayedPlanEntries} />}
+      {hasPlanPanel && (
+        <div className={hasTodoPanel ? "oc-tray-section" : "oc-tray-pad"}>
+          {nativePlans.length > 0 ? planDocumentBody : (
+            <div className="ocv-prose">
+              <MarkdownRenderer content={planFileContent} onFileClick={onNavigateToFile} onMermaidClick={setLightboxSvg} onD2Click={setLightboxSvg} onImageClick={setLightboxUrl} sketchContext={isStudioProject ? { projectId, taskId } : undefined} />
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  ) : orbitActiveTray === "queue" ? (
+    <OrbitQueueTray
+      mode={queueMode}
+      onModeChange={handleSetQueueMode}
+      error={editingPendingId ? pendingEditError : null}
+      onClose={() => setOrbitTray(null)}
+      rows={pendingQueueRows.map((msg, i) => ({
+        key: pendingMessageKeys[i] ?? `idx-${i}`,
+        failed: msg.input?.status === "failed",
+        title: msg.input?.error ?? msg.text,
+        text: msg.text || (msg.attachments?.length === 1
+          ? msg.attachments[0].name || msg.attachments[0].label || "Attachment"
+          : msg.attachments?.every((attachment) => attachment.type === "image") && msg.attachments.length > 0
+            ? `${msg.attachments.length} images`
+            : `${msg.attachments?.length ?? 0} attachments`),
+        attachments: msg.attachments?.length ? <PendingQueueAttachments attachments={msg.attachments} onImageClick={setLightboxUrl} /> : undefined,
+        actions: editingPendingId === msg.id ? (
+          <>
+            <span className="oc-row-badge">{isSavingPendingEdit ? "Saving…" : "Editing"}</span>
+            <button type="button" className="oc-text-btn" onClick={handleCancelPendingEdit} disabled={isSavingPendingEdit}>Cancel</button>
+            <button type="button" className="oc-text-btn is-danger" onClick={() => handleDeletePending(msg.id)} disabled={isSavingPendingEdit || !isConnected}>Delete</button>
+          </>
+        ) : msg.input && (msg.input.status !== "accepted" || !msg.input.serverQueued) ? renderPendingInputActions(msg.input, true) : (
+          <>
+            {msg.id === pendingMessages[0]?.id && (
+              <button type="button" className="oc-icon-btn" onClick={() => handleSendNow()} disabled={isCancelling || !!editingPendingId} title={isCancelling ? "Cancelling…" : "Send now"} aria-label="Send now">
+                {isCancelling ? <Loader2 className="animate-spin" /> : <Send />}
+              </button>
+            )}
+            <button type="button" className="oc-icon-btn" onClick={() => handleEditPending(msg)} disabled={!isConnected || !msg.id || !!editingPendingId} title="Edit" aria-label="Edit queued message"><Pencil /></button>
+            <button type="button" className="oc-icon-btn is-danger" onClick={() => handleDeletePending(msg.id)} title="Delete" aria-label="Delete queued message"><Trash2 /></button>
+          </>
+        ),
+      }))}
+    />
+  ) : orbitActiveTray === "comments" ? (
+    <OrbitCommentsTray drafts={taskPreviewCommentDrafts} onUpdate={updatePreviewCommentDraft} onSend={sendPreviewComments} onRemove={removePreviewCommentDraft} onClose={() => setOrbitTray(null)} />
+  ) : orbitActiveTray === "memory" ? (
+    <OrbitMemoryTray memories={readMemories} onClose={() => setOrbitTray(null)} />
+  ) : orbitActiveTray && orbitActiveTray !== "ask" ? composerPanelBody : null;
+  const orbitComposerTools = orbitShell ? (
+    <>
+      {!activePermissionMessage && (promptCaps.image || promptCaps.audio) && (
+        <button type="button" className="oc-tool" onClick={() => fileInputRef.current?.click()} disabled={isSavingPendingEdit} title="Attach file" aria-label="Attach file">
+          <Paperclip />
+        </button>
+      )}
+      {!isTerminalLaunchMode && !isViewingArchived && agentVoiceControl}
+      {!isPhoneLayout && <button
+        type="button"
+        className="oc-tool"
+        onClick={() => {
+          setIsInputExpanded((v) => {
+            if (!v) {
+              setShowPlan(false);
+              setShowPlanFile(false);
+            }
+            return !v;
+          });
+          setTimeout(() => editableRef.current?.focus(), 0);
+        }}
+        title={isInputExpanded ? "Collapse input (Esc)" : "Expand input"}
+        aria-label={isInputExpanded ? "Collapse input" : "Expand input"}
+      >
+        {isInputExpanded ? <Minimize2 /> : <Maximize2 />}
+      </button>}
+      {isTerminalMode && <span className="oc-tag is-shell"><Terminal className="h-3 w-3" />Shell</span>}
+    </>
+  ) : null;
+  // Only while typing; the permanent "Enter send" label is gone.
+  const orbitComposerHint = hasContent && isInputFocused && !activePermissionMessage
+    ? isInputExpanded ? "⌘⏎ send · ⏎ newline" : `⏎ ${isBusy && !editingPendingId ? "queue" : "send"} · ⇧⏎ newline`
+    : null;
+  // One button for send and stop — same cases as the Workbench buttons.
+  const orbitOrbAction = resolveOrbAction({ editing: !!editingPendingId, permissionPending: !!activePermissionMessage, busy: isBusy, hasContent, pendingCount: pendingMessages.length });
+  const orbitOrbDisabled = orbitOrbAction === "save"
+    ? !hasContent || !isConnected || isSavingPendingEdit || pendingEditImporting || pendingEditGone || !!activePermissionMessage
+    : orbitOrbAction === "send"
+      ? !isConnected && (isTerminalLaunchMode || isTerminalMode)
+      : orbitOrbAction === "stop" || orbitOrbAction === "sendNow" ? isCancelling : false;
+  const orbitOrbBusy = orbitOrbAction === "save" ? isSavingPendingEdit : (orbitOrbAction === "stop" || orbitOrbAction === "sendNow") && isCancelling;
+
   // ─── Full chat view ──────────────────────────────────────────────────────
 
+  // Orbit's session menu: one item set, shown both on the sidebar row
+  // (portaled into its slot) and at the right end of the chat header.
+  const orbitSessionMenu = orbitHeader && activeChat && !isViewingArchived ? (
+        <SessionActionsMenu
+          surface="orbit" chatId={activeChat.id} forkCapable={forkCapable} importCapable={importCapable}
+          importSessions={importSessions} importLoading={importLoading} importNextCursor={importNextCursor}
+          authMethods={authMethods} logoutCapable={logoutCapable}
+          refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+          reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+          actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
+          deleteDisabled={false} archiveDisabled={isBusy}
+          onFork={handleForkChat} onOpenImport={() => { if (importSessions.length === 0) void loadImportSessions(); }}
+          onLoadMoreImport={() => { if (importNextCursor) void loadImportSessions(importNextCursor); }}
+          onImport={(session) => void handleImportSession(session)} onLogin={handleMenuLogin} onLogout={handleLogout}
+          onRefresh={() => void handleRefresh()} onReconnect={handleReconnect} onDelete={requestDeleteChat}
+          onArchive={(chatId) => void handleArchiveChat(chatId)}
+          onRename={() => window.dispatchEvent(new CustomEvent("grove:orbit-rename-session", { detail: { projectId, taskId, chatId: activeChat.id, name: activeChat.title || "Untitled session" } }))}
+        />
+  ) : null;
+
   return (
+    <OrbitConversationContext.Provider value={orbitComposer}>
+    <SentPopContext.Provider value={orbitShell ? sentPops : null}>
     <ToolTimelineExpansionContext.Provider value={timelineExpansion}>
     <motion.div
       ref={taskChatRootRef}
@@ -10761,24 +11781,7 @@ export function TaskChat({
         }
       }}
     >
-      {orbitHeader && activeChat && !isViewingArchived && orbitMenuTarget && createPortal(
-        <SessionActionsMenu
-          surface="orbit" chatId={activeChat.id} forkCapable={forkCapable} importCapable={importCapable}
-          importSessions={importSessions} importLoading={importLoading} importNextCursor={importNextCursor}
-          authMethods={authMethods} logoutCapable={logoutCapable}
-          refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
-          reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
-          actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
-          deleteDisabled={false} archiveDisabled={isBusy}
-          onFork={handleForkChat} onOpenImport={() => { if (importSessions.length === 0) void loadImportSessions(); }}
-          onLoadMoreImport={() => { if (importNextCursor) void loadImportSessions(importNextCursor); }}
-          onImport={(session) => void handleImportSession(session)} onLogin={handleMenuLogin} onLogout={handleLogout}
-          onRefresh={() => void handleRefresh()} onReconnect={handleReconnect} onDelete={requestDeleteChat}
-          onArchive={(chatId) => void handleArchiveChat(chatId)}
-          onRename={() => window.dispatchEvent(new CustomEvent("grove:orbit-rename-session", { detail: { projectId, taskId, chatId: activeChat.id, name: activeChat.title || "Untitled session" } }))}
-        />,
-        orbitMenuTarget,
-      )}
+      {orbitSessionMenu && orbitMenuTarget && createPortal(orbitSessionMenu, orbitMenuTarget)}
       {chatSearchOpen && (
         <PreviewSearchBar
           query={chatSearchQuery}
@@ -11085,6 +12088,7 @@ export function TaskChat({
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
+              {orbitSessionMenu && <div className="ml-0.5 shrink-0">{orbitSessionMenu}</div>}
             </div>
           </div>
         </div>
@@ -11394,7 +12398,8 @@ export function TaskChat({
 
         <div
           ref={messagePaneRef}
-          className="task-chat-message-pane relative min-h-0 min-w-0 flex-1"
+          className={`task-chat-message-pane relative min-h-0 min-w-0 flex-1${orbitComposer ? " ocv" : ""}`}
+          data-sent-pop-pane={orbitComposer || undefined}
           onWheelCapture={handleChatWheelCapture}
           onPointerDownCapture={handleChatPointerDownCapture}
         >
@@ -11416,11 +12421,19 @@ export function TaskChat({
               </div>
             </div>
           )}
+          {orbitComposer ? (
+            <OrbitTurnRail
+              turns={conversationTurns}
+              activeMessageIndex={minimapActiveMessageIndex}
+              onNavigate={navigateToConversationTurn}
+            />
+          ) : (
           <ConversationMinimap
             turns={conversationTurns}
             activeMessageIndex={minimapActiveMessageIndex}
             onNavigate={navigateToConversationTurn}
           />
+          )}
           {/* Terminal launch mode: agent CLI runs in xterm.js (PTY).
               Chatbox input still writes lines to PTY stdin via handleSend. */}
           {!isReadOnlyHistory && isTerminalLaunchMode && agentPtyWsUrl ? (
@@ -11553,6 +12566,7 @@ export function TaskChat({
           ) : (
           <div
             ref={inputAreaRef}
+            data-sent-pop-cover={orbitComposer || undefined}
             onPointerDownCapture={markComposerInteraction}
             onFocusCapture={markComposerInteraction}
             className={`task-chat-input-area pointer-events-none absolute inset-x-0 z-10 px-3 pt-2 ${showMobileComposerPill ? "pb-2" : "pb-4"}`}
@@ -11562,7 +12576,9 @@ export function TaskChat({
                 : "max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom))",
             }}
           >
-            {!showMobileComposerPill && (
+            {orbitComposer ? (
+              <div className="ocv-fade" aria-hidden="true" />
+            ) : !showMobileComposerPill && (
               <div className="task-chat-input-scrim pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
             )}
 
@@ -11637,7 +12653,7 @@ export function TaskChat({
                 ? { type: "spring", stiffness: 390, damping: 34, mass: 0.82 }
                 : { duration: 0 }}
               aria-hidden={showMobileComposerPill || undefined}
-              className={`chatbox-cq-root mx-auto w-full max-w-[920px] ${isPhoneLayout ? "task-chat-mobile-composer" : ""}${orbitPhone ? " is-orbit-phone" : ""} ${showMobileComposerPill ? "mobile-composer-expanded-hidden pointer-events-none absolute inset-x-0 bottom-0" : "pointer-events-auto relative"}`}
+              className={`chatbox-cq-root mx-auto w-full max-w-[920px] ${isPhoneLayout && !orbitShell ? "task-chat-mobile-composer" : ""}${orbitPhone && !orbitShell ? " is-orbit-phone" : ""}${orbitPhoneShell ? " oc-phone-dock" : ""} ${showMobileComposerPill ? "mobile-composer-expanded-hidden pointer-events-none absolute inset-x-0 bottom-0" : "pointer-events-auto relative"}`}
             >
               {isRemoteSession && (
                 <div className="absolute inset-x-0 bottom-full z-20 mb-3">
@@ -11664,7 +12680,7 @@ export function TaskChat({
                   </div>
                 </div>
               )}
-              <ChatComposerPanel
+              {!orbitShell && <ChatComposerPanel
                     open={composerPanelOpen}
                     mobileSheet={isPhoneLayout && !mobileActionPanelOpen}
                     title={mobileComposerPanelTitles[requestedMobilePanel ?? "pending"]}
@@ -11672,493 +12688,8 @@ export function TaskChat({
                     onSheetClosed={closeMobileDetails}
                     className={`mb-3 overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_92%,transparent)] shadow-[0_12px_32px_rgba(0,0,0,0.14)] backdrop-blur-md ${mobileActionPanelOpen ? `mobile-action-sheet mobile-action-sheet-${activeComposerPanel}` : ""}`}
                   >
-                    <div className={`${activeComposerPanel === "permission" ? "flex max-h-[min(360px,48vh)] flex-col overflow-hidden" : mobileDetailsPanelOpen ? "mobile-composer-sheet-content" : activeComposerPanel === "subagents" && selectedSubagentId ? "max-h-[min(560px,58vh)] overflow-y-auto overscroll-contain" : "max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain"} ${activeComposerPanel === "previewComments" || activeComposerPanel === "subagents" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
-                      {activeComposerPanel === "quota" && (
-                        agentQuota ? <AgentQuotaCard usage={agentQuota} refreshing={quotaRefreshing} onRefresh={refreshAgentQuota} /> : <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">Quota data is unavailable.</p>
-                      )}
-                      {activeComposerPanel === "context" && (
-                        contextUsage && contextUsage.size > 0 ? <ContextUsageDetails usage={contextUsage} hasCompactCommand={hasCompactCommand} onCompact={() => { closeMobileDetails(); handleCompact(); }} /> : <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">Context usage is unavailable.</p>
-                      )}
-                      {activeComposerPanel === "todo" && (
-                        <div className="space-y-1">
-                          {displayedPlanEntries.length === 0 && <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">No todos.</p>}
-                          {displayedPlanEntries.map((entry, i) => (
-                            <div
-                              key={`${entry.priority ?? "legacy"}:${entry.content}:${i}`}
-                              className={`flex items-center gap-2 rounded-md px-1.5 py-1 text-sm ${
-                                entry.status === "in_progress"
-                                  ? "bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)]"
-                                  : ""
-                              }`}
-                            >
-                              {entry.status === "completed" ? (
-                                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[var(--color-success)]" />
-                              ) : entry.status === "in_progress" ? (
-                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-highlight)]" />
-                              ) : (
-                                <Circle className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
-                              )}
-                              <span
-                                className={`min-w-0 flex-1 ${
-                                  entry.status === "completed"
-                                    ? "text-[var(--color-text-muted)] line-through"
-                                    : entry.status === "in_progress"
-                                      ? "font-medium text-[var(--color-highlight)]"
-                                      : "text-[var(--color-text)]"
-                                }`}
-                              >
-                                {entry.content}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {activeComposerPanel === "memory" && (
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2 px-0.5">
-                            <Database className="h-3.5 w-3.5 text-[var(--color-highlight)]" />
-                            <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                              Read Memory · {readMemories.length}
-                            </div>
-                          </div>
-                          <div className="space-y-1.5">
-                            {readMemories.map((memory) => (
-                              <div
-                                key={memory.entity_id}
-                                className="rounded-xl border border-[color-mix(in_srgb,var(--color-border)_65%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_72%,transparent)] px-3 py-2.5"
-                              >
-                                <div className="flex min-w-0 items-start justify-between gap-3">
-                                  <div className="min-w-0 text-sm font-medium leading-5 text-[var(--color-text)]">
-                                    {memory.title}
-                                  </div>
-                                  <span
-                                    className="max-w-28 shrink-0 truncate font-mono text-[9px] text-[var(--color-text-muted)] opacity-60"
-                                    title={memory.entity_id}
-                                  >
-                                    {memory.entity_id}
-                                  </span>
-                                </div>
-                                {memory.tags.length > 0 && (
-                                  <div className="mt-2 flex flex-wrap gap-1">
-                                    {memory.tags.map((tag) => (
-                                      <span
-                                        key={`${tag.key}:${tag.value}`}
-                                        title={`${tag.key}: ${tag.value}`}
-                                        className="rounded-full bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)] px-1.5 py-0.5 text-[9px] text-[var(--color-highlight)]"
-                                      >
-                                        {tag.value}
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {activeComposerPanel === "plan" && (nativePlans.length > 0 ? (
-                        <PlanDocumentsPanel key={activeChatId} plans={nativePlans} allowLocalFiles={!isRemoteSession} onFileClick={onNavigateToFile} fileContext={{ projectId, taskId }} markdownProps={{ onImageClick: setLightboxUrl, onMermaidClick: setLightboxSvg, onD2Click: setLightboxSvg, sketchContext: isStudioProject ? { projectId, taskId } : undefined }} />
-                      ) : (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <div className="text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                              {planFilePath.split("/").pop()}
-                            </div>
-                            <button
-                              onClick={handleSavePlanToNote}
-                              disabled={isSavingToNote}
-                              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
-                              title="Save plan to task note"
-                            >
-                              {isSavingToNote ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : saveToNoteDone ? (
-                                <CheckCircle2 className="h-3 w-3" />
-                              ) : (
-                                <Bookmark className="h-3 w-3" />
-                              )}
-                              <span>{saveToNoteDone ? "Saved" : "Save To Note"}</span>
-                            </button>
-                          </div>
-                          <MarkdownRenderer
-                            content={planFileContent}
-                            onFileClick={onNavigateToFile}
-                            onMermaidClick={setLightboxSvg}
-                            onD2Click={setLightboxSvg}
-                            onImageClick={setLightboxUrl}
-                            sketchContext={isStudioProject ? { projectId, taskId: taskId } : undefined}
-                          />
-                        </div>
-                      ))}
-
-                      {activeComposerPanel === "subagents" && (
-                        <SubagentsPanel
-                          agents={subagents} selectedId={selectedSubagentId} connected={isConnected}
-                          onSelect={(id) => setSubagentSelection({ chatId: activeChatId ?? null, id })}
-                          onClose={() => { setShowSubagents(false); closeMobileDetails(); }}
-                          onCancel={isRemoteSession ? undefined : (sessionId) => { if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: "cancel_subagent", session_id: sessionId })); }}
-                          onOpenRequest={(kind) => { closeMobileDetails(); setShowSubagents(false); setShowPermissionPanel(kind === "permission"); setShowFormPanel(kind === "elicitation"); }}
-                          renderActivity={(agent) => (
-                            <MessageItem message={agent} index={0} isBusy={isBusy} subagentDetail subagentConnected={isConnected} planFilesLocal={!isRemoteSession} onOpenSubagent={openSubagentPanel}
-                              agentLabel={agentLabel} projectId={projectId} taskId={taskId} activeChatId={activeChatId ?? undefined}
-                              previewCommentDrafts={[]} onAddPreviewComment={addPreviewCommentDraft} onUpdatePreviewComment={updatePreviewCommentDraft} onRemovePreviewComment={removePreviewCommentDraft}
-                              isStudio={isStudioProject} onPermissionResponse={handlePermissionResponse} onFileClick={onNavigateToFile} onImageClick={setLightboxUrl} onMermaidClick={setLightboxSvg} onD2Click={setLightboxSvg} onInsertReference={insertAttachmentReference} />
-                          )}
-                        />
-                      )}
-
-                      {activeComposerPanel === "pending" && (
-                        <div>
-                          <div className={`flex items-center gap-2 px-0.5 ${isPhoneLayout ? "min-h-10" : "h-5"}`}>
-                            <div className="text-[9px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)] opacity-55">
-                              Pending · {pendingQueueRows.length}
-                            </div>
-                            <div className="ml-auto inline-flex items-center gap-2 text-[9px]">
-                              {(
-                                [
-                                  {
-                                    id: "separate" as const,
-                                    label: "Separate",
-                                    title: "Send queued messages one at a time",
-                                  },
-                                  {
-                                    id: "compact" as const,
-                                    label: "Compact",
-                                    title: "Merge all queued messages into one when auto-sent",
-                                  },
-                                ]
-                              ).map((opt) => (
-                                <button
-                                  key={opt.id}
-                                  onClick={() => handleSetQueueMode(opt.id)}
-                                  title={opt.title}
-                                  className={`rounded px-1 py-0.5 transition-colors ${
-                                    queueMode === opt.id
-                                      ? "text-[var(--color-highlight)]"
-                                      : "text-[var(--color-text-muted)] opacity-60 hover:opacity-100"
-                                  }`}
-                                >
-                                  {opt.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                          {pendingQueueRows.length === 0 && <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">No pending messages.</p>}
-                          {pendingQueueRows.map((msg, i) => (
-                            <div
-                              key={pendingMessageKeys[i] ?? `idx-${i}`}
-                              className={`flex items-center gap-2 rounded-lg px-0.5 text-sm transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_3%,transparent)] ${isPhoneLayout ? "min-h-12 py-2" : "min-h-7"}`}
-                            >
-                              <span className="w-4 shrink-0 text-right text-xs text-[var(--color-text-muted)]">
-                                {i + 1}
-                              </span>
-                              <>
-                                  <PendingQueueAttachments
-                                    attachments={msg.attachments ?? []}
-                                    onImageClick={setLightboxUrl}
-                                  />
-                                  <span
-                                    className={`flex-1 min-w-0 text-[var(--color-text)] ${isPhoneLayout ? "whitespace-pre-wrap break-words leading-5" : "truncate"}`}
-                                    title={msg.input?.error ?? msg.text}
-                                  >
-                                    {msg.text || (msg.attachments?.length === 1
-                                      ? msg.attachments[0].name || msg.attachments[0].label || "Attachment"
-                                      : msg.attachments?.every((attachment) => attachment.type === "image") && msg.attachments.length > 0
-                                        ? `${msg.attachments.length} images`
-                                        : `${msg.attachments?.length ?? 0} attachments`)}
-                                  </span>
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    {editingPendingId === msg.id ? (
-                                      <>
-                                        <span className="rounded-full bg-[color-mix(in_srgb,var(--color-highlight)_12%,transparent)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-highlight)]">{isSavingPendingEdit ? "Saving…" : "Editing"}</span>
-                                        <button type="button" onClick={handleCancelPendingEdit} disabled={isSavingPendingEdit} className="rounded px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">Cancel</button>
-                                        <button type="button" onClick={() => handleDeletePending(msg.id)} disabled={isSavingPendingEdit || !isConnected} className="rounded px-1.5 py-0.5 text-xs text-[var(--color-error)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">Delete</button>
-                                      </>
-                                    ) : msg.input && (msg.input.status !== "accepted" || !msg.input.serverQueued) ? renderPendingInputActions(msg.input, true) : (
-                                      <>
-                                        {msg.id === pendingMessages[0]?.id && (
-                                          <button
-                                            onClick={() => handleSendNow()}
-                                            disabled={isCancelling || !!editingPendingId}
-                                            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 disabled:cursor-not-allowed"
-                                            title={isCancelling ? "Cancelling…" : "Send Now"}
-                                          >
-                                            {isCancelling ? (
-                                              <Loader2 className="h-3 w-3 animate-spin" />
-                                            ) : (
-                                              <Send className="h-3 w-3" />
-                                            )}
-                                            <span>Now</span>
-                                          </button>
-                                        )}
-                                        <button
-                                          onClick={() => handleEditPending(msg)}
-                                          disabled={!isConnected || !msg.id || !!editingPendingId}
-                                          className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] disabled:opacity-50"
-                                          title="Edit"
-                                        >
-                                          <Pencil className="h-3 w-3" />
-                                        </button>
-                                        <button
-                                          onClick={() => handleDeletePending(msg.id)}
-                                          className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-error)]"
-                                          title="Delete"
-                                        >
-                                          <Trash2 className="h-3 w-3" />
-                                        </button>
-                                      </>
-                                    )}
-                                  </div>
-                              </>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {activeComposerPanel === "previewComments" && (
-                        <div>
-                          <div className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-[color-mix(in_srgb,var(--color-border)_55%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_94%,transparent)] px-3 py-2.5 backdrop-blur-md">
-                            <div className="flex items-center gap-1.5">
-                              <MessageSquarePlus className="h-3.5 w-3.5 text-[var(--color-highlight)]" />
-                              <span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
-                                Comments
-                              </span>
-                              <span className="rounded-full bg-[color-mix(in_srgb,var(--color-highlight)_14%,transparent)] px-1.5 py-px text-[10px] font-medium leading-none text-[var(--color-highlight)]">
-                                {taskPreviewCommentDrafts.length}
-                              </span>
-                            </div>
-                            <button
-                              onClick={() => sendPreviewComments(taskPreviewCommentDrafts)}
-                              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold text-white shadow-sm transition-transform hover:scale-[1.02]"
-                              style={{ background: "var(--color-highlight)" }}
-                            >
-                              <Send className="h-3 w-3" />
-                              Send all
-                            </button>
-                          </div>
-                          <div className="space-y-1.5 px-2.5 py-2.5">
-                            {taskPreviewCommentDrafts.map((draft, idx) => {
-                              const fileLabel = draft.source === "chat"
-                                ? `Conversation · message ${draft.filePath.split("-").pop()}`
-                                : draft.fileName || draft.filePath.split("/").pop() || draft.filePath;
-                              const dir = draft.source === "chat"
-                                ? ""
-                                : draft.filePath.slice(0, Math.max(0, draft.filePath.length - fileLabel.length - 1));
-                              const selectedText = draft.locator.text?.trim();
-                              const contextLabel = selectedText
-                                ? `“${selectedText}”`
-                                : draft.locator.selector || draft.locator.tagName;
-                              const isEditing = editingPreviewCommentId === draft.id;
-                              return (
-                                <div
-                                  key={draft.id}
-                                  className="group relative flex gap-2.5 rounded-xl border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-bg)_75%,transparent)] p-2 pl-2.5 transition-colors hover:border-[color-mix(in_srgb,var(--color-highlight)_40%,var(--color-border))]"
-                                >
-                                  <div
-                                    className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-sm"
-                                    style={{ background: "var(--color-highlight)" }}
-                                    title="Marker shown in preview"
-                                  >
-                                    {idx + 1}
-                                  </div>
-                                  <div className="min-w-0 flex-1">
-                                    {isEditing ? (
-                                      <textarea
-                                        autoFocus
-                                        rows={3}
-                                        value={editingPreviewCommentText}
-                                        onChange={(event) => setEditingPreviewCommentText(event.target.value)}
-                                        onKeyDown={(event) => {
-                                          if (event.key === "Escape") {
-                                            event.preventDefault();
-                                            setEditingPreviewCommentId(null);
-                                            setEditingPreviewCommentText("");
-                                          }
-                                          if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && editingPreviewCommentText.trim()) {
-                                            event.preventDefault();
-                                            updatePreviewCommentDraft(draft.id, { comment: editingPreviewCommentText.trim() });
-                                            setEditingPreviewCommentId(null);
-                                            setEditingPreviewCommentText("");
-                                          }
-                                        }}
-                                        className="w-full resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 text-[12px] leading-snug text-[var(--color-text)] outline-none focus:border-[var(--color-highlight)]"
-                                      />
-                                    ) : (
-                                      <div className="line-clamp-2 whitespace-pre-wrap break-words text-[12px] leading-snug text-[var(--color-text)]">
-                                        {draft.comment}
-                                      </div>
-                                    )}
-                                    <div className="mt-1 flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
-                                      <span className="truncate font-medium text-[var(--color-text)]" title={draft.filePath}>
-                                        {fileLabel}
-                                      </span>
-                                      {dir && (
-                                        <span className="truncate opacity-60" title={draft.filePath}>
-                                          · {dir}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div
-                                      className={`mt-1 line-clamp-2 text-[10px] leading-4 text-[var(--color-text-muted)] opacity-80 ${selectedText ? "" : "font-mono"}`}
-                                      title={contextLabel}
-                                    >
-                                      {contextLabel}
-                                    </div>
-                                    {isEditing && (
-                                      <div className="mt-2 flex items-center justify-end gap-1.5">
-                                        <button
-                                          onClick={() => {
-                                            setEditingPreviewCommentId(null);
-                                            setEditingPreviewCommentText("");
-                                          }}
-                                          className="rounded-md px-2 py-1 text-[10px] font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
-                                        >
-                                          Cancel
-                                        </button>
-                                        <button
-                                          disabled={!editingPreviewCommentText.trim()}
-                                          onClick={() => {
-                                            updatePreviewCommentDraft(draft.id, { comment: editingPreviewCommentText.trim() });
-                                            setEditingPreviewCommentId(null);
-                                            setEditingPreviewCommentText("");
-                                          }}
-                                          className="rounded-md px-2 py-1 text-[10px] font-semibold text-[var(--color-highlight)] hover:bg-[color-mix(in_srgb,var(--color-highlight)_12%,transparent)] disabled:cursor-not-allowed disabled:opacity-40"
-                                        >
-                                          Save
-                                        </button>
-                                        <button
-                                          disabled={!editingPreviewCommentText.trim()}
-                                          onClick={() => {
-                                            const comment = editingPreviewCommentText.trim();
-                                            if (!comment) return;
-                                            setEditingPreviewCommentId(null);
-                                            setEditingPreviewCommentText("");
-                                            sendPreviewComments([{ ...draft, comment }]);
-                                          }}
-                                          className="inline-flex items-center gap-1 rounded-md bg-[var(--color-highlight)] px-2 py-1 text-[10px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-                                        >
-                                          <Send className="h-3 w-3" />
-                                          Send
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                  {!isEditing && <div className="flex shrink-0 items-start gap-1 opacity-70 transition-opacity group-hover:opacity-100">
-                                    <button
-                                      onClick={() => {
-                                        setEditingPreviewCommentId(draft.id);
-                                        setEditingPreviewCommentText(draft.comment);
-                                      }}
-                                      className="rounded-md p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
-                                      title="Edit comment"
-                                    >
-                                      <Pencil className="h-3 w-3" />
-                                    </button>
-                                    <button
-                                      onClick={() => sendPreviewComments([draft])}
-                                      className="rounded-md p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-highlight)_12%,transparent)] hover:text-[var(--color-highlight)]"
-                                      title="Send this comment"
-                                    >
-                                      <Send className="h-3 w-3" />
-                                    </button>
-                                    <button
-                                      onClick={() => removePreviewCommentDraft(draft.id)}
-                                      className="rounded-md p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)] hover:text-[var(--color-error)]"
-                                      title="Remove"
-                                    >
-                                      <X className="h-3 w-3" />
-                                    </button>
-                                  </div>}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {activeComposerPanel === "auth" && activeAuthMessage && (
-                        <AuthRequiredPanel
-                          message={activeAuthMessage}
-                          index={activeAuthMessageIndex}
-                          agentLabel={agentLabel}
-                          onAuthLogin={handleAuthLogin}
-                          onAuthRetry={handleAuthRetry}
-                          projectId={projectId}
-                          taskId={taskId}
-                          chatId={activeChatId ?? undefined}
-                          onTerminalEnd={handleAuthTerminalEnd}
-                        />
-                      )}
-
-                      {activeComposerPanel === "permission" &&
-                        activePermissionMessage && (
-                          <PermissionCard message={activePermissionMessage} onRespond={handlePermissionResponse} composer isPhoneLayout={isPhoneLayout} />
-                        )}
-                      {activeComposerPanel === "ask_form" &&
-                        activeSurveyMessage && (
-                          activeSurveyMessage.type === "ask_form" ? (
-                            <FormPill
-                              key={activeSurveyMessage.id}
-                              definition={activeSurveyMessage.definition}
-                              disabled={!isConnected}
-                              onSubmit={({ markdown }) => {
-                                sendFormResponse(markdown);
-                                resolveAskForm(activeSurveyMessage.id);
-                              }}
-                              onDismiss={() => resolveAskForm(activeSurveyMessage.id)}
-                            />
-                          ) : activeSurveyMessage.snapshot.request.mode === "form" ? (
-                            (() => {
-                              const definition = elicitationToSurvey(activeSurveyMessage.snapshot);
-                              return definition ? (
-                                <FormPill
-                                  key={activeSurveyMessage.id}
-                                  definition={definition}
-                                  agentName={activeSurveyMessage.snapshot.agent_name}
-                                  requestMessage={activeSurveyMessage.snapshot.request.message}
-                                  disabled={!isConnected}
-                                  externalError={activeSurveyMessage.error}
-                                  onChange={() => clearElicitationError(activeSurveyMessage.id)}
-                                  onSubmit={({ answers }) => respondElicitation(
-                                    activeSurveyMessage.id,
-                                    "accept",
-                                    answers,
-                                  )}
-                                  onDecline={() => respondElicitation(activeSurveyMessage.id, "decline")}
-                                  onDismiss={() => respondElicitation(activeSurveyMessage.id, "cancel")}
-                                />
-                              ) : (
-                                <div className="space-y-3 text-sm text-[var(--color-text)]">
-                                  <p>This Agent requested a form Grove cannot safely display.</p>
-                                  <Button variant="ghost" size="sm" onClick={() => respondElicitation(activeSurveyMessage.id, "cancel")}>Cancel</Button>
-                                </div>
-                              );
-                            })()
-                          ) : (
-                            <ElicitationUrlPill
-                              key={activeSurveyMessage.id}
-                              agentName={activeSurveyMessage.snapshot.agent_name}
-                              message={activeSurveyMessage.snapshot.request.message}
-                              url={activeSurveyMessage.snapshot.request.url ?? ""}
-                              opened={!!activeSurveyMessage.snapshot.opened}
-                              disabled={!isConnected && !activeSurveyMessage.snapshot.opened}
-                              onOpen={() => {
-                                const url = activeSurveyMessage.snapshot.request.url;
-                                if (!url) return;
-                                openExternalUrl(url);
-                                if (!activeSurveyMessage.snapshot.opened) {
-                                  respondElicitation(activeSurveyMessage.id, "accept");
-                                }
-                              }}
-                              onDecline={() => respondElicitation(activeSurveyMessage.id, "decline")}
-                              onCancel={() => respondElicitation(activeSurveyMessage.id, "cancel")}
-                            />
-                          )
-                        )}
-                    </div>
-              </ChatComposerPanel>
+                    {composerPanelBody}
+              </ChatComposerPanel>}
 
               <AnimatePresence>
                 {showScrollToBottom && (
@@ -12251,6 +12782,37 @@ export function TaskChat({
                 onChange={handleFileSelect}
               />
 
+              {orbitShell ? (
+                <OrbitConversationContext.Provider value>
+                <OrbitComposer
+                  shellRef={setChatboxContainer}
+                  className="chatbox-bubble"
+                  phone={orbitPhoneShell}
+                  running={isBusy}
+                  dragging={isDragging}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  statusBar={<OrbitStatusBar status={orbitComposerStatus} activeTray={orbitActiveTray} onTrayChange={setOrbitTray} />}
+                  tray={orbitPhoneShell ? null : orbitTrayBody}
+                  ask={orbitActiveTray === "ask" ? composerPanelBody : null}
+                  tools={orbitComposerTools}
+                  hint={orbitPhoneShell ? null : orbitComposerHint}
+                  setup={<OrbitSetupChip agentLabel={agentLabel} agentIconType={AgentIcon} fields={orbitSetup.fields} toggles={orbitSetup.toggles} disabled={!isConnected} sheet={orbitPhoneShell} />}
+                  usage={<OrbitUsageRing contextUsage={contextUsage} quota={agentQuota} quotaRefreshing={quotaRefreshing} onRefreshQuota={refreshAgentQuota} hasCompactCommand={hasCompactCommand} onCompact={handleCompact} sheet={orbitPhoneShell} />}
+                  orb={<OrbitSendOrb action={orbitOrbAction} disabled={orbitOrbDisabled} busy={orbitOrbBusy} onSend={handleSendButtonClick} onStop={handleStopAgent} onSendNow={handleSendNow} onPointerDown={handleSendButtonPointerDown} />}
+                >
+                  {composerDropOverlay}
+                  {composerAttachments}
+                  {composerEditor}
+                </OrbitComposer>
+                {orbitPhoneShell && (
+                  <OrbitComposerSheet open={!!orbitActiveTray && orbitActiveTray !== "ask"} onClose={() => setOrbitTray(null)} label="Session details">
+                    {orbitTrayBody}
+                  </OrbitComposerSheet>
+                )}
+                </OrbitConversationContext.Provider>
+              ) : (
               <div
                 ref={setChatboxContainer}
                 className={`chatbox-bubble relative min-w-0 rounded-[30px] border bg-[color-mix(in_srgb,var(--color-bg-secondary)_78%,transparent)] px-3 pt-2 pb-3 shadow-[0_22px_60px_rgba(0,0,0,0.18)] backdrop-blur-md transition-all ${
@@ -12266,14 +12828,7 @@ export function TaskChat({
                 onDrop={handleDrop}
               >
                 {/* Localized drop overlay — only fires inside the composer */}
-                {isDragging && (
-                  <div className="chatbox-drop-overlay" aria-hidden>
-                    <div className="chatbox-drop-overlay-inner">
-                      <Paperclip className="w-4 h-4" />
-                      <span>Drop to mention this file</span>
-                    </div>
-                  </div>
-                )}
+                {composerDropOverlay}
                 {/* Orbit on a phone folds the status into the Agent row below. */}
                 {!showMobileComposerPill && !orbitPhone && mobileStatus}
                 <div className="chatbox-header mb-2 flex items-center justify-between gap-2 pr-10 select-none">
@@ -12344,110 +12899,7 @@ export function TaskChat({
                       )}
                     </div>
                     {!isTerminalLaunchMode && !isViewingArchived && (
-                      <div className="agent-voice-menu-root relative shrink-0" ref={agentVoiceMenuRef}>
-                        <div className={`inline-flex h-7 items-center overflow-hidden rounded-full border border-transparent bg-[var(--color-bg)] transition-colors ${agentVoiceState.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
-                          <button
-                            type="button"
-                            onClick={() => setShowAgentVoiceMenu((visible) => !visible)}
-                            disabled={!isConnected}
-                            aria-pressed={agentVoiceState.enabled}
-                            aria-label={agentVoiceState.enabled
-                              ? `Agent Voice enabled with ${activeSpeakingProfile?.name ?? "selected profile"}`
-                              : "Configure Agent Voice for this Session"}
-                            className={`inline-flex h-full min-w-0 items-center justify-center gap-1.5 transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-45 ${agentVoiceState.enabled ? "max-w-36 px-2" : "w-7 px-0"}`}
-                            title={agentVoiceState.enabled
-                              ? `Agent Voice: ${activeSpeakingProfile?.name ?? "On"}`
-                              : "Agent Voice"}
-                          >
-                            {agentVoicePlayback === "queued" ? (
-                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-highlight)]" />
-                            ) : agentVoicePlayback === "playing" ? (
-                              <AudioWaveform className="h-3.5 w-3.5 shrink-0 animate-pulse text-[var(--color-highlight)]" strokeWidth={2} />
-                            ) : agentVoiceState.enabled && activeSpeakingProfile ? (
-                              <VoiceIdentityIcon kind="profile" id={activeSpeakingProfile.id} size="xs" />
-                            ) : (
-                              <AudioWaveform className="h-3.5 w-3.5" strokeWidth={1.8} />
-                            )}
-                            {agentVoiceState.enabled && (
-                              <span className="min-w-0 truncate text-xs font-medium">
-                                {agentVoicePlayback === "queued" ? "Preparing…" : activeSpeakingProfile?.name ?? "Voice"}
-                              </span>
-                            )}
-                          </button>
-                          {agentVoicePlayback === "playing" && activeChatId && (
-                            <button
-                              type="button"
-                              aria-label="Stop Agent Voice playback"
-                              title="Stop speaking"
-                              onClick={() => {
-                                cancelAgentVoiceForSession(activeChatId);
-                                setShowAgentVoiceMenu(false);
-                              }}
-                              className="flex h-4 w-7 shrink-0 items-center justify-center border-l border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-error)]"
-                            >
-                              <Square className="h-2.5 w-2.5 fill-current" />
-                            </button>
-                          )}
-                        </div>
-                        {showAgentVoiceMenu && (
-                          <div data-agent-voice-menu className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-xl">
-                            <div className="border-b border-[var(--color-border)] px-3 py-2.5">
-                              <div className="text-xs font-semibold text-[var(--color-text)]">Agent Voice</div>
-                              <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">Session-specific voice output</div>
-                            </div>
-                            <div className="max-h-64 overflow-y-auto p-1.5">
-                              {speakingProfiles.length === 0 ? (
-                                <div className="px-3 py-4 text-center">
-                                  <div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]">
-                                    <AudioWaveform className="h-4 w-4" strokeWidth={1.8} />
-                                  </div>
-                                  <div className="mt-2 text-xs font-medium text-[var(--color-text)]">No Speaking Profiles</div>
-                                  <div className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">Create a voice setup before enabling Agent Voice.</div>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setShowAgentVoiceMenu(false);
-                                      window.sessionStorage.setItem("grove:ai-settings-tab", "agent_voice");
-                                      window.dispatchEvent(new CustomEvent("grove:open-ai-settings"));
-                                    }}
-                                    className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text)] transition-colors hover:border-[var(--color-highlight)] hover:text-[var(--color-highlight)]"
-                                  >
-                                    Configure Agent Voice
-                                  </button>
-                                </div>
-                              ) : speakingProfiles.map((profile) => (
-                                <button
-                                  key={profile.id}
-                                  type="button"
-                                  onClick={() => {
-                                    updateAgentVoiceState({ enabled: true, speakingProfileId: profile.id });
-                                    setShowAgentVoiceMenu(false);
-                                  }}
-                                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${agentVoiceState.enabled && profile.id === agentVoiceState.speakingProfileId ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]" : "text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]"}`}
-                                >
-                                  <VoiceIdentityIcon kind="profile" id={profile.id} size="xs" />
-                                  <span className="min-w-0 flex-1 truncate">{profile.name}</span>
-                                  <span className="text-[10px] text-[var(--color-text-muted)]">{profile.maxCharacters} chars</span>
-                                </button>
-                              ))}
-                            </div>
-                            {agentVoiceState.enabled && (
-                              <div className="border-t border-[var(--color-border)] p-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    updateAgentVoiceState({ enabled: false, speakingProfileId: agentVoiceState.speakingProfileId });
-                                    setShowAgentVoiceMenu(false);
-                                  }}
-                                  className="w-full rounded-lg px-2.5 py-2 text-left text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
-                                >
-                                  Turn off for this Session
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                      agentVoiceControl
                     )}
                     {isTerminalMode && (
                       <div className="inline-flex items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] px-2 py-1 text-[10px] font-medium text-[var(--color-warning)]">
@@ -12668,55 +13120,7 @@ export function TaskChat({
                   </div>
                 </div>
 
-                {editingPendingId && pendingEditError && (
-                  <div role="alert" className="mb-2 break-words px-3 text-xs text-[var(--color-error)]">
-                    {pendingEditError}
-                  </div>
-                )}
-
-                {attachments.length > 0 && (
-                  <div className="mb-2 flex gap-2 flex-wrap select-none">
-                    {attachments.map((att, i) => (
-                      <div
-                        key={i}
-                        className="group relative flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 pr-7 max-w-full"
-                      >
-                        {att.type === "image" && att.previewUrl ? (
-                          <img
-                            src={att.previewUrl}
-                            className="w-8 h-8 object-cover rounded-md border border-[var(--color-border)] shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                            alt={att.label}
-                            title={att.label}
-                            onClick={() => setLightboxUrl(att.previewUrl!)}
-                          />
-                        ) : att.type === "audio" ? (
-                          <div className="w-8 h-8 rounded-md border border-[var(--color-border)] flex items-center justify-center bg-[var(--color-bg-tertiary)] shrink-0">
-                            <Mic className="w-4 h-4 text-[var(--color-text-muted)]" />
-                          </div>
-                        ) : att.type === "resource" ? (
-                          <div className="w-8 h-8 rounded-md border border-[var(--color-border)] flex items-center justify-center bg-[var(--color-bg-tertiary)] shrink-0">
-                            <Paperclip className="w-4 h-4 text-[var(--color-text-muted)]" />
-                          </div>
-                        ) : null}
-                        <div className="min-w-0">
-                          <div className="text-xs font-medium text-[var(--color-text)] truncate max-w-40">
-                            {att.label}
-                          </div>
-                          <div className="text-[10px] text-[var(--color-text-muted)] truncate max-w-40">
-                            {att.name}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => removeAttachment(i)}
-                          disabled={isSavingPendingEdit}
-                          className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-error)] text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          &times;
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {composerAttachments}
 
                 {!orbitPhone && <button
                   onClick={() => {
@@ -12749,69 +13153,7 @@ export function TaskChat({
                   )}
                 </button>}
 
-                <div
-                  className={`relative flex ${isTerminalMode ? "items-start" : ""}`}
-                >
-                  {isTerminalMode && (
-                    <span className="shrink-0 pl-4 pt-2 text-sm leading-7 font-mono text-[var(--color-text-muted)] select-none">
-                      $&nbsp;
-                    </span>
-                  )}
-                  <div className="relative flex-1">
-                    {!hasContent && !isInputFocused && (
-                      <div
-                        className={`pointer-events-none absolute top-2 text-sm leading-7 text-[var(--color-text-muted)] select-none ${
-                          isTerminalMode ? "left-0 right-4" : "left-4 right-4"
-                        }`}
-                      >
-                        {isPhoneLayout
-                          ? `Message ${agentLabel}…`
-                          : activePermissionMessage
-                            ? "Handle permission above to continue"
-                            : !isConnected
-                              ? "Waiting for connection..."
-                              : isTerminalMode
-                                ? "Enter shell command\u2026"
-                                : isBusy
-                                  ? "Queue a message\u2026"
-                                  : "Ask anything… use @ for mentions, / for commands"}
-                      </div>
-                    )}
-                    <div
-                      ref={editableRef}
-                      contentEditable={
-                        !isRemoteSession && !activePermissionMessage && !isSavingPendingEdit
-                      }
-                      suppressContentEditableWarning
-                      onInput={handleInput}
-                      onKeyDown={handleKeyDown}
-                      onMouseDown={handleEditableMouseDown}
-                      onFocus={() => setIsInputFocused(true)}
-                      onBlur={() => setIsInputFocused(false)}
-                      onPaste={handlePaste}
-                      onCompositionStart={() => {
-                        composingRef.current = true;
-                      }}
-                      onCompositionEnd={() => {
-                        composingRef.current = false;
-                        handleInput();
-                      }}
-                      className={`overflow-y-auto py-2 text-sm leading-6 text-[var(--color-text)] focus:outline-none flex-1 ${
-                        isTerminalMode ? "pr-4" : "px-4"
-                      } ${
-                        isInputExpanded
-                          ? "min-h-[32vh] max-h-[56vh]"
-                          : "min-h-[56px] max-h-32"
-                      } ${isRemoteSession || activePermissionMessage ? "opacity-50 cursor-not-allowed" : ""} ${
-                        isTerminalMode ? "font-mono" : ""
-                      }`}
-                      style={{
-                        overflowWrap: "anywhere",
-                        whiteSpace: "pre-wrap",
-                      }}
-                    />
-                  </div>
-                </div>
+                {composerEditor}
 
                 <div className="chatbox-footer mt-2 flex items-center justify-between gap-2 select-none">
                   <div className="chatbox-footer-left flex items-center gap-2 min-w-0 select-none">
@@ -13028,6 +13370,7 @@ export function TaskChat({
                   </div>
                 </div>
               </div>
+              )}
             </motion.div>
           </div>
           )}
@@ -13133,6 +13476,8 @@ export function TaskChat({
         )}
     </motion.div>
     </ToolTimelineExpansionContext.Provider>
+    </SentPopContext.Provider>
+    </OrbitConversationContext.Provider>
   );
 }
 
@@ -13601,7 +13946,7 @@ const MessageItem = memo(function MessageItem({
   onUpdatePreviewComment: ReturnType<typeof usePreviewComments>["updateDraft"];
   onRemovePreviewComment: ReturnType<typeof usePreviewComments>["removeDraft"];
   isStudio: boolean;
-  onPermissionResponse?: (optionId: string, requestId: string) => void;
+  onPermissionResponse?: (optionId: string, requestId: string) => boolean | void;
   subagentConnected?: boolean;
   subagentDetail?: boolean;
   planFilesLocal?: boolean;
@@ -13617,6 +13962,9 @@ const MessageItem = memo(function MessageItem({
   };
 }) {
   const [hoverTime, setHoverTime] = useState(Date.now);
+  const orbitConversation = useOrbitConversation();
+  const userBubbleRef = useRef<HTMLDivElement | null>(null);
+  useSentPop(userBubbleRef, message.type === "user" && !message.terminal ? message.clientMessageId : undefined);
   const sketchContext = useMemo(
     () => (isStudio ? { projectId, taskId } : undefined),
     [isStudio, projectId, taskId],
@@ -13714,7 +14062,7 @@ const MessageItem = memo(function MessageItem({
         );
       }
       return (
-        <div className="group/message flex items-end justify-end gap-1" onMouseEnter={() => setHoverTime(Date.now())} onFocus={() => setHoverTime(Date.now())}>
+        <div className={`group/message flex items-end justify-end gap-1${orbitConversation ? " ocv-user-row" : ""}`} onMouseEnter={() => setHoverTime(Date.now())} onFocus={() => setHoverTime(Date.now())}>
           <div className="max-w-[80%] min-w-0">
             {message.sender && (() => {
               const buddy = message.sender.startsWith("buddy:") ? buddyMessageSender(message.content) : null;
@@ -13741,7 +14089,7 @@ const MessageItem = memo(function MessageItem({
                 </div>
               );
             })()}
-            <div className="relative rounded-2xl px-3.5 py-2.5 bg-[color-mix(in_srgb,var(--color-bg-tertiary)_78%,transparent)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-sm text-[var(--color-text)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
+            <div ref={userBubbleRef} className={orbitConversation ? "ocv-user-bubble" : "relative rounded-2xl px-3.5 py-2.5 bg-[color-mix(in_srgb,var(--color-bg-tertiary)_78%,transparent)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-sm text-[var(--color-text)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]"}>
               {delivery && (
                 <div className="absolute right-full top-1/2 mr-1 -translate-y-1/2" title={deliveryError}>
                   {delivery}
@@ -13847,7 +14195,7 @@ const MessageItem = memo(function MessageItem({
       return (
         <div className="group/message flex justify-start" onMouseEnter={() => setHoverTime(Date.now())} onFocus={() => setHoverTime(Date.now())}>
           <div
-            className="w-full min-w-0 text-sm text-[var(--color-text)]"
+            className={`w-full min-w-0 text-sm text-[var(--color-text)]${orbitConversation ? " ocv-prose" : ""}`}
             data-grove-commentable-message="true"
             data-grove-message-index={index}
           >
@@ -13911,7 +14259,9 @@ const MessageItem = memo(function MessageItem({
       return <ThinkingStatus label={extractThoughtStatus(message.content)} active={isBusy} />;
     case "permission":
       return message.resolved ? (
-        <PermissionCard message={message} onRespond={onPermissionResponse} />
+        orbitConversation
+          ? <OrbitPermissionRecord message={message} />
+          : <PermissionCard message={message} onRespond={onPermissionResponse} />
       ) : null;
     case "tool":
       // Tools are rendered via ToolSectionView; skip here
@@ -14004,10 +14354,18 @@ function PermissionCard({
   isPhoneLayout = false,
 }: {
   message: PermissionMessage;
-  onRespond?: (optionId: string, requestId: string) => void;
+  onRespond?: (optionId: string, requestId: string) => boolean | void;
   composer?: boolean;
   isPhoneLayout?: boolean;
 }) {
+  // One answer per request (by message identity, so id-less legacy requests
+  // work too): a double click must not send a second, stale response.
+  const answeredRef = useRef<PermissionMessage | null>(null);
+  const respondOnce = (optionId: string) => {
+    if (answeredRef.current === message) return;
+    if (onRespond?.(optionId, message.id) === false) return;
+    answeredRef.current = message;
+  };
   const isResolved = !!message.resolved;
   const isCancelled =
     isResolved && message.resolved!.toLowerCase() === "cancelled";
@@ -14075,10 +14433,7 @@ function PermissionCard({
             <button
               key={opt.option_id}
               onClick={() =>
-                onRespond?.(
-                  opt.option_id,
-                  message.id,
-                )
+                respondOnce(opt.option_id)
               }
               className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left transition-colors ${opt.kind.startsWith("reject") ? "border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-bg-tertiary)]" : "border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)]"}`}
             >
@@ -14119,7 +14474,7 @@ function PermissionCard({
           {allowOptions.map((opt) => (
             <button
               key={opt.option_id}
-              onClick={() => onRespond?.(opt.option_id, message.id)}
+              onClick={() => respondOnce(opt.option_id)}
               className="px-3 py-1 rounded-md text-xs font-medium transition-colors bg-[var(--color-success)] text-white hover:opacity-80"
               style={{
                 backgroundColor:
@@ -14132,7 +14487,7 @@ function PermissionCard({
           {rejectOptions.map((opt) => (
             <button
               key={opt.option_id}
-              onClick={() => onRespond?.(opt.option_id, message.id)}
+              onClick={() => respondOnce(opt.option_id)}
               className="px-3 py-1 rounded-md text-xs font-medium transition-colors border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-error)]"
             >
               {opt.name}
@@ -14688,6 +15043,7 @@ const ToolSectionView = memo(function ToolSectionView({ sectionId, tools, lastTo
   onFileClick?: (filePath: string, line?: number, mode?: "diff" | "full") => Promise<boolean>;
 }) {
   const rows = useMemo(() => buildToolTimelineRows(tools), [tools]);
+  const orbitConversation = useOrbitConversation();
   const expansion = useContext(ToolTimelineExpansionContext);
   if (!expansion) throw new Error("Tool timeline requires chat expansion state");
   const stateSectionId = JSON.stringify([expansion.scopeId, sectionId]);
@@ -14778,7 +15134,8 @@ const ToolSectionView = memo(function ToolSectionView({ sectionId, tools, lastTo
             content: message.content ?? "", locations: message.locations ?? [], status: message.status,
             input: message.input, output: message.output, hoverText: toolCallHoverText(message.title, message.input, message.name),
           };
-          return <ActionChipList key={segment.key} items={[item]} overflowCount={0} onShowMore={() => {}} expandedKey={expandedDetailKey} onToggleExpand={toggleDetail} onFileClick={onFileClick} />;
+          const chips = <ActionChipList key={segment.key} items={[item]} overflowCount={0} onShowMore={() => {}} expandedKey={expandedDetailKey} onToggleExpand={toggleDetail} onFileClick={onFileClick} />;
+          return orbitConversation ? <div key={segment.key} className="ocv-special">{chips}</div> : chips;
         }
         const earlierExpanded = expansion.expandedSections.has(expansionKey("earlier", segment.key));
         const window = toolTimelineWindow(segment.rows, earlierExpanded);
@@ -14791,7 +15148,7 @@ const ToolSectionView = memo(function ToolSectionView({ sectionId, tools, lastTo
         const visibleRows = window.rows.filter((row) => !hiddenKeys.has(row.key));
         const lastVisibleFileKey = visibleRows.filter((row) => row.kind === "file").at(-1)?.key;
         return (
-          <div key={segment.key} className="relative ml-2 min-w-0 py-1 pl-5 before:absolute before:bottom-2.5 before:left-0 before:top-2.5 before:w-px before:bg-[var(--color-border)]">
+          <div key={segment.key} className={`relative ml-2 min-w-0 py-1 pl-5 before:absolute before:bottom-2.5 before:left-0 before:top-2.5 before:w-px before:bg-[var(--color-border)]${orbitConversation ? " ocv-steps-seg" : ""}`}>
             {window.earlierCount > 0 && (
               <button
                 type="button"
@@ -14841,6 +15198,10 @@ const WorkSummaryView = memo(function WorkSummaryView({
   expanded,
   onToggleSection,
   onFileClick,
+  live = false,
+  startedAt,
+  awaitingApproval,
+  atTail = false,
 }: {
   sectionId: string;
   items: WorkSummaryItem[];
@@ -14848,6 +15209,12 @@ const WorkSummaryView = memo(function WorkSummaryView({
   durationSeconds?: number;
   expanded: boolean;
   onToggleSection: (sectionId: string) => void;
+  /** Orbit: the running turn's work, grouped while it happens. */
+  live?: boolean;
+  startedAt?: number;
+  awaitingApproval?: string[];
+  /** Nothing follows the group, so the agent is between steps. */
+  atTail?: boolean;
   onFileClick?: (
     filePath: string,
     line?: number,
@@ -14887,10 +15254,35 @@ const WorkSummaryView = memo(function WorkSummaryView({
   }, [items]);
   const duration = formatWorkDuration(durationSeconds);
   const title = duration ? `Worked for ${duration}` : "Worked";
+  const orbitConversation = useOrbitConversation();
+  const liveSummary = useMemo(
+    () => (live ? summarizeLiveWork(items, atTail, awaitingApproval) : null),
+    [live, items, atTail, awaitingApproval],
+  );
+
+  const header = liveSummary ? (
+    <OrbitLiveWorkHeader
+      sectionId={sectionId}
+      summary={liveSummary}
+      startedAt={startedAt}
+      expanded={expanded}
+      onToggle={onToggleSection}
+    />
+  ) : orbitConversation ? (
+    <OrbitSettledWorkHeader
+      sectionId={sectionId}
+      title={title}
+      failedLabel={failedTool ? timelineToolLabel(failedTool) : undefined}
+      expanded={expanded}
+      onToggle={onToggleSection}
+    />
+  ) : null;
 
   return (
-    <motion.div layout className="text-[var(--color-text)]">
-      <button
+    // A live group grows with every step; animating that layout would chase
+    // the stream, so only settled summaries animate.
+    <motion.div layout={!live} className="text-[var(--color-text)]">
+      {header ?? <button
         type="button"
         onClick={() => onToggleSection(sectionId)}
         className="group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
@@ -14906,7 +15298,7 @@ const WorkSummaryView = memo(function WorkSummaryView({
         <ChevronRight
           className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
         />
-      </button>
+      </button>}
 
       <AnimatePresence initial={false}>
         {expanded && (
@@ -14932,7 +15324,7 @@ const WorkSummaryView = memo(function WorkSummaryView({
                 }
                 const { message, index } = detailItem.item;
                 return (
-                  <div key={`work-commentary-${index}`} className="text-sm">
+                  <div key={`work-commentary-${index}`} className={orbitConversation ? "text-sm ocv-prose" : "text-sm"}>
                     <MarkdownRenderer
                       content={message.content ?? ""}
                       onFileClick={onFileClick}

@@ -14,6 +14,8 @@ export interface Command {
   name: string;
   category: string;
   icon?: LucideIcon;
+  /** Rendered in place of `icon` (e.g. a plugin's own image or emoji). Orbit palette only. */
+  iconElement?: ReactNode;
   shortcut?: string;
   handler: () => void;
   keywords?: string[];

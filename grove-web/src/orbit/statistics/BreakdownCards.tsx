@@ -1,11 +1,12 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
+import { ChevronRight } from "lucide-react";
 import type { AgentShareItem, ModelItem, TopItem } from "../../api/statistics";
 import type { AverageRates } from "../../components/Stats/components/pricing";
 import { formatCost, formatNumber, formatTokens } from "../../components/Stats/formatters";
 import { valueModels, valueTop, type MetricType, type Unit, type ValuedRow } from "../../components/Stats/statsModel";
 import { resolveAgentIcon } from "../../utils/agentIcon";
 import { Card } from "../ui";
-import { METRIC_LABEL, chartAgentColor } from "./statisticsView";
+import { METRIC_LABEL, chartAgentColor, topRowTarget, type TopTarget } from "./statisticsView";
 
 const turnsText = (n: number) => `${formatNumber(n)} ${n === 1 ? "turn" : "turns"}`;
 const fmtFor = (unit: Unit) => (unit === "cost" ? formatCost : formatTokens);
@@ -90,10 +91,13 @@ interface TopCardProps {
   unit: Unit;
   averageRates: AverageRates;
   dark: boolean;
+  /** The project whose tasks the rows name (project scope). */
+  project?: Parameters<typeof topRowTarget>[2];
+  onOpenTask?: (projectId: string, taskId: string) => void;
 }
 
 /** The ten heaviest tasks (project scope) or projects (all projects). */
-export function TopCard({ scope, items, metric, unit, averageRates, dark }: TopCardProps) {
+export function TopCard({ scope, items, metric, unit, averageRates, dark, project, onOpenTask }: TopCardProps) {
   const fmt = fmtFor(unit);
   const rows = valueTop(items, metric, unit, averageRates);
   const max = Math.max(0, ...rows.map((row) => row.displayValue));
@@ -110,8 +114,23 @@ export function TopCard({ scope, items, metric, unit, averageRates, dark }: TopC
       <ol className="ostat-list oui-scroll ostat-top">
         {rows.length ? rows.map((row, index) => {
           const dominant = row.agent_split.reduce<{ agent: string; tokens: number } | null>((best, a) => (!best || a.tokens > best.tokens ? a : best), null);
+          const target: TopTarget = onOpenTask ? topRowTarget(scope, row.id, project) : { kind: "none" };
+          const open = target.kind === "task" ? () => onOpenTask?.(target.projectId, target.taskId) : undefined;
+          const onKey = (event: KeyboardEvent<HTMLLIElement>) => {
+            if (open && (event.key === "Enter" || event.key === " ")) {
+              event.preventDefault();
+              open();
+            }
+          };
+          const detail = `${splitTitle(row, unit)}${dominant ? ` · mostly ${resolveAgentIcon(dominant.agent).label}` : ""}`;
           return (
-            <li key={row.id} className="ostat-top-row" title={`${splitTitle(row, unit)}${dominant ? ` · mostly ${resolveAgentIcon(dominant.agent).label}` : ""}`} style={{ animationDelay: `${260 + index * 40}ms` }}>
+            <li
+              key={row.id}
+              className={`ostat-top-row${open ? " is-link" : ""}`}
+              title={target.kind === "none" && target.reason ? `${target.reason} · ${detail}` : detail}
+              style={{ animationDelay: `${260 + index * 40}ms` }}
+              {...(open ? { role: "button", tabIndex: 0, onClick: open, onKeyDown: onKey, "aria-label": `Open ${row.name}` } : {})}
+            >
               <span className="ostat-rank">{index + 1}</span>
               <span className="ostat-top-main">
                 <span className="oui-truncate">{row.name}</span>
@@ -121,6 +140,7 @@ export function TopCard({ scope, items, metric, unit, averageRates, dark }: TopC
               </span>
               <span className="ostat-num">{fmt(row.displayValue)}</span>
               <span className="ostat-turns">{turnsText(row.turns)}</span>
+              <span className="ostat-top-go" aria-hidden="true">{open ? <ChevronRight /> : null}</span>
             </li>
           );
         }) : <li className="ostat-empty">No {noun}s with agent turns in this range</li>}

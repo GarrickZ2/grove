@@ -94,6 +94,17 @@
 .owp-st.is-M{color:var(--o-warn)}
 .owp-st.is-D{color:var(--o-error)}
 .owp-st.is-R{color:var(--o-info)}
+.owp-st.is-X{color:var(--o-error)}
+/* Ahead/behind next to branch → target, and uncommitted rows */
+.owp-ab{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;height:20px;padding:0 7px;border-radius:999px;background:var(--o-selected);font-size:11px;font-variant-numeric:tabular-nums;color:var(--o-text);white-space:nowrap}
+.owp-ab.is-even{color:var(--o-muted)}
+.owp-ab>span{display:inline-flex;align-items:center;gap:1px}
+.owp-ab svg{width:11px;height:11px}
+.owp-ab-up svg{color:color-mix(in oklab,var(--o-success) 85%,var(--o-text))}
+.owp-ab-down svg{color:var(--o-warn)}
+.owp-stage{flex-shrink:0;padding:0 5px;border-radius:4px;background:color-mix(in oklab,var(--o-success) 14%,transparent);color:color-mix(in oklab,var(--o-success) 80%,var(--o-text));font-size:10.5px;line-height:16px}
+.owp-trunc{margin:0;padding:6px 12px 8px;font-size:11.5px;color:var(--o-muted)}
+.owp-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .owp-delta{flex-shrink:0;font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .owp-delta .owp-add+.owp-del{margin-left:5px}
 

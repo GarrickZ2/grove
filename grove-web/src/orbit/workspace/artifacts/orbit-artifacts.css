@@ -120,6 +120,35 @@
 .oar-tile-more svg{width:14px;height:14px}
 .oar-tile:hover .oar-tile-more,.oar-tile:focus-within .oar-tile-more,.oar-tile.is-menu .oar-tile-more{opacity:1;transform:none}
 
+/* Multi-select: checkbox over the glyph / tile corner, batch bar */
+.oar-lead{position:relative;width:30px;height:30px;display:flex}
+.oar-check{display:flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border-radius:5px;border:1.5px solid var(--o-border-strong);background:var(--o-bg);color:var(--o-on-ink,#fff);cursor:pointer;flex-shrink:0;transition:background-color 120ms,border-color 120ms,opacity 120ms,transform 140ms var(--o-ease-toggle)}
+.oar-check svg{width:12px;height:12px;stroke-width:3}
+.oar-check:active{transform:scale(.9)}
+.oar-check.is-on{background:var(--oar-hue);border-color:var(--oar-hue);color:#fff}
+.oar-check:focus-visible{outline:2px solid var(--o-accent);outline-offset:1px}
+.oar-lead .oar-check{position:absolute;inset:6px;opacity:0}
+.oar-row:hover .oar-lead .oar-check,.oar-row:focus-within .oar-lead .oar-check,.oar-row.is-selecting .oar-lead .oar-check{opacity:1}
+.oar-row:hover .oar-lead .oar-glyph,.oar-row:focus-within .oar-lead .oar-glyph,.oar-row.is-selecting .oar-lead .oar-glyph{opacity:0}
+.oar-lead .oar-glyph{transition:opacity 120ms}
+.oar-row.is-checked{background:var(--oar-hue-soft)}
+.oar-row.is-checked:hover{background:color-mix(in oklab,var(--oar-hue) 16%,transparent)}
+.oar-check.is-tile{position:absolute;top:7px;left:7px;z-index:1;opacity:0;box-shadow:0 1px 3px var(--o-shadow)}
+.oar-tile:hover .oar-check.is-tile,.oar-tile:focus-within .oar-check.is-tile,.oar-tile.is-selecting .oar-check.is-tile{opacity:1}
+.oar-tile.is-checked{border-color:var(--oar-hue);box-shadow:0 0 0 3px var(--oar-hue-soft)}
+.oar-batch{display:flex;align-items:center;gap:6px;margin:0 12px 8px;padding:5px 5px 5px 9px;border-radius:var(--o-radius-md);border:1px solid var(--oar-hue-line);background:color-mix(in oklab,var(--oar-hue) 6%,var(--o-bg));flex-shrink:0;animation:oui-rise 220ms var(--o-ease-out) both}
+.oar-batch .oar-check{opacity:1}
+.oar-batch .oar-check.is-mixed{background:var(--oar-hue);border-color:var(--oar-hue);color:#fff}
+.oar-batch-n{font-size:12.5px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+
+/* Per-file upload progress */
+.oar-prog{position:absolute;left:46px;right:12px;bottom:5px;height:3px;border-radius:2px;background:var(--o-track);overflow:hidden}
+.oar-prog i{display:block;height:100%;background:var(--oar-hue);transform-origin:left;transition:transform 160ms linear}
+.oar-prog.is-failed i{background:var(--o-error)}
+.oar-tile .oar-prog{left:10px;right:10px;bottom:6px}
+.oar-row.is-failed,.oar-tile.is-failed{opacity:1}
+.oar-row.is-failed .oar-meta{color:var(--o-error)}
+
 /* Linked folders */
 .oar-linked{display:flex;flex-direction:column;gap:8px;padding:4px 12px 12px}
 .oar-lrow{display:flex;align-items:center;gap:10px;padding:9px 8px 9px 10px;border-radius:var(--o-radius-md);border:1px solid var(--o-border);background:var(--o-bg);box-shadow:var(--o-shadow-1);animation:oui-fade-up 300ms var(--o-ease-out) both}
@@ -155,3 +184,11 @@
 @media (prefers-reduced-motion:reduce){
   .oar,.oar *,.oar *::before{animation-duration:0s!important;animation-delay:0s!important;animation-iteration-count:1!important;transition-duration:0s!important}
 }
+
+/* Multi-file drag image: the grabbed row's name with a count badge. Lives on
+   document.body (outside .orbit-ui), so it reads the theme's --color-* vars.
+   It sits in the viewport behind the app (WebKit snapshots off-screen nodes
+   blank) for the one frame before it is removed. */
+.oar-drag-ghost{position:fixed;top:0;left:0;z-index:-1;display:inline-flex;align-items:center;gap:8px;max-width:280px;padding:6px 6px 6px 11px;border-radius:9px;background:var(--color-bg);box-shadow:0 0 0 1px color-mix(in oklab,var(--color-text) 12%,transparent),0 10px 24px -10px rgb(0 0 0 / 35%);color:var(--color-text);font:500 12.5px/18px system-ui,-apple-system,sans-serif;white-space:nowrap;pointer-events:none}
+.oar-drag-ghost-name{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.oar-drag-ghost-count{flex:none;padding:1px 7px;border-radius:999px;background:var(--color-text);color:var(--color-bg);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}

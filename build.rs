@@ -91,6 +91,8 @@ fn build_tauri() {
                 "get_remote_auth",
                 "configure_desktop_tray",
                 "play_sound",
+                "notify_banner",
+                "is_remote_mode_command",
             ]),
         ))
         .expect("failed to run tauri-build");

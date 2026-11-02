@@ -30,3 +30,17 @@ describe("Studio Work commands", () => {
     expect(navigate).toHaveBeenCalledWith("work");
   });
 });
+
+describe("Plugin page commands", () => {
+  it("adds a Go to command per plugin page that navigates to its page id", () => {
+    const navigate = vi.fn();
+    const icon = "🗂️";
+    const commands = buildCommands({ navigation: { onNavigate: navigate, activeItem: "dashboard", pluginPages: [{ id: "plugin:kanban", label: "Board", icon }] } });
+    const command = commands.find((c) => c.id === "nav-plugin:kanban")!;
+    expect(command).toMatchObject({ name: "Go to Board", category: "Navigation", iconElement: icon });
+    expect(command.keywords).toContain("plugin");
+    command.handler();
+    expect(navigate).toHaveBeenCalledWith("plugin:kanban");
+    expect(buildCommands({ navigation: { onNavigate: navigate, activeItem: "dashboard" } }).some((c) => c.id.startsWith("nav-plugin:"))).toBe(false);
+  });
+});

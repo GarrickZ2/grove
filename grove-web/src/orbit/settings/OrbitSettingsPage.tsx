@@ -10,7 +10,7 @@ import { SettingsNav } from "./SettingsNav";
 import {
   DEFAULT_SETTINGS_PAGE,
   SETTINGS_PAGES,
-  isSettingsPageId,
+  resolveSettingsTarget,
   pickActiveSection,
   searchSettingsPages,
   type SettingsPageDef,
@@ -25,7 +25,7 @@ import { NotificationsPage } from "./pages/NotificationsPage";
 import { ShortcutsPage } from "./pages/ShortcutsPage";
 import { SystemPage } from "./pages/SystemPage";
 import { AgentVoicePage, AIProvidersPage, VoiceControlPage, VoiceInputPage } from "./pages/voice";
-import { themePreviewStyle } from "./themePreview";
+import { applyThemePreview } from "./themePreview";
 import "./orbit-settings.css";
 
 const VOICE_SAVE_EVENTS = [
@@ -49,8 +49,7 @@ function prefersReducedMotion() {
 function renderPage(pageId: SettingsPageId, settings: SettingsState, onPreviewTheme: (theme: Theme | null) => void) {
   switch (pageId) {
     case "agents": return <AgentsPage settings={settings} />;
-    case "terminal": return <TerminalPage settings={settings} />;
-    case "worktrees": return <WorktreesPage settings={settings} />;
+    case "worktrees": return <><TerminalPage settings={settings} /><WorktreesPage settings={settings} /></>;
     case "general": return <GeneralPage settings={settings} />;
     case "appearance": return <AppearancePage onPreviewTheme={onPreviewTheme} />;
     case "shortcuts": return <ShortcutsPage />;
@@ -72,6 +71,9 @@ export function OrbitSettingsPage() {
   // Hover preview of a theme, applied to this page only and never saved.
   const [previewTheme, setPreviewTheme] = useState<Theme | null>(null);
   const previewing = previewTheme && previewTheme.id !== currentTheme.id ? previewTheme : null;
+  // Hover preview covers the whole window, sidebar included, and is undone on
+  // leave or unmount; nothing is saved.
+  useEffect(() => (previewing ? applyThemePreview(previewing) : undefined), [previewing]);
 
   const [pageId, setPageId] = useState<SettingsPageId>(DEFAULT_SETTINGS_PAGE);
   const [query, setQuery] = useState("");
@@ -89,7 +91,7 @@ export function OrbitSettingsPage() {
   // Sub-sections that only render in some states: the terminal layout needs
   // multiplexer mode, the window shortcut needs the desktop app.
   const pages = useMemo<SettingsPageDef[]>(() => SETTINGS_PAGES.map((page) => {
-    const hidden = page.id === "terminal" && webTerminalMode !== "multiplexer" ? "layout"
+    const hidden = page.id === "worktrees" && webTerminalMode !== "multiplexer" ? "layout"
       : page.id === "general" && !isTauriGui ? "window"
         : null;
     return hidden ? { ...page, subs: page.subs.filter((sub) => sub.id !== hidden) } : page;
@@ -100,7 +102,7 @@ export function OrbitSettingsPage() {
 
   const attention = useMemo(() => {
     const ids = new Set<SettingsPageId>();
-    if (Object.keys(depStates).length > 0 && !isChecking && !isTerminalAvailable) ids.add("terminal");
+    if (Object.keys(depStates).length > 0 && !isChecking && !isTerminalAvailable) ids.add("worktrees");
     if (!baseAgentsLoading && !isChatAvailable) ids.add("agents");
     return ids;
   }, [depStates, isChecking, isTerminalAvailable, baseAgentsLoading, isChatAvailable]);
@@ -225,8 +227,10 @@ export function OrbitSettingsPage() {
     const onHashChange = () => {
       const hash = window.location.hash;
       const target = hash === "#shortcuts" ? "shortcuts" : hash.startsWith("#settings-") ? hash.slice("#settings-".length) : null;
-      if (!target || !isSettingsPageId(target)) return;
-      selectPage(target);
+      // Legacy Workbench section ids (terminal, browserControl, ...) land where they live now.
+      const resolved = target ? resolveSettingsTarget(target) : null;
+      if (!resolved) return;
+      selectPage(resolved.pageId, resolved.subId);
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     };
     window.addEventListener("hashchange", onHashChange);
@@ -235,7 +239,7 @@ export function OrbitSettingsPage() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="ost orbit-ui" style={previewing ? themePreviewStyle(previewing) : undefined}>
+      <div className="ost orbit-ui">
         <SettingsNav
           pages={pages}
           hits={hits}

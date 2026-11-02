@@ -1,5 +1,6 @@
 //! Task API handlers
 
+pub mod artifact_zip;
 pub mod artifacts;
 pub mod crud;
 pub mod file_explorer;
@@ -15,6 +16,7 @@ pub mod sketches;
 pub mod types;
 
 // Re-export all public items so routing table needs zero changes.
+pub use artifact_zip::*;
 pub use artifacts::*;
 pub use crud::*;
 pub use file_explorer::*;

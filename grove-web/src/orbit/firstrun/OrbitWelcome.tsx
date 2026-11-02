@@ -126,7 +126,7 @@ export function OrbitWelcome({ onAction }: { onAction: (action: WelcomeAction) =
           {isRemote && <span className="owl-remote">Remote</span>}
         </p>
       )}
-      <MarketplaceModal open={marketplaceOpen} onClose={() => { setMarketplaceOpen(false); recheck(); }} />
+      <MarketplaceModal open={marketplaceOpen} initialTab="explore" onClose={() => { setMarketplaceOpen(false); recheck(); }} />
     </motion.div>
   );
 }

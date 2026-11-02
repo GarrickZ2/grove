@@ -17,7 +17,18 @@ export type RenderItem =
       items: WorkSummaryItem[];
       durationSeconds?: number;
       lastToolId?: string;
+      /** Orbit only: the running turn's work, grouped while it happens. */
+      live?: boolean;
+      /** Wall-clock ms the live turn started (its user message's send time). */
+      startedAt?: number;
+      /** Live only: ids of this turn's permission requests still awaiting an answer. */
+      awaitingApproval?: string[];
     };
+
+export type BuildRenderItemsOptions = {
+  /** Fold the running turn's process into one live work group (Orbit). */
+  groupLiveWork?: boolean;
+};
 
 export function shouldRenderTimelineTool(message: ToolMessage): boolean {
   return message.kind !== "think" || ["failed", "error", "cancelled"].includes(message.status);
@@ -80,7 +91,7 @@ export function buildSequentialRenderItems(
  * one expandable work record, while the answer emitted after that boundary
  * remains fully visible.
  */
-export function buildRenderItems(messages: ChatMessage[], isBusy = false): RenderItem[] {
+export function buildRenderItems(messages: ChatMessage[], isBusy = false, options: BuildRenderItemsOptions = {}): RenderItem[] {
   const items: RenderItem[] = [];
   let cursor = 0;
 
@@ -116,8 +127,15 @@ export function buildRenderItems(messages: ChatMessage[], isBusy = false): Rende
     );
 
     if ((isLatestTurn && isBusy) || hasStreamingEntry) {
+      const userMessage = messages[userIndex];
       items.push(
-        ...buildSequentialRenderItems(turnEntries, userIndex + 1, null),
+        ...(options.groupLiveWork
+          ? buildLiveTurnItems(
+              turnEntries,
+              userIndex + 1,
+              userMessage.type === "user" ? userMessage.sentAt : undefined,
+            )
+          : buildSequentialRenderItems(turnEntries, userIndex + 1, null)),
       );
       cursor = nextUserIndex;
       continue;
@@ -139,6 +157,70 @@ export function buildRenderItems(messages: ChatMessage[], isBusy = false): Rende
     cursor = nextUserIndex;
   }
   return items;
+}
+
+/**
+ * The running turn, grouped the way it will settle: everything through the
+ * latest step (tools, unfinished thinking, narration between them) is one
+ * live work group; the text streaming after it stays visible. The group's
+ * id only depends on where the turn's segment starts, so its disclosure
+ * survives new steps; once the turn finishes it becomes an ordinary
+ * work summary with its own (collapsed) id. Hard boundaries (compaction,
+ * rich assistant content) close earlier segments as ordinary summaries.
+ */
+function buildLiveTurnItems(turnEntries: ChatMessage[], startIndex: number, startedAt?: number): RenderItem[] {
+  const items: RenderItem[] = [];
+  let segmentStart = 0;
+  turnEntries.forEach((message, offset) => {
+    const boundary = message.type === "compaction" ||
+      (message.type === "assistant" && message.blocks?.some((block) => block.type !== "text"));
+    if (!boundary) return;
+    const segment = turnEntries.slice(segmentStart, offset);
+    items.push(...compactCompletedSegment(segment, startIndex + segmentStart, lastToolCallId(segment)));
+    items.push({ kind: "single", message, index: startIndex + offset });
+    segmentStart = offset + 1;
+  });
+  items.push(...liveSegment(turnEntries.slice(segmentStart), startIndex + segmentStart, startedAt));
+  return items;
+}
+
+function liveSegment(entries: ChatMessage[], startIndex: number, startedAt?: number): RenderItem[] {
+  let lastToolOffset = -1;
+  let lastThinkingOffset = -1;
+  entries.forEach((message, offset) => {
+    if (message.type === "tool" && message.kind !== "think") lastToolOffset = offset;
+    if (message.type === "thinking" && !message.complete) lastThinkingOffset = offset;
+  });
+  // A turn that has only streamed text or thinking so far needs no group.
+  if (lastToolOffset < 0) return buildSequentialRenderItems(entries, startIndex, null);
+  const processEnd = Math.max(lastToolOffset, lastThinkingOffset);
+  const processItems: WorkSummaryItem[] = [];
+  const passthrough: RenderItem[] = [];
+  const awaitingApproval = entries.flatMap((message) =>
+    message.type === "permission" && !message.resolved ? [message.id] : []);
+  for (let offset = 0; offset <= processEnd; offset += 1) {
+    const message = entries[offset];
+    const index = startIndex + offset;
+    if (message.type === "assistant" || message.type === "thinking") {
+      processItems.push({ message, index });
+    } else if (message.type === "tool") {
+      if (shouldRenderTimelineTool(message)) processItems.push({ message, index });
+    } else if (message.type !== "plan_document" && message.type !== "auth_required") {
+      passthrough.push({ kind: "single", message, index });
+    }
+  }
+  return [
+    {
+      kind: "work-summary",
+      sectionId: `live-${startIndex}`,
+      items: processItems,
+      live: true,
+      startedAt,
+      ...(awaitingApproval.length > 0 ? { awaitingApproval } : {}),
+    },
+    ...passthrough,
+    ...buildSequentialRenderItems(entries.slice(processEnd + 1), startIndex + processEnd + 1, null),
+  ];
 }
 
 /** Fold ordinary process content together; keep operational entries outside in order. */

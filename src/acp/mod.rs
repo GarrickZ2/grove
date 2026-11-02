@@ -238,6 +238,10 @@ pub struct AcpSessionHandle {
     /// the menubar tray can render a real progress bar instead of the
     /// generic pulse strip. None for chats whose agent never emits a plan.
     last_plan: Mutex<Option<(u32, u32)>>,
+    /// How the current/last turn ended and whether it delivered a graph
+    /// reply. Drives the agent graph's settled `error` / `done` outcome
+    /// (see `agent_graph::node_outcome`). Reset on every `Busy { true }`.
+    turn_record: Mutex<crate::agent_graph::node_outcome::TurnRecord>,
     /// Latest pending permission request details (description + options),
     /// cached at `PermissionRequest` emit time so a one-shot snapshot
     /// (`GET /api/v1/tray/chats`) can render the request — the `pending_permission`
@@ -5238,6 +5242,7 @@ pub async fn get_or_start_session(
                     pending_text_separator: std::sync::atomic::AtomicBool::new(false),
                     last_user_prompt: Mutex::new(None),
                     last_plan: Mutex::new(None),
+                    turn_record: Mutex::new(Default::default()),
                     last_permission_info: Mutex::new(None),
                     active_tool_calls: Mutex::new(std::collections::HashSet::new()),
                     short_tool_watches: Mutex::new(HashMap::new()),
@@ -5301,6 +5306,7 @@ pub async fn get_or_start_session(
                                     message: None,
                                     todo_completed: None,
                                     todo_total: None,
+                                    outcome: None,
                                 });
                                 cleanup_socket_files(&self.project_key, &self.task_id, cid);
                             }
@@ -5335,6 +5341,7 @@ pub async fn get_or_start_session(
                             message: None,
                             todo_completed: None,
                             todo_total: None,
+                            outcome: None,
                         });
                     }
                 }
@@ -5397,6 +5404,7 @@ pub async fn get_or_start_session(
                         message: None,
                         todo_completed: None,
                         todo_total: None,
+                        outcome: None,
                     });
                     cleanup_socket_files(&session_project_key, &session_task_id, cid);
                 }
@@ -7791,6 +7799,7 @@ async fn drive_session(
                 };
 
                 if got_kill {
+                    handle.finish_turn(crate::agent_graph::node_outcome::TurnEnd::Stopped);
                     handle.emit(AcpUpdate::Busy { value: false });
                     handle.emit(AcpUpdate::TurnInterrupted {
                         start_ts: turn_start_ts,
@@ -7866,6 +7875,11 @@ async fn drive_session(
                                 None,
                             );
                         }
+                        handle.finish_turn(
+                            crate::agent_graph::node_outcome::TurnEnd::from_stop_reason(
+                                &stop_reason,
+                            ),
+                        );
                         handle.emit(AcpUpdate::Busy { value: false });
                         let turn_end_ts = chrono::Utc::now().timestamp();
                         let turn_usage = resp.usage.as_ref().map(|usage| TurnUsage {
@@ -7924,6 +7938,7 @@ async fn drive_session(
                         });
                     }
                     Err(e) => {
+                        handle.finish_turn(crate::agent_graph::node_outcome::TurnEnd::Failed);
                         handle.emit(AcpUpdate::Busy { value: false });
                         handle.emit(AcpUpdate::TurnInterrupted {
                             start_ts: turn_start_ts,
@@ -9122,6 +9137,37 @@ impl AcpSessionHandle {
         }
     }
 
+    /// Settled outcome of this chat's last turn (`"error"` / `"done"`) for
+    /// the agent graph, or `None`. Only an idle chat has one.
+    pub fn node_outcome(&self) -> Option<&'static str> {
+        self.node_outcome_for(self.derive_node_status())
+    }
+
+    fn node_outcome_for(&self, status: &str) -> Option<&'static str> {
+        crate::agent_graph::node_outcome::node_outcome(status, self.turn_record(), false)
+    }
+
+    /// Snapshot of how the current/last turn ended.
+    pub fn turn_record(&self) -> crate::agent_graph::node_outcome::TurnRecord {
+        self.turn_record.lock().map(|r| *r).unwrap_or_default()
+    }
+
+    /// The agent delivered a graph reply (`grove_agent_graph_reply`) during
+    /// its current turn.
+    pub(crate) fn record_graph_reply(&self) {
+        if let Ok(mut record) = self.turn_record.lock() {
+            record.record_reply();
+        }
+    }
+
+    /// Record how the running turn ended. Call before emitting
+    /// `Busy { false }` so the idle `ChatStatus` carries the outcome.
+    pub(crate) fn finish_turn(&self, end: crate::agent_graph::node_outcome::TurnEnd) {
+        if let Ok(mut record) = self.turn_record.lock() {
+            record.finish(end);
+        }
+    }
+
     /// 响应待处理的权限请求
     ///
     /// 顺序：先通知 agent（主效果），再落盘（记账）。即使 agent 侧 rx 已被
@@ -9204,6 +9250,7 @@ impl AcpSessionHandle {
                 message: None,
                 todo_completed: self.last_plan.lock().ok().and_then(|p| p.map(|(c, _)| c)),
                 todo_total: self.last_plan.lock().ok().and_then(|p| p.map(|(_, t)| t)),
+                outcome: self.node_outcome().map(str::to_string),
             });
         }
     }
@@ -9510,6 +9557,11 @@ impl AcpSessionHandle {
 
         // 跟踪 busy 状态，并通知 Radio 客户端
         if let AcpUpdate::Busy { value } = &update {
+            if *value {
+                if let Ok(mut record) = self.turn_record.lock() {
+                    record.start();
+                }
+            }
             self.is_busy
                 .store(*value, std::sync::atomic::Ordering::Relaxed);
             if self.chat_id.is_some() {
@@ -9658,6 +9710,7 @@ impl AcpSessionHandle {
                     message,
                     todo_completed,
                     todo_total,
+                    outcome: self.node_outcome_for(status).map(str::to_string),
                 });
             }
         }
@@ -11130,6 +11183,7 @@ pub fn new_handle_for_test(
         pending_text_separator: std::sync::atomic::AtomicBool::new(false),
         last_user_prompt: Mutex::new(None),
         last_plan: Mutex::new(None),
+        turn_record: Mutex::new(Default::default()),
         last_permission_info: Mutex::new(None),
         active_tool_calls: Mutex::new(std::collections::HashSet::new()),
         short_tool_watches: Mutex::new(HashMap::new()),

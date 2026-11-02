@@ -25,7 +25,27 @@ pub async fn get_project_linked_projects(
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     let registered = workspace::load_projects()
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    Ok(Json(resolve_items(ids, &registered)))
+    Ok(Json(resolve_project_items(ids, &registered)))
+}
+
+/// Like the Task view, but an archived linked Project is shown as removed:
+/// flagged `archived` with `exists: false`, and never copied into new Tasks.
+fn resolve_project_items(
+    ids: Vec<String>,
+    registered: &[workspace::RegisteredProject],
+) -> LinkedProjectsResponse {
+    let mut response = resolve_items(ids, registered);
+    for item in &mut response.linked_projects {
+        let archived = registered
+            .iter()
+            .any(|project| project.archived && workspace::project_hash(&project.path) == item.id);
+        if archived {
+            item.archived = true;
+            item.exists = false;
+            item.review_task_id = None;
+        }
+    }
+    response
 }
 
 /// PUT /api/v1/projects/{id}/linked-projects
@@ -37,11 +57,16 @@ pub async fn update_project_linked_projects(
         .map_err(|status| api_error(status, "Project not found"))?;
     let registered = workspace::load_projects()
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    let normalized =
-        normalize_linked_ids(request.project_ids, &project_key, &registered, "project")?;
+    let normalized = normalize_linked_ids(
+        request.project_ids,
+        &project_key,
+        &registered,
+        "project",
+        true,
+    )?;
     tasks::replace_project_linked_project_ids(&project_key, &normalized)
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    Ok(Json(resolve_items(normalized, &registered)))
+    Ok(Json(resolve_project_items(normalized, &registered)))
 }
 
 #[cfg(test)]
@@ -104,6 +129,26 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ids(&loaded), [other.clone()]);
+
+        // Archived Projects can't be linked, and an archived default shows
+        // as removed.
+        workspace::set_project_archived(&other, true).unwrap();
+        let error = update_project_linked_projects(
+            Path(own.clone()),
+            Json(UpdateLinkedProjectsRequest {
+                project_ids: vec![other.clone()],
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.0, StatusCode::BAD_REQUEST);
+        assert!(error.1.error.contains("archived"));
+        let loaded = get_project_linked_projects(Path(own.clone()))
+            .await
+            .unwrap();
+        assert!(loaded.linked_projects[0].archived);
+        assert!(!loaded.linked_projects[0].exists);
+        workspace::set_project_archived(&other, false).unwrap();
 
         // A linked Project that disappears is reported, not dropped.
         let conn = crate::storage::database::connection();

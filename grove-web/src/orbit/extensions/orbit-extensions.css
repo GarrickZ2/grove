@@ -148,6 +148,42 @@
   .oex .oex-split{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(260px,40vh) auto}
   .oex-master{border-right:0;border-bottom:1px solid var(--o-border)}
 }
+/* Phone: the list, then the picked item on its own with Back (usePhoneSplit);
+   section heads stack their switch, the facts table reads as rows. */
+@media (max-width:767px){
+  .oex .oex-split.is-phone-list,.oex .oex-split.is-phone-detail{display:flex;flex-direction:column;flex:none;height:max(460px,calc(100dvh - 210px))}
+  .oex .oex-split.is-phone-list>.oex-detail,.oex .oex-split.is-phone-detail>.oex-master{display:none}
+  .oex .oex-split.is-phone-list>.oex-master{flex:1;border-bottom:0}
+  .oex .oex-split.is-phone-detail>.oex-detail{flex:1}
+  .oex-phone-back{display:flex;align-items:center;flex-shrink:0;padding:6px 8px;border-bottom:1px solid var(--o-border)}
+  .oex-phone-back .oui-btn{padding:0 10px 0 6px;color:var(--o-text)}
+  .oex-ext{min-height:56px}
+  .oex-dbody{padding:16px 16px 18px}
+  .oex-dfoot{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));flex-wrap:wrap}
+  .oex-ident{gap:12px}
+  .oex-ident h2{flex-wrap:wrap;row-gap:2px;font-size:18px}
+  .oex-ident h2>*{min-width:0}
+  .oex-ident p{overflow-wrap:anywhere}
+  .oex-shead{flex-wrap:wrap;row-gap:8px}
+  .oex-shead h3{flex-basis:100%}
+  .oex-shead>.oui-seg{width:100%;display:grid}
+  .oex-alert{flex-wrap:wrap}
+  .oex-alert div{flex-basis:calc(100% - 28px)}
+  .oex-alert>.oui-btn{margin-left:28px}
+  .oex-agrid{grid-template-columns:minmax(0,1fr)}
+  .oex-achip{height:44px}
+  /* Facts table: one labelled row per fact instead of three squeezed columns. */
+  .oex-meta{grid-template-columns:minmax(0,1fr)!important}
+  .oex-meta>div{display:flex;align-items:baseline;justify-content:space-between;gap:16px;border-left:0!important;border-top:1px solid var(--o-border)!important}
+  .oex-meta>div:first-child{border-top:0!important}
+  .oex-meta span{flex-shrink:0}
+  .oex-meta b{margin-top:0;min-width:0;text-align:right}
+  .oex-use{min-height:44px}
+  .oex-ptools{flex-wrap:wrap}
+  .oex-ag-grid{grid-template-columns:minmax(0,1fr)}
+  .oex-ractions{opacity:1}
+}
+
 @media (prefers-reduced-motion:reduce){
   .oex [class*="oex-"],.oex [class*="oex-"]::before,.oex [class*="oex-"]::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important}
   .oex .oex-saved{animation:none!important}

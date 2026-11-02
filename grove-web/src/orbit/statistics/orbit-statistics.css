@@ -117,7 +117,11 @@
 .ostat-track{display:block;height:4px;margin-top:5px;border-radius:3px;background:var(--o-selected);overflow:hidden}
 .ostat-track i{display:block;height:100%;border-radius:inherit;transform-origin:left;animation:oui-growx 700ms var(--o-ease-reflow) both;transition:width var(--o-dur-reflow) var(--o-ease-reflow)}
 .ostat-top{padding-top:2px}
-.ostat-top-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto auto;align-items:center;gap:10px;padding:6px 8px 7px;border-radius:var(--o-radius-sm);font-size:12.5px;animation:oui-rise 420ms var(--o-ease-out) both;transition:background-color var(--o-dur-fast)}
+.ostat-top-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto auto 14px;align-items:center;gap:10px;padding:6px 8px 7px;border-radius:var(--o-radius-sm);font-size:12.5px;animation:oui-rise 420ms var(--o-ease-out) both;transition:background-color var(--o-dur-fast)}
+.ostat-top-row.is-link{cursor:pointer}
+.ostat-top-go{display:flex;color:var(--o-muted);opacity:0;transform:translateX(-3px);transition:opacity var(--o-dur-fast),transform 260ms var(--o-ease-pop)}
+.ostat-top-go svg{width:14px;height:14px}
+.ostat-top-row.is-link:is(:hover,:focus-visible) .ostat-top-go{opacity:1;transform:none;color:var(--o-text)}
 .ostat-rank{font-size:11.5px;color:var(--o-muted);text-align:right}
 .ostat-top-main{min-width:0;display:flex;flex-direction:column}
 
@@ -172,6 +176,32 @@
   .ostat-usage{height:320px}
   .ostat-heat-card{height:280px}
   .ostat-list{max-height:none;overflow:visible}
+}
+
+@media (hover:none){.ostat-top-row.is-link .ostat-top-go{opacity:1;transform:none}}
+
+/* Phone: controls stack in full-width rows; tiles wrap their footnotes. */
+@media (max-width:767px){
+  .ostat .oui-page-actions{display:grid;grid-template-columns:minmax(0,1fr) auto auto;width:100%;gap:8px}
+  .ostat .oui-page-actions>.oui-seg{grid-column:1/-1;width:100%;display:grid}
+  .ostat .oui-page-actions>.ostat-measure{grid-column:1/3;justify-self:start}
+  .ostat .ostat-pop{width:min(272px,calc(100vw - 32px))}
+  .ostat-kpis{gap:10px}
+  .ostat-kpi{padding:12px 14px 13px}
+  .ostat-kpi>b{font-size:24px}
+  .ostat-kpi-foot{flex-direction:column;align-items:stretch;gap:7px;white-space:normal;overflow:visible;line-height:1.4}
+  .ostat-kpi-foot>span{overflow:visible}
+  /* The input / cache / output split moves under its key, inside the tile. */
+  .ostat-split{position:static;order:2;height:4px;border-radius:2px;overflow:hidden}
+  .ostat-split-key{flex-wrap:wrap;gap:2px 10px}
+  .ostat-legend{max-height:none;padding:0 16px 2px}
+  .ostat-usage{height:300px}
+  .ostat-usage .oui-card-head .oui-seg{flex:1 1 auto}
+  .ostat-agent{height:44px}
+  .ostat-top-row{min-height:44px}
+  .ostat-heat{padding:4px 12px 0 8px;column-gap:6px}
+  .ostat-heat-foot{padding:6px 12px 11px 44px;flex-wrap:wrap}
+  .ostat-table-wrap{overflow-x:auto}
 }
 
 @media (prefers-reduced-motion:reduce){

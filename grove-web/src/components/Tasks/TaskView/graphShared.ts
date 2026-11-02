@@ -16,6 +16,8 @@ export interface GraphNode {
   agent: string;
   duty?: string;
   status: string;
+  /** Settled outcome of the last turn while idle (`error` / `done`). */
+  outcome?: "error" | "done";
   pending_in: number;
   pending_out: number;
   pending_messages: PendingMessageInfo[];

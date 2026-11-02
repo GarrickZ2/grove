@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "../../ui";
+import { useOrbitConversation } from "./conversation/OrbitConversationContext";
 import type {
   AskFormDefinition,
   FormQuestionDef,
@@ -135,6 +136,44 @@ export function FormPill({
     [isLast, onSubmitClick, total],
   );
 
+  const orbit = useOrbitConversation();
+  if (orbit) {
+    return (
+      <div className="ocv-decision oc-form" role="group" aria-label="Survey" onKeyDown={onKeyDown}>
+        <div className="ocv-decision-head">
+          <span className="ocv-decision-icon" aria-hidden="true"><ListChecks /></span>
+          <div className="ocv-decision-text">
+            <div className="ocv-decision-eyebrow">{agentName ? `${agentName} needs your input` : "Needs your input"}</div>
+            <div className="ocv-decision-title">{definition.title}</div>
+            {requestMessage && <p className="oc-ask-body">{requestMessage}</p>}
+            {definition.description && definition.description !== requestMessage && <p className="oc-ask-body">{definition.description}</p>}
+          </div>
+        </div>
+        {(error || externalError) && <p className="oc-tray-error" role="alert">{error || externalError}</p>}
+        {currentQuestion && (
+          <div className="oc-form-question">
+            <div className="oc-form-qhead">
+              <span className="oc-form-step">{currentTab + 1}/{total}</span>
+              <span className="oc-form-qtitle">{currentQuestion.title}</span>
+              {currentQuestion.required && <span className="oc-form-required">Required</span>}
+            </div>
+            {currentQuestion.description && <p className="oc-ask-body">{currentQuestion.description}</p>}
+            <QuestionControls question={currentQuestion} answer={answers[currentQuestion.id]} onChange={(next) => updateAnswer(currentQuestion.id, next)} />
+          </div>
+        )}
+        <div className="ocv-decision-actions">
+          <button type="button" className="ocv-btn is-quiet" disabled={disabled} onClick={fireDismiss}>Cancel</button>
+          {onDecline && <button type="button" className="ocv-btn is-quiet" disabled={disabled} onClick={fireDecline}>Decline</button>}
+          <span className="ocv-decision-spacer" />
+          {total > 1 && <>
+            <button type="button" className="ocv-btn" onClick={onPrev} disabled={currentTab === 0} aria-label="Previous question"><ChevronLeft className="oc-btn-ic" aria-hidden="true" />Prev</button>
+            <button type="button" className="ocv-btn" onClick={onNext} disabled={isLast} aria-label="Next question">Next<ChevronRight className="oc-btn-ic is-end" aria-hidden="true" /></button>
+          </>}
+          <button type="button" className="ocv-btn is-primary" disabled={disabled} onClick={onSubmitClick}><Send className="oc-btn-ic" aria-hidden="true" />Submit</button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="space-y-3" onKeyDown={onKeyDown}>
       {/* Line 1: Survey title + Cancel / Submit */}

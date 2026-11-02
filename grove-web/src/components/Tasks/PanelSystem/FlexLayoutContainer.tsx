@@ -6,9 +6,11 @@ import type { IJsonModel, ITabRenderValues, ITabSetRenderValues } from 'flexlayo
 import {
   Terminal, MessageSquare, Code, FileCode,
   X, XCircle, Trash2,
-  Plus, Maximize, Minimize2, FolderOpen, Puzzle,
+  Plus, Maximize, Minimize2, FolderOpen, Puzzle, PanelsTopLeft,
 } from 'lucide-react';
 import { OrbitWorkspaceBar, type OrbitToolItem } from '../IDELayout/OrbitWorkspace';
+import { orbitTabTitle } from './orbitTabs';
+import { useSlotElement } from '../IDELayout/useSlotElement';
 import type { PanelMenuItem } from '../../../orbit/ui';
 import 'flexlayout-react/style/light.css';
 import './flexlayout-theme.css';
@@ -23,7 +25,8 @@ import { useConfig, useProject } from '../../../context';
 import { useIsMobile } from '../../../hooks';
 import { apiClient } from '../../../api/client';
 import { listPlugins, type Plugin } from '../../../api/plugins';
-import { useLinkedReviewProjects } from '../../../hooks/useLinkedReviewProjects';
+import { useLinkedReviewProjectsState } from '../../../hooks/useLinkedReviewProjects';
+import { useOpenReviewRequests, type OpenReviewRequest } from '../../../orbit/workspace/openReview';
 import {
   OPEN_PLUGIN_PANEL_EVENT,
   PLUGINS_CHANGED_EVENT,
@@ -53,6 +56,20 @@ function stripMaximizedNodes(node: any): void {
   if (node.children) {
     node.children.forEach(stripMaximizedNodes);
   }
+}
+
+/** How many tabs host the same panel as `node` (plugins by plugin id). */
+function sameKindCount(node: TabNode, allTabs: TabNode[]): number {
+  const component = node.getComponent();
+  const pluginId = (node.getConfig() as TabNodeConfig | undefined)?.pluginId;
+  return allTabs.filter((t) => t.getComponent() === component
+    && (component !== 'plugin' || (t.getConfig() as TabNodeConfig | undefined)?.pluginId === pluginId)).length;
+}
+
+/** Orbit: a tab's slot in its tabset strip; its PanelShell portals actions here. */
+function TabActionSlot({ id, visible, register }: { id: string; visible: boolean; register: (id: string, el: HTMLElement | null) => void }) {
+  const ref = useCallback((el: HTMLSpanElement | null) => register(id, el), [id, register]);
+  return <span ref={ref} className="ofl-tab-slot" style={{ display: visible ? 'inline-flex' : 'none' }} />;
 }
 
 // --- TabBar Dropdown Menu ---
@@ -224,6 +241,9 @@ interface FlexLayoutContainerProps {
   /** Orbit: header toolbar slots (the bar is portaled into the window header). */
   toolbarLeading?: React.ReactNode;
   toolbarTrailing?: React.ReactNode;
+  /** Orbit: extra rows for the toolbar's ⋯ (git overflow actions). */
+  toolbarMenu?: PanelMenuItem[];
+  onToggleLayoutMode?: () => void;
 }
 
 export interface FlexLayoutContainerHandle {
@@ -243,7 +263,7 @@ export interface FlexLayoutContainerHandle {
 export const FlexLayoutContainer = forwardRef<
   FlexLayoutContainerHandle,
   FlexLayoutContainerProps
->(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen, isActive = true, toolbarLeading, toolbarTrailing }, ref) => {
+>(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen, isActive = true, toolbarLeading, toolbarTrailing, toolbarMenu, onToggleLayoutMode }, ref) => {
   const { terminalAvailable, config } = useConfig();
   const { isMobile } = useIsMobile();
   const orbit = !isMobile && config?.web?.interface === 'orbit';
@@ -253,20 +273,13 @@ export const FlexLayoutContainer = forwardRef<
   const taskProject = projects.find((p) => p.id === projectId) ?? selectedProject;
   const isStudio = taskProject?.projectType === 'studio';
   const taskIsGitRepo = taskProject?.isGitRepo;
-  const linkedReviewProjects = useLinkedReviewProjects(projectId, task.id);
+  const { projects: linkedReviewProjects, loaded: linkedReviewLoaded } = useLinkedReviewProjectsState(projectId, task.id);
   const hasLinkedReview = linkedReviewProjects.length > 0;
 
   const layoutStorageKey = `grove-flexlayout-${projectId}-${task.id}`;
 
   // Orbit: the workspace toolbar lives in the window header slot.
-  const [orbitToolbarSlot, setOrbitToolbarSlot] = useState<HTMLElement | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.resolve().then(() => {
-      if (!cancelled) setOrbitToolbarSlot(orbit ? document.getElementById('orbit-workspace-toolbar') : null);
-    });
-    return () => { cancelled = true; };
-  }, [orbit]);
+  const orbitToolbarSlot = useSlotElement(orbit ? 'orbit-workspace-toolbar' : null, isActive);
 
   // Compute the initial layout once. Doing this in a lazy useState
   // initializer means we never read or write a ref during render (which
@@ -668,6 +681,25 @@ export const FlexLayoutContainer = forwardRef<
     return true;
   }, [model, getAllTabs, addPanel, isStudio, projectId, task.id]);
 
+  // "Open in Review" from elsewhere (Orbit Dashboard, Comments panel): see
+  // orbit/workspace/openReview.ts. Same rules as the IDE layout: a Studio
+  // task waits for its linked Projects before deciding it has a Review.
+  const openReviewPanel = useCallback((request: OpenReviewRequest) => {
+    if (isStudio && linkedReviewProjects.length === 0) return;
+    const showPanel = () => {
+      const reviewTab = getAllTabs().find((t) => t.getComponent() === 'review');
+      if (reviewTab) model.doAction(Actions.selectTab(reviewTab.getId()));
+      else addPanel('review');
+    };
+    if (!request.file || isStudio) {
+      showPanel();
+      return;
+    }
+    const mode = taskIsGitRepo === false ? 'full' : request.mode;
+    void navigateToFile(request.file, request.line, mode).then((opened) => { if (!opened) showPanel(); });
+  }, [isStudio, linkedReviewProjects.length, getAllTabs, model, addPanel, taskIsGitRepo, navigateToFile]);
+  useOpenReviewRequests(projectId, task.id, !isStudio || linkedReviewLoaded, openReviewPanel);
+
   // Expose API via ref
   useImperativeHandle(ref, () => ({
     addPanel,
@@ -768,7 +800,9 @@ export const FlexLayoutContainer = forwardRef<
   const onRenderTab = useCallback((node: TabNode, renderValues: ITabRenderValues) => {
     const component = node.getComponent() || 'terminal';
     const iconAndColor = getPanelIconAndColor(component);
-    const orbitDescriptor = orbit && component !== 'plugin' ? getPanelDescriptor(component) : undefined;
+    // Orbit: a plugin tab shows its plugin's own icon (resolved by the id in its config).
+    const pluginKey = component === 'plugin' ? `${PLUGIN_PANEL_PREFIX}${(node.getConfig() as TabNodeConfig | undefined)?.pluginId ?? ''}` : null;
+    const orbitDescriptor = orbit ? (pluginKey ? getPanelDescriptor(pluginKey, plugins) : getPanelDescriptor(component)) : undefined;
     const Icon = orbitDescriptor ? panelGlyph(orbitDescriptor, true) as typeof Terminal : iconAndColor.icon;
     const color = orbit ? 'currentColor' : iconAndColor.color;
     const tabId = node.getId();
@@ -840,11 +874,11 @@ export const FlexLayoutContainer = forwardRef<
             }}
           />
         ) : (
-          <span style={{ fontSize: orbit ? '12.5px' : '13px' }}>{node.getName()}</span>
+          <span style={{ fontSize: orbit ? '12.5px' : '13px' }}>{orbit ? orbitTabTitle(node.getName(), sameKindCount(node, getAllTabs())) : node.getName()}</span>
         )}
       </div>
     );
-  }, [editingTabId, model, orbit]);
+  }, [editingTabId, model, orbit, getAllTabs, plugins]);
 
   // Build dropdown items for [+] Add Panel button
   // Derived entirely from the shared panel catalog — adding a panel/plugin in
@@ -875,11 +909,35 @@ export const FlexLayoutContainer = forwardRef<
   }, [plugins, isStudio, terminalAvailable, hasLinkedReview, addPanel, addPluginPanel]);
 
   // Custom TabSet rendering ([+] add panel + maximize button)
+  // Orbit: one element per tab in its tabset's strip, where that tab's
+  // PanelShell portals its actions. Only the selected tab's slot shows.
+  const [tabActionSlots, setTabActionSlots] = useState<Record<string, HTMLElement>>({});
+  const registerTabActionSlot = useCallback((id: string, el: HTMLElement | null) => {
+    setTabActionSlots((prev) => {
+      if (el ? prev[id] === el : !(id in prev)) return prev;
+      const next = { ...prev };
+      if (el) next[id] = el;
+      else delete next[id];
+      return next;
+    });
+  }, []);
+
   const onRenderTabSet = useCallback((tabSetNode: TabSetNode | BorderNode, renderValues: ITabSetRenderValues) => {
     const panelId = tabSetNode.getId();
     const isMaximized = fullscreenPanelId === panelId;
 
     renderValues.buttons = renderValues.buttons || [];
+
+    if (orbit && tabSetNode.getType() === 'tabset') {
+      const selectedId = (tabSetNode as TabSetNode).getSelectedNode()?.getId();
+      renderValues.buttons.push(
+        <span key="panel-actions" className="ofl-tab-actions">
+          {tabSetNode.getChildren().map((child) => (
+            <TabActionSlot key={child.getId()} id={child.getId()} visible={child.getId() === selectedId} register={registerTabActionSlot} />
+          ))}
+        </span>,
+      );
+    }
 
     // [+] Add Panel dropdown
     renderValues.buttons.push(
@@ -919,7 +977,7 @@ export const FlexLayoutContainer = forwardRef<
         {isMaximized ? <Minimize2 size={13} /> : <Maximize size={13} />}
       </button>
     );
-  }, [addPanelItems, model, fullscreenPanelId, onToggleFullscreen]);
+  }, [addPanelItems, model, fullscreenPanelId, onToggleFullscreen, orbit, registerTabActionSlot]);
 
   // Factory: render panel content from the shared registry (the single source
   // of truth both layouts use). Terminal is layout-specific (per-tab here), so
@@ -960,32 +1018,17 @@ export const FlexLayoutContainer = forwardRef<
       linkedReviewProjects,
     };
     if (orbit && key !== 'chat') {
-      // Orbit: every panel but the Agent sits in the shared PanelShell.
-      const tabsetId = node.getParent()?.getId();
-      const isMaximized = !!tabsetId && fullscreenPanelId === tabsetId;
-      const menu: PanelMenuItem[] = [
-        ...(tabsetId ? [{
-          id: 'maximize',
-          label: isMaximized ? 'Restore' : 'Maximize',
-          icon: isMaximized ? Minimize2 : Maximize,
-          onSelect: () => {
-            model.doAction(Actions.maximizeToggle(tabsetId));
-            setFullscreenPanelId(isMaximized ? null : tabsetId);
-            onToggleFullscreen?.();
-          },
-        }] : []),
-        {
-          id: 'close-others',
-          label: 'Close other panels',
-          icon: XCircle,
-          disabled: getAllTabs().length < 2,
-          onSelect: () => getAllTabs().forEach((t) => { if (t.getId() !== node.getId()) model.doAction(Actions.deleteTab(t.getId())); }),
-        },
-      ];
-      return <div style={{ display: 'flex', width: '100%', height: '100%' }}>{renderOrbitPanel(key, ctx, { menu })}</div>;
+      // Orbit: every panel but the Agent sits in the shared PanelShell. The tab
+      // strip already shows glyph + title, so the shell is headless and puts its
+      // own actions into this tab's slot in the strip (see TabActionSlot).
+      return (
+        <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+          {renderOrbitPanel(key, ctx, { headless: true, actionsTarget: tabActionSlots[node.getId()] ?? null })}
+        </div>
+      );
     }
     return <div style={flexWrapStyle(key)}>{renderPanel(key, ctx)}</div>;
-  }, [projectId, task, model, isStudio, terminalAvailable, orbit, isActive, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, isChatBusy, handleChatBecameIdle, handleBusyStateChange, taskIsGitRepo, plugins, linkedReviewProjects, fullscreenPanelId, onToggleFullscreen, getAllTabs]);
+  }, [projectId, task, model, isStudio, terminalAvailable, orbit, isActive, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, isChatBusy, handleChatBecameIdle, handleBusyStateChange, taskIsGitRepo, plugins, linkedReviewProjects, tabActionSlots]);
 
   // Track empty state
   const [isEmpty, setIsEmpty] = useState(() => getAllTabs().length === 0);
@@ -1055,16 +1098,33 @@ export const FlexLayoutContainer = forwardRef<
         },
       };
     };
-    const info = catalog.filter((d) => d.category === 'info' || d.key === 'graph');
-    const rest = catalog.filter((d) => d.category !== 'info' && d.key !== 'graph');
+    // Same order as the docked layout: info panels, then Graph, then plugins.
+    const info = catalog
+      .filter((d) => d.category === 'info' || d.key === 'graph')
+      .map((d, i) => ({ d, i, rank: d.key.startsWith(PLUGIN_PANEL_PREFIX) ? 2 : d.key === 'graph' ? 1 : 0 }))
+      .sort((a, b) => a.rank - b.rank || a.i - b.i)
+      .map((x) => x.d);
+    const agent = catalog.filter((d) => d.key === 'chat');
+    const rest = catalog.filter((d) => d.category !== 'info' && d.key !== 'graph' && d.key !== 'chat');
     return createPortal(
       <OrbitWorkspaceBar
         title={task.name}
         branch={task.branch || undefined}
         state={isChatBusy ? 'working' : task.status === 'archived' ? 'archived' : undefined}
         leading={toolbarLeading}
-        groups={[info.map(toolFor), rest.map(toolFor)]}
+        groups={[
+          agent.map((d) => {
+            const item = toolFor(d);
+            return { ...item, label: 'Agent', primary: true, tip: item.active ? 'Agent · click to show or close' : 'Open Agent' };
+          }),
+          info.map(toolFor),
+          rest.map(toolFor),
+        ]}
         trailing={toolbarTrailing}
+        menu={[
+          ...(onToggleLayoutMode ? [{ id: 'docked-layout', label: 'Switch to docked layout', icon: PanelsTopLeft, onSelect: onToggleLayoutMode }] : []),
+          ...(toolbarMenu ?? []).map((row, i) => (i === 0 && onToggleLayoutMode ? { ...row, separator: true } : row)),
+        ]}
       />,
       orbitToolbarSlot,
     );

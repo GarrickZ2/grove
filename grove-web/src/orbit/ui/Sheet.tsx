@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { DialogLayerContext } from "../../components/ui/dialogLayerContext";
 import { Button } from "./Button";
+import { hasMacWindowControls } from "./windowControls";
 
 const SHEET_SPRING = { type: "spring", stiffness: 380, damping: 36, mass: 0.9 } as const;
 
@@ -43,7 +44,7 @@ function SheetLayer({ onClose, title, description, aside, lead, wide = false, la
   // pointer events at once so a click right after closing reaches the page.
   const present = useIsPresent();
   return (
-    <div className={`orbit-ui oui-sheet-root${present ? "" : " is-leaving"}`}>
+    <div className={`orbit-ui oui-sheet-root${hasMacWindowControls ? " has-mac-controls" : ""}${present ? "" : " is-leaving"}`}>
       <motion.button
         type="button"
         aria-label="Close"

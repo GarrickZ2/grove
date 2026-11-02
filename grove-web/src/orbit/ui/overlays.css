@@ -277,3 +277,26 @@
   .oui-pal-foot{display:none}
   .oui-dlg-foot{flex-wrap:wrap}
 }
+
+/* Phone: 16px gutters, touch-sized footers; a narrowed macOS window keeps its
+   traffic lights clear (they sit over the top-left 54px). */
+@media (max-width:767px){
+  .oui-dlg-root:not(.is-sheet){padding:16px}
+  .oui-dlg-root.has-mac-controls:not(.is-sheet){padding-top:54px}
+  .oui-dlg-root.is-sheet.has-mac-controls{padding-top:54px}
+  .oui-dlg-head{padding:18px 16px 6px}
+  .oui-dlg-body{padding:10px 16px 6px}
+  .oui-dlg-foot{padding:14px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+  .oui-dlg-foot .oui-btn{height:40px;padding:0 14px}
+  .oui-dlg-foot .oui-btn-sm{height:36px}
+  .oui-dlg-hint{flex-basis:100%;white-space:normal}
+  .oui-dlg .oui-field,.oui-dlg-static{height:40px;font-size:16px}
+  .oui-dlg-textarea{font-size:16px}
+  .oui-dlg-manager-head{padding:12px 8px 12px 16px}
+  .oui-pal{width:calc(100vw - 32px)}
+  .oui-pal-list{max-height:none}
+  .oui-pal-item{min-height:44px}
+  .oui-pal-trail .oui-keys,.oui-pal-trail .oui-kbd{display:none}
+  .oui-pal-root.has-mac-controls .oui-pal{top:54px;max-height:calc(100dvh - 64px)}
+  .oui-sheet-root.has-mac-controls .oui-sheet-head{padding-top:54px}
+}

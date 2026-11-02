@@ -24,7 +24,8 @@ describe('AuthGate sign-in screen', () => {
   let root: Root;
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-    const stored = new Map<string, string>();
+    // These cases cover the Workbench sign-in; with nothing remembered the gate would draw Orbit's.
+    const stored = new Map<string, string>([['grove:interface', 'workbench']]);
     vi.stubGlobal('localStorage', {
       getItem: (key: string) => stored.get(key) ?? null,
       setItem: (key: string, value: string) => { stored.set(key, value); },

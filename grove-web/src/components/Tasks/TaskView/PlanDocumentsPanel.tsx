@@ -3,6 +3,8 @@ import { BookOpen, CheckCircle2, Circle, Loader2 } from "lucide-react";
 import { readFile } from "../../../api";
 import { MarkdownRenderer, type MarkdownRendererProps } from "../../ui/MarkdownRenderer";
 import { planDocumentTitle, planFilePath, type PlanDocument } from "./executionPlans";
+import { useOrbitConversation } from "./conversation/OrbitConversationContext";
+import { OrbitPlanSteps } from "./composer/OrbitComposer";
 
 export type PlanMarkdownOptions = Pick<MarkdownRendererProps, "onImageClick" | "onMermaidClick" | "onD2Click" | "sketchContext">;
 
@@ -27,13 +29,23 @@ function PlanContent({ plan, allowLocalFiles, onFileClick, markdownProps, fileCo
     return () => { cancelled = true; };
   }, [uri, allowLocalFiles, plan]);
 
+  const orbit = useOrbitConversation();
+  if (plan.type === "items" && orbit) return <OrbitPlanSteps entries={plan.entries} />;
   if (plan.type === "items") return <ul className="space-y-1.5">{plan.entries.map((entry, index) => <li key={index} className="flex items-start gap-2 text-sm">
     {entry.status === "completed" ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-success)]" /> : entry.status === "in_progress" ? <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-highlight)] motion-reduce:animate-none" /> : <Circle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />}
     <span className={entry.status === "completed" ? "text-[var(--color-text-muted)] line-through" : ""}>{entry.content}</span>
   </li>)}</ul>;
+  if (plan.type === "markdown" && orbit) return <div className="ocv-prose"><MarkdownRenderer content={plan.content} onFileClick={onFileClick} {...markdownProps} /></div>;
   if (plan.type === "markdown") return <MarkdownRenderer content={plan.content} onFileClick={onFileClick} {...markdownProps} />;
   const path = planFilePath(plan.uri);
   const current = file?.uri === plan.uri ? file : null;
+  if (orbit) return <div className="oc-plan-file">
+    <p className="oc-plan-uri">{plan.uri}</p>
+    {!allowLocalFiles || !path ? <p className="oc-tray-empty">This plan references a file that is not available through this connection.</p>
+      : current?.error ? <p className="oc-tray-error">{current.error}</p>
+      : current?.content !== undefined ? <div className="ocv-prose"><MarkdownRenderer content={current.content} onFileClick={onFileClick} {...markdownProps} location={fileContext && path ? { projectId: fileContext.projectId, root: { kind: "task", taskId: fileContext.taskId }, path } : undefined} /></div>
+      : <p className="oc-tray-empty">Loading plan…</p>}
+  </div>;
   return <div className="space-y-2">
     <p className="break-all font-mono text-[11px] text-[var(--color-text-muted)]">{plan.uri}</p>
     {!allowLocalFiles || !path ? <p className="text-xs text-[var(--color-text-muted)]">This plan references a file that is not available through this connection.</p>
@@ -52,7 +64,14 @@ export function PlanDocumentsPanel({ plans, allowLocalFiles = false, onFileClick
 }) {
   const [selected, setSelected] = useState<string | null>(() => plans.at(-1)?.plan_id ?? null);
   const current = plans.find((plan) => plan.plan_id === selected) ?? plans.at(-1);
+  const orbit = useOrbitConversation();
   if (!current) return null;
+  if (orbit) return <div className="oc-plan-docs">
+    {plans.length > 1 && <div className="oc-plan-tabs" role="tablist" aria-label="Plans">
+      {plans.map((plan, index) => <button key={plan.plan_id} type="button" role="tab" aria-selected={plan.plan_id === current.plan_id} title={planDocumentTitle(plan, index)} onClick={() => setSelected(plan.plan_id)}>{planDocumentTitle(plan, index)}</button>)}
+    </div>}
+    <PlanContent key={current.plan_id} plan={current} allowLocalFiles={allowLocalFiles} onFileClick={onFileClick} markdownProps={markdownProps} fileContext={fileContext} />
+  </div>;
   return <div className="space-y-3">
     <div className="flex flex-wrap items-center gap-1.5">
       <BookOpen className="mr-1 h-3.5 w-3.5 text-[var(--color-text-muted)]" />

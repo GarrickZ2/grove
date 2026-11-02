@@ -92,17 +92,21 @@ fn build_graph_response(project_key: &str, task_id: &str) -> Option<GraphRespons
 
     for chat in &chats {
         let session_key = format!("{}:{}:{}", project_key, task_id, chat.id);
-        let status = if let Some(handle) = acp::get_session_handle(&session_key) {
-            if handle.is_busy.load(std::sync::atomic::Ordering::Relaxed) {
+        let pending_in = *pending_in_map.get(&chat.id).unwrap_or(&0);
+        let (status, turn_record) = if let Some(handle) = acp::get_session_handle(&session_key) {
+            let status = if handle.is_busy.load(std::sync::atomic::Ordering::Relaxed) {
                 "busy"
             } else if handle.has_pending_permission() {
                 "permission_required"
             } else {
                 "idle"
-            }
+            };
+            (status, handle.turn_record())
         } else {
-            "disconnected"
+            ("disconnected", Default::default())
         };
+        let outcome =
+            crate::agent_graph::node_outcome::node_outcome(status, turn_record, pending_in > 0);
 
         node_status_map.insert(chat.id.clone(), status.to_string());
 
@@ -112,7 +116,8 @@ fn build_graph_response(project_key: &str, task_id: &str) -> Option<GraphRespons
             agent: chat.agent.clone(),
             duty: chat.duty.clone(),
             status: status.to_string(),
-            pending_in: *pending_in_map.get(&chat.id).unwrap_or(&0),
+            outcome: outcome.map(str::to_string),
+            pending_in,
             pending_out: *pending_out_map.get(&chat.id).unwrap_or(&0),
             pending_messages: pending_msgs_map.remove(&chat.id).unwrap_or_default(),
         });
@@ -649,6 +654,70 @@ mod tests {
             assert_eq!(resp.nodes[0].pending_out, 0);
             assert!(resp.nodes[0].pending_messages.is_empty());
             assert!(resp.edges.is_empty());
+        });
+    }
+
+    #[test]
+    fn graph_node_outcome_follows_the_last_turn() {
+        use crate::agent_graph::node_outcome::TurnEnd;
+        with_temp_home(|project_id, task_id| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let _rt = rt.enter();
+            for id in ["chat-1", "chat-2"] {
+                add_chat_session(
+                    project_id,
+                    task_id,
+                    ChatSession {
+                        id: id.to_string(),
+                        title: id.to_string(),
+                        agent: "claude".to_string(),
+                        acp_session_id: None,
+                        created_at: chrono::Utc::now(),
+                        duty: None,
+                        launch_mode: "acp".to_string(),
+                    },
+                )
+                .unwrap();
+            }
+            let key = format!("{project_id}:{task_id}:chat-2");
+            let (handle, _rx, _guard) =
+                acp::new_handle_for_test(&key, project_id, task_id, "chat-2");
+            let outcome_of = |chat: &str| {
+                build_graph_response(project_id, task_id)
+                    .unwrap()
+                    .nodes
+                    .into_iter()
+                    .find(|n| n.chat_id == chat)
+                    .unwrap()
+                    .outcome
+            };
+
+            // Fresh idle session, and a node with no session: no outcome.
+            assert_eq!(outcome_of("chat-2"), None);
+            assert_eq!(outcome_of("chat-1"), None);
+
+            // Replied during a turn that ended normally: done.
+            handle.emit(crate::acp::AcpUpdate::Busy { value: true });
+            handle.record_graph_reply();
+            assert_eq!(outcome_of("chat-2"), None, "busy node has no outcome");
+            handle.finish_turn(TurnEnd::EndTurn);
+            handle.emit(crate::acp::AcpUpdate::Busy { value: false });
+            assert_eq!(outcome_of("chat-2").as_deref(), Some("done"));
+
+            // A message still waiting for its reply means it is not done.
+            {
+                let conn = connection();
+                graph_db::add_edge(&conn, project_id, task_id, "chat-1", "chat-2", None).unwrap();
+                graph_db::insert_pending_message(&conn, "msg-1", task_id, "chat-1", "chat-2", "x")
+                    .unwrap();
+            }
+            assert_eq!(outcome_of("chat-2"), None);
+
+            // A failed turn is an error regardless of what it owes.
+            handle.emit(crate::acp::AcpUpdate::Busy { value: true });
+            handle.finish_turn(TurnEnd::Failed);
+            handle.emit(crate::acp::AcpUpdate::Busy { value: false });
+            assert_eq!(outcome_of("chat-2").as_deref(), Some("error"));
         });
     }
 

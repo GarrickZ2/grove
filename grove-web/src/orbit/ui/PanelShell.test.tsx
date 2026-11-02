@@ -44,7 +44,6 @@ describe("PanelShell", () => {
 
   it("lets the body contribute context, header actions and menu rows", () => {
     const onBodyRow = vi.fn();
-    const onHostRow = vi.fn();
     function Body() {
       const items = useMemo(() => [{ id: "refresh", label: "Refresh", onSelect: onBodyRow }], []);
       usePanelMenuItems(items);
@@ -57,7 +56,7 @@ describe("PanelShell", () => {
       );
     }
     act(() => root.render(
-      <PanelShell glyph={Info} hue={PANEL_HUES.green} title="Graph" context="default" menu={[{ id: "host", label: "Reset width", onSelect: onHostRow }]}>
+      <PanelShell glyph={Info} hue={PANEL_HUES.green} title="Graph" context="default">
         <Body />
       </PanelShell>,
     ));
@@ -66,11 +65,36 @@ describe("PanelShell", () => {
     expect(container.querySelector(".oui-panel-body")?.textContent).toBe("inside");
 
     act(() => (container.querySelector('[aria-label="Panel actions"]') as HTMLButtonElement).click());
-    const rows = [...container.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent);
-    expect(rows).toEqual(["Refresh", "Reset width"]);
-    act(() => (container.querySelector('[role="menuitem"]') as HTMLButtonElement).click());
+    const rows = [...document.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent);
+    expect(rows).toEqual(["Refresh"]);
+    act(() => (document.querySelector('[role="menuitem"]') as HTMLButtonElement).click());
     expect(onBodyRow).toHaveBeenCalledOnce();
-    expect(container.querySelector('[role="menu"]')).toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("has no ⋯ when the body registers no rows", () => {
+    act(() => root.render(<PanelShell glyph={Info} hue={PANEL_HUES.blue} title="Notes"><p>n</p></PanelShell>));
+    expect(container.querySelector('[aria-label="Panel actions"]')).toBeNull();
+  });
+
+  it("headless: no header, the body's actions and ⋯ go to the target", () => {
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    function Body() {
+      usePanelMenuItems(useMemo(() => [{ id: "edit", label: "Edit", onSelect: () => {} }], []));
+      return <PanelHeaderActions><button type="button">Sync</button></PanelHeaderActions>;
+    }
+    act(() => root.render(
+      <PanelShell glyph={Info} hue={PANEL_HUES.orange} title="Git" headless actionsTarget={target} onClose={() => {}}>
+        <Body />
+      </PanelShell>,
+    ));
+    expect(container.querySelector(".oui-panel-head")).toBeNull();
+    expect(target.textContent).toContain("Sync");
+    expect(target.querySelector('[aria-label="Panel actions"]')).not.toBeNull();
+    expect(target.querySelector('[aria-label="Close panel"]')).toBeNull();
+    act(() => root.render(<span />));
+    target.remove();
   });
 
   it("slot helpers are no-ops outside a shell", () => {

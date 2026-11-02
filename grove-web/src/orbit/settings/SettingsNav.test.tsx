@@ -56,7 +56,7 @@ describe("SettingsNav", () => {
     expect(navLabels()).toEqual([
       "Agents",
       "General", "Appearance", "Notifications", "Keyboard Shortcuts",
-      "Terminal", "Worktrees",
+      "Workspace",
       "Voice input", "Voice control", "Agent voice", "AI providers",
       "System",
     ]);
@@ -64,13 +64,13 @@ describe("SettingsNav", () => {
       sep.previousElementSibling?.classList.contains("ost-subs")
         ? sep.previousElementSibling.previousElementSibling?.textContent
         : sep.previousElementSibling?.textContent);
-    expect(separatorsAfter).toEqual(["Agents", "Keyboard Shortcuts", "Worktrees", "AI providers"]);
+    expect(separatorsAfter).toEqual(["Agents", "Keyboard Shortcuts", "Workspace", "AI providers"]);
     expect(container.querySelector('[aria-current="page"]')?.textContent).toContain("Agents");
   });
 
   it("filters to matching pages and shows an empty state", () => {
     render({ query: "zellij" });
-    expect(navLabels()).toEqual(["Terminal"]);
+    expect(navLabels()).toEqual(["Workspace"]);
     render({ query: "no such setting" });
     expect(navLabels()).toEqual([]);
     expect(container.textContent).toContain("No settings match");
@@ -101,15 +101,15 @@ describe("SettingsNav", () => {
   it("expands only the active page's sub-sections and jumps on click", () => {
     render({ activePage: "worktrees" });
     const open = container.querySelectorAll(".ost-subs.is-open .ost-sub");
-    expect([...open].map((node) => node.textContent)).toEqual(["AutoLink", "Code Indexing"]);
-    act(() => (open[1] as HTMLButtonElement).click());
+    expect([...open].map((node) => node.textContent)).toEqual(["Terminal", "Terminal layout", "AutoLink", "Code Indexing"]);
+    act(() => (open[3] as HTMLButtonElement).click());
     expect(onJump).toHaveBeenCalledWith("indexing");
   });
 
   it("keeps sub-sections collapsed when the page fits without scrolling", () => {
     render({ activePage: "worktrees", showSubs: false });
     expect(container.querySelectorAll(".ost-subs.is-open")).toHaveLength(0);
-    expect(container.querySelector('[aria-current="page"]')?.textContent).toContain("Worktrees");
+    expect(container.querySelector('[aria-current="page"]')?.textContent).toContain("Workspace");
   });
 
   it("still opens a matched sub-section from search when sub-sections are hidden", () => {
@@ -119,8 +119,8 @@ describe("SettingsNav", () => {
   });
 
   it("marks pages that need attention", () => {
-    render({ attention: new Set<SettingsPageId>(["terminal"]) });
-    const terminal = container.querySelector("#ost-nav-terminal");
+    render({ attention: new Set<SettingsPageId>(["worktrees"]) });
+    const terminal = container.querySelector("#ost-nav-worktrees");
     expect(terminal?.querySelector('[aria-label="Needs setup"]')).not.toBeNull();
     expect(container.querySelectorAll('[aria-label="Needs setup"]')).toHaveLength(1);
   });

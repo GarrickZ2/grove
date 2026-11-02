@@ -1,6 +1,6 @@
 /* Per-browser flags behind the first-run experience. Everything here is a
    convenience: storage that throws or comes back empty only means a first-run
-   element shows (or the Workbench look is used), never that the app breaks. */
+   element shows (or the Orbit look is used), never that the app breaks. */
 
 /** Last interface the config reported, so screens drawn before the config loads (sign-in, splash) can match it. */
 export const INTERFACE_KEY = "grove:interface";
@@ -29,8 +29,9 @@ export function markSeen(key: string): void {
   write(key, "1");
 }
 
+/** With nothing remembered (new browser, cleared storage) this is Orbit, the default for new installs. */
 export function readCachedOrbit(): boolean {
-  return read(INTERFACE_KEY) === "orbit";
+  return read(INTERFACE_KEY) !== "workbench";
 }
 
 export function writeCachedInterface(value: "orbit" | "workbench"): void {

@@ -19,6 +19,7 @@ import type { OrbitPhoneAction } from "../IDELayout/OrbitPhonePanels";
 import type { IDELayoutHandle, LayoutMode, AuxPanelType, InfoTabType } from "../IDELayout";
 import { AUX_PANEL_TYPES, INFO_PANEL_TYPES } from "../IDELayout";
 import type { Task } from "../../../data/types";
+import { TaskGitActionsContext, type TaskGitActions } from "./taskGitActions";
 import type { PanelType } from "../PanelSystem/types";
 import { sendInputToTerminal, pasteToTerminal } from "../TaskDetail/terminalCache";
 import { activateTask } from "../../../api";
@@ -27,7 +28,7 @@ import { useConfig } from "../../../context";
 import { useIsMobile } from "../../../hooks";
 import { useCommand, useKeyboardScope, useContextKey, useVoiceControlContext } from "../../../keyboard";
 import { usePluginPanelCommands } from "../../Plugins/pluginPanelCommands";
-import { Button, PanelMenuButton, type PanelMenuItem } from "../../../orbit/ui";
+import { Button, type PanelMenuItem } from "../../../orbit/ui";
 
 // --- Workspace Bar Dropdown (for overflow actions) ---
 function OverflowDropdown({ items }: { items: OverflowItem[] }) {
@@ -287,6 +288,10 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   const isArchived = task.status === "archived";
   const isLocal = task.isLocal === true;
   const canOperate = !isArchived && !isLocal;
+  // Same enablement as the toolbar's Commit / Merge buttons below.
+  const gitActions = useMemo<TaskGitActions>(() => ({
+    onCommit, onMerge, commitDisabled: isArchived, mergeDisabled: !canOperate,
+  }), [onCommit, onMerge, isArchived, canOperate]);
 
   // Voice control context contribution for active workspace
   useVoiceControlContext("active_workspace", () => {
@@ -443,7 +448,8 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     </div>
   ) : undefined, [onBack]);
 
-  // Orbit: compact ghost actions after the panel toggles; the rest under ⋯.
+  // Orbit: compact ghost actions after the panel toggles; the rest go to the
+  // toolbar's ⋯ (with the workspace's own layout rows).
   const orbitOverflow = useMemo<PanelMenuItem[]>(() => overflowItems.map((item) => ({
     id: item.id,
     label: item.label,
@@ -470,9 +476,8 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
           <RefreshCw aria-hidden="true" />
         </Button>
       )}
-      {orbitOverflow.length > 0 && <PanelMenuButton items={orbitOverflow} label="More actions" />}
     </>
-  ), [onCommit, onMerge, onSync, canOperate, isLocal, isArchived, orbitOverflow]);
+  ), [onCommit, onMerge, onSync, canOperate, isLocal, isArchived]);
 
   const workspaceActions = useMemo(() => (
     <div className="flex items-center gap-1 shrink-0">
@@ -518,6 +523,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   ), [onCommit, onMerge, onSync, canOperate, isLocal, isArchived, overflowItems]);
 
   return (
+    <TaskGitActionsContext.Provider value={gitActions}>
     <div className={`flex-1 flex flex-col h-full overflow-hidden ${fullscreen ? 'fixed inset-0 z-50 bg-[var(--color-bg)]' : ''}`}>
       {/* Workspace Bar — hidden in fullscreen */}
       {!fullscreen && !orbit && layoutMode !== "ide" && <div className="flex items-center h-9 px-3 gap-3 bg-[var(--color-bg)] border-b border-[var(--color-border)] shrink-0 select-none">
@@ -622,6 +628,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             phoneActions={phoneActions}
             isActive={isActive}
             onToggleLayoutMode={toggleLayoutMode}
+            toolbarMenu={orbit && !isMobile ? orbitOverflow : undefined}
           />
         ) : (
           <FlexLayoutContainer
@@ -634,10 +641,13 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             onToggleFullscreen={toggleFullscreen}
             toolbarLeading={orbit ? workspaceLeading : undefined}
             toolbarTrailing={orbit ? orbitWorkspaceActions : undefined}
+            toolbarMenu={orbit ? orbitOverflow : undefined}
+            onToggleLayoutMode={toggleLayoutMode}
           />
         )}
       </div>
     </div>
+    </TaskGitActionsContext.Provider>
   );
 });
 

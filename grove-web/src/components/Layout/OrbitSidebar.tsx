@@ -25,6 +25,9 @@ import { useGlobalActiveChatId } from "../Tasks/TaskView/useActiveChatId";
 import { promoteSession } from "../Tasks/TaskView/sessionListState";
 import { ArchivedDialog, type ArchivedScope } from "../Archived/ArchivedDialog";
 import { sessionActivityReducer, type SessionActivityState } from "./orbitSessionActivity";
+import type { Plugin } from "../../api/plugins";
+import { PluginIcon } from "../Plugins/PluginIcon";
+import { pluginPageEntries } from "../Plugins/pluginPages";
 import "./orbit-sidebar.css";
 
 interface OrbitSidebarProps {
@@ -39,6 +42,8 @@ interface OrbitSidebarProps {
   onProjectSwitch: (projectId?: string) => void;
   onManageProjects: (tab?: "coding" | "studio") => void;
   onAddProject: (studioMode?: "studio") => void;
+  /** Installed plugins; those contributing a top-level page (`contributes.sidebar`) are listed under More. */
+  plugins?: Plugin[];
 }
 
 type Selection = { projectId: string; taskId: string; chatId: string };
@@ -62,7 +67,7 @@ function readExpansion(projectId: string): ExpansionState {
   }
 }
 
-export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onItemClick, onNavigate, onSearch, onProjectSwitch, onManageProjects, onAddProject }: OrbitSidebarProps) {
+export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onItemClick, onNavigate, onSearch, onProjectSwitch, onManageProjects, onAddProject, plugins }: OrbitSidebarProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
   const { theme, appIcon } = useTheme();
   const { unreadCount } = useNotifications();
@@ -278,7 +283,9 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
     { id: "automation", label: "Automation", icon: Repeat },
     { id: "statistics", label: "Statistics", icon: BarChart2 },
   ];
-  const moreOpen = moreExpanded || moreNavigation.some(({ id }) => id === activeItem);
+  // Plugin pages (`plugin:<id>`) follow the built-in More pages, each with the plugin's own icon.
+  const pluginPages = useMemo(() => pluginPageEntries(plugins), [plugins]);
+  const moreOpen = moreExpanded || moreNavigation.some(({ id }) => id === activeItem) || pluginPages.some(({ id }) => id === activeItem);
   const renderNavRow = ({ id, label, icon: Icon }: (typeof navigation)[number]) => <button type="button" key={id} className={`orbit-row orbit-nav-row${activeItem === id ? " is-selected" : ""}`} onClick={() => onItemClick(id)}><Icon size={16} strokeWidth={1.6} /><span>{label}</span></button>;
   const drawer = variant === "drawer";
   const hasMacControls = typeof window !== "undefined" && ("__TAURI__" in window || "__TAURI_INTERNALS__" in window) && /Mac/i.test(navigator.platform);
@@ -349,6 +356,7 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
           {navigation.map(renderNavRow)}
           <button type="button" className="orbit-row orbit-nav-row" aria-expanded={moreOpen} onClick={() => setMoreExpanded(!moreOpen)}><MoreHorizontal size={16} strokeWidth={1.6} /><span>More</span><ChevronDown size={13} className={`orbit-more-chevron${moreOpen ? "" : " is-collapsed"}`} /></button>
           {moreOpen && moreNavigation.map(renderNavRow)}
+          {moreOpen && pluginPages.map(({ id, label, plugin }) => <button type="button" key={id} className={`orbit-row orbit-nav-row orbit-plugin-row${activeItem === id ? " is-selected" : ""}`} aria-current={activeItem === id ? "page" : undefined} title={label} onClick={() => onItemClick(id)}><PluginIcon plugin={plugin} className="orbit-plugin-icon" size={14} /><span>{label}</span></button>)}
         </nav>
         <section className="orbit-session-area" aria-label="Sessions">
           {error && <p role="alert" className="orbit-error">{error}</p>}

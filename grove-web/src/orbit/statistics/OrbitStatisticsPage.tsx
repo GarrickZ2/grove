@@ -19,8 +19,12 @@ const HUE: PageHue = {
   glow: "color-mix(in oklab, #f59e0b 12%, transparent)",
 };
 
+interface OrbitStatisticsPageProps {
+  onNavigate?: (page: string, data?: Record<string, unknown>) => void;
+}
+
 /** Orbit Statistics: where agent time and tokens go, in one viewport. */
-export function OrbitStatisticsPage() {
+export function OrbitStatisticsPage({ onNavigate }: OrbitStatisticsPageProps) {
   const { selectedProject } = useProject();
   const { theme } = useTheme();
   usePersonaRegistry();
@@ -126,6 +130,8 @@ export function OrbitStatisticsPage() {
               unit={unit}
               averageRates={averageRates}
               dark={dark}
+              project={selectedProject}
+              onOpenTask={onNavigate ? (taskProjectId, taskId) => onNavigate("tasks", { projectId: taskProjectId, taskId, taskKnown: true }) : undefined}
             />
           </div>
         </>

@@ -13,9 +13,9 @@
 import type { CSSProperties, ElementType, ReactNode } from "react";
 import {
   Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText,
-  MessageCircle, FolderOpen, Pencil, Network, Info, Eye, Puzzle,
+  MessageCircle, FolderOpen, Pencil, Network, Info, Eye, Puzzle, Sparkle,
 } from "lucide-react";
-import { PanelShell, PanelEmpty, PANEL_HUES, type PanelHue, type PanelMenuItem } from "../../../orbit/ui";
+import { PanelShell, PanelEmpty, PANEL_HUES, type PanelHue } from "../../../orbit/ui";
 import type { Task } from "../../../data/types";
 import type { FileNavRequest } from "../../Review";
 import type { Plugin } from "../../../api/plugins";
@@ -142,7 +142,8 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-info)",
     category: "chat",
     available: always,
-    orbit: { hue: PANEL_HUES.slate },
+    // Orbit marks agents with Sparkle (as in Settings → Agents).
+    orbit: { hue: PANEL_HUES.slate, glyph: Sparkle },
     render: (ctx) => (
       <OptionalPerfProfiler id="TaskChat">
         <TaskChat
@@ -326,7 +327,13 @@ function pluginDescriptor(plugin: Plugin): PanelDescriptor {
     color: "var(--color-highlight)",
     category: side === "right" ? "info" : "aux",
     available: always,
-    orbit: { hue: PANEL_HUES.slate },
+    // Orbit draws the glyph at the size its host asks for (12px in the panel tile).
+    orbit: {
+      hue: PANEL_HUES.slate,
+      glyph: (props: { className?: string; size?: number }) => (
+        <PluginIcon plugin={plugin} className={props.className} size={props.size ?? 12} />
+      ),
+    },
     render: (ctx) => (
       <PluginFrame
         plugin={plugin}
@@ -378,8 +385,10 @@ export function renderPanel(key: string, ctx: PanelRenderCtx): ReactNode {
 }
 
 export interface OrbitPanelFrame {
-  /** The workspace's own ⋯ rows for this panel. */
-  menu?: PanelMenuItem[];
+  /** Free layout: the tab strip shows glyph + title, so the shell is headless
+   *  and its actions go into this tab-strip element. */
+  actionsTarget?: HTMLElement | null;
+  headless?: boolean;
 }
 
 /** Orbit: a panel's content inside the shared PanelShell (header, states,
@@ -388,7 +397,7 @@ export function renderOrbitPanel(key: string, ctx: PanelRenderCtx, frame: OrbitP
   const d = getPanelDescriptor(key, ctx.plugins);
   if (!d) {
     return (
-      <PanelShell glyph={Puzzle} hue={PANEL_HUES.slate} title="Panel" onClose={ctx.onClose} menu={frame.menu}>
+      <PanelShell glyph={Puzzle} hue={PANEL_HUES.slate} title="Panel" onClose={ctx.onClose} actionsTarget={frame.actionsTarget} headless={frame.headless}>
         <PanelEmpty icon={Puzzle} title="This panel is no longer available">
           Its plugin was removed or turned off. Close the panel, or reinstall the plugin from Extensions.
         </PanelEmpty>
@@ -402,8 +411,9 @@ export function renderOrbitPanel(key: string, ctx: PanelRenderCtx, frame: OrbitP
       hue={meta?.hue ?? PANEL_HUES.slate}
       title={d.label}
       context={meta?.context?.(ctx)}
-      onClose={ctx.onClose}
-      menu={frame.menu}
+      onClose={frame.headless ? undefined : ctx.onClose}
+      actionsTarget={frame.actionsTarget}
+      headless={frame.headless}
       body={meta?.body ?? "fill"}
     >
       {d.render(ctx)}

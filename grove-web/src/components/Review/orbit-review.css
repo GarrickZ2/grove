@@ -15,39 +15,33 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Header actions (portalled into the PanelShell header) ─────────────── */
-.oui-panel-actions .orv-scope { margin-right: 4px; }
-
-/* ── Bar over the diff ─────────────────────────────────────────────────── */
-.orv-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 42px;
-  padding: 0 8px 0 12px;
-  flex-shrink: 0;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--o-border);
-  background: var(--o-bg);
-  min-width: 0;
-}
-.orv-bar-leading { display: flex; align-items: center; min-width: 0; flex: 0 1 220px; }
-.orv-bar-spacer { flex: 1; min-width: 0; }
-.orv-bar-group { display: inline-flex; align-items: center; gap: 1px; }
-.orv-range { display: flex; align-items: center; gap: 6px; min-width: 0; flex-shrink: 1; }
+/* ── The one header row (portalled into the PanelShell header, or the free
+      layout's tab strip). Outside `.diff-review-page`, so scoped by `.orv-head`. */
+.orv-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.orv-head-leading { display: flex; align-items: center; min-width: 0; max-width: 200px; }
+.orv-head-group { display: inline-flex; align-items: center; gap: 1px; }
+.orv-range { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .orv-range-arrow { color: var(--o-muted); font-size: 12px; user-select: none; }
 
+/* Focus-mode warning: a pill over the top of the diff. */
 .orv-warn {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 25;
+  translate: -50% 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-width: 0;
-  height: 24px;
-  padding: 0 4px 0 9px;
+  max-width: calc(100% - 32px);
+  height: 26px;
+  padding: 0 4px 0 10px;
+  box-sizing: border-box;
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: color-mix(in oklab, var(--o-warn) 85%, var(--o-text));
-  background: color-mix(in oklab, var(--o-warn) 13%, transparent);
+  background: color-mix(in oklab, var(--o-warn) 14%, var(--o-bg));
+  box-shadow: var(--o-shadow-2);
   animation: oui-fade-up var(--o-dur-enter) var(--o-ease-out) both;
 }
 .orv-warn-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -67,6 +61,7 @@
   height: 28px;
   min-width: 28px;
   padding: 0 7px;
+  box-sizing: border-box;
   border: 0;
   border-radius: var(--o-radius-sm);
   background: none;
@@ -89,9 +84,11 @@
   color: color-mix(in oklab, var(--o-warn) 85%, var(--o-text));
   animation: orv-pop var(--o-dur-pop) var(--o-ease-pop) both;
 }
+.orv-head .diff-version-trigger { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+.orv-head.is-narrow .diff-version-trigger { max-width: 96px; padding: 0 6px 0 8px; }
 
 /* Version selectors: Orbit field + popover */
-.diff-review-page.is-orbit .diff-version-trigger {
+.orv-head .diff-version-trigger {
   height: 28px;
   padding: 0 8px 0 10px;
   border: 1px solid var(--o-border);
@@ -102,10 +99,12 @@
   box-shadow: var(--o-shadow-1);
   transition: border-color var(--o-dur-fast), box-shadow var(--o-dur-fast);
 }
-.diff-review-page.is-orbit .diff-version-trigger:hover { border-color: var(--o-border-strong); background: var(--o-bg); }
-.diff-review-page.is-orbit .diff-version-trigger.open { border-color: var(--o-border-strong); box-shadow: var(--o-ring-selected); }
-.diff-review-page.is-orbit .diff-version-dropdown {
-  top: calc(100% + 6px);
+.orv-head .diff-version-trigger:hover { border-color: var(--o-border-strong); background: var(--o-bg); }
+.orv-head .diff-version-trigger.open { border-color: var(--o-border-strong); box-shadow: var(--o-ring-selected); }
+.orv-version-pop { position: fixed; z-index: 1000; }
+.orv-version-pop .diff-version-dropdown {
+  position: static;
+  transform-origin: top right;
   min-width: 220px;
   padding: 5px;
   border: 1px solid var(--o-border);
@@ -114,25 +113,30 @@
   box-shadow: var(--o-shadow-2);
   scrollbar-width: thin;
   scrollbar-color: var(--o-track) transparent;
-  transform-origin: top left;
   animation: orv-pop-in 220ms var(--o-ease-out) both;
 }
-.diff-review-page.is-orbit .diff-version-option {
+.orv-version-pop .diff-version-option {
   height: 30px;
   padding: 0 9px;
   border-radius: var(--o-radius-sm);
   font-size: 12.5px;
   color: var(--o-text);
 }
-.diff-review-page.is-orbit .diff-version-option:hover { background: var(--o-hover); }
-.diff-review-page.is-orbit .diff-version-option.selected { background: var(--o-selected); font-weight: 500; }
-.diff-review-page.is-orbit .diff-version-footer { padding: 6px 9px 2px; border-top-color: var(--o-border); color: var(--o-muted); }
+.orv-version-pop .diff-version-option:hover { background: var(--o-hover); }
+.orv-version-pop .diff-version-option.selected { background: var(--o-selected); font-weight: 500; }
+.orv-version-pop .diff-version-footer { padding: 6px 9px 2px; border-top-color: var(--o-border); color: var(--o-muted); }
 
 /* Linked-project switcher, when the task links Projects */
-.diff-review-page.is-orbit .review-project-trigger { border-color: var(--o-border); border-radius: var(--o-radius-sm); background: var(--o-bg); box-shadow: var(--o-shadow-1); }
-.diff-review-page.is-orbit .review-project-menu { border-color: var(--o-border); border-radius: var(--o-radius-md); background: var(--o-bg); box-shadow: var(--o-shadow-2); }
-.diff-review-page.is-orbit .review-project-option { border-radius: var(--o-radius-sm); }
-.diff-review-page.is-orbit .review-project-option:hover { background: var(--o-hover); }
+.orv-head .review-project-trigger { border-color: var(--o-border); border-radius: var(--o-radius-sm); background: var(--o-bg); box-shadow: var(--o-shadow-1); }
+.orv-project-pop { position: fixed; z-index: 1000; }
+.orv-project-pop .review-project-menu { position: static; width: 240px; max-width: calc(100vw - 16px); }
+.orv-project-pop .review-project-menu { border-color: var(--o-border); border-radius: var(--o-radius-md); background: var(--o-bg); box-shadow: var(--o-shadow-2); }
+.orv-project-pop .review-project-option { border-radius: var(--o-radius-sm); }
+.orv-project-pop .review-project-option:hover { background: var(--o-hover); }
+
+/* Standalone /review page: the panel fills the window. */
+.orv-standalone { height: 100vh; height: 100dvh; display: flex; }
+.orv-standalone-wait { height: 100vh; height: 100dvh; background: var(--color-bg); }
 
 /* ── Content states ────────────────────────────────────────────────────── */
 .diff-review-page.is-orbit .orv-state { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 14px 16px; }
@@ -312,6 +316,34 @@
 .diff-review-page.is-orbit .conv-sidebar-header > svg { display: none; }
 .diff-review-page.is-orbit .conv-sidebar-count { font-size: 11px; padding: 0 6px; line-height: 17px; border-radius: 999px; background: var(--o-selected); color: var(--o-muted); }
 .diff-review-page.is-orbit .conv-cleanup-btn { border-radius: var(--o-radius-xs); }
+.diff-review-page.is-orbit .conv-send-all-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--o-radius-sm);
+  background: var(--o-ink);
+  color: var(--o-on-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%), 0 1px 2px rgb(0 0 0 / 18%);
+  transition: transform 140ms var(--o-ease-toggle), opacity 200ms;
+}
+.diff-review-page.is-orbit .conv-send-all-btn svg { width: 12px; height: 12px; }
+/* A narrow sidebar keeps just the icon (the title says what it does). */
+.diff-review-page.is-orbit .conv-sidebar { container-type: inline-size; }
+@container (max-width: 250px) {
+  .diff-review-page.is-orbit .conv-send-all-label { display: none; }
+  .diff-review-page.is-orbit .conv-send-all-btn { width: 26px; padding: 0; justify-content: center; }
+}
+.diff-review-page.is-orbit .conv-send-all-btn:active:not(:disabled) { transform: scale(.96); }
+.diff-review-page.is-orbit .conv-send-all-btn:disabled { opacity: .4; cursor: default; }
+.diff-review-page.is-orbit .conv-send-all-btn:focus-visible { outline: 2px solid var(--o-accent); outline-offset: 2px; }
 
 /* Filters read as one segmented control */
 .diff-review-page.is-orbit .conv-filter-bar {
@@ -370,6 +402,17 @@
 .diff-review-page.is-orbit .conv-empty { color: var(--o-muted); font-size: 12.5px; }
 .diff-review-page.is-orbit .conv-sidebar-footer { border-top: 1px solid var(--o-border); background: var(--o-group); }
 
+/* Commit / merge readiness (foot of the comments sidebar) */
+/* Wraps instead of truncating: when the sidebar is narrow the copy takes its
+   own line and the buttons move under it; the copy itself wraps too. */
+.orv-merge { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--o-border); background: var(--o-group); flex-shrink: 0; }
+.orv-merge-copy { flex: 1 1 150px; min-width: 0; display: flex; flex-direction: column; }
+.orv-merge-copy b { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.orv-merge-copy span { margin-top: 1px; font-size: 11.5px; line-height: 1.4; color: var(--o-muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.orv-merge-acts { display: flex; gap: 6px; margin-left: auto; }
+.orv-merge.is-blocked .orv-merge-copy b { color: color-mix(in oklab, var(--o-warn) 85%, var(--o-text)); }
+.orv-merge.is-ready .orv-merge-copy b { color: color-mix(in oklab, var(--o-success) 80%, var(--o-text)); }
+
 /* ── Find bar ─────────────────────────────────────────────────────────── */
 .orv-search {
   position: absolute;
@@ -423,8 +466,6 @@
 
 /* ── Narrow panels ────────────────────────────────────────────────────── */
 @container (max-width: 640px) {
-  .orv-range-arrow { display: none; }
-  .orv-bar .orv-layout { display: none; }
   .diff-review-page.is-orbit .diff-comment-card { margin-left: 16px; }
 }
 

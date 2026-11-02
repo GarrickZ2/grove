@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import {
   X,
@@ -66,13 +67,21 @@ function ReviewProjectSwitcher({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // In Orbit the switcher sits in a header / tab strip that clips overflow,
+  // so the menu is portaled and fixed under the trigger.
+  const orbitUi = useOrbitInterface();
+  const inShell = useInPanelShell();
+  const portaled = orbitUi && inShell;
+  const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
   const own = targets.filter((t) => !t.linked);
   const linked = targets.filter((t) => t.linked);
 
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -106,6 +115,16 @@ function ReviewProjectSwitcher({
     );
   };
 
+  const menu = (
+    <div role="listbox" aria-label="Project to review" className="review-project-menu">
+      {own.map(renderOption)}
+      {own.length > 0 && linked.length > 0 && (
+        <div className="review-project-section">Linked projects</div>
+      )}
+      {linked.map(renderOption)}
+    </div>
+  );
+
   return (
     <div ref={rootRef} className="review-project-switcher">
       <button
@@ -115,20 +134,22 @@ function ReviewProjectSwitcher({
         aria-expanded={open}
         aria-label={`Reviewing ${active.name}. Switch project`}
         title={active.name}
-        onClick={() => setOpen((v) => !v)}
+        onClick={(e) => {
+          if (portaled && !open) {
+            const r = e.currentTarget.getBoundingClientRect();
+            setAnchor({ top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 260)) });
+          }
+          setOpen((v) => !v);
+        }}
       >
         <ProjectGlyph projectId={active.projectId} />
         <span className="review-project-name">{active.name}</span>
         <ChevronDown className="review-project-chevron" />
       </button>
-      {open && (
-        <div role="listbox" aria-label="Project to review" className="review-project-menu">
-          {own.map(renderOption)}
-          {own.length > 0 && linked.length > 0 && (
-            <div className="review-project-section">Linked projects</div>
-          )}
-          {linked.map(renderOption)}
-        </div>
+      {open && !portaled && menu}
+      {open && portaled && anchor && createPortal(
+        <div ref={menuRef} className="orbit-ui orv-project-pop" style={{ top: anchor.top, left: anchor.left }}>{menu}</div>,
+        document.body,
       )}
     </div>
   );

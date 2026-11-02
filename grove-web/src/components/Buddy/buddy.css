@@ -64,10 +64,7 @@
 .buddy-conversation-header{height:54px;min-height:54px;display:flex;align-items:center;gap:10px;padding:0 16px 0 24px;border-bottom:1px solid var(--buddy-border)}
 .buddy-header-copy{flex:1;min-width:0}.buddy-header-copy h2{font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.buddy-header-status{font-size:12px;color:var(--color-text-muted)}.buddy-header-status.is-waiting{color:var(--buddy-waiting-text)}
 .buddy-conversation{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
-.buddy-transcript{flex:1;min-height:0;overflow:auto;padding:24px 32px;display:flex;flex-direction:column;gap:12px}.buddy-transcript>.buddy-empty{margin:auto}
 .buddy-preview-label{font-size:11px;color:var(--color-text-muted);text-align:center;margin-bottom:12px}
-.buddy-message{width:fit-content;max-width:min(85%,720px);border-radius:17px;padding:12px 16px;font-size:14px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;background:color-mix(in oklab,var(--color-text) 6%,var(--color-bg))}
-.buddy-message.is-user{align-self:flex-end;background:var(--color-text);color:var(--color-bg)}.buddy-message-file{display:block;font-size:12px;margin-top:4px}
 .buddy-composer-wrap{width:calc(100% - 64px);max-width:720px;margin:12px auto 20px;flex-shrink:0}
 .buddy-composer{display:flex;flex-direction:column;gap:4px;padding:12px 12px 10px 16px;border:1px solid var(--buddy-border);border-radius:20px;background:var(--color-bg);box-shadow:0 1px 2px color-mix(in oklab,var(--color-text) 4%,transparent),0 6px 20px -8px color-mix(in oklab,var(--color-text) 10%,transparent);transition:border-color 150ms,box-shadow 150ms}.buddy-composer:focus-within{border-color:color-mix(in oklab,var(--color-text) 22%,var(--buddy-border));box-shadow:0 1px 2px color-mix(in oklab,var(--color-text) 5%,transparent),0 10px 28px -10px color-mix(in oklab,var(--color-text) 16%,transparent)}
 .buddy-composer textarea{display:block;width:100%;min-width:0;min-height:24px;max-height:min(240px,35vh);overflow-y:auto;resize:none;background:transparent;outline:none;border:0;font-size:14.5px;line-height:24px;padding:2px 4px 0 0;color:var(--color-text);scrollbar-width:thin}.buddy-composer textarea::placeholder{color:var(--color-text-muted)}.buddy-composer-toolbar{display:flex;align-items:center;justify-content:space-between;margin-left:-6px}
@@ -84,7 +81,6 @@
 .buddy-panel-section h3{font-weight:600}.buddy-panel-section .buddy-search{margin:0}
 .buddy-agent-confirm{padding:12px;font-size:12px;line-height:1.6;background:var(--color-bg-secondary);border-radius:10px}
 .buddy-routine{display:flex;align-items:center;gap:8px;padding:12px 0;border-bottom:1px solid var(--buddy-border)}.buddy-routine>div{flex:1;min-width:0}.buddy-routine h3{font-size:13px}
-.buddy-switch{width:32px;height:20px;border-radius:12px;padding:3px;background:var(--color-bg-tertiary);flex-shrink:0}.buddy-switch span{display:block;width:14px;height:14px;border-radius:50%;background:var(--color-text-muted)}.buddy-switch[aria-checked=true]{background:var(--color-text)}.buddy-switch[aria-checked=true] span{background:var(--color-bg);transform:translateX(12px)}
 .buddy-memory-list>div:first-child{display:none}.buddy-memory-list button{display:block;padding:12px 0}.buddy-memory-list button>span:not(:first-child){display:none}.buddy-memory-document{overflow-wrap:anywhere}
 .buddy-form select{display:block;width:100%;padding:8px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-bg);margin-top:6px}
 
@@ -109,8 +105,6 @@
   .buddy-sidebar footer button{min-height:44px}
   .buddy-conversation-header{height:64px;min-height:64px;padding:0 8px;gap:6px}
   .buddy-header-status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .buddy-transcript{padding:20px 16px}
-  .buddy-message{max-width:90%}
   .buddy-composer-wrap{width:calc(100% - 24px);margin:8px auto calc(20px + env(safe-area-inset-bottom,0px))}
   .buddy-composer{padding:10px 10px 8px 14px}
   .buddy-composer textarea{font-size:16px}
@@ -296,7 +290,7 @@
   .buddy-app.is-phone .buddy-conversation-header{height:60px;min-height:60px;padding:0 8px}
   .buddy-app.is-phone .buddy-header-copy{display:block;min-width:0}
   .buddy-app.is-phone .buddy-zero-header{height:56px;padding:0 16px}
-  .buddy-app.is-phone.has-mac-controls .buddy-sidebar-top,.buddy-app.is-phone.has-mac-controls .buddy-zero-header,.buddy-app.is-phone.has-mac-controls.is-single .buddy-conversation-header{height:54px;min-height:54px;padding-left:96px}
+  .buddy-app.is-phone.has-mac-controls .buddy-sidebar-top,.buddy-app.is-phone.has-mac-controls .buddy-zero-header,.buddy-app.is-phone.has-mac-controls .buddy-conversation-header{height:54px;min-height:54px;padding-left:96px}
   .buddy-app.is-phone .buddy-onboarding{padding:24px 16px}
   .buddy-app.is-phone .buddy-templates{grid-template-columns:1fr;gap:8px}
   .buddy-app.is-phone .buddy-template{padding:12px}
@@ -315,3 +309,114 @@
   .buddy-sheet .buddy-panel-tabs{gap:8px;overflow-x:auto}
 }
 .buddy-memory-browser{position:relative;min-width:0}.buddy-memory-search{display:block;padding-bottom:12px}.buddy-memory-search [hidden],.buddy-memory-browser aside[hidden],.buddy-memory-browser [hidden]{display:none!important}.buddy-memory-search>p{margin-top:8px;text-align:right}.buddy-memory-browser section{min-width:0}.buddy-memory-list button{display:block;padding:12px}.buddy-memory-list button>span:not(:first-child){display:flex!important;margin:6px 0 0}.buddy-memory-list button>span:last-child{display:none!important}.buddy-memory-document .glass-overlay{box-shadow:none;max-height:none;min-height:0;border:0}.buddy-memory-document article>div{padding:16px 4px}.buddy-memory-document h2{font-size:18px}.buddy-memory-document article .grid{grid-template-columns:1fr}.buddy-memory-document .glass-overlay>div:first-child{padding:8px 0}.buddy-memory-document [aria-label="Close Memory document"]{order:-1}
+/* Orbit interface: the overlay carries .orbit-ui (Orbit dialogs and sheets carry it themselves), so these
+   rules only reach Buddy under Orbit and swap its theme-var surfaces for the Orbit tokens. Workbench keeps the rules above. */
+.orbit-ui :where(.buddy-app,.buddy-dialog,.buddy-sheet){--buddy-border:var(--o-border);--buddy-selected:var(--o-selected)}
+/* The sidebar matches the Orbit shell sidebar it replaces: its accent wash and hover/selected strengths. */
+.orbit-ui .buddy-sidebar{--buddy-selected:color-mix(in oklab,var(--color-text) 10%,transparent);background:linear-gradient(180deg,color-mix(in srgb,var(--color-highlight) 3%,transparent),transparent 155px),var(--buddy-sidebar-bg)}
+.orbit-ui .buddy-sidebar .buddy-list-item:not(.is-selected):hover,.orbit-ui .buddy-sidebar .buddy-icon-button:hover{background:color-mix(in oklab,var(--color-text) 9%,transparent)}
+/* Hover is lighter than selected in Orbit content. */
+.orbit-ui :is(.buddy-main,.buddy-side-panel,.buddy-dialog) :is(.buddy-icon-button,.buddy-text-button,.buddy-composer-circle:not(.is-primary)):hover:not(:disabled),.orbit-ui :is(.buddy-template,button.buddy-notice-chip,.buddy-delegation-row,.buddy-menu button):hover{background:var(--o-hover)}
+.orbit-ui .buddy-zero .buddy-template:hover{background:color-mix(in oklab,var(--o-bg) 86%,transparent)}
+/* Fields and buttons: Orbit borders, radius, focus ring and ink primary. */
+.orbit-ui .buddy-search{border-radius:var(--o-radius);background:var(--o-bg);transition:border-color var(--o-dur-fast),box-shadow 200ms}
+.orbit-ui .buddy-search:focus-within{border-color:var(--o-border-strong);box-shadow:0 0 0 3px var(--o-hover)}
+.orbit-ui .buddy-search input::placeholder{color:var(--o-muted)}
+.orbit-ui .buddy-form :is(input,textarea,select){border-color:var(--o-border);border-radius:var(--o-radius);background:var(--o-bg);color:var(--o-text);outline:0;transition:border-color var(--o-dur-fast),box-shadow 200ms}
+.orbit-ui .buddy-form :is(input,textarea,select):focus{border-color:var(--o-border-strong);box-shadow:0 0 0 3px var(--o-hover)}
+.orbit-ui .buddy-form :is(input,textarea)::placeholder{color:var(--o-muted)}
+.orbit-ui .buddy-question :is(input,textarea){border-color:var(--o-border);border-radius:var(--o-radius-xs);background:var(--o-bg)}
+.orbit-ui .buddy-button{border-color:var(--o-border);border-radius:var(--o-radius);background:var(--o-bg);color:var(--o-text);font-weight:500;box-shadow:var(--o-shadow-1);transition:transform 140ms var(--o-ease-toggle),background-color var(--o-dur-fast),border-color var(--o-dur-fast)}
+.orbit-ui .buddy-button:hover:not(:disabled){border-color:var(--o-border-strong)}
+.orbit-ui .buddy-button:active:not(:disabled){transform:scale(.96)}
+.orbit-ui .buddy-button.is-primary{background:var(--o-ink);color:var(--o-on-ink);border-color:transparent;box-shadow:inset 0 1px 0 rgb(255 255 255 / 14%),0 1px 2px rgb(0 0 0 / 18%),0 6px 16px -8px rgb(0 0 0 / 40%)}
+.orbit-ui .buddy-button.is-danger{color:var(--o-error);border-color:color-mix(in oklab,var(--o-error) 35%,var(--o-border))}
+.orbit-ui .buddy-button.is-danger:hover:not(:disabled){background:color-mix(in oklab,var(--o-error) 9%,var(--o-bg))}
+.orbit-ui .buddy-agent-menu>.buddy-button{border-radius:999px;box-shadow:none}
+.orbit-ui .buddy-agent-panel .buddy-agent-menu>.buddy-button{background:var(--o-bg)}
+.orbit-ui .buddy-agent-panel .buddy-agent-menu>.buddy-button:hover:not(:disabled){background:color-mix(in oklab,var(--o-text) 4%,var(--o-bg))}
+.orbit-ui .buddy-agent-panel .buddy-agent-options button{background:transparent;box-shadow:none}
+.orbit-ui .buddy-agent-panel .buddy-agent-options button:hover:not(:disabled){background:var(--o-hover)}
+/* Cards are Orbit groups: tinted surface, hairline border, first elevation. */
+.orbit-ui :is(.buddy-card,.buddy-template,.buddy-template-routine,.buddy-agent-panel,.buddy-mcp-list,.buddy-routine-card){border-color:var(--o-border);border-radius:var(--o-radius-lg);background:var(--o-group);box-shadow:var(--o-shadow-1)}
+.orbit-ui .buddy-delegation.is-expanded,.orbit-ui .buddy-delegation.is-waiting{border-radius:var(--o-radius-lg);background:var(--o-group);box-shadow:var(--o-shadow-1)}
+.orbit-ui .buddy-delegation.is-expanded{border-color:var(--o-border)}
+.orbit-ui .buddy-approval{border-color:color-mix(in oklab,var(--o-warn) 45%,var(--o-border));background:color-mix(in oklab,var(--o-warn) 4%,var(--o-bg))}
+.orbit-ui .buddy-delegation-requests.is-compact .buddy-approval{border-radius:var(--o-radius);box-shadow:none;background:color-mix(in oklab,var(--o-warn) 7%,var(--o-bg))}
+.orbit-ui .buddy-assistant-message :is(table,ul:has(input[type=checkbox])){border-color:var(--o-border);background:var(--o-group)}
+.orbit-ui .buddy-template-routine-icon{background:var(--o-accent-soft);color:var(--o-accent)}
+/* Insets that used the cold secondary background. */
+.orbit-ui :is(.buddy-agent-confirm,.buddy-system-routine,.buddy-delegation-result){background:var(--o-code)}
+.orbit-ui .buddy-memory-tabs{background:var(--o-selected);box-shadow:inset 0 0 0 .5px var(--o-border);border-radius:9px;padding:2px}
+.orbit-ui .buddy-memory-tabs button{border-radius:var(--o-radius-sm);color:var(--o-muted);font-weight:500}
+.orbit-ui .buddy-memory-tabs [aria-selected=true]{background:var(--o-bg);color:var(--o-text);box-shadow:var(--o-shadow-1)}
+.orbit-ui .buddy-panel-tabs [role=tab]{color:var(--o-muted)}
+.orbit-ui .buddy-panel-tabs [aria-selected=true]{color:var(--o-text);background:var(--o-selected)}
+/* Zero page: same black elevation. */
+.orbit-ui .buddy-zero .buddy-template{border-color:var(--o-border);background:color-mix(in oklab,var(--o-bg) 72%,transparent);box-shadow:var(--o-shadow-1)}
+.orbit-ui .buddy-zero .buddy-template:hover{border-color:var(--o-border-strong);box-shadow:var(--o-shadow-2)}
+.orbit-ui .buddy-zero .buddy-welcome-avatars{filter:drop-shadow(0 10px 18px rgb(0 0 0 / 12%))}
+.orbit-ui .buddy-zero .buddy-onboarding>.buddy-button.is-primary{box-shadow:inset 0 1px 0 rgb(255 255 255 / 14%),0 1px 2px rgb(0 0 0 / 18%),0 6px 16px -8px rgb(0 0 0 / 40%)}
+/* Thin scrollbars use the Orbit track color. */
+.orbit-ui :is(.buddy-create-body,.buddy-panel-content){scrollbar-color:var(--o-track) transparent}
+.orbit-ui :is(.buddy-create-body,.buddy-panel-content)::-webkit-scrollbar-thumb{background-color:var(--o-track)}
+/* Dialog cards sit in the Orbit dialog layer: frosted panel, hairline, dialog elevation. On a phone sheet the sheet paints the surface. */
+.orbit-ui .buddy-dialog,.orbit-ui .buddy-memory-modal{border-color:var(--o-border);border-radius:16px;background:color-mix(in oklab,var(--o-bg) 93%,transparent);-webkit-backdrop-filter:blur(24px) saturate(1.6);backdrop-filter:blur(24px) saturate(1.6);box-shadow:0 1px 2px var(--o-shadow),0 40px 80px -30px rgb(0 0 0 / 45%),0 0 0 .5px var(--o-border)}
+.orbit-ui .oui-dlg-sheet :is(.buddy-dialog,.buddy-memory-modal){border:0;border-radius:0;background:transparent;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+.orbit-ui .oui-dlg-sheet .buddy-sheet,.orbit-ui .oui-dlg-sheet .buddy-sheet .buddy-side-panel{background:transparent}
+.orbit-ui .buddy-create-dialog>.buddy-actions{border-top-color:var(--o-border)}
+.orbit-ui .buddy-delegation-link:not(.is-danger){color:var(--o-accent)}
+/* Orbit Memory page in the Buddy Memory modal: the one-screen page fills a fixed-height modal; the close button sits beside the header actions. */
+.orbit-ui .buddy-memory-modal.is-orbit{height:min(860px,90vh);padding:0;overflow:hidden}
+.buddy-memory-modal.is-orbit .oui-page-head{padding-right:44px}
+.buddy-memory-modal.is-orbit .buddy-memory-modal-close{top:33px;right:24px}
+@media(max-height:760px){.buddy-memory-modal.is-orbit .buddy-memory-modal-close{top:25px}}
+@media(max-width:860px){.buddy-memory-modal.is-orbit .buddy-memory-modal-close{top:14px;right:12px}}
+/* Orbit settings over Buddy: a window-header bar holds the close button; the page fills the rest. */
+.orbit-ui .buddy-global-settings.is-orbit{display:flex;flex-direction:column;padding:0;overflow:hidden;background:var(--o-bg)}
+.buddy-global-bar{height:40px;flex-shrink:0;display:flex;align-items:center;justify-content:flex-end;padding:0 8px;border-bottom:1px solid var(--o-border)}
+.buddy-app.has-mac-controls .buddy-global-bar{height:54px}
+.buddy-global-body{flex:1;min-height:0;display:flex}
+/* Orbit composer look (copied from Tasks/TaskView/composer/orbit-composer.css): gradient hairline frame, green→cyan→violet edge on focus,
+   a light circling the edge while the Buddy works, a quiet attach tool, the typing hint and one flat ink orb that morphs between send and stop. */
+@property --buddy-oc-ang{syntax:"<angle>";inherits:false;initial-value:0deg}
+.buddy-composer.is-orbit{--boc-green:color-mix(in oklab,var(--color-highlight) 88%,var(--color-text));--boc-cyan:color-mix(in oklab,var(--color-accent,var(--color-info)) 86%,var(--color-text));--boc-violet:color-mix(in oklab,color-mix(in oklab,var(--color-accent,var(--color-info)) 55%,#8b5cf6) 84%,var(--color-text));--boc-sky:color-mix(in oklab,var(--color-accent,var(--color-info)) 78%,var(--color-text));--boc-panel:color-mix(in oklab,var(--color-bg-secondary) 86%,var(--color-bg));--boc-fill2:color-mix(in oklab,var(--color-text) 8%,transparent);--boc-faint:color-mix(in oklab,var(--color-text-muted) 72%,transparent);--boc-ease:cubic-bezier(.25,1,.5,1);--boc-pop:cubic-bezier(.3,1.5,.5,1);position:relative;gap:0;padding:0;border:1px solid transparent;border-radius:18px;background:linear-gradient(var(--boc-panel),var(--boc-panel)) padding-box,linear-gradient(140deg,color-mix(in oklab,var(--color-text) 16%,transparent),color-mix(in oklab,var(--color-text) 5%,transparent) 40%,color-mix(in oklab,var(--color-text) 10%,transparent)) border-box;box-shadow:0 1px 2px rgb(0 0 0 / 6%),0 24px 60px -30px rgb(0 0 0 / 45%);transition:box-shadow 260ms var(--boc-ease)}
+/* Glow hues follow the theme (highlight, accent, and a hue turned from the accent). */
+@supports (color:oklch(from red l c h)){.buddy-composer.is-orbit{--boc-violet:color-mix(in oklab,oklch(from var(--color-accent,var(--color-info)) l c calc(h + 55)) 84%,var(--color-text))}}
+.buddy-composer.is-orbit:focus-within{border-color:transparent;background:linear-gradient(var(--boc-panel),var(--boc-panel)) padding-box,linear-gradient(140deg,color-mix(in oklab,var(--boc-green) 78%,transparent),color-mix(in oklab,var(--boc-cyan) 40%,transparent) 45%,color-mix(in oklab,var(--boc-violet) 60%,transparent)) border-box;box-shadow:0 0 0 4px color-mix(in oklab,var(--boc-green) 9%,transparent),0 24px 60px -30px rgb(0 0 0 / 45%),0 0 60px -22px color-mix(in oklab,var(--boc-green) 40%,transparent)}
+.buddy-composer.is-orbit.is-running{box-shadow:0 0 0 4px color-mix(in oklab,var(--boc-glow-2) 8%,transparent),0 24px 60px -30px rgb(0 0 0 / 45%),0 0 70px -20px color-mix(in oklab,var(--boc-glow-2) 50%,transparent)}
+/* Running light: theme hues unmixed, a sharp arc plus a blurred bloom that travels with it (same as the task composer). */
+.buddy-composer.is-orbit{--boc-glow-1:var(--color-highlight);--boc-glow-2:var(--color-accent,var(--color-info));--boc-glow-3:color-mix(in oklab,var(--boc-glow-2) 50%,#8b5cf6)}
+@supports (color:oklch(from red l c h)){.buddy-composer.is-orbit{--boc-glow-3:oklch(from var(--boc-glow-2) l c calc(h + 55))}}
+.buddy-composer.is-orbit>.buddy-oc-orbit{position:absolute;inset:-1px;z-index:0;border-radius:18px;pointer-events:none}
+.buddy-composer.is-orbit>.buddy-oc-orbit.is-bloom{inset:-3px;border-radius:20px;filter:blur(9px);opacity:.85}
+.buddy-oc-orbit i{position:absolute;inset:0;border-radius:inherit;padding:1.5px;background:conic-gradient(from var(--buddy-oc-ang),transparent 0 56%,color-mix(in oklab,var(--boc-glow-1) 85%,transparent) 70%,var(--boc-glow-2) 82%,var(--boc-glow-3) 91%,transparent 98%);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:buddy-oc-orbit 3.2s linear infinite}
+.buddy-oc-orbit.is-bloom i{padding:4px}
+@keyframes buddy-oc-orbit{to{--buddy-oc-ang:360deg}}
+.buddy-composer.is-orbit>*{position:relative;z-index:1}
+.buddy-composer.is-orbit textarea{font-size:14px;padding:14px 22px 8px;box-sizing:border-box}
+.buddy-composer.is-orbit textarea::placeholder{color:var(--color-text-muted)}
+.buddy-composer.is-orbit .buddy-composer-toolbar{gap:4px;margin:0;padding:4px 8px 8px}
+.buddy-oc-tools{display:flex;min-width:0;flex:1;align-items:center;gap:2px}
+.buddy-oc-tool{display:inline-flex;width:30px;height:30px;flex:none;align-items:center;justify-content:center;border:0;border-radius:999px;background:none;color:var(--color-text-muted);cursor:pointer;transition:color 150ms,background-color 150ms}
+.buddy-oc-tool:hover:not(:disabled){background:var(--boc-fill2);color:var(--color-text)}
+.buddy-app .buddy-oc-tool:disabled{opacity:.4;cursor:default}
+.buddy-oc-tool svg{width:16px;height:16px}
+.buddy-oc-hint{margin-left:6px;overflow:hidden;color:var(--boc-faint);font-size:11.5px;text-overflow:ellipsis;white-space:nowrap;animation:buddy-oc-fade 200ms var(--boc-ease) both}
+@keyframes buddy-oc-fade{from{opacity:0}}
+.buddy-oc-orb{position:relative;display:inline-flex;width:30px;height:30px;flex:none;align-items:center;justify-content:center;border:0;border-radius:999px;background:var(--o-ink,var(--color-text));color:var(--o-on-ink,var(--color-bg));cursor:pointer;transition:transform 160ms var(--boc-pop),background-color 220ms var(--boc-ease),color 220ms var(--boc-ease)}
+.buddy-oc-orb:hover:not(:disabled){background:color-mix(in oklab,var(--o-ink,var(--color-text)) 86%,var(--color-bg))}
+.buddy-oc-orb:active:not(:disabled){transform:scale(.92)}
+.buddy-app .buddy-oc-orb:disabled{opacity:1;cursor:default;background:var(--o-selected,var(--boc-fill2));color:var(--boc-faint)}
+.buddy-app .buddy-oc-orb[data-icon=spin]:disabled{background:var(--o-ink,var(--color-text));color:var(--o-on-ink,var(--color-bg))}
+.buddy-oc-orb-ic{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;transform:scale(.5) rotate(-45deg);transition:opacity 160ms var(--boc-ease),transform 240ms var(--boc-pop)}
+.buddy-oc-orb-ic svg{width:14px;height:14px;stroke-width:2.2}
+.buddy-oc-orb-ic.is-stop svg{width:10px;height:10px;fill:currentColor;stroke-width:0}
+.buddy-oc-orb-ic.is-spin svg{animation:buddy-spin 900ms linear infinite}
+.buddy-oc-orb[data-icon=arrow] .is-arrow,.buddy-oc-orb[data-icon=stop] .is-stop,.buddy-oc-orb[data-icon=spin] .is-spin{opacity:1;transform:none}
+.buddy-composer.is-orbit :is(.buddy-oc-tool,.buddy-oc-orb):focus-visible{outline:2px solid var(--color-highlight);outline-offset:2px}
+@media(max-width:767px){.buddy-app.is-phone .buddy-composer.is-orbit{padding:0;border-radius:22px}.buddy-app.is-phone .buddy-composer.is-orbit>.buddy-oc-orbit{border-radius:22px}.buddy-app.is-phone .buddy-composer.is-orbit>.buddy-oc-orbit.is-bloom{border-radius:24px}.buddy-app.is-phone .buddy-oc-orb{width:40px;height:40px;margin:2px}.buddy-app.is-phone .buddy-oc-orb-ic svg{width:17px;height:17px}.buddy-app.is-phone .buddy-oc-orb-ic.is-stop svg{width:12px;height:12px}.buddy-app.is-phone .buddy-composer.is-orbit textarea{font-size:16px}.buddy-app.is-phone .buddy-oc-hint{display:none}.buddy-app.is-phone .buddy-oc-tool{width:44px;height:44px}.buddy-app.is-phone .buddy-oc-tool svg{width:19px;height:19px}}
+@media(prefers-reduced-motion:reduce){.buddy-composer.is-orbit,.buddy-composer.is-orbit *,.buddy-composer.is-orbit::before{animation:none!important;transition:none!important}}
+.buddy-overlay:focus{outline:none}
+/* Inline code wraps at spaces first and only splits a token longer than the line (the shared renderer uses break-all). */
+:is(.buddy-bubble,.buddy-assistant-message) :not(pre)>code{word-break:normal;overflow-wrap:break-word}

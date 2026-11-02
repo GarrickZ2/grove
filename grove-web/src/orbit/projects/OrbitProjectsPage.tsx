@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { AlertCircle, Archive, Download, FolderOpen, FolderPlus, LayoutGrid, Plus, SearchX, Sparkles, X } from "lucide-react";
+import { AlertCircle, Archive, ChevronLeft, Download, FolderOpen, FolderPlus, LayoutGrid, Plus, SearchX, Sparkles, X } from "lucide-react";
 import { useProject } from "../../context";
 import { AddProjectDialog } from "../../components/Projects/AddProjectDialog";
 import { DeleteProjectDialog } from "../../components/Projects/DeleteProjectDialog";
 import { useProjectsActions } from "../../components/Projects/useProjectsActions";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { Button, EmptyState, OrbitPage, OrbitPageHeader, PopoverMenu, SearchField, Segmented, useNow, type MenuItem, type PageHue } from "../ui";
 import { ProjectRow } from "./ProjectRow";
 import { ProjectDetail } from "./ProjectDetail";
@@ -30,6 +31,10 @@ export function OrbitProjectsPage({ onNavigate, initialTab }: OrbitProjectsPageP
   const [tab, setTab] = useState<ProjectsTab>(initialTab ?? "all");
   const [query, setQuery] = useState("");
   const [pickedId, setPickedId] = useState<string | null>(null);
+  // A phone shows the list, then the picked project on its own with Back.
+  const { isMobile, isTablet } = useIsMobile();
+  const phone = isMobile && !isTablet;
+  const [phoneDetail, setPhoneDetail] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const now = useNow(60_000);
 
@@ -169,7 +174,12 @@ export function OrbitProjectsPage({ onNavigate, initialTab }: OrbitProjectsPageP
       {visible.length === 0 ? (
         <div key={`empty-${tab}`} className="opj-empty oui-rise" style={{ animationDelay: "60ms" }}>{empty}</div>
       ) : (
-        <div className="opj-body">
+        <div className={`opj-body${phone ? (phoneDetail && selected ? " is-phone-detail" : " is-phone-list") : ""}`}>
+          {phone && phoneDetail && selected ? (
+            <div className="opj-phone-back">
+              <Button variant="ghost" size="sm" onClick={() => setPhoneDetail(false)}><ChevronLeft />Projects</Button>
+            </div>
+          ) : null}
           <section className="oui-card opj-list oui-rise" style={{ animationDelay: "60ms" }} aria-label="Projects">
             <div key={tab} ref={listRef} className="opj-rows oui-scroll" role="listbox" aria-label="Projects" onKeyDown={moveSelection}>
               {visible.map((project, index) => (
@@ -179,7 +189,7 @@ export function OrbitProjectsPage({ onNavigate, initialTab }: OrbitProjectsPageP
                   index={index}
                   isCurrent={!project.archived && selectedProject?.id === project.id}
                   isSelected={selected?.id === project.id}
-                  onSelect={() => setPickedId(project.id)}
+                  onSelect={() => { setPickedId(project.id); setPhoneDetail(true); }}
                   onOpen={() => actions.handleOpenProject(project)}
                 />
               ))}

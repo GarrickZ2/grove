@@ -1,22 +1,24 @@
 /* PanelShell — the shared frame of every Orbit workspace panel (Panels board). */
 .oui-panel{position:relative;display:flex;flex-direction:column;flex:1;width:100%;height:100%;min-width:0;min-height:0;background:var(--o-group);color:var(--o-text);font-size:13px;-webkit-font-smoothing:antialiased}
 
-.oui-panel-head{position:relative;z-index:2;display:flex;align-items:center;gap:10px;height:48px;padding:0 8px 0 16px;flex-shrink:0;box-sizing:border-box;border-bottom:1px solid var(--o-border)}
-.oui-panel-tile{width:26px;height:26px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(150deg,var(--oui-panel-a),var(--oui-panel-b));box-shadow:inset 0 1px 0 rgb(255 255 255 / 30%);animation:oui-panel-tile-in 460ms var(--o-ease-pop) both}
-.oui-panel-tile .oui-panel-glyph{width:14px;height:14px;stroke-width:1.9}
+.oui-panel-head{position:relative;z-index:2;display:flex;align-items:center;gap:8px;height:40px;padding:0 6px 0 12px;flex-shrink:0;box-sizing:border-box;border-bottom:1px solid var(--o-border)}
+.oui-panel-tile{width:22px;height:22px;border-radius:7px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(150deg,var(--oui-panel-a),var(--oui-panel-b));box-shadow:inset 0 1px 0 rgb(255 255 255 / 30%);animation:oui-panel-tile-in 460ms var(--o-ease-pop) both}
+.oui-panel-tile .oui-panel-glyph{width:12px;height:12px;stroke-width:2}
 /* Plugin icons (emoji / image) sit on the tile at their own size. */
-.oui-panel-tile img{width:16px;height:16px;border-radius:4px}
+.oui-panel-tile img{width:14px;height:14px;border-radius:4px}
 @keyframes oui-panel-tile-in{from{transform:scale(.5) rotate(-10deg);opacity:0}}
-.oui-panel-title{flex:1;min-width:0;margin:0;display:flex;align-items:baseline;gap:6px;font-size:13.5px;font-weight:600;white-space:nowrap}
+/* min-content: the name never collapses under crowded actions; the context truncates. */
+.oui-panel-title{flex:1;min-width:min-content;margin:0;display:flex;align-items:baseline;gap:6px;font-size:13px;font-weight:600;white-space:nowrap}
 .oui-panel-name{flex-shrink:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}
-.oui-panel-title small{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:12px;font-weight:400;color:var(--o-muted)}
+/* Zero basis: the context fills what is left and adds nothing to min-content, so it truncates and never pushes the buttons out. */
+.oui-panel-title small{flex:1 1 0;width:0;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;font-weight:400;color:var(--o-muted)}
 .oui-panel-ctx-slot:empty{display:none}
 .oui-panel-title:has(.oui-panel-ctx-slot:not(:empty)) .oui-panel-ctx-default{display:none}
 .oui-panel-actions{display:flex;align-items:center;gap:2px}
 .oui-panel-actions:empty{display:none}
-.oui-panel-ib{width:28px;height:28px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:var(--o-radius-sm);background:none;color:var(--o-muted);cursor:pointer;transition:background-color var(--o-dur-fast),color var(--o-dur-fast)}
+.oui-panel-ib{width:26px;height:26px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:var(--o-radius-sm);background:none;color:var(--o-muted);cursor:pointer;transition:background-color var(--o-dur-fast),color var(--o-dur-fast)}
 .oui-panel-ib:hover,.oui-panel-ib.is-open{background:var(--o-hover);color:var(--o-text)}
-.oui-panel-ib svg{width:15px;height:15px}
+.oui-panel-ib svg{width:14px;height:14px}
 .oui-panel-ib:focus-visible{outline:2px solid var(--o-accent);outline-offset:2px}
 
 /* ⋯ menu: compact rows (icon, label, shortcut) */
@@ -27,6 +29,11 @@
 .oui-panel-menu-item svg,.oui-panel-menu-gap{width:14px;height:14px;flex-shrink:0;color:var(--o-muted)}
 .oui-panel-menu-item.is-danger,.oui-panel-menu-item.is-danger svg{color:var(--o-error)}
 .oui-panel-menu-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oui-panel-menu-sep{display:block;height:1px;margin:4px 6px;background:var(--o-border)}
+.oui-pop.oui-panel-menu{z-index:200;transform-origin:top right}
+/* Free layout: the panel's actions sit in the tab strip, before its own buttons. */
+.oui-panel-inline{display:inline-flex;align-items:center;gap:2px;margin-right:2px}
+.oui-panel-inline .oui-panel-ib{width:26px;height:26px}
 .oui-panel-menu-item kbd{font:inherit;font-size:11px;color:var(--o-muted)}
 
 /* Body: padded + scrolling, or edge to edge */

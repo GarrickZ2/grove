@@ -21,6 +21,10 @@ pub struct LinkedProjectItem {
     /// Task whose Code Review represents this project in an aggregated
     /// Review panel. Only set for existing Repo projects (their Local Task).
     pub review_task_id: Option<String>,
+    /// Project-level defaults only: the linked project is archived, which
+    /// counts as removed (`exists` is false). Never set for Task links.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub archived: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,6 +73,7 @@ pub(crate) fn resolve_items(
                         project_type: Some(project.project_type.as_str().to_string()),
                         is_git_repo: project.is_git_repo,
                         review_task_id,
+                        archived: false,
                     }
                 })
                 .unwrap_or_else(|| LinkedProjectItem {
@@ -78,6 +83,7 @@ pub(crate) fn resolve_items(
                     project_type: None,
                     is_git_repo: false,
                     review_task_id: None,
+                    archived: false,
                 })
         })
         .collect();
@@ -112,7 +118,13 @@ pub async fn update_linked_projects(
 
     let registered = workspace::load_projects()
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    let normalized = normalize_linked_ids(request.project_ids, &project_key, &registered, "task")?;
+    let normalized = normalize_linked_ids(
+        request.project_ids,
+        &project_key,
+        &registered,
+        "task",
+        false,
+    )?;
 
     tasks::replace_linked_project_ids(&project_key, &task_id, &normalized)
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
@@ -122,12 +134,15 @@ pub async fn update_linked_projects(
 /// Shared validation for Task- and Project-level linked Project sets:
 /// size cap, no self-link, every ID must be a registered Project, duplicates
 /// are collapsed while preserving the first-seen order. `owner` is the noun
-/// used in error messages ("task" / "project").
+/// used in error messages ("task" / "project"). `reject_archived` refuses
+/// archived Projects (Project-level defaults treat them as removed; Task
+/// links keep accepting them).
 pub(crate) fn normalize_linked_ids(
     project_ids: Vec<String>,
     own_project_key: &str,
     registered: &[workspace::RegisteredProject],
     owner: &str,
+    reject_archived: bool,
 ) -> Result<Vec<String>, (StatusCode, Json<ApiError>)> {
     if project_ids.len() > MAX_LINKED_PROJECTS {
         return Err(api_error(
@@ -153,6 +168,20 @@ pub(crate) fn normalize_linked_ids(
                 StatusCode::BAD_REQUEST,
                 format!("Linked project {id} is not registered"),
             ));
+        }
+        if reject_archived {
+            if let Some(project) = registered
+                .iter()
+                .find(|project| project.archived && workspace::project_hash(&project.path) == id)
+            {
+                return Err(api_error(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Linked project {} is archived; restore it before linking",
+                        project.name
+                    ),
+                ));
+            }
         }
         if seen.insert(id.clone()) {
             normalized.push(id);

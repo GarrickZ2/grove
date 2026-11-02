@@ -27,6 +27,7 @@
 pub mod ask_form;
 pub mod error;
 pub mod inject;
+pub mod node_outcome;
 pub mod tools;
 pub mod user_ops;
 

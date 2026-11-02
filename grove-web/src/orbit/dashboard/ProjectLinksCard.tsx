@@ -56,7 +56,7 @@ export function ProjectLinksCard({ view, linkable }: ProjectLinksCardProps) {
           <div key={link.id} className={`odb-tl-row${link.exists ? "" : " is-missing"}`}>
             <span className="odb-pav" aria-hidden="true">{link.name.charAt(0)}</span>
             <span className="oui-truncate">{link.name}</span>
-            {!link.exists ? <span className="odb-src">missing</span> : null}
+            {!link.exists ? <span className="odb-src">{link.archived ? "archived" : "missing"}</span> : null}
             <button
               type="button"
               className="odb-x"
@@ -68,7 +68,7 @@ export function ProjectLinksCard({ view, linkable }: ProjectLinksCardProps) {
             </button>
           </div>
         ))}
-        <div className="odb-plinks-hint">New tasks copy these links when created. Existing tasks keep their own.</div>
+        <div className="odb-plinks-hint">New tasks copy these links when created (archived ones are skipped). Existing tasks keep their own.</div>
         {error && !saving ? <div className="odb-tl-error" role="alert">{error}</div> : null}
       </div>
     </Card>

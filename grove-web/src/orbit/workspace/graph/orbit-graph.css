@@ -4,50 +4,109 @@
 .ogr :is(button,input,textarea):focus-visible{outline:2px solid var(--o-accent);outline-offset:2px}
 .ogr b{font-weight:600}
 
-/* Canvas */
+/* Canvas: a faint dot grid with an accent glow at the center. */
 .ogr-stage{position:relative;flex:1;min-height:180px;min-width:0;display:flex}
-.ogr-canvas{position:relative;flex:1;min-width:0;overflow:hidden;border-radius:var(--o-radius-lg);border:1px solid var(--o-border);background:radial-gradient(circle at 50% 42%,color-mix(in oklab,var(--o-accent) 6%,transparent),transparent 68%),var(--o-bg);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.ogr-canvas{--ogr-r:22px;--ogr-lw:132px;--ogr-quiet:color-mix(in oklab,var(--o-text) 24%,transparent);position:relative;flex:1;min-width:0;overflow:hidden;border-radius:var(--o-radius-lg);border:1px solid var(--o-border);background:radial-gradient(ellipse 70% 55% at 50% 42%,color-mix(in oklab,var(--o-accent) 5%,transparent),transparent 70%),radial-gradient(circle,color-mix(in oklab,var(--o-text) 9%,transparent) 1px,transparent 1.2px) 0 0/22px 22px,var(--o-group);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
 .ogr-canvas.is-panning{cursor:grabbing}
 .ogr-world{position:absolute;left:0;top:0;transform-origin:0 0}
+
+/* Delegations: curved arrows. In flight = moving accent dashes; waiting on a
+   reply = dotted amber; done = a quiet solid line. */
 .ogr-edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
-.ogr-edge{transition:opacity 240ms var(--o-ease-out)}
-.ogr-edge.is-dim{opacity:.32}
-.ogr-edge-line{fill:none;stroke:var(--o-track);stroke-width:1.6;transition:stroke 240ms,stroke-width 240ms}
-.ogr-edge.is-in_flight .ogr-edge-line{stroke:var(--o-accent);stroke-width:2}
-.ogr-edge.is-blocked .ogr-edge-line{stroke:var(--o-warn);stroke-width:1.8;stroke-dasharray:5 4}
-.ogr-edge:hover .ogr-edge-line{stroke-width:2.4}
-.ogr-edge.is-sel .ogr-edge-line{stroke-width:2.6}
-.ogr-edge.is-sel.is-idle .ogr-edge-line{stroke:var(--o-text)}
+.ogr-edge{transition:opacity 200ms var(--o-ease-out)}
+.ogr-edge.is-dim{opacity:.14}
+.ogr-edge-line{fill:none;stroke:var(--ogr-quiet);stroke-width:1.6;transition:stroke-width 200ms}
+.ogr-edge.is-in_flight .ogr-edge-line{stroke:var(--o-accent);stroke-dasharray:6 6;animation:ogr-flow 900ms linear infinite}
+.ogr-edge.is-blocked .ogr-edge-line{stroke:var(--o-warn);stroke-dasharray:2 5;stroke-linecap:round}
+.ogr-edge:hover .ogr-edge-line,.ogr-edge.is-hot .ogr-edge-line{stroke-width:2.4}
+.ogr-edge.is-sel.is-idle .ogr-edge-line{stroke:color-mix(in oklab,var(--o-text) 55%,transparent)}
 .ogr-edge-hit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;cursor:pointer}
-.ogr-arrow.is-idle{fill:var(--o-track)}
+.ogr-arrow.is-idle{fill:color-mix(in oklab,var(--o-text) 30%,transparent)}
 .ogr-arrow.is-in_flight{fill:var(--o-accent)}
 .ogr-arrow.is-blocked{fill:var(--o-warn)}
-.ogr-pulse{fill:var(--o-accent);filter:drop-shadow(0 0 3px color-mix(in oklab,var(--o-accent) 70%,transparent))}
+@keyframes ogr-flow{to{stroke-dashoffset:-24}}
 
-/* Edge purpose label: a zero-size anchor at the curve's midpoint. */
-.ogr-elabel{position:absolute;left:0;top:0;width:0;height:0;padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer;transition:opacity 240ms}
-.ogr-elabel>span{position:absolute;left:0;top:0;transform:translate(-50%,-50%);display:block;max-width:132px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 8px;border-radius:999px;border:1px solid var(--o-border);background:var(--o-bg);font-size:10.5px;line-height:15px;color:var(--o-muted);box-shadow:var(--o-shadow-1);transition:border-color var(--o-dur-fast),color var(--o-dur-fast)}
-.ogr-elabel:hover>span,.ogr-elabel.is-sel>span{border-color:var(--o-border-strong);color:var(--o-text)}
-.ogr-elabel.is-dim{opacity:.32}
+/* Task pill: a zero-size anchor at the curve's midpoint. */
+.ogr-elabel{position:absolute;left:0;top:0;width:0;height:0;padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer;transition:opacity 200ms}
+.ogr-elabel>span{position:absolute;left:0;top:0;transform:translate(-50%,-50%);display:block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 8px;border-radius:999px;background:var(--o-bg);box-shadow:0 0 0 .5px var(--o-border),0 1px 2px var(--o-shadow);font-size:11px;line-height:15px;color:var(--o-muted);transition:color var(--o-dur-fast),box-shadow var(--o-dur-fast)}
+.ogr-elabel.is-in_flight>span{color:color-mix(in oklab,var(--o-accent) 80%,var(--o-text))}
+.ogr-elabel.is-blocked>span{color:color-mix(in oklab,var(--o-warn) 85%,var(--o-text))}
+.ogr-elabel:hover>span,.ogr-elabel.is-sel>span{box-shadow:0 0 0 1px var(--o-border-strong),0 1px 2px var(--o-shadow);color:var(--o-text)}
+.ogr-elabel.is-dim{opacity:.18}
 
-/* Agent card */
-.ogr-node{position:absolute;left:0;top:0;display:flex;align-items:center;gap:9px;padding:0 10px 0 10px;box-sizing:border-box;border-radius:var(--o-radius-lg);border:1px solid var(--o-border);background:var(--o-bg);box-shadow:0 1px 2px var(--o-shadow),0 10px 22px -16px rgb(0 0 0 / 45%);text-align:left;font:inherit;color:var(--o-text);cursor:pointer;transition:border-color 200ms,box-shadow 200ms,opacity 240ms var(--o-ease-out)}
-.ogr-node:hover{border-color:var(--o-border-strong)}
-.ogr-node.is-sel{border-color:var(--o-accent);box-shadow:var(--o-ring-selected),0 12px 26px -16px color-mix(in oklab,var(--o-accent) 70%,transparent)}
-.ogr-node.is-permission_required:not(.is-sel){border-color:color-mix(in oklab,var(--o-warn) 45%,var(--o-border))}
-.ogr-node.is-disconnected .ogr-tile{filter:grayscale(1);opacity:.65}
-.ogr-node.is-disconnected .ogr-node-copy b{color:var(--o-muted)}
-.ogr-node.is-dim{opacity:.45}
-.ogr-node-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-.ogr-node-copy b{font-size:12.5px;line-height:1.25}
-.ogr-node-copy small{font-size:11px;line-height:1.25;color:var(--o-muted)}
-.ogr-node-q{min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:600;flex-shrink:0;color:var(--o-accent);background:var(--o-accent-soft)}
+/* Agent: a zero-size anchor at the circle's center; the circle, its
+   affordances and the label hang off it. */
+.ogr-node{position:absolute;left:0;top:0;width:0;height:0;outline:0;pointer-events:none;transition:opacity 200ms var(--o-ease-out)}
+.ogr-node.is-dim{opacity:.3}
+.ogr-node.is-dragged{z-index:2}
+.ogr-av{position:absolute;left:calc(var(--ogr-r) * -1);top:calc(var(--ogr-r) * -1);width:calc(var(--ogr-r) * 2);height:calc(var(--ogr-r) * 2);box-sizing:border-box;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--o-bg);box-shadow:0 0 0 1px var(--o-border),0 6px 16px -8px rgb(0 0 0 / 35%);pointer-events:auto;cursor:grab;transition:transform 220ms var(--o-ease-toggle),box-shadow 200ms}
+.ogr-node:hover .ogr-av{transform:scale(1.08)}
+.ogr-node.is-dragged .ogr-av{cursor:grabbing;transform:scale(1.08);box-shadow:0 0 0 1px var(--o-border-strong),var(--o-shadow-2)}
+.ogr-node.is-sel .ogr-av{box-shadow:0 0 0 1px var(--o-border),0 0 0 6px var(--o-accent-soft),0 8px 20px -8px rgb(0 0 0 / 40%)}
+.ogr-node:focus-visible .ogr-av{box-shadow:0 0 0 2px var(--o-accent),0 0 0 6px var(--o-accent-soft)}
+.ogr-node.is-drop-ok .ogr-av{box-shadow:0 0 0 2px var(--o-accent),0 0 0 7px var(--o-accent-soft)}
+.ogr-node.is-drop-bad{opacity:1}
+.ogr-node.is-drop-bad .ogr-av{box-shadow:0 0 0 2px var(--o-error),0 0 0 7px color-mix(in oklab,var(--o-error) 16%,transparent)}
+.ogr-icon{display:flex;align-items:center;justify-content:center;transition:filter 200ms,opacity 200ms}
+.ogr-icon svg{display:block}
+.ogr-node.is-off .ogr-icon{filter:grayscale(1);opacity:.45}
+.ogr-node.is-off .ogr-av{background:color-mix(in oklab,var(--o-bg) 92%,var(--o-text))}
+
+/* Status ring around the circle. */
+.ogr-ring{position:absolute;inset:-4px;border-radius:50%;pointer-events:none}
+.ogr-node.is-work .ogr-ring{background:conic-gradient(from 0deg,transparent 0 55%,var(--o-accent) 100%);-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 2.5px),#000 calc(100% - 2px));mask:radial-gradient(farthest-side,transparent calc(100% - 2.5px),#000 calc(100% - 2px));animation:ogr-spin 1.4s linear infinite}
+.ogr-node.is-connecting .ogr-ring{box-shadow:inset 0 0 0 1.5px color-mix(in oklab,var(--o-accent) 45%,transparent);animation:ogr-breathe 1.6s var(--o-ease-out) infinite alternate}
+.ogr-node.is-ask .ogr-ring{box-shadow:inset 0 0 0 2px var(--o-warn)}
+/* Error: a steady ring, no motion — noticeable without alarming. Done: a thin settled ring. */
+.ogr-node.is-err .ogr-ring{box-shadow:inset 0 0 0 2px color-mix(in oklab,var(--o-error) 85%,transparent)}
+.ogr-node.is-done .ogr-ring{box-shadow:inset 0 0 0 1.5px color-mix(in oklab,var(--o-success) 55%,transparent)}
+@keyframes ogr-spin{to{transform:rotate(360deg)}}
+@keyframes ogr-breathe{from{opacity:.35}}
+.ogr-badge{position:absolute;right:-3px;top:-3px;width:15px;height:15px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;line-height:1;color:#fff;box-shadow:0 0 0 2px var(--o-group)}
+.ogr-badge.is-ask{background:var(--o-warn)}
+.ogr-badge.is-err{background:var(--o-error)}
+.ogr-badge.is-done{background:var(--o-success);color:#fff}
+.ogr-badge svg{width:9px;height:9px;stroke-width:3.4}
+.ogr-node-q{position:absolute;right:-6px;bottom:-4px;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:650;color:var(--o-on-accent);background:var(--o-accent);box-shadow:0 0 0 2px var(--o-group)}
+
+/* Label under the circle: name, then "Agent · status". */
+.ogr-nl{position:absolute;left:0;top:calc(var(--ogr-r) + 7px);transform:translateX(-50%);width:max-content;max-width:var(--ogr-lw);text-align:center;line-height:1.25;pointer-events:auto;cursor:grab}
+.ogr-nl b{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ogr-nl small{display:block;margin-top:1px;font-size:10.5px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ogr-node.is-off .ogr-nl b{color:var(--o-muted);font-weight:500}
+.ogr-canvas.is-compact .ogr-nl{top:calc(var(--ogr-r) + 5px)}
+.ogr-canvas.is-compact .ogr-nl b{font-size:11px}
+/* Crowded dock: quiet agents show their name on hover only. */
+.ogr-node.is-quiet .ogr-nl{visibility:hidden;opacity:0;transition:opacity 150ms}
+.ogr-node.is-quiet:is(:hover,:focus-visible,.is-dragged) .ogr-nl{visibility:visible;opacity:1;z-index:3;padding:1px 6px;border-radius:6px;background:var(--o-bg);box-shadow:0 0 0 .5px var(--o-border),var(--o-shadow-1)}
+
+/* Hover affordances: connect handle (east) and spawn "+" (south-west). */
+.ogr-handle{position:absolute;right:-8px;top:50%;width:12px;height:12px;margin-top:-6px;box-sizing:border-box;border-radius:50%;background:var(--o-accent);border:2px solid var(--o-bg);box-shadow:0 0 0 1px var(--o-accent);cursor:crosshair;opacity:0;transform:scale(.5);transition:opacity 150ms,transform 220ms var(--o-ease-pop);touch-action:none;pointer-events:auto}
+.ogr-handle::before{content:"";position:absolute;inset:-8px;border-radius:50%}
+.ogr-node-spawn{position:absolute;left:calc(var(--ogr-r) * -0.72 - 9px);top:calc(var(--ogr-r) * 0.72 - 9px);width:18px;height:18px;padding:0;box-sizing:border-box;border-radius:50%;border:1px solid var(--o-border-strong);background:var(--o-bg);color:var(--o-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;transform:scale(.5);pointer-events:auto;z-index:1;transition:opacity 150ms,transform 220ms var(--o-ease-pop),color var(--o-dur-fast),border-color var(--o-dur-fast)}
+.ogr-node-spawn svg{width:11px;height:11px;stroke-width:2.4}
+.ogr-node-spawn:hover{color:var(--o-text);border-color:var(--o-accent)}
+.ogr-node:not(.is-dim):is(:hover,.is-sel,:focus-within) :is(.ogr-handle,.ogr-node-spawn){opacity:1;transform:none}
+.ogr-canvas:is(.is-linking,.is-dragging,.is-panning) .ogr-node-spawn{opacity:0;pointer-events:none}
+.ogr-canvas.is-linking .ogr-handle{opacity:0}
+.ogr-canvas.is-linking :is(.ogr-av,.ogr-nl){cursor:crosshair}
+.ogr-canvas.is-linking{cursor:crosshair}
+@media (hover:none){.ogr-handle{opacity:.85;transform:none}}
+.ogr-draft{fill:none;stroke:var(--o-muted);stroke-width:1.8;stroke-dasharray:5 4}
+.ogr-draft.is-ok{stroke:var(--o-accent)}
+.ogr-draft.is-bad{stroke:var(--o-error)}
+.ogr-arrow.is-draft{fill:var(--o-muted)}
+
+/* "No delegations yet" tip, bottom center. */
+.ogr-tip{position:absolute;left:50%;bottom:16px;z-index:3;transform:translateX(-50%);display:flex;align-items:center;gap:8px;max-width:calc(100% - 32px);box-sizing:border-box;padding:7px 12px;border-radius:999px;background:var(--o-bg);box-shadow:0 0 0 .5px var(--o-border),0 6px 16px -10px rgb(0 0 0 / 35%);font-size:12px;color:var(--o-muted);white-space:nowrap;pointer-events:none}
+.ogr-tip svg{width:13px;height:13px;flex-shrink:0;color:var(--o-accent)}
 
 /* Agent tile (canvas cards + inspector) */
 .ogr-tile{--ogr-agent:var(--o-muted);position:relative;width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:color-mix(in oklab,var(--ogr-agent) 14%,var(--o-bg));box-shadow:inset 0 0 0 .5px var(--o-border);color:var(--o-text)}
 .ogr-tile.is-sm{width:22px;height:22px;border-radius:7px}
 .ogr-tile.is-plain{background:var(--o-selected);color:var(--o-muted)}
 .ogr-tile.is-danger{background:color-mix(in oklab,var(--o-error) 10%,transparent);color:var(--o-error);box-shadow:none}
+.ogr-tile.is-round{border-radius:50%;background:var(--o-bg);box-shadow:0 0 0 1px var(--o-border)}
 .ogr-tile .ogr-node-dot{position:absolute;right:-2px;bottom:-2px;outline:2px solid var(--o-bg)}
 .ogr-tile.is-sm .ogr-node-dot{width:6px;height:6px;right:-2px;bottom:-2px}
 
@@ -61,16 +120,13 @@
 .ogr-zoom i{width:1px;height:14px;margin:0 2px;background:var(--o-border)}
 
 /* Toast */
-.ogr-toast-slot{position:absolute;left:0;right:0;bottom:12px;z-index:3;display:flex;justify-content:center;pointer-events:none;padding:0 12px}
+.ogr-toast-slot{position:absolute;left:0;right:0;top:8px;z-index:5;display:flex;justify-content:center;pointer-events:none;padding:0 118px 0 12px}
 .ogr-toast{display:inline-flex;align-items:center;gap:7px;max-width:100%;height:30px;padding:0 12px;box-sizing:border-box;border-radius:999px;border:1px solid var(--o-border);background:var(--o-bg);box-shadow:var(--o-shadow-2);font-size:12.5px;color:var(--o-text)}
 .ogr-toast svg{width:13px;height:13px;flex-shrink:0;color:var(--o-accent);stroke-width:2.4}
 .ogr-toast.is-error{color:var(--o-error);border-color:color-mix(in oklab,var(--o-error) 30%,var(--o-border))}
 .ogr-toast.is-error svg{color:var(--o-error);stroke-width:2}
 
 /* Inspector */
-.ogr-side{position:relative;z-index:4;flex-shrink:0;display:flex;flex-direction:column;min-height:0;max-height:52%}
-.ogr-side.is-solo{flex:1;max-height:none;align-items:center;justify-content:center}
-.ogr-side.is-solo .ogr-pane{width:100%;max-width:420px}
 .ogr-pane{display:flex;flex-direction:column;min-height:0;max-height:100%;border:1px solid var(--o-border);border-radius:var(--o-radius-lg);background:var(--o-group);box-shadow:var(--o-shadow-1);animation:oui-rise 300ms var(--o-ease-out) both}
 .ogr-pane-head{display:flex;align-items:center;gap:10px;min-height:48px;padding:8px 8px 8px 12px;box-sizing:border-box;flex-shrink:0}
 .ogr-pane-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
@@ -132,40 +188,56 @@
 /* States: PanelLoading / PanelError / PanelEmpty from the shell kit. */
 .ogr-state{flex:1;min-height:0;display:flex;flex-direction:column}
 
-/* In the workspace shell (fill body) the canvas runs edge to edge; the inspector docks below it. */
+/* In the workspace shell (fill body) the canvas runs edge to edge. */
 .ogr.is-shell .ogr-in{padding:0;gap:0}
 .ogr.is-shell .ogr-canvas{border:0;border-radius:0}
-.ogr.is-shell .ogr-side{padding:10px;border-top:1px solid var(--o-border);background:var(--o-bg)}
 .ogr.is-shell .ogr-state{padding:12px}
+.ogr-state.is-solo{position:relative;align-items:center;justify-content:center;padding:12px}
+.ogr-state.is-solo>.ogr-pane{width:100%;max-width:420px}
 
-/* Narrow dock: the overview is a single strip; the canvas carries the agents. */
-.ogr-pane.is-overview :is(.ogr-pane-body,.ogr-pane-foot){display:none}
-/* In the panel shell the header carries the summary, so a narrow dock gives the canvas everything. */
-.ogr-side:has(>.ogr-pane.is-overview.is-shell){display:none}
+/* Floating card for the selection and inline forms. */
+.ogr-dock{position:absolute;left:8px;right:8px;bottom:8px;z-index:4;display:flex;justify-content:center;pointer-events:none}
+.ogr-dock>.ogr-pane{pointer-events:auto;width:100%;max-width:460px;max-height:62cqh;background:var(--o-bg);box-shadow:var(--o-shadow-2);animation:none}
+.ogr-dock .ogr-pane-head .oui-pop{top:auto;bottom:calc(100% + 6px);width:min(290px,calc(100cqw - 24px));transform-origin:bottom right}
+.ogr-pane.is-compact .ogr-pane-head{gap:9px;min-height:46px;padding:7px 6px 7px 10px}
+.ogr-pane.is-compact .ogr-pane-body{padding:0 12px 10px}
+.ogr-acts{display:flex;align-items:center;flex-shrink:0}
+.ogr-facts{display:flex;flex-direction:column;gap:3px}
+.ogr-fact{margin:0;font-size:12px;line-height:1.45;color:var(--o-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ogr-fact>span{color:var(--o-muted);margin-right:7px}
+.ogr-fact i{font-style:normal}
+.ogr-corner{position:absolute;left:8px;top:8px;z-index:3}
 
-/* Wide panel: inspector becomes a column beside the canvas. */
-@container ogr (min-width:720px){
-  .ogr-pane.is-overview .ogr-pane-body{display:block}
-  .ogr-pane.is-overview .ogr-pane-foot{display:flex}
-  .ogr-side:has(>.ogr-pane.is-overview.is-shell){display:flex}
-  .ogr-in{flex-direction:row;padding:12px;gap:12px}
-  .ogr-side{width:min(340px,38%);max-height:none}
-  .ogr-side.is-solo{width:auto}
-  .ogr.is-shell .ogr-in{padding:0;gap:0}
-  .ogr.is-shell .ogr-side{border-top:0;border-left:1px solid var(--o-border)}
+/* Floating action bar for the selected agent. */
+.ogr-dock.is-bar{bottom:14px}
+.ogr-bar{pointer-events:auto;width:max-content;max-width:min(760px,100%);min-width:0;box-sizing:border-box;display:flex;flex-direction:column;gap:2px;padding:5px 6px 5px 8px;border-radius:12px;background:color-mix(in oklab,var(--o-bg) 94%,transparent);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);box-shadow:0 0 0 .5px var(--o-border),0 16px 36px -14px rgb(0 0 0 / 35%)}
+.ogr-bar-row{display:flex;align-items:center;gap:4px;min-width:0}
+.ogr-bar .ogr-tile{margin-right:4px}
+.ogr-bar-name{font-size:12.5px;min-width:48px;max-width:42%;flex:0 0 auto;margin-right:2px}
+.ogr-bar-st{flex:0 1 auto;min-width:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;padding:1px 7px;border-radius:999px;background:var(--o-selected);color:var(--o-muted);margin-right:6px}
+.ogr-bar-st.is-live{color:var(--o-accent)}
+.ogr-bar-st.is-waiting{color:var(--o-warn)}
+.ogr-bar-st.is-fail{color:var(--o-error)}
+.ogr-bar-sep{width:1px;height:16px;margin:0 2px;flex-shrink:0;background:var(--o-border)}
+.ogr-bar .oui-pop{top:auto;bottom:calc(100% + 6px);width:min(290px,calc(100cqw - 24px));transform-origin:bottom right}
+.ogr-bar .ogr-facts{padding:2px 4px 3px 2px}
+@container ogr (max-width:700px){.ogr-bar-agent{display:none}}
+@container ogr (max-width:520px){
+  .ogr-bar-lab{display:none}
+  .ogr-bar .oui-btn-sm:has(.ogr-bar-lab){width:28px;padding:0}
 }
+@container ogr (max-width:360px){.ogr-bar-st{display:none}}
+
+/* Drag-to-connect prompt beside the target card. */
+.ogr-bubble{position:absolute;z-index:6;width:var(--ogr-bw);box-sizing:border-box;left:clamp(8px,calc(var(--ogr-ax) + 104px),calc(100% - var(--ogr-bw) - 8px));top:clamp(8px,calc(var(--ogr-ay) - 50px),calc(100% - 150px));display:flex;flex-direction:column;gap:8px;padding:6px 10px 10px;border-radius:var(--o-radius-lg);border:1px solid var(--o-border);background:var(--o-bg);box-shadow:var(--o-shadow-2);animation:oui-popin 200ms cubic-bezier(.3,1.3,.5,1) both}
+.ogr-bubble-head{display:flex;align-items:center;gap:6px;min-width:0;font-size:12.5px;margin-right:-6px}
+.ogr-bubble-head b{max-width:40%}
+.ogr-bubble-foot{display:flex;align-items:center;gap:8px}
+.ogr-bubble-foot .ogr-hint{flex:1;white-space:normal;line-height:1.35}
+
 /* Very narrow: keep the footers to their buttons. */
 @container ogr (max-width:380px){
   .ogr-pane.is-form .ogr-hint{display:none}
-  .ogr-kv{grid-template-columns:72px minmax(0,1fr)}
-}
-/* Short panel (bottom dock): side by side even when narrow-ish. */
-@container ogr (max-height:420px) and (min-width:520px){
-  .ogr-in{flex-direction:row}
-  .ogr-side{width:min(300px,45%);max-height:none}
-  .ogr-pane.is-overview .ogr-pane-body{display:block}
-  .ogr-side:has(>.ogr-pane.is-overview.is-shell){display:flex}
-  .ogr.is-shell .ogr-side{border-top:0;border-left:1px solid var(--o-border)}
 }
 
 @media (prefers-reduced-motion:reduce){

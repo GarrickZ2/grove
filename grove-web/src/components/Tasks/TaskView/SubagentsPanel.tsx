@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowUpRight, Check, ChevronRight, LoaderCircle, Square, X }
 import type { ReactNode } from "react";
 import { SubagentAvatar } from "./SubagentAvatar";
 import { flattenSubagentMessages, subagentPreview, subagentStatus, type SubagentMessage } from "./subagents";
+import { useOrbitConversation } from "./conversation/OrbitConversationContext";
 
 export function SubagentsPanel({ agents, selectedId, connected, onSelect, onClose, onCancel, onOpenRequest, renderActivity }: {
   agents: SubagentMessage[];
@@ -18,6 +19,46 @@ export function SubagentsPanel({ agents, selectedId, connected, onSelect, onClos
   const status = selected ? subagentStatus(selected, connected) : undefined;
   const request = selected && flattenSubagentMessages(selected.messages).find((message) => (message.type === "permission" || (message.type === "elicitation" && !message.snapshot.opened)) && !message.resolved);
   const canCancel = selected && onCancel && connected && selected.capabilities?.cancel != null && !["idle", "_completed", "_failed", "_cancelled"].includes(selected.state?.state ?? "");
+  const orbit = useOrbitConversation();
+  if (orbit) {
+    const tone = (state: string) => state === "Running" ? "is-running" : state === "Needs your input" ? "is-ask" : /fail|error|cancel/i.test(state) ? "is-failed" : state === "Completed" ? "is-done" : "";
+    return (
+      <div className="oc-subagents">
+        <div className="oc-tray-head">
+          {selected ? <button type="button" className="oc-icon-btn" onClick={() => onSelect()} aria-label="All subagents"><ArrowLeft /></button> : null}
+          <b>{selected ? selected.title || "Subagent" : "Subagents"}</b>
+          <span>· {selected ? status : `${agents.length} spawned by this session${running ? ` · ${running} running` : ""}`}</span>
+          <span className="oc-spacer" />
+          {canCancel && <button type="button" className="oc-tray-action" onClick={() => onCancel?.(selected.sessionId)}><Square aria-hidden="true" />Stop</button>}
+          <button type="button" className="oc-icon-btn" onClick={onClose} title="Close (Esc)" aria-label="Close subagents panel"><X /></button>
+        </div>
+        {selected ? (
+          <div className="oc-tray-pad">
+            {selected.description && !selected.description.startsWith("Delegated task for ") && <p className="oc-sub-lede" title={selected.description}>{selected.description}</p>}
+            {request && <button type="button" className="oc-ask-link" onClick={() => onOpenRequest(request.type === "permission" ? "permission" : "elicitation")}><span>{request.type === "permission" ? "Permission requested" : "Your response is needed"}</span><ArrowUpRight aria-hidden="true" /></button>}
+            {selected.messages.length ? renderActivity(selected) : <p className="oc-tray-empty">Waiting for the first update…</p>}
+          </div>
+        ) : (
+          <ul className="oc-rows" aria-label="Subagents">
+            {agents.map((agent) => {
+              const state = subagentStatus(agent, connected);
+              return (
+                <li key={agent.sessionId} className="oc-row is-link">
+                  <span className="oc-row-avatar"><SubagentAvatar sessionId={agent.sessionId} size={24} /><i className={`oc-row-state ${tone(state)}`} aria-hidden="true" /></span>
+                  <div className="oc-row-main">
+                    <span className="oc-row-text is-single">{agent.title || "Subagent"}</span>
+                    <span className="oc-row-meta"><span>{subagentPreview(agent)}</span></span>
+                  </div>
+                  <span className={`oc-row-status ${tone(state)}`}>{state === "Completed" && <Check aria-hidden="true" />}{state === "Running" && <LoaderCircle className="oc-spin" aria-hidden="true" />}{state}</span>
+                  <button type="button" className="oc-tray-action" onClick={() => onSelect(agent.sessionId)} aria-label={`Open ${agent.title || "subagent"}`}>Open<ChevronRight aria-hidden="true" /></button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="text-[var(--color-text)]">
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-[color-mix(in_srgb,var(--color-border)_55%,transparent)] bg-[var(--color-bg-secondary)] px-3 py-2.5">

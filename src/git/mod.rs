@@ -4,6 +4,9 @@ use std::process::{Command, Stdio};
 use crate::error::{GroveError, Result};
 
 pub mod cache;
+pub mod status;
+
+pub use status::{ahead_behind, worktree_status};
 
 // ============================================================================
 // Git 命令执行助手函数
@@ -20,6 +23,27 @@ pub(crate) fn git_cmd(path: &str, args: &[&str]) -> Result<String> {
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(GroveError::git(format!(
+            "git {} failed: {}",
+            args.first().unwrap_or(&""),
+            stderr.trim()
+        )))
+    }
+}
+
+/// 执行 git 命令并返回未 trim 的原始 stdout（用于 `-z` / porcelain 输出，
+/// 前导空格有语义，不能 trim）。
+pub(crate) fn git_cmd_raw(path: &str, args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| GroveError::git(format!("Failed to execute git: {}", e)))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(GroveError::git(format!(

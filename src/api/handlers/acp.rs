@@ -2410,10 +2410,13 @@ pub async fn update_chat(
 
     // Get the current ACP session handle status if it exists, otherwise "disconnected".
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
-    let status = if let Some(h) = acp::get_session_handle(&session_key) {
-        h.derive_node_status().to_string()
+    let (status, outcome) = if let Some(h) = acp::get_session_handle(&session_key) {
+        (
+            h.derive_node_status().to_string(),
+            h.node_outcome().map(str::to_string),
+        )
     } else {
-        "disconnected".to_string()
+        ("disconnected".to_string(), None)
     };
 
     crate::radio::publish(crate::radio::RadioEvent::ChatStatus {
@@ -2430,6 +2433,7 @@ pub async fn update_chat(
         message: None,
         todo_completed: None,
         todo_total: None,
+        outcome,
     });
 
     Ok(Json(ChatSessionResponse::build(

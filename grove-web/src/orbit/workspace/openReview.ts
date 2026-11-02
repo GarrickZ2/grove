@@ -12,7 +12,11 @@
  *
  * A request is consumed once, by the workspace showing that task, and goes
  * stale after `PENDING_TTL_MS` so a later visit never opens Review by surprise.
+ * A workspace that can't tell yet whether it has a Review (a Studio task whose
+ * linked Projects are still loading) leaves the request pending until it can.
  */
+
+import { useEffect } from "react";
 
 export const OPEN_REVIEW_EVENT = "grove:open-review";
 
@@ -48,4 +52,27 @@ export function takeOpenReviewRequest(projectId: string, taskId: string): OpenRe
   if (request.projectId !== projectId || request.taskId !== taskId) return null;
   pending = null;
   return request;
+}
+
+/**
+ * The workspace side: hands this task's request to `onOpen` once `ready`
+ * (taken on mount, when `ready` turns true, and on the event). Until then the
+ * request stays pending, up to its TTL.
+ */
+export function useOpenReviewRequests(
+  projectId: string,
+  taskId: string,
+  ready: boolean,
+  onOpen: (request: OpenReviewRequest) => void,
+): void {
+  useEffect(() => {
+    if (!ready) return;
+    const take = () => {
+      const request = takeOpenReviewRequest(projectId, taskId);
+      if (request) onOpen(request);
+    };
+    take();
+    window.addEventListener(OPEN_REVIEW_EVENT, take);
+    return () => window.removeEventListener(OPEN_REVIEW_EVENT, take);
+  }, [projectId, taskId, ready, onOpen]);
 }

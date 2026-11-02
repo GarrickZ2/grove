@@ -1,0 +1,471 @@
+/* Orbit composer (Composer & conversation board). Colors come from the
+   theme's --color-* variables; hues are mixed toward the text color so they
+   lighten on dark themes and deepen on light ones. */
+@property --oc-ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+
+.oc-shell {
+  /* Glow hues follow the theme: its highlight and accent, a third hue turned
+     from the accent. Mixing toward the text colour lightens them on dark
+     themes and deepens them on light ones. Status colours stay semantic. */
+  --oc-green: color-mix(in oklab, var(--color-highlight) 88%, var(--color-text));
+  --oc-cyan: color-mix(in oklab, var(--color-accent, var(--color-info)) 86%, var(--color-text));
+  --oc-sky: color-mix(in oklab, var(--color-accent, var(--color-info)) 78%, var(--color-text));
+  --oc-violet: color-mix(in oklab, color-mix(in oklab, var(--color-accent, var(--color-info)) 55%, #8b5cf6) 84%, var(--color-text));
+  --oc-amber: var(--color-warning);
+  --oc-rose: var(--color-error);
+  --oc-panel: color-mix(in oklab, var(--color-bg-secondary) 86%, var(--color-bg));
+  --oc-line: color-mix(in oklab, var(--color-border) 62%, transparent);
+  --oc-line2: color-mix(in oklab, var(--color-text) 14%, transparent);
+  --oc-fill: color-mix(in oklab, var(--color-text) 4%, transparent);
+  --oc-fill2: color-mix(in oklab, var(--color-text) 8%, transparent);
+  --oc-muted: var(--color-text-muted);
+  --oc-faint: color-mix(in oklab, var(--color-text-muted) 72%, transparent);
+  --oc-ease: cubic-bezier(.25, 1, .5, 1);
+  --oc-pop: cubic-bezier(.3, 1.5, .5, 1);
+  position: relative;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 18px;
+  background:
+    linear-gradient(var(--oc-panel), var(--oc-panel)) padding-box,
+    linear-gradient(140deg, color-mix(in oklab, var(--color-text) 16%, transparent), color-mix(in oklab, var(--color-text) 5%, transparent) 40%, color-mix(in oklab, var(--color-text) 10%, transparent)) border-box;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 24px 60px -30px rgb(0 0 0 / 45%);
+  color: var(--color-text);
+  transition: box-shadow 260ms var(--oc-ease);
+  user-select: none;
+}
+/* Phone sheets are portaled out of the shell, so they carry the same tokens. */
+.oc-sheet {
+  /* Glow hues follow the theme: its highlight and accent, a third hue turned
+     from the accent. Mixing toward the text colour lightens them on dark
+     themes and deepens them on light ones. Status colours stay semantic. */
+  --oc-green: color-mix(in oklab, var(--color-highlight) 88%, var(--color-text));
+  --oc-cyan: color-mix(in oklab, var(--color-accent, var(--color-info)) 86%, var(--color-text));
+  --oc-sky: color-mix(in oklab, var(--color-accent, var(--color-info)) 78%, var(--color-text));
+  --oc-violet: color-mix(in oklab, color-mix(in oklab, var(--color-accent, var(--color-info)) 55%, #8b5cf6) 84%, var(--color-text));
+  --oc-amber: var(--color-warning);
+  --oc-rose: var(--color-error);
+  --oc-panel: color-mix(in oklab, var(--color-bg-secondary) 86%, var(--color-bg));
+  --oc-line: color-mix(in oklab, var(--color-border) 62%, transparent);
+  --oc-line2: color-mix(in oklab, var(--color-text) 14%, transparent);
+  --oc-fill: color-mix(in oklab, var(--color-text) 4%, transparent);
+  --oc-fill2: color-mix(in oklab, var(--color-text) 8%, transparent);
+  --oc-muted: var(--color-text-muted);
+  --oc-faint: color-mix(in oklab, var(--color-text-muted) 72%, transparent);
+  --oc-ease: cubic-bezier(.25, 1, .5, 1);
+  --oc-pop: cubic-bezier(.3, 1.5, .5, 1);
+  color: var(--color-text);
+}
+/* A custom property can't fall back by redeclaring, so the turned hue is gated. */
+@supports (color: oklch(from red l c h)) {
+  .oc-shell, .oc-sheet { --oc-violet: color-mix(in oklab, oklch(from var(--color-accent, var(--color-info)) l c calc(h + 55)) 84%, var(--color-text)); }
+}
+.oc-shell:focus-within {
+  background:
+    linear-gradient(var(--oc-panel), var(--oc-panel)) padding-box,
+    linear-gradient(140deg, color-mix(in oklab, var(--oc-green) 78%, transparent), color-mix(in oklab, var(--oc-cyan) 40%, transparent) 45%, color-mix(in oklab, var(--oc-violet) 60%, transparent)) border-box;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--oc-green) 9%, transparent), 0 24px 60px -30px rgb(0 0 0 / 45%), 0 0 60px -22px color-mix(in oklab, var(--oc-green) 40%, transparent);
+}
+/* Running: a light orbits the edge. Its hues are the theme's own, unmixed, so
+   they stay vivid on light themes: highlight → accent → the accent turned. */
+.oc-shell {
+  --oc-glow-1: var(--color-highlight);
+  --oc-glow-2: var(--color-accent, var(--color-info));
+  --oc-glow-3: color-mix(in oklab, var(--oc-glow-2) 50%, #8b5cf6);
+}
+@supports (color: oklch(from red l c h)) {
+  .oc-shell { --oc-glow-3: oklch(from var(--oc-glow-2) l c calc(h + 55)); }
+}
+.oc-shell.is-running { box-shadow: 0 0 0 4px color-mix(in oklab, var(--oc-glow-2) 8%, transparent), 0 24px 60px -30px rgb(0 0 0 / 45%), 0 0 70px -20px color-mix(in oklab, var(--oc-glow-2) 50%, transparent); }
+/* The arc is masked to the border ring; the bloom blurs a wider copy of it,
+   so the glow travels with the light instead of sitting still. */
+.oc-shell > .oc-orbit { position: absolute; inset: -1px; z-index: 0; border-radius: 18px; pointer-events: none; }
+.oc-shell > .oc-orbit.is-bloom { inset: -3px; border-radius: 20px; filter: blur(9px); opacity: .85; }
+.oc-orbit i {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--oc-ang), transparent 0 56%, color-mix(in oklab, var(--oc-glow-1) 85%, transparent) 70%, var(--oc-glow-2) 82%, var(--oc-glow-3) 91%, transparent 98%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: oc-orbit 3.2s linear infinite;
+}
+.oc-orbit.is-bloom i { padding: 4px; }
+@keyframes oc-orbit { to { --oc-ang: 360deg; } }
+.oc-shell > * { position: relative; z-index: 1; }
+
+/* Zone 1: status */
+.oc-status { display: flex; align-items: center; gap: 6px; padding: 7px 9px; border-bottom: 1px solid var(--oc-line); border-radius: 17px 17px 0 0; background: var(--oc-fill); overflow-x: auto; scrollbar-width: none; animation: oc-rise 280ms var(--oc-ease) both; }
+.oc-status::-webkit-scrollbar { display: none; }
+.oc-spacer { flex: 1; }
+.oc-chip { display: inline-flex; flex: none; align-items: center; gap: 6px; max-width: 100%; height: 24px; padding: 0 9px; border: 0; border-radius: 999px; background: var(--oc-fill); box-shadow: inset 0 0 0 1px var(--oc-line); color: var(--oc-muted); font: inherit; font-size: 11.5px; white-space: nowrap; cursor: pointer; transition: color 150ms, background-color 150ms; }
+.oc-chip:hover { color: var(--color-text); background: var(--oc-fill2); }
+.oc-chip.is-on { color: var(--color-text); background: var(--oc-fill2); box-shadow: inset 0 0 0 1px var(--oc-line2); }
+.oc-chip:focus-visible, .oc-orb:focus-visible, .oc-tool:focus-visible, .oc-setup-chip:focus-visible, .oc-ring:focus-visible { outline: 2px solid var(--color-highlight); outline-offset: 2px; }
+.oc-chip b { font-weight: 600; color: var(--color-text); font-variant-numeric: tabular-nums; }
+.oc-chip.is-plan { flex: 0 1 auto; min-width: 0; }
+.oc-chip.is-plan.is-live { color: var(--oc-sky); }
+.oc-chip.is-static { cursor: default; }
+.oc-chip-label { min-width: 0; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.oc-mini { width: 28px; height: 4px; flex: none; overflow: hidden; border-radius: 999px; background: var(--oc-fill2); }
+.oc-mini i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--oc-sky), var(--oc-violet)); transition: width 400ms var(--oc-ease); }
+.oc-live { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--oc-sky); box-shadow: 0 0 10px var(--oc-sky); animation: oc-pulse 1.3s ease-in-out infinite; }
+@keyframes oc-pulse { 50% { opacity: .35; transform: scale(.7); } }
+.oc-stack { display: inline-flex; }
+.oc-stack > * { margin-left: -4px; box-shadow: 0 0 0 2px var(--oc-panel); border-radius: 999px; }
+.oc-stack > :first-child { margin-left: 0; }
+.oc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--oc-muted); }
+.oc-chip.is-error { color: var(--oc-rose); }
+.oc-chip.is-error .oc-dot { background: var(--oc-rose); }
+.oc-chip.is-ask { color: var(--oc-amber); background: color-mix(in oklab, var(--oc-amber) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--oc-amber) 28%, transparent); }
+
+/* Trays rise out of the composer, one at a time. */
+.oc-tray { max-height: min(380px, 46vh); overflow-y: auto; overscroll-behavior: contain; border-bottom: 1px solid var(--oc-line); background: color-mix(in oklab, var(--color-text) 1.5%, transparent); animation: oc-rise 320ms var(--oc-ease) both; user-select: text; }
+.oc-status + .oc-tray { border-radius: 0; }
+.oc-shell > .oc-tray:first-child, .oc-shell > .oc-ask:first-child { border-radius: 17px 17px 0 0; }
+.oc-tray-head { display: flex; align-items: center; gap: 6px; padding: 9px 14px 4px; font-size: 12px; color: var(--oc-muted); }
+.oc-tray-head b { color: var(--color-text); font-weight: 600; }
+.oc-tray-esc { font-size: 11px; color: var(--oc-faint); }
+.oc-tray-pad { padding: 4px 10px 10px; }
+.oc-tray-section { padding: 6px 14px 12px; border-top: 1px solid var(--oc-line); }
+@keyframes oc-rise { from { opacity: 0; transform: translateY(6px); } }
+.oc-steps { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 2px 8px 9px; list-style: none; }
+.oc-step { display: flex; align-items: flex-start; gap: 10px; padding: 5px 8px; border-radius: 9px; font-size: 12.5px; line-height: 1.45; }
+.oc-step-ck { position: relative; width: 15px; height: 15px; flex: none; margin-top: 1px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--oc-line2); }
+.oc-step.is-done { color: var(--oc-faint); }
+.oc-step.is-done .oc-step-ck { background: var(--color-success); box-shadow: none; }
+.oc-step.is-done .oc-step-ck::after { content: ""; position: absolute; left: 5px; top: 2.5px; width: 3.5px; height: 6.5px; border: solid var(--color-bg); border-width: 0 1.8px 1.8px 0; transform: rotate(45deg); }
+.oc-step.is-cur { background: color-mix(in oklab, var(--oc-sky) 8%, transparent); }
+.oc-step.is-cur .oc-step-ck { box-shadow: inset 0 0 0 1.5px var(--oc-sky); }
+.oc-step.is-cur .oc-step-ck::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--oc-sky); animation: oc-pulse 1.3s ease-in-out infinite; }
+
+/* Agent asks dock above the input. */
+.oc-ask { max-height: min(420px, 52vh); overflow-y: auto; overscroll-behavior: contain; padding: 10px 12px; border-bottom: 1px solid var(--oc-line); background: linear-gradient(180deg, color-mix(in oklab, var(--oc-amber) 7%, transparent), transparent); animation: oc-rise 320ms var(--oc-ease) both; user-select: text; }
+
+/* Zone 2: input */
+.oc-body { padding: 6px 6px 0; }
+.oc-body [contenteditable], .oc-body textarea { font-size: 14px; }
+
+/* Zone 3: tools (left), who + how (right) */
+.oc-bar { display: flex; align-items: center; gap: 4px; padding: 4px 8px 8px; }
+.oc-tools { display: flex; min-width: 0; flex: 1; align-items: center; gap: 2px; }
+.oc-who { display: flex; flex: none; align-items: center; gap: 6px; }
+.oc-tool { display: inline-flex; width: 30px; height: 30px; flex: none; align-items: center; justify-content: center; border: 0; border-radius: 999px; background: none; color: var(--oc-muted); cursor: pointer; transition: color 150ms, background-color 150ms; }
+.oc-tool:hover:not(:disabled) { background: var(--oc-fill2); color: var(--color-text); }
+.oc-tool:disabled { opacity: .4; cursor: default; }
+.oc-tool svg { width: 16px; height: 16px; }
+.oc-tag { display: inline-flex; flex: none; align-items: center; gap: 4px; height: 22px; margin-left: 4px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+.oc-tag.is-shell { color: var(--oc-amber); background: color-mix(in oklab, var(--oc-amber) 11%, transparent); }
+.oc-hint { margin-left: 6px; overflow: hidden; color: var(--oc-faint); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; animation: oc-fade 200ms var(--oc-ease) both; }
+@keyframes oc-fade { from { opacity: 0; } }
+/* The Agent Voice control reuses Workbench's markup; quiet its fill. */
+.oc-tools .agent-voice-menu-root > div:first-child { background: transparent; }
+
+/* Setup chip */
+.oc-setup, .oc-ring-root { position: relative; display: inline-flex; min-width: 0; }
+.oc-setup { flex: 0 1 auto; }
+.oc-setup-chip { display: inline-flex; min-width: 0; max-width: 360px; height: 30px; align-items: center; gap: 7px; padding: 0 9px 0 5px; border: 0; border-radius: 999px; background: var(--oc-fill); box-shadow: inset 0 0 0 1px var(--oc-line); color: var(--color-text); font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer; transition: background-color 150ms; }
+.oc-setup-chip:hover, .oc-setup-chip.is-open { background: var(--oc-fill2); }
+.oc-setup-ag { display: inline-flex; width: 20px; height: 20px; flex: none; align-items: center; justify-content: center; border-radius: 999px; background: color-mix(in oklab, var(--color-highlight) 14%, transparent); color: var(--color-highlight); }
+.oc-setup-name { flex: none; }
+.oc-setup-dim { min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.oc-setup-risk { flex: none; }
+.oc-setup-dim { color: var(--oc-muted); }
+.oc-setup-risk { color: var(--oc-amber); font-weight: 500; }
+.oc-setup-dot { width: 3px; height: 3px; flex: none; border-radius: 50%; background: var(--oc-faint); }
+.oc-setup-caret { flex: none; color: var(--oc-faint); }
+
+/* Popovers rise from the bar, aligned to the right edge. */
+.oc-pop { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 60; display: flex; width: 320px; max-width: calc(100vw - 32px); max-height: min(480px, 64vh); flex-direction: column; gap: 4px; overflow-y: auto; overscroll-behavior: contain; padding: 8px; border-radius: 14px; background: color-mix(in oklab, var(--color-bg) 94%, transparent); box-shadow: 0 0 0 1px var(--oc-line2), 0 20px 44px -18px rgb(0 0 0 / 45%); backdrop-filter: blur(16px); color: var(--color-text); font-size: 12.5px; text-align: left; animation: oc-pop-in 240ms var(--oc-pop) both; user-select: none; }
+@keyframes oc-pop-in { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+.oc-pop-note { margin: 4px 6px; color: var(--oc-muted); font-size: 11.5px; line-height: 1.45; }
+/* Setup menu: macOS-style two levels. Level 1 lists the settings with their
+   values; each opens its options in a side submenu. One highlight for hover
+   and keyboard focus (neutral fill); the current option shows a check only. */
+.oc-menu { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 60; display: flex; width: 264px; flex-direction: column; padding: 5px; border-radius: 12px; background: color-mix(in oklab, var(--color-bg) 96%, transparent); box-shadow: 0 0 0 1px var(--oc-line2), 0 18px 40px -16px rgb(0 0 0 / 42%); backdrop-filter: blur(16px); color: var(--color-text); font-size: 12.5px; text-align: left; outline: none; animation: oc-pop-in 200ms var(--oc-ease) both; user-select: none; }
+.oc-menu-row { display: flex; width: 100%; min-width: 0; height: 30px; align-items: center; gap: 9px; padding: 0 8px; border: 0; border-radius: 7px; background: none; color: var(--color-text); font: inherit; text-align: left; cursor: default; outline: none; }
+.oc-menu-row:is(button):hover:not(:disabled), .oc-menu-row:is(button):focus-visible, .oc-menu-row.is-open, .oc-menu-row.is-toggle:hover { background: var(--o-hover, var(--oc-fill2)); }
+.oc-menu-row:disabled { opacity: .45; }
+.oc-menu-ic { flex: none; color: var(--oc-muted); }
+.oc-menu-agent { display: inline-flex; width: 14px; height: 14px; align-items: center; justify-content: center; color: inherit; }
+.oc-menu-agent > svg, .oc-menu-agent > img { width: 14px; height: 14px; }
+.oc-menu-label { flex: none; }
+.oc-menu-value { min-width: 0; flex: 1; overflow: hidden; color: var(--oc-muted); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.oc-menu-chev { flex: none; color: var(--oc-faint); }
+.oc-menu-row.is-toggle { justify-content: space-between; }
+.oc-menu-row.is-toggle .oc-menu-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oc-menu-toggle { display: inline-flex; flex: none; }
+.oc-menu-sep { height: 1px; margin: 4px 6px; background: var(--oc-line); }
+.oc-menu-note { margin: 4px 8px; color: var(--oc-muted); font-size: 11.5px; line-height: 1.45; }
+.oc-sub { position: absolute; z-index: 61; display: flex; width: 280px; max-width: calc(100vw - 16px); flex-direction: column; padding: 5px; border-radius: 12px; background: color-mix(in oklab, var(--color-bg) 97%, transparent); box-shadow: 0 0 0 1px var(--oc-line2), 0 18px 40px -16px rgb(0 0 0 / 45%); backdrop-filter: blur(16px); animation: oc-fade 140ms var(--oc-ease) both; }
+.oc-sub-search { display: flex; flex: none; align-items: center; gap: 6px; height: 28px; margin: 0 0 4px; padding: 0 8px; border-radius: 7px; background: var(--oc-fill); color: var(--oc-muted); }
+.oc-sub-search input { min-width: 0; flex: 1; border: 0; outline: none; background: transparent; color: var(--color-text); font: inherit; font-size: 12px; }
+.oc-sub-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+.oc-sub-group { padding: 6px 8px 2px; color: var(--oc-faint); font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+.oc-sub-item { display: flex; width: 100%; min-height: 30px; align-items: center; gap: 9px; padding: 4px 8px; border: 0; border-radius: 7px; background: none; color: var(--color-text); font: inherit; text-align: left; cursor: default; outline: none; }
+.oc-sub-item:hover, .oc-sub-item:focus { background: var(--o-hover, var(--oc-fill2)); }
+.oc-sub-ic { display: inline-flex; flex: none; color: var(--oc-muted); }
+.oc-sub-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.oc-sub-name { overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.oc-sub-desc { overflow: hidden; color: var(--oc-muted); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.oc-sub-check { flex: none; color: var(--color-text); visibility: hidden; }
+.oc-sub-item[aria-checked="true"] .oc-sub-check { visibility: visible; }
+
+/* Usage ring */
+.oc-ring { display: inline-flex; width: 30px; height: 30px; flex: none; align-items: center; justify-content: center; border: 0; border-radius: 999px; background: none; cursor: pointer; }
+.oc-ring:hover, .oc-ring.is-open { background: var(--oc-fill2); }
+.oc-ring svg { width: 19px; height: 19px; transform: rotate(-90deg); }
+.oc-ring-track { fill: none; stroke: var(--oc-fill2); stroke-width: 2.6; }
+.oc-ring-fill { fill: none; stroke-width: 2.6; stroke-linecap: round; transition: stroke-dashoffset 500ms var(--oc-ease); }
+.oc-ring.is-warn .oc-ring-fill { stroke: var(--oc-amber); }
+.oc-ring-stop-a { stop-color: var(--oc-green); }
+.oc-ring-stop-b { stop-color: var(--oc-cyan); }
+.oc-ring-pop { width: 340px; gap: 8px; }
+
+/* The orb: send, queue, stop, save — one flat button that morphs. Ink like
+   the sign-in page's primary button, so it inverts in dark themes. */
+.oc-orb { position: relative; display: inline-flex; width: 30px; height: 30px; flex: none; align-items: center; justify-content: center; border: 0; border-radius: 999px; background: var(--o-ink, var(--color-text)); color: var(--o-on-ink, var(--color-bg)); cursor: pointer; transition: transform 160ms var(--oc-pop), background-color 220ms var(--oc-ease), color 220ms var(--oc-ease); }
+.oc-orb:hover:not(:disabled) { background: color-mix(in oklab, var(--o-ink, var(--color-text)) 86%, var(--color-bg)); }
+.oc-orb:active:not(:disabled) { transform: scale(.92); }
+.oc-orb:disabled { cursor: default; background: var(--o-selected, var(--oc-fill2)); color: var(--oc-faint); }
+.oc-orb.is-queue, .oc-orb.is-sendNow { background: color-mix(in oklab, var(--oc-sky) 16%, transparent); color: var(--oc-sky); }
+.oc-orb.is-queue:hover:not(:disabled), .oc-orb.is-sendNow:hover:not(:disabled) { background: color-mix(in oklab, var(--oc-sky) 24%, transparent); }
+.oc-orb-ic { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; transform: scale(.5) rotate(-45deg); transition: opacity 160ms var(--oc-ease), transform 240ms var(--oc-pop); }
+.oc-orb-ic svg { width: 14px; height: 14px; stroke-width: 2.2; }
+.oc-orb-ic.is-stop svg { width: 10px; height: 10px; fill: currentColor; stroke-width: 0; }
+.oc-orb-ic.is-spin svg { animation: oc-spin 900ms linear infinite; }
+@keyframes oc-spin { to { transform: rotate(360deg); } }
+.oc-orb[data-icon="arrow"] .is-arrow,
+.oc-orb[data-icon="stop"] .is-stop,
+.oc-orb[data-icon="check"] .is-check,
+.oc-orb[data-icon="skip"] .is-skip,
+.oc-orb[data-icon="spin"] .is-spin { opacity: 1; transform: none; }
+
+/* Typography inside reused Workbench pieces. */
+.oc-tray .text-sm { font-size: 12.5px; }
+
+/* Narrow chat column: the setup chip gives way first. */
+@container chatbox (max-width: 560px) {
+  .oc-setup-dim { max-width: 90px; }
+  .oc-hint { display: none; }
+}
+@container chatbox (max-width: 420px) {
+  .oc-setup-name, .oc-setup-dot:first-of-type { display: none; }
+  .oc-chip-label { max-width: 140px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oc-shell, .oc-shell *, .oc-shell::before, .oc-orbit i { animation: none !important; transition: none !important; }
+}
+/* Stopping / saving: keep the spinner legible while the orb is locked. */
+.oc-orb[data-icon="spin"]:disabled { background: var(--o-ink, var(--color-text)); color: var(--o-on-ink, var(--color-bg)); }
+
+/* Flat tray rows (Comments, Memory): same rhythm as the queue rows. */
+.oc-tray-head .oc-icon-btn { margin-right: -4px; }
+.oc-tray-action { display: inline-flex; height: 24px; flex: none; align-items: center; gap: 5px; padding: 0 9px; border: 0; border-radius: 7px; background: var(--oc-fill); box-shadow: inset 0 0 0 1px var(--oc-line2); color: var(--color-text); font: inherit; font-size: 11.5px; font-weight: 500; cursor: pointer; transition: background-color 150ms; }
+.oc-tray-action:hover:not(:disabled) { background: var(--oc-fill2); }
+.oc-tray-action:disabled { opacity: .45; cursor: default; }
+.oc-tray-action svg { width: 12px; height: 12px; }
+.oc-text-btn { height: 24px; padding: 0 8px; border: 0; border-radius: 7px; background: none; color: var(--oc-muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.oc-text-btn:hover:not(:disabled) { background: var(--oc-fill2); color: var(--color-text); }
+.oc-text-btn:disabled { opacity: .45; cursor: default; }
+.oc-icon-btn { display: inline-flex; width: 24px; height: 24px; flex: none; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: none; color: var(--oc-muted); cursor: pointer; transition: color 150ms, background-color 150ms; }
+.oc-icon-btn:hover { background: var(--oc-fill2); color: var(--color-text); }
+.oc-icon-btn.is-danger:hover { color: var(--oc-rose); }
+.oc-icon-btn svg { width: 13px; height: 13px; }
+.oc-icon-btn:focus-visible, .oc-tray-action:focus-visible, .oc-text-btn:focus-visible { outline: 2px solid var(--color-highlight); outline-offset: 1px; }
+.oc-rows { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 2px 8px 9px; list-style: none; }
+.oc-row { display: flex; align-items: flex-start; gap: 10px; padding: 6px 8px; border-radius: 9px; font-size: 12.5px; line-height: 1.45; }
+.oc-row:hover, .oc-row:focus-within { background: var(--o-hover, var(--oc-fill)); }
+.oc-row-n { display: inline-flex; width: 18px; height: 18px; flex: none; margin-top: 1px; align-items: center; justify-content: center; border-radius: 6px; background: var(--oc-fill2); color: var(--oc-muted); font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.oc-row-ic { width: 14px; height: 14px; flex: none; margin: 2px 2px 0; color: var(--oc-muted); }
+.oc-row-main { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.oc-row-text { overflow: hidden; color: var(--color-text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: pre-wrap; overflow-wrap: anywhere; }
+.oc-row-meta { display: flex; min-width: 0; align-items: center; gap: 6px; overflow: hidden; color: var(--oc-muted); font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
+.oc-row-meta > span { overflow: hidden; text-overflow: ellipsis; }
+.oc-row-quote { overflow: hidden; margin-top: 2px; padding-left: 8px; border-left: 1px solid var(--oc-line2); color: var(--oc-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.oc-row-quote.is-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; }
+.oc-row-actions { display: flex; flex: none; gap: 1px; opacity: 0; transition: opacity 150ms; }
+.oc-row:hover .oc-row-actions, .oc-row:focus-within .oc-row-actions { opacity: 1; }
+.oc-row-edit { width: 100%; resize: none; padding: 6px 8px; border: 0; border-radius: 8px; outline: none; background: var(--color-bg); box-shadow: inset 0 0 0 1px var(--oc-line2); color: var(--color-text); font: inherit; font-size: 12.5px; line-height: 1.45; user-select: text; }
+.oc-row-edit:focus { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-highlight) 60%, var(--oc-line2)); }
+.oc-row-edit-actions { display: flex; justify-content: flex-end; gap: 4px; margin-top: 4px; }
+.oc-row.is-editing { background: var(--oc-fill); }
+.oc-tag-quiet { flex: none; padding: 0 6px; border-radius: 999px; background: var(--oc-fill2); color: var(--oc-muted); font-size: 10.5px; line-height: 16px; }
+.oc-row-id { min-width: 0; overflow: hidden; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px; opacity: .7; text-overflow: ellipsis; }
+@media (hover: none) { .oc-row-actions { opacity: 1; } }
+
+/* ── Tray states and rows shared by every tray ───────────────────────── */
+.oc-tray-empty, .oc-tray-error { margin: 0; padding: 10px 16px 14px; color: var(--oc-muted); font-size: 12px; }
+.oc-tray-error { color: var(--oc-rose); }
+.oc-tray-pad > .oc-tray-empty { padding: 6px 2px; }
+.oc-tray-head .oui-seg { margin-right: 4px; }
+.oc-row-text.is-single { display: block; white-space: nowrap; text-overflow: ellipsis; }
+.oc-row-meta.is-error { color: var(--oc-rose); }
+.oc-row.is-failed .oc-row-n { background: color-mix(in oklab, var(--oc-rose) 15%, transparent); color: var(--oc-rose); }
+.oc-row-actions.is-pinned { opacity: 1; }
+.oc-row > .flex { flex: none; align-self: center; }
+.oc-row-badge { align-self: center; padding: 0 7px; border-radius: 999px; background: var(--oc-fill2); color: var(--color-text); font-size: 10.5px; font-weight: 500; line-height: 18px; }
+.oc-text-btn.is-danger:hover:not(:disabled) { color: var(--oc-rose); }
+.oc-row-actions .oc-text-btn { align-self: center; }
+/* The failed/sending menu trigger reused from Workbench sits like an icon button. */
+.oc-row-actions > div > button { width: 24px; height: 24px; }
+.oc-row.is-link { align-items: center; }
+.oc-row-avatar { position: relative; display: inline-flex; flex: none; }
+.oc-row-state { position: absolute; right: -2px; bottom: -2px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 2px var(--oc-panel); background: var(--oc-faint); }
+.oc-row-state.is-running { background: var(--oc-sky); }
+.oc-row-state.is-ask { background: var(--oc-amber); }
+.oc-row-state.is-done { background: var(--color-success); }
+.oc-row-state.is-failed { background: var(--oc-rose); }
+.oc-row-status { display: inline-flex; flex: none; align-items: center; gap: 4px; color: var(--oc-muted); font-size: 11px; }
+.oc-row-status svg { width: 12px; height: 12px; }
+.oc-row-status.is-running { color: var(--oc-sky); }
+.oc-row-status.is-ask { color: var(--oc-amber); }
+.oc-row-status.is-failed { color: var(--oc-rose); }
+.oc-tray-action svg:last-child:not(:first-child) { margin-right: -3px; }
+.oc-spin { animation: oc-spin 900ms linear infinite; }
+.oc-sub-lede { display: -webkit-box; margin: 2px 2px 10px; overflow: hidden; color: var(--oc-muted); font-size: 12px; line-height: 1.5; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.oc-ask-link { display: flex; width: 100%; align-items: center; justify-content: space-between; margin-bottom: 10px; padding: 7px 10px; border: 0; border-radius: 8px; background: color-mix(in oklab, var(--oc-amber) 10%, transparent); color: var(--oc-amber); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+.oc-ask-link:hover { background: color-mix(in oklab, var(--oc-amber) 16%, transparent); }
+.oc-ask-link svg { width: 14px; height: 14px; }
+
+/* Plan documents */
+.oc-plan-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.oc-plan-tabs button { max-width: 240px; height: 24px; overflow: hidden; padding: 0 9px; border: 0; border-radius: 999px; background: var(--oc-fill); box-shadow: inset 0 0 0 1px var(--oc-line); color: var(--oc-muted); font: inherit; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.oc-plan-tabs button:hover { color: var(--color-text); background: var(--oc-fill2); }
+.oc-plan-tabs button[aria-selected="true"] { color: var(--color-text); background: var(--oc-fill2); box-shadow: inset 0 0 0 1px var(--oc-line2); }
+.oc-plan-docs .oc-steps { padding: 0; }
+.oc-plan-uri { margin: 0 0 6px; overflow: hidden; color: var(--oc-faint); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.oc-tray .ocv-prose { font-size: 13px; }
+.oc-step.is-failed { color: var(--oc-rose); }
+.oc-step.is-failed .oc-step-ck { box-shadow: inset 0 0 0 1.5px var(--oc-rose); }
+.oc-step.is-failed .oc-step-ck::before, .oc-step.is-failed .oc-step-ck::after { content: ""; position: absolute; left: 7px; top: 4px; width: 1.5px; height: 7px; border-radius: 1px; background: var(--oc-rose); transform: rotate(45deg); }
+.oc-step.is-failed .oc-step-ck::after { transform: rotate(-45deg); }
+
+/* Agent asks: sign-in, survey and website requests share the permission card's layout. */
+.oc-ask .ocv-decision-icon.is-ok { background: color-mix(in oklab, var(--color-success) 14%, transparent); color: var(--color-success); }
+.oc-ask .ocv-decision-icon.is-error { background: color-mix(in oklab, var(--oc-rose) 14%, transparent); color: var(--oc-rose); }
+.oc-ask-body { margin: 3px 0 0; color: var(--oc-muted); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.oc-ask .ocv-decision > .oc-ask-body, .oc-ask .ocv-decision > .ocv-decision-payload, .oc-ask .ocv-decision > .oc-ask-warn, .oc-ask .ocv-decision > .oc-tray-error { margin-left: 38px; }
+.oc-ask .ocv-decision > .oc-tray-error { padding: 0; }
+.oc-ask-warn { display: flex; align-items: flex-start; gap: 6px; margin: 0; color: var(--oc-amber); font-size: 11.5px; }
+.oc-ask-warn svg { width: 13px; height: 13px; flex: none; margin-top: 1px; }
+.oc-ask-note { color: var(--oc-muted); font-size: 11.5px; }
+.oc-btn-ic { width: 13px; height: 13px; margin-right: 6px; }
+.oc-btn-ic.is-end { margin: 0 0 0 6px; }
+.oc-ask .ocv-btn:disabled { opacity: .45; cursor: default; }
+.oc-option-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; text-align: left; }
+.oc-option-copy small { color: inherit; font-size: 11px; opacity: .7; }
+.oc-ask-terminal { display: flex; flex-direction: column; gap: 6px; margin-left: 38px; }
+.oc-ask-terminal-frame { height: 280px; overflow: hidden; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--oc-line2); }
+.oc-form-question { display: flex; flex-direction: column; gap: 8px; margin-left: 38px; }
+.oc-form-qhead { display: flex; align-items: baseline; gap: 8px; }
+.oc-form-step { flex: none; color: var(--oc-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.oc-form-qtitle { font-size: 13.5px; font-weight: 600; }
+.oc-form-required { color: var(--oc-rose); font-size: 11px; }
+/* Survey controls (shared with Workbench) in the Orbit card's language. */
+.oc-form fieldset > label, .oc-form fieldset > div > label { border: 0; border-radius: 8px; background: var(--oc-fill); box-shadow: inset 0 0 0 1px var(--oc-line); --tw-ring-shadow: 0 0 #0000; }
+.oc-form fieldset label:hover { background: var(--oc-fill2); }
+.oc-form fieldset label:has(input:checked) { background: var(--oc-fill2); box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--color-text) 45%, transparent); }
+.oc-form input[type="radio"], .oc-form input[type="checkbox"] { accent-color: var(--color-text); }
+.oc-form :is(input[type="text"], input[type="number"], textarea, select) { border: 0; border-radius: 8px; background: var(--color-bg); box-shadow: inset 0 0 0 1px var(--oc-line2); --tw-ring-shadow: 0 0 #0000; }
+.oc-form :is(input[type="text"], input[type="number"], textarea, select):focus { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-text) 45%, transparent); }
+.oc-form fieldset input[type="text"] { box-shadow: none; background: transparent; }
+.oc-form-question > div > button, .oc-form-question > div > div > button { border: 0; border-radius: 8px; background: var(--oc-fill); box-shadow: inset 0 0 0 1px var(--oc-line); color: var(--color-text); }
+.oc-form-question button[class*="color-highlight)] text-white"] { background: var(--color-text); box-shadow: none; color: var(--color-bg); }
+
+/* Usage popover: one surface with sections, not cards inside a card. */
+.oc-ring-pop { gap: 0; padding: 4px; }
+.oc-ring-pop > div { border: 0 !important; border-radius: 10px !important; background: none !important; backdrop-filter: none !important; box-shadow: none !important; }
+.oc-ring-pop > div + div { border-top: 1px solid var(--oc-line) !important; border-radius: 0 !important; }
+.oc-ring-pop > div > div { background: none !important; backdrop-filter: none !important; }
+.oc-ring-pop .uppercase { color: var(--color-text); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.oc-ring-pop button[aria-label^="Compact"] { border: 0; border-radius: 8px; background: var(--oc-fill2) !important; box-shadow: inset 0 0 0 1px var(--oc-line2); color: var(--color-text) !important; font-weight: 500; }
+.oc-ring-pop button[aria-label^="Compact"]:hover { opacity: 1; background: color-mix(in oklab, var(--color-text) 12%, transparent) !important; }
+
+/* ── Phone ─────────────────────────────────────────────────────────────
+   Same frame and orb; 44px touch targets, a 16px input (iOS won't zoom),
+   one scrolling status row, and sheets instead of popovers. */
+.oc-phone-dock { padding-bottom: 2px; }
+.oc-shell.is-phone { border-radius: 22px; }
+.oc-shell.is-phone > .oc-orbit { border-radius: 22px; }
+.oc-shell.is-phone > .oc-orbit.is-bloom { border-radius: 24px; }
+.oc-shell.is-phone .oc-status { gap: 6px; padding: 6px 8px; border-radius: 21px 21px 0 0; }
+.oc-shell.is-phone .oc-chip { height: 32px; padding: 0 11px; font-size: 12.5px; }
+.oc-shell.is-phone .oc-chip-label { max-width: 46vw; }
+.oc-shell.is-phone .oc-spacer { flex: 0 0 0; }
+.oc-shell.is-phone > .oc-ask:first-child { border-radius: 21px 21px 0 0; }
+.oc-shell.is-phone .oc-ask { max-height: min(56dvh, 460px); }
+.oc-shell.is-phone .oc-body { padding: 4px 4px 0; }
+.oc-shell.is-phone .oc-body [contenteditable] { min-height: 44px; max-height: min(24dvh, 150px); padding-block: 10px; font-size: 16px; line-height: 1.45; }
+.oc-shell.is-phone .oc-body [contenteditable] + * , .oc-shell.is-phone .oc-body .pointer-events-none { font-size: 16px; }
+.oc-shell.is-phone .oc-bar { gap: 2px; padding: 0 4px 4px; }
+.oc-shell.is-phone .oc-tool { width: 44px; height: 44px; }
+.oc-shell.is-phone .oc-tool svg { width: 19px; height: 19px; }
+.oc-shell.is-phone .oc-who { min-width: 0; flex: 0 1 auto; gap: 2px; }
+.oc-shell.is-phone .oc-setup { min-width: 0; }
+.oc-shell.is-phone .oc-setup-chip { height: 40px; min-width: 0; padding: 0 10px 0 6px; font-size: 13px; }
+.oc-shell.is-phone .oc-setup-name, .oc-shell.is-phone .oc-setup-name + .oc-setup-dot { display: none; }
+.oc-shell.is-phone .oc-setup-ag { width: 24px; height: 24px; }
+.oc-shell.is-phone .oc-setup-dim { max-width: 28vw; }
+.oc-shell.is-phone .oc-ring { width: 44px; height: 44px; }
+.oc-shell.is-phone .oc-orb { width: 40px; height: 40px; margin: 2px; }
+.oc-shell.is-phone .oc-orb-ic svg { width: 17px; height: 17px; }
+.oc-shell.is-phone .oc-orb-ic.is-stop svg { width: 12px; height: 12px; }
+.oc-shell.is-phone .oc-tools .agent-voice-menu-root > div:first-child { height: 44px; }
+.oc-shell.is-phone .oc-tools .agent-voice-menu-root > div:first-child > button { min-width: 44px; }
+.oc-shell.is-phone .oc-hint { display: none; }
+
+/* Sheets (trays, setup, usage) */
+.oc-sheet { display: flex; flex-direction: column; min-height: 0; padding: 0 0 6px; font-size: 14px; }
+.oc-sheet .oc-tray-head { padding: 2px 12px 8px 18px; font-size: 13.5px; }
+.oc-sheet .oc-tray-head .oc-icon-btn { width: 40px; height: 40px; }
+.oc-sheet .oc-tray-esc { display: none; }
+.oc-sheet .oc-rows { padding: 0 8px 8px; }
+.oc-sheet .oc-row { min-height: 48px; padding: 9px 10px; font-size: 14px; }
+.oc-sheet .oc-row-meta, .oc-sheet .oc-row-quote { font-size: 12px; }
+.oc-sheet .oc-row-actions { opacity: 1; }
+.oc-sheet .oc-icon-btn { width: 40px; height: 40px; }
+.oc-sheet .oc-icon-btn svg { width: 16px; height: 16px; }
+.oc-sheet .oc-tray-action { height: 36px; padding: 0 12px; font-size: 13px; }
+.oc-sheet .oc-steps { padding: 0 10px 10px; }
+.oc-sheet .oc-step { min-height: 40px; align-items: center; font-size: 14px; }
+.oc-sheet .oc-tray-section, .oc-sheet .oc-tray-pad { padding: 8px 18px 12px; }
+.oc-sheet .oc-row-edit { font-size: 16px; }
+.oc-sheet-head { display: flex; min-height: 44px; align-items: center; gap: 6px; padding: 0 16px 4px; font-size: 15px; }
+.oc-sheet-head b { font-weight: 600; }
+.oc-sheet-head span { min-width: 0; overflow: hidden; color: var(--oc-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.oc-sheet-back { display: inline-flex; width: 44px; height: 44px; margin-left: -12px; align-items: center; justify-content: center; border: 0; border-radius: 10px; background: none; color: var(--color-text); cursor: pointer; }
+.oc-sheet-back svg { width: 19px; height: 19px; }
+.oc-sheet-search { height: 40px; margin: 0 12px 6px; }
+.oc-sheet-search input { font-size: 16px; }
+.oc-sheet-list { max-height: min(62dvh, 540px); overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 8px; -webkit-overflow-scrolling: touch; }
+.oc-sheet .oc-sheet-item { min-height: 48px; height: auto; padding: 8px 10px; border-radius: 10px; font-size: 15px; }
+.oc-sheet .oc-sheet-item .oc-sub-name { font-size: 15px; }
+.oc-sheet .oc-sheet-item .oc-sub-desc { font-size: 12.5px; white-space: normal; }
+.oc-sheet .oc-menu-value { font-size: 14px; }
+.oc-sheet .oc-menu-row:is(button):active, .oc-sheet .oc-sub-item:active { background: var(--o-hover, var(--oc-fill2)); }
+.oc-sheet .oc-sub-item:focus:not(:focus-visible) { background: none; }
+.oc-sheet-menu.is-level-2 { animation: oc-slide-in 260ms var(--oc-ease) both; }
+.oc-sheet-menu.is-level-1 { animation: oc-slide-back 220ms var(--oc-ease) both; }
+@keyframes oc-slide-in { from { opacity: 0; transform: translateX(28px); } }
+@keyframes oc-slide-back { from { opacity: .4; transform: translateX(-20px); } }
+.oc-ring-pop.is-sheet { width: auto; max-height: none; gap: 0; padding: 0 12px 10px; }
+.oc-ring-pop.is-sheet > .oc-sheet-head { padding: 0 4px 4px; }
+@media (prefers-reduced-motion: reduce) { .oc-sheet-menu { animation: none !important; } }
+/* Tools keep their size; the setup chip is what gives way on a narrow phone. */
+.oc-shell.is-phone .oc-tools { flex: none; }
+.oc-shell.is-phone .oc-who { flex: 1 1 auto; justify-content: flex-end; }
+.oc-shell.is-phone .oc-setup-chip { max-width: 100%; overflow: hidden; }
+.oc-shell.is-phone .oc-setup-dim { min-width: 0; flex: 0 1 auto; }
+.oc-shell.is-phone .oc-chip, .oc-shell.is-phone .oc-chip.is-plan { flex: none; }
+.oc-shell.is-phone .oc-setup-chip { gap: 5px; padding-right: 12px; }
+.oc-shell.is-phone .oc-setup-caret { display: none; }
+/* Phone: the chip names the mode (whole word, amber when risky); the model lives in the sheet. */
+.oc-shell.is-phone .oc-setup-dim.is-model:not(:last-of-type), .oc-shell.is-phone .oc-setup-dim.is-model:not(:last-of-type) + .oc-setup-dot { display: none; }
+.oc-shell.is-phone :is(.oc-setup-risk, .oc-setup-dim:not(.is-model)) { flex: none; max-width: none; }
+.oc-tray-head > span:not(.oc-spacer):not(.oc-tray-esc) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oc-tray-head > b { flex: none; }
+

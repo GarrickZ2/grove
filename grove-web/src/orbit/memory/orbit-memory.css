@@ -177,6 +177,28 @@
   .om-steps{grid-template-columns:minmax(0,1fr)}
 }
 
+/* Phone: one card at a time (map, list or an open memory), sized to the
+   screen; the map's controls dock in a bar under it instead of over it. */
+@media (max-width:767px){
+  .om-stage-hit{min-height:44px}
+  .om-phone-switch{width:100%}
+  .om-grid.is-phone .om-col{display:none}
+  .om-grid.is-phone.is-list .om-col-list,.om-grid.is-phone:is(.is-graph,.is-doc) .om-col-detail{display:flex}
+  .om-grid.is-phone .om-col>.oui-card{flex:none;height:max(440px,calc(100dvh - 200px));min-height:0;max-height:none}
+  .om-grid.is-phone .omd-graph{margin:0 8px 8px}
+  .omd-graph>div{padding-bottom:52px}
+  .omd-graph>div>div.absolute.bottom-4{left:0;right:0;bottom:0;justify-content:center;gap:4px;padding:4px;border-width:1px 0 0;border-radius:0;box-shadow:none}
+  .omd-graph>div>div.absolute.bottom-4>button{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px}
+  .omd-graph>div>p:last-child{display:none}
+  /* A pinned memory's card fits inside the map instead of running off its edge. */
+  .omd-graph>div>div.absolute.top-16{left:8px!important;right:8px;top:8px!important;width:auto!important;max-width:none!important}
+  .omd-doc{padding:4px 16px 16px}
+  .oml-chip{height:36px;padding:0 12px}
+  .oml .oml-search{flex-basis:100%}
+  .oml .oui-card-head>.oui-seg{flex:1 1 auto}
+  .omd-rel{min-height:44px}
+}
+
 @media (prefers-reduced-motion:reduce){
   .orbit-ui :is([class*="om-"],[class*="oml-"],[class*="omd-"],[class*="oms-"],[class*="omr-"]),
   .orbit-ui :is([class*="om-"],[class*="oml-"],[class*="omd-"],[class*="oms-"],[class*="omr-"])::before,

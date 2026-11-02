@@ -1,4 +1,4 @@
-export type ChatConnectionStatus = "connecting" | "reconnecting" | "connected" | "disconnected" | "failed";
+export type ChatConnectionStatus = "connecting" | "reconnecting" | "connected" | "read_only" | "disconnected" | "failed";
 
 export const MAX_CHAT_RECONNECT_ATTEMPTS = 5;
 
@@ -6,6 +6,7 @@ export const chatConnectionLabels: Record<ChatConnectionStatus, string> = {
   connecting: "Connecting...",
   reconnecting: "Reconnecting...",
   connected: "Connected",
+  read_only: "Read only",
   disconnected: "Disconnected",
   failed: "Connect Failed",
 };

@@ -15,6 +15,7 @@ const api = {
   getReviewComments: vi.fn(),
   getDiff: vi.fn(),
   getCommits: vi.fn(),
+  getTaskGitStatus: vi.fn(),
   getNotes: vi.fn(),
   updateNotes: vi.fn(),
   getTaskFiles: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("../../../api", () => ({
   getReviewComments: (...a: unknown[]) => api.getReviewComments(...a),
   getDiff: (...a: unknown[]) => api.getDiff(...a),
   getCommits: (...a: unknown[]) => api.getCommits(...a),
+  getTaskGitStatus: (...a: unknown[]) => api.getTaskGitStatus(...a),
   getNotes: (...a: unknown[]) => api.getNotes(...a),
   updateNotes: (...a: unknown[]) => api.updateNotes(...a),
   getTaskFiles: (...a: unknown[]) => api.getTaskFiles(...a),
@@ -50,6 +52,7 @@ describe("Orbit task panels", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     Object.values(api).forEach((fn) => fn.mockReset());
     api.getTaskFiles.mockResolvedValue({ files: [] });
+    api.getTaskGitStatus.mockRejectedValue({ status: 404, message: "Not Found" });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -123,6 +126,47 @@ describe("Orbit task panels", () => {
     expect(container.querySelectorAll(".owp-chg")).toHaveLength(2);
     expect(container.querySelector(".owp-commit")?.textContent).toContain("abcdef1");
     expect(container.querySelector(".owp-chips")?.textContent).toContain("1 commit");
+  });
+
+  it("Git: shows ahead/behind and uncommitted changes when the backend has them", async () => {
+    api.getDiff.mockResolvedValue({ files: [], total_additions: 0, total_deletions: 0 });
+    api.getCommits.mockResolvedValue({ commits: [], total: 0, skip_versions: 0 });
+    api.getTaskGitStatus.mockResolvedValue({
+      is_git: true, base: "master", ahead: 2, behind: 1, uncommitted_truncated: false, uncommitted_total: 3,
+      uncommitted: [
+        { path: "src/a.ts", status: "modified", staged: true, additions: 3, deletions: 1 },
+        { path: "src/a.ts", status: "modified", staged: false, additions: 1, deletions: 0 },
+        { path: "notes/todo.md", status: "untracked", staged: false, additions: 4, deletions: 0 },
+      ],
+    });
+    await render(<GitTab projectId="p1" task={task} />, true);
+    await act(async () => { await Promise.resolve(); });
+    const ab = container.querySelector(".owp-ab");
+    expect(ab?.textContent).toBe("2 ahead1 behind");
+    expect(ab?.getAttribute("title")).toContain("behind master");
+    const section = [...container.querySelectorAll(".owp-sec")].find((el) => el.querySelector(".owp-label")?.textContent?.startsWith("Uncommitted"));
+    expect(section?.querySelector(".owp-label small")?.textContent).toBe("1 staged · 1 unstaged · 1 untracked");
+    expect(section?.querySelectorAll(".owp-chg")).toHaveLength(3);
+    expect(section?.querySelector(".owp-stage")?.textContent).toBe("staged");
+  });
+
+  it("Git: a backend without the status endpoint hides those parts silently", async () => {
+    api.getDiff.mockResolvedValue({ files: [], total_additions: 0, total_deletions: 0 });
+    api.getCommits.mockResolvedValue({ commits: [], total: 0, skip_versions: 0 });
+    await render(<GitTab projectId="p1" task={task} />, true);
+    await act(async () => { await Promise.resolve(); });
+    expect(api.getTaskGitStatus).toHaveBeenCalled();
+    expect(container.querySelector(".owp-ab")).toBeNull();
+    expect(container.textContent).not.toContain("Uncommitted");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("Git: Workbench GitTab doesn't ask for the status", async () => {
+    api.getDiff.mockResolvedValue({ files: [], total_additions: 0, total_deletions: 0 });
+    api.getCommits.mockResolvedValue({ commits: [], total: 0, skip_versions: 0 });
+    await render(<GitTab projectId="p1" task={task} />, false);
+    expect(container.querySelector(".owp")).toBeNull();
+    expect(api.getTaskGitStatus).not.toHaveBeenCalled();
   });
 
   it("Notes: empty notes offer to start one; Workbench keeps Add Notes", async () => {

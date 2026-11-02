@@ -25,6 +25,7 @@ import { AUX_PANEL_TYPES } from "./IDELayout.types";
 import { MultiTabTerminalPanel } from "./MultiTabTerminalPanel";
 import { OrbitPhonePanels, type OrbitPhonePanel } from "./OrbitPhonePanels";
 import { OrbitWorkspaceBar, OrbitDock, OrbitGrip, type OrbitToolItem } from "./OrbitWorkspace";
+import { useSlotElement } from "./useSlotElement";
 import {
   orbitSlotFor,
   toggleOrbitPanel,
@@ -47,10 +48,10 @@ import type { PanelMenuItem } from "../../../orbit/ui";
 import { ORBIT_PHONE_ACTIONS_SLOT, ORBIT_PHONE_SHOW_CHAT_EVENT } from "../../Layout/OrbitPhoneHeader";
 import type { FileNavRequest } from "../../Review";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from "../../ui/sketchChipCache";
-import { OPEN_REVIEW_EVENT, takeOpenReviewRequest, type OpenReviewRequest } from "../../../orbit/workspace/openReview";
+import { useOpenReviewRequests, type OpenReviewRequest } from "../../../orbit/workspace/openReview";
 import { useConfig, useProject } from "../../../context";
 import { useIsMobile } from "../../../hooks";
-import { useLinkedReviewProjects } from "../../../hooks/useLinkedReviewProjects";
+import { useLinkedReviewProjectsState } from "../../../hooks/useLinkedReviewProjects";
 import { apiClient } from "../../../api/client";
 import { listPlugins, type Plugin } from "../../../api/plugins";
 import {
@@ -501,7 +502,7 @@ function PanelSlot({
 }
 
 export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainerProps>(
-  function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing, phoneActions, isActive = true, onToggleLayoutMode }, ref) {
+  function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing, phoneActions, isActive = true, onToggleLayoutMode, toolbarMenu }, ref) {
     const { selectedProject, projects } = useProject();
     const { terminalAvailable, config } = useConfig();
     const { isMobile } = useIsMobile();
@@ -514,15 +515,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     // Orbit on a desktop: Agent in the centre, a right dock, the terminal below.
     const orbitDesk = orbitLayout && !isMobile;
     const orbitSlotId = orbitPhone ? ORBIT_PHONE_ACTIONS_SLOT : "orbit-workspace-toolbar";
-    const [orbitToolbarSlot, setOrbitToolbarSlot] = useState<HTMLElement | null>(() =>
-      typeof document === "undefined" ? null : document.getElementById(orbitSlotId));
-    useEffect(() => {
-      let cancelled = false;
-      void Promise.resolve().then(() => {
-        if (!cancelled) setOrbitToolbarSlot(orbitLayout ? document.getElementById(orbitSlotId) : null);
-      });
-      return () => { cancelled = true; };
-    }, [orbitLayout, orbitSlotId]);
+    // The header slot can mount after this layout (config / page transitions):
+    // keep resolving it until it exists.
+    const orbitToolbarSlot = useSlotElement(orbitLayout ? orbitSlotId : null, isActive);
     const orbitToolbarTarget = orbitLayout && isActive ? orbitToolbarSlot : null;
     const resizerWidth = orbitLayout ? 1 : RESIZER_PX;
     // Resolve the project this task actually belongs to by its projectId,
@@ -533,7 +528,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const taskProject = projects.find((p) => p.id === projectId) ?? selectedProject;
     const isStudio = taskProject?.projectType === "studio";
     const isGitRepo = taskProject?.isGitRepo;
-    const linkedReviewProjects = useLinkedReviewProjects(projectId, task.id);
+    const { projects: linkedReviewProjects, loaded: linkedReviewLoaded } = useLinkedReviewProjectsState(projectId, task.id);
     const hasLinkedReview = linkedReviewProjects.length > 0;
 
     // Read persisted state once at mount via useState lazy initializer (avoids repeated localStorage reads)
@@ -849,7 +844,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
 
     // "Open in Review" from elsewhere (Orbit Dashboard, Comments panel): see
     // orbit/workspace/openReview.ts. Taken on mount (the caller navigated here)
-    // and on the event (this workspace was already showing).
+    // and on the event (this workspace was already showing). A Studio task
+    // only knows whether it has a Review once its linked Projects load, so the
+    // request waits for that instead of being dropped.
     const openReviewPanel = useCallback((request: OpenReviewRequest) => {
       if (isStudio && !hasLinkedReview) return;
       const showPanel = () => setStateTagged((prev) => (
@@ -867,15 +864,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       void handleNavigateToFile(request.file, request.line, mode).then((opened) => { if (!opened) showPanel(); });
     }, [isStudio, hasLinkedReview, isGitRepo, isMobile, setStateTagged, handleNavigateToFile]);
 
-    useEffect(() => {
-      const take = () => {
-        const request = takeOpenReviewRequest(projectId, task.id);
-        if (request) openReviewPanel(request);
-      };
-      take();
-      window.addEventListener(OPEN_REVIEW_EVENT, take);
-      return () => window.removeEventListener(OPEN_REVIEW_EVENT, take);
-    }, [projectId, task.id, openReviewPanel]);
+    useOpenReviewRequests(projectId, task.id, !isStudio || linkedReviewLoaded, openReviewPanel);
 
     const handleBusyStateChange = useCallback((busy: boolean) => {
       update({ isChatBusy: busy });
@@ -1328,12 +1317,17 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       const orbitShowChat = state.chatVisible || !orbitShowAux;
       const orbitShowBottom = state.bottomVisible && terminalAvailable;
       const chatDescriptor = getPanelDescriptor("chat");
+      // The Agent leads the strip. It can only be hidden behind a left panel,
+      // so without one it reads as on and does nothing.
       const agentTool: OrbitToolItem | null = chatDescriptor ? {
         key: "chat",
-        label: orbitShowChat ? "Hide Agent" : "Show Agent",
+        label: "Agent",
+        tip: !orbitShowAux ? "Agent · open a left panel to hide it" : orbitShowChat ? "Hide Agent" : "Show Agent",
         icon: panelGlyph(chatDescriptor, true),
         shortcut: panelShortcutDisplay("chat"),
         active: orbitShowChat,
+        disabled: !orbitShowAux,
+        primary: true,
         onToggle: () => update({ chatVisible: !orbitShowChat }),
       } : null;
       const fitted = fitOrbitWidths(shellSize.w, { aux: auxWidth, dock: infoWidth }, { aux: orbitShowAux, dock: orbitShowDock, chat: orbitShowChat });
@@ -1341,24 +1335,25 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       const auxSize = orbitShowChat ? fitted.aux : Math.max(ORBIT_SIDE_MIN, shellSize.w - (orbitShowDock ? fitted.dock : 0));
       const bottomSize = fitOrbitBottom(shellSize.h, bottomHeight);
 
-      const layoutMenu: PanelMenuItem[] = onToggleLayoutMode
-        ? [{ id: "free-layout", label: "Switch to free layout", icon: LayoutGrid, onSelect: onToggleLayoutMode }]
-        : [];
-      const dockMenu: PanelMenuItem[] = [
-        ...(infoWidth !== ORBIT_DOCK_DEFAULT
-          ? [{ id: "reset-width", label: "Reset width", icon: MoveHorizontal, onSelect: () => setInfoWidth(ORBIT_DOCK_DEFAULT) }]
+      // Workspace-level rows live in the toolbar's ⋯, never in a panel's.
+      const sizesChanged = auxWidth !== ORBIT_AUX_DEFAULT || infoWidth !== ORBIT_DOCK_DEFAULT || bottomHeight !== ORBIT_BOTTOM_DEFAULT;
+      const workspaceMenu: PanelMenuItem[] = [
+        ...(orbitShowAux
+          ? [orbitShowChat
+            ? { id: "hide-agent", label: "Hide Agent", icon: PanelLeftOpen, onSelect: () => update({ chatVisible: false }) }
+            : { id: "show-agent", label: "Show Agent", icon: PanelLeftClose, onSelect: () => update({ chatVisible: true }) }]
           : []),
-        ...layoutMenu,
-      ];
-      const auxMenu: PanelMenuItem[] = [
-        orbitShowChat
-          ? { id: "hide-agent", label: "Hide Agent", icon: PanelLeftOpen, onSelect: () => update({ chatVisible: false }) }
-          : { id: "show-agent", label: "Show Agent", icon: PanelLeftClose, onSelect: () => update({ chatVisible: true }) },
-        ...(orbitShowChat && auxWidth !== ORBIT_AUX_DEFAULT
-          ? [{ id: "reset-width", label: "Reset width", icon: MoveHorizontal, onSelect: () => setAuxWidth(ORBIT_AUX_DEFAULT) }]
+        ...(sizesChanged
+          ? [{
+            id: "reset-sizes",
+            label: "Reset panel sizes",
+            icon: MoveHorizontal,
+            onSelect: () => { setAuxWidth(ORBIT_AUX_DEFAULT); setInfoWidth(ORBIT_DOCK_DEFAULT); setBottomHeight(ORBIT_BOTTOM_DEFAULT); },
+          }]
           : []),
-        ...layoutMenu,
+        ...(onToggleLayoutMode ? [{ id: "free-layout", label: "Switch to free layout", icon: LayoutGrid, onSelect: onToggleLayoutMode }] : []),
       ];
+      const toolbarRows = (toolbarMenu ?? []).map((row, i) => (i === 0 && workspaceMenu.length ? { ...row, separator: true } : row));
 
       const startOrbitResize = (which: "aux" | "dock" | "bottom", event: React.PointerEvent<HTMLDivElement>) => {
         event.preventDefault();
@@ -1395,14 +1390,15 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           state={state.isChatBusy ? "working" : task.status === "archived" ? "archived" : undefined}
           leading={toolbarLeading}
           groups={[
+            agentTool ? [agentTool] : [],
             dockPanels.map(toolFor),
             [
-              ...(orbitShowAux && agentTool ? [agentTool] : []),
               ...leftPanels.map(toolFor),
               ...(terminalPanel ? [toolFor(terminalPanel)] : []),
             ],
           ]}
           trailing={toolbarTrailing}
+          menu={[...workspaceMenu, ...toolbarRows]}
         />
       );
 
@@ -1420,7 +1416,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
                   >
                     {state.visitedAux.filter((type) => slotOf(type) === "aux").map((type) => (
                       <div key={type} className="ows-pane" style={{ display: state.auxType === type ? "flex" : "none" }}>
-                        {renderOrbitPanel(type, buildCtx(() => update({ auxVisible: false, chatVisible: true })), { menu: auxMenu })}
+                        {renderOrbitPanel(type, buildCtx(() => update({ auxVisible: false, chatVisible: true })))}
                       </div>
                     ))}
                   </div>
@@ -1472,7 +1468,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
               >
                 {state.visitedInfo.map((type) => (
                   <div key={type} className="ows-pane" style={{ display: state.infoType === type ? "flex" : "none" }}>
-                    {renderOrbitPanel(type, buildCtx(() => update({ infoVisible: false })), { menu: dockMenu })}
+                    {renderOrbitPanel(type, buildCtx(() => update({ infoVisible: false })))}
                   </div>
                 ))}
               </div>

@@ -126,6 +126,12 @@ pub enum RadioEvent {
         todo_completed: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         todo_total: Option<u32>,
+        /// Settled outcome of the chat's last turn while it is idle:
+        /// `"error"` (the prompt failed) or `"done"` (it replied to its graph
+        /// message and ended its turn). Absent otherwise. Additive — clients
+        /// that only read `status` are unaffected.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        outcome: Option<String>,
     },
     PendingChanged {
         project_id: String,

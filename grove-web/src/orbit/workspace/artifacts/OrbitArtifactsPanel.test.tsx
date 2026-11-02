@@ -148,7 +148,108 @@ describe("OrbitArtifactsPanel", () => {
     // The body's own overflow menu gives way to the shell's ⋯ rows.
     expect(container.querySelector('.oar-bar [aria-label="More actions"]')).toBeNull();
     click(header.querySelector('[aria-label="Panel actions"]'));
-    expect(Array.from(container.querySelectorAll(".oui-panel-menu-label"), (el) => el.textContent))
-      .toEqual(["Add link to uploads…", "Link a folder…", expect.stringMatching(/^Show in /)]);
+    expect(Array.from(document.querySelectorAll('[role="menuitem"]'), (el) => el.textContent?.trim()))
+      .toEqual(["Add link to uploads…", "Link a folder…", expect.stringMatching(/^Show in /), "Download folder as .zip"]);
+  });
+  it("selects with checkboxes and shift-click, then zips the selection", () => {
+    const handleDownloadZip = vi.fn();
+    const handlePreview = vi.fn();
+    panelState.current = fakePanel({
+      outputFiles: [file("a.md"), file("b.md"), file("c.md"), file("d.md")],
+      handleDownloadZip,
+      handlePreview,
+    });
+    act(() => root.render(<OrbitArtifactsPanel projectId="p" task={TASK} />));
+    const byName = () => Array.from(rows(), (r) => r.getAttribute("aria-label"));
+    const box = (name: string) => container.querySelector(`[aria-label="Select ${name}"]`);
+    expect(container.querySelector(".oar-batch")).toBeNull();
+    click(box(byName()[0]!));
+    expect(container.querySelector(".oar-batch")?.textContent).toContain("1 item selected");
+    // Shift-click on the checkbox extends from the anchor.
+    act(() => { (box(byName()[2]!) as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true })); });
+    expect(container.querySelector(".oar-batch")?.textContent).toContain("3 items selected");
+    // While selecting, a plain row click toggles instead of previewing.
+    click(rows()[3]);
+    expect(handlePreview).not.toHaveBeenCalled();
+    expect(container.querySelector(".oar-batch")?.textContent).toContain("4 items selected");
+    // Outputs can't be deleted; Download zips the selection.
+    expect(container.querySelector(".oar-batch .oui-btn-hold")).toBeNull();
+    const download = Array.from(container.querySelectorAll(".oar-batch button")).find((b) => b.textContent === "Download");
+    click(download!);
+    expect(handleDownloadZip).toHaveBeenCalledWith("output", expect.arrayContaining(["a.md", "b.md", "c.md", "d.md"]));
+    // Esc on the list clears.
+    act(() => { rows()[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(container.querySelector(".oar-batch")).toBeNull();
+  });
+
+  it("drags every selected file from a selected row, and just the row otherwise", () => {
+    panelState.current = fakePanel({ outputFiles: [file("a.md"), file("b.md"), file("c.md")] });
+    act(() => root.render(<OrbitArtifactsPanel projectId="p" task={TASK} />));
+    const byName = () => Array.from(rows(), (r) => r.getAttribute("aria-label"));
+    const drag = (row: Element) => {
+      const data = new Map<string, string>();
+      const dataTransfer = { setData: (type: string, value: string) => { data.set(type, value); }, setDragImage: vi.fn(), effectAllowed: "" };
+      const event = new Event("dragstart", { bubbles: true });
+      Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+      act(() => { row.dispatchEvent(event); });
+      return { data, dataTransfer };
+    };
+    const names = byName();
+    const pathOf = (name: string | null) => `output/${name}`;
+    // Not selected: one path, no list, no badge image.
+    const single = drag(rows()[0]);
+    expect(single.data.get("application/x-grove-file-path")).toBe(pathOf(names[0]));
+    expect(single.data.has("application/x-grove-file-paths")).toBe(false);
+    expect(single.dataTransfer.setDragImage).not.toHaveBeenCalled();
+    // Select the first two; dragging the second carries both, in view order.
+    click(container.querySelector(`[aria-label="Select ${names[0]}"]`));
+    click(container.querySelector(`[aria-label="Select ${names[1]}"]`));
+    const multi = drag(rows()[1]);
+    expect(JSON.parse(multi.data.get("application/x-grove-file-paths")!)).toEqual([pathOf(names[0]), pathOf(names[1])]);
+    expect(multi.data.get("application/x-grove-file-path")).toBe(pathOf(names[0]));
+    expect(multi.dataTransfer.setDragImage).toHaveBeenCalledTimes(1);
+    const ghost = multi.dataTransfer.setDragImage.mock.calls[0][0] as HTMLElement;
+    expect(ghost.textContent).toContain("2 files");
+    // A row outside the selection drags alone.
+    expect(drag(rows()[2]).data.has("application/x-grove-file-paths")).toBe(false);
+  });
+
+  it("deletes only selected upload files through the hold-to-confirm button", async () => {
+    const handleDeleteMany = vi.fn().mockResolvedValue({ deleted: 1, failed: 0 });
+    panelState.current = fakePanel({
+      inputFiles: [file("docs", "input", true), file("brief.md", "input")],
+      handleDeleteMany,
+    });
+    render();
+    click(container.querySelectorAll('[aria-label="Source"] [role="radio"]')[1]);
+    // Space toggles the focused row; ⌘A selects everything.
+    act(() => { rows()[0].dispatchEvent(new KeyboardEvent("keydown", { key: "a", metaKey: true, bubbles: true })); });
+    expect(container.querySelector(".oar-batch")?.textContent).toContain("2 items selected");
+    const hold = container.querySelector<HTMLButtonElement>(".oar-batch .oui-btn-hold")!;
+    expect(hold.textContent).toContain("Hold to delete 1 file");
+    // Keyboard activation (detail 0) confirms at once.
+    await act(async () => { hold.click(); });
+    expect(handleDeleteMany).toHaveBeenCalledWith([expect.objectContaining({ path: "brief.md" })]);
+  });
+
+  it("shows determinate progress for each uploading file", () => {
+    panelState.current = fakePanel({
+      inputFiles: [file("old.md", "input")],
+      isUploading: true,
+      pendingUploads: ["big.mov", "small.png", "later.txt"],
+      pendingUploadItems: [
+        { id: "1", name: "big.mov", progress: 0.42 },
+        { id: "2", name: "small.png", progress: null },
+        { id: "3", name: "later.txt", progress: null, queued: true },
+      ],
+    });
+    render();
+    click(container.querySelectorAll('[aria-label="Source"] [role="radio"]')[1]);
+    const bars = container.querySelectorAll('[role="progressbar"]');
+    expect(bars).toHaveLength(1);
+    expect(bars[0].getAttribute("aria-valuenow")).toBe("42");
+    expect(container.querySelector('[aria-label="Uploading big.mov"]')?.textContent).toContain("42%");
+    expect(container.querySelector('[aria-label="Uploading small.png"]')?.textContent).toContain("Uploading…");
+    expect(container.querySelector('[aria-label="Uploading later.txt"]')?.textContent).toContain("Queued");
   });
 });

@@ -67,10 +67,14 @@ import { FileTreeSidebar } from './FileTreeSidebar';
 import { DiffFileView, resetGlobalMatchIndex } from './DiffFileView';
 import { ConversationSidebar } from './ConversationSidebar';
 import { CodeSearchBar } from './CodeSearchBar';
-import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText, RefreshCw, Code, Columns2, Eye, ZoomIn, ZoomOut } from 'lucide-react';
+import { X, MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText, RefreshCw, Code, Columns2, Eye, ZoomIn, ZoomOut } from 'lucide-react';
 import { VersionSelector } from './VersionSelector';
-import { OrbitReviewBar, OrbitReviewHeader, OrbitReviewSummary } from './OrbitReviewChrome';
+import { OrbitReviewHeader, OrbitReviewSummary } from './OrbitReviewChrome';
+import { reviewHeaderDensity, useElementWidth } from './reviewHeaderDensity';
 import { useOrbitReview } from './useOrbitReview';
+import { openCommentsOf, useActiveChatTarget } from './sendOpenComments';
+import { SendOpenCommentsDialog } from './SendOpenCommentsDialog';
+import { OrbitMergeFooter } from './OrbitMergeFooter';
 import { PanelEmpty, PanelError, PanelLoading } from '../../orbit/ui/PanelShell';
 import { Button as OrbitButton } from '../../orbit/ui/Button';
 import { useIsMobile } from '../../hooks';
@@ -2016,9 +2020,11 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     setTimeout(() => tryScroll(1), 150);
   }, [scrollToFile]);
 
-  // Orbit (inside a workspace PanelShell): the shell header carries the
-  // scope switch, refresh and the view options; see OrbitReviewChrome.
+  // Orbit (inside a workspace PanelShell): the whole Review toolbar lives in
+  // the shell header; see OrbitReviewChrome.
   const orbit = useOrbitReview();
+  const [rootEl, setRootEl] = useState<HTMLDivElement | null>(null);
+  const density = reviewHeaderDensity(useElementWidth(orbit ? rootEl : null));
   const handleOpenSearch = useCallback(() => {
     setCodeSearchVisible(true);
     setCodeSearchFocusTrigger((n) => n + 1);
@@ -2026,32 +2032,69 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const handleToggleSidebar = useCallback(() => setSidebarVisible((v) => !v), [setSidebarVisible]);
   const handleToggleConvSidebar = useCallback(() => setConvSidebarVisible((v) => !v), [setConvSidebarVisible]);
   const handleToggleFocusModeClick = useCallback(() => { void handleToggleFocusMode(); }, [handleToggleFocusMode]);
+  // "Send all open comments to the agent" (one batch to the active chat).
+  const chatTarget = useActiveChatTarget();
+  const [sendAllOpen, setSendAllOpen] = useState(false);
+  const handleRequestSendAll = useCallback(() => setSendAllOpen(true), []);
 
   // Comments for a specific file
   const getFileComments = (filePath: string) => {
     return comments.filter((c) => c.file_path === filePath);
   };
 
+  // Exclude directory placeholders (new_path ending in '/') from counts — in
+  // full+focus mode they appear in displayFiles and a broad auto-view rule
+  // (e.g. '**') would otherwise inflate both totals.
+  const countableFiles = displayFiles.filter((f) => !f.new_path.endsWith('/'));
+  const viewedCount = countableFiles.filter((f) => getFileViewedStatus(f.new_path) === 'viewed').length;
+  const totalFiles = countableFiles.length;
+  const isEmpty = displayFiles.length === 0;
+
+  // Ensure selectedFile is valid - if not, use first file
+  const validSelectedFile = activeFilePath;
+  const openComments = orbit ? openCommentsOf(comments) : [];
+  const openCommentCount = openComments.length;
+  const canSendAll = openCommentCount > 0 && !!chatTarget.chatId;
+  const sendAllTitle = !chatTarget.chatId
+    ? 'Open the task’s chat to send comments to its agent'
+    : openCommentCount === 0
+      ? 'No open comments'
+      : `Send ${openCommentCount} open ${openCommentCount === 1 ? 'comment' : 'comments'} to ${chatTarget.agent || 'the agent'}`;
+  const hasVersionRange = !error && viewMode === 'diff' && fromOptions.length > 0 && toOptions.length > 0;
+  const activeRenderer = orbit && activeFilePath ? getPreviewRenderer(activeFilePath, viewMode) : null;
+
   const orbitHeader = orbit ? (
     <OrbitReviewHeader
+      density={density}
+      leading={title}
+      rangeFrom={hasVersionRange ? <VersionSelector options={fromOptions} selected={fromVersion} onChange={handleFromVersionChange} footer={versionFooter} /> : undefined}
+      rangeTo={hasVersionRange ? <VersionSelector options={toOptions} selected={toVersion} onChange={handleToVersionChange} footer={versionFooter} /> : undefined}
       isGitRepo={isGitRepo}
       viewMode={viewMode}
       onSetViewMode={handleSetViewMode}
+      viewType={viewType}
+      onSetViewType={setViewType}
+      allowSplit={!isMobile}
+      canPrev={totalFiles > 0 && currentFileIndex > 0}
+      canNext={totalFiles > 0 && currentFileIndex < totalFiles - 1}
+      onPrev={goToPrevFile}
+      onNext={goToNextFile}
+      convSidebarVisible={convSidebarVisible}
+      onToggleConvSidebar={handleToggleConvSidebar}
+      openComments={openCommentCount}
       refreshing={refreshing}
       onRefresh={handleRefresh}
       sidebarVisible={sidebarVisible}
       onToggleSidebar={handleToggleSidebar}
-      convSidebarVisible={convSidebarVisible}
-      onToggleConvSidebar={handleToggleConvSidebar}
       focusMode={focusMode}
       onToggleFocusMode={handleToggleFocusModeClick}
+      canPreview={!!activeRenderer && activeRenderer.id !== 'image'}
       displayMode={displayMode}
       onSetDisplayMode={setDisplayMode}
-      fontSize={fontSize}
-      onZoomIn={handleZoomIn}
-      onZoomOut={handleZoomOut}
-      onZoomReset={handleZoomReset}
       onOpenSearch={handleOpenSearch}
+      canSendAll={canSendAll}
+      sendAllTitle={sendAllTitle}
+      onSendAll={handleRequestSendAll}
     />
   ) : null;
 
@@ -2059,7 +2102,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   // Error state
   if (error && orbit) {
     return (
-      <div className={`diff-review-page is-orbit ${isEmbedded ? 'embedded' : ''}`}>
+      <div ref={setRootEl} className={`diff-review-page is-orbit ${isEmbedded ? 'embedded' : ''}`}>
         {orbitHeader}
         <div className="orv-state">
           <PanelError title="Couldn’t load the review" onRetry={handleRefresh} retrying={refreshing}>{error}</PanelError>
@@ -2081,21 +2124,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     );
   }
 
-  // Exclude directory placeholders (new_path ending in '/') from counts — in
-  // full+focus mode they appear in displayFiles and a broad auto-view rule
-  // (e.g. '**') would otherwise inflate both totals.
-  const countableFiles = displayFiles.filter((f) => !f.new_path.endsWith('/'));
-  const viewedCount = countableFiles.filter((f) => getFileViewedStatus(f.new_path) === 'viewed').length;
-  const totalFiles = countableFiles.length;
-  const isEmpty = displayFiles.length === 0;
-
-  // Ensure selectedFile is valid - if not, use first file
-  const validSelectedFile = activeFilePath;
-  const openCommentCount = orbit ? comments.filter((c) => c.status === 'open' || c.status === 'outdated').length : 0;
-  const hasVersionRange = viewMode === 'diff' && fromOptions.length > 0 && toOptions.length > 0;
-
   return (
     <div
+      ref={orbit ? setRootEl : undefined}
       className={`diff-review-page ${isEmbedded ? 'embedded' : ''}${orbit ? ' is-orbit' : ''}`}
       style={{
         '--diff-font-size': `${fontSize}px`,
@@ -2105,29 +2136,12 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       {orbit ? (
         <>
           {orbitHeader}
-          <OrbitReviewBar
-            leading={title}
-            range={hasVersionRange ? (
-              <>
-                <VersionSelector options={fromOptions} selected={fromVersion} onChange={handleFromVersionChange} footer={versionFooter} />
-                <span className="orv-range-arrow" aria-hidden="true">&rarr;</span>
-                <VersionSelector options={toOptions} selected={toVersion} onChange={handleToVersionChange} footer={versionFooter} />
-              </>
-            ) : undefined}
-            showLayout={viewMode === 'diff'}
-            viewType={viewType}
-            onSetViewType={setViewType}
-            allowSplit={!isMobile}
-            canPrev={totalFiles > 0 && currentFileIndex > 0}
-            canNext={totalFiles > 0 && currentFileIndex < totalFiles - 1}
-            onPrev={goToPrevFile}
-            onNext={goToNextFile}
-            convSidebarVisible={convSidebarVisible}
-            onToggleConvSidebar={handleToggleConvSidebar}
-            openComments={openCommentCount}
-            warning={focusModeWarn}
-            onDismissWarning={() => setFocusModeWarn(null)}
-          />
+          {focusModeWarn ? (
+            <div className="orv-warn" role="status">
+              <span className="orv-warn-text">{focusModeWarn}</span>
+              <button type="button" className="orv-warn-x" aria-label="Dismiss" onClick={() => setFocusModeWarn(null)}><X aria-hidden="true" /></button>
+            </div>
+          ) : null}
         </>
       ) : (
       <>
@@ -2533,10 +2547,27 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
               onDeleteReply={handleDeleteReply}
               onBulkDelete={handleBulkDelete}
               mentionItems={mentionItems}
+              onSendAllOpen={orbit ? handleRequestSendAll : undefined}
+              sendAllDisabled={!canSendAll}
+              sendAllTitle={sendAllTitle}
+              footer={orbit ? (
+                <OrbitMergeFooter
+                  projectId={projectId}
+                  taskId={taskId}
+                  openComments={openCommentCount}
+                  viewed={viewedCount}
+                  total={totalFiles}
+                  refreshSignal={diffData}
+                />
+              ) : undefined}
             />
           </>
         )}
       </div>
+
+      {orbit && sendAllOpen && (
+        <SendOpenCommentsDialog comments={openComments} agent={chatTarget.agent} onClose={() => setSendAllOpen(false)} />
+      )}
 
       {/* Code Search Bar (Ctrl+F) */}
       <CodeSearchBar

@@ -163,6 +163,8 @@ enum ServerMessage {
         todo_completed: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         todo_total: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        outcome: Option<String>,
     },
     /// Mirror of `RadioEvent::PendingChanged`.
     PendingChanged {
@@ -353,7 +355,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             message,
                         });
                     }
-                    Some(RadioEvent::ChatStatus { project_id, task_id, chat_id, status, permission, project_name, task_name, chat_title, agent, prompt, message, todo_completed, todo_total }) => {
+                    Some(RadioEvent::ChatStatus { project_id, task_id, chat_id, status, permission, project_name, task_name, chat_title, agent, prompt, message, todo_completed, todo_total, outcome }) => {
                         // Per-chat granularity — never dedup. Pure state push.
                         let _ = msg_tx.send(ServerMessage::ChatStatus {
                             project_id,
@@ -369,6 +371,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             message,
                             todo_completed,
                             todo_total,
+                            outcome,
                         });
                     }
                     Some(RadioEvent::PendingChanged {

@@ -2,6 +2,7 @@ import { AlertTriangle, ChevronRight, Loader2, ShieldCheck } from "lucide-react"
 import { useRef } from "react";
 import { Button } from "../../ui";
 import { XTerminal } from "../TaskDetail/XTerminal";
+import { useOrbitConversation } from "./conversation/OrbitConversationContext";
 
 export interface AuthMethodOption {
   type?: "agent" | "terminal";
@@ -87,6 +88,50 @@ export function AuthRequiredPanel({
   }
   const buttonsDisabled =
     message.status === "in_progress" || message.status === "succeeded";
+  const orbit = useOrbitConversation();
+  if (orbit) {
+    return (
+      <div className={`ocv-decision${buttonsDisabled ? " is-answered" : ""}`} role="group" aria-label="Sign-in required">
+        <div className="ocv-decision-head">
+          <span className={`ocv-decision-icon${message.status === "succeeded" ? " is-ok" : message.status === "failed" ? " is-error" : ""}`} aria-hidden="true">
+            {message.status === "succeeded" ? <ShieldCheck /> : message.status === "in_progress" ? <Loader2 className="ocv-spin" /> : <AlertTriangle />}
+          </span>
+          <div className="ocv-decision-text">
+            <div className="ocv-decision-eyebrow">{message.status === "failed" ? "Sign-in failed" : message.status === "succeeded" ? "Signed in" : "Sign-in required"}</div>
+            <div className="ocv-decision-title">{title}</div>
+            <p className="oc-ask-body">{description}</p>
+          </div>
+        </div>
+        {terminalUrl && (
+          <div className="oc-ask-terminal">
+            <div className="oc-ask-terminal-frame">
+              <SignInTerminal key={terminalUrl} wsUrl={terminalUrl} onOpenFailure={() => onTerminalEnd(index, "Could not open the sign-in terminal. Please retry.")} />
+            </div>
+            <div className="ocv-decision-actions"><button type="button" className="ocv-btn is-quiet" onClick={() => onTerminalEnd(index)}>Cancel sign-in</button></div>
+          </div>
+        )}
+        {hasMethods ? (
+          <div className="ocv-decision-list">
+            {message.methods.map((method, methodIndex) => {
+              const isActive = method.id === message.activeMethodId;
+              return (
+                <button key={method.id} type="button" disabled={buttonsDisabled} aria-busy={isActive && message.status === "in_progress" || undefined}
+                  className={`ocv-decision-option${methodIndex === 0 ? " is-primary" : ""}`} onClick={() => onAuthLogin?.(index, method.id)}>
+                  <span className="oc-option-copy"><span>{method.name}</span>{method.description && <small>{method.description}</small>}</span>
+                  {isActive && message.status === "succeeded" ? <ShieldCheck /> : isActive && message.status === "in_progress" ? <Loader2 className="ocv-spin" /> : <ChevronRight />}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="ocv-decision-actions">
+            <span className="ocv-decision-spacer" />
+            <button type="button" className="ocv-btn is-primary" disabled={buttonsDisabled} onClick={() => onAuthRetry?.(index)}>{message.status === "in_progress" ? "Retrying…" : "Retry"}</button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3 relative">

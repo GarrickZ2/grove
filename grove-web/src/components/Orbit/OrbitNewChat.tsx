@@ -1,5 +1,5 @@
-import { createElement, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { Sparkle, BookOpen, Box, Brain, ChevronDown, FileText, FlaskConical, Folder, GitBranch, Globe, Laptop, Loader2, Mic, Paperclip, Send, ShieldCheck, Terminal, type LucideIcon } from "lucide-react";
+import { createElement, useEffect, useMemo, useRef, useState, type ComponentType, type DragEvent, type ReactNode } from "react";
+import { Sparkle, BookOpen, ChevronDown, FileText, FlaskConical, Folder, FolderTree, GitBranch, Globe, Laptop, ListChecks, Mic, Paperclip, PenLine, Terminal, type LucideIcon } from "lucide-react";
 import { createChat, listChats } from "../../api";
 import type { AgentConfigSelection } from "../../api/agentConfig";
 import { listInstalledAgentConfigs, type InstalledAgentConfig } from "../../api/marketplace";
@@ -12,34 +12,48 @@ import { agentIconComponent } from "../../utils/agentIcon";
 import { getProjectStyle } from "../../utils/projectStyle";
 import { formatTimeAgo } from "../../utils/notificationFormat";
 import { PickerMenu, type PickerMenuItem } from "../ui/PickerMenu";
-import { Button } from "../ui/Button";
 import { useACPAvailability } from "../Tasks/TaskView/useACPAvailability";
-import { DropdownSelect, SessionSettingsMenu, type ChatDropdownOption } from "../Tasks/TaskView/ChatConfigMenus";
+import type { ChatDropdownOption } from "../Tasks/TaskView/ChatConfigMenus";
 import { configDropdownValues, quickConfigOptions } from "../Tasks/TaskView/sessionConfigOptions";
 import { buildDefaultSessionTitle } from "../Tasks/TaskView/useInitialChatLoad";
 import { AttachmentError, attachmentLabel, prepareFileAttachment, type Attachment } from "../Tasks/TaskView/chatAttachments";
 import { promptConfigFromSelection } from "./orbitDraftConfig";
 import { setOrbitFirstMessage } from "./orbitFirstMessage";
 import { hasSeen, markSeen, STARTERS_DONE_KEY } from "../../orbit/firstrun/storage";
+import { useRecentSessions } from "../../orbit/dashboard/useRecentSessions";
+import { useLiveChats } from "../../orbit/dashboard/useLiveChats";
+import { liveChatKey } from "../../orbit/dashboard/liveChats";
+import { taskLabel } from "../../orbit/dashboard/dashboardModel";
+import { shortAgo } from "../../orbit/ui/format";
+import { useNow } from "../../orbit/ui/useNow";
+import { OrbitComposer, OrbitSendOrb } from "../Tasks/TaskView/composer/OrbitComposer";
+import { OrbitSetupChip, type SetupField, type SetupToggle } from "../Tasks/TaskView/composer/OrbitSetupChip";
 import "./orbit-new-chat.css";
 
 const LAST_AGENT_KEY = "grove-orbit-new-agent";
 /** Composer slide-down before the Session view takes over. */
 const HANDOFF_MS = 320;
-const NO_PENDING_CONFIG = new Set<string>();
 /** Phone: recent Sessions listed above the composer as quick ways back in. */
 const RECENT_LIMIT = 3;
 
-/** First-run starter prompts for a code project; a pick only fills the composer. */
-const STARTERS: { label: string; icon: LucideIcon }[] = [
-  { label: "Explain how this project is organized", icon: BookOpen },
-  { label: "Find and fix a failing test", icon: FlaskConical },
-  { label: "Add a section to the README", icon: FileText },
-];
+/** First-run starter prompts by project type; a pick only fills the composer. */
+const STARTERS: Record<"code" | "studio", { label: string; icon: LucideIcon }[]> = {
+  code: [
+    { label: "Explain how this project is organized", icon: BookOpen },
+    { label: "Find and fix a failing test", icon: FlaskConical },
+    { label: "Add a section to the README", icon: FileText },
+  ],
+  studio: [
+    { label: "Summarize the workspace instructions", icon: ListChecks },
+    { label: "Suggest how to organize the shared files", icon: FolderTree },
+    { label: "Draft an outline I can review", icon: PenLine },
+  ],
+};
+/** Desktop "Continue" row: the project's most recently active Sessions. */
+const CONTINUE_LIMIT = 3;
+const CLOCK_MS = 30_000;
 
 type RecentSession = { taskId: string; taskName?: string; chatId: string; title: string; agent: string; createdAt: string };
-
-type MenuId = "agent" | "model" | "mode" | "thinking" | "settings";
 
 function readLastAgent(): string | null {
   try { return localStorage.getItem(LAST_AGENT_KEY); } catch { return null; }
@@ -154,15 +168,10 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
     return previous.filter((_, i) => i !== index);
   });
-  const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
+  const [inputFocused, setInputFocused] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const agentMenuRef = useRef<HTMLDivElement>(null);
-  const modelMenuRef = useRef<HTMLDivElement>(null);
-  const modeMenuRef = useRef<HTMLDivElement>(null);
-  const thinkingMenuRef = useRef<HTMLDivElement>(null);
-  const settingsMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -188,21 +197,6 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     // A restored draft continues where it left off.
     input.setSelectionRange(input.value.length, input.value.length);
   }, [phone]);
-
-  // Footer menus are controlled here (as in TaskChat), so close them on outside clicks.
-  useEffect(() => {
-    if (!openMenu) return;
-    const refs = { agent: agentMenuRef, model: modelMenuRef, mode: modeMenuRef, thinking: thinkingMenuRef, settings: settingsMenuRef };
-    const close = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (refs[openMenu].current?.contains(target)) return;
-      // SessionSettingsMenu renders its panel in a portal.
-      if ((target as Element).closest?.("[data-session-settings-menu]")) return;
-      setOpenMenu(null);
-    };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [openMenu]);
 
   const agentId = selection.agent_id ?? "";
   // Only built-in Agents have a capability snapshot; Custom Agents carry their own config.
@@ -232,88 +226,50 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   const chooseAgent = (id: string) => {
     const installed = agents.find((candidate) => candidate.id === id);
     setSelection(installed ? configForAgent(installed) : { source: "default", agent_id: id });
-    setOpenMenu(null);
   };
 
   const configOptions = selection.source === "config_options" ? snapshot?.config_options ?? [] : [];
   const quick = quickConfigOptions(configOptions);
   const quickIds = new Set([quick.model, quick.mode, quick.thinking].flatMap((option) => option ? [option.id] : []));
-  // Phone: quick options that don't fit beside Send fold into the settings menu
-  // (Thinking first, then Mode, then Model), as in the Session composer.
-  const [quickKept, setQuickKept] = useState(3);
-  const kept = phone ? quickKept : 3;
-  const showModel = !!quick.model && kept >= 1;
-  const showMode = !!quick.mode && kept >= 2;
-  const showThinking = !!quick.thinking && kept >= 3;
-  const folded = [!showModel && quick.model, !showMode && quick.mode, !showThinking && quick.thinking]
-    .filter((option): option is SessionConfigOption => !!option);
-  const settingsOptions = [...folded, ...configOptions.filter((option) => !quickIds.has(option.id))];
-  const footerRef = useRef<HTMLDivElement>(null);
-  const quickWidthsRef = useRef({ model: 0, mode: 0, thinking: 0 });
-  useEffect(() => {
-    const footer = footerRef.current;
-    // Legacy "modes" Agents have no config options to fold (and their Mode menu can't live in settings).
-    if (!phone || selection.source !== "config_options" || !footer || typeof ResizeObserver === "undefined") return;
-    const chips = [["model", modelMenuRef], ["mode", modeMenuRef], ["thinking", thinkingMenuRef]] as const;
-    const fit = () => {
-      const right = footer.querySelector<HTMLElement>(".chatbox-footer-right");
-      const left = footer.querySelector<HTMLElement>(".chatbox-footer-left");
-      if (!right) return;
-      const widths = quickWidthsRef.current;
-      // A folded chip keeps its last measured width; one the Agent doesn't offer takes none.
-      chips.forEach(([key, ref], index) => {
-        if (ref.current?.isConnected) widths[key] = ref.current.offsetWidth;
-        else if (index < quickKept) widths[key] = 0;
-      });
-      const GAP = 6;
-      const others = Array.from(right.children).filter((child) => !chips.some(([, ref]) => ref.current === child)) as HTMLElement[];
-      // The settings button appears once something is folded; reserve its room up front.
-      const settingsReserve = right.querySelector(".chatbox-session-settings") ? 0 : 40 + GAP;
-      let budget = footer.clientWidth - (left?.offsetWidth ?? 0) - 8
-        - others.reduce((sum, child) => sum + child.offsetWidth + GAP, 0) - settingsReserve;
-      let next = 0;
-      for (const [key] of chips) {
-        const width = widths[key];
-        if (width > 0 && width + GAP > budget) break;
-        budget -= width > 0 ? width + GAP : 0;
-        next += 1;
-      }
-      setQuickKept(next);
-    };
-    const observer = new ResizeObserver(fit);
-    observer.observe(footer);
-    // A chip's width follows its value, so watch the visible ones too.
-    const watchChips = () => { for (const [, ref] of chips) if (ref.current) observer.observe(ref.current); };
-    watchChips();
-    // Chips that appear or relabel later don't resize the footer (it just overflows); refit on any change.
-    let frame = 0;
-    const mutations = new MutationObserver(() => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => { frame = 0; watchChips(); fit(); });
-    });
-    mutations.observe(footer, { childList: true, subtree: true, characterData: true });
-    return () => {
-      observer.disconnect();
-      mutations.disconnect();
-      cancelAnimationFrame(frame);
-    };
-  }, [phone, quickKept, agentId, selection.source]);
   const valueOf = (option: SessionConfigOption | undefined) => {
     if (!option || selection.source !== "config_options") return "";
     return String(selection.values[option.id] ?? option.currentValue);
   };
   const setOption = (option: SessionConfigOption, value: string | boolean) => {
     if (selection.source === "config_options") setSelection({ ...selection, values: { ...selection.values, [option.id]: value } });
-    setOpenMenu(null);
   };
-  // SessionSettingsMenu reads currentValue, so show the draft's overrides through it.
-  const settingsWithDraft = settingsOptions.map((option) => selection.source === "config_options" && option.id in selection.values
-    ? { ...option, currentValue: selection.values[option.id] } as SessionConfigOption
-    : option);
   const modes = selection.source === "modes" ? snapshot?.modes?.available ?? [] : [];
+  // Desktop: every setting lives in the composer's one setup chip.
+  const setupFields: SetupField[] = [
+    { id: "agent", kind: "agent", label: "Agent", value: agentId, onSelect: chooseAgent,
+      options: agentItems.map((item) => ({ value: item.id, label: item.label, group: item.group, icon: item.icon })) },
+    ...([quick.model, quick.mode, quick.thinking] as const).flatMap((option, index): SetupField[] => option ? [{
+      id: option.id, kind: (["model", "mode", "thinking"] as const)[index], label: option.name,
+      options: dropdownValues(option), value: valueOf(option), onSelect: (value: string) => setOption(option, value),
+    }] : []),
+    ...(modes.length > 0 && selection.source === "modes" ? [{
+      id: "mode", kind: "mode" as const, label: "Mode", options: modes.map(([id, name]) => ({ label: name, value: id })), value: selection.mode_id,
+      onSelect: (modeId: string) => { setSelection({ ...selection, mode_id: modeId }); },
+    }] : []),
+    ...configOptions.filter((option) => !quickIds.has(option.id) && option.type === "select").map((option): SetupField => ({
+      id: option.id, kind: "option", label: option.name, options: dropdownValues(option), value: valueOf(option), onSelect: (value) => setOption(option, value),
+    })),
+  ];
+  const setupToggles: SetupToggle[] = configOptions.filter((option) => !quickIds.has(option.id) && option.type === "boolean").map((option) => ({
+    id: option.id, label: option.name, description: option.description,
+    value: selection.source === "config_options" && option.id in selection.values ? !!selection.values[option.id] : !!option.currentValue,
+    onToggle: (value) => setOption(option, value),
+  }));
 
   const projectReady = !!selectedProject && selectedProject.taskCount === undefined && !!selectedProject.localTask;
   const tasks = useMemo(() => selectedProject?.tasks.filter((task) => task.status !== "archived") ?? [], [selectedProject]);
+
+  // Desktop: the Dashboard's recent-session source, with live dots from the radio channel.
+  const continueTaskIds = useMemo(() => ["_local", ...tasks.map((task) => task.id)], [tasks]);
+  const continueSessions = useRecentSessions(!phone && projectReady ? selectedProject?.id : undefined, continueTaskIds).sessions.slice(0, CONTINUE_LIMIT);
+  const liveChats = useLiveChats();
+  const now = useNow(CLOCK_MS);
+  const taskNames = new Map(tasks.map((task) => [task.id, task.name]));
 
   const [recentState, setRecent] = useState<{ projectId: string; sessions: RecentSession[] } | null>(null);
   const recentProjectId = phone && projectReady ? selectedProject?.id : undefined;
@@ -343,7 +299,6 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     if (!canSend || !selectedProject) return;
     setSending(true);
     setError(null);
-    setOpenMenu(null);
     // Slide the composer to where the Session view docks it: TaskChat's composer
     // (chat-only layout) ends 12px above the bottom of <main>, same width and center.
     const main = rootRef.current?.closest("main")?.getBoundingClientRect();
@@ -381,8 +336,75 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     return <span className="orbit-new__project-icon" style={{ backgroundColor: color.bg }}><Icon className="h-3 w-3" style={{ color: color.fg }} /></span>;
   };
 
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); };
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length === 0) return;
+    event.preventDefault();
+    addFiles(files);
+  };
+  const attachmentList = (
+    <>
+      {attachments.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2 select-none">
+          {attachments.map((attachment, index) => (
+            <div key={`${attachment.label}-${index}`} className="group relative flex max-w-full items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 pr-7">
+              {attachment.type === "image" && attachment.previewUrl ? (
+                <img src={attachment.previewUrl} className="h-8 w-8 shrink-0 rounded-md border border-[var(--color-border)] object-cover" alt={attachment.label} title={attachment.label} />
+              ) : (
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]">
+                  {attachment.type === "audio" ? <Mic className="h-4 w-4 text-[var(--color-text-muted)]" /> : <Paperclip className="h-4 w-4 text-[var(--color-text-muted)]" />}
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="max-w-40 truncate text-xs font-medium text-[var(--color-text)]">{attachment.label}</div>
+                <div className="max-w-40 truncate text-[10px] text-[var(--color-text-muted)]">{attachment.name}</div>
+              </div>
+              <button type="button" onClick={() => removeAttachment(index)} aria-label={`Remove ${attachment.label}`} className="absolute top-1.5 right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--color-error)] text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">&times;</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+  const fileInput = (
+    <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(event) => {
+      addFiles(Array.from(event.target.files ?? []));
+      event.target.value = "";
+    }} />
+  );
+  const composerInput = (
+    <textarea
+      ref={inputRef}
+      value={text}
+      rows={2}
+      placeholder="Ask anything…"
+      onFocus={() => setInputFocused(true)}
+      onBlur={() => setInputFocused(false)}
+      onChange={(event) => { setText(event.target.value); writeDraft(event.target.value); }}
+      onPaste={(event) => {
+        // Copied files and screenshots become attachments; text pastes normally.
+        const files = Array.from(event.clipboardData.files);
+        if (files.length === 0) return;
+        event.preventDefault();
+        addFiles(files);
+      }}
+      onKeyDown={(event) => {
+        // WebKit can clear isComposing before the candidate-confirming
+        // Enter; keyCode 229 still identifies that IME event.
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          void send();
+        }
+      }}
+      className="orbit-new__input block min-h-[56px] max-h-32 w-full resize-none bg-transparent px-4 py-2 text-sm leading-6 text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-muted)]"
+    />
+  );
+
   return (
     <div ref={rootRef} className={`orbit-new${phone ? " is-phone" : ""}${handoffOffset !== null ? " is-handing-off" : ""}`}>
+      {!phone && <div className="orbit-new__glow" aria-hidden="true"><i /><i /><i /></div>}
       <div className="orbit-new__inner">
         <h1 className="orbit-new__title">What should we work on?</h1>
         {recent.length > 0 && (
@@ -403,120 +425,26 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
           </ul>
         )}
         <div className="orbit-new__stack" style={handoffOffset !== null ? { transform: `translateY(${handoffOffset}px)` } : undefined}>
-          <div
-            ref={composerRef}
-            className="chatbox-bubble orbit-new__composer relative min-w-0 rounded-[30px] border border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_78%,transparent)] px-3 pt-2 pb-3 shadow-[0_22px_60px_rgba(0,0,0,0.18)] backdrop-blur-md transition-colors focus-within:border-[color-mix(in_srgb,var(--color-highlight)_82%,white_8%)]"
-            onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }}
-            onDrop={(event) => {
-              const files = Array.from(event.dataTransfer.files);
-              if (files.length === 0) return;
-              event.preventDefault();
-              addFiles(files);
-            }}
-          >
-            <div className="chatbox-header mb-2 flex items-center gap-2">
-              {/* Same pill as the chat composer header. */}
-              <div ref={agentMenuRef} className="relative">
-                <button
-                  type="button"
-                  onClick={() => setOpenMenu(openMenu === "agent" ? null : "agent")}
-                  aria-expanded={openMenu === "agent"}
-                  className="chatbox-agent-pill inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[11px] text-[var(--color-text)] transition-colors hover:bg-[var(--color-bg-tertiary)]"
-                >
-                  {agentIcon}
-                  <span className="shrink-0 text-[var(--color-text-muted)]">Agent</span>
-                  <span className="truncate font-medium">{agentLabel || (acpAvailabilityLoaded ? "Choose" : "Loading…")}</span>
-                  <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+            <OrbitComposer
+              shellRef={composerRef}
+              className="chatbox-bubble orbit-new__composer"
+              running={false}
+              phone={phone}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              tools={(
+                <button type="button" className="oc-tool" onClick={() => fileInputRef.current?.click()} title="Attach file" aria-label="Attach file">
+                  <Paperclip />
                 </button>
-                {openMenu === "agent" && (acpAvailabilityLoaded
-                  ? <PickerMenu items={agentItems} selectedId={agentId} onSelect={chooseAgent} placement="up-left" searchPlaceholder="Search agents" onEscape={() => setOpenMenu(null)} />
-                  : <div className="picker-menu picker-menu--up-left"><div className="picker-menu__empty flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking…</div></div>)}
-              </div>
-            </div>
-            {attachments.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-2 select-none">
-                {attachments.map((attachment, index) => (
-                  <div key={`${attachment.label}-${index}`} className="group relative flex max-w-full items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 pr-7">
-                    {attachment.type === "image" && attachment.previewUrl ? (
-                      <img src={attachment.previewUrl} className="h-8 w-8 shrink-0 rounded-md border border-[var(--color-border)] object-cover" alt={attachment.label} title={attachment.label} />
-                    ) : (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]">
-                        {attachment.type === "audio" ? <Mic className="h-4 w-4 text-[var(--color-text-muted)]" /> : <Paperclip className="h-4 w-4 text-[var(--color-text-muted)]" />}
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <div className="max-w-40 truncate text-xs font-medium text-[var(--color-text)]">{attachment.label}</div>
-                      <div className="max-w-40 truncate text-[10px] text-[var(--color-text-muted)]">{attachment.name}</div>
-                    </div>
-                    <button type="button" onClick={() => removeAttachment(index)} aria-label={`Remove ${attachment.label}`} className="absolute top-1.5 right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--color-error)] text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">&times;</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(event) => {
-              addFiles(Array.from(event.target.files ?? []));
-              event.target.value = "";
-            }} />
-            <textarea
-              ref={inputRef}
-              value={text}
-              rows={2}
-              placeholder="Ask anything…"
-              onChange={(event) => { setText(event.target.value); writeDraft(event.target.value); }}
-              onPaste={(event) => {
-                // Copied files and screenshots become attachments; text pastes normally.
-                const files = Array.from(event.clipboardData.files);
-                if (files.length === 0) return;
-                event.preventDefault();
-                addFiles(files);
-              }}
-              onKeyDown={(event) => {
-                // WebKit can clear isComposing before the candidate-confirming
-                // Enter; keyCode 229 still identifies that IME event.
-                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void send();
-                }
-              }}
-              className="orbit-new__input block min-h-[56px] max-h-32 w-full resize-none bg-transparent px-4 py-2 text-sm leading-6 text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-muted)]"
-            />
-            <div ref={footerRef} className="chatbox-footer mt-2 flex items-center justify-between gap-2 select-none">
-              <div className="chatbox-footer-left flex min-w-0 items-center gap-2">
-                <button type="button" onClick={() => fileInputRef.current?.click()} title="Attach file" aria-label="Attach file" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-bg)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]">
-                  <Paperclip className="h-4 w-4" />
-                </button>
-                {!phone && <span className="truncate text-[10px] text-[var(--color-text-muted)]">Enter send</span>}
-              </div>
-              <div className="chatbox-footer-right flex shrink-0 items-center gap-2">
-                {showModel && quick.model && (
-                  <DropdownSelect ref={modelMenuRef} label={quick.model.name} icon={<Box className="h-3 w-3" />} options={dropdownValues(quick.model)} value={valueOf(quick.model)}
-                    open={openMenu === "model"} onToggle={() => setOpenMenu(openMenu === "model" ? null : "model")} onSelect={(value) => setOption(quick.model!, value)} />
-                )}
-                {showMode && quick.mode && (
-                  <DropdownSelect ref={modeMenuRef} label={quick.mode.name} icon={<ShieldCheck className="h-3 w-3" />} options={dropdownValues(quick.mode)} value={valueOf(quick.mode)}
-                    open={openMenu === "mode"} onToggle={() => setOpenMenu(openMenu === "mode" ? null : "mode")} onSelect={(value) => setOption(quick.mode!, value)} />
-                )}
-                {modes.length > 0 && selection.source === "modes" && (
-                  <DropdownSelect ref={modeMenuRef} label="Mode" icon={<ShieldCheck className="h-3 w-3" />} options={modes.map(([id, name]) => ({ label: name, value: id }))} value={selection.mode_id}
-                    open={openMenu === "mode"} onToggle={() => setOpenMenu(openMenu === "mode" ? null : "mode")} onSelect={(modeId) => { setSelection({ ...selection, mode_id: modeId }); setOpenMenu(null); }} />
-                )}
-                {showThinking && quick.thinking && (
-                  <DropdownSelect ref={thinkingMenuRef} label={quick.thinking.name} icon={<Brain className="h-3 w-3" />} options={dropdownValues(quick.thinking)} value={valueOf(quick.thinking)}
-                    open={openMenu === "thinking"} onToggle={() => setOpenMenu(openMenu === "thinking" ? null : "thinking")} onSelect={(value) => setOption(quick.thinking!, value)} />
-                )}
-                {settingsWithDraft.length > 0 && (
-                  <span className="chatbox-session-settings">
-                    <SessionSettingsMenu ref={settingsMenuRef} options={settingsWithDraft} open={openMenu === "settings"} disabled={false} pendingConfigIds={NO_PENDING_CONFIG}
-                      onToggle={() => setOpenMenu(openMenu === "settings" ? null : "settings")} onSelect={setOption} />
-                  </span>
-                )}
-                <Button variant="primary" size="sm" className="h-9 w-9 !p-0 rounded-xl shadow-sm" disabled={!canSend} onClick={() => void send()} title="Send (Enter)">
-                  {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                </Button>
-              </div>
-            </div>
-          </div>
+              )}
+              hint={!phone && text.trim() && inputFocused ? "\u23CE send \u00b7 \u21E7\u23CE newline" : null}
+              setup={<OrbitSetupChip agentLabel={agentLabel || (acpAvailabilityLoaded ? "Choose agent" : "Loading\u2026")} agentIcon={agentIcon} fields={setupFields} toggles={setupToggles} emptyNote={agent && !snapshot ? `${agent.name} hasn't connected yet, so it starts with its defaults.` : undefined} sheet={phone} />}
+              orb={<OrbitSendOrb action={text.trim() || attachments.length > 0 ? "send" : "idle"} disabled={!canSend} busy={sending} onSend={() => void send()} sendTitle="Send (Enter)" />}
+            >
+              {attachmentList}
+              {fileInput}
+              {composerInput}
+            </OrbitComposer>
           <div className="orbit-new__context">
             <TrayPicker
               icon={selectedProject ? projectIcon(selectedProject.id) : <Folder size={14} strokeWidth={1.7} />}
@@ -543,9 +471,10 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
               onSelect={setTaskId}
             />
           </div>
-          {!phone && !startersDone && !text && attachments.length === 0 && selectedProject && selectedProject.projectType !== "studio" && (
-            <div className="orbit-new__starters" aria-label="Starter prompts">
-              {STARTERS.map(({ label, icon: Icon }, index) => (
+          {/* Starters stay put while typing (dimmed) so the page never jumps. */}
+          {!phone && !startersDone && selectedProject && (
+            <div className={`orbit-new__starters${text || attachments.length > 0 ? " is-quiet" : ""}`} aria-label="Starter prompts">
+              {STARTERS[selectedProject.projectType === "studio" ? "studio" : "code"].map(({ label, icon: Icon }, index) => (
                 <button
                   key={label}
                   type="button"
@@ -568,6 +497,30 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
           )}
           {error && <p role="alert" className="orbit-new__error">{error}</p>}
         </div>
+        {continueSessions.length > 0 && (
+          <section className="orbit-new__continue" aria-label="Continue">
+            <h2>Continue</h2>
+            <ul>
+              {continueSessions.map(({ taskId, chat, activeAt }) => {
+                const live = selectedProject ? liveChats[liveChatKey(selectedProject.id, taskId, chat.id)] : undefined;
+                const running = live?.status === "busy" || live?.status === "connecting";
+                return (
+                  <li key={`${taskId}:${chat.id}`}>
+                    <button type="button" onClick={() => onNavigate("tasks", { taskId, chatId: chat.id, viewMode: "terminal" })}>
+                      {createElement(agentIconComponent(chat.agent), { size: 15, className: "orbit-new__continue-icon" })}
+                      <span className="orbit-new__continue-copy">
+                        <b title={chat.title}>{chat.title || "Untitled session"}</b>
+                        <span>{taskLabel(taskId, taskNames.get(taskId))}</span>
+                      </span>
+                      {running && <i className="orbit-new__live" role="img" aria-label="Running" />}
+                      <span className="orbit-new__continue-ago">{activeAt ? shortAgo(activeAt, now) : ""}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
       </div>
     </div>
   );

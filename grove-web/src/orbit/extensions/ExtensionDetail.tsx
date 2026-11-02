@@ -18,6 +18,7 @@ import { KIND_LABEL, attentionText, mcpEndpoint, primaryConnection, sinceText, v
 import { AgentMark, ExtIcon, type MarkTarget } from "./parts";
 import { useMcpAccess, type BindingRow } from "./useMcpAccess";
 import { shortenPath } from "../../utils/path";
+import { useProject } from "../../context";
 import { parseAllowedTools, scopedInstallRecord, useSkillDetail } from "./useSkillDetail";
 import { recordNeedsAttention } from "../../components/Skills/useExtensionCatalog";
 
@@ -90,7 +91,7 @@ function SourceMeta({ item, context, extra }: { item: ExtensionArtifact; context
   const source = context.sourcesByName.get(item.source);
   const cells: Array<[string, string]> = [
     ["Source", source ? sourceDisplayName(source) : item.source],
-    ...(source ? [["Managed by", formatMode(source.management_mode)], ["Synced", sinceText(source.last_synced, context.now)]] as Array<[string, string]> : []),
+    ...(source ? [["Managed by", source.management_mode === "managed" ? "Grove" : formatMode(source.management_mode)], ["Synced", sinceText(source.last_synced, context.now)]] as Array<[string, string]> : []),
     ...(extra ?? []),
   ];
   return (
@@ -182,7 +183,7 @@ function McpDetail({ record, context }: { record: CatalogRecord; context: Detail
               })}
             </div>
           )}
-          {access.scope === "project" && context.projectPath ? <p className="oex-hint oui-mono oui-truncate" title={context.projectPath}>{context.projectPath}</p> : null}
+          {access.scope === "project" && context.projectPath && !isStudioPath(context.projectPath) ? <p className="oex-hint oui-mono oui-truncate" title={context.projectPath}>{context.projectPath}</p> : null}
           {access.loaded && access.elsewhere > 0 && !buddyScope ? <p className="oex-hint">Also on for {access.elsewhere} {access.elsewhere === 1 ? "agent" : "agents"} in other projects.</p> : null}
           {access.error ? (
             <p className="oex-err" role="alert">{access.error}{access.loaded ? null : <button type="button" className="oex-link" onClick={access.retry}>Retry</button>}</p>
@@ -209,9 +210,22 @@ function McpDetail({ record, context }: { record: CatalogRecord; context: Detail
   );
 }
 
+/** Studio projects live at `studio://…`, an internal address nobody should read. */
+function isStudioPath(path: string): boolean {
+  return path.startsWith("studio://");
+}
+
+/** Another project in "Used by": its name, or its shortened path for a Coding project. */
+function otherProjectLabel(path: string, projects: ReadonlyArray<{ path: string; name: string }>): string {
+  const project = projects.find((item) => item.path === path);
+  if (isStudioPath(path)) return project?.name ?? "A Studio project";
+  return shortenPath(path);
+}
+
 /** Every agent / Buddy that has this server, and where: all scopes at once,
  *  so the scope switch above never hides a binding. */
 function UsedBy({ rows, context }: { rows: BindingRow[]; context: DetailContext }) {
+  const { projects } = useProject();
   const agents = new Map(context.agentOptions.map((agent) => [agent.id, agent.name]));
   const buddies = new Map(context.buddies.map((buddy) => [buddy.id, buddy]));
   return (
@@ -227,12 +241,12 @@ function UsedBy({ rows, context }: { rows: BindingRow[]; context: DetailContext 
               : { id: row.targetId, name: agents.get(row.targetId) ?? row.targetId };
             const where = row.scope === "global" ? "All projects"
               : row.scope === "buddy" ? "Buddy"
-                : row.projectPath === context.projectPath ? "This project" : shortenPath(row.projectPath ?? "");
+                : row.projectPath === context.projectPath ? "This project" : otherProjectLabel(row.projectPath ?? "", projects);
             return (
               <div key={`${row.scope}:${row.projectPath}:${row.targetId}`} className="oex-use" style={{ animationDelay: `${Math.min(index, 10) * 25}ms` }}>
                 <AgentMark target={target} size={20} />
                 <span className="oex-use-name oui-truncate">{target.name}</span>
-                <span className={`oex-use-where oui-truncate${row.scope === "project" && row.projectPath !== context.projectPath ? " oui-mono" : ""}`} title={row.projectPath ?? undefined}>{where}</span>
+                <span className={`oex-use-where oui-truncate${row.scope === "project" && row.projectPath !== context.projectPath && !isStudioPath(row.projectPath ?? "") ? " oui-mono" : ""}`} title={row.projectPath && !isStudioPath(row.projectPath) ? row.projectPath : undefined}>{where}</span>
               </div>
             );
           })}

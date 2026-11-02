@@ -34,6 +34,13 @@ export type NodeStatus =
   | "permission_required"
   | "disconnected";
 
+/**
+ * Settled outcome of an idle chat's last turn, sent beside `status`:
+ * `error` — the prompt failed; `done` — it replied to its graph message and
+ * ended its turn normally. Absent otherwise.
+ */
+export type NodeOutcome = "error" | "done";
+
 export type RadioEvent =
   | { type: "chat_input_status"; project_id: string; task_id: string; chat_id: string; waiting_for_input: boolean }
   | { type: "focus_task"; project_id: string; task_id: string; target?: TargetMode }
@@ -66,6 +73,8 @@ export type RadioEvent =
       todo_completed?: number;
       /** Total entries in the latest plan. See `todo_completed`. */
       todo_total?: number;
+      /** Settled outcome while idle. See `NodeOutcome`. */
+      outcome?: NodeOutcome;
     }
   | {
       type: "pending_changed";

@@ -1,5 +1,6 @@
 import { ExternalLink, Link2, ShieldAlert, X } from "lucide-react";
 import { Button } from "../../ui";
+import { useOrbitConversation } from "./conversation/OrbitConversationContext";
 
 interface Props {
   agentName: string;
@@ -35,6 +36,40 @@ export function ElicitationUrlPill({
     // older backend sends one so the UI never hides the actual destination.
   }
 
+  const orbit = useOrbitConversation();
+  if (orbit) {
+    return (
+      <div className="ocv-decision" role="group" aria-label="External request">
+        <div className="ocv-decision-head">
+          <span className="ocv-decision-icon" aria-hidden="true"><Link2 /></span>
+          <div className="ocv-decision-text">
+            <div className="ocv-decision-eyebrow">Needs you to open a website</div>
+            <div className="ocv-decision-title">{agentName} requests to open {host}</div>
+          </div>
+        </div>
+        {message && <p className="oc-ask-body">{message}</p>}
+        <pre className="ocv-decision-payload">{url}</pre>
+        {insecure && <p className="oc-ask-warn"><ShieldAlert aria-hidden="true" />This connection is not encrypted. Check the address before continuing.</p>}
+        {suspicious && <p className="oc-ask-warn"><ShieldAlert aria-hidden="true" />This address uses an internationalized domain. Verify the full URL carefully.</p>}
+        <div className="ocv-decision-actions">
+          {opened ? (
+            <>
+              <span className="oc-ask-note">Opened in your browser. Waiting for the Agent to confirm completion.</span>
+              <span className="ocv-decision-spacer" />
+              <button type="button" className="ocv-btn" onClick={onOpen}><ExternalLink className="oc-btn-ic" aria-hidden="true" />Open again</button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="ocv-btn is-quiet" disabled={disabled} onClick={onCancel}>Cancel</button>
+              <span className="ocv-decision-spacer" />
+              <button type="button" className="ocv-btn" disabled={disabled} onClick={onDecline}>Decline</button>
+              <button type="button" className="ocv-btn is-primary" disabled={disabled} onClick={onOpen}><ExternalLink className="oc-btn-ic" aria-hidden="true" />Open in browser</button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">

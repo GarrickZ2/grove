@@ -6,7 +6,7 @@ backend**, and reads context + persists data through a **typed SDK**.
 
 ## Quick start
 
-**Settings → Plugins → Develop Plugin** → name it → pick a folder. Grove
+**Extensions → Add → Plugin → Create new** → name it → pick a folder. Grove
 scaffolds a vite + TypeScript project and registers it as a *dev* plugin. Then:
 
 ```
@@ -19,7 +19,7 @@ npm run publish  # build + verify + package <name>-<version>.zip, ready to ship
 `npm run publish` (or `make publish`) is the last step before distribution: it
 checks every declared entry is built, then zips the install-only files
 (`plugin.json` + `dist/` + `skills/` + `docs/`) into `<name>-<version>.zip` —
-drop that into Grove → Settings → Plugins → Add → From Local. For a git install,
+drop that into Grove → Extensions → Add → Plugin → Local package. For a git install,
 just commit `dist/`. The panel entry is `dist/index.html`.
 
 > **Node 24+ required for backends.** A plugin that ships an MCP server or a
@@ -38,7 +38,7 @@ my-plugin/
 ├── src/
 │   ├── main.ts          # your panel UI
 │   ├── shared.ts        # types/constants shared by panel + MCP/backend
-│   └── grove-sdk/       # vendored SDK — refresh via Settings → Plugins → Update SDK
+│   └── grove-sdk/       # vendored SDK — refresh via Extensions → your plugin → Manage → Update SDK
 │       ├── index.ts     # panel SDK     → import { grove } from "./grove-sdk"
 │       ├── mcp.ts       # MCP SDK       → import { grove } from "./grove-sdk/mcp"
 │       └── backend.ts   # backend SDK   → import { … } from "./grove-sdk/backend"
@@ -93,7 +93,8 @@ cannot touch Grove or the filesystem except through this SDK.
 import { grove } from "./grove-sdk";
 
 const info = await grove.host.getInfo();
-// { projectId, projectName, projectType: "repo"|"studio"|null, taskId }
+// { projectId, projectName, projectType: "repo"|"studio"|null, taskId,
+//   interface: "orbit"|"workbench" }   ← interface: absent on older Grove
 ```
 
 ### Storage — three scopes, KV + files
@@ -173,11 +174,131 @@ If the plugin contributes a backend, the panel calls its methods:
 const result = await grove.backend.invoke<{ rows: number }>("query", { sql: "…" });
 ```
 
-### Theme
+### Theme, interface and Orbit tokens
 
-The SDK applies Grove's theme to your `:root` automatically (so `var(--color-bg)`
-etc. match Grove and follow theme switches). `grove.theme.getColors()` /
-`isLight()` / `onChange(cb)`.
+Grove has two interfaces: **Orbit** (the redesigned UI) and **Workbench** (the
+classic one). The user picks one in Settings → General → Interface. The SDK
+applies the current look to your `:root` automatically and keeps it live on
+every theme or interface switch:
+
+| On your page | What it is |
+|---|---|
+| `--color-bg`, `--color-text`, `--color-text-muted`, `--color-border`, `--color-highlight`, … | the theme palette (unchanged since the first SDK) |
+| `--o-*` (same names as Grove's own `orbit/tokens.css`) | the Orbit design tokens, resolved by Grove from the live document |
+| `<html data-grove-interface="orbit\|workbench">` | which interface is showing |
+| `<html data-grove-theme="light\|dark">` | the theme's mode |
+
+The Orbit tokens:
+
+| Group | Tokens |
+|---|---|
+| Surfaces & text | `--o-bg`, `--o-text`, `--o-muted`, `--o-group` (card fill), `--o-code`, `--o-frost`, `--o-track` |
+| Lines & states | `--o-border`, `--o-border-strong`, `--o-hover`, `--o-selected`, `--o-ring-selected` |
+| Accent & status | `--o-accent`, `--o-accent-soft`, `--o-success`, `--o-warn`, `--o-error`, `--o-info` |
+| Buttons | `--o-ink` / `--o-on-ink` (primary = ink fill), `--o-on-accent` |
+| Elevation | `--o-shadow`, `--o-shadow-1` (cards), `--o-shadow-2` (popovers) |
+| Radii | `--o-radius-xs` 6 · `--o-radius-sm` 7 · `--o-radius` 8 · `--o-radius-md` 10 · `--o-radius-lg` 12 |
+| Type | `--o-font-sans` (Grove's UI font), `--o-font-mono` |
+| Motion | `--o-ease-out`, `--o-ease-pop`, `--o-ease-slide`, `--o-ease-toggle`, `--o-ease-draw`, `--o-ease-reflow`, `--o-dur-fast`, `--o-dur-*`, `--o-stagger` |
+
+Grove sends the tokens under **both** interfaces. They derive from the active
+theme, so a plugin styled only with `--o-*` looks native in Orbit and still
+right in Workbench. Use `data-grove-interface` for the few things you want to
+differ:
+
+```css
+body { margin: 0; font: 13px/1.5 var(--o-font-sans); background: var(--o-bg); color: var(--o-text); }
+.card { border: 1px solid var(--o-border); border-radius: var(--o-radius-lg);
+        background: var(--o-group); box-shadow: var(--o-shadow-1); }
+.row:hover { background: var(--o-hover); }
+.row.is-selected { background: var(--o-selected); }
+.btn-primary { background: var(--o-ink); color: var(--o-on-ink); border-radius: var(--o-radius); }
+/* Workbench's primary buttons use the accent colour. */
+[data-grove-interface="workbench"] .btn-primary { background: var(--color-highlight); color: #fff; }
+```
+
+The same values in code:
+
+```ts
+grove.theme.getColors();     // ThemeColors | null — the --color-* palette
+grove.theme.isLight();       // boolean
+grove.theme.getInterface();  // "orbit" | "workbench"
+grove.theme.getTokens();     // { "--o-bg": "#fff", "--o-radius": "8px", ... }
+const off = grove.theme.onChange((t) => {
+  // t: { id, isLight, colors, interface, tokens } — fires on theme AND interface changes
+  chart.setDark(!t.isLight);
+});
+```
+
+Token values are self-contained (`var()` references already substituted);
+colours can be `color-mix(...)` expressions, which every engine Grove runs on
+supports.
+
+**Compatibility**
+
+- *Old plugin, new Grove.* An SDK vendored before this change still gets
+  `id` / `isLight` / `colors` exactly as before and ignores the new fields. It
+  doesn't get `--o-*` or `data-grove-interface`; run **Update SDK** and rebuild
+  to opt in.
+- *New plugin, older Grove.* A Grove that doesn't send `interface` / `tokens`
+  reports `getInterface() === "workbench"` and `getTokens()` returns `{}`. The
+  SDK ships a fallback stylesheet that derives every `--o-*` token from
+  `--color-*` the same way Grove does, so `var(--o-*)` styles still render. The
+  fallback is the first `<style>` in `<head>`, so your own CSS can override it;
+  the host's resolved values (inline on `:root`) override both.
+- The scaffolded starter (`src/main.ts`) is styled this way: Orbit card,
+  button and empty-state styles on the `--o-*` tokens.
+
+### Navigation — open your page or Settings
+
+`grove.navigate(target)` moves Grove to one of two places and resolves
+`{ ok: true }` once it has:
+
+```ts
+// Your own top-level page (needs contributes.sidebar), e.g. a panel's
+// "Open full view" button.
+await grove.navigate({ to: "plugin-page" });
+
+// Grove's Settings, optionally at a section.
+await grove.navigate({ to: "settings" });
+await grove.navigate({ to: "settings", section: "appearance" });
+```
+
+| Target | Opens | Notes |
+|---|---|---|
+| `{ to: "plugin-page" }` | This plugin's `contributes.sidebar` page | Always your own plugin: the host takes the id from your frame, never from the call |
+| `{ to: "settings", section? }` | Settings | `section`: `agents`, `general`, `appearance`, `notifications`, `shortcuts`, `worktrees`, `voice`, `vcontrol`, `avoice`, `providers`, `system` |
+
+Failures reject with a `GroveError`, so branch on `code`:
+
+```ts
+try {
+  await grove.navigate({ to: "plugin-page" });
+} catch (e) {
+  if (e instanceof GroveError && e.code === "not_found") {
+    // This plugin has no page (no contributes.sidebar).
+  }
+}
+```
+
+| `code` | When |
+|---|---|
+| `bad_request` | Unknown `to`, or a `section` Settings doesn't have |
+| `not_found` | `plugin-page` but the plugin has no page |
+| `forbidden` | The frame isn't on screen (a background tab, a hidden window): a plugin can only navigate while the user is looking at it |
+| `unavailable` | The surface has no app shell to navigate (shouldn't happen in the web or desktop app) |
+| `unknown_method` | Grove is older than this API |
+
+Interfaces:
+
+- **Orbit** opens the page or the Settings section directly. Settings also
+  accepts the older Workbench section ids (`terminal`, `layout`, `autolink`,
+  `indexing`, `browserControl`, `chat`) and lands where they live now.
+- **Workbench** opens your page the same way. Settings opens at the top: the
+  Workbench settings page has no deep links, so `section` is validated but not
+  scrolled to.
+
+Navigation is panel-only: the MCP and backend sides of the SDK don't have it.
 
 ### Utilities
 
@@ -491,8 +612,20 @@ a record, it chooses how to connect to the external platform and calls
 
 | Contribution | Surface | How to open |
 |---|---|---|
-| `panel` | Workspace panel (task-scoped) | task toolbar `[+]` menu, or its keybinding |
-| `sidebar` | Top-level page (app-scoped) | the sidebar nav entry |
+| `panel` | Workspace panel (task-scoped) | Workbench: task toolbar `[+]` menu. Orbit: the workspace toolbar / panel picker. Either: its keybinding |
+| `sidebar` | Top-level page (app-scoped) | Workbench: the sidebar nav entry. Orbit: sidebar **More** group, or ⌘K "Go to <title>" |
+
+In Orbit a sidebar page opens inside Orbit's page frame: a page header with the
+plugin's `icon` and `contributes.sidebar.title` (or its name), and your UI edge
+to edge below it, so don't draw a second title bar. A panel sits in Orbit's
+panel frame (glyph tile with your icon, title, ⋯ menu; a dev plugin's **Reload**
+is in that ⋯ menu). Size your layout to the frame, not the window.
+
+A plugin can move Grove to exactly two places, through `grove.navigate` (see
+[Navigation](#navigation--open-your-page-or-settings)): its **own** page and
+Grove's Settings. It can't open another plugin's page, other panels or a URL.
+The only ids a plugin declares are its own (`plugin:<id>` for its page,
+`panel.plugin:<id>.open` for its keybinding).
 
 ## Skills
 
@@ -545,17 +678,17 @@ permission — Node's model can't enforce it, so Grove doesn't pretend to.
 
 ## Keybindings
 
-A `panel.shortcut` (or the user, in Settings → Shortcuts) binds a key to
+A `panel.shortcut` (or the user, in Settings → Keyboard Shortcuts) binds a key to
 `panel.plugin:<id>.open` — added on install, removed on uninstall.
 
 ## Installing
 
-From **Settings → Plugins**:
+From **Extensions → Add → Plugin** (same place in Orbit and Workbench):
 
-- **Develop** — scaffold a new plugin (dev).
-- **Add → From Local** — drop a `.zip` or pick a folder (copied into Grove).
-- **Add → From Git** — clone a repo (optional subpath).
-- **Add → Dev folder** — reference a folder in place (hot-reload).
+- **Create new** — scaffold a new plugin (dev).
+- **Local package** — drop a `.zip` or pick a folder (copied into Grove).
+- **Git repository** — clone a repo (optional subpath).
+- **Development folder** — reference a folder in place (hot-reload).
 
 `local`/`git` plugins live under `~/.grove/plugins/<id>` (files removed on
 uninstall); `dev` plugins reference your folder, which Grove does not delete.

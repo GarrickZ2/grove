@@ -25,10 +25,11 @@ interface NeedsYouCardProps {
   /** The input request's simple form when it can be answered in place. */
   formFor?: (item: NeedsYouItem) => InlineForm | null;
   onAnswerForm?: (item: NeedsYouItem, form: InlineForm, value: string) => void;
+  onDeclineForm?: (item: NeedsYouItem, form: InlineForm) => void;
 }
 
 /** Things waiting on the user, answerable in place where the backend allows it. */
-export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss, formFor, onAnswerForm }: NeedsYouCardProps) {
+export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss, formFor, onAnswerForm, onDeclineForm }: NeedsYouCardProps) {
   return (
     <Card
       className={`odb-inbox${items.length ? "" : " is-clear"}`}
@@ -82,6 +83,9 @@ export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss, formFor,
                     ) : form && onAnswerForm ? (
                       <>
                         <InlineAnswer form={form} onAnswer={(value) => onAnswerForm(item, form, value)} />
+                        {onDeclineForm ? (
+                          <Button variant="ghost" size="sm" title="Decline this request" onClick={() => onDeclineForm(item, form)}>Decline</Button>
+                        ) : null}
                         <Button variant="ghost" iconOnly size="sm" aria-label="Open session" title="Open session" onClick={() => onOpen(item)}>
                           <ArrowUpRight />
                         </Button>
@@ -115,27 +119,24 @@ export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss, formFor,
   );
 }
 
-/** One simple field answered in place: Yes / No, a few choices, or short text. */
+/** One simple field answered in place: Yes / No, up to four choices, or
+ *  short text. No option is styled as the default. */
 function InlineAnswer({ form, onAnswer }: { form: InlineForm; onAnswer: (value: string) => void }) {
   const [text, setText] = useState("");
   const { field } = form;
-  if (field.kind === "boolean") {
+  if (field.kind === "boolean" || field.kind === "choice") {
+    const choices = field.kind === "boolean"
+      ? [{ value: "false", label: "No" }, { value: "true", label: "Yes" }]
+      : field.options.map((option) => ({ value: option, label: option }));
+    // Two side by side; three or four in a compact two-column grid.
     return (
-      <>
-        <Button variant="secondary" size="sm" onClick={() => onAnswer("false")}>No</Button>
-        <Button variant="secondary" size="sm" onClick={() => onAnswer("true")}>Yes</Button>
-      </>
-    );
-  }
-  if (field.kind === "choice") {
-    return (
-      <>
-        {field.options.map((option) => (
-          <Button key={option} variant="secondary" size="sm" title={option} onClick={() => onAnswer(option)}>
-            {option.length > 14 ? `${option.slice(0, 13)}…` : option}
+      <span className={`odb-choices${choices.length > 2 ? " is-grid" : ""}`} role="group" aria-label={field.label}>
+        {choices.map((choice) => (
+          <Button key={choice.value} variant="secondary" size="sm" title={choice.label} onClick={() => onAnswer(choice.value)}>
+            <span className="oui-truncate">{choice.label}</span>
           </Button>
         ))}
-      </>
+      </span>
     );
   }
   const value = text.trim();
@@ -156,7 +157,7 @@ function InlineAnswer({ form, onAnswer }: { form: InlineForm; onAnswer: (value: 
         title={field.description ?? undefined}
         onChange={(event) => setText(event.target.value)}
       />
-      <Button type="submit" variant="primary" size="sm" disabled={!canSend}>Send</Button>
+      <Button type="submit" variant="secondary" size="sm" disabled={!canSend}>Send</Button>
     </form>
   );
 }

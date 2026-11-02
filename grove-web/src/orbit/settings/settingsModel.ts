@@ -6,7 +6,6 @@ import {
   Palette,
   SlidersHorizontal,
   Sparkle,
-  SquareTerminal,
   type LucideIcon,
 } from "lucide-react";
 import type { PageHue } from "../ui";
@@ -14,7 +13,6 @@ import { VOICE_PAGE_META } from "./pages/voice/voicePages";
 
 export type SettingsPageId =
   | "agents"
-  | "terminal"
   | "worktrees"
   | "voice"
   | "vcontrol"
@@ -118,30 +116,21 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     keywords: ["keybindings", "hotkeys", "keymap", "conflicts", "reset"],
   },
   {
-    id: "terminal",
-    title: "Terminal",
-    description: "How task terminals run, and the layout new sessions open with.",
-    icon: SquareTerminal,
-    hue: { from: "#57534e", to: "#1c1917", glow: "rgba(120,113,108,.13)", strong: "rgba(28,25,23,.6)" },
-    group: 2,
-    subs: [
-      { id: "mode", label: "Mode" },
-      { id: "layout", label: "Layout" },
-    ],
-    keywords: ["tmux", "zellij", "multiplexer", "direct", "panes", "shell", "terminal agent"],
-  },
-  {
+    // Terminal and worktree settings share a page: both shape the environment
+    // a task runs in. The id stays "worktrees" so existing links keep working.
     id: "worktrees",
-    title: "Worktrees",
-    description: "What every task worktree gets: linked folders and a code index.",
+    title: "Workspace",
+    description: "How task terminals run, and what every task worktree gets.",
     icon: FolderGit2,
     hue: { from: "#4ade80", to: "#15803d", glow: "rgba(22,163,74,.15)", strong: "rgba(21,128,61,.7)" },
     group: 2,
     subs: [
+      { id: "mode", label: "Terminal" },
+      { id: "layout", label: "Terminal layout" },
       { id: "autolink", label: "AutoLink" },
       { id: "indexing", label: "Code Indexing" },
     ],
-    keywords: ["symlink", "glob", "node_modules", "patterns", "languages", "cmd+click", "navigation"],
+    keywords: ["terminal", "tmux", "zellij", "multiplexer", "direct", "panes", "shell", "terminal agent", "worktree", "symlink", "glob", "node_modules", "patterns", "languages", "cmd+click", "navigation"],
   },
   {
     id: "voice",
@@ -203,6 +192,25 @@ export const DEFAULT_SETTINGS_PAGE: SettingsPageId = "agents";
 
 export function isSettingsPageId(value: unknown): value is SettingsPageId {
   return typeof value === "string" && SETTINGS_PAGES.some((page) => page.id === value);
+}
+
+/** Workbench Settings section ids that moved in Orbit: Terminal merged into
+ *  Workspace ("worktrees"), Browser Control folded into Agents. */
+const LEGACY_SETTINGS_TARGETS: Record<string, { pageId: SettingsPageId; subId?: string }> = {
+  terminal: { pageId: "worktrees", subId: "mode" },
+  layout: { pageId: "worktrees", subId: "layout" },
+  autolink: { pageId: "worktrees", subId: "autolink" },
+  indexing: { pageId: "worktrees", subId: "indexing" },
+  browserControl: { pageId: "agents", subId: "browser" },
+  browser: { pageId: "agents", subId: "browser" },
+  chat: { pageId: "agents" },
+};
+
+/** A settings link target (`#settings-<id>`): an Orbit page id, or a legacy
+ *  Workbench section id mapped to where that section lives now. */
+export function resolveSettingsTarget(id: string): { pageId: SettingsPageId; subId?: string } | null {
+  if (isSettingsPageId(id)) return { pageId: id };
+  return Object.prototype.hasOwnProperty.call(LEGACY_SETTINGS_TARGETS, id) ? LEGACY_SETTINGS_TARGETS[id] : null;
 }
 
 export interface SettingsSearchHit {

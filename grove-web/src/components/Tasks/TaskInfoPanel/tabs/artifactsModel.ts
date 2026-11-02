@@ -2,8 +2,10 @@
 // ArtifactsTab and the Orbit artifacts body.
 import type { ArtifactFile } from "../../../../api";
 
+import { dragCarriesGroveFiles } from "../../../../utils/groveFileDrag";
+
 /** dataTransfer type carried by internal file drags (FileTree, artifact rows). */
-export const GROVE_FILE_DRAG_TYPE = "application/x-grove-file-path";
+export { GROVE_FILE_DRAG_TYPE } from "../../../../utils/groveFileDrag";
 
 export function dropContainsDirectory(dataTransfer: DataTransfer): boolean {
   for (const item of Array.from(dataTransfer.items || [])) {
@@ -20,12 +22,7 @@ export function dropContainsDirectory(dataTransfer: DataTransfer): boolean {
  *  this to suppress the "Drop files to upload" overlay (misleading when the
  *  user is moving a chip to the chat composer) and to no-op the drop handler. */
 export function dragCarriesGrovePath(dt: DataTransfer): boolean {
-  const types = dt.types;
-  if (!types) return false;
-  for (let i = 0; i < types.length; i++) {
-    if (types[i] === GROVE_FILE_DRAG_TYPE) return true;
-  }
-  return false;
+  return dragCarriesGroveFiles(dt.types);
 }
 
 export function parentPath(path: string): string {

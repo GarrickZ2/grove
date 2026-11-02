@@ -4,6 +4,7 @@ import type { LucideIcon } from "lucide-react";
 import "../tokens.css";
 import "./orbit-ui.css";
 import "./overlays.css";
+import { hasMacWindowControls } from "./windowControls";
 
 /* Orbit dialog: a frosted, centered panel over a blurred scrim (a bottom sheet
    on phones). The layer only positions and animates; the panel parts below
@@ -52,7 +53,7 @@ function Layer({
   const role = alert ? "alertdialog" : "dialog";
   return (
     <MotionConfig reducedMotion="user">
-      <div className={`orbit-ui oui-dlg-root${sheet ? " is-sheet" : ""}${present ? "" : " is-leaving"}`} style={rootStyle}>
+      <div className={`orbit-ui oui-dlg-root${sheet ? " is-sheet" : ""}${hasMacWindowControls ? " has-mac-controls" : ""}${present ? "" : " is-leaving"}`} style={rootStyle}>
         <motion.div
           className="oui-dlg-scrim"
           initial={{ opacity: 0 }}

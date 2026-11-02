@@ -6,7 +6,8 @@ import { useMemoryConfigDraft } from "../../components/Memory/useMemoryConfigDra
 import { useMemoryEntities } from "../../components/Memory/useMemoryEntities";
 import { useMemoryLogs } from "../../components/Memory/useMemoryLogs";
 import { useMemoryRuns } from "../../components/Memory/useMemoryRuns";
-import { Button, OrbitPage, OrbitPageHeader, OrbitPageMessage, useNow, type PageHue } from "../ui";
+import { useIsMobile } from "../../hooks/useIsMobile";
+import { Button, OrbitPage, OrbitPageHeader, OrbitPageMessage, Segmented, useNow, type PageHue } from "../ui";
 import { MemoryListCard, type ListMode } from "./MemoryListCard";
 import { MemoryDetailCard, type DetailPane } from "./MemoryDetailCard";
 import { MemorySettingsSheet } from "./MemorySettingsSheet";
@@ -56,10 +57,17 @@ function useFreshIds(ids: string[], ready: boolean) {
 interface OrbitMemoryPageProps {
   /** Opens the run whose session is this chat (e.g. from Automation's "Open session"). */
   initialRunChatId?: string;
+  /** Show this Project's Memory instead of the selected one (e.g. a Buddy's own Project). */
+  projectId?: string;
+  /** How the page names that Project; defaults to the selected Project's name. */
+  projectName?: string;
 }
 
-export function OrbitMemoryPage({ initialRunChatId }: OrbitMemoryPageProps) {
+export function OrbitMemoryPage({ initialRunChatId, projectId, projectName }: OrbitMemoryPageProps) {
   const { selectedProject } = useProject();
+  if (projectId) {
+    return <ProjectMemory key={projectId} projectId={projectId} projectName={projectName ?? (selectedProject?.id === projectId ? selectedProject.name : "this project")} initialRunChatId={initialRunChatId} />;
+  }
   if (!selectedProject) {
     return <OrbitPageMessage className="om">Select a project to see its Memory</OrbitPageMessage>;
   }
@@ -67,12 +75,19 @@ export function OrbitMemoryPage({ initialRunChatId }: OrbitMemoryPageProps) {
   return <ProjectMemory key={selectedProject.id} projectId={selectedProject.id} projectName={selectedProject.name} initialRunChatId={initialRunChatId} />;
 }
 
+type PhoneView = "graph" | "list" | "doc";
+
 function ProjectMemory({ projectId, projectName, initialRunChatId }: { projectId: string; projectName: string; initialRunChatId?: string }) {
   const { selectedProject } = useProject();
   const now = useNow(CLOCK_MS);
   const [mode, setMode] = useState<ListMode>("memories");
   // The mind map leads; picking a memory in the list opens it.
   const [pane, setPane] = useState<DetailPane>("graph");
+  // A phone shows one card at a time: the mind map, the list, or an open memory.
+  const { isMobile, isTablet } = useIsMobile();
+  const phone = isMobile && !isTablet;
+  const [phoneView, setPhoneView] = useState<PhoneView>("graph");
+  const [phoneDocFrom, setPhoneDocFrom] = useState<"graph" | "list">("graph");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   // Bumped per opening so the guide starts at step 1 but still animates out.
@@ -96,7 +111,8 @@ function ProjectMemory({ projectId, projectName, initialRunChatId }: { projectId
 
   const entityIds = useMemo(() => entities.items.map((entity) => entity.entity_id), [entities.items]);
   const fresh = useFreshIds(entityIds, !entities.loading && entities.submitted === "");
-  const taskNames = useMemo(() => new Map((selectedProject?.tasks ?? []).map((task) => [task.id, task.name])), [selectedProject]);
+  // Task names are only known for the selected Project.
+  const taskNames = useMemo(() => new Map(((selectedProject?.id === projectId ? selectedProject.tasks : undefined) ?? []).map((task) => [task.id, task.name])), [selectedProject, projectId]);
 
   // Keep a memory open: the strongest visible one until you pick another (and
   // again after Forget clears the selection). A related memory outside the
@@ -224,7 +240,7 @@ function ProjectMemory({ projectId, projectName, initialRunChatId }: { projectId
       ) : (
         <>
           <section className="om-pipe oui-rise" style={{ animationDelay: "60ms" }} aria-label="Memory pipeline">
-            <button type="button" className="om-stage om-stage-hit" onClick={() => setMode("notes")} title="Show notes">
+            <button type="button" className="om-stage om-stage-hit" onClick={() => { setMode("notes"); setPhoneView("list"); }} title="Show notes">
               <span className={`om-stage-ic${overview.log_count > 0 ? " is-on" : ""}`}><FileText /></span>
               <span className="om-stage-copy">
                 <b key={`n${overview.log_count}`} className="om-bump">{firstLoad ? "—" : countLabel(overview.log_count, "new note", "new notes")}</b>
@@ -243,7 +259,7 @@ function ProjectMemory({ projectId, projectName, initialRunChatId }: { projectId
               {!enabled && !firstLoad ? <Button variant="secondary" size="sm" disabled={editor.saving} onClick={turnOn}>Turn on</Button> : null}
             </div>
             <div className={`om-flow${stage.busy ? " is-on" : ""}`} aria-hidden="true" />
-            <button type="button" className="om-stage om-stage-hit" onClick={() => setMode("memories")} title="Show memories">
+            <button type="button" className="om-stage om-stage-hit" onClick={() => { setMode("memories"); setPhoneView("list"); }} title="Show memories">
               <span className="om-stage-ic is-on"><Brain /></span>
               <span className="om-stage-copy">
                 <b key={`m${overview.entity_count}`} className="om-bump">{firstLoad ? "—" : countLabel(overview.entity_count, "memory", "memories")}</b>
@@ -252,8 +268,18 @@ function ProjectMemory({ projectId, projectName, initialRunChatId }: { projectId
             </button>
           </section>
 
-          <div className="om-grid">
-            <div className="oui-rise om-col" style={{ animationDelay: "100ms" }}>
+          {phone ? (
+            <Segmented<"graph" | "list">
+              className="om-phone-switch"
+              block
+              ariaLabel="Memory view"
+              value={phoneView === "graph" ? "graph" : "list"}
+              onChange={setPhoneView}
+              options={[{ value: "graph", label: "Mind map" }, { value: "list", label: "Memory" }]}
+            />
+          ) : null}
+          <div className={`om-grid${phone ? ` is-phone is-${phoneView}` : ""}`}>
+            <div className="oui-rise om-col om-col-list" style={{ animationDelay: "100ms" }}>
               <MemoryListCard
                 mode={mode}
                 onModeChange={setMode}
@@ -262,15 +288,24 @@ function ProjectMemory({ projectId, projectName, initialRunChatId }: { projectId
                 noteCount={overview.log_count}
                 fresh={fresh}
                 taskNames={taskNames}
-                onOpenMemory={() => setPane("memory")}
+                onOpenMemory={() => {
+                  setPane("memory");
+                  if (phone) { setPhoneDocFrom("list"); setPhoneView("doc"); }
+                }}
                 emptyAction={enabled && overview.log_count > 0 ? { label: action.label, onClick: organize, disabled: action.disabled } : null}
               />
             </div>
-            <div className="oui-rise om-col" style={{ animationDelay: "140ms" }}>
+            <div className="oui-rise om-col om-col-detail" style={{ animationDelay: "140ms" }}>
               <MemoryDetailCard
-                pane={pane}
-                onPaneChange={setPane}
+                pane={phone ? (phoneView === "doc" ? "memory" : "graph") : pane}
+                onPaneChange={(next) => {
+                  setPane(next);
+                  if (!phone) return;
+                  if (next === "memory") { setPhoneDocFrom("graph"); setPhoneView("doc"); } else setPhoneView("graph");
+                }}
+                onBack={phone ? () => setPhoneView(phoneDocFrom) : undefined}
                 entities={entities}
+                pendingNotes={overview.log_count}
                 emptyHint={overview.log_count > 0
                   ? `${countLabel(overview.log_count, "note is", "notes are")} waiting. Organize them to form the first memories.`
                   : "As agents work here they leave notes; organizing turns them into memories every new session can recall."}

@@ -40,6 +40,36 @@ describe("completed work grouping", () => {
     expect(result.filter((item) => item.kind === "work-summary").map((item) => item.sectionId)).toEqual(["work-1-1", "work-3-3", "work-5-5"]);
   });
 
+  it("groups a live turn's process for Orbit and settles it into a collapsed summary", () => {
+    const sent: ChatMessage = { type: "user", content: "Investigate", sentAt: 1000 };
+    const streaming: ChatMessage = { type: "assistant", content: "So far", complete: false };
+    const live = buildRenderItems([sent, assistant("Looking"), tool("read"), notice, tool("wait", { status: "in_progress" }), streaming], true, { groupLiveWork: true });
+    expect(live.map(label)).toEqual(["user", "work-summary", "session_notice", "So far"]);
+    const group = live[1];
+    if (group.kind !== "work-summary") throw new Error("Missing live group");
+    expect(group).toMatchObject({ sectionId: "live-1", live: true, startedAt: 1000 });
+    expect(group.items.map((item) => item.index)).toEqual([1, 2, 4]);
+    // New steps keep the group's id (and so its disclosure).
+    const more = buildRenderItems([sent, assistant("Looking"), tool("read"), notice, tool("wait"), assistant("Next"), tool("edit")], true, { groupLiveWork: true });
+    expect(more[1]).toMatchObject({ kind: "work-summary", sectionId: "live-1" });
+    const settled = buildRenderItems([sent, assistant("Looking"), tool("read"), tool("wait"), assistant("Answer")], false, { groupLiveWork: true });
+    expect(settled.find((item) => item.kind === "work-summary")).toMatchObject({ sectionId: "work-1-3" });
+    expect(settled.some((item) => item.kind === "work-summary" && item.live)).toBe(false);
+  });
+
+  it("does not group a live turn before its first tool, and keeps thinking in the group", () => {
+    const thinking: ChatMessage = { type: "thinking", content: "Hmm", complete: false, collapsed: false };
+    expect(buildRenderItems([user, thinking], true, { groupLiveWork: true }).map(label)).toEqual(["user", "thinking"]);
+    const grouped = buildRenderItems([user, tool("a"), thinking], true, { groupLiveWork: true });
+    expect(grouped.map(label)).toEqual(["user", "work-summary"]);
+    // Pending permissions in the live turn are carried for the "now" line.
+    const ask: ChatMessage = { type: "permission", id: "a", description: "Run", options: [] };
+    expect(buildRenderItems([user, tool("a", { status: "pending" }), ask], true, { groupLiveWork: true })[1]).toMatchObject({ awaitingApproval: ["a"] });
+    expect(buildRenderItems([user, tool("a"), { ...ask, resolved: "Allow" }], true, { groupLiveWork: true })[1]).not.toHaveProperty("awaitingApproval");
+    // Without the option the live turn stays chronological (Workbench).
+    expect(buildRenderItems([user, tool("a"), thinking], true).map(label)).toEqual(["user", "tool-section", "thinking"]);
+  });
+
   it("does not hide a turn that only has a notice and a final answer", () => {
     expect(buildRenderItems([user, notice, assistant("Answer")]).map(label)).toEqual(["user", "session_notice", "Answer"]);
   });

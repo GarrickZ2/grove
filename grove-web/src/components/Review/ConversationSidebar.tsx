@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, type ReactNode } from 'react';
 import { MessageSquare, CheckCircle, RotateCcw, Reply, Send, FileCode, ChevronDown, ChevronRight, Trash2, Maximize2 } from 'lucide-react';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import { AgentAvatar } from './AgentAvatar';
@@ -9,6 +9,7 @@ import { FileMentionDropdown } from '../ui';
 import type { MentionItem } from '../../utils/fileMention';
 import { useGlobalActiveChatId } from '../Tasks/TaskView/useActiveChatId';
 import { useBanner } from '../../context';
+import { useOrbitReview } from './useOrbitReview';
 
 type StatusFilter = 'all' | 'open' | 'resolved' | 'outdated';
 
@@ -26,6 +27,12 @@ interface ConversationSidebarProps {
   onDeleteReply?: (commentId: number, replyId: number) => void;
   onBulkDelete?: (statuses?: string[], authors?: string[]) => void;
   mentionItems?: MentionItem[] | null;
+  /** Orbit: "Send all open comments to the agent" (the caller confirms). */
+  onSendAllOpen?: () => void;
+  sendAllDisabled?: boolean;
+  sendAllTitle?: string;
+  /** Orbit: commit / merge readiness under the comment box. */
+  footer?: ReactNode;
 }
 
 export function ConversationSidebar({
@@ -42,12 +49,17 @@ export function ConversationSidebar({
   onDeleteReply,
   onBulkDelete,
   mentionItems,
+  onSendAllOpen,
+  sendAllDisabled = false,
+  sendAllTitle,
+  footer,
 }: ConversationSidebarProps) {
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [projectCommentContent, setProjectCommentContent] = useState('');
   const [expandedCommentId, setExpandedCommentId] = useState<number | null>(null);
   const [cleanupOpen, setCleanupOpen] = useState(false);
+  const orbit = useOrbitReview();
 
   const projectTextareaRef = useRef<HTMLTextAreaElement>(null);
   const projectMention = useFileMention({ mentionItems: mentionItems ?? null, textareaRef: projectTextareaRef });
@@ -143,10 +155,23 @@ export function ConversationSidebar({
       {/* Header */}
       <div className="conv-sidebar-header">
         <MessageSquare style={{ width: 14, height: 14 }} />
-        <span>Conversation</span>
+        <span>{orbit ? 'Comments' : 'Conversation'}</span>
         <span className="conv-sidebar-count">{comments.length}</span>
+        {onSendAllOpen && (
+          <button
+            type="button"
+            className="conv-send-all-btn"
+            onClick={onSendAllOpen}
+            disabled={sendAllDisabled}
+            title={sendAllTitle}
+            aria-label={sendAllTitle ?? 'Send open comments to the agent'}
+          >
+            <Send aria-hidden="true" />
+            <span className="conv-send-all-label">Fix with agent</span>
+          </button>
+        )}
         {comments.length > 0 && onBulkDelete && (
-          <div style={{ marginLeft: 'auto', position: 'relative' }}>
+          <div style={{ marginLeft: onSendAllOpen ? undefined : 'auto', position: 'relative' }}>
             <button
               className="conv-cleanup-btn"
               onMouseDown={(e) => {
@@ -357,6 +382,7 @@ export function ConversationSidebar({
           </div>
         </div>
       )}
+      {footer}
 
       {/* Comment Detail Modal */}
       {expandedComment && (

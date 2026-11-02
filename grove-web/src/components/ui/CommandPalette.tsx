@@ -231,7 +231,7 @@ export function CommandPalette() {
                     key={cmd.id}
                     data-cmd-item
                     active={idx === highlightedIndex}
-                    icon={Icon ? <Icon aria-hidden="true" /> : undefined}
+                    icon={cmd.iconElement ?? (Icon ? <Icon aria-hidden="true" /> : undefined)}
                     title={cmd.name}
                     trailing={cmd.shortcut ? <PaletteKeys keys={[cmd.shortcut]} /> : undefined}
                     onClick={() => handleSelect(cmd)}

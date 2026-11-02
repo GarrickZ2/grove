@@ -30,6 +30,7 @@ export function watchChatConnection(
     let data;
     try { data = JSON.parse(event.data); } catch { return; }
     switch (data?.type) {
+      case "remote_session": // Observation uses HTTP polling, not Agent startup.
       case "session_ready": dispose(); break;
       case "error": fail(typeof data.message === "string" ? data.message : "Agent connection failed."); break;
       case "session_ended": fail("Agent session ended before it became ready. Use Reconnect to retry."); break;

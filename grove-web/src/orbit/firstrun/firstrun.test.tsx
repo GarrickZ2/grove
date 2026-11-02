@@ -48,6 +48,8 @@ describe("first-run once-only flags", () => {
   it("remembers the interface for screens drawn before the config", async () => {
     stubStorage();
     const storage = await loadStorage();
+    expect(storage.readCachedOrbit()).toBe(true);
+    storage.writeCachedInterface("workbench");
     expect(storage.readCachedOrbit()).toBe(false);
     storage.writeCachedInterface("orbit");
     expect(storage.readCachedOrbit()).toBe(true);

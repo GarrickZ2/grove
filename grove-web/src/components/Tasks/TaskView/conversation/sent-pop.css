@@ -1,0 +1,31 @@
+/* Orbit send motion, shared by TaskChat and Buddy (classes are added only
+   under Orbit, so Workbench never matches). */
+
+/* A just-sent bubble rises from the composer edge, its bottom-right corner
+   (nearest the composer) leading, and settles with a soft spring. */
+.ocv-sent-wait { opacity: 0; }
+.ocv-sent-pop {
+  transform-origin: 100% 100%;
+  /* Spring-ish fallback where linear() easing is not supported. */
+  animation: ocv-sent-pop 340ms cubic-bezier(.3, 1.35, .5, 1) both;
+  animation: ocv-sent-pop 340ms linear(0, .22 8%, .52 18%, .8 30%, .96 42%, 1.02 54%, 1.012 68%, 1) both;
+}
+@keyframes ocv-sent-pop {
+  from { opacity: 0; transform: translateY(14px) scale(.96); }
+  35% { opacity: 1; }
+  to { opacity: 1; transform: none; }
+}
+
+/* The typed text leaves the box: an inert copy over the cleared input. */
+.oc-send-out { z-index: 2; margin: 0; overflow: hidden; pointer-events: none; user-select: none; animation: oc-send-out 180ms cubic-bezier(.4, 0, .2, 1) both; }
+@keyframes oc-send-out { to { opacity: 0; transform: translateY(-8px); } }
+/* A textarea keeps its value until the send resolves; hide it under the copy. */
+.oc-send-out-source { color: transparent !important; caret-color: transparent; }
+
+@keyframes ocv-sent-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .ocv-sent-wait { opacity: 1; }
+  .ocv-sent-pop { animation: ocv-sent-fade 160ms ease-out both !important; }
+  .oc-send-out { display: none; }
+  .oc-send-out-source { color: inherit !important; caret-color: auto; }
+}

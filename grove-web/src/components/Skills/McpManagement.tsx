@@ -259,7 +259,7 @@ export function AddMcpDialog({
                     ? "All projects"
                     : completed.scope === "buddy"
                       ? "Selected Buddies"
-                      : projectPath}
+                      : orbit && projectPath?.startsWith("studio://") ? "This project" : projectPath}
                 </p>
               </div>
               <div className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">

@@ -322,6 +322,13 @@ pub async fn grove_agent_reply(
     )
     .await?;
 
+    // The caller answered the message it was given: if its turn now ends
+    // normally, the graph shows it as done (see `node_outcome`).
+    let caller_key = format!("{}:{}:{}", caller_project, caller_task, caller_chat.id);
+    if let Some(handle) = crate::acp::get_session_handle(&caller_key) {
+        handle.record_graph_reply();
+    }
+
     // 投递成功后消费 ticket
     {
         let conn = database::connection();
@@ -1267,6 +1274,7 @@ pub async fn grove_agent_set_title(
         message: None,
         todo_completed: None,
         todo_total: None,
+        outcome: None,
     });
 
     Ok(SetTitleOutput {
@@ -1859,6 +1867,52 @@ mod tests {
             }
             other => panic!("expected UserMessage, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn reply_then_normal_turn_end_marks_replier_done() {
+        use crate::agent_graph::node_outcome::TurnEnd;
+        let _l = test_lock().lock().await;
+        let _h = TempHome::new();
+        seed_chat("p", "t", "chat-A", "Alice", Some("d"));
+        seed_chat("p", "t", "chat-B", "Bob", Some("w"));
+        let conn = database::connection();
+        seed_edge(&conn, "t", "chat-A", "chat-B");
+        graph_db::insert_pending_message(&conn, "msg-1", "t", "chat-A", "chat-B", "do x")
+            .expect("p1");
+        drop(conn);
+
+        let key_a = "p:t:chat-A".to_string();
+        let (_handle_a, _rx_a, _guard_a) = acp::new_handle_for_test(&key_a, "p", "t", "chat-A");
+        let key_b = "p:t:chat-B".to_string();
+        let (handle_b, _rx_b, _guard_b) = acp::new_handle_for_test(&key_b, "p", "t", "chat-B");
+
+        // B is mid-turn when it calls the reply tool.
+        handle_b.emit(AcpUpdate::Busy { value: true });
+        assert_eq!(handle_b.node_outcome(), None);
+        grove_agent_reply(
+            &ToolContext::new("chat-B".into()),
+            ReplyInput {
+                msg_id: "msg-1".into(),
+                message: "done".into(),
+            },
+        )
+        .await
+        .expect("reply ok");
+        assert!(handle_b.turn_record().replied);
+        // Still busy: the live status wins until the turn ends.
+        assert_eq!(handle_b.node_outcome(), None);
+
+        handle_b.finish_turn(TurnEnd::EndTurn);
+        handle_b.emit(AcpUpdate::Busy { value: false });
+        assert_eq!(handle_b.node_outcome(), Some("done"));
+
+        // The next turn clears it; a failed turn reads as error.
+        handle_b.emit(AcpUpdate::Busy { value: true });
+        assert!(!handle_b.turn_record().replied);
+        handle_b.finish_turn(TurnEnd::Failed);
+        handle_b.emit(AcpUpdate::Busy { value: false });
+        assert_eq!(handle_b.node_outcome(), Some("error"));
     }
 
     #[tokio::test]

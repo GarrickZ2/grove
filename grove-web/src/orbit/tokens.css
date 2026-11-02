@@ -35,6 +35,8 @@
   --o-radius-md: 10px;
   --o-radius-lg: 12px;
 
+  /* The UI font (same stack as the body in index.css). */
+  --o-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --o-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 
   /* Motion (Components board): selection slide, toggle, enter, pop, condense. */

@@ -8,6 +8,7 @@ import { formatMode, isPluginSource, sourceDisplayName, useSourceActions } from 
 import { useCommand } from "../../keyboard";
 import { Button, Card, EmptyState, SearchField, StatusDot } from "../ui";
 import { ExtIcon } from "./parts";
+import { usePhoneSplit } from "./usePhoneSplit";
 import { KIND_LABEL, accessText, contentSummary, recordsBySource, resolveSelection, sinceText, versionText } from "./catalogModel";
 
 interface SourcesViewProps {
@@ -29,6 +30,7 @@ const sourceKey = (source: SkillSource) => source.name;
 export function SourcesView({ sources, records, recordsLoading, now, onRefresh, onAddSource, onOpenRecord }: SourcesViewProps) {
   const [search, setSearch] = useState("");
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const phoneSplit = usePhoneSplit();
   const [editSource, setEditSource] = useState<SkillSource | null>(null);
   const [removing, setRemoving] = useState<SkillSource | null>(null);
   // Bumped per finished sync so the "Synced" text flashes once.
@@ -53,7 +55,7 @@ export function SourcesView({ sources, records, recordsLoading, now, onRefresh, 
   useCommand("skills.source.syncAll", () => { void syncAll(); }, { enabled: () => sources.length > 0 && !actions.syncingAll }, [sources.length, actions.syncingAll]);
 
   return (
-    <Card className="oex-split oui-rise" style={{ animationDelay: "60ms" }} aria-label="Sources">
+    <Card className={`${phoneSplit.split} oui-rise`} style={{ animationDelay: "60ms" }} aria-label="Sources">
       <div className="oex-master">
         <div className="oex-mtools oex-mtools-row">
           <SearchField value={search} onChange={setSearch} label="Search sources" />
@@ -79,7 +81,7 @@ export function SourcesView({ sources, records, recordsLoading, now, onRefresh, 
                 className={`oex-ext${isSelected ? " is-sel" : ""}`}
                 aria-current={isSelected || undefined}
                 style={{ animationDelay: `${Math.min(index, 12) * 30 + 60}ms` }}
-                onClick={() => setSelectedName(source.name)}
+                onClick={() => { setSelectedName(source.name); phoneSplit.open(); }}
               >
                 <SourceIcon source={source} />
                 <span className="oex-ecopy">
@@ -93,6 +95,7 @@ export function SourcesView({ sources, records, recordsLoading, now, onRefresh, 
       </div>
 
       <div className="oex-detail">
+        {phoneSplit.back("Sources")}
         {selected ? (
           <SourceDetail
             key={selected.name}

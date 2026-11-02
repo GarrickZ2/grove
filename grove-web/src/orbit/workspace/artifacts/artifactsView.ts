@@ -189,3 +189,14 @@ export function windowRange(
   const end = Math.min(count, first + visible + overscan);
   return { start: Math.min(start, end), end };
 }
+
+/** The files a drag starting on `file` carries: every selected file when the
+ * row is part of the selection (folders stay out, as for a single drag). */
+export function artifactDragFiles(
+  file: ArtifactFile,
+  selection: { has: (path: string) => boolean; files: readonly ArtifactFile[] },
+): ArtifactFile[] {
+  if (!selection.has(file.path)) return [file];
+  const files = selection.files.filter((item) => !item.is_dir);
+  return files.length > 0 ? files : [file];
+}

@@ -1,149 +1,70 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
+import type { ReviewHeaderDensity } from './reviewHeaderDensity';
 import {
   Check,
   ChevronDown,
   ChevronUp,
-  Crosshair,
+  Code,
+  Columns2,
+  Eye,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
   Search,
-  X,
-  ZoomIn,
-  ZoomOut,
+  Send,
 } from 'lucide-react';
 import { Button } from '../../orbit/ui/Button';
 import { Segmented } from '../../orbit/ui/Segmented';
 import { PanelHeaderActions } from '../../orbit/ui/PanelShell';
 import { usePanelMenuItems, type PanelMenuItem } from '../../orbit/ui/panelSlots';
+import { commandRegistry, effectiveBindings, formatKeyDisplay, userKeymapStore } from '../../keyboard';
 import './orbit-review.css';
 
 /*
  * Orbit chrome for Code Review (inside the workspace PanelShell).
  *
- * The legacy page header + toolbar are replaced by:
- *   - PanelShell header: Changes / All files + refresh (PanelHeaderActions),
- *     and the view options in the ⋯ menu (usePanelMenuItems).
- *   - A slim bar over the diff: version range, Unified / Split, prev / next
- *     file, the comments sidebar toggle.
- *   - A reviewed-progress summary at the top of the file tree.
- * All state stays in DiffReviewPage; these only render it.
+ * Everything sits in ONE row, the PanelShell header (PanelHeaderActions):
+ *   [project] [Base → Latest] [Changes | All files] [Unified | Split] [↑ ↓] [comments] [refresh]  ⋯
+ * As the panel narrows, the range arrow and Unified / Split go first, then
+ * prev / next and the comments toggle fold into ⋯ (see reviewHeaderDensity.ts).
+ * The ⋯ menu otherwise holds only what isn't visible: find, file tree, focus
+ * mode, and the preview mode when the current file can preview.
+ * All state stays in DiffReviewPage; this only renders it.
  */
 
 export type ReviewViewMode = 'diff' | 'full';
 export type ReviewDisplayMode = 'code' | 'split' | 'preview';
+/** The user's current binding for a command, for menu hints. */
+function useCommandShortcut(id: string): string | undefined {
+  useSyncExternalStore((cb) => userKeymapStore.subscribe(cb), () => userKeymapStore.getVersion());
+  const cmd = commandRegistry.listCommands().find((c) => c.id === id);
+  if (!cmd) return undefined;
+  const binding = effectiveBindings(cmd, userKeymapStore.getAllOverrides().get(cmd.id))[0];
+  return binding ? formatKeyDisplay(binding.key) : undefined;
+}
+
+const DISPLAY_NEXT: Record<ReviewDisplayMode, ReviewDisplayMode> = { code: 'split', split: 'preview', preview: 'code' };
+const DISPLAY_LABEL: Record<ReviewDisplayMode, string> = {
+  code: 'Preview: off',
+  split: 'Preview: beside code',
+  preview: 'Preview: only',
+};
+const DISPLAY_ICON = { code: Code, split: Columns2, preview: Eye } as const;
 
 interface OrbitReviewHeaderProps {
+  density: ReviewHeaderDensity;
+  /** Linked-project switcher, when the task links Projects. */
+  leading?: ReactNode;
+  /** Version selectors (diff mode); null hides the range. */
+  rangeFrom?: ReactNode;
+  rangeTo?: ReactNode;
   isGitRepo?: boolean;
   viewMode: ReviewViewMode;
   onSetViewMode: (mode: ReviewViewMode) => void;
-  refreshing: boolean;
-  onRefresh: () => void;
-  sidebarVisible: boolean;
-  onToggleSidebar: () => void;
-  convSidebarVisible: boolean;
-  onToggleConvSidebar: () => void;
-  focusMode: boolean;
-  onToggleFocusMode: () => void;
-  displayMode: ReviewDisplayMode;
-  onSetDisplayMode: (mode: ReviewDisplayMode) => void;
-  fontSize: number;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
-  onOpenSearch: () => void;
-}
-
-const DISPLAY_LABEL: Record<ReviewDisplayMode, string> = {
-  code: 'Show code',
-  split: 'Show code and preview',
-  preview: 'Show preview',
-};
-
-/** Header actions + ⋯ rows. Renders nothing in place; it portals into the shell. */
-export function OrbitReviewHeader(props: OrbitReviewHeaderProps) {
-  const {
-    isGitRepo, viewMode, onSetViewMode, refreshing, onRefresh,
-    sidebarVisible, onToggleSidebar, convSidebarVisible, onToggleConvSidebar,
-    focusMode, onToggleFocusMode, displayMode, onSetDisplayMode,
-    fontSize, onZoomIn, onZoomOut, onZoomReset, onOpenSearch,
-  } = props;
-
-  const menu = useMemo<PanelMenuItem[]>(() => [
-    { id: 'review-find', label: 'Find in review', icon: Search, onSelect: onOpenSearch },
-    {
-      id: 'review-tree',
-      label: sidebarVisible ? 'Hide file tree' : 'Show file tree',
-      icon: sidebarVisible ? PanelLeftClose : PanelLeftOpen,
-      onSelect: onToggleSidebar,
-    },
-    {
-      id: 'review-comments',
-      label: convSidebarVisible ? 'Hide comments' : 'Show comments',
-      icon: MessageSquare,
-      onSelect: onToggleConvSidebar,
-    },
-    {
-      id: 'review-focus',
-      label: focusMode ? 'Scroll through every file' : 'Focus on one file',
-      icon: Crosshair,
-      onSelect: onToggleFocusMode,
-    },
-    ...(['code', 'split', 'preview'] as const).map((mode) => ({
-      id: `review-display-${mode}`,
-      label: DISPLAY_LABEL[mode],
-      icon: displayMode === mode ? Check : undefined,
-      onSelect: () => onSetDisplayMode(mode),
-    })),
-    { id: 'review-zoom-in', label: 'Larger text', icon: ZoomIn, onSelect: onZoomIn },
-    { id: 'review-zoom-out', label: 'Smaller text', icon: ZoomOut, onSelect: onZoomOut },
-    { id: 'review-zoom-reset', label: `Reset text size (${fontSize}px)`, onSelect: onZoomReset },
-  ], [
-    onOpenSearch, sidebarVisible, onToggleSidebar, convSidebarVisible, onToggleConvSidebar,
-    focusMode, onToggleFocusMode, displayMode, onSetDisplayMode, fontSize, onZoomIn, onZoomOut, onZoomReset,
-  ]);
-  usePanelMenuItems(menu);
-
-  return (
-    <PanelHeaderActions>
-      {isGitRepo !== false ? (
-        <Segmented
-          size="sm"
-          ariaLabel="Files to review"
-          value={viewMode}
-          onChange={onSetViewMode}
-          options={[
-            { value: 'diff', label: 'Changes', title: 'Only the files this task changed' },
-            { value: 'full', label: 'All files', title: 'Every file in the worktree' },
-          ]}
-          className="orv-scope"
-        />
-      ) : null}
-      <Button
-        variant="ghost"
-        size="sm"
-        iconOnly
-        aria-label="Refresh review"
-        title="Refresh review"
-        disabled={refreshing}
-        onClick={onRefresh}
-      >
-        <RefreshCw className={refreshing ? 'oui-spin' : undefined} aria-hidden="true" />
-      </Button>
-    </PanelHeaderActions>
-  );
-}
-
-interface OrbitReviewBarProps {
-  /** Linked-project switcher, when the task links Projects. */
-  leading?: ReactNode;
-  /** Version range selectors (diff mode only). */
-  range?: ReactNode;
-  showLayout: boolean;
   viewType: 'unified' | 'split';
   onSetViewType: (type: 'unified' | 'split') => void;
-  /** Split is hidden on phones. */
+  /** Split is unavailable on phones. */
   allowSplit: boolean;
   canPrev: boolean;
   canNext: boolean;
@@ -152,62 +73,163 @@ interface OrbitReviewBarProps {
   convSidebarVisible: boolean;
   onToggleConvSidebar: () => void;
   openComments: number;
-  warning?: string | null;
-  onDismissWarning?: () => void;
+  refreshing: boolean;
+  onRefresh: () => void;
+  sidebarVisible: boolean;
+  onToggleSidebar: () => void;
+  focusMode: boolean;
+  onToggleFocusMode: () => void;
+  /** The current file has a preview renderer; shows the preview row. */
+  canPreview: boolean;
+  displayMode: ReviewDisplayMode;
+  onSetDisplayMode: (mode: ReviewDisplayMode) => void;
+  onOpenSearch: () => void;
+  /** Send all open comments to the active chat's agent (asks first). */
+  canSendAll: boolean;
+  sendAllTitle: string;
+  onSendAll: () => void;
 }
 
-/** The slim bar over the diff. */
-export function OrbitReviewBar({
-  leading, range, showLayout, viewType, onSetViewType, allowSplit,
-  canPrev, canNext, onPrev, onNext,
-  convSidebarVisible, onToggleConvSidebar, openComments,
-  warning, onDismissWarning,
-}: OrbitReviewBarProps) {
+/** The whole Review toolbar, portalled into the PanelShell header, plus its ⋯ rows. */
+export function OrbitReviewHeader(props: OrbitReviewHeaderProps) {
+  const {
+    density, leading, rangeFrom, rangeTo, isGitRepo, viewMode, onSetViewMode,
+    viewType, onSetViewType, allowSplit, canPrev, canNext, onPrev, onNext,
+    convSidebarVisible, onToggleConvSidebar, openComments, refreshing, onRefresh,
+    sidebarVisible, onToggleSidebar, focusMode, onToggleFocusMode,
+    canPreview, displayMode, onSetDisplayMode, onOpenSearch,
+    canSendAll, onSendAll,
+  } = props;
+  const findKeys = useCommandShortcut('diffReview.openSearch');
+  const treeKeys = useCommandShortcut('diffReview.toggleSidebar');
+  const prevKeys = useCommandShortcut('diffReview.prevFile');
+  const nextKeys = useCommandShortcut('diffReview.nextFile');
+
+  const showLayoutInline = density === 'wide' && viewMode === 'diff' && allowSplit;
+  const foldLayout = density !== 'wide' && viewMode === 'diff' && allowSplit;
+  const foldNav = density === 'narrow';
+  const commentsLabel = convSidebarVisible ? 'Hide comments' : 'Show comments';
+
+  const menu = useMemo<PanelMenuItem[]>(() => [
+    {
+      id: 'review-send-all',
+      label: openComments > 0 ? `Send ${openComments} to agent` : 'Send comments to agent',
+      icon: Send,
+      disabled: !canSendAll,
+      onSelect: onSendAll,
+    },
+    { id: 'review-find', label: 'Find in review', icon: Search, shortcut: findKeys, onSelect: onOpenSearch },
+    {
+      id: 'review-tree',
+      label: sidebarVisible ? 'Hide file tree' : 'Show file tree',
+      icon: sidebarVisible ? PanelLeftClose : PanelLeftOpen,
+      shortcut: treeKeys,
+      onSelect: onToggleSidebar,
+    },
+    // Focus mode has no other control in Orbit, so it keeps one toggle row.
+    { id: 'review-focus', label: 'Focus on one file', icon: focusMode ? Check : undefined, onSelect: onToggleFocusMode },
+    ...(canPreview ? [{
+      id: 'review-display',
+      label: DISPLAY_LABEL[displayMode],
+      icon: DISPLAY_ICON[displayMode],
+      onSelect: () => onSetDisplayMode(DISPLAY_NEXT[displayMode]),
+    }] : []),
+    // Folded from the header when the panel is narrow.
+    ...(foldLayout ? [{
+      id: 'review-layout',
+      label: viewType === 'split' ? 'Unified view' : 'Split view',
+      icon: viewType === 'split' ? Code : Columns2,
+      onSelect: () => onSetViewType(viewType === 'split' ? 'unified' : 'split'),
+    }] : []),
+    ...(foldNav ? [
+      { id: 'review-prev', label: 'Previous file', icon: ChevronUp, shortcut: prevKeys, disabled: !canPrev, onSelect: onPrev },
+      { id: 'review-next', label: 'Next file', icon: ChevronDown, shortcut: nextKeys, disabled: !canNext, onSelect: onNext },
+      {
+        id: 'review-comments',
+        label: openComments > 0 ? `${commentsLabel} (${openComments} open)` : commentsLabel,
+        icon: MessageSquare,
+        onSelect: onToggleConvSidebar,
+      },
+    ] : []),
+  ], [
+    canSendAll, onSendAll,
+    findKeys, onOpenSearch, sidebarVisible, treeKeys, onToggleSidebar, focusMode, onToggleFocusMode,
+    canPreview, displayMode, onSetDisplayMode, foldLayout, viewType, onSetViewType,
+    foldNav, prevKeys, nextKeys, canPrev, canNext, onPrev, onNext, commentsLabel, openComments, onToggleConvSidebar,
+  ]);
+  usePanelMenuItems(menu);
+
   return (
-    <div className="orv-bar">
-      {leading ? <div className="orv-bar-leading">{leading}</div> : null}
-      {range ? <div className="orv-range" aria-label="Compare versions">{range}</div> : null}
-      {warning ? (
-        <span className="orv-warn" role="status">
-          <span className="orv-warn-text">{warning}</span>
-          {onDismissWarning ? (
-            <button type="button" className="orv-warn-x" aria-label="Dismiss" onClick={onDismissWarning}><X aria-hidden="true" /></button>
-          ) : null}
-        </span>
-      ) : null}
-      <span className="orv-bar-spacer" />
-      {showLayout ? (
-        allowSplit ? (
+    <PanelHeaderActions>
+      <span className={`orv-head is-${density}`}>
+        {leading ? <span className="orv-head-leading">{leading}</span> : null}
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          aria-pressed={sidebarVisible}
+          aria-label={sidebarVisible ? 'Hide file tree' : 'Show file tree'}
+          title={treeKeys ? `${sidebarVisible ? 'Hide file tree' : 'Show file tree'} (${treeKeys})` : sidebarVisible ? 'Hide file tree' : 'Show file tree'}
+          onClick={onToggleSidebar}
+        >
+          {sidebarVisible ? <PanelLeftClose aria-hidden="true" /> : <PanelLeftOpen aria-hidden="true" />}
+        </Button>
+        {rangeFrom && rangeTo ? (
+          <span className="orv-range" role="group" aria-label="Compare versions">
+            {rangeFrom}
+            {density === 'wide' ? <span className="orv-range-arrow" aria-hidden="true">&rarr;</span> : null}
+            {rangeTo}
+          </span>
+        ) : null}
+        {isGitRepo !== false ? (
+          <Segmented
+            size="sm"
+            ariaLabel="Files to review"
+            value={viewMode}
+            onChange={onSetViewMode}
+            options={[
+              { value: 'diff', label: 'Changes', title: 'Only the files this task changed' },
+              { value: 'full', label: 'All files', title: 'Every file in the worktree' },
+            ]}
+          />
+        ) : null}
+        {showLayoutInline ? (
           <Segmented
             size="sm"
             ariaLabel="Diff layout"
             value={viewType}
             onChange={onSetViewType}
             options={[{ value: 'unified', label: 'Unified' }, { value: 'split', label: 'Split' }]}
-            className="orv-layout"
           />
-        ) : null
-      ) : null}
-      <span className="orv-bar-group">
-        <Button variant="ghost" size="sm" iconOnly aria-label="Previous file" title="Previous file" disabled={!canPrev} onClick={onPrev}>
-          <ChevronUp aria-hidden="true" />
-        </Button>
-        <Button variant="ghost" size="sm" iconOnly aria-label="Next file" title="Next file" disabled={!canNext} onClick={onNext}>
-          <ChevronDown aria-hidden="true" />
+        ) : null}
+        {!foldNav ? (
+          <>
+            <span className="orv-head-group">
+              <Button variant="ghost" size="sm" iconOnly aria-label="Previous file" title={prevKeys ? `Previous file (${prevKeys})` : 'Previous file'} disabled={!canPrev} onClick={onPrev}>
+                <ChevronUp aria-hidden="true" />
+              </Button>
+              <Button variant="ghost" size="sm" iconOnly aria-label="Next file" title={nextKeys ? `Next file (${nextKeys})` : 'Next file'} disabled={!canNext} onClick={onNext}>
+                <ChevronDown aria-hidden="true" />
+              </Button>
+            </span>
+            <button
+              type="button"
+              className={`orv-comments-btn ${convSidebarVisible ? 'is-on' : ''}`}
+              aria-pressed={convSidebarVisible}
+              aria-label={commentsLabel}
+              title={commentsLabel}
+              onClick={onToggleConvSidebar}
+            >
+              <MessageSquare aria-hidden="true" />
+              {openComments > 0 ? <span className="orv-comments-n" key={openComments}>{openComments}</span> : null}
+            </button>
+          </>
+        ) : null}
+        <Button variant="ghost" size="sm" iconOnly aria-label="Refresh review" title="Refresh review" disabled={refreshing} onClick={onRefresh}>
+          <RefreshCw className={refreshing ? 'oui-spin' : undefined} aria-hidden="true" />
         </Button>
       </span>
-      <button
-        type="button"
-        className={`orv-comments-btn ${convSidebarVisible ? 'is-on' : ''}`}
-        aria-pressed={convSidebarVisible}
-        aria-label={convSidebarVisible ? 'Hide comments' : 'Show comments'}
-        title={convSidebarVisible ? 'Hide comments' : 'Show comments'}
-        onClick={onToggleConvSidebar}
-      >
-        <MessageSquare aria-hidden="true" />
-        {openComments > 0 ? <span className="orv-comments-n" key={openComments}>{openComments}</span> : null}
-      </button>
-    </div>
+    </PanelHeaderActions>
   );
 }
 

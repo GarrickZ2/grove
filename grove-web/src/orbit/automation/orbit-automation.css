@@ -135,6 +135,14 @@ input.oau-title-in:focus{background:var(--o-bg);box-shadow:0 0 0 1px var(--o-bor
   .oau-hours span:nth-child(even){display:none}
 }
 
+/* Phone: the managed note's action drops under its copy. */
+@media (max-width:767px){
+  .oau-managed{flex-wrap:wrap}
+  .oau-managed>span{flex:1 1 calc(100% - 30px)}
+  .oau-managed>.oui-btn{margin-left:auto}
+  .oau-foot{flex-wrap:wrap;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+}
+
 @media (prefers-reduced-motion:reduce){
   .oau [class*="oau-"],.oau [class*="oau-"]::before,.oau [class*="oau-"]::after{animation-duration:0s!important;animation-delay:0s!important;animation-iteration-count:1!important;transition-duration:0s!important}
 }

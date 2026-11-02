@@ -28,6 +28,9 @@
     "allow-tray-update-theme-icons",
     "allow-set-remote-auth",
     "allow-configure-desktop-tray",
-    "allow-play-sound"
+    "allow-play-sound",
+    "allow-notify-banner",
+    "allow-is-remote-mode-command",
+    "allow-tray-take-pending-navigate"
   ]
 }

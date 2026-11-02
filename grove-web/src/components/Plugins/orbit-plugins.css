@@ -1,0 +1,34 @@
+/* Orbit chrome around plugin UIs: the sidebar rows, the full page and the
+   iframe host (loading / error / dev reload). Tokens: orbit/tokens.css. */
+
+/* Sidebar: a plugin page row under More, with the plugin's own icon. */
+.orbit-plugin-row .orbit-plugin-icon { width: 16px; height: 16px; flex: none; border-radius: 4px; }
+.orbit-plugin-row > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Iframe host. */
+.oplg-frame-host { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; background: var(--o-bg); color: var(--o-text); }
+.oplg-iframe { flex: 1; width: 100%; height: 100%; min-height: 0; border: 0; background: var(--o-bg); }
+.oplg-loading { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--o-muted); font-size: 12.5px; }
+.oplg-loading svg { width: 14px; height: 14px; }
+.oplg-frame-host .oui-panel-error { flex: 1; }
+/* Dev-only reload: bottom corner, revealed on hover or focus. */
+.oplg-reload { position: absolute; right: 8px; bottom: 8px; z-index: 1; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--o-border); border-radius: var(--o-radius); background: var(--o-frost); color: var(--o-muted); box-shadow: var(--o-shadow-1); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); cursor: pointer; opacity: 0; transition: opacity var(--o-dur-fast), color var(--o-dur-fast); }
+.oplg-reload svg { width: 14px; height: 14px; }
+.oplg-frame-host:hover .oplg-reload, .oplg-reload:focus-visible { opacity: 1; }
+.oplg-reload:hover { color: var(--o-text); }
+.oplg-reload:focus-visible { outline: 2px solid var(--o-accent); outline-offset: 2px; }
+@media (hover: none) { .oplg-reload { opacity: 1; } }
+
+/* Full page: Orbit page header, then the plugin edge to edge below it. */
+.oui-page.oplg-page { overflow: hidden; }
+.oplg-page-inner { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.oplg-page .oplg-head { padding: 26px 36px 18px; }
+.oplg-glyph { width: 46px; height: 46px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 13px; background: var(--o-group); color: var(--o-muted); box-shadow: inset 0 0 0 .5px var(--o-border), var(--o-shadow-1); animation: oui-glyph-in 560ms var(--o-ease-pop) both; }
+.oplg-glyph .oplg-glyph-icon { width: 26px; height: 26px; }
+.oplg-glyph img.oplg-glyph-icon { border-radius: 6px; }
+.oplg-body { position: relative; flex: 1; min-height: 0; border-top: 1px solid var(--o-border); }
+/* Phone: the phone title bar already names the page, so the in-page header goes. */
+@media (max-width: 767px) {
+  .oplg-page .oplg-head { display: none; }
+  .oplg-body { border-top: 0; }
+}

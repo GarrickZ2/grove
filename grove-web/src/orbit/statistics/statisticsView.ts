@@ -268,3 +268,29 @@ export function deltaOf(current: number | undefined, previous: number | undefine
 export function rateLabel(rangeSecs: number): { per: string; divisor: number } {
   return rangeSecs <= DAY ? { per: "hour", divisor: rangeSecs / HOUR } : { per: "day", divisor: rangeSecs / DAY };
 }
+
+// ── Top list targets ────────────────────────────────────────────────────
+
+interface TaskOwner {
+  id: string;
+  tasks: { id: string; status: string }[];
+  localTask?: { id: string } | null;
+}
+
+export type TopTarget =
+  | { kind: "task"; projectId: string; taskId: string }
+  | { kind: "none"; reason?: string };
+
+/**
+ * What a "By task" row opens. Rows come from usage history, so a task may
+ * be archived or deleted since; those stay inert and say why. All-projects
+ * rows are projects, which carry no task to open.
+ */
+export function topRowTarget(scope: "global" | "project", rowId: string, project: TaskOwner | null | undefined): TopTarget {
+  if (scope !== "project" || !project) return { kind: "none" };
+  if (rowId === "_local" || project.localTask?.id === rowId) return { kind: "task", projectId: project.id, taskId: rowId };
+  const task = project.tasks.find((item) => item.id === rowId);
+  if (!task) return { kind: "none", reason: "This task no longer exists" };
+  if (task.status === "archived") return { kind: "none", reason: "This task is archived" };
+  return { kind: "task", projectId: project.id, taskId: rowId };
+}

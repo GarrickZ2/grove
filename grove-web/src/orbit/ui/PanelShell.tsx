@@ -1,12 +1,15 @@
 import {
   Component,
+  Fragment,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type CSSProperties,
   type ElementType,
   type ErrorInfo,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -18,7 +21,7 @@ import "./panel-shell.css";
 /*
  * PanelShell — the one frame every Orbit workspace panel sits in.
  *
- * The shell owns the panel's chrome: a 48px header with the coloured glyph
+ * The shell owns the panel's chrome: a 40px header with the coloured glyph
  * tile, the title, a muted context line, the ⋯ menu and close. It also owns
  * the body container (padded + scrolling, or edge-to-edge) and catches render
  * errors with a retry. The workspace (IDE layout / FlexLayout) renders it via
@@ -45,7 +48,8 @@ import "./panel-shell.css";
  *       28px ghost icon buttons (`Button size="sm" variant="ghost" iconOnly`).
  *
  *   usePanelMenuItems(items)
- *       Adds rows to the ⋯ menu, above the workspace's own rows. `items`
+ *       The panel's ⋯ menu rows. The ⋯ only appears when a body registers
+ *       rows (workspace-level actions live in the toolbar's ⋯). `items`
  *       must be memoized (useMemo) — a new array every render re-registers.
  *
  *   useInPanelShell()
@@ -77,42 +81,64 @@ export interface PanelShellProps {
   title: ReactNode;
   /** Muted text after the title (a body can replace it with PanelHeaderContext). */
   context?: ReactNode;
-  /** The workspace's own ⋯ rows (listed after the body's). */
-  menu?: PanelMenuItem[];
   onClose?: () => void;
   /** `scroll`: 12px padded, scrolls if the body doesn't (default). `fill`: edge to edge, no scroll. */
   body?: "scroll" | "fill";
+  /**
+   * Free layout: the tab strip already shows the glyph and title, so the
+   * shell draws no header and puts the panel's own actions (body actions +
+   * ⋯) into this element in the tab strip instead. Close is the tab's ×.
+   */
+  actionsTarget?: HTMLElement | null;
+  /** Set with `actionsTarget`: render without a header. */
+  headless?: boolean;
   className?: string;
   style?: CSSProperties;
   children: ReactNode;
 }
 
-export function PanelShell({ glyph: Glyph, hue, title, context, menu, onClose, body = "scroll", className, style, children }: PanelShellProps) {
+export function PanelShell({ glyph: Glyph, hue, title, context, onClose, body = "scroll", actionsTarget, headless = false, className, style, children }: PanelShellProps) {
   const [actions, setActions] = useState<HTMLElement | null>(null);
   const [contextSlot, setContextSlot] = useState<HTMLElement | null>(null);
   const [bodyMenu, setBodyMenuState] = useState<PanelMenuItem[]>([]);
   const setBodyMenu = useCallback((items: PanelMenuItem[]) => setBodyMenuState(items), []);
   const slots = useMemo<PanelSlots>(() => ({ actions, context: contextSlot, setBodyMenu }), [actions, contextSlot, setBodyMenu]);
-  const menuItems = useMemo(() => [...bodyMenu, ...(menu ?? [])], [bodyMenu, menu]);
   const tileStyle = { "--oui-panel-a": hue.from, "--oui-panel-b": hue.to } as CSSProperties;
+  // A panel's ⋯ holds only its own rows; with none, there is no ⋯.
+  // In a tab strip the menu is portaled so the strip's overflow can't clip it.
+  const menuButton = bodyMenu.length > 0 ? <PanelMenuButton items={bodyMenu} label="Panel actions" portal={headless} /> : null;
 
   return (
-    <section className={`oui-panel orbit-ui${className ? ` ${className}` : ""}`} style={style}>
-      <header className="oui-panel-head">
-        <span className="oui-panel-tile" style={tileStyle} aria-hidden="true"><Glyph className="oui-panel-glyph" size={14} /></span>
-        <h2 className="oui-panel-title">
-          <span className="oui-panel-name">{title}</span>
-          {context ? <small className="oui-panel-ctx-default">{context}</small> : null}
-          <small ref={setContextSlot} className="oui-panel-ctx-slot" />
-        </h2>
-        <span ref={setActions} className="oui-panel-actions" />
-        {menuItems.length > 0 ? <PanelMenuButton items={menuItems} label="Panel actions" /> : null}
-        {onClose ? (
-          <button type="button" className="oui-panel-ib" aria-label="Close panel" title="Close panel" onClick={onClose}>
-            <X aria-hidden="true" />
-          </button>
-        ) : null}
-      </header>
+    <section className={`oui-panel orbit-ui${headless ? " is-headless" : ""}${className ? ` ${className}` : ""}`} style={style}>
+      {headless ? (
+        <>
+          {/* Context has no place in the tab strip; the slot stays so PanelHeaderContext is harmless. */}
+          <small ref={setContextSlot} hidden />
+          {actionsTarget && createPortal(
+            <span className="oui-panel-inline orbit-ui">
+              <span ref={setActions} className="oui-panel-actions" />
+              {menuButton}
+            </span>,
+            actionsTarget,
+          )}
+        </>
+      ) : (
+        <header className="oui-panel-head">
+          <span className="oui-panel-tile" style={tileStyle} aria-hidden="true"><Glyph className="oui-panel-glyph" size={12} /></span>
+          <h2 className="oui-panel-title">
+            <span className="oui-panel-name">{title}</span>
+            {context ? <small className="oui-panel-ctx-default" title={typeof context === "string" ? context : undefined}>{context}</small> : null}
+            <small ref={setContextSlot} className="oui-panel-ctx-slot" />
+          </h2>
+          <span ref={setActions} className="oui-panel-actions" />
+          {menuButton}
+          {onClose ? (
+            <button type="button" className="oui-panel-ib" aria-label="Close panel" title="Close panel" onClick={onClose}>
+              <X aria-hidden="true" />
+            </button>
+          ) : null}
+        </header>
+      )}
       <PanelSlotsContext.Provider value={slots}>
         <div className={`oui-panel-body is-${body}`}>
           <PanelErrorBoundary>{children}</PanelErrorBoundary>
@@ -122,35 +148,62 @@ export function PanelShell({ glyph: Glyph, hue, title, context, menu, onClose, b
   );
 }
 
-/** ⋯ button with a compact menu (icon, label, shortcut). Also used by the workspace toolbar. */
-export function PanelMenuButton({ items, label }: { items: PanelMenuItem[]; label: string }) {
+/** ⋯ button with a compact menu (icon, label, shortcut). Also used by the
+ *  workspace toolbar. `portal`: render the menu fixed on document.body, for
+ *  hosts that clip overflow (FlexLayout's tab strip). */
+export function PanelMenuButton({ items, label, portal = false }: { items: PanelMenuItem[]; label: string; portal?: boolean }) {
   const { open, close, toggle, rootRef } = usePopover();
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [open, close]);
+  const onToggle = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    const r = event.currentTarget.getBoundingClientRect();
+    setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    toggle();
+  };
+  const menu = (fixed: boolean) => (
+    <div
+      className={`oui-pop oui-panel-menu${fixed ? " orbit-ui" : ""}`}
+      role="menu"
+      aria-label={label}
+      style={fixed && pos ? { position: "fixed", top: pos.top, right: pos.right } : undefined}
+      // Keeps usePopover's outside-pointer close from firing on the portaled menu.
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      {items.map((item) => {
+        const Icon = item.icon;
+        return (
+          <Fragment key={item.id}>
+            {item.separator ? <span className="oui-panel-menu-sep" role="separator" /> : null}
+            <button
+              type="button"
+              role="menuitem"
+              disabled={item.disabled}
+              className={`oui-panel-menu-item${item.danger ? " is-danger" : ""}`}
+              onClick={() => { close(); item.onSelect(); }}
+            >
+              {Icon ? <Icon aria-hidden="true" /> : <span className="oui-panel-menu-gap" />}
+              <span className="oui-panel-menu-label">{item.label}</span>
+              {item.shortcut ? <kbd>{item.shortcut}</kbd> : null}
+            </button>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
   return (
     <span ref={rootRef} className="oui-pop-anchor">
-      <button type="button" className={`oui-panel-ib${open ? " is-open" : ""}`} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
+      <button type="button" className={`oui-panel-ib${open ? " is-open" : ""}`} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} onClick={onToggle}>
         <MoreHorizontal aria-hidden="true" />
       </button>
-      {open ? (
-        <div className="oui-pop oui-panel-menu" role="menu" aria-label={label}>
-          {items.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                role="menuitem"
-                disabled={item.disabled}
-                className={`oui-panel-menu-item${item.danger ? " is-danger" : ""}`}
-                onClick={() => { close(); item.onSelect(); }}
-              >
-                {Icon ? <Icon aria-hidden="true" /> : <span className="oui-panel-menu-gap" />}
-                <span className="oui-panel-menu-label">{item.label}</span>
-                {item.shortcut ? <kbd>{item.shortcut}</kbd> : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      {open ? (portal && pos ? createPortal(menu(true), document.body) : menu(false)) : null}
     </span>
   );
 }

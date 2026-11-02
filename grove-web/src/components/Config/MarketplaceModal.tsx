@@ -62,6 +62,8 @@ import {
 interface MarketplaceModalProps {
   open: boolean;
   onClose: () => void;
+  /** Tab shown each time the modal opens. Defaults to "installed". */
+  initialTab?: "installed" | "explore";
 }
 
 type TabKind = "installed" | "explore";
@@ -103,12 +105,18 @@ function hasUpdate(a: MarketplaceAgent): boolean {
   return Boolean(installed && latest && installed !== latest);
 }
 
-export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
+export function MarketplaceModal({ open, onClose, initialTab }: MarketplaceModalProps) {
   const catalogRevision = useAgentCatalogRevision();
   const [data, setData] = useState<MarketplaceResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [tab, setTab] = useState<TabKind>("installed");
+  const [tab, setTab] = useState<TabKind>(initialTab ?? "installed");
+  // A caller that names a tab gets it on every open (the modal stays mounted while closed).
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open && initialTab) setTab(initialTab);
+  }
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);

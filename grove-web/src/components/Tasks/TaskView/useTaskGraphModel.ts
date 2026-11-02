@@ -17,7 +17,7 @@ import {
   getConfig,
   deleteChat,
 } from "../../../api";
-import type { NodeStatus } from "../../../api/walkieTalkie";
+import type { NodeOutcome, NodeStatus } from "../../../api/walkieTalkie";
 import { useRadioEvents } from "../../../hooks/useRadioEvents";
 import { agentOptions } from "../../../data/agents";
 import { useACPAvailability } from "./useACPAvailability";
@@ -89,14 +89,19 @@ export function sanitizeGraph(raw: Partial<GraphData> | null | undefined): Graph
 export function seedLiveMaps(data: GraphData): {
   statuses: Map<string, NodeStatus>;
   pending: Map<string, string | undefined>;
+  outcomes: Map<string, NodeOutcome>;
 } {
   const statuses = new Map<string, NodeStatus>();
-  for (const n of data.nodes) statuses.set(n.chat_id, n.status as NodeStatus);
+  const outcomes = new Map<string, NodeOutcome>();
+  for (const n of data.nodes) {
+    statuses.set(n.chat_id, n.status as NodeStatus);
+    if (n.outcome) outcomes.set(n.chat_id, n.outcome);
+  }
   const pending = new Map<string, string | undefined>();
   for (const e of data.edges) {
     if (e.state !== "idle") pending.set(pendingKey(e.from, e.to), e.pending_message?.body_excerpt);
   }
-  return { statuses, pending };
+  return { statuses, pending, outcomes };
 }
 
 /** Live edge state: a queued message is in flight while its target works, blocked otherwise. */
@@ -154,6 +159,9 @@ export function useTaskGraphData(projectId: string, taskId: string) {
   const [reloadKey, setReloadKey] = useState(0);
   const [nodeStatusMap, setNodeStatusMap] = useState<Map<string, NodeStatus>>(new Map());
   const [pendingPairsMap, setPendingPairsMap] = useState<Map<string, string | undefined>>(new Map());
+  // Settled last-turn outcome per chat (`error` / `done`), carried on
+  // ChatStatus events and the /graph snapshot. Absent = no outcome.
+  const [nodeOutcomeMap, setNodeOutcomeMap] = useState<Map<string, NodeOutcome>>(new Map());
 
   // Monotonic counter for /graph fetches. Each fetch records its seq at the
   // moment it's issued; on response we drop it iff a newer fetch has already
@@ -167,9 +175,10 @@ export function useTaskGraphData(projectId: string, taskId: string) {
 
   const applySnapshot = useCallback((sanitized: GraphData) => {
     setData(sanitized);
-    const { statuses, pending } = seedLiveMaps(sanitized);
+    const { statuses, pending, outcomes } = seedLiveMaps(sanitized);
     setNodeStatusMap(statuses);
     setPendingPairsMap(pending);
+    setNodeOutcomeMap(outcomes);
   }, []);
 
   const refreshGraph = useCallback(async () => {
@@ -192,7 +201,7 @@ export function useTaskGraphData(projectId: string, taskId: string) {
   // mutate local maps; topology changes (chat list) still trigger a full
   // /graph refetch. No polling, no wholesale refresh on every status flip.
   useRadioEvents({
-    onChatStatus: (evtProjectId, evtTaskId, chatId, status) => {
+    onChatStatus: (evtProjectId, evtTaskId, chatId, status, payload) => {
       if (evtProjectId !== projectId || evtTaskId !== taskId) return;
       // Only discard fetches issued STRICTLY BEFORE this event. The current
       // in-flight fetch (if any) was triggered by an event sibling like
@@ -207,6 +216,14 @@ export function useTaskGraphData(projectId: string, taskId: string) {
         if (prev.get(chatId) === status) return prev;
         const next = new Map(prev);
         next.set(chatId, status);
+        return next;
+      });
+      const outcome = payload?.outcome;
+      setNodeOutcomeMap((prev) => {
+        if (prev.get(chatId) === outcome) return prev;
+        const next = new Map(prev);
+        if (outcome) next.set(chatId, outcome);
+        else next.delete(chatId);
         return next;
       });
     },
@@ -265,6 +282,10 @@ export function useTaskGraphData(projectId: string, taskId: string) {
     (chatId: string): NodeStatus => nodeStatusMap.get(chatId) ?? "disconnected",
     [nodeStatusMap],
   );
+  const getNodeOutcome = useCallback(
+    (chatId: string): NodeOutcome | undefined => nodeOutcomeMap.get(chatId),
+    [nodeOutcomeMap],
+  );
   const deriveEdgeState = useCallback(
     (fromId: string, toId: string): EdgeLiveState =>
       edgeLiveState(pendingPairsMap, nodeStatusMap, fromId, toId),
@@ -280,6 +301,7 @@ export function useTaskGraphData(projectId: string, taskId: string) {
     nodeStatusMap,
     pendingPairsMap,
     getNodeStatus,
+    getNodeOutcome,
     deriveEdgeState,
   };
 }

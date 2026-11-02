@@ -435,6 +435,10 @@ pub struct GraphNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duty: Option<String>,
     pub status: String,
+    /// Settled outcome of the agent's last turn while idle: `"error"` or
+    /// `"done"` (see `agent_graph::node_outcome`). Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
     /// Count of pending messages where this node is the recipient.
     pub pending_in: usize,
     /// Count of pending messages where this node is the sender.

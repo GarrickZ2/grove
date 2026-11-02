@@ -157,6 +157,8 @@ export interface LinkedProjectItem {
   /** Task whose Code Review stands for this project in an aggregated Review
    *  panel (its Local Task). Null when the project can't be reviewed. */
   review_task_id: string | null;
+  /** Project-level defaults only: archived, which counts as removed. */
+  archived?: boolean;
 }
 
 export interface LinkedProjectsResponse {
@@ -1265,6 +1267,75 @@ export function revealArtifactFile(projectId: string, taskId: string, dir: strin
 
 export function uploadArtifacts(projectId: string, taskId: string, files: File[]) {
   return artifactApi(projectId, taskId).upload(files) as Promise<ArtifactFile[]>;
+}
+
+/** Upload one file to input/, reporting progress (0..1) as it goes. */
+export function uploadArtifactWithProgress(
+  projectId: string,
+  taskId: string,
+  file: File,
+  onProgress: (fraction: number) => void,
+  signal?: AbortSignal,
+): Promise<ArtifactFile[]> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiClient.postFormDataWithProgress<ArtifactFile[]>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/upload`,
+    formData,
+    onProgress,
+    signal,
+  );
+}
+
+/**
+ * URL of a .zip of artifacts in one root: the whole root (no paths), one
+ * folder or file, or a multi-selection. Paths are relative to `dir`.
+ */
+export function artifactsZipUrl(
+  projectId: string,
+  taskId: string,
+  dir: string,
+  paths: string[],
+  name?: string,
+): string {
+  const params = new URLSearchParams({ dir });
+  if (paths.length === 1) params.set('path', paths[0]);
+  else if (paths.length > 1) params.set('paths', JSON.stringify(paths));
+  if (name) params.set('name', name);
+  return `/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/zip?${params}`;
+}
+
+// ============================================================================
+// Task git status (ahead/behind + uncommitted changes)
+// ============================================================================
+
+export type UncommittedStatus =
+  | 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'typechange' | 'untracked' | 'conflicted';
+
+export interface UncommittedEntry {
+  path: string;
+  old_path?: string;
+  status: UncommittedStatus;
+  staged: boolean;
+  additions?: number;
+  deletions?: number;
+}
+
+export interface TaskGitStatusResponse {
+  /** False for Studio tasks and tasks without a git worktree. */
+  is_git: boolean;
+  base?: string;
+  /** Null when the base ref can't be resolved locally. */
+  ahead: number | null;
+  behind: number | null;
+  uncommitted: UncommittedEntry[];
+  uncommitted_truncated: boolean;
+  uncommitted_total: number;
+}
+
+/** Ahead/behind against the target (local refs, no fetch) and the worktree's uncommitted changes. */
+export async function getTaskGitStatus(projectId: string, taskId: string): Promise<TaskGitStatusResponse> {
+  return apiClient.get<TaskGitStatusResponse>(`/api/v1/projects/${projectId}/tasks/${taskId}/git/status`);
 }
 
 export async function createArtifactLink(

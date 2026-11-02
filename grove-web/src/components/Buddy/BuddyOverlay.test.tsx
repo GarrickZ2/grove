@@ -7,12 +7,13 @@ import { useBuddyOpen } from "../../hooks/useBuddyOpen";
 import { useCommand } from "../../keyboard/useCommand";
 import { commandRegistry } from "../../keyboard/CommandRegistry";
 import { buildCommands } from "../../hooks/useCommands";
+import { OrbitInterfaceContext } from "../../orbit/ui/interfaceContext";
 vi.mock("../../context", () => ({ useConfig: () => ({ config: { web: { interface: "orbit" } } }), useProject: () => ({ applySelectedProject: vi.fn() }) }));
 vi.mock("../../hooks/useBuddies", () => ({ useBuddies: () => ({ items: [], refresh: vi.fn() }) }));
 vi.mock("../../hooks/useRadioEvents", () => ({ useRadioEvents: () => {} }));
 vi.mock("./BuddyApp", () => ({ BuddyApp: ({ onExit }: { onExit: () => void }) => <button onClick={onExit}>Back to Grove</button> }));
 vi.mock("../ui/CommandPalette", () => ({ CommandPalette: () => null }));
-vi.mock("framer-motion", () => ({ AnimatePresence: ({ children }: { children: React.ReactNode }) => children, motion: { div: ({ children, ref, tabIndex }: { children: React.ReactNode; ref: React.Ref<HTMLDivElement>; tabIndex: number }) => <div ref={ref} tabIndex={tabIndex}>{children}</div> } }));
+vi.mock("framer-motion", () => ({ AnimatePresence: ({ children }: { children: React.ReactNode }) => children, motion: { div: ({ children, ref, tabIndex, className }: { children: React.ReactNode; ref: React.Ref<HTMLDivElement>; tabIndex: number; className?: string }) => <div ref={ref} tabIndex={tabIndex} className={className}>{children}</div> } }));
 let host: HTMLDivElement, root: Root;
 const handled = vi.fn();
 function Shell() {
@@ -57,4 +58,11 @@ it("provides open, leave, new and individual Buddy commands", () => {
   expect(open.mock.calls).toEqual([[], ["a"], [undefined, true]]);
   buildCommands({ buddies: { open, leave, items: [] } })[0].handler();
   expect(leave).toHaveBeenCalledOnce();
+});
+it("carries the Orbit tokens only under the Orbit interface", async () => {
+  localStorage.setItem("grove-buddy-open", "true");
+  await act(async () => root.render(<Harness />));
+  expect(host.querySelector(".buddy-overlay")?.classList.contains("orbit-ui")).toBe(false);
+  await act(async () => root.render(<OrbitInterfaceContext.Provider value><Harness /></OrbitInterfaceContext.Provider>));
+  expect(host.querySelector(".buddy-overlay")?.classList.contains("orbit-ui")).toBe(true);
 });

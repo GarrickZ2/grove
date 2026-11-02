@@ -1,0 +1,443 @@
+/* Orbit conversation (desktop). `.ocv` is set on the message pane only in
+   Orbit, so Workbench and phones never match these rules. Colors derive
+   from the theme's --color-* variables (the rail preview is portaled out of
+   .orbit-ui, so it cannot use --o-* tokens). */
+
+.ocv {
+  --ocv-line: color-mix(in oklab, var(--color-border) 70%, transparent);
+  --ocv-line-strong: color-mix(in oklab, var(--color-text) 16%, transparent);
+  --ocv-fill: color-mix(in oklab, var(--color-text) 4%, transparent);
+  --ocv-fill-2: color-mix(in oklab, var(--color-text) 7%, transparent);
+  --ocv-code: color-mix(in oklab, var(--color-text) 3.5%, var(--color-bg));
+  --ocv-muted: var(--color-text-muted);
+  --ocv-faint: color-mix(in oklab, var(--color-text-muted) 72%, transparent);
+  --ocv-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --ocv-ease: cubic-bezier(.25, 1, .5, 1);
+  --ocv-fade: 40px;
+}
+
+/* ── 1. Bottom fade ─────────────────────────────────────────────────────
+   Starts above the input area and is solid behind the composer, so lines
+   dissolve as they scroll under it. The transcript footer pads by the same
+   amount, so the last line at the bottom sits clear of it. */
+.ocv-fade {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(-1 * var(--ocv-fade));
+  bottom: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--color-bg) 0%, transparent) 0,
+    color-mix(in oklab, var(--color-bg) 38%, transparent) calc(var(--ocv-fade) * .35),
+    color-mix(in oklab, var(--color-bg) 78%, transparent) calc(var(--ocv-fade) * .7),
+    var(--color-bg) var(--ocv-fade)
+  );
+}
+
+/* ── 2. Turn rail ───────────────────────────────────────────────────── */
+.ocv-rail {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  z-index: 20;
+  display: flex;
+  max-height: min(60vh, 420px);
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 12px 0;
+  overflow-y: auto;
+  transform: translateY(-50%);
+  opacity: .72;
+  transition: opacity 180ms var(--ocv-ease);
+}
+.ocv-rail:hover, .ocv-rail:focus-within { opacity: 1; }
+@container task-chat-message-pane (max-width: 719px) {
+  .ocv-rail { display: none; }
+}
+.ocv-tick {
+  display: flex;
+  width: 28px;
+  height: 12px;
+  flex: none;
+  align-items: center;
+  padding: 0 0 0 5px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+.ocv-tick i {
+  display: block;
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in oklab, var(--color-text) 24%, transparent);
+  transition: width 200ms var(--ocv-ease), background-color 150ms;
+}
+.ocv-tick[data-state="unanswered"] i { background: color-mix(in oklab, var(--color-warning) 60%, transparent); }
+.ocv-tick[data-state="active"] i { width: 15px; background: var(--color-text); }
+.ocv-tick[data-state="streaming"] i { width: 12px; background: var(--color-highlight); animation: ocv-breathe 1.6s ease-in-out infinite; }
+/* Hover swells the line and, a little, its neighbours. */
+.ocv-tick:hover + .ocv-tick:not([data-state="active"]) i,
+.ocv-tick:not([data-state="active"]):has(+ .ocv-tick:hover) i { width: 12px; }
+.ocv-tick:hover i, .ocv-tick:focus-visible i { width: 20px; background: var(--color-text); }
+.ocv-tick[data-state="streaming"]:hover i { background: var(--color-highlight); }
+.ocv-tick:focus-visible { outline: 2px solid var(--color-highlight); outline-offset: -1px; }
+
+.ocv-rail-preview {
+  position: fixed;
+  z-index: 120;
+  width: min(340px, calc(100vw - 32px));
+  padding: 10px 12px 11px;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--color-bg) 96%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-text) 11%, transparent), 0 18px 44px -18px rgb(0 0 0 / 40%);
+  backdrop-filter: blur(16px) saturate(1.3);
+  color: var(--color-text);
+  pointer-events: none;
+  animation: ocv-preview-in 170ms cubic-bezier(.25, 1, .5, 1) both;
+}
+.ocv-rail-preview.is-measuring { visibility: hidden; animation: none; }
+.ocv-rail-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.ocv-rail-preview-live { display: inline-flex; align-items: center; gap: 5px; color: var(--color-highlight); }
+.ocv-rail-preview-live i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: ocv-breathe 1.6s ease-in-out infinite; }
+.ocv-rail-preview-user {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.ocv-rail-preview-reply {
+  display: -webkit-box;
+  margin: 6px 0 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.ocv-rail-preview-tools {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent);
+  color: color-mix(in oklab, var(--color-text-muted) 80%, transparent);
+  font-size: 11px;
+}
+
+/* ── 3. Message typography ──────────────────────────────────────────── */
+.ocv-user-row { margin-top: 14px; }
+.ocv-user-bubble {
+  position: relative;
+  padding: 9px 14px;
+  border-radius: 18px 18px 6px 18px;
+  background: color-mix(in oklab, var(--color-text) 5.5%, var(--color-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-text) 6%, transparent);
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.ocv-prose { font-size: 14px; line-height: 1.68; letter-spacing: -.003em; }
+.ocv-prose :is(p, li) { font-size: 14px; line-height: 1.68; }
+.ocv-prose p { margin: 0 0 .75em; }
+.ocv-prose p:last-child { margin-bottom: 0; }
+/* Prose, tables and code share one column edge, so a reply reads as one block (the chat column is already a readable width). */
+.ocv-prose :is(ul, ol) { margin: .25em 0 .85em; margin-left: 0; padding-left: 1.4em; list-style-position: outside; }
+.ocv-prose :is(ul, ol):last-child { margin-bottom: 0; }
+.ocv-prose li + li { margin-top: .3em; }
+.ocv-prose li :is(ul, ol) { margin: .3em 0 0; }
+.ocv-prose li::marker { color: var(--ocv-faint); }
+.ocv-prose :is(h1, h2, h3, h4) { color: var(--color-text); font-weight: 600; letter-spacing: -.011em; }
+.ocv-prose h1 { margin: 1.4em 0 .5em; font-size: 18px; line-height: 1.35; }
+.ocv-prose h2 { margin: 1.35em 0 .45em; font-size: 16px; line-height: 1.4; }
+.ocv-prose h3 { margin: 1.2em 0 .4em; font-size: 14.5px; line-height: 1.45; }
+.ocv-prose h4 { margin: 1.1em 0 .35em; font-size: 14px; line-height: 1.5; }
+.ocv-prose :is(h1, h2, h3, h4):first-child { margin-top: 0; }
+.ocv-prose strong { font-weight: 600; }
+.ocv-prose blockquote { margin: .85em 0; padding-left: .95em; border-left: 2px solid var(--ocv-line-strong); color: var(--ocv-muted); }
+.ocv-prose hr { margin: 1.5em 0; border-color: var(--ocv-line); }
+.ocv-prose :not(pre) > code:not(.markdown-code-block code) {
+  padding: .12em .38em;
+  border-radius: 5px;
+  background: var(--ocv-fill);
+  box-shadow: inset 0 0 0 1px var(--ocv-line);
+  color: var(--color-text);
+  font-family: var(--ocv-mono);
+  font-size: .86em;
+}
+.ocv-prose .markdown-code-block {
+  margin: .9em 0;
+  border-radius: 10px;
+  border-color: var(--ocv-line) !important;
+  background: var(--ocv-code) !important;
+}
+.ocv-prose .markdown-code-block:first-child { margin-top: 0; }
+.ocv-prose .markdown-code-block:last-child { margin-bottom: 0; }
+.ocv-prose .markdown-code-block > div:first-child {
+  padding-block: 4px;
+  border-bottom-color: var(--ocv-line) !important;
+  background: transparent !important;
+}
+.ocv-prose .markdown-code-block .font-mono.leading-6 { font-size: 12.5px; line-height: 20px; }
+.ocv-prose table { font-size: 13px; }
+.ocv-prose :is(th, td) { border-color: var(--ocv-line); }
+.ocv-prose thead { background: var(--ocv-fill); }
+
+/* Tool-call rows: quieter rail, steadier rhythm. */
+.ocv-steps-seg::before { background-color: var(--ocv-line) !important; }
+.ocv-steps-seg > div > button, .ocv-steps-seg > button { padding-block: 3px; font-size: 12.5px; line-height: 18px; }
+.ocv-steps-seg :is(.font-mono) { font-family: var(--ocv-mono); }
+
+/* ── 5. Work group (live and settled) ───────────────────────────────── */
+.ocv-work-head {
+  display: inline-flex;
+  max-width: 100%;
+  height: 26px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ocv-muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: color 150ms;
+}
+.ocv-work-head:hover { color: var(--color-text); }
+.ocv-work-head:focus-visible { outline: 2px solid var(--color-highlight); outline-offset: 2px; }
+.ocv-work-head > svg:first-child { width: 13px; height: 13px; flex: none; }
+.ocv-work-title { flex: none; font-weight: 500; }
+.ocv-work-head.is-live .ocv-work-title { color: var(--color-text); }
+.ocv-work-fail { min-width: 0; overflow: hidden; color: var(--color-error); text-overflow: ellipsis; white-space: nowrap; }
+.ocv-work-chev { width: 12px; height: 12px; flex: none; opacity: .7; transition: transform 200ms var(--ocv-ease); }
+.ocv-work-chev.is-open { transform: rotate(90deg); }
+.ocv-tabular { font-variant-numeric: tabular-nums; }
+.ocv-live-meta { flex: none; white-space: nowrap; }
+.ocv-live-meta::before { content: "·"; margin-right: 6px; opacity: .55; }
+.ocv-live-meta.is-failed { color: var(--color-error); }
+.ocv-live-dot {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  flex: none;
+  margin: 0 3px;
+  border-radius: 50%;
+  background: var(--color-highlight);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-highlight) 18%, transparent);
+  animation: ocv-breathe 1.6s ease-in-out infinite;
+}
+.ocv-live-now {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  margin: 1px 0 2px 6px;
+  padding: 3px 0 3px 12px;
+  border-left: 1px solid var(--ocv-line);
+  color: var(--ocv-muted);
+  font-size: 12.5px;
+  line-height: 18px;
+  animation: ocv-step-in 240ms var(--ocv-ease) both;
+}
+.ocv-live-now.is-failed { color: var(--color-error); }
+.ocv-live-now-icon { width: 13px; height: 13px; flex: none; opacity: .8; }
+.ocv-live-now-verb { flex: none; color: var(--color-text); }
+.ocv-live-now-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ocv-live-now-subject.is-mono { font-family: var(--ocv-mono); font-size: 12px; }
+.ocv-work-body { margin-top: 4px; }
+
+/* ── 4. Decision cards ──────────────────────────────────────────────────
+   Pending requests dock in the composer (.oc-ask); resolved ones are a
+   quiet record in the timeline. */
+.ocv-decision { display: flex; min-height: 0; flex-direction: column; gap: 10px; color: var(--color-text); }
+.ocv-decision-head { display: flex; align-items: flex-start; gap: 10px; }
+.ocv-decision-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+}
+.ocv-decision-icon svg { width: 15px; height: 15px; }
+.ocv-decision-text { min-width: 0; flex: 1; }
+.ocv-decision-eyebrow { color: var(--color-warning); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.ocv-decision-title {
+  max-height: 4.5em;
+  margin-top: 1px;
+  overflow-y: auto;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.ocv-decision-title:focus-visible, .ocv-decision-payload:focus-visible, .ocv-decision-doc:focus-visible { outline: 2px solid var(--color-highlight); outline-offset: 2px; }
+.ocv-decision-payload {
+  max-height: 9.5rem;
+  margin: 0 0 0 38px;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-text) 4%, var(--color-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-border) 70%, transparent);
+  color: color-mix(in oklab, var(--color-text) 86%, var(--color-text-muted));
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.ocv-decision-doc {
+  max-height: min(16rem, 34vh);
+  margin-left: 38px;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-text) 3%, var(--color-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-border) 70%, transparent);
+  font-size: 13px;
+}
+.ocv-decision-doc.ocv-prose :is(p, li) { font-size: 13px; line-height: 1.6; }
+.ocv-decision-doc.ocv-prose :is(h1, h2) { font-size: 14.5px; }
+.ocv-decision-doc.ocv-prose :is(h3, h4) { font-size: 13.5px; }
+.ocv-decision-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-left: 38px; }
+.ocv-decision-spacer { flex: 1; }
+.ocv-btn {
+  display: inline-flex;
+  height: 30px;
+  max-width: 100%;
+  align-items: center;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-text) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-text) 10%, transparent);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms, box-shadow 150ms;
+}
+.ocv-btn:hover { background: color-mix(in oklab, var(--color-text) 11%, transparent); }
+.ocv-btn.is-quiet { background: none; box-shadow: none; color: var(--color-text-muted); }
+.ocv-btn.is-quiet:hover { background: color-mix(in oklab, var(--color-error) 9%, transparent); color: var(--color-error); }
+.ocv-btn.is-primary { background: var(--color-text); box-shadow: none; color: var(--color-bg); }
+.ocv-btn.is-primary:hover { background: color-mix(in oklab, var(--color-text) 86%, var(--color-bg)); }
+.ocv-btn:focus-visible, .ocv-decision-option:focus-visible { outline: 2px solid var(--color-highlight); outline-offset: 2px; }
+.ocv-decision-list { display: flex; flex-direction: column; gap: 4px; padding-left: 38px; }
+.ocv-decision-option {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 11px;
+  border: 0;
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--color-text) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-text) 9%, transparent);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms, box-shadow 150ms;
+}
+.ocv-decision-option svg { width: 14px; height: 14px; flex: none; color: var(--color-text-muted); }
+.ocv-decision-option:hover { background: color-mix(in oklab, var(--color-text) 8%, transparent); }
+.ocv-decision-option.is-primary { background: var(--color-text); box-shadow: none; color: var(--color-bg); font-weight: 500; }
+.ocv-decision-option.is-primary svg { color: var(--color-bg); }
+.ocv-decision-option.is-primary:hover { background: color-mix(in oklab, var(--color-text) 86%, var(--color-bg)); }
+.ocv-decision-option.is-reject { background: none; box-shadow: none; color: var(--color-text-muted); }
+.ocv-decision-option.is-reject:hover { background: color-mix(in oklab, var(--color-error) 8%, transparent); color: var(--color-error); }
+.ocv-decision-option.is-reject:hover svg { color: var(--color-error); }
+
+/* Answered: waiting for the agent to resolve it. */
+.ocv-btn:disabled, .ocv-decision-option:disabled { cursor: default; }
+.ocv-decision.is-answered :is(.ocv-btn, .ocv-decision-option):not([aria-busy]) { opacity: .45; }
+.ocv-btn .ocv-spin, .ocv-decision-option .ocv-spin { width: 13px; height: 13px; margin-right: 6px; animation: ocv-spin 900ms linear infinite; }
+.ocv-decision-option .ocv-spin { margin-right: 0; }
+@keyframes ocv-spin { to { transform: rotate(360deg); } }
+
+.ocv-decision-record {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  width: fit-content;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 8px;
+  background: var(--ocv-fill);
+  color: var(--ocv-muted);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+.ocv-decision-record-icon { width: 13px; height: 13px; flex: none; }
+.ocv-decision-record-outcome { flex: none; font-weight: 600; }
+.ocv-decision-record.is-allowed .ocv-decision-record-icon, .ocv-decision-record.is-allowed .ocv-decision-record-outcome { color: var(--color-success); }
+.ocv-decision-record.is-denied .ocv-decision-record-icon, .ocv-decision-record.is-denied .ocv-decision-record-outcome { color: var(--color-error); }
+.ocv-decision-record.is-cancelled .ocv-decision-record-icon, .ocv-decision-record.is-cancelled .ocv-decision-record-outcome { color: var(--color-warning); }
+.ocv-decision-record-title { min-width: 0; overflow: hidden; color: var(--color-text); text-overflow: ellipsis; white-space: nowrap; }
+.ocv-decision-record-choice { flex: none; max-width: 38%; overflow: hidden; color: var(--ocv-faint); text-overflow: ellipsis; white-space: nowrap; }
+.ocv-decision-record-choice::before { content: "·"; margin-right: 7px; }
+
+@keyframes ocv-breathe { 50% { opacity: .45; } }
+@keyframes ocv-step-in { from { opacity: 0; transform: translateY(3px); } }
+@keyframes ocv-preview-in { from { opacity: 0; transform: translateX(-4px) scale(.985); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ocv-spin, .ocv-tick i, .ocv-live-dot, .ocv-live-now, .ocv-rail-preview, .ocv-rail-preview-live i, .ocv-work-chev, .ocv-rail {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ── Todo and mode-switch chips in the transcript ─────────────────────
+   Same quiet chip as the composer's status zone instead of the tinted
+   status pills; failures keep their colour. */
+.ocv-special > div > div:first-child > button {
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ocv-fill);
+  box-shadow: inset 0 0 0 1px var(--ocv-line);
+  color: var(--ocv-muted);
+  font-size: 12px;
+  filter: none;
+}
+.ocv-special > div > div:first-child > button:hover:not(:disabled) { background: var(--ocv-fill-2); color: var(--color-text); }
+.ocv-special > div > div:first-child > button[aria-expanded="true"],
+.ocv-special > div > div:first-child > button[class*="ring-1"] { background: var(--ocv-fill-2); box-shadow: inset 0 0 0 1px var(--ocv-line-strong); color: var(--color-text); }
+.ocv-special > div > div:first-child > button[class*="color-warning"] { color: var(--color-warning); }
+.ocv-special > div > div:last-child:not(:first-child) > div {
+  border: 0;
+  border-radius: 10px;
+  background: var(--ocv-code);
+  box-shadow: inset 0 0 0 1px var(--ocv-line);
+}
+.ocv-special > div > div:last-child:not(:first-child) > div > div:first-child { border-bottom-color: var(--ocv-line); background: none; }

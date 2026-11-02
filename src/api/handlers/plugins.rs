@@ -274,7 +274,7 @@ window.addEventListener("message", (e) => {
   } else if (d.type === "chat.active") {
     currentActiveChatId = typeof d.chatId === "string" ? d.chatId : null;
   } else if (d.type === "grove:theme" && d.data) {
-    applyTheme(d.data as GroveTheme); // live theme switch
+    applyTheme(d.data as Partial<GroveTheme>); // live theme / interface switch
   }
 });
 
@@ -309,11 +309,16 @@ function b64ToBytes(s: string): Uint8Array {
   return out;
 }
 
+/** Which interface Grove is showing: the redesigned "orbit" or the classic "workbench". */
+export type GroveInterface = "orbit" | "workbench";
+
 export interface HostInfo {
   projectId: string | null;
   projectName: string | null;
   projectType: "repo" | "studio" | null;
   taskId: string | null;
+  /** Missing on Grove builds older than the interface flag — treat as "workbench". */
+  interface?: GroveInterface;
 }
 
 export interface ThemeColors {
@@ -321,7 +326,18 @@ export interface ThemeColors {
   text: string; textMuted: string; highlight: string; accent: string;
   success: string; warning: string; error: string; info: string;
 }
-export interface GroveTheme { id: string; isLight: boolean; colors: ThemeColors; }
+/** Orbit design tokens keyed by CSS name ("--o-bg", "--o-radius", ...). */
+export type OrbitTokens = Record<string, string>;
+export interface GroveTheme {
+  id: string;
+  isLight: boolean;
+  colors: ThemeColors;
+  /** The interface Grove is showing ("workbench" on hosts that don't report it). */
+  interface: GroveInterface;
+  /** The resolved Orbit tokens from the host ({} on hosts that don't send them;
+   *  the `--o-*` variables then come from the SDK's built-in fallback). */
+  tokens: OrbitTokens;
+}
 
 const CSS_VAR: Record<keyof ThemeColors, string> = {
   bg: "--color-bg", bgSecondary: "--color-bg-secondary", bgTertiary: "--color-bg-tertiary",
@@ -329,16 +345,72 @@ const CSS_VAR: Record<keyof ThemeColors, string> = {
   highlight: "--color-highlight", accent: "--color-accent", success: "--color-success",
   warning: "--color-warning", error: "--color-error", info: "--color-info",
 };
+
+// Fallback Orbit tokens, derived from the --color-* variables exactly as Grove
+// derives them. Used before the theme arrives and on Grove builds that don't
+// send tokens; the host's resolved values (inline on :root) override them.
+// Inserted first in <head>, so your own stylesheet can still override any of it.
+const ORBIT_FALLBACK_CSS = `:root{
+  --o-bg:var(--color-bg);--o-text:var(--color-text);--o-muted:var(--color-text-muted);
+  --o-border:color-mix(in oklab,var(--color-border) 70%,transparent);
+  --o-border-strong:color-mix(in oklab,var(--color-text) 22%,var(--o-border));
+  --o-hover:color-mix(in oklab,var(--color-text) 4.5%,transparent);
+  --o-selected:color-mix(in oklab,var(--color-text) 7%,transparent);
+  --o-group:color-mix(in oklab,var(--color-bg) 98%,var(--color-text) 2%);
+  --o-track:color-mix(in oklab,var(--color-text) 15%,var(--color-bg));
+  --o-code:color-mix(in oklab,var(--color-text) 4%,var(--color-bg));
+  --o-frost:color-mix(in oklab,var(--color-bg) 76%,transparent);
+  --o-accent:var(--color-highlight);--o-accent-soft:color-mix(in oklab,var(--color-highlight) 16%,transparent);
+  --o-success:var(--color-success);--o-warn:var(--color-warning);--o-error:var(--color-error);--o-info:var(--color-info);
+  --o-ink:var(--color-text);--o-on-ink:var(--color-bg);--o-on-accent:#fff;
+  --o-shadow:rgb(0 0 0 / 7%);--o-shadow-1:0 1px 2px var(--o-shadow);
+  --o-shadow-2:0 1px 2px var(--o-shadow),0 16px 36px -14px rgb(0 0 0 / 22%);
+  --o-ring-selected:0 0 0 3px var(--o-accent-soft);
+  --o-radius-xs:6px;--o-radius-sm:7px;--o-radius:8px;--o-radius-md:10px;--o-radius-lg:12px;
+  --o-font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --o-font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --o-ease-out:cubic-bezier(.25,1,.5,1);--o-ease-pop:cubic-bezier(.3,1.6,.5,1);--o-dur-fast:150ms;
+}`;
+if (typeof document !== "undefined" && !document.getElementById("grove-orbit-fallback")) {
+  const style = document.createElement("style");
+  style.id = "grove-orbit-fallback";
+  style.textContent = ORBIT_FALLBACK_CSS;
+  (document.head ?? document.documentElement).prepend(style);
+}
+
+const TOKEN_NAME = /^--o-[a-z0-9-]+$/;
 let currentTheme: GroveTheme | null = null;
+let appliedTokens: string[] = [];
 const themeListeners = new Set<(t: GroveTheme) => void>();
-function applyTheme(t: GroveTheme) {
+// Accepts both the current payload and the old one (no interface / tokens).
+function applyTheme(raw: Partial<GroveTheme> & { colors?: Partial<ThemeColors> }) {
+  const tokens: OrbitTokens = {};
+  if (raw.tokens && typeof raw.tokens === "object") {
+    for (const [name, value] of Object.entries(raw.tokens)) {
+      if (TOKEN_NAME.test(name) && typeof value === "string" && value) tokens[name] = value;
+    }
+  }
+  const t: GroveTheme = {
+    id: String(raw.id ?? ""),
+    isLight: raw.isLight ?? true,
+    colors: (raw.colors ?? {}) as ThemeColors,
+    interface: raw.interface === "orbit" ? "orbit" : "workbench",
+    tokens,
+  };
   currentTheme = t;
   const root = document.documentElement;
   (Object.keys(CSS_VAR) as (keyof ThemeColors)[]).forEach((k) => {
     if (t.colors[k]) root.style.setProperty(CSS_VAR[k], t.colors[k]);
   });
-  root.style.setProperty("--grove-bg", t.colors.bg);
-  root.style.setProperty("--grove-text", t.colors.text);
+  if (t.colors.bg) root.style.setProperty("--grove-bg", t.colors.bg);
+  if (t.colors.text) root.style.setProperty("--grove-text", t.colors.text);
+  // Host tokens go inline on :root; a token the host stopped sending falls
+  // back to the derived default above.
+  for (const name of appliedTokens) if (!(name in tokens)) root.style.removeProperty(name);
+  for (const [name, value] of Object.entries(tokens)) root.style.setProperty(name, value);
+  appliedTokens = Object.keys(tokens);
+  root.dataset.groveInterface = t.interface; // <html data-grove-interface="orbit|workbench">
+  root.dataset.groveTheme = t.isLight ? "light" : "dark";
   themeListeners.forEach((l) => l(t));
 }
 
@@ -436,6 +508,18 @@ function exec(command: string, args: string[] = []): AsyncIterable<ExecEvent> {
   };
 }
 
+/** A Settings section `grove.navigate({ to: "settings", section })` can open. */
+export type SettingsSection =
+  | "agents" | "general" | "appearance" | "notifications" | "shortcuts" | "worktrees"
+  | "voice" | "vcontrol" | "avoice" | "providers" | "system";
+
+/** Where `grove.navigate` can take the user: this plugin's own page
+ *  (`contributes.sidebar`) or Grove's Settings. Nothing else — no other
+ *  plugin's page, no URL. */
+export type NavigateTarget =
+  | { to: "plugin-page" }
+  | { to: "settings"; section?: SettingsSection };
+
 /** A chat session under the current task. */
 export interface ChatInfo {
   id: string;
@@ -447,6 +531,13 @@ export const grove = {
   // Project + task context. `taskId`/project read are only meaningful in a
   // workspace panel; a sidebar page is app-scoped (taskId is null).
   host: { getInfo: () => call<HostInfo>("host.getInfo") },
+  // Move Grove to this plugin's own page or to Settings. Resolves { ok: true };
+  // rejects with a GroveError ("bad_request" for an unknown target or section,
+  // "not_found" when the plugin has no page, "forbidden" from a hidden frame).
+  //   await grove.navigate({ to: "plugin-page" });
+  //   await grove.navigate({ to: "settings", section: "appearance" });
+  navigate: (target: NavigateTarget): Promise<{ ok: true }> =>
+    call<{ ok: true }>("host.navigate", { ...target }),
   // Private storage at three scopes (requires storage:read / storage:write).
   storage: {
     global: makeScope("global"),
@@ -516,11 +607,18 @@ export const grove = {
   // Small helpers. `uuid()` wraps crypto.randomUUID() — collision-free, no need
   // to roll your own from Date.now()/Math.random().
   util: { uuid: (): string => crypto.randomUUID() },
-  // Grove's theme. The SDK applies it to your :root automatically (so
-  // `var(--color-bg)` etc. match Grove and update live on theme switch).
+  // Grove's theme. The SDK applies it to your :root automatically, so
+  // `var(--color-bg)` etc. and the Orbit tokens `var(--o-bg)`, `var(--o-radius)`
+  // ... match Grove and update live on theme or interface switch. <html> also
+  // carries data-grove-interface="orbit|workbench" and data-grove-theme="light|dark".
   theme: {
     getColors: (): ThemeColors | null => currentTheme?.colors ?? null,
     isLight: (): boolean => currentTheme?.isLight ?? true,
+    // "workbench" until the theme arrives, and on Grove builds that don't report it.
+    getInterface: (): GroveInterface => currentTheme?.interface ?? "workbench",
+    // The host's resolved Orbit tokens ({} until the theme arrives or on older Grove).
+    getTokens: (): OrbitTokens => ({ ...(currentTheme?.tokens ?? {}) }),
+    // Fires on every theme or interface change, with the full GroveTheme.
     onChange: (cb: (t: GroveTheme) => void): (() => void) => {
       themeListeners.add(cb);
       return () => { themeListeners.delete(cb); };
@@ -530,7 +628,7 @@ export const grove = {
 
 // Apply Grove's theme to this plugin on load (and the host pushes updates when
 // the user switches themes — handled in the message listener above).
-call<GroveTheme>("theme.get").then(applyTheme).catch(() => { /* host may be old */ });
+call<Partial<GroveTheme>>("theme.get").then(applyTheme).catch(() => { /* host may be old */ });
 "#;
 
 // MCP-server SDK — the SAME `grove` API as the panel SDK (`src/grove.ts`), so
@@ -884,34 +982,89 @@ export interface CountChanged {
 const SCAFFOLD_MAIN_TS: &str = r#"import { grove } from "./grove-sdk";
 import { STATE_KEY, type PluginState } from "./shared";
 
-// Styled entirely with Grove's theme variables (the SDK applies the current
-// theme to :root and keeps it live), so this panel matches Grove and follows
-// theme switches in Settings.
+// Styled with Grove's Orbit tokens (--o-*). The SDK applies the current theme
+// and tokens to :root and keeps them live, so this panel looks native in Orbit
+// and follows theme switches. The tokens derive from the theme, so it looks
+// right in the classic Workbench interface too; <html data-grove-interface>
+// says which one is showing if you want to tweak either.
 const app = document.getElementById("app")!;
 app.innerHTML = `
   <style>
-    body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background: var(--color-bg); color: var(--color-text); }
-    .wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; box-sizing: border-box; }
-    .card { width: 100%; max-width: 30rem; padding: 1.5rem; border-radius: .75rem; border: 1px solid var(--color-border); background: var(--color-bg-secondary); }
-    h1 { margin: 0 0 .35rem; font-size: 1.25rem; color: var(--color-text); }
-    p { margin: .4rem 0; color: var(--color-text-muted); font-size: .875rem; }
-    code { color: var(--color-highlight); }
-    .count { color: var(--color-highlight); font-weight: 600; }
-    button { margin-top: 1rem; padding: .5rem .9rem; border-radius: .5rem; border: none; background: var(--color-highlight); color: #fff; cursor: pointer; font-size: .875rem; font-weight: 500; }
-    button:hover { opacity: .9; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 13px/1.5 var(--o-font-sans); background: var(--o-bg); color: var(--o-text); -webkit-font-smoothing: antialiased; }
+    .page { max-width: 40rem; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .head { display: flex; align-items: center; gap: 12px; }
+    .glyph { width: 36px; height: 36px; flex-shrink: 0; border-radius: var(--o-radius-md); display: flex; align-items: center; justify-content: center; font-size: 18px; background: var(--o-group); box-shadow: inset 0 0 0 .5px var(--o-border), var(--o-shadow-1); }
+    h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.02em; line-height: 1.25; }
+    .muted { margin: 2px 0 0; color: var(--o-muted); font-size: 12.5px; }
+    .card { border: 1px solid var(--o-border); border-radius: var(--o-radius-lg); background: var(--o-group); box-shadow: var(--o-shadow-1); overflow: hidden; }
+    .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; padding: 6px 8px 6px 14px; border-bottom: 1px solid var(--o-border); }
+    .card-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; }
+    .row + .row { border-top: 1px solid var(--o-border); }
+    .value { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .actions { display: flex; gap: 8px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--o-radius); font: inherit; font-weight: 500; cursor: pointer; white-space: nowrap; transition: transform 140ms var(--o-ease-out), background-color var(--o-dur-fast), border-color var(--o-dur-fast), color var(--o-dur-fast); }
+    .btn:active:not(:disabled) { transform: scale(.96); }
+    .btn:disabled { opacity: .45; cursor: default; }
+    .btn:focus-visible { outline: 2px solid var(--o-accent); outline-offset: 2px; }
+    .btn-primary { background: var(--o-ink); color: var(--o-on-ink); box-shadow: 0 1px 2px rgb(0 0 0 / 18%); }
+    .btn-secondary { background: var(--o-bg); color: var(--o-text); border-color: var(--o-border); box-shadow: var(--o-shadow-1); }
+    .btn-secondary:hover:not(:disabled) { border-color: var(--o-border-strong); }
+    .btn-ghost { background: none; color: var(--o-muted); }
+    .btn-ghost:hover:not(:disabled) { background: var(--o-hover); color: var(--o-text); }
+    .empty { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 22px 16px; text-align: center; }
+    .empty-ic { width: 34px; height: 34px; margin-bottom: 6px; border-radius: var(--o-radius-md); display: flex; align-items: center; justify-content: center; background: var(--o-selected); color: var(--o-muted); box-shadow: inset 0 0 0 .5px var(--o-border); }
+    .empty b { font-size: 13px; font-weight: 600; }
+    .empty span { max-width: 300px; color: var(--o-muted); font-size: 12.5px; }
+    code { font-family: var(--o-font-mono); font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--o-selected); }
+    /* Workbench: primary buttons use the theme accent, like the rest of Workbench. */
+    [data-grove-interface="workbench"] .btn-primary { background: var(--color-highlight); color: #fff; }
   </style>
-  <div class="wrap"><div class="card">
-    <h1>Hello from __NAME__ 👋</h1>
-    <p id="info">Connecting to Grove…</p>
-    <p>Persisted count: <span class="count" id="count">0</span></p>
-    <button id="inc">Increment &amp; save</button>
-    <p>This panel uses Grove's theme — switch themes in Settings and watch it follow.</p>
-    <p>Edit <code>src/main.ts</code>, run <code>npm run dev</code>, then hit Reload.</p>
-  </div></div>
+  <div class="page">
+    <header class="head">
+      <span class="glyph" aria-hidden="true">🧩</span>
+      <div>
+        <h1>__NAME__</h1>
+        <p class="muted" id="info">Connecting to Grove…</p>
+      </div>
+    </header>
+    <section class="card">
+      <div class="card-head">
+        <h2>Counter</h2>
+        <button class="btn btn-ghost" id="reset">Reset</button>
+      </div>
+      <div class="row">
+        <span class="muted">Persisted count</span>
+        <span class="value" id="count">0</span>
+      </div>
+      <div class="row">
+        <span class="muted">Saved in this plugin's global storage</span>
+        <span class="actions"><button class="btn btn-primary" id="inc">Increment &amp; save</button></span>
+      </div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Your UI</h2></div>
+      <div class="empty">
+        <span class="empty-ic" aria-hidden="true">✦</span>
+        <b>Nothing here yet</b>
+        <span>Edit <code>src/main.ts</code>, run <code>npm run dev</code>, then reload the panel.</span>
+      </div>
+    </section>
+    <p class="muted" id="look"></p>
+  </div>
 `;
 
 const infoEl = document.getElementById("info")!;
 const countEl = document.getElementById("count")!;
+const lookEl = document.getElementById("look")!;
+
+// The interface and theme are live: re-render whatever depends on them.
+const showLook = () => {
+  lookEl.textContent = `Interface: ${grove.theme.getInterface()} · ${grove.theme.isLight() ? "light" : "dark"} theme`;
+};
+grove.theme.onChange(showLook);
+showLook();
 
 async function init() {
   try {
@@ -922,11 +1075,13 @@ async function init() {
     const state = (await grove.storage.global.get<PluginState>(STATE_KEY)) ?? { count: 0 };
     let count = state.count;
     countEl.textContent = String(count);
-    document.getElementById("inc")!.addEventListener("click", async () => {
-      count += 1;
+    const save = async (next: number) => {
+      count = next;
       await grove.storage.global.set(STATE_KEY, { count } satisfies PluginState);
       countEl.textContent = String(count);
-    });
+    };
+    document.getElementById("inc")!.addEventListener("click", () => void save(count + 1));
+    document.getElementById("reset")!.addEventListener("click", () => void save(0));
   } catch (err) {
     infoEl.textContent = "SDK error: " + (err instanceof Error ? err.message : String(err));
   }
@@ -953,7 +1108,8 @@ local installs). The panel entry is `dist/index.html`.
 - `plugin.json` — manifest: name, version, permissions, contributes
 - `src/main.ts` — your panel UI
 - `src/grove-sdk/` — vendored SDK (panel · MCP · backend, including Connect).
-  Refresh it via **Settings → Plugins → Update SDK**; don't edit by hand.
+  Refresh it via **Extensions → your plugin → Manage → Update SDK**; don't edit
+  by hand.
 - `index.html` · `vite.config.ts` — build config
 - `dist/` — built output · `skills/` — SKILL.md folders · `docs/` — full guide
 
@@ -967,6 +1123,15 @@ local installs). The panel entry is `dist/index.html`.
   (node 24+ required)
 - IM Connect uses the normal backend SDK: `grove.connect` for records and
   inbound delivery, plus `grove.events.on(...)` for Radio and Connect events.
+
+## Look & feel
+The SDK puts Grove's theme on your `:root`: the `--color-*` palette and the
+Orbit design tokens (`--o-bg`, `--o-text`, `--o-muted`, `--o-border`,
+`--o-hover`, `--o-selected`, `--o-group`, `--o-radius*`, `--o-shadow-*`,
+`--o-font-sans`, ...), live on theme switch. Style with the `--o-*` tokens and
+the panel looks native in Orbit and still right in Workbench.
+`<html data-grove-interface="orbit|workbench">` and
+`grove.theme.getInterface()` tell you which interface is showing.
 
 See `docs/plugin-development.md` for the full reference.
 "#;

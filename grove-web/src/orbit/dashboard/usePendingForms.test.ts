@@ -10,10 +10,11 @@ describe("usableForm", () => {
     expect(usableForm(form("text"))?.field.kind).toBe("text");
     expect(usableForm(form("boolean"))?.field.kind).toBe("boolean");
     expect(usableForm(form("choice", ["a", "b"]))?.field.options).toEqual(["a", "b"]);
+    expect(usableForm(form("choice", ["a", "b", "c", "d"]))?.field.options).toHaveLength(4);
   });
 
   it("sends long choice lists, unknown kinds and old servers to the session", () => {
-    expect(usableForm(form("choice", ["a", "b", "c", "d"]))).toBeNull();
+    expect(usableForm(form("choice", ["a", "b", "c", "d", "e"]))).toBeNull();
     expect(usableForm(form("choice", []))).toBeNull();
     expect(usableForm(form("integer"))).toBeNull();
     expect(usableForm({ form: null })).toBeNull();

@@ -10,6 +10,7 @@ import {
 } from "./catalogModel";
 import { ExtensionDetail, type DetailContext } from "./ExtensionDetail";
 import { AgentMark, ExtIcon, type MarkTarget } from "./parts";
+import { usePhoneSplit } from "./usePhoneSplit";
 
 interface CatalogViewProps {
   records: CatalogRecord[];
@@ -34,6 +35,7 @@ export function CatalogView({ records, loading, error, onRetry, agents, buddies,
   const [kind, setKind] = useState<KindFilter>("all");
   const [search, setSearch] = useState(initialSearch);
   const [selectedKey, setSelectedKey] = useState<string | null>(initialSelectedKey);
+  const phoneSplit = usePhoneSplit(initialSelectedKey !== null);
 
   const visible = useMemo(() => filterRecords(records, kind, search), [records, kind, search]);
   const groups = useMemo(() => groupRecords(visible), [visible]);
@@ -83,7 +85,7 @@ export function CatalogView({ records, loading, error, onRetry, agents, buddies,
         className={`oex-ext${isSelected ? " is-sel" : ""}`}
         aria-current={isSelected || undefined}
         style={{ animationDelay: `${delay}ms` }}
-        onClick={() => setSelectedKey(key)}
+        onClick={() => { setSelectedKey(key); phoneSplit.open(); }}
       >
         <ExtIcon kind={item.kind} name={item.name} manifest={item.manifest} plugin={plugin} />
         <span className="oex-ecopy">
@@ -104,7 +106,7 @@ export function CatalogView({ records, loading, error, onRetry, agents, buddies,
   const listEmpty = !loading && ordered.length === 0;
 
   return (
-    <Card className="oex-split oui-rise" style={{ animationDelay: "60ms" }} aria-label="Catalog">
+    <Card className={`${phoneSplit.split} oui-rise`} style={{ animationDelay: "60ms" }} aria-label="Catalog">
       <div className="oex-master">
         <div className="oex-mtools">
           <SearchField value={search} onChange={setSearch} label="Search extensions" />
@@ -141,6 +143,7 @@ export function CatalogView({ records, loading, error, onRetry, agents, buddies,
       </div>
 
       <div className="oex-detail">
+        {phoneSplit.back("Catalog")}
         {selected ? (
           <ExtensionDetail key={`${catalogRecordKey(selected)}:${context.revision}`} record={selected} context={context} />
         ) : loading ? (

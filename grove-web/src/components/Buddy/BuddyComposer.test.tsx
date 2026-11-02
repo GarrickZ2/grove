@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BuddyComposer } from "./BuddyComposer";
 import { BuddyConversationHeader } from "./BuddyConversationHeader";
 import { createBuddiesMock } from "../../api/buddies.mock";
+import { OrbitInterfaceContext } from "../../orbit/ui/interfaceContext";
 const transport = vi.hoisted(() => ({ send: vi.fn(), stop: vi.fn(), connected: true, sending: false }));
 vi.mock("../../hooks/useBuddyComposer", () => ({ useBuddyComposer: () => transport }));
 describe("Buddy composer and header", () => {
@@ -40,6 +41,55 @@ describe("Buddy composer and header", () => {
     act(() => root.render(<BuddyComposer buddy={{ ...buddy, status: "idle" }} onSent={vi.fn()} />));
     expect(stop()).toBeNull();
     expect(host.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled).toBe(true);
+  });
+  it("under Orbit lets the typed text leave the box while sending, keeping a failed draft visible", async () => {
+    let resolve!: () => void;
+    transport.send.mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }));
+    act(() => root.render(<OrbitInterfaceContext.Provider value><BuddyComposer buddy={buddy} onSent={vi.fn()} /></OrbitInterfaceContext.Provider>));
+    draft("Leaving");
+    const textarea = host.querySelector("textarea")!;
+    act(() => { host.querySelector<HTMLButtonElement>(".buddy-oc-orb")!.click(); });
+    expect(host.querySelector(".oc-send-out")?.textContent).toBe("Leaving");
+    expect(textarea.classList.contains("oc-send-out-source")).toBe(true);
+    expect(transport.send).toHaveBeenCalledWith("Leaving", []);
+    await act(async () => { resolve(); });
+    expect(textarea.value).toBe("");
+    expect(textarea.classList.contains("oc-send-out-source")).toBe(false);
+    // A failed send keeps the draft, and it shows again.
+    transport.send.mockRejectedValueOnce(new Error("Session disconnected"));
+    draft("Kept");
+    await act(async () => { host.querySelector<HTMLButtonElement>(".buddy-oc-orb")!.click(); });
+    expect(textarea.value).toBe("Kept");
+    expect(textarea.classList.contains("oc-send-out-source")).toBe(false);
+  });
+
+  it("outside Orbit sends without the send-out copy", async () => {
+    act(() => root.render(<BuddyComposer buddy={buddy} onSent={vi.fn()} />));
+    draft("Plain");
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click());
+    expect(host.querySelector(".oc-send-out")).toBeNull();
+  });
+
+  it("under Orbit morphs one orb between Stop and Send, keeps the same actions and hints while typing", async () => {
+    const render = (status: "working" | "idle") => act(() => root.render(<OrbitInterfaceContext.Provider value><BuddyComposer buddy={{ ...buddy, status }} onSent={vi.fn()} /></OrbitInterfaceContext.Provider>));
+    render("working");
+    expect(host.querySelector("form")?.className).toBe("buddy-composer is-orbit is-running");
+    const orb = host.querySelector<HTMLButtonElement>(".buddy-oc-orb")!;
+    expect(orb.getAttribute("aria-label")).toBe("Stop response"); expect(orb.dataset.icon).toBe("stop"); expect(orb.type).toBe("button");
+    await act(async () => orb.click());
+    expect(transport.stop).toHaveBeenCalledOnce();
+    expect(host.querySelector(".buddy-oc-hint")).toBeNull();
+    act(() => host.querySelector("textarea")!.focus());
+    draft("Next message");
+    expect(host.querySelector(".buddy-oc-orb")).toBe(orb);
+    expect(orb.getAttribute("aria-label")).toBe("Send message"); expect(orb.dataset.icon).toBe("arrow"); expect(orb.type).toBe("submit");
+    expect(host.querySelector(".buddy-oc-hint")?.textContent).toBe("\u23CE send \u00b7 \u21E7\u23CE newline");
+    await act(async () => orb.click());
+    expect(transport.send).toHaveBeenCalledWith("Next message", []);
+    render("idle");
+    expect(host.querySelector("form")?.className).toBe("buddy-composer is-orbit");
+    expect(orb.disabled).toBe(true);
+    expect(host.querySelector('[aria-label="Add attachment"]')?.classList.contains("buddy-oc-tool")).toBe(true);
   });
   it("keeps attachment-only inputs sendable during work and restores Stop when removed", () => {
     act(() => root.render(<BuddyComposer buddy={{ ...buddy, status: "working" }} onSent={vi.fn()} />));

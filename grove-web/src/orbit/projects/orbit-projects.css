@@ -131,6 +131,38 @@
   .opj-dbody{margin-top:10px}
   .opj-row{min-height:46px;padding:6px 10px}
 }
+/* Phone: the list, then the picked project on its own with Back. The
+   header's search and type switch take full rows. */
+@media (max-width:767px){
+  .opj .oui-page-actions{width:100%}
+  .opj .opj-search{width:100%;flex-basis:100%}
+  .opj .oui-page-actions>.oui-seg{flex:1 1 auto}
+  .opj-body.is-phone-list,.opj-body.is-phone-detail{display:flex;flex-direction:column}
+  .opj-body.is-phone-list>.opj-detail,.opj-body.is-phone-detail>.opj-list{display:none}
+  .opj-body.is-phone-list>.opj-list{flex:none;max-height:none}
+  .opj-body.is-phone-list .opj-rows{overflow:visible}
+  .opj-phone-back{display:flex;margin:-4px 0 -6px -6px}
+  .opj-phone-back .oui-btn{padding:0 10px 0 6px;color:var(--o-text)}
+  .opj-row{min-height:56px}
+  .opj-detail{flex:none}
+  .opj-dhead{flex-wrap:wrap;padding:16px 16px 12px}
+  .opj-dhead-copy{flex-basis:calc(100% - 60px)}
+  .opj-dmeta{flex-wrap:wrap;white-space:normal;row-gap:2px}
+  .opj-dacts{width:100%;flex-wrap:wrap}
+  .opj-dacts .oui-btn{height:40px}
+  .opj-dacts .oui-btn-icon{width:40px}
+  .opj-note{margin:0 16px 12px}
+  .opj-strip{margin:0 16px;grid-auto-flow:row;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .opj-stat{padding:8px 12px}
+  .opj-stat+.opj-stat{border-left:0}
+  .opj-stat:not(:nth-child(3n+1)){border-left:1px solid var(--o-border)}
+  .opj-stat:nth-child(n+4){border-top:1px solid var(--o-border)}
+  .opj-dbody{display:flex;flex-direction:column}
+  .opj-dsec+.opj-dsec{border-left:0;border-top:1px solid var(--o-border)}
+  .opj-tasks{max-height:none;overflow:visible}
+  .opj-task{min-height:48px;grid-template-columns:10px minmax(0,1fr) auto auto}
+}
+
 @media (prefers-reduced-motion:reduce){
   .orbit-ui [class*="opj-"],.orbit-ui [class*="opj-"] *{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important}
   .opj-row:hover .opj-avatar,.opj-row:active .opj-avatar{transform:none}

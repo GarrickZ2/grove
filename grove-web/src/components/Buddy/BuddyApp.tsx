@@ -11,6 +11,8 @@ import { BuddyDelegationsContext } from "./delegations/buddyDelegationsContext";
 import { useRadioEvents } from "../../hooks/useRadioEvents";
 import { BUDDIES_MOCK_ENABLED } from "../../api/buddies.mock";
 import { SettingsPage } from "../Config/SettingsPage";
+import { OrbitSettingsPage } from "../../orbit/settings/OrbitSettingsPage";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
 import { DialogShell } from "../ui/DialogShell";
 import { errorMessage } from "../../utils/errorMessage";
 import { BuddySidebar } from "./BuddySidebar";
@@ -36,6 +38,7 @@ function BuddyEvents({ data }: { data: ReturnType<typeof useBuddies> }) {
 export function BuddyApp({ onExit = () => {}, request }: { onExit?: () => void; request?: { id?: string; create?: boolean; revision: number } }) {
   const data = useBuddies();
   const device = useIsMobile();
+  const orbit = useOrbitInterface();
   const phone = device.isMobile && !device.isTablet;
   const hasMacControls = ("__TAURI__" in window || "__TAURI_INTERNALS__" in window) && /Mac/i.test(navigator.platform);
   const [conversationOpen, setConversationOpen] = useState(false);
@@ -112,7 +115,9 @@ export function BuddyApp({ onExit = () => {}, request }: { onExit?: () => void; 
     {phone && <DialogShell isOpen={sheetOpen && !!data.buddy} onClose={() => setSheetOpen(false)} swipeToClose><div className="buddy-sheet">{data.buddy && <BuddySidePanel buddy={data.buddy} tab={panelTab} onTab={setPanelTab} onChanged={data.accept} onArchive={() => setArchiveId(data.selectedId)} onClose={() => setSheetOpen(false)} closable />}</div></DialogShell>}
     {templatesOpen && <DialogShell isOpen onClose={() => setTemplatesOpen(false)} maxWidth="max-w-[800px]"><div className="buddy-dialog"><button type="button" className="orbit-icon-button" aria-label="Close templates" onClick={() => setTemplatesOpen(false)}><X /></button><BuddyOnboarding onCreate={createFrom} /></div></DialogShell>}
     {creating && <CreateBuddyDialog template={template} onClose={() => setCreating(false)} onCreate={async (input) => { const buddy = await data.create(input); setArrivedId(buddy.id); setConversationOpen(true); return buddy; }} />}
-    {settings && <div className="buddy-global-settings" role="dialog" aria-modal="true" aria-label="Grove settings"><button type="button" className="buddy-icon-button buddy-global-close" aria-label="Close Grove settings" onClick={() => setSettings(false)}><X /></button><SettingsPage /></div>}
+    {settings && !orbit && <div className="buddy-global-settings" role="dialog" aria-modal="true" aria-label="Grove settings"><button type="button" className="buddy-icon-button buddy-global-close" aria-label="Close Grove settings" onClick={() => setSettings(false)}><X /></button><SettingsPage /></div>}
+    {/* Orbit: a title bar like the shell's window header holds the close button, so it never covers the settings header. */}
+    {settings && orbit && <div className="buddy-global-settings is-orbit" role="dialog" aria-modal="true" aria-label="Grove settings"><header className="buddy-global-bar" data-tauri-drag-region="deep" data-window-drag-strip><button type="button" className="orbit-icon-button" aria-label="Close Grove settings" onClick={() => setSettings(false)}><X size={18} /></button></header><div className="buddy-global-body"><OrbitSettingsPage /></div></div>}
     <DialogShell isOpen={archiveId !== null} onClose={() => { if (!archiving) setArchiveId(null); }}><div className="buddy-dialog"><h2>Archive Buddy?</h2><p>Your data and conversation history are kept. Routines and IM connections will not stop automatically.</p>{error && <p role="alert">{error}</p>}<div className="buddy-actions"><button type="button" className="buddy-button" disabled={archiving} onClick={() => setArchiveId(null)}>Cancel</button><button type="button" className="buddy-button is-danger" disabled={archiving} onClick={() => void archive()}>Archive Buddy</button></div></div></DialogShell>
   </div></BuddyDelegationsContext.Provider></TabletAsDesktopContext.Provider>;
 }

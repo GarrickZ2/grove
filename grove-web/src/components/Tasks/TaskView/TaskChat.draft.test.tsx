@@ -5,6 +5,8 @@ import { listChats, type ChatSessionResponse } from "../../../api";
 import type { RadioEventCallbacks } from "../../../hooks/useRadioEvents";
 import type { BottomOriginTurnListHandle } from "./BottomOriginTurnList";
 import { TaskChat } from "./TaskChat";
+import { OrbitInterfaceContext } from "../../../orbit/ui/interfaceContext";
+import { beginGroveFileDrag } from "../../../utils/groveFileDrag";
 
 const mocks = vi.hoisted(() => ({
   radio: new Set<RadioEventCallbacks>(),
@@ -14,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   availability: { baseAgents: [], customAgents: [], customAgentPersonas: [], acpAvailabilityLoaded: true },
   hideTurnRows: false,
   forceVirtualization: false,
+  remoteSession: false,
   virtualizationListeners: new Set<() => void>(),
 }));
 
@@ -97,13 +100,19 @@ class ChatSocket extends EventTarget {
   readyState = ChatSocket.OPEN;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
-  send = vi.fn();
+  sent: string[] = [];
+  send = vi.fn((data: string) => { this.sent.push(data); });
 
   constructor(url: string) {
     super();
     const chatId = new URL(url).pathname.split("/").at(-2)!;
     ChatSocket.instances.set(chatId, this);
-    queueMicrotask(() => this.receive({ type: "session_ready" }));
+    queueMicrotask(() => {
+      if (mocks.remoteSession) {
+        this.receive({ type: "remote_session", agent_name: "Codex" });
+        this.close();
+      } else this.receive({ type: "session_ready" });
+    });
   }
 
   receive(data: object) {
@@ -125,6 +134,7 @@ describe("TaskChat draft isolation during session completion", () => {
   let root: Root;
 
   beforeEach(() => {
+    mocks.remoteSession = false;
     mocks.hideTurnRows = false;
     mocks.forceVirtualization = false;
     mocks.virtualizationListeners.clear();
@@ -157,6 +167,19 @@ describe("TaskChat draft isolation during session completion", () => {
     Reflect.deleteProperty(HTMLElement.prototype, "scrollTo");
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("shows read only and take control after the remote owner closes the socket", async () => {
+    mocks.remoteSession = true;
+    await render();
+    await openChat("A");
+    expect(container.textContent).toContain("Read only");
+    expect(container.textContent).toContain("Take Control");
+    expect(container.textContent).not.toMatch(/Connect Failed|failed to connect|Connection closed before/);
+    await openChat("B");
+    await openChat("A");
+    expect(container.textContent).toContain("Read only");
+    expect(container.textContent).not.toMatch(/Connect Failed|failed to connect|Connection closed before/);
   });
 
   async function render() {
@@ -201,6 +224,82 @@ describe("TaskChat draft isolation during session completion", () => {
     });
     await refreshChats();
   }
+
+  it("under Orbit pops the bubble of a message sent here, through the real echo sequence, and not history", async () => {
+    await act(async () => root.render(<OrbitInterfaceContext.Provider value><TaskChat projectId="project" taskId="task" /></OrbitInterfaceContext.Provider>));
+    const socket = ChatSocket.instances.get("A")!;
+    await act(async () => {
+      socket.receive({ type: "user_message", text: "Earlier", client_message_id: "history-1" });
+      socket.receive({ type: "user_message_time", sent_at: Date.now() - 60_000, client_message_id: "history-1" });
+      socket.receive({ type: "complete", stop_reason: "EndTurn" });
+    });
+    typeDraft("Pop me");
+    // Enter goes through the keyboard catalog (mocked here); the orb is the same send.
+    await act(async () => { container.querySelector<HTMLButtonElement>(".oc-orb.is-send")!.click(); });
+    await vi.waitFor(() => expect(socket.sent.some((data) => JSON.parse(data).type === "prompt")).toBe(true));
+    const prompt = socket.sent.map((data) => JSON.parse(data)).find((event) => event.type === "prompt");
+    // Exactly what src/api/handlers/acp.rs emits for a prompt.
+    await act(async () => {
+      socket.receive({ type: "user_message", text: prompt.text, client_message_id: prompt.client_message_id });
+      socket.receive({ type: "user_message_time", sent_at: prompt.sent_at, client_message_id: prompt.client_message_id });
+      socket.receive({ type: "input_accepted", client_message_id: prompt.client_message_id });
+      socket.receive({ type: "busy", value: true });
+    });
+    const bubbles = [...container.querySelectorAll<HTMLElement>(".ocv-user-bubble")];
+    expect(bubbles.map((bubble) => bubble.textContent)).toEqual(["Earlier", "Pop me"]);
+    expect(bubbles[0].dataset.sentPop).toBeUndefined();
+    expect(bubbles[1].dataset.sentPop).toMatch(/pop|wait|skipped|done/);
+  });
+
+  it("inserts every file of a multi-file drag as chips, in order and without repeats", async () => {
+    await render();
+    const data: Record<string, string> = {
+      "application/x-grove-file-paths": JSON.stringify(["output/a.md", "output/b.png", "output/a.md"]),
+      "application/x-grove-file-path": "output/a.md",
+    };
+    const dataTransfer = { types: Object.keys(data), files: [], items: [], getData: (type: string) => data[type] ?? "", dropEffect: "none" };
+    const target = editor().closest(".chatbox-bubble")!;
+    const fire = async (type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+      await act(async () => { target.dispatchEvent(event); });
+    };
+    // The panel that started the drag reports its size; the overlay says so.
+    beginGroveFileDrag(2);
+    await fire("dragover");
+    expect(container.textContent).toContain("Drop 2 files");
+    await fire("drop");
+    expect([...editor().querySelectorAll<HTMLElement>("[data-file]")].map((chip) => chip.dataset.file)).toEqual(["output/a.md", "output/b.png"]);
+    // A single-path drag (older senders) still inserts one chip.
+    delete data["application/x-grove-file-paths"];
+    data["application/x-grove-file-path"] = "output/c.txt";
+    await fire("drop");
+    expect([...editor().querySelectorAll<HTMLElement>("[data-file]")].map((chip) => chip.dataset.file)).toEqual(["output/a.md", "output/b.png", "output/c.txt"]);
+  });
+
+  it("answers a permission once and keeps the next request when a stale response errors", async () => {
+    await render();
+    const socket = ChatSocket.instances.get("A")!;
+    const option = (name: string) => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === name);
+    const ask = (id: string) => ({ type: "permission_request", id, title: `Use ${id}`, description: id, options: [{ option_id: `yes-${id}`, name: `Yes ${id}`, kind: "allow_once" }] });
+    await act(async () => {
+      socket.receive({ type: "user_message", text: "Check notes" });
+      socket.receive({ type: "busy", value: true });
+      socket.receive(ask("read_notes"));
+    });
+    await act(async () => { option("Yes read_notes")!.click(); option("Yes read_notes")!.click(); });
+    const responses = socket.sent.map((data) => JSON.parse(data)).filter((event) => event.type === "permission_response");
+    expect(responses).toEqual([{ type: "permission_response", id: "read_notes", option_id: "yes-read_notes" }]);
+    await act(async () => {
+      socket.receive({ type: "permission_response", id: "read_notes", option_id: "yes-read_notes" });
+      // The backend serialises requests: the next one arrives, then the
+      // error for a late duplicate response to the first.
+      socket.receive(ask("memory_recall"));
+      socket.receive({ type: "error", message: "Permission request read_notes is no longer pending" });
+    });
+    expect(option("Yes memory_recall")).toBeDefined();
+    expect(container.textContent).not.toContain("Cancelled");
+  });
 
   it("retains timeline disclosures through row unmounts and completed-summary unmounts", async () => {
     mocks.forceVirtualization = true;

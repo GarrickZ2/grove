@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ArtifactFile } from "../../../api";
 import {
-  arrangeEntries, breadcrumbTrail, defaultSource, existingFolder, fileCount, gridColumns, indexFolders, kindCounts,
+  artifactDragFiles, arrangeEntries, breadcrumbTrail, defaultSource, existingFolder, fileCount, gridColumns, indexFolders, kindCounts,
   scopeEntries, totalsFor, windowRange,
 } from "./artifactsView";
 
@@ -117,5 +117,21 @@ describe("misc", () => {
     expect(breadcrumbTrail("a/b/c")).toEqual([{ name: "a", path: "a" }, { name: "b", path: "a/b" }, { name: "c", path: "a/b/c" }]);
     expect(breadcrumbTrail("")).toEqual([]);
     expect(fileCount(TREE)).toBe(4);
+  });
+});
+
+describe("artifactDragFiles", () => {
+  const a = file("a.md");
+  const b = file("b.png");
+  const folder = dir("assets");
+  const selection = (files: ArtifactFile[]) => ({ has: (path: string) => files.some((f) => f.path === path), files });
+
+  it("drags the whole selection, in order, when the row is part of it", () => {
+    expect(artifactDragFiles(b, selection([a, folder, b]))).toEqual([a, b]);
+  });
+
+  it("drags just the row when it is not selected", () => {
+    expect(artifactDragFiles(a, selection([b]))).toEqual([a]);
+    expect(artifactDragFiles(a, selection([]))).toEqual([a]);
   });
 });

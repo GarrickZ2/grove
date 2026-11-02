@@ -98,7 +98,7 @@ fn list_dir_recursive(
     files
 }
 
-fn resolve_task_dir(
+pub(super) fn resolve_task_dir(
     project: &workspace::RegisteredProject,
     project_id: &str,
     task_id: &str,

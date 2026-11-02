@@ -1,8 +1,9 @@
-import { CircleAlert } from "lucide-react";
-import { MemoryGraph } from "../../components/Memory/MemoryGraph";
+import { ChevronLeft, CircleAlert } from "lucide-react";
+import { StarfieldGraph } from "../../components/Memory/starfield/StarfieldGraph";
 import { formatNumber, humanize, plural } from "../../components/Memory/memoryFormat";
 import type { MemoryEntitiesState } from "../../components/Memory/useMemoryEntities";
 import { MarkdownRenderer } from "../../components/ui/MarkdownRenderer";
+import { useTheme } from "../../context/ThemeContext";
 import { Button, Card, EmptyState, Segmented, formatDateTime, relativeText } from "../ui";
 import { countLabel, strengthPct } from "./memoryView";
 
@@ -14,6 +15,10 @@ interface MemoryDetailCardProps {
   entities: MemoryEntitiesState;
   /** Shown when the project has no memories yet. */
   emptyHint: string;
+  /** Phone: the page switches panes itself, so the card drops its switch and offers Back from a memory. */
+  onBack?: () => void;
+  /** Notes waiting to be organized; the mind map shows them as faint glimmers. */
+  pendingNotes?: number;
 }
 
 const RELATED_LIMIT = 6;
@@ -83,17 +88,28 @@ function DocumentPane({ entities }: { entities: MemoryEntitiesState }) {
 }
 
 /** The open memory as a document, or the whole Memory as a relation graph. */
-export function MemoryDetailCard({ pane, onPaneChange, entities, emptyHint }: MemoryDetailCardProps) {
+export function MemoryDetailCard({ pane, onPaneChange, entities, emptyHint, onBack, pendingNotes = 0 }: MemoryDetailCardProps) {
+  const { theme } = useTheme();
   const empty = !entities.loading && entities.items.length === 0;
+  // A category filter dims the rest of the graph, so the title says how many of all are lit.
+  const memoryCount = entities.category
+    ? `${formatNumber(entities.visibleItems.length)} of ${countLabel(entities.items.length, "memory", "memories")}`
+    : countLabel(entities.visibleItems.length, "memory", "memories");
   const title = pane === "memory"
     ? "Memory"
-    : `${countLabel(entities.visibleItems.length, "memory", "memories")} · ${countLabel(entities.allRelations.length, "link", "links")}${entities.hasMore ? "+" : ""}`;
+    : `${memoryCount} · ${countLabel(entities.allRelations.length, "link", "links")}${entities.hasMore ? "+" : ""}`;
   return (
     <Card
       className="omd"
       aria-label={pane === "memory" ? "Memory document" : "Memory mind map"}
       title={<span className="oui-truncate">{title}</span>}
-      actions={(
+      head={onBack && pane === "memory" ? (
+        <>
+          <Button variant="ghost" iconOnly size="sm" className="omd-back" aria-label="Back" title="Back" onClick={onBack}><ChevronLeft /></Button>
+          <h2><span className="oui-truncate">{title}</span></h2>
+        </>
+      ) : undefined}
+      actions={onBack ? undefined : (
         <Segmented<DetailPane>
           ariaLabel="Right pane"
           value={pane}
@@ -108,12 +124,14 @@ export function MemoryDetailCard({ pane, onPaneChange, entities, emptyHint }: Me
         </EmptyState>
       ) : pane === "graph" ? (
         <div className="omd-graph">
-          <MemoryGraph
-            entities={entities.visibleItems}
+          {/* All memories keep their places; a category filter only dims the others. */}
+          <StarfieldGraph
+            entities={entities.items}
             relations={entities.allRelations}
             onOpen={(id) => { entities.setSelectedId(id); onPaneChange("memory"); }}
-            categoryColors={entities.categoryColors}
+            look={theme.isLight ? "light" : "dark"}
             activeCategory={entities.category}
+            pendingCount={pendingNotes}
           />
         </div>
       ) : entities.selectedId ? (

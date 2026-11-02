@@ -8,6 +8,8 @@ import { QuestionCard } from "./QuestionCard";
 import { DelegationCard } from "./DelegationCard";
 import { BuddyHello } from "./BuddyHello";
 import { visibleRows } from "./visibleRows";
+import { useSentPop } from "../../Tasks/TaskView/conversation/sentPop";
+import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
 import { MessageActions } from "../../Tasks/TaskView/MessageActionsBar";
 import type { BuddyRow, BuddyTimelineState, DelegationRow, Question } from "./buddyTimelineState";
 import { useBuddyDelegationsContext } from "../delegations/buddyDelegationsContext";
@@ -31,7 +33,15 @@ function AssistantBubbles({ content }: { content: string }) {
     : <div key={index} className="buddy-bubble"><MarkdownRenderer content={bubble.content} /></div>)}</div>;
 }
 
+/** The user's bubble; under Orbit a just-sent one pops in (see sentPop). */
+function UserBubble({ clientMessageId, children }: { clientMessageId?: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useSentPop(ref, clientMessageId);
+  return <div ref={ref} className="buddy-user-message">{children}</div>;
+}
+
 export function BuddyTimeline({ buddy, state, connected, loading = false, onRespond, onAnswer, onSkip, onOpenQuestion, arriving = false, hasEarlier = false, loadingEarlier = false, onLoadEarlier }: { arriving?: boolean; hasEarlier?: boolean; loadingEarlier?: boolean; onLoadEarlier?: () => void; buddy: Buddy; state: BuddyTimelineState; connected: boolean; loading?: boolean; onRespond: (id: string, option: string) => void; onAnswer: (question: Question, answers: SurveyAnswers, markdown: string) => Promise<void>; onSkip: (question: Question) => void; onOpenQuestion: (question: Question) => void }) {
+  const orbit = useOrbitInterface();
   const scroll = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const delegations = useBuddyDelegationsContext();
@@ -73,7 +83,7 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
   // Relative times refresh when a message is hovered, as in TaskChat.
   const [now, setNow] = useState(() => Date.now());
   const touch = () => setNow(Date.now());
-  return <div className="buddy-timeline" aria-label="Conversation" ref={scroll} onScroll={event => { const node = event.currentTarget; following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; if (node.scrollTop < 160) loadEarlier(); }}><div className="buddy-timeline-content">
+  return <div className="buddy-timeline" aria-label="Conversation" data-sent-pop-pane={orbit || undefined} ref={scroll} onScroll={event => { const node = event.currentTarget; following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; if (node.scrollTop < 160) loadEarlier(); }}><div className="buddy-timeline-content">
     {hasEarlier && <p className="buddy-earlier" role="status">{loadingEarlier ? "Loading earlier messages…" : <button type="button" onClick={loadEarlier}>Load earlier messages</button>}</p>}
     {state.rows.length === 0 && <BuddyHello buddy={buddy} arriving={arriving && !loading} loading={loading} />}
     {shown.map(row => {
@@ -108,7 +118,7 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
         const visible = segments.filter(segment => !(segment.kind === "meta" && segment.envelope.v === 1 && segment.envelope.type === "grove_session_init"));
         const content = visible.length === segments.length ? message.content : visible.map(segment => segment.kind === "text" ? segment.content : segment.raw).join("").replace(/^\n+/, "");
         if (!content.trim() && !message.attachments?.length) return null;
-        return <div key={row.id} className="buddy-user-turn group/message" onPointerEnter={touch}><div className="buddy-user-message">{message.sender === "connect" && <MessageCircle size={13} aria-label="IM Connect" />}{content.trim() && <p>{content}</p>}{message.attachments?.map((file, index) => <span className="buddy-file" key={index}><File size={14} />{file.name || file.label || "Attachment"}</span>)}</div><MessageActions text={content} timestamp={message.sentAt} now={now} alignRight /></div>;
+        return <div key={row.id} className="buddy-user-turn group/message" onPointerEnter={touch}><UserBubble clientMessageId={message.clientMessageId}>{message.sender === "connect" && <MessageCircle size={13} aria-label="IM Connect" />}{content.trim() && <p>{content}</p>}{message.attachments?.map((file, index) => <span className="buddy-file" key={index}><File size={14} />{file.name || file.label || "Attachment"}</span>)}</UserBubble><MessageActions text={content} timestamp={message.sentAt} now={now} alignRight /></div>;
       }
       if (message.type === "assistant") return <div key={row.id} className="buddy-assistant-message group/message" onPointerEnter={touch}><AssistantBubbles content={message.content} />{message.blocks?.filter(block => block.type !== "text").map((block, index) => <span className="buddy-file" key={index}><File size={14} />{block.type === "resource_link" ? block.name : block.type === "resource" ? block.uri : block.label || block.type}</span>)}{message.complete && message.endTs != null && <MessageActions text={message.content} timestamp={message.endTs * 1000} startTs={message.startTs} endTs={message.endTs} now={now} />}</div>;
       return null;

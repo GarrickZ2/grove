@@ -741,6 +741,10 @@ pub fn create_api_router() -> Router {
             get(handlers::tasks::download_artifact),
         )
         .route(
+            "/projects/{id}/tasks/{taskId}/artifacts/zip",
+            get(handlers::tasks::download_artifacts_zip),
+        )
+        .route(
             "/projects/{id}/tasks/{taskId}/artifacts/upload",
             post(handlers::tasks::upload_artifact).layer(DefaultBodyLimit::max(
                 handlers::studio_common::MAX_UPLOAD_SIZE,
@@ -815,6 +819,10 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/tasks/{taskId}/commits",
             get(handlers::tasks::get_commits),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/git/status",
+            get(handlers::tasks::get_task_git_status),
         )
         // Review Comments API
         .route(

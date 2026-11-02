@@ -132,7 +132,7 @@ function TaskRow({ index, task, activity, open, onToggle, now, props }: TaskRowP
           <span className="odb-ago" title={formatDateTime(task.updatedAt)}>{shortAgo(task.updatedAt.getTime(), now)}</span>
         </span>
         <span className="odb-row-acts">
-          <ReviewAction task={task} onOpen={onOpen} />
+          <ReviewAction task={task} onOpen={onOpen} linkedCount={links?.length ?? 0} />
           <Button variant="primary" size="sm" onClick={() => onOpen(task, activity?.chatId ?? null)}>Open</Button>
         </span>
       </div>
@@ -190,10 +190,10 @@ function TaskRow({ index, task, activity, open, onToggle, now, props }: TaskRowP
 }
 
 /** Opens the task with its Code Review panel showing (see orbit/workspace/openReview.ts). */
-function ReviewAction({ task, onOpen }: { task: Task; onOpen: InFlightCardProps["onOpen"] }) {
+function ReviewAction({ task, onOpen, linkedCount }: { task: Task; onOpen: InFlightCardProps["onOpen"]; linkedCount: number }) {
   const { selectedProject } = useProject();
-  // Studio tasks review linked Projects only; their own work is in Artifacts.
-  if (!selectedProject || selectedProject.projectType === "studio") return null;
+  // Studio tasks review their linked Projects only, so they need at least one.
+  if (!selectedProject || (selectedProject.projectType === "studio" && linkedCount === 0)) return null;
   const projectId = selectedProject.id;
   return (
     <Button

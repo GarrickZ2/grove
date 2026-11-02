@@ -11,6 +11,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ShortcutHandler } from "@tauri-apps/plugin-global-shortcut";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { PluginFrame } from "./components/Plugins/PluginFrame";
+import { PluginIcon } from "./components/Plugins/PluginIcon";
+import { OrbitPluginPage } from "./components/Plugins/OrbitPluginPage";
+import { findPluginPage, pluginPageEntries, pluginPageTitle } from "./components/Plugins/pluginPages";
+import { performPluginNavigation, PLUGIN_NAVIGATE_EVENT, type PluginNavigateDetail } from "./components/Plugins/pluginNavigation";
 import { listPlugins, PLUGINS_CHANGED_EVENT, type Plugin } from "./api/plugins";
 import { MobileHeader } from "./components/Layout/MobileHeader";
 import { MobileDrawer } from "./components/Layout/MobileDrawer";
@@ -41,7 +45,7 @@ import { WelcomePage } from "./components/Welcome";
 import type { WelcomeAction } from "./components/Welcome/WelcomePage";
 import type { CodingTab } from "./components/Projects/AddProjectDialog";
 import { InterfaceChoiceDialog } from "./components/Orbit/InterfaceChoiceDialog";
-import { DiffReviewPage } from "./components/Review";
+import { StandaloneReviewPage } from "./components/Review";
 import { HelpOverlay } from "./components/Tasks/HelpOverlay";
 import { SkillsPage } from "./components/Skills";
 import { AIPage, GlobalAgentVoiceRuntime, GlobalAudioRecorder, GlobalVoiceControlRecorder } from "./components/AI";
@@ -413,6 +417,26 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
     window.addEventListener("grove:open-ai-settings", openAISettings);
     return () => window.removeEventListener("grove:open-ai-settings", openAISettings);
   }, [openAISettings]);
+
+  // Plugin bridge `host.navigate`: PluginFrame validates the request (own page
+  // only, known settings sections) and hands it here; we answer synchronously.
+  useEffect(() => {
+    const onPluginNavigate = (event: Event) => {
+      performPluginNavigation((event as CustomEvent<PluginNavigateDetail>).detail, {
+        pagePlugins: sidebarPlugins,
+        orbit,
+        setActiveItem,
+        // OrbitSettingsPage opens the page named by #settings-<id>.
+        openSettingsSection: (section) => {
+          setTimeout(() => {
+            window.location.hash = `#settings-${section}`;
+          }, 50);
+        },
+      });
+    };
+    window.addEventListener(PLUGIN_NAVIGATE_EVENT, onPluginNavigate);
+    return () => window.removeEventListener(PLUGIN_NAVIGATE_EVENT, onPluginNavigate);
+  }, [sidebarPlugins, orbit]);
 
   // Mobile virtual-keyboard tracker: exposes the keyboard height as a global
   // CSS variable (--grove-kb-inset). Bottom-anchored UI uses
@@ -1386,6 +1410,10 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       // ⌘K "Go to AI" goes to Settings → Voice & AI in Orbit.
       onNavigate: (page: string) => (page === "ai" ? openAISettings() : setActiveItem(page)),
       activeItem,
+      // Orbit lists plugin pages in ⌘K (Workbench reaches them from its sidebar).
+      pluginPages: orbit
+        ? pluginPageEntries(sidebarPlugins).map(({ id, label, plugin }) => ({ id, label, icon: <PluginIcon plugin={plugin} className="h-3.5 w-3.5" size={13} /> }))
+        : undefined,
     },
     project: {
       projects,
@@ -1550,7 +1578,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       case "ai":
         return <AIPage />;
       case "statistics":
-        return orbit ? <OrbitStatisticsPage /> : <ProjectStatsPage projectId={selectedProject?.id} />;
+        return orbit ? <OrbitStatisticsPage onNavigate={handleNavigate} /> : <ProjectStatsPage projectId={selectedProject?.id} />;
       // Orbit forks presentation per page; Workbench keeps the legacy UI.
       case "settings":
         return orbit ? <OrbitSettingsPage /> : <SettingsPage />;
@@ -1562,6 +1590,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
           const pluginId = activeItem.slice("plugin:".length);
           const plugin = sidebarPlugins.find((p) => p.id === pluginId);
           if (plugin) {
+            if (orbit) return <OrbitPluginPage plugin={plugin} projectId={selectedProject?.id ?? null} />;
             return (
               <PluginFrame
                 plugin={plugin}
@@ -1590,9 +1619,10 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   const isDashboardPage = activeItem === "dashboard";
   // Orbit's window header only hosts the workspace toolbar. Other pages drop it,
   // except when the collapsed sidebar's controls need a bar to sit on.
-  const orbitHeaderVisible = ((activeItem === "tasks" || activeItem === "work") && globalConfig?.web.workspace_layout !== "flex") || effectiveSidebarMode === "collapsed";
+  // Both workspace layouts put their Orbit toolbar (panel toggles, git actions) in this header.
+  const orbitHeaderVisible = activeItem === "tasks" || activeItem === "work" || effectiveSidebarMode === "collapsed";
   // Orbit pages that own their whole surface (own scroll, no outer padding).
-  const isOrbitEdgeToEdgePage = orbit && (activeItem === "settings" || activeItem === "dashboard" || activeItem === "skills" || activeItem === "memory" || activeItem === "automation" || activeItem === "statistics" || activeItem === "resource" || activeItem === "projects");
+  const isOrbitEdgeToEdgePage = orbit && (activeItem === "settings" || activeItem === "dashboard" || activeItem === "skills" || activeItem === "memory" || activeItem === "automation" || activeItem === "statistics" || activeItem === "resource" || activeItem === "projects" || activeItem.startsWith("plugin:"));
   const isFullWidthPage =
     isOrbitEdgeToEdgePage ||
     isDashboardPage ||
@@ -1716,9 +1746,10 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   }
 
   // Phone header fallback; a visible Session puts its own title over it.
+  const phonePluginPage = findPluginPage(sidebarPlugins, activeItem);
   const orbitPhoneTitle = activeItem === "new" || activeItem === "tasks" || activeItem === "work"
     ? selectedProject?.name ?? "Grove"
-    : ORBIT_PAGE_TITLES[activeItem] ?? sidebarPlugins.find((plugin) => `plugin:${plugin.id}` === activeItem)?.name ?? "Grove";
+    : ORBIT_PAGE_TITLES[activeItem] ?? (phonePluginPage ? pluginPageTitle(phonePluginPage) : "Grove");
 
   // One page tree across breakpoints keeps task/workspace state alive.
   return (
@@ -1765,6 +1796,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
             onProjectSwitch={handleProjectSwitch}
             onManageProjects={(tab) => { setDrawerOpen(false); sidebarProps.onManageProjects(tab); }}
             onAddProject={(mode) => { setDrawerOpen(false); sidebarProps.onAddProject(mode); }}
+            plugins={sidebarPlugins}
           />
         </div>
       )}
@@ -1817,7 +1849,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
             </div>}
             <div data-grove-sidebar className={isMobile ? "hidden" : undefined}>{!isMobile && (orbit ? <OrbitSidebar activeItem={activeItem} collapsed={effectiveSidebarMode === "collapsed"} onCollapse={() => {
                 setSidebarMode(effectiveSidebarMode === "collapsed" ? "expanded" : "collapsed");
-              }} onItemClick={handleItemClick} onNavigate={handleNavigate} onSearch={openCommandPalette} onProjectSwitch={handleProjectSwitch} onManageProjects={sidebarProps.onManageProjects} onAddProject={sidebarProps.onAddProject} /> : <Sidebar {...sidebarProps} />)}</div>
+              }} onItemClick={handleItemClick} onNavigate={handleNavigate} onSearch={openCommandPalette} onProjectSwitch={handleProjectSwitch} onManageProjects={sidebarProps.onManageProjects} onAddProject={sidebarProps.onAddProject} plugins={sidebarPlugins} /> : <Sidebar {...sidebarProps} />)}</div>
             {/* Floating main card — mirrors the sidebar's "floating panel"
                language so the chrome reads as a single design system:
                two cards on a desktop, 12px gap between them and to all
@@ -1935,7 +1967,7 @@ function App() {
       <ThemeProvider>
         <BannerProvider>
           <PreviewCommentProvider>
-            <DiffReviewPage projectId={reviewMatch[1]} taskId={reviewMatch[2]} />
+            <StandaloneReviewPage projectId={reviewMatch[1]} taskId={reviewMatch[2]} />
           </PreviewCommentProvider>
         </BannerProvider>
       </ThemeProvider>

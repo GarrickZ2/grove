@@ -253,3 +253,45 @@
   .oui-page-head p{white-space:normal}
   .oui-sheet,.oui-sheet.is-wide{left:12px;width:auto}
 }
+
+/* Phone (Orbit's phone layout is < 768px): 16px gutter, nothing wider than the
+   screen, controls wrap instead of running off the edge, touch-sized targets.
+   Scoped to pages and sheets so the composer and workspace keep their sizes. */
+@media (max-width:767px){
+  .oui-page-head{row-gap:12px}
+  .oui-page-actions{flex-wrap:wrap;flex-shrink:1;min-width:0;max-width:100%}
+  /* Segments share the width they get instead of overflowing it. */
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-seg{max-width:100%;grid-auto-columns:minmax(0,1fr)}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-seg-btn{min-width:0;padding:0 10px}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-seg-btn>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-seg-btn,.oui-page .oui-page-actions .oui-seg-btn{height:34px}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-seg.is-sm .oui-seg-btn{height:30px;padding:0 8px}
+  /* The visible segment stays compact; its hit area reaches 44px tall. */
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-seg-btn::after{content:"";position:absolute;inset:-5px 0}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-seg.is-sm .oui-seg-btn::after{inset:-7px 0}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-btn,.oui-page .oui-page-actions .oui-btn{height:40px}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-btn-icon,.oui-page .oui-page-actions .oui-btn-icon{width:40px}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-btn-sm{height:36px}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-btn-sm.oui-btn-icon{width:36px}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-search{height:40px}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-search input,:is(.oui-page,.oui-sheet-root,.ost) .oui-field{font-size:16px}
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-field{height:40px}
+  /* Card heads wrap their controls under the title rather than overlapping it. */
+  .oui-card-head{flex-wrap:wrap;row-gap:4px;padding:8px 10px 6px 16px}
+  .oui-card-head h2{flex:1 0 auto;max-width:100%;overflow:hidden}
+  /* Toggles keep their size; the hit area grows to 44px. */
+  .orbit-ui .oui-tg::after{content:"";position:absolute;inset:-11px -4px}
+  .oui-glabel{flex-wrap:wrap;row-gap:2px}
+  /* Grouped rows: the control drops under long copy instead of squeezing it. */
+  .oui-row{flex-wrap:wrap;row-gap:8px}
+  .oui-row-copy{flex-basis:min(100%,160px)}
+  .oui-row-control{flex-wrap:wrap;max-width:100%}
+  .oui-sheet,.oui-sheet.is-wide{inset:0;width:auto;max-width:none;border-radius:0;border:0}
+  .oui-sheet-head{padding:calc(12px + env(safe-area-inset-top,0px)) 8px 10px 16px}
+  .oui-sheet-body{padding:0 16px calc(20px + env(safe-area-inset-bottom,0px))}
+  .oui-sheet-head .oui-btn-icon{width:44px;height:44px}
+}
+/* The phone layout drops shortcut hints on buttons, a narrowed desktop window included. */
+@media (max-width:767px){
+  :is(.oui-page,.oui-sheet-root,.ost) .oui-btn kbd{display:none}
+}

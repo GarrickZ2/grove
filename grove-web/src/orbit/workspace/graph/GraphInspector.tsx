@@ -8,7 +8,6 @@ import {
   MessageSquare,
   MoreHorizontal,
   Pencil,
-  Plus,
   Send,
   Trash2,
   X,
@@ -22,7 +21,7 @@ import { AgentPicker } from "../../../components/ui/AgentPicker";
 import { agentColor } from "../../../components/Stats/agentColors";
 import { resolveAgentIcon } from "../../../utils/agentIcon";
 import { Button, DialogField, HoldButton, PopoverMenu, StatusDot } from "../../ui";
-import { EDGE_STATE_LABEL, graphSummary, statusMeta } from "./graphLayout";
+import { EDGE_STATE_LABEL, statusMeta, type GraphNodeStatus } from "./graphLayout";
 import type { GraphSelection } from "./GraphCanvas";
 
 export type GraphForm =
@@ -45,7 +44,10 @@ export interface GraphInspectorProps {
   edges: GraphEdge[];
   selection: GraphSelection;
   form: GraphForm | null;
+  /** Live status — drives what actions are allowed. */
   getNodeStatus: (chatId: string) => NodeStatus;
+  /** Displayed status (live, or the settled error / done outcome). Defaults to the live status. */
+  getDisplayStatus?: (chatId: string) => GraphNodeStatus;
   deriveEdgeState: (from: string, to: string) => EdgeLiveState;
   queued: QueuedMessage[];
   onSelect: (selection: GraphSelection) => void;
@@ -68,11 +70,9 @@ export interface GraphInspectorProps {
   onRemind: (edgeId: number) => Promise<void>;
   onDeleteNode: (chatId: string) => Promise<boolean>;
   onDeleteEdge: (edgeId: number) => Promise<boolean>;
-  /** Inside the workspace PanelShell: the header carries the summary and New agent. */
-  inShell?: boolean;
 }
 
-/** Selected-agent / selected-connection detail, the overview, and every inline form. */
+/** Compact card for the selected agent / connection, and every inline form. Nothing when idle. */
 export function GraphInspector(props: GraphInspectorProps) {
   const { form, selection, nodes, edges } = props;
   if (form) return <FormView {...props} form={form} />;
@@ -84,18 +84,18 @@ export function GraphInspector(props: GraphInspectorProps) {
     const edge = edges.find((e) => e.edge_id === selection.id);
     if (edge) return <EdgeDetail {...props} edge={edge} />;
   }
-  return <Overview {...props} />;
+  return null;
 }
 
 function nameOf(nodes: GraphNode[], id: string): string {
   return nodes.find((n) => n.chat_id === id)?.name ?? id;
 }
 
-function AgentTile({ agent, status, size = "md" }: { agent: string; status?: NodeStatus; size?: "sm" | "md" }) {
+function AgentTile({ agent, status, size = "md", round = false }: { agent: string; status?: GraphNodeStatus; size?: "sm" | "md"; round?: boolean }) {
   const Icon = resolveAgentIcon(agent).Component;
   const meta = status ? statusMeta(status) : null;
   return (
-    <span className={`ogr-tile is-${size}`} style={{ "--ogr-agent": agentColor(agent) } as CSSProperties} aria-hidden="true">
+    <span className={`ogr-tile is-${size}${round ? " is-round" : ""}`} style={{ "--ogr-agent": agentColor(agent) } as CSSProperties} aria-hidden="true">
       <Icon size={size === "sm" ? 13 : 16} />
       {meta ? <StatusDot className="ogr-node-dot" tone={meta.tone} pulse={meta.pulse} /> : null}
     </span>
@@ -112,166 +112,88 @@ function Pane({ head, children, foot, className }: { head: ReactNode; children?:
   );
 }
 
-function Rows({ children }: { children: ReactNode }) {
-  return <div className="ogr-rows">{children}</div>;
-}
-
-function KV({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="ogr-kv">
-      <span>{label}</span>
-      <div>{children}</div>
-    </div>
-  );
-}
-
-// ─── Overview ──────────────────────────────────────────────────────────────
-
-function Overview({ nodes, getNodeStatus, queued, onSelect, onForm, inShell }: GraphInspectorProps) {
-  // A one-line strip in a narrow dock (the canvas is the list); a full list beside a wide canvas.
-  return (
-    <Pane
-      className={`is-overview${inShell ? " is-shell" : ""}`}
-      head={
-        <>
-          <div className="ogr-pane-title">
-            <b>Agents</b>
-            <small className="oui-truncate">{graphSummary(nodes, getNodeStatus, queued.length)}</small>
-          </div>
-          {inShell ? null : <Button variant="secondary" size="sm" onClick={() => onForm({ kind: "spawn", fromChatId: null })}><Plus />New agent</Button>}
-        </>
-      }
-      foot={<span className="ogr-hint">Double-click an agent to open its chat · ⌘-scroll to zoom</span>}
-    >
-      <div className="ogr-list">
-        {nodes.map((node) => {
-          const status = getNodeStatus(node.chat_id);
-          const meta = statusMeta(status);
-          return (
-            <button key={node.chat_id} type="button" className="ogr-list-row" onClick={() => onSelect({ kind: "node", id: node.chat_id })}>
-              <AgentTile agent={node.agent} status={status} size="sm" />
-              <span className="oui-truncate ogr-list-name">{node.name}</span>
-              <span className={`ogr-list-st is-${meta.tone}`}>{meta.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </Pane>
-  );
-}
-
-// ─── Node detail ───────────────────────────────────────────────────────────
+// ─── Floating action bar for the selected agent ────────────────────────────
+// One row: who it is, then the actions. Duty and queued messages, when there
+// are any, sit on a quiet second line. In a narrow dock the labels collapse
+// to icons.
 
 function NodeDetail(props: GraphInspectorProps & { node: GraphNode }) {
-  const { node, nodes, edges, queued, getNodeStatus, deriveEdgeState, onSelect, onForm, onOpenChat } = props;
-  const status = getNodeStatus(node.chat_id);
+  const { node, nodes, queued, getNodeStatus, getDisplayStatus = getNodeStatus, onSelect, onForm, onOpenChat } = props;
+  const status = getDisplayStatus(node.chat_id);
   const meta = statusMeta(status);
   const agent = resolveAgentIcon(node.agent);
-  const inbound = edges.filter((e) => e.to === node.chat_id);
-  const outbound = edges.filter((e) => e.from === node.chat_id);
   const waiting = queued.filter((q) => q.to === node.chat_id);
   const sent = queued.filter((q) => q.from === node.chat_id);
   const canConnect = nodes.some((n) => n.chat_id !== node.chat_id);
+  const duty = node.duty?.trim();
+  // One line for every queued message, so the bar stays two rows at most;
+  // the excerpts are in its tooltip.
+  const queuedHere = [
+    ...waiting.map((q) => ({ label: `from ${nameOf(nodes, q.from)}`, excerpt: q.excerpt })),
+    ...sent.map((q) => ({ label: `to ${nameOf(nodes, q.to)}`, excerpt: q.excerpt })),
+  ];
   return (
-    <Pane
-      head={
-        <>
-          <AgentTile agent={node.agent} status={status} />
-          <div className="ogr-pane-title">
-            <b className="oui-truncate" title={node.name}>{node.name}</b>
-            <small className="oui-truncate">{agent.label} · <span className={`ogr-st is-${meta.tone}`}>{meta.label}</span></small>
-          </div>
-          <Button variant="ghost" size="sm" iconOnly aria-label="Close details" title="Close" onClick={() => onSelect(null)}><X /></Button>
-        </>
-      }
-      foot={
-        <>
-          <Button variant="secondary" size="sm" onClick={() => onOpenChat(node.chat_id)}><MessageSquare />Open chat</Button>
-          <Button variant="secondary" size="sm" onClick={() => onForm({ kind: "send", chatId: node.chat_id })}><Send />Send</Button>
-          <Button variant="primary" size="sm" onClick={() => onForm({ kind: "spawn", fromChatId: node.chat_id })}><GitBranch />Spawn child</Button>
-          <span className="ogr-sp" />
-          <PopoverMenu
-            label={`${node.name} actions`}
-            items={[
-              ...(canConnect ? [{ id: "connect", icon: Link2, title: "Connect to…", description: "Let this agent message another one.", onSelect: () => onForm({ kind: "connect", fromChatId: node.chat_id }) }] : []),
-              { id: "edit", icon: Pencil, title: "Edit name & duty", description: "What this agent is called and responsible for.", onSelect: () => onForm({ kind: "edit", chatId: node.chat_id }) },
-              { id: "delete", icon: Trash2, title: "Delete agent", description: "Removes its chat and all its connections.", onSelect: () => onForm({ kind: "delete-node", chatId: node.chat_id }) },
-            ]}
-            trigger={({ open, toggle }) => (
-              <Button variant="ghost" size="sm" iconOnly aria-label="More actions" aria-expanded={open} title="More" onClick={toggle}><MoreHorizontal /></Button>
-            )}
-          />
-        </>
-      }
-    >
-      <Rows>
-        <KV label="Duty">{node.duty?.trim() ? <p className="ogr-text">{node.duty}</p> : <span className="ogr-muted">Not set yet — the agent sets it on its first message.</span>}</KV>
-        {waiting.length ? (
-          <KV label="Waiting">
-            {waiting.map((q) => <QueuedLine key={`${q.from}>${q.to}`} who={`From ${nameOf(nodes, q.from)}`} excerpt={q.excerpt} />)}
-          </KV>
-        ) : null}
-        {sent.length ? (
-          <KV label="Sent">
-            {sent.map((q) => <QueuedLine key={`${q.from}>${q.to}`} who={`To ${nameOf(nodes, q.to)}`} excerpt={q.excerpt} />)}
-          </KV>
-        ) : null}
-        {inbound.length || outbound.length ? (
-          <KV label="Connections">
-            <div className="ogr-links">
-              {inbound.map((e) => (
-                <EdgeLink key={e.edge_id} dir="in" name={nameOf(nodes, e.from)} edge={e} state={deriveEdgeState(e.from, e.to)} onClick={() => onSelect({ kind: "edge", id: e.edge_id })} />
-              ))}
-              {outbound.map((e) => (
-                <EdgeLink key={e.edge_id} dir="out" name={nameOf(nodes, e.to)} edge={e} state={deriveEdgeState(e.from, e.to)} onClick={() => onSelect({ kind: "edge", id: e.edge_id })} />
-              ))}
-            </div>
-          </KV>
-        ) : null}
-      </Rows>
-    </Pane>
-  );
-}
-
-function QueuedLine({ who, excerpt }: { who: string; excerpt: string | undefined }) {
-  return (
-    <div className="ogr-queued">
-      <b>{who}</b>
-      {excerpt ? <span>{excerpt}</span> : null}
+    <div className="ogr-bar" role="toolbar" aria-label={`${node.name} actions`}>
+      <div className="ogr-bar-row">
+        <AgentTile agent={node.agent} status={status} round />
+        <b className="ogr-bar-name oui-truncate" title={node.name}>{node.name}</b>
+        <span className={`ogr-bar-st is-${meta.tone}`} title={meta.detail}><span className="ogr-bar-agent">{agent.label} · </span>{meta.label}</span>
+        <span className="ogr-sp" />
+        <Button variant="primary" size="sm" aria-label={`Open ${node.name}'s chat`} title="Open chat" onClick={() => onOpenChat(node.chat_id)}><MessageSquare /><span className="ogr-bar-lab">Open chat</span></Button>
+        <Button variant="ghost" size="sm" aria-label={`Send a message to ${node.name}`} title="Send message" onClick={() => onForm({ kind: "send", chatId: node.chat_id })}><Send /><span className="ogr-bar-lab">Send</span></Button>
+        <Button variant="ghost" size="sm" aria-label="Spawn child" title="Spawn child" onClick={() => onForm({ kind: "spawn", fromChatId: node.chat_id })}><GitBranch /><span className="ogr-bar-lab">Spawn child</span></Button>
+        <i className="ogr-bar-sep" aria-hidden="true" />
+        <Button variant="ghost" size="sm" iconOnly aria-label="Edit name and duty" title="Edit (double-click the agent)" onClick={() => onForm({ kind: "edit", chatId: node.chat_id })}><Pencil /></Button>
+        <PopoverMenu
+          label={`${node.name} actions`}
+          items={[
+            ...(canConnect ? [{ id: "connect", icon: Link2, title: "Connect to…", description: "Or drag from the agent's handle onto another agent.", onSelect: () => onForm({ kind: "connect", fromChatId: node.chat_id }) }] : []),
+            { id: "delete", icon: Trash2, title: "Delete agent", description: "Removes its chat and all its connections.", onSelect: () => onForm({ kind: "delete-node", chatId: node.chat_id }) },
+          ]}
+          trigger={({ open, toggle }) => (
+            <Button variant="ghost" size="sm" iconOnly aria-label="More actions" aria-expanded={open} title="More" onClick={toggle}><MoreHorizontal /></Button>
+          )}
+        />
+        <Button variant="ghost" size="sm" iconOnly aria-label="Close details" title="Close" onClick={() => onSelect(null)}><X /></Button>
+      </div>
+      {duty || queuedHere.length ? (
+        <div className="ogr-facts">
+          {duty ? <p className="ogr-fact" title={duty}><span>Duty</span>{duty}</p> : null}
+          {queuedHere.length ? (
+            <p className="ogr-fact" title={queuedHere.map((q) => `${q.label}: ${q.excerpt ?? "Queued message"}`).join("\n")}>
+              <span>Queued</span>
+              {queuedHere.length === 1
+                ? `${queuedHere[0].label}: ${queuedHere[0].excerpt ?? "Queued message"}`
+                : queuedHere.map((q) => q.label).join(", ")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function EdgeLink({ dir, name, edge, state, onClick }: { dir: "in" | "out"; name: string; edge: GraphEdge; state: EdgeLiveState; onClick: () => void }) {
-  return (
-    <button type="button" className="ogr-link" onClick={onClick} title={edge.purpose || undefined}>
-      <span className="ogr-link-dir">{dir === "in" ? "From" : "To"}</span>
-      <b className="oui-truncate">{name}</b>
-      {edge.purpose ? <span className="oui-truncate ogr-muted">{edge.purpose}</span> : <span className="ogr-sp" />}
-      {state !== "idle" ? <span className={`ogr-chip is-${state}`}>{EDGE_STATE_LABEL[state]}</span> : null}
-    </button>
-  );
-}
-
-// ─── Edge detail ───────────────────────────────────────────────────────────
+// ─── Compact connection card ───────────────────────────────────────────────
 
 function EdgeDetail(props: GraphInspectorProps & { edge: GraphEdge }) {
-  const { edge, nodes, queued, getNodeStatus, deriveEdgeState, onSelect, onForm, onRemind } = props;
+  const { edge, nodes, queued, getNodeStatus, getDisplayStatus = getNodeStatus, deriveEdgeState, onSelect, onForm, onRemind } = props;
   const state = deriveEdgeState(edge.from, edge.to);
   const targetStatus = getNodeStatus(edge.to);
   const pending = queued.find((q) => q.from === edge.from && q.to === edge.to);
   const hasPending = state !== "idle";
   const canRemind = hasPending && targetStatus === "idle";
   const remindTitle = canRemind
-    ? "Nudge the target to read its queued message"
+    ? "Remind: nudge the target to read its queued message"
     : !hasPending
       ? "No pending message on this edge"
       : targetStatus === "busy"
         ? "Target session is currently working"
         : "Target session is not idle";
   const [reminding, setReminding] = useState(false);
+  const purpose = edge.purpose?.trim();
   return (
     <Pane
+      className="is-compact"
       head={
         <>
           <span className="ogr-tile is-md is-plain" aria-hidden="true"><ArrowRight size={15} /></span>
@@ -281,33 +203,31 @@ function EdgeDetail(props: GraphInspectorProps & { edge: GraphEdge }) {
               <span className="ogr-muted"> → </span>
               <button type="button" className="ogr-namelink" onClick={() => onSelect({ kind: "node", id: edge.to })}>{nameOf(nodes, edge.to)}</button>
             </b>
-            <small className="oui-truncate">Connection · <span className={`ogr-st is-${state}`}>{EDGE_STATE_LABEL[state]}</span></small>
+            <small className="oui-truncate"><span className={`ogr-st is-${state}`}>{EDGE_STATE_LABEL[state]}</span> · {nameOf(nodes, edge.to)} {statusMeta(getDisplayStatus(edge.to)).label.toLowerCase()}</small>
           </div>
-          <Button variant="ghost" size="sm" iconOnly aria-label="Close details" title="Close" onClick={() => onSelect(null)}><X /></Button>
-        </>
-      }
-      foot={
-        <>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!canRemind || reminding}
-            title={remindTitle}
-            onClick={async () => { setReminding(true); try { await onRemind(edge.edge_id); } finally { setReminding(false); } }}
-          >
-            {reminding ? <Loader2 className="oui-spin" /> : <Bell />}Remind
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => onForm({ kind: "edit-edge", edgeId: edge.edge_id })}><Pencil />Edit purpose</Button>
-          <span className="ogr-sp" />
-          <Button variant="ghost" size="sm" danger iconOnly aria-label="Delete connection" title="Delete connection" onClick={() => onForm({ kind: "delete-edge", edgeId: edge.edge_id })}><Trash2 /></Button>
+          <span className="ogr-acts">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label="Remind"
+              disabled={!canRemind || reminding}
+              title={remindTitle}
+              onClick={async () => { setReminding(true); try { await onRemind(edge.edge_id); } finally { setReminding(false); } }}
+            >
+              {reminding ? <Loader2 className="oui-spin" /> : <Bell />}
+            </Button>
+            <Button variant="ghost" size="sm" iconOnly aria-label="Edit purpose" title="Edit purpose" onClick={() => onForm({ kind: "edit-edge", edgeId: edge.edge_id })}><Pencil /></Button>
+            <Button variant="ghost" size="sm" danger iconOnly aria-label="Delete connection" title="Delete connection" onClick={() => onForm({ kind: "delete-edge", edgeId: edge.edge_id })}><Trash2 /></Button>
+            <Button variant="ghost" size="sm" iconOnly aria-label="Close details" title="Close" onClick={() => onSelect(null)}><X /></Button>
+          </span>
         </>
       }
     >
-      <Rows>
-        <KV label="Purpose">{edge.purpose?.trim() ? <p className="ogr-text">{edge.purpose}</p> : <span className="ogr-muted">No purpose set.</span>}</KV>
-        {pending ? <KV label="Queued"><QueuedLine who={`From ${nameOf(nodes, edge.from)}`} excerpt={pending.excerpt} /></KV> : null}
-        <KV label="Target">{nameOf(nodes, edge.to)} · {statusMeta(targetStatus).label}</KV>
-      </Rows>
+      <div className="ogr-facts">
+        <p className="ogr-fact" title={purpose}><span>Purpose</span>{purpose ?? <i className="ogr-muted">None — set one with the pencil.</i>}</p>
+        {pending ? <p className="ogr-fact" title={pending.excerpt}><span>Queued</span>{pending.excerpt ?? "Message waiting"}</p> : null}
+      </div>
     </Pane>
   );
 }
@@ -613,5 +533,59 @@ function DeleteForm(props: GraphInspectorProps & { target: { kind: "node"; id: s
         <HoldButton size="sm" onConfirm={() => void confirm()}>Hold to delete</HoldButton>
       </div>
     </div>
+  );
+}
+
+// ─── Drag-to-connect prompt ────────────────────────────────────────────────
+
+const PROMPT_W = 260;
+
+/**
+ * Asked only when a connection is dropped on an agent without a duty (as in
+ * Workbench): a small bubble beside the target, duty required.
+ */
+export function ConnectPrompt({ nodes, from, to, anchor, busy, onCancel, onSubmit }: {
+  nodes: GraphNode[];
+  from: string;
+  to: string;
+  /** Target card center, in canvas pixels. */
+  anchor: { x: number; y: number };
+  busy: boolean;
+  onCancel: () => void;
+  onSubmit: (duty: string) => void;
+}) {
+  const [duty, setDuty] = useState("");
+  const canSubmit = !!duty.trim() && !busy;
+  return (
+    <form
+      className="ogr-bubble"
+      style={{ "--ogr-ax": `${anchor.x}px`, "--ogr-ay": `${anchor.y}px`, "--ogr-bw": `${PROMPT_W}px` } as CSSProperties}
+      aria-label={`Connect ${nameOf(nodes, from)} to ${nameOf(nodes, to)}`}
+      onSubmit={(event) => { event.preventDefault(); if (canSubmit) onSubmit(duty); }}
+      onKeyDown={submitOnMetaEnter(() => { if (canSubmit) onSubmit(duty); })}
+      onPointerDown={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <div className="ogr-bubble-head">
+        <b className="oui-truncate">{nameOf(nodes, from)}</b>
+        <span className="ogr-muted">→</span>
+        <b className="oui-truncate">{nameOf(nodes, to)}</b>
+        <span className="ogr-sp" />
+        <Button variant="ghost" size="sm" iconOnly aria-label="Cancel" title="Cancel" onClick={onCancel}><X /></Button>
+      </div>
+      <textarea
+        autoFocus
+        className="ogr-textarea"
+        rows={2}
+        value={duty}
+        aria-label={`Duty for ${nameOf(nodes, to)}`}
+        placeholder={`${nameOf(nodes, to)} has no duty — set one`}
+        onChange={(event) => setDuty(event.target.value)}
+      />
+      <div className="ogr-bubble-foot">
+        <span className="ogr-hint">Set the purpose later on the connection.</span>
+        <Button variant="primary" size="sm" type="submit" disabled={!canSubmit}>{busy ? <Loader2 className="oui-spin" /> : null}Connect</Button>
+      </div>
+    </form>
   );
 }

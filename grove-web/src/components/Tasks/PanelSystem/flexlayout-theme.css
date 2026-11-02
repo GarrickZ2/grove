@@ -170,15 +170,16 @@
 .orbit-free-layout .flexlayout__splitter { background: var(--ofl-border); opacity: 1; transition: background-color 150ms; }
 .orbit-free-layout .flexlayout__splitter:hover { background: color-mix(in oklab, var(--color-text) 25%, transparent); opacity: 1; }
 .orbit-free-layout .flexlayout__splitter_drag { background: var(--color-highlight); opacity: 1; border-radius: 0; }
+/* 40px: the same column-header height as the docked layout. */
 .orbit-free-layout .flexlayout__tabset_tabbar_outer {
-  height: 36px;
+  height: 40px;
   padding: 0 6px 0 6px;
   background: color-mix(in oklab, var(--color-bg) 96%, var(--color-text) 4%);
   border-bottom: 1px solid var(--ofl-border);
 }
 .orbit-free-layout .flexlayout__tabset_tabbar_inner_tab_container { gap: 2px; align-items: center; }
 .orbit-free-layout .flexlayout__tab_button {
-  height: 26px;
+  height: 28px;
   padding: 0 6px 0 9px;
   margin: 0;
   border: 0;
@@ -304,3 +305,9 @@
   font-weight: 600;
   margin-bottom: 12px;
 }
+
+/* Orbit: the selected tab's panel actions (from its headless PanelShell) sit in
+   the tab strip, before [+] and maximize — one header row per panel. */
+.orbit-free-layout .ofl-tab-actions { display: inline-flex; align-items: center; }
+.orbit-free-layout .ofl-tab-slot { align-items: center; }
+.orbit-free-layout .ofl-tab-slot:empty { display: none !important; }

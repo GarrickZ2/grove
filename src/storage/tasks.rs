@@ -467,12 +467,18 @@ pub fn replace_project_linked_project_ids(
 
 /// Seed a freshly created Task's linked Projects from its Project's default
 /// set. This is a one-time copy: later edits on either side stay independent.
-/// A self-link is skipped defensively; unregistered IDs are copied as-is and
-/// handled by the ACP resolver exactly like a Task-level stale link.
+/// A self-link and archived Projects (treated as removed) are skipped;
+/// unregistered IDs are copied as-is and handled by the ACP resolver exactly
+/// like a Task-level stale link.
 pub fn copy_project_linked_projects_to_task(project: &str, task_id: &str) -> Result<()> {
+    let archived: std::collections::HashSet<String> =
+        crate::storage::workspace::load_archived_projects()?
+            .iter()
+            .map(|archived| crate::storage::workspace::project_hash(&archived.path))
+            .collect();
     let ids: Vec<String> = load_project_linked_project_ids(project)?
         .into_iter()
-        .filter(|id| id != project)
+        .filter(|id| id != project && !archived.contains(id))
         .collect();
     if ids.is_empty() {
         return Ok(());

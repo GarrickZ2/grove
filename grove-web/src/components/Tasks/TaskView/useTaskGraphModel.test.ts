@@ -16,6 +16,12 @@ describe("task graph model", () => {
     expect([...pending]).toEqual([[pendingKey("a", "b"), "hi"]]);
   });
 
+  it("seeds settled outcomes from the snapshot", () => {
+    const data = sanitizeGraph({ nodes: [{ ...node("a"), outcome: "error" }, { ...node("b"), outcome: "done" }, node("c")], edges: [] });
+    const { outcomes } = seedLiveMaps(data);
+    expect([...outcomes]).toEqual([["a", "error"], ["b", "done"]]);
+  });
+
   it("derives in-flight only while the target works", () => {
     const pending = new Map([[pendingKey("a", "b"), "hi"]]);
     const statuses = new Map<string, NodeStatus>([["b", "busy"]]);

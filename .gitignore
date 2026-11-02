@@ -77,3 +77,6 @@ examples/test_autolink.rs
 # Superpowers brainstorm cache
 .superpowers/
 .agentic-team
+
+# Local tool versions (mise)
+mise.toml

@@ -19,10 +19,9 @@
 .orbit-new__hint { color: var(--color-text-muted); }
 .orbit-new__error { color: var(--color-error); }
 /* Phone: the composer docks at the bottom like a chat app; the title centers in the space above. */
-.orbit-new.is-phone { display: block; min-height: 0; padding: 0 12px calc(10px + env(safe-area-inset-bottom)); }
+.orbit-new.is-phone { display: block; min-height: 0; padding: 0 16px calc(10px + env(safe-area-inset-bottom)); }
 .orbit-new.is-phone .orbit-new__inner { display: flex; height: 100%; flex-direction: column; }
 .orbit-new.is-phone .orbit-new__title { margin: auto 0; padding: 0 12px; font-size: 22px; }
-.orbit-new.is-phone .orbit-new__composer { border-radius: 26px; box-shadow: 0 10px 32px rgba(0, 0, 0, .14); }
 /* Narrow footer: drop the "Model" / "Mode" prefixes and cap long values.
    No overflow scrolling here: it would clip the dropdown menus. */
 .orbit-new.is-phone .chatbox-footer-right { min-width: 0; flex-shrink: 1; gap: 6px; }
@@ -50,9 +49,56 @@
 /* First-run starter prompts (Onboarding board): fill the composer, never send. */
 .orbit-new__starters { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 16px 20px 0; transition: opacity .2s ease; }
 .orbit-new.is-handing-off .orbit-new__starters { opacity: 0; }
+.orbit-new__starters.is-quiet { opacity: .45; }
+.orbit-new__starters.is-quiet:hover, .orbit-new__starters.is-quiet:focus-within { opacity: 1; }
 .orbit-new__starter { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid color-mix(in oklab, var(--color-border) 70%, transparent); background: var(--color-bg); font-size: 12.5px; color: color-mix(in oklab, var(--color-text) 85%, var(--color-text-muted)); cursor: pointer; animation: orbit-new-starter-in .6s cubic-bezier(.25, 1, .5, 1) both; transition: border-color .15s, transform .2s cubic-bezier(.3, 1.5, .5, 1); }
 .orbit-new__starter:hover { border-color: color-mix(in oklab, var(--color-text) 22%, var(--color-border)); transform: translateY(-1px); }
 .orbit-new__starter:focus-visible { outline: 2px solid var(--color-highlight); outline-offset: 2px; }
 .orbit-new__starter svg { color: var(--color-text-muted); }
 @keyframes orbit-new-starter-in { from { opacity: 0; transform: translateY(10px); filter: blur(4px); } }
 @media (prefers-reduced-motion: reduce) { .orbit-new__starter { animation: none; transition: none; } }
+
+/* Desktop atmosphere: a faint, slow glow behind the heading and composer (as on sign-in / first launch). */
+.orbit-new { position: relative; }
+.orbit-new__inner { position: relative; z-index: 1; }
+.orbit-new__glow { position: absolute; left: 50%; top: 44%; width: min(980px, 90%); height: 520px; transform: translate(-50%, -50%); pointer-events: none; filter: blur(70px); opacity: .7; }
+.orbit-new__glow i { position: absolute; border-radius: 50%; }
+.orbit-new__glow i:nth-child(1) { width: 46%; height: 62%; left: 14%; top: 8%; background: color-mix(in oklab, var(--color-highlight) 22%, transparent); animation: orbit-new-drift1 28s ease-in-out infinite; }
+.orbit-new__glow i:nth-child(2) { width: 40%; height: 56%; right: 12%; top: 18%; background: color-mix(in oklab, var(--color-info) 14%, transparent); animation: orbit-new-drift2 34s ease-in-out infinite; }
+.orbit-new__glow i:nth-child(3) { width: 34%; height: 46%; left: 38%; bottom: 0; background: color-mix(in oklab, #f9a8d4 10%, transparent); animation: orbit-new-drift3 40s ease-in-out infinite; }
+@keyframes orbit-new-drift1 { 50% { transform: translate(6%, 8%) scale(1.06); } }
+@keyframes orbit-new-drift2 { 50% { transform: translate(-8%, 4%) scale(.95); } }
+@keyframes orbit-new-drift3 { 50% { transform: translate(5%, -8%) scale(1.05); } }
+.orbit-new.is-handing-off .orbit-new__glow { opacity: 0; transition: opacity .3s ease; }
+
+/* Lighter starter chips: no fill, hairline border, muted until hovered. */
+.orbit-new__starter { border-color: color-mix(in oklab, var(--color-border) 45%, transparent); background: transparent; color: var(--color-text-muted); }
+.orbit-new__starter:hover { color: var(--color-text); background: color-mix(in oklab, var(--color-text) 4%, transparent); border-color: color-mix(in oklab, var(--color-text) 14%, var(--color-border)); }
+.orbit-new__starter svg { opacity: .8; }
+
+/* Desktop "Continue": recent Sessions, hung below the composer so loading never shifts it. */
+.orbit-new__continue { position: absolute; top: calc(100% + 28px); left: 20px; right: 20px; transition: opacity .2s ease; animation: orbit-new-starter-in .5s .1s cubic-bezier(.25, 1, .5, 1) both; }
+.orbit-new.is-handing-off .orbit-new__continue { opacity: 0; }
+.orbit-new__continue h2 { margin: 0 0 8px 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--color-text-muted); }
+.orbit-new__continue ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.orbit-new__continue button { display: flex; width: 100%; min-width: 0; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid color-mix(in oklab, var(--color-border) 45%, transparent); border-radius: 12px; background: color-mix(in oklab, var(--color-bg) 70%, transparent); backdrop-filter: blur(12px); color: var(--color-text); text-align: left; cursor: pointer; transition: border-color .15s, background-color .15s; }
+.orbit-new__continue button:hover { border-color: color-mix(in oklab, var(--color-text) 16%, var(--color-border)); background: color-mix(in oklab, var(--color-text) 4%, var(--color-bg)); }
+.orbit-new__continue button:focus-visible { outline: 2px solid var(--color-highlight); outline-offset: 2px; }
+.orbit-new__continue-icon { flex: none; color: var(--color-text-muted); }
+.orbit-new__continue-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.orbit-new__continue-copy b { overflow: hidden; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-new__continue-copy span { overflow: hidden; font-size: 11.5px; color: var(--color-text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.orbit-new__live { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--color-success); box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-success) 22%, transparent); animation: orbit-new-live 1.6s ease-in-out infinite; }
+@keyframes orbit-new-live { 50% { opacity: .45; } }
+.orbit-new__continue-ago { flex: none; font-size: 11.5px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+/* Short windows: keep one screen, drop the row rather than clip it. */
+@media (max-height: 640px) { .orbit-new__continue { display: none; } }
+@media (max-width: 760px) { .orbit-new__continue ul { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) {
+  .orbit-new__glow i, .orbit-new__continue, .orbit-new__live { animation: none; }
+}
+
+/* Phone: the Orbit composer docks at the bottom; the project / Task tray tucks under it. */
+.orbit-new.is-phone .orbit-new__context { margin: -14px 12px 0; padding: 20px 6px 4px; border-radius: 0 0 16px 16px; }
+.orbit-new.is-phone .orbit-new__chip { height: 40px; padding: 0 10px; font-size: 13.5px; }
+.orbit-new.is-phone .orbit-new__input { font-size: 16px; min-height: 44px; }

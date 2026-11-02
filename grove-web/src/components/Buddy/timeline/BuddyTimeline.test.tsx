@@ -97,3 +97,25 @@ it("marks where a subagent reported back, between two answers", () => {
   expect(events).toEqual([["Subagent finished", "Plan: design doc"], ["Routine ran"]]);
   expect(host.textContent).not.toContain("All eight sections");
 });
+
+it("under Orbit pops a just-sent bubble once (real sequence: buddy_input, then the echo), never history", async () => {
+  const { SentPopContext, createSentPopRegistry } = await import("../../Tasks/TaskView/conversation/sentPop");
+  const registry = createSentPopRegistry();
+  registry.record("fresh");
+  const draw = (state: BuddyTimelineState) => act(() => root.render(<SentPopContext.Provider value={registry}><BuddyTimeline buddy={createBuddiesMock().get("mock-release")} state={state} connected onRespond={vi.fn()} onAnswer={vi.fn()} onSkip={vi.fn()} onOpenQuestion={vi.fn()} /></SentPopContext.Provider>));
+  const history = fromEvents([{ type: "user_message", text: "Earlier", client_message_id: "old" }]);
+  draw(history);
+  expect(host.querySelector(".buddy-user-message")!.className).toBe("buddy-user-message");
+  // What useBuddyComposer + the backend produce for a send.
+  const sent = [
+    { type: "buddy_input", client_message_id: "fresh", text: "Now" },
+    { type: "user_message", text: "Now", client_message_id: "fresh" },
+    { type: "input_accepted", client_message_id: "fresh" },
+  ].reduce((state, event) => reduceBuddyEvent(state, event), history);
+  draw(sent);
+  const bubbles = [...host.querySelectorAll<HTMLElement>(".buddy-user-message")];
+  expect(bubbles.map((bubble) => bubble.dataset.sentPop)).toEqual([undefined, expect.stringMatching(/pop|wait/)]);
+  // Re-rendering the same state does not replay it.
+  draw({ ...sent });
+  expect(registry.claim("fresh")).toBe(false);
+});

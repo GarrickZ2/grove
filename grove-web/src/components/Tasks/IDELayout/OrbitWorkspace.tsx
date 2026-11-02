@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ElementType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "framer-motion";
+import { PanelMenuButton, type PanelMenuItem } from "../../../orbit/ui";
 import "./orbit-workspace.css";
 
 /* Orbit desktop workspace chrome: the window-header toolbar and the docks
@@ -15,6 +16,10 @@ export interface OrbitToolItem {
   active: boolean;
   disabled?: boolean;
   onToggle: () => void;
+  /** The Agent: a labelled pill, accent-tinted when shown, first in the strip. */
+  primary?: boolean;
+  /** Tooltip text when it differs from `label`. */
+  tip?: string;
 }
 
 interface OrbitWorkspaceBarProps {
@@ -26,9 +31,11 @@ interface OrbitWorkspaceBarProps {
   /** Tool groups, separated by a hairline. */
   groups: OrbitToolItem[][];
   trailing?: ReactNode;
+  /** Workspace-level actions (layout, sizes, git overflow) under the toolbar's ⋯. */
+  menu?: PanelMenuItem[];
 }
 
-export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trailing }: OrbitWorkspaceBarProps) {
+export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trailing, menu }: OrbitWorkspaceBarProps) {
   const [tip, setTip] = useState<{ item: OrbitToolItem; left: number; top: number } | null>(null);
   const tipTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(tipTimer.current), []);
@@ -64,7 +71,7 @@ export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trail
                   <button
                     key={item.key}
                     type="button"
-                    className={`ows-tb${item.active ? " is-on" : ""}`}
+                    className={`ows-tb${item.active ? " is-on" : ""}${item.primary ? " is-primary" : ""}`}
                     aria-pressed={item.active}
                     aria-label={item.label} data-orbit-tool={item.key}
                     disabled={item.disabled}
@@ -75,6 +82,7 @@ export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trail
                     onBlur={hideTip}
                   >
                     <Icon className="ows-tb-icon" size={15} />
+                    {item.primary ? <span className="ows-tb-label">{item.label}</span> : null}
                   </button>
                 );
               })}
@@ -82,10 +90,15 @@ export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trail
           ))}
         </div>
       ) : null}
-      {trailing ? <div className="ows-bar-trailing">{trailing}</div> : null}
+      {trailing || menu?.length ? (
+        <div className="ows-bar-trailing">
+          {trailing}
+          {menu?.length ? <PanelMenuButton items={menu} label="Workspace actions" /> : null}
+        </div>
+      ) : null}
       {tip && createPortal(
         <div className="ows-tip" role="tooltip" style={{ left: tip.left, top: tip.top }}>
-          {tip.item.label}{tip.item.shortcut ? <kbd>{tip.item.shortcut}</kbd> : null}
+          {tip.item.tip ?? tip.item.label}{tip.item.shortcut ? <kbd>{tip.item.shortcut}</kbd> : null}
         </div>,
         document.body,
       )}

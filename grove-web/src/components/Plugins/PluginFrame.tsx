@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { LoaderCircle, RefreshCw } from "lucide-react";
 import { apiClient, appendHmacToUrl } from "../../api/client";
 import { useProject, useTheme } from "../../context";
 import type { Plugin } from "../../api/plugins";
@@ -10,6 +10,12 @@ import {
   type PluginUiManifest,
 } from "./pluginEntry";
 import { ensurePluginAssetSession, getPluginAssetSessionGeneration, subscribeToPluginAssetSessionChanges } from "./pluginAssetSession";
+import { buildPluginThemePayload, readOrbitTokens } from "./pluginTheme";
+import { dispatchPluginNavigation, isPluginFrameShown, resolvePluginNavigation } from "./pluginNavigation";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { PanelError } from "../../orbit/ui/PanelShell";
+import { useInPanelShell, usePanelMenuItems, type PanelMenuItem } from "../../orbit/ui/panelSlots";
+import "./orbit-plugins.css";
 
 /** Encode each path segment but keep `/` separators (for the /data/{*path} route). */
 const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
@@ -28,8 +34,12 @@ const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/")
  * post to the specific iframe we hold a ref to).
  *
  * Bridge methods (all gated by the backend against the plugin's manifest perms):
- *   - `host.getInfo` → current project (+ `projectType`) and `taskId`.
- *   - `theme.get`     → the current theme palette (also pushed live on change).
+ *   - `host.getInfo` → current project (+ `projectType`), `taskId` and `interface`.
+ *   - `host.navigate` → open this plugin's own page or a Settings section
+ *                       (`pluginNavigation.ts`); never another plugin or a URL.
+ *   - `theme.get`     → the theme palette, the interface ("orbit" | "workbench")
+ *                       and the resolved Orbit `--o-*` tokens (pushed live on
+ *                       theme or interface change). See `pluginTheme.ts`.
  *   - `storage.*`     → the plugin's private storage, scoped global/project/task.
  *   - `project.*`     → read the current task's working dir (task panels only).
  *   - `backend.invoke`→ call the plugin's node backend (contributes.backend).
@@ -38,7 +48,7 @@ const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/")
  *   - `chat.send`     → inject a user prompt into a chat (`chat:write`).
  *
  * The host also pushes two unsolicited messages into the iframe: `grove:theme`
- * on theme change, and `chat.active` ({ chatId }) on mount + whenever the
+ * (same payload as `theme.get`) on theme or interface change, and `chat.active` ({ chatId }) on mount + whenever the
  * focused chat changes. Backend ACP events arrive as `grove:event` named
  * `grove:acp` via the events SSE relay (see below).
  */
@@ -65,6 +75,8 @@ export function PluginFrame({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const { selectedProject, projects } = useProject();
   const { theme } = useTheme();
+  const orbit = useOrbitInterface();
+  const inPanelShell = useInPanelShell();
 
   // Resolve the scoped project: explicit projectId (task panel) wins over the
   // sidebar selection — Blitz can open a task from a different project.
@@ -136,10 +148,22 @@ export function PluginFrame({
                 projectName: project?.name ?? null,
                 projectType: project?.projectType ?? null,
                 taskId: taskId ?? null,
+                interface: orbit ? "orbit" : "workbench",
               },
             });
+          } else if (method === "host.navigate") {
+            // The plugin id comes from this frame, never from params, so a
+            // plugin can only open its own page. Off-screen frames can't move
+            // the user away from what they're looking at.
+            if (!isPluginFrameShown(iframeRef.current)) {
+              reply({ error: { code: "forbidden", message: "host.navigate requires a visible plugin frame" } });
+              return;
+            }
+            const resolved = resolvePluginNavigation(plugin, params);
+            const outcome = resolved.ok ? dispatchPluginNavigation(resolved.target) : resolved;
+            reply(outcome.ok ? { data: { ok: true } } : { error: outcome.error });
           } else if (method === "theme.get") {
-            reply({ data: { id: theme.id, isLight: theme.isLight, colors: theme.colors } });
+            reply({ data: buildPluginThemePayload(theme, orbit, readOrbitTokens()) });
           } else if (method === "storage.readFile") {
             const path = encodePath(String(params.path ?? ""));
             const r = await apiClient.get<{ content: string | null }>(`${base}/${path}?${scopeQuery(params)}`);
@@ -266,7 +290,7 @@ export function PluginFrame({
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [plugin.id, project, taskId, theme]);
+  }, [plugin, project, taskId, theme, orbit]);
 
   // Event bus: subscribe to events the plugin's backend/MCP server push for this
   // task (or the global sidebar scope) and relay them into the isolated iframe.
@@ -335,20 +359,74 @@ export function PluginFrame({
     };
   }, [plugin.id, taskId, reloadKey, assetSession?.token]);
 
-  // Push the theme into the iframe whenever it changes (the SDK requests the
-  // initial one via `theme.get` on load; this keeps it live).
+  // Push the theme into the iframe whenever it or the interface changes (the
+  // SDK requests the initial one via `theme.get` on load; this keeps it live).
+  // ThemeProvider writes the new --color-* variables in its own effect, which
+  // runs after this one, so the tokens are read a frame later.
   useEffect(() => {
-    iframeRef.current?.contentWindow?.postMessage(
-      { type: "grove:theme", data: { id: theme.id, isLight: theme.isLight, colors: theme.colors } },
-      "*",
-    );
-  }, [theme]);
+    const push = () =>
+      iframeRef.current?.contentWindow?.postMessage({ type: "grove:theme", data: buildPluginThemePayload(theme, orbit, readOrbitTokens()) }, "*");
+    if (typeof requestAnimationFrame !== "function") {
+      const timer = setTimeout(push, 0);
+      return () => clearTimeout(timer);
+    }
+    const frame = requestAnimationFrame(push);
+    return () => cancelAnimationFrame(frame);
+  }, [theme, orbit]);
+
+  // Orbit workspace panel: a dev plugin's Reload lives in the panel's ⋯ menu.
+  const reloadInMenu = orbit && inPanelShell && showReload && plugin.source === "dev";
+  const panelMenu = useMemo<PanelMenuItem[]>(
+    () => (reloadInMenu ? [{ id: "reload-plugin", label: "Reload plugin", icon: RefreshCw, onSelect: () => setReloadKey((k) => k + 1) }] : []),
+    [reloadInMenu],
+  );
+  usePanelMenuItems(panelMenu);
 
   const sessionReady = assetSession?.pluginId === plugin.id && assetSession.generation === generation && assetSession.reloadKey === reloadKey;
   const src =
     entry === null || !sessionReady || !assetSession?.token
       ? undefined
       : `/api/v1/plugin-assets/${assetSession.token}/${plugin.id}/${entry}?v=${reloadKey}`;
+
+  const failed = sessionReady && !assetSession?.token;
+
+  if (orbit) {
+    return (
+      <div className="oplg-frame-host orbit-ui">
+        {showReload && plugin.source === "dev" && !reloadInMenu && (
+          <button
+            type="button"
+            onClick={() => setReloadKey((k) => k + 1)}
+            title="Reload plugin (after rebuild)"
+            aria-label="Reload plugin"
+            className="oplg-reload"
+          >
+            <RefreshCw aria-hidden="true" />
+          </button>
+        )}
+        {src ? (
+          <iframe
+            ref={iframeRef}
+            key={reloadKey}
+            src={src}
+            title={plugin.name}
+            // No allow-same-origin → opaque origin → real isolation (see above).
+            sandbox="allow-scripts"
+            className="oplg-iframe"
+          />
+        ) : failed ? (
+          <PanelError title={`Couldn't open ${plugin.name}`} onRetry={() => setReloadKey((key) => key + 1)}>
+            Grove couldn't start a session for this plugin's files.
+          </PanelError>
+        ) : (
+          <div className="oplg-loading" role="status">
+            <LoaderCircle className="oui-spin" aria-hidden="true" />
+            <span>Loading {plugin.name}…</span>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="group relative flex h-full w-full flex-col bg-[var(--color-bg)]">

@@ -5,6 +5,7 @@ import {
   moveCursor,
   pickActiveSection,
   searchSettingsPages,
+  resolveSettingsTarget,
 } from "./settingsModel";
 
 describe("searchSettingsPages", () => {
@@ -22,7 +23,7 @@ describe("searchSettingsPages", () => {
   });
 
   it("matches keywords and requires every term", () => {
-    expect(searchSettingsPages(SETTINGS_PAGES, "zellij").map((hit) => hit.pageId)).toEqual(["terminal"]);
+    expect(searchSettingsPages(SETTINGS_PAGES, "zellij").map((hit) => hit.pageId)).toEqual(["worktrees"]);
     expect(searchSettingsPages(SETTINGS_PAGES, "zellij theme")).toEqual([]);
   });
 });
@@ -69,3 +70,18 @@ describe("pickActiveSection", () => {
   });
 });
 
+
+describe("resolveSettingsTarget", () => {
+  it("resolves Orbit page ids and maps moved Workbench sections", () => {
+    expect(resolveSettingsTarget("worktrees")).toEqual({ pageId: "worktrees" });
+    expect(resolveSettingsTarget("terminal")).toEqual({ pageId: "worktrees", subId: "mode" });
+    expect(resolveSettingsTarget("browserControl")).toEqual({ pageId: "agents", subId: "browser" });
+    expect(resolveSettingsTarget("nope")).toBeNull();
+    expect(resolveSettingsTarget("toString")).toBeNull();
+    for (const id of ["terminal", "layout", "autolink", "indexing", "browserControl", "browser", "chat"]) {
+      const target = resolveSettingsTarget(id)!;
+      const page = SETTINGS_PAGES.find((p) => p.id === target.pageId)!;
+      if (target.subId) expect(page.subs.map((sub) => sub.id)).toContain(target.subId);
+    }
+  });
+});

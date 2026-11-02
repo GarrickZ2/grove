@@ -16,3 +16,14 @@
 .picker-menu__description { margin-top: 1px; color: var(--color-text-muted); font-size: 11px; line-height: 1.35; white-space: normal; }
 .picker-menu__check { flex: none; color: var(--color-highlight); }
 .picker-menu__empty { padding: 8px 12px; color: var(--color-text-muted); font-size: 12px; text-align: center; }
+
+/* Orbit: the same frosted popover and quiet states as Orbit menus (Workbench keeps the rules above). */
+.orbit-ui .picker-menu { padding: 5px; border-color: var(--o-border); border-radius: var(--o-radius-lg); background: color-mix(in oklab, var(--o-bg) 94%, transparent); -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6); box-shadow: var(--o-shadow-2); color: var(--o-text); }
+.orbit-ui .picker-menu__search { margin: 0 0 5px; padding: 6px 9px; border-radius: var(--o-radius); background: var(--o-code); }
+.orbit-ui .picker-menu__search input { color: var(--o-text); }
+.orbit-ui .picker-menu__footer { margin: 5px -5px -5px; padding: 5px; border-top-color: var(--o-border); }
+.orbit-ui .picker-menu__group { padding: 8px 9px 4px; color: var(--o-muted); }
+.orbit-ui .picker-menu__item { padding: 7px 9px; border-radius: var(--o-radius); color: var(--o-text); transition: background-color var(--o-dur-fast); }
+.orbit-ui .picker-menu__item:hover, .orbit-ui .picker-menu__item:focus-visible { background: var(--o-hover); outline: none; }
+.orbit-ui .picker-menu__description, .orbit-ui .picker-menu__empty { color: var(--o-muted); }
+.orbit-ui .picker-menu__check { color: var(--o-accent); }

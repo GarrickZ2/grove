@@ -583,6 +583,59 @@ class ApiClient {
     return undefined as T;
   }
 
+  /**
+   * POST multipart form data, reporting upload progress (0..1). Uses XHR,
+   * since fetch has no upload progress events. Falls back to `postFormData`
+   * (no progress) where XHR isn't available or the iOS app's transport is in
+   * play, so progress is purely additive.
+   */
+  async postFormDataWithProgress<R>(
+    path: string,
+    formData: FormData,
+    onProgress: (fraction: number) => void,
+    signal?: AbortSignal,
+  ): Promise<R> {
+    const iosTransport = (window as Window & { __GROVE_TRANSPORT_READY__?: boolean }).__GROVE_TRANSPORT_READY__ !== undefined;
+    if (typeof XMLHttpRequest === 'undefined' || iosTransport) {
+      const result = await this.postFormData<R>(path, formData, signal);
+      onProgress(1);
+      return result;
+    }
+    const headers = await getAuthOnlyHeaders('POST', path);
+    const deviceId = headers['X-Device-Id'] ?? (headers['X-Signature'] ? null : getDeviceId());
+    const masterKey = headers['X-Signature'] && !deviceId ? getSecretKey() : null;
+    const xhr = new XMLHttpRequest();
+    const done = new Promise<{ status: number; statusText: string; body: string; headers: Headers }>((resolve, reject) => {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) onProgress(Math.min(1, event.loaded / event.total));
+      };
+      xhr.onload = () => {
+        if (xhr.status === 0) { reject(new TypeError('Network request failed')); return; }
+        const responseHeaders = new Headers();
+        for (const line of xhr.getAllResponseHeaders().trim().split(/[\r\n]+/)) {
+          const at = line.indexOf(':');
+          if (at > 0) responseHeaders.append(line.slice(0, at).trim(), line.slice(at + 1).trim());
+        }
+        resolve({ status: xhr.status, statusText: xhr.statusText, body: xhr.responseText, headers: responseHeaders });
+      };
+      xhr.onerror = () => reject(new TypeError('Network request failed'));
+      xhr.onabort = () => reject(new DOMException('The upload was aborted.', 'AbortError'));
+    });
+    signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+    xhr.open('POST', `${this.baseUrl}${path}`);
+    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+    xhr.send(formData);
+    const result = await done;
+    if (result.status < 200 || result.status >= 300) {
+      const response = new Response(result.body, { status: result.status, statusText: result.statusText, headers: result.headers });
+      responseAuthorizations.set(response, headers['Authorization'] ? { deviceId: null, masterKey: null } : { deviceId, masterKey });
+      const payload = await extractErrorPayload(response);
+      throw { status: result.status, message: payload.message, data: payload.data } as ApiError;
+    }
+    onProgress(1);
+    return (result.body ? JSON.parse(result.body) : undefined) as R;
+  }
+
   async postFormData<R>(path: string, formData: FormData, signal?: AbortSignal): Promise<R> {
     const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'POST',

@@ -1,5 +1,6 @@
 import type { Task } from "../../../data/types";
 import type { OrbitPhoneAction } from "./OrbitPhonePanels";
+import type { PanelMenuItem } from "../../../orbit/ui";
 
 // ── Layout Mode ──
 export type LayoutMode = "flex" | "ide";
@@ -26,6 +27,8 @@ export interface IDELayoutContainerProps {
   isActive?: boolean;
   /** Flip the workspace between this layout and the free (FlexLayout) one. */
   onToggleLayoutMode?: () => void;
+  /** Orbit: extra rows for the toolbar's ⋯ (git overflow actions). */
+  toolbarMenu?: PanelMenuItem[];
 }
 
 export interface IDELayoutHandle {

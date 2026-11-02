@@ -1,0 +1,77 @@
+/* Memory star map. Inline it sits on the Orbit card in the app theme
+   (.is-light / .is-dark); expanded it is the full-window night sky. */
+.osf{position:relative;width:100%;height:100%;min-height:0;overflow:hidden;container-type:inline-size;
+  background:var(--o-bg,#f9f9f8);color:var(--o-text,#1c1b19);touch-action:none;user-select:none;-webkit-user-select:none}
+.osf-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+.osf-canvas-under{pointer-events:none}
+
+/* ---- controls ---- */
+.osf-tools{position:absolute;left:12px;bottom:12px;z-index:3;display:inline-flex;align-items:center;gap:2px;padding:3px;border-radius:var(--o-radius-md,10px);
+  background:color-mix(in oklab,var(--o-bg,#fdfdfc) 90%,transparent);border:1px solid var(--o-border,rgb(28 27 25/10%));box-shadow:var(--o-shadow-1,0 1px 2px rgb(0 0 0/7%));
+  -webkit-backdrop-filter:blur(14px) saturate(1.4);backdrop-filter:blur(14px) saturate(1.4)}
+.osf-tools button{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:var(--o-radius-sm,7px);background:transparent;color:var(--o-muted,#6b6a66);cursor:pointer;transition:background var(--o-dur-fast,150ms),color var(--o-dur-fast,150ms)}
+.osf-tools button:hover{background:var(--o-hover,rgb(28 27 25/5%));color:var(--o-text,#1c1b19)}
+.osf-tools button:focus-visible{outline:2px solid var(--o-accent,#059669);outline-offset:1px}
+.osf-tools svg{width:14px;height:14px}
+.osf-tools-sep{width:1px;height:16px;margin:0 3px;background:var(--o-border,rgb(28 27 25/10%))}
+.osf-hint{position:absolute;right:14px;bottom:18px;z-index:2;font-size:10.5px;color:var(--o-muted,#6b6a66);opacity:.75;pointer-events:none;white-space:nowrap}
+@container (max-width:560px){.osf-hint{display:none}}
+
+/* ---- info card: Orbit light popover / dark glass, corner-docked ---- */
+.osf-info{position:absolute;z-index:4;width:min(300px,calc(100% - 24px));overflow:hidden;border-radius:var(--o-radius-lg,12px);pointer-events:none;
+  color:var(--o-text,#1c1b19);background:color-mix(in oklab,var(--o-bg,#fdfdfc) 94%,transparent);border:1px solid var(--o-border,rgb(28 27 25/10%));
+  box-shadow:var(--o-shadow-2,0 1px 2px rgb(0 0 0/7%),0 16px 36px -14px rgb(0 0 0/22%));-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);
+  animation:osf-in 160ms var(--o-ease-out,ease) both}
+.osf-info.is-pinned{pointer-events:auto}
+.osf-info.is-tl{left:12px;top:12px}.osf-info.is-tr{right:12px;top:12px}.osf-info.is-bl{left:12px;bottom:52px}.osf-info.is-br{right:12px;bottom:52px}
+.osf-info-bar{height:2px;background:linear-gradient(90deg,var(--osf-star,#2c63d8),color-mix(in srgb,var(--osf-star,#2c63d8) 30%,transparent) 60%,transparent)}
+.osf-info-body{padding:12px 14px 10px}
+.osf-info-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.osf-info-titles{min-width:0}
+.osf-info-eyebrow{margin:0;font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--o-muted,#6b6a66);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.osf-info h3{margin:5px 0 0;font-size:15px;line-height:1.32;font-weight:600;letter-spacing:-.005em;overflow-wrap:anywhere}
+.osf-info-score{flex:none;margin-top:1px;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--osf-star);background:color-mix(in srgb,var(--osf-star,#2c63d8) 13%,transparent)}
+.osf-info-desc{margin:8px 0 0;font-size:12px;line-height:1.55;color:var(--o-muted,#6b6a66);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.osf-info-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+.osf-info-tags span{font-size:10px;padding:2px 7px;border-radius:999px;border:1px solid var(--o-border,rgb(28 27 25/10%));color:var(--o-muted,#6b6a66);background:var(--o-hover,rgb(28 27 25/3%))}
+.osf-info-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 14px;border-top:1px solid var(--o-border,rgb(28 27 25/10%));font-size:10.5px;color:var(--o-muted,#6b6a66)}
+.osf-read{font:inherit;font-size:11px;font-weight:600;border:0;border-radius:var(--o-radius-sm,7px);padding:5px 10px;cursor:pointer;background:var(--o-ink,#1c1b19);color:var(--o-on-ink,#fdfdfc)}
+.osf-read:hover{opacity:.9}
+@keyframes osf-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ---- full-window night sky ---- */
+.osf-full{position:fixed;inset:0;z-index:60;pointer-events:none}
+.osf-scrim{position:absolute;inset:0;background:#04060d;opacity:0}
+.osf-stage{position:absolute;inset:0;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+.osf-full.is-open,.osf-full.is-open .osf-stage{pointer-events:auto}
+.osf-full:not(.is-open) .osf-tools,.osf-full:not(.is-open) .osf-info{opacity:0}
+.osf-full .osf-tools{left:16px;bottom:16px;background:rgba(12,16,30,.66);border-color:rgba(170,190,255,.13);box-shadow:none;transition:opacity .2s ease}
+.osf-full .osf-tools button{color:rgba(196,207,238,.62)}
+.osf-full .osf-tools button:hover{background:rgba(255,255,255,.06);color:#e3e9ff}
+.osf-full .osf-tools-sep{background:rgba(170,190,255,.13)}
+.osf-full .osf-info{color:#e3e9ff;background:rgba(12,16,30,.84);border-color:rgba(170,190,255,.13);box-shadow:0 18px 50px -12px rgba(0,0,0,.65);-webkit-backdrop-filter:blur(14px) saturate(1.4);backdrop-filter:blur(14px) saturate(1.4)}
+.osf-full .osf-info.is-tl,.osf-full .osf-info.is-tr{top:16px}
+.osf-full .osf-info-eyebrow,.osf-full .osf-info-desc,.osf-full .osf-info-foot,.osf-full .osf-info-tags span{color:rgba(196,207,238,.62)}
+.osf-full .osf-info-foot,.osf-full .osf-info-tags span{border-color:rgba(170,190,255,.13)}
+.osf-full .osf-info-tags span{background:rgba(255,255,255,.025)}
+.osf-full .osf-read{background:#dfe8ff;color:#0b1020}
+
+/* ---- dark theme card: dark glass ---- */
+.osf.is-dark .osf-info{background:color-mix(in oklab,var(--o-bg,#1f1f1e) 90%,transparent);box-shadow:0 1px 2px rgb(0 0 0/30%),0 16px 36px -14px rgb(0 0 0/55%)}
+
+/* ---- phone: controls dock in a bar under the map, 44px targets ---- */
+@container (max-width:520px){
+  .osf-tools{left:0;right:0;bottom:0;justify-content:center;gap:4px;padding:4px;border-width:1px 0 0;border-radius:0;box-shadow:none}
+  .osf-tools button{width:44px;height:44px}
+  .osf-tools svg{width:16px;height:16px}
+  .osf-info{width:auto;left:8px!important;right:8px!important}
+  .osf-info.is-bl,.osf-info.is-br{bottom:60px}
+  .osf-info.is-tl,.osf-info.is-tr{top:8px}
+}
+@media (max-width:520px){
+  .osf-full .osf-tools{left:0;right:0;bottom:0;justify-content:center;gap:4px;padding:4px calc(4px + env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) calc(4px + env(safe-area-inset-left));border-width:1px 0 0;border-radius:0}
+  .osf-full .osf-tools button{width:44px;height:44px}
+  .osf-full .osf-info{width:auto;left:8px!important;right:8px!important}
+  .osf-full .osf-info.is-tl,.osf-full .osf-info.is-tr{top:calc(8px + env(safe-area-inset-top))}
+}
+@media (prefers-reduced-motion:reduce){.osf-info{animation:none}}

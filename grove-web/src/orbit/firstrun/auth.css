@@ -49,6 +49,12 @@
 .oas-foot a,.oas-link{color:var(--o-muted)}
 .oas-link{display:block;margin-top:18px;padding:8px 0;font-size:12px;text-decoration:underline;text-decoration-color:var(--o-track);text-underline-offset:3px}
 .oas-link:hover,.oas-foot a:hover{color:var(--o-text)}
+/* Phone: touch-sized controls; 16px text so iOS doesn't zoom the field. */
+@media (max-width:767px){
+  .oas-field input{font-size:16px}
+  .oas-eye{width:40px;height:40px}
+  .oas-remember{min-height:44px}
+}
 @media (prefers-reduced-motion:reduce){
   .oas *,.oas-mark::after{animation-duration:1ms!important;animation-iteration-count:1!important;transition:none!important}
   .oas-mark.is-loading::after{display:none}

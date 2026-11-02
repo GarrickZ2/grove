@@ -6,6 +6,7 @@ import { BuddyLaunchContext } from "../Buddy/buddyLaunchContext";
 import { createBuddiesMock } from "../../api/buddies.mock";
 import { archiveChat, createChat, listChats, reorderTasks, updateChatTitle } from "../../api";
 import type { NodeStatus } from "../../api/walkieTalkie";
+import type { Plugin } from "../../api/plugins";
 
 const project = vi.hoisted(() => ({ id: "p1", projectType: "studio", localTask: { id: "_local" }, tasks: [{ id: "task-a", name: "Task A", status: "active" }] }));
 const radio = vi.hoisted(() => ({ callbacks: {} as { onEvent?: (event: unknown) => void; onChatStatus?: (project: string, task: string, chat: string, status: NodeStatus) => void; onChatListChanged?: (project: string, task: string) => void } }));
@@ -261,6 +262,36 @@ describe("Orbit sidebar", () => {
     expect(reorderTasks).toHaveBeenCalledWith("p1", ["task-b", "task-a"]);
     expect(names()).toEqual(["Task B", "Task A"]);
     project.tasks = original;
+  });
+  it("lists plugin pages under More with their own icon, in the desktop sidebar and the phone drawer", async () => {
+    const plugins = [
+      { id: "kanban", name: "Kanban", icon: "🗂️", contributes: { sidebar: { title: "Board" } } },
+      { id: "plain", name: "Plain", contributes: { sidebar: {} } },
+      { id: "panel-only", name: "Panel only", contributes: { panel: { title: "Panel" } } },
+    ] as unknown as Plugin[];
+    const click = vi.fn();
+    const rows = () => [...container.querySelectorAll<HTMLButtonElement>("nav .orbit-plugin-row")];
+    const more = () => [...container.querySelectorAll<HTMLButtonElement>("nav button")].find((button) => button.textContent === "More")!;
+    for (const drawer of [false, true]) {
+      await act(async () => root.render(<OrbitSidebar variant={drawer ? "drawer" : undefined} activeItem="dashboard" collapsed={false} onCollapse={vi.fn()} onItemClick={click} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} plugins={plugins} />));
+      if (more().getAttribute("aria-expanded") === "true") act(() => more().click());
+      expect(rows()).toHaveLength(0);
+      act(() => more().click());
+      expect(rows().map((row) => row.textContent)).toEqual(["🗂️Board", "Plain"]);
+      // The rows follow the built-in More pages.
+      const navLabels = [...container.querySelectorAll("nav button")].map((button) => button.textContent);
+      expect(navLabels.slice(-4)).toEqual(["Automation", "Statistics", "🗂️Board", "Plain"]);
+      expect(rows()[1].querySelector(".lucide-puzzle")).not.toBeNull();
+      expect(rows().every((row) => row.type === "button" && row.tabIndex === 0)).toBe(true);
+      act(() => rows()[0].click());
+      expect(click).toHaveBeenLastCalledWith("plugin:kanban");
+    }
+    // An active plugin page keeps More open and marks its row.
+    await act(async () => root.render(<OrbitSidebar activeItem="plugin:plain" collapsed={false} onCollapse={vi.fn()} onItemClick={click} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} plugins={plugins} />));
+    expect(more().getAttribute("aria-expanded")).toBe("true");
+    const active = rows().find((row) => row.textContent === "Plain")!;
+    expect(active.classList.contains("is-selected")).toBe(true);
+    expect(active.getAttribute("aria-current")).toBe("page");
   });
   it("replaces the collapsed sidebar with title-bar controls", async () => {
     const onCollapse = vi.fn();

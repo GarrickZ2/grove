@@ -40,6 +40,15 @@ describe("actual connection deadlines", () => {
     vi.advanceTimersByTime(200000);
     expect(fail).not.toHaveBeenCalled();
   });
+  it("accepts remote observation without waiting for session_ready", () => {
+    socket.dispatchEvent(new Event("open"));
+    socket.receive({ type: "remote_session", agent_name: "Codex" });
+    vi.advanceTimersByTime(200000);
+    expect(fail).not.toHaveBeenCalled();
+    expect(socket.close).not.toHaveBeenCalled();
+    socket.close();
+    expect(fail).not.toHaveBeenCalled();
+  });
   it("waits for human sign-in, then bounds the resumed initialization", () => {
     socket.dispatchEvent(new Event("open")); socket.receive({ type: "auth_required" });
     vi.advanceTimersByTime(600000); expect(fail).not.toHaveBeenCalled();

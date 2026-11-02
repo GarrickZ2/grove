@@ -125,7 +125,7 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
     }
   };
 
-  const answerForm = async (item: NeedsYouItem, form: InlineForm, value: string) => {
+  const answerForm = async (item: NeedsYouItem, form: InlineForm, value: string | null) => {
     // Same optimistic collapse as permissions; the input status confirms it.
     setAnswering((previous) => new Map(previous).set(item.id, item.at));
     try {
@@ -246,6 +246,7 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
               onDismiss={(item) => void dismissNotification(item.projectId, item.taskId)}
               formFor={pendingForms.formFor}
               onAnswerForm={(item, form, value) => void answerForm(item, form, value)}
+              onDeclineForm={(item, form) => void answerForm(item, form, null)}
             />
           </div>
           <div className="oui-rise odb-fill-wrap" style={{ animationDelay: "140ms" }}>

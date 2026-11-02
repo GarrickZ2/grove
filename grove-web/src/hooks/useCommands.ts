@@ -22,6 +22,7 @@ import {
   Terminal,
   Code,
   Code2,
+  Puzzle,
   FileSearch,
   MessageSquare,
   ExternalLink,
@@ -31,6 +32,7 @@ import {
   StickyNote,
   MessageCircle,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import type { Command } from "../context/CommandPaletteContext";
 import type { Project, Task } from "../data/types";
 import type { TaskOperationsHandlers } from "./useTaskOperations";
@@ -49,6 +51,8 @@ export interface UseCommandsOptions {
   navigation?: {
     onNavigate: (page: string) => void;
     activeItem: string;
+    /** Plugin top-level pages (`plugin:<id>`), listed as "Go to <title>". */
+    pluginPages?: { id: string; label: string; icon?: ReactNode }[];
   };
   // Project (optional)
   project?: {
@@ -131,6 +135,9 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
         withRanking({ id: "nav-settings", name: "Go to Settings", category: "Navigation", icon: Settings, handler: () => onNavigate("settings"), keywords: ["config", "preferences"] }, { contexts: { default: 8, tasks: -4, workspace: -8 } }),
         withRanking({ id: "nav-projects", name: "Go to Projects", category: "Navigation", icon: FolderOpen, handler: () => onNavigate("projects"), keywords: ["manage"] }, { contexts: { default: 24, tasks: 4, workspace: 8 } }),
       );
+      for (const page of navigation.pluginPages ?? []) {
+        commands.push(withRanking({ id: `nav-${page.id}`, name: `Go to ${page.label}`, category: "Navigation", icon: Puzzle, iconElement: page.icon, handler: () => onNavigate(page.id), keywords: ["plugin", page.label] }, { contexts: { default: 10, tasks: -6, workspace: -10 } }));
+      }
     }
 
     // --- Palette launchers ---

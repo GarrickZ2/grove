@@ -97,6 +97,10 @@
 /* Needs you: short-text answer in place */
 .odb-answer{display:flex;align-items:center;gap:6px}
 .odb-answer .oui-field{width:150px;height:26px}
+.odb-choices{display:flex;align-items:center;gap:6px;min-width:0}
+.odb-choices .oui-btn{max-width:132px;min-width:0}
+.odb-choices.is-grid{display:grid;grid-template-columns:repeat(2,minmax(0,112px));gap:4px}
+.odb-choices.is-grid .oui-btn{max-width:none;height:24px;justify-content:center}
 .odb-item-copy b{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .odb-item-copy>span{display:block;margin-top:2px;font-size:12px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .odb-item-copy code{font-size:11.5px;padding:0 4px;border-radius:4px;background:var(--o-selected);color:var(--o-text)}

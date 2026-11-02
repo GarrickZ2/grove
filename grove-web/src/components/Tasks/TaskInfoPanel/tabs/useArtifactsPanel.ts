@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { Task } from "../../../../data/types";
 import {
   listArtifacts, previewArtifact, artifactDownloadUrl, deleteArtifact,
-  uploadArtifacts, createArtifactLink, updateArtifactLink, syncArtifactToResource, listArtifactWorkdirs, addArtifactWorkdir, deleteArtifactWorkdir, openArtifactWorkdir, openArtifactFile, revealArtifactFile,
+  uploadArtifacts, uploadArtifactWithProgress, artifactsZipUrl, createArtifactLink, updateArtifactLink, syncArtifactToResource, listArtifactWorkdirs, addArtifactWorkdir, deleteArtifactWorkdir, openArtifactWorkdir, openArtifactFile, revealArtifactFile,
   listResources,
   type ArtifactFile, type ArtifactWorkDirectoryEntry,
 } from "../../../../api";
@@ -33,7 +33,23 @@ export interface ArtifactsPanelOptions {
   /** Called when an external preview request resolves to a file, before it
    *  opens, so the layout can bring that file's section / folder into view. */
   onRevealTarget?: (file: ArtifactFile) => void;
+  /** Upload files one request each with per-file progress (`pendingUploadItems`).
+   *  Off by default so the Workbench keeps its single batch upload. */
+  uploadProgress?: boolean;
 }
+
+/** One file in the upload batch in flight. `progress` is 0..1, or null before it starts. */
+export interface PendingUpload {
+  id: string;
+  name: string;
+  progress: number | null;
+  /** Waiting for an upload slot. */
+  queued?: boolean;
+  failed?: boolean;
+}
+
+/** Concurrent per-file uploads when `uploadProgress` is on. */
+const UPLOAD_CONCURRENCY = 3;
 
 interface LoadFilesOptions {
   silent?: boolean;
@@ -65,7 +81,7 @@ export interface ArtifactSyncConflict {
  * the open / reveal / sync / delete actions. Shared by the Workbench tab and
  * the Orbit body; each renders its own layout.
  */
-export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy, onRevealTarget }: ArtifactsPanelOptions) {
+export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy, onRevealTarget, uploadProgress }: ArtifactsPanelOptions) {
   const { browseFolder, folderPicker } = useBrowseFolder("Select Artifact Folder");
   const { drafts: previewCommentDrafts, addDraft, updateDraft, removeDraft } = usePreviewComments();
   const [inputFiles, setInputFiles] = useState<ArtifactFile[]>([]);
@@ -81,6 +97,8 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
   const [isUploading, setIsUploading] = useState(false);
   /** Names in the upload batch in flight. */
   const [pendingUploads, setPendingUploads] = useState<string[]>([]);
+  /** The same batch with per-file progress (only filled when `uploadProgress` is on). */
+  const [pendingUploadItems, setPendingUploadItems] = useState<PendingUpload[]>([]);
   const isUploadingRef = useRef(false);
   const [addLinkOpen, setAddLinkOpen] = useState(false);
   const [editLink, setEditLink] = useState<{
@@ -191,16 +209,47 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     setIsUploading(true);
     setPendingUploads(list.map((file) => file.name));
     setError(null);
-    try {
-      await uploadArtifacts(projectId, task.id, list);
-      await loadFiles();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+    if (uploadProgress) {
+      const batch = Date.now().toString(36);
+      const items: PendingUpload[] = list.map((file, i) => ({ id: `${batch}-${i}`, name: file.name, progress: null, queued: true }));
+      setPendingUploadItems(items);
+      const update = (id: string, patch: Partial<PendingUpload>) =>
+        setPendingUploadItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+      const failures: string[] = [];
+      let next = 0;
+      const worker = async () => {
+        while (next < list.length) {
+          const at = next++;
+          const { id } = items[at];
+          update(id, { progress: 0, queued: false });
+          try {
+            await uploadArtifactWithProgress(projectId, task.id, list[at], (fraction) => update(id, { progress: fraction }));
+            update(id, { progress: 1 });
+          } catch (err) {
+            update(id, { failed: true });
+            const apiErr = err as { message?: string };
+            failures.push(`${list[at].name}${apiErr?.message ? ` (${apiErr.message})` : ""}`);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, list.length) }, worker));
+      await loadFiles({ silent: true });
+      if (failures.length) {
+        setError(failures.length === 1 ? `Couldn’t upload ${failures[0]}` : `Couldn’t upload ${failures.length} files: ${failures.join(", ")}`);
+      }
+      setPendingUploadItems([]);
+    } else {
+      try {
+        await uploadArtifacts(projectId, task.id, list);
+        await loadFiles();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Upload failed");
+      }
     }
     isUploadingRef.current = false;
     setIsUploading(false);
     setPendingUploads([]);
-  }, [projectId, task.id, loadFiles]);
+  }, [projectId, task.id, loadFiles, uploadProgress]);
 
   const handleAddWorkdir = useCallback(async () => {
     if (!projectId) return;
@@ -375,6 +424,14 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     );
   }, [projectId, task.id]);
 
+  /** Download a .zip of `paths` (relative to `dir`; none = the whole root). */
+  const handleDownloadZip = useCallback((dir: string, paths: string[], name?: string) => {
+    if (!projectId) return;
+    const fallback = paths.length === 1 ? paths[0].split("/").pop() || dir : paths.length === 0 ? dir : `${dir}-${paths.length}-items`;
+    const archive = `${name || fallback}.zip`;
+    downloadViaIframe(artifactsZipUrl(projectId, task.id, dir, paths, name), archive);
+  }, [projectId, task.id]);
+
   const handleOpenInApp = useCallback((file: ArtifactFile) => {
     if (!projectId || file.is_dir) return;
     void openArtifactFile(projectId, task.id, file.directory, file.path);
@@ -465,6 +522,26 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete file");
     }
+  }, [projectId, task.id, loadFiles]);
+
+  /** Delete several uploads (input/ only, like single delete), then reload once. */
+  const handleDeleteMany = useCallback(async (files: ArtifactFile[]) => {
+    if (!projectId) return { deleted: 0, failed: 0 };
+    const targets = files.filter((file) => file.directory === "input");
+    let deleted = 0;
+    const failed: string[] = [];
+    for (const file of targets) {
+      try {
+        await deleteArtifact(projectId, task.id, file.directory, file.path);
+        deleted += 1;
+      } catch {
+        failed.push(file.name);
+      }
+    }
+    await loadFiles({ silent: true });
+    if (failed.length) setError(`Couldn’t delete ${failed.length === 1 ? failed[0] : `${failed.length} files`}`);
+    else if (deleted) setToastMessage(deleted === 1 ? `Deleted "${targets[0].name}"` : `Deleted ${deleted} files`);
+    return { deleted, failed: failed.length };
   }, [projectId, task.id, loadFiles]);
 
   const handleSyncToResource = useCallback(async (
@@ -562,6 +639,7 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     closePreview,
     isUploading,
     pendingUploads,
+    pendingUploadItems,
     addLinkOpen,
     setAddLinkOpen,
     editLink,
@@ -577,6 +655,7 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     handleOpenWorkdir,
     handlePreview,
     handleDownload,
+    handleDownloadZip,
     handleOpenInApp,
     handleRevealInFileManager,
     handleCreatePreviewComment,
@@ -587,6 +666,7 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     handleOpenLink,
     handleEditLink,
     handleDelete,
+    handleDeleteMany,
     handleSyncToResource,
     handleOpenFolder,
     submitAddLink,

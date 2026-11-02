@@ -1,8 +1,8 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent } from "react";
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { AnimatePresence, MotionConfig } from "framer-motion";
 import {
   ArrowDownAZ, ArrowUpFromLine, ArrowUpDown, Check, ChevronLeft, ChevronRight, CircleAlert, Clock, Download, Edit3, Eye,
-  Folder, FolderOpen, FolderSearch, HardDrive, House, LayoutGrid, Link as LinkIcon, Link2, List, Loader2, MoreHorizontal,
+  FileArchive, Folder, FolderOpen, FolderSearch, HardDrive, House, LayoutGrid, Link as LinkIcon, Link2, List, Loader2, Minus, MoreHorizontal,
   RefreshCw, Search, SquareArrowOutUpRight, Trash2, Upload, X,
 } from "lucide-react";
 import type { Task } from "../../../data/types";
@@ -10,12 +10,13 @@ import { artifactDownloadUrl, type ArtifactFile, type ArtifactWorkDirectoryEntry
 import {
   AddLinkDialog, FileConflictDialog, FilePreviewDrawer, VSCodeIcon, formatSize, isLinkFile, linkDisplayName, hostnameOf,
 } from "../../../components/ui";
-import { useArtifactsPanel, type ArtifactPreviewRequest, type ArtifactsPanel } from "../../../components/Tasks/TaskInfoPanel/tabs/useArtifactsPanel";
+import { useArtifactsPanel, type ArtifactPreviewRequest, type ArtifactsPanel, type PendingUpload } from "../../../components/Tasks/TaskInfoPanel/tabs/useArtifactsPanel";
 import {
-  GROVE_FILE_DRAG_TYPE, dragCarriesGrovePath, dropContainsDirectory, parentPath,
+  dragCarriesGrovePath, dropContainsDirectory, parentPath,
 } from "../../../components/Tasks/TaskInfoPanel/tabs/artifactsModel";
+import { beginGroveFileDrag, endGroveFileDrag, setGroveFileDrag } from "../../../utils/groveFileDrag";
 import {
-  Button, LOCALE, PanelEmpty, PanelError, PanelHeaderActions, PanelHeaderContext, SearchField, formatDateTime,
+  Button, HoldButton, LOCALE, PanelEmpty, PanelError, PanelHeaderActions, PanelHeaderContext, SearchField, formatDateTime,
   shortAgo, useInPanelShell, useNow, usePanelMenuItems, type PanelMenuItem,
 } from "../../ui";
 import { ActionMenu, type ActionItem } from "../../studio/ActionMenu";
@@ -23,6 +24,7 @@ import { useActionMenu } from "../../studio/useActionMenu";
 import { useSignedUrl } from "../../studio/useSignedUrl";
 import { extLabel, fileKind, hostFileActionsAvailable, revealLabel } from "../../studio/studioView";
 import {
+  artifactDragFiles,
   KIND_LABELS, arrangeEntries, breadcrumbTrail, defaultSource, existingFolder, fileCount, gridColumns, indexFolders,
   kindCounts, scopeEntries, totalsFor,
   type ArtifactEntry, type ArtifactSort, type FolderIndex, type ArtifactSource, type ArtifactView, type KindFilter,
@@ -76,6 +78,26 @@ function writePrefs(prefs: Prefs) {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString(LOCALE)} ${n === 1 ? one : many}`;
 
+const NO_SELECTION: ReadonlySet<string> = new Set();
+
+/** Multi-selection of the rows in the current folder view, keyed by artifact path. */
+interface Selection {
+  has: (path: string) => boolean;
+  /** True once anything is selected: a plain click then toggles instead of opening. */
+  active: boolean;
+  /** Click / keyboard entry point: toggles, or with `range` selects from the anchor. */
+  pick: (path: string, range: boolean) => void;
+  /** The selected files, in view order (for multi-file drags). */
+  files: readonly ArtifactFile[];
+}
+
+/** Ctrl/⌘+click toggles, Shift+click selects a range, and while a selection exists a plain click toggles too. */
+function selectionGesture(event: MouseEvent, selection: Selection): "toggle" | "range" | null {
+  if (event.shiftKey) return "range";
+  if (event.metaKey || event.ctrlKey || selection.active) return "toggle";
+  return null;
+}
+
 /**
  * Orbit body of the task Artifacts panel (no frame or title; the workspace
  * shell owns those). Three sources — what the agent wrote (`output/`), what
@@ -111,7 +133,7 @@ export function OrbitArtifactsPanel(props: Props) {
     setKind("all");
   }, []);
 
-  const panel = useArtifactsPanel({ ...props, onRevealTarget: revealTarget });
+  const panel = useArtifactsPanel({ ...props, onRevealTarget: revealTarget, uploadProgress: true });
   const { inputFiles, outputFiles, workdirs, isLoading, error, setError, previewFile, syncConflict, editLink } = panel;
 
   const active: ArtifactSource = source ?? defaultSource({ input: inputFiles, output: outputFiles });
@@ -126,6 +148,39 @@ export function OrbitArtifactsPanel(props: Props) {
     () => arrangeEntries(scope, { kind: effectiveKind, sort: prefs.sort }, index),
     [scope, effectiveKind, prefs.sort, index],
   );
+
+  // Selection belongs to one folder view: moving elsewhere drops it.
+  const scopeKey = `${active}/${folder}`;
+  const [selectionState, setSelectionState] = useState<{ key: string; paths: Set<string>; anchor: string | null }>({ key: "", paths: new Set(), anchor: null });
+  const selected = selectionState.key === scopeKey ? selectionState.paths : NO_SELECTION;
+  const selectedEntries = useMemo(() => entries.filter((entry) => selected.has(entry.file.path)), [entries, selected]);
+  const clearSelection = useCallback(() => setSelectionState({ key: "", paths: new Set(), anchor: null }), []);
+  const pick = useCallback((path: string, range: boolean) => {
+    setSelectionState((current) => {
+      const same = current.key === scopeKey;
+      const paths = new Set(same ? current.paths : []);
+      const anchor = same ? current.anchor : null;
+      const anchorAt = anchor ? entries.findIndex((entry) => entry.file.path === anchor) : -1;
+      const at = entries.findIndex((entry) => entry.file.path === path);
+      if (range && anchorAt >= 0 && at >= 0) {
+        const [from, to] = anchorAt < at ? [anchorAt, at] : [at, anchorAt];
+        for (let i = from; i <= to; i += 1) paths.add(entries[i].file.path);
+        return { key: scopeKey, paths, anchor };
+      }
+      if (paths.has(path)) paths.delete(path);
+      else paths.add(path);
+      return { key: scopeKey, paths, anchor: path };
+    });
+  }, [entries, scopeKey]);
+  const selectAll = useCallback(() => {
+    setSelectionState({ key: scopeKey, paths: new Set(entries.map((entry) => entry.file.path)), anchor: entries[0]?.file.path ?? null });
+  }, [entries, scopeKey]);
+  const selection = useMemo<Selection>(() => ({
+    has: (path) => selected.has(path),
+    active: selectedEntries.length > 0,
+    pick,
+    files: selectedEntries.map((entry) => entry.file),
+  }), [selected, selectedEntries, pick]);
 
   const navigate = (next: string, dir: "in" | "out") => {
     if (active === "linked") return;
@@ -185,8 +240,9 @@ export function OrbitArtifactsPanel(props: Props) {
 
   const refresh = () => { void panel.loadFiles(); void panel.loadWorkdirs(); };
   const inShell = useInPanelShell();
-  const { setAddLinkOpen, handleAddWorkdir, handleOpenFolder } = panel;
+  const { setAddLinkOpen, handleAddWorkdir, handleOpenFolder, handleDownloadZip } = panel;
   const revealDir = active === "linked" ? null : active;
+  const folderHasFiles = revealDir !== null && totalsFor(index, folder).files > 0;
   const menuItems = useMemo<PanelMenuItem[]>(() => [
     { id: "artifacts-add-link", label: "Add link to uploads…", icon: LinkIcon, onSelect: () => setAddLinkOpen(true) },
     { id: "artifacts-link-folder", label: "Link a folder…", icon: FolderOpen, onSelect: () => void handleAddWorkdir() },
@@ -196,7 +252,13 @@ export function OrbitArtifactsPanel(props: Props) {
       icon: FolderSearch,
       onSelect: () => handleOpenFolder(revealDir, folder || undefined),
     }] : []),
-  ], [setAddLinkOpen, handleAddWorkdir, handleOpenFolder, revealDir, folder]);
+    ...(revealDir && folderHasFiles ? [{
+      id: "artifacts-zip",
+      label: "Download folder as .zip",
+      icon: FileArchive,
+      onSelect: () => handleDownloadZip(revealDir, folder ? [folder] : []),
+    }] : []),
+  ], [setAddLinkOpen, handleAddWorkdir, handleOpenFolder, handleDownloadZip, revealDir, folder, folderHasFiles]);
   usePanelMenuItems(menuItems);
   const nothingLoaded = inputFiles.length === 0 && outputFiles.length === 0;
   const loadFailed = Boolean(error) && nothingLoaded && !isLoading;
@@ -226,6 +288,9 @@ export function OrbitArtifactsPanel(props: Props) {
         direction={direction}
         onOpenFolder={(path) => navigate(path, "in")}
         onUpload={openFilePicker}
+        selection={selection}
+        onSelectAll={selectAll}
+        onClearSelection={clearSelection}
       />
     );
   }
@@ -314,7 +379,7 @@ export function OrbitArtifactsPanel(props: Props) {
               </Button>
             ) : null}
             {/* In the workspace shell these live in the header's ⋯ menu and refresh button. */}
-            {inShell ? null : <SourceMenu panel={panel} source={active} folder={folder} onRefresh={refresh} />}
+            {inShell ? null : <SourceMenu panel={panel} source={active} folder={folder} canZip={folderHasFiles} onRefresh={refresh} />}
           </div>
         ) : (
           <div className="oar-bar">
@@ -352,6 +417,17 @@ export function OrbitArtifactsPanel(props: Props) {
               <KindChip key={entry.kind} label={KIND_LABELS[entry.kind]} count={entry.count} on={effectiveKind === entry.kind} onPick={() => setKind(entry.kind)} />
             ))}
           </div>
+        ) : null}
+
+        {active !== "linked" && selectedEntries.length > 0 && !isLoading && !loadFailed ? (
+          <BatchBar
+            panel={panel}
+            source={active}
+            selected={selectedEntries}
+            total={entries.length}
+            onSelectAll={selectAll}
+            onClear={clearSelection}
+          />
         ) : null}
 
         {error && !loadFailed ? (
@@ -546,10 +622,11 @@ function SortButton({ sort, onChange }: { sort: ArtifactSort; onChange: (sort: A
   );
 }
 
-function SourceMenu({ panel, source, folder, onRefresh }: {
+function SourceMenu({ panel, source, folder, canZip, onRefresh }: {
   panel: ArtifactsPanel;
   source: "output" | "input";
   folder: string;
+  canZip: boolean;
   onRefresh: () => void;
 }) {
   const menu = useActionMenu();
@@ -559,6 +636,7 @@ function SourceMenu({ panel, source, folder, onRefresh }: {
       { id: "linkdir", icon: FolderOpen, label: "Link a folder…", onSelect: () => void panel.handleAddWorkdir() },
     ] : []),
     { id: "reveal", icon: FolderSearch, label: revealLabel(), separated: source === "input", onSelect: () => panel.handleOpenFolder(source, folder || undefined) },
+    ...(canZip ? [{ id: "zip", icon: FileArchive, label: "Download folder as .zip", onSelect: () => panel.handleDownloadZip(source, folder ? [folder] : []) }] : []),
     { id: "refresh", icon: RefreshCw, label: "Refresh", onSelect: onRefresh },
   ];
   return (
@@ -578,6 +656,58 @@ function SourceMenu({ panel, source, folder, onRefresh }: {
   );
 }
 
+/** Shown while rows are selected: zip download, delete (uploads only, hold to confirm), clear. */
+function BatchBar({ panel, source, selected, total, onSelectAll, onClear }: {
+  panel: ArtifactsPanel;
+  source: "output" | "input";
+  selected: ArtifactEntry[];
+  total: number;
+  onSelectAll: () => void;
+  onClear: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  // Same rule as the row menu: only your uploads' files can be deleted.
+  const deletable = source === "input" ? selected.filter(({ file }) => !file.is_dir).map(({ file }) => file) : [];
+  const all = selected.length === total;
+  const remove = async () => {
+    setDeleting(true);
+    const result = await panel.handleDeleteMany(deletable);
+    setDeleting(false);
+    if (result.failed === 0) onClear();
+  };
+  return (
+    <div className="oar-batch" role="toolbar" aria-label="Selected files">
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={all ? "true" : "mixed"}
+        aria-label={all ? "Clear selection" : "Select all"}
+        title={all ? "Clear selection" : "Select all"}
+        className={`oar-check is-on${all ? "" : " is-mixed"}`}
+        onClick={all ? onClear : onSelectAll}
+      >{all ? <Check aria-hidden="true" /> : <Minus aria-hidden="true" />}</button>
+      <b className="oar-batch-n" aria-live="polite">{plural(selected.length, "item")} selected</b>
+      <span className="oar-sp" />
+      <Button
+        variant="secondary"
+        size="sm"
+        title="Download the selection as one .zip"
+        onClick={() => panel.handleDownloadZip(source, selected.map(({ file }) => file.path))}
+      ><FileArchive />Download</Button>
+      {source === "input" ? (
+        deletable.length === 0 ? (
+          <Button variant="secondary" size="sm" danger disabled title="Folders can’t be deleted here"><Trash2 />Delete</Button>
+        ) : (
+          <HoldButton size="sm" disabled={deleting} onConfirm={() => void remove()} holdingLabel="Keep holding…">
+            {deleting ? "Deleting…" : `Hold to delete ${deletable.length === 1 ? "1 file" : `${deletable.length} files`}`}
+          </HoldButton>
+        )
+      ) : null}
+      <Button variant="ghost" size="sm" iconOnly aria-label="Clear selection" title="Clear selection (Esc)" onClick={onClear}><X /></Button>
+    </div>
+  );
+}
+
 function KindChip({ label, count, on, onPick }: { label: string; count: number; on: boolean; onPick: () => void }) {
   return (
     <button type="button" role="radio" aria-checked={on} className={`oar-chip${on ? " is-on" : ""}`} onClick={onPick}>
@@ -589,7 +719,7 @@ function KindChip({ label, count, on, onPick }: { label: string; count: number; 
 /* ── Folder listing ── */
 
 function FolderView({
-  panel, source, folder, index, entries, scopeSize, query, setQuery, kind, view, direction, onOpenFolder, onUpload,
+  panel, source, folder, index, entries, scopeSize, query, setQuery, kind, view, direction, onOpenFolder, onUpload, selection, onSelectAll, onClearSelection,
 }: {
   panel: ArtifactsPanel;
   source: "output" | "input";
@@ -604,9 +734,12 @@ function FolderView({
   direction: "in" | "out" | "none";
   onOpenFolder: (path: string) => void;
   onUpload: () => void;
+  selection: Selection;
+  onSelectAll: () => void;
+  onClearSelection: () => void;
 }) {
   const now = useNow(CLOCK_MS);
-  const pending = source === "input" && folder === "" && !query ? panel.pendingUploads : [];
+  const pending = source === "input" && folder === "" && !query ? pendingItems(panel) : [];
   const previewKey = panel.previewFile ? `${panel.previewFile.file.directory}/${panel.previewFile.file.path}` : null;
   const folderName = folder ? folder.split("/").pop()! : SOURCE_ROOT[source];
 
@@ -644,7 +777,7 @@ function FolderView({
     );
   }
 
-  const shared = { panel, source, now, index, previewKey, searching: Boolean(query.trim()), onOpenFolder };
+  const shared = { panel, source, now, index, previewKey, searching: Boolean(query.trim()), onOpenFolder, selection, onSelectAll, onClearSelection };
   const key = `${source}/${folder}/${view}`;
   return view === "grid" ? (
     <WindowedGrid key={key} entries={entries} pending={pending} direction={direction} {...shared} />
@@ -661,12 +794,61 @@ interface RowShared {
   previewKey: string | null;
   searching: boolean;
   onOpenFolder: (path: string) => void;
+  selection: Selection;
 }
 
 interface WindowedProps extends RowShared {
   entries: ArtifactEntry[];
-  pending: string[];
+  pending: PendingUpload[];
   direction: "in" | "out" | "none";
+  onSelectAll: () => void;
+  onClearSelection: () => void;
+}
+
+/** The upload batch in flight: per-file progress when the hook tracks it, else names only. */
+function pendingItems(panel: ArtifactsPanel): PendingUpload[] {
+  if (panel.pendingUploadItems && panel.pendingUploadItems.length > 0) return panel.pendingUploadItems;
+  return (panel.pendingUploads ?? []).map((name, i) => ({ id: `n-${i}-${name}`, name, progress: null }));
+}
+
+/**
+ * Selection keys on a list/grid container: ⌘/Ctrl+A selects every row,
+ * Esc clears, Space toggles the focused row, Shift+arrows extend.
+ * Returns true when it handled the event.
+ */
+function selectionKeys(event: KeyboardEvent<HTMLDivElement>, entries: ArtifactEntry[], pendingCount: number, shared: Pick<WindowedProps, "selection" | "onSelectAll" | "onClearSelection">): boolean {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+    event.preventDefault();
+    shared.onSelectAll();
+    return true;
+  }
+  if (event.key === "Escape" && shared.selection.active) {
+    event.preventDefault();
+    event.stopPropagation();
+    shared.onClearSelection();
+    return true;
+  }
+  const at = (event.target as HTMLElement).dataset.index;
+  if (at === undefined) return false;
+  const entry = entries[Number(at) - pendingCount];
+  if (!entry) return false;
+  if (event.key === " " && event.target === event.currentTarget.querySelector(`[data-index="${at}"]`)) {
+    event.preventDefault();
+    shared.selection.pick(entry.file.path, event.shiftKey);
+    return true;
+  }
+  return false;
+}
+
+/** After a Shift+arrow focus move, add the newly focused row to the selection. */
+function extendOnShiftArrow(event: KeyboardEvent<HTMLDivElement>, delta: number, entries: ArtifactEntry[], pendingCount: number, selection: Selection) {
+  if (!event.shiftKey || delta === 0) return;
+  const at = (event.target as HTMLElement).dataset.index;
+  if (at === undefined) return;
+  const from = entries[Number(at) - pendingCount];
+  const to = entries[Math.max(0, Math.min(entries.length - 1, Number(at) + delta - pendingCount))];
+  if (from && !selection.has(from.file.path)) selection.pick(from.file.path, false);
+  if (to && to !== from) selection.pick(to.file.path, true);
 }
 
 /** Arrow keys move focus between rendered items; the window keeps the neighbours mounted. */
@@ -693,7 +875,7 @@ function WindowedList({ entries, pending, direction, ...shared }: WindowedProps)
   for (let i = win.start; i < win.end; i += 1) {
     const style = { transform: `translateY(${i * ROW_HEIGHT}px)` };
     if (i < pending.length) {
-      rows.push(<PendingRow key={`up-${i}-${pending[i]}`} name={pending[i]} style={style} />);
+      rows.push(<PendingRow key={pending[i].id} item={pending[i]} style={style} />);
     } else {
       const entry = entries[i - pending.length];
       rows.push(<EntryRow key={entry.file.path} entry={entry} indexAt={i} style={style} {...shared} />);
@@ -704,7 +886,12 @@ function WindowedList({ entries, pending, direction, ...shared }: WindowedProps)
       ref={attach}
       className={`oar-scroll oui-scroll is-${direction}`}
       onScroll={onScroll}
-      onKeyDown={(event) => moveFocus(event, (key) => (key === "ArrowDown" ? 1 : key === "ArrowUp" ? -1 : 0), count, win.reveal)}
+      onKeyDown={(event) => {
+        if (selectionKeys(event, entries, pending.length, shared)) return;
+        const step = (key: string) => (key === "ArrowDown" ? 1 : key === "ArrowUp" ? -1 : 0);
+        extendOnShiftArrow(event, step(event.key), entries, pending.length, shared.selection);
+        moveFocus(event, step, count, win.reveal);
+      }}
     >
       <div className="oar-list" role="list" style={{ height: win.totalHeight + LIST_PAD * 2 }}>
         {rows}
@@ -728,7 +915,7 @@ function WindowedGrid({ entries, pending, direction, ...shared }: WindowedProps)
         width: `calc((100% - ${(cols - 1) * TILE_GAP}px) / ${cols})`,
       };
       if (i < pending.length) {
-        tiles.push(<PendingTile key={`up-${i}-${pending[i]}`} name={pending[i]} style={style} />);
+        tiles.push(<PendingTile key={pending[i].id} item={pending[i]} style={style} />);
       } else {
         const entry = entries[i - pending.length];
         tiles.push(<EntryTile key={entry.file.path} entry={entry} indexAt={i} style={style} {...shared} />);
@@ -741,7 +928,11 @@ function WindowedGrid({ entries, pending, direction, ...shared }: WindowedProps)
       ref={attach}
       className={`oar-scroll oui-scroll is-${direction}`}
       onScroll={onScroll}
-      onKeyDown={(event) => moveFocus(event, step, count, win.reveal, cols)}
+      onKeyDown={(event) => {
+        if (selectionKeys(event, entries, pending.length, shared)) return;
+        extendOnShiftArrow(event, step(event.key), entries, pending.length, shared.selection);
+        moveFocus(event, step, count, win.reveal, cols);
+      }}
     >
       <div className="oar-grid" role="list" style={{ height: Math.max(0, win.totalHeight - TILE_GAP) + GRID_PAD * 2 }}>
         <div className="oar-grid-inner">{tiles}</div>
@@ -750,7 +941,7 @@ function WindowedGrid({ entries, pending, direction, ...shared }: WindowedProps)
   );
 }
 
-function useEntryActions({ entry, panel, source, onOpenFolder }: { entry: ArtifactEntry } & Pick<RowShared, "panel" | "source" | "onOpenFolder">) {
+function useEntryActions({ entry, panel, source, onOpenFolder, selection }: { entry: ArtifactEntry } & Pick<RowShared, "panel" | "source" | "onOpenFolder" | "selection">) {
   const { file } = entry;
   const isLink = !file.is_dir && isLinkFile(file.name);
   const host = hostFileActionsAvailable();
@@ -764,6 +955,7 @@ function useEntryActions({ entry, panel, source, onOpenFolder }: { entry: Artifa
     items = [
       { id: "open", icon: FolderOpen, label: "Open", onSelect: () => onOpenFolder(file.path) },
       { id: "reveal", icon: FolderSearch, label: revealLabel(), onSelect: () => panel.handleOpenFolder(source, file.path) },
+      { id: "zip", icon: FileArchive, label: "Download as .zip", onSelect: () => panel.handleDownloadZip(source, [file.path]) },
     ];
   } else if (isLink) {
     items = [
@@ -789,15 +981,36 @@ function useEntryActions({ entry, panel, source, onOpenFolder }: { entry: Artifa
   const dragProps = file.is_dir ? {} : {
     draggable: true,
     onDragStart: (event: DragEvent) => {
-      // Same protocol as FileTree, so the chat composer turns it into a file chip.
-      const path = `${file.directory}/${file.path}`;
+      // Same protocol as FileTree, so the chat composer turns it into file
+      // chips. Dragging a row of the selection carries every selected file
+      // (folders stay out, as they do for a single drag).
+      const files = artifactDragFiles(file, selection);
+      const paths = setGroveFileDrag(event.dataTransfer, files.map((item) => `${item.directory}/${item.path}`));
       event.dataTransfer.effectAllowed = "copy";
-      event.dataTransfer.setData(GROVE_FILE_DRAG_TYPE, path);
-      event.dataTransfer.setData("application/x-grove-file-is-dir", "false");
-      event.dataTransfer.setData("text/plain", path);
+      beginGroveFileDrag(paths.length);
+      if (paths.length > 1) setCountDragImage(event.dataTransfer, displayName(file), paths.length);
     },
+    onDragEnd: () => endGroveFileDrag(),
   };
   return { isLink, activate, items, dragProps };
+}
+
+/** A drag image naming the dragged row with a count badge: "report.md  3 files". */
+function setCountDragImage(dataTransfer: DataTransfer, name: string, count: number) {
+  if (typeof dataTransfer.setDragImage !== "function") return;
+  const ghost = document.createElement("div");
+  ghost.className = "oar-drag-ghost";
+  const label = document.createElement("span");
+  label.className = "oar-drag-ghost-name";
+  label.textContent = name;
+  const badge = document.createElement("span");
+  badge.className = "oar-drag-ghost-count";
+  badge.textContent = `${count} files`;
+  ghost.append(label, badge);
+  document.body.appendChild(ghost);
+  dataTransfer.setDragImage(ghost, 14, 14);
+  // The browser snapshots the element during dragstart; it can go next frame.
+  window.setTimeout(() => ghost.remove(), 0);
 }
 
 function displayName(file: ArtifactFile): string {
@@ -819,6 +1032,7 @@ function EntryRow({ entry, indexAt, style, ...shared }: RowShared & { entry: Art
   const menu = useActionMenu();
   const { isLink, activate, items, dragProps } = useEntryActions({ entry, ...shared });
   const selected = shared.previewKey === `${file.directory}/${file.path}`;
+  const checked = shared.selection.has(file.path);
   const sub = shared.searching && rel !== file.name ? parentPath(rel) : null;
   const name = displayName(file);
   return (
@@ -826,19 +1040,23 @@ function EntryRow({ entry, indexAt, style, ...shared }: RowShared & { entry: Art
       role="listitem"
       tabIndex={0}
       data-index={indexAt}
-      className={`oar-row${file.is_dir ? " is-dir" : ""}${selected ? " is-sel" : ""}${menu.open ? " is-menu" : ""}`}
+      aria-selected={shared.selection.active ? checked : undefined}
+      className={`oar-row${file.is_dir ? " is-dir" : ""}${selected ? " is-sel" : ""}${checked ? " is-checked" : ""}${shared.selection.active ? " is-selecting" : ""}${menu.open ? " is-menu" : ""}`}
       style={style}
       title={isLink ? file.url : rel}
       aria-label={file.is_dir ? `Folder ${name}` : name}
-      onClick={activate}
+      onClick={(event) => onEntryClick(event, file.path, shared.selection, activate)}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
-        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activate(); }
+        if (event.key === "Enter") { event.preventDefault(); activate(); }
       }}
       onContextMenu={menu.fromPoint}
       {...dragProps}
     >
-      <FileGlyph file={file} projectId={shared.panel.projectId} taskId={shared.panel.taskId} />
+      <span className="oar-lead">
+        <FileGlyph file={file} projectId={shared.panel.projectId} taskId={shared.panel.taskId} />
+        <SelectBox name={name} path={file.path} selection={shared.selection} />
+      </span>
       <span className="oar-name">
         <b>{name}</b>
         {sub ? <small className="oui-mono">{sub}/</small> : null}
@@ -873,25 +1091,28 @@ function EntryTile({ entry, indexAt, style, ...shared }: RowShared & { entry: Ar
   const menu = useActionMenu();
   const { isLink, activate, items, dragProps } = useEntryActions({ entry, ...shared });
   const selected = shared.previewKey === `${file.directory}/${file.path}`;
+  const checked = shared.selection.has(file.path);
   const name = displayName(file);
   return (
     <div
       role="listitem"
       tabIndex={0}
       data-index={indexAt}
-      className={`oar-tile${selected ? " is-sel" : ""}${menu.open ? " is-menu" : ""}`}
+      aria-selected={shared.selection.active ? checked : undefined}
+      className={`oar-tile${selected ? " is-sel" : ""}${checked ? " is-checked" : ""}${shared.selection.active ? " is-selecting" : ""}${menu.open ? " is-menu" : ""}`}
       style={style}
       title={isLink ? file.url : rel}
       aria-label={file.is_dir ? `Folder ${name}` : name}
-      onClick={activate}
+      onClick={(event) => onEntryClick(event, file.path, shared.selection, activate)}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
-        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activate(); }
+        if (event.key === "Enter") { event.preventDefault(); activate(); }
       }}
       onContextMenu={menu.fromPoint}
       {...dragProps}
     >
       <TileThumb file={file} projectId={shared.panel.projectId} taskId={shared.panel.taskId} />
+      <SelectBox name={name} path={file.path} selection={shared.selection} tile />
       <button
         type="button"
         className="oar-tile-more"
@@ -907,24 +1128,79 @@ function EntryTile({ entry, indexAt, style, ...shared }: RowShared & { entry: Ar
   );
 }
 
-function PendingRow({ name, style }: { name: string; style: CSSProperties }) {
+function pendingLabel(item: PendingUpload): string {
+  if (item.failed) return "Failed";
+  if (item.queued) return "Queued";
+  if (item.progress === null) return "Uploading…";
+  if (item.progress >= 1) return "Processing…";
+  return `${Math.round(item.progress * 100)}%`;
+}
+
+/** Determinate bar for one uploading file; indeterminate (no bar) when progress isn't tracked. */
+function UploadBar({ item }: { item: PendingUpload }) {
+  if ((item.progress === null || item.queued) && !item.failed) return null;
+  const pct = item.failed ? 100 : Math.round((item.progress ?? 0) * 100);
   return (
-    <div role="listitem" className="oar-row is-pending" style={style} aria-label={`Uploading ${name}`}>
+    <span
+      className={`oar-prog${item.failed ? " is-failed" : ""}`}
+      role="progressbar"
+      aria-label={`Uploading ${item.name}`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+    ><i style={{ transform: `scaleX(${pct / 100})` }} /></span>
+  );
+}
+
+function PendingRow({ item, style }: { item: PendingUpload; style: CSSProperties }) {
+  const { name } = item;
+  return (
+    <div role="listitem" className={`oar-row is-pending${item.failed ? " is-failed" : ""}`} style={style} aria-label={`Uploading ${name}`}>
       <span className="oar-glyph"><VSCodeIcon filename={name} size={16} /></span>
       <span className="oar-name"><b>{name}</b></span>
-      <span className="oar-meta"><Loader2 className="oui-spin" aria-hidden="true" />Uploading…</span>
+      <span className="oar-meta">
+        {item.failed ? <CircleAlert aria-hidden="true" /> : <Loader2 className="oui-spin" aria-hidden="true" />}
+        {pendingLabel(item)}
+      </span>
+      <UploadBar item={item} />
     </div>
   );
 }
 
-function PendingTile({ name, style }: { name: string; style: CSSProperties }) {
+function PendingTile({ item, style }: { item: PendingUpload; style: CSSProperties }) {
+  const { name } = item;
   return (
-    <div role="listitem" className="oar-tile is-pending" style={style} aria-label={`Uploading ${name}`}>
+    <div role="listitem" className={`oar-tile is-pending${item.failed ? " is-failed" : ""}`} style={style} aria-label={`Uploading ${name}`}>
       <span className={`osd-thumb is-${fileKind(name)} oar-thumb`}>
-        <span className="osd-thumb-icon"><Loader2 className="oui-spin" /></span>
+        <span className="osd-thumb-icon">{item.failed ? <CircleAlert /> : <Loader2 className="oui-spin" />}</span>
       </span>
-      <span className="oar-tile-meta"><b>{name}</b><small>Uploading…</small></span>
+      <span className="oar-tile-meta"><b>{name}</b><small>{pendingLabel(item)}</small></span>
+      <UploadBar item={item} />
     </div>
+  );
+}
+
+/** Row click: a selection gesture selects; otherwise the row opens as before. */
+function onEntryClick(event: MouseEvent, path: string, selection: Selection, activate: () => void) {
+  const gesture = selectionGesture(event, selection);
+  if (gesture === null) { activate(); return; }
+  event.preventDefault();
+  selection.pick(path, gesture === "range");
+}
+
+/** Checkbox over the row glyph / tile corner. Shift+click selects a range. */
+function SelectBox({ name, path, selection, tile = false }: { name: string; path: string; selection: Selection; tile?: boolean }) {
+  const checked = selection.has(path);
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={`Select ${name}`}
+      tabIndex={-1}
+      className={`oar-check${tile ? " is-tile" : ""}${checked ? " is-on" : ""}`}
+      onClick={(event) => { event.stopPropagation(); selection.pick(path, event.shiftKey); }}
+    >{checked ? <Check aria-hidden="true" /> : null}</button>
   );
 }
 

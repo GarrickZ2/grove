@@ -790,11 +790,21 @@ fn config_path() -> PathBuf {
     grove_dir().join("config.toml")
 }
 
+/// Defaults for an install that has never written `config.toml`. New
+/// installs start in the Orbit interface; an existing config without
+/// `web.interface` keeps the old behaviour (Workbench + first-run picker),
+/// so upgraders are not switched. The value persists with the first save.
+fn fresh_install_config() -> Config {
+    let mut config = Config::default();
+    config.web.interface = Some("orbit".to_string());
+    config
+}
+
 /// 加载配置（不存在则返回默认值）
 pub fn load_config() -> Config {
     let path = config_path();
     let mut config = if !path.exists() {
-        Config::default()
+        fresh_install_config()
     } else {
         fs::read_to_string(&path)
             .ok()
@@ -905,5 +915,32 @@ impl Config {
         } else {
             self.terminal_multiplexer.to_string()
         }
+    }
+}
+
+#[cfg(test)]
+mod fresh_install_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_fresh_install_defaults_to_orbit() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+
+        // No config.toml yet: Orbit, and it persists with the first save.
+        assert_eq!(load_config().web.interface.as_deref(), Some("orbit"));
+        save_config(&load_config()).unwrap();
+        assert_eq!(load_config().web.interface.as_deref(), Some("orbit"));
+
+        // An existing config without the key is left alone (upgraders).
+        fs::write(config_path(), "[theme]\nname = \"auto\"\n").unwrap();
+        assert_eq!(load_config().web.interface, None);
+
+        // An explicit choice wins.
+        fs::write(config_path(), "[web]\ninterface = \"workbench\"\n").unwrap();
+        assert_eq!(load_config().web.interface.as_deref(), Some("workbench"));
+
+        crate::storage::set_grove_dir_override(None);
     }
 }

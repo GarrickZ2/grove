@@ -176,8 +176,8 @@ describe("OrbitSettingsPage", () => {
   });
 
   it("switches pages and saves pattern edits", async () => {
-    await render("Worktrees");
-    expect(container.querySelector("h1")?.textContent).toBe("Worktrees");
+    await render("Workspace");
+    expect(container.querySelector("h1")?.textContent).toBe("Workspace");
 
     const draft = container.querySelector<HTMLInputElement>('input[aria-label="New pattern"]')!;
     act(() => {
@@ -195,7 +195,7 @@ describe("OrbitSettingsPage", () => {
   });
 
   it("toggles indexing languages as chips", async () => {
-    await render("Worktrees");
+    await render("Workspace");
     const go = [...container.querySelectorAll(".ost-chip")].find((chip) => chip.textContent?.includes("Go"));
     expect(go?.getAttribute("aria-pressed")).toBe("false");
     click(go);
@@ -204,14 +204,14 @@ describe("OrbitSettingsPage", () => {
   });
 
   it("only offers the terminal layout in multiplexer mode", async () => {
-    await render("Terminal");
-    expect(groupLabels()).toEqual(["Mode", "Layout"]);
-    expect([...container.querySelectorAll(".ost-subs.is-open .ost-sub")].map((sub) => sub.textContent)).toEqual(["Mode", "Layout"]);
+    await render("Workspace");
+    expect(groupLabels()).toEqual(["Terminal", "Terminal layout", "AutoLink", "Code Indexing"]);
+    expect([...container.querySelectorAll(".ost-subs.is-open .ost-sub")].map((sub) => sub.textContent)).toEqual(["Terminal", "Terminal layout", "AutoLink", "Code Indexing"]);
     expect(container.textContent).toContain("Zellij not found");
 
     click(buttonByText("Direct"));
-    expect(groupLabels()).toEqual(["Mode"]);
-    expect([...container.querySelectorAll(".ost-subs.is-open .ost-sub")].map((sub) => sub.textContent)).toEqual(["Mode"]);
+    expect(groupLabels()).toEqual(["Terminal", "AutoLink", "Code Indexing"]);
+    expect([...container.querySelectorAll(".ost-subs.is-open .ost-sub")].map((sub) => sub.textContent)).toEqual(["Terminal", "AutoLink", "Code Indexing"]);
     await flush(500);
     expect(vi.mocked(patchConfig).mock.lastCall?.[0]).toMatchObject({ web: { terminal_mode: "direct" } });
   });
@@ -237,17 +237,17 @@ describe("OrbitSettingsPage", () => {
     expect(navItem("Browser Control")).toBeUndefined();
   });
 
-  it("previews a theme on the settings root only, and reverts it", async () => {
+  it("previews a theme across the whole window, and reverts it", async () => {
+    document.documentElement.style.setProperty("--color-bg", "#111111");
     await render("Appearance");
-    const settingsRoot = container.querySelector<HTMLElement>(".ost")!;
     click(buttonByText("preview paper"));
-    expect(settingsRoot.style.getPropertyValue("--color-bg")).toBe("#fdf6e3");
+    expect(document.documentElement.style.getPropertyValue("--color-bg")).toBe("#fdf6e3");
     expect(container.textContent).toContain("Previewing Paper");
-    expect(document.documentElement.style.getPropertyValue("--color-bg")).not.toBe("#fdf6e3");
     expect(patchConfig).not.toHaveBeenCalledWith(expect.objectContaining({ theme: expect.anything() }));
     click(buttonByText("revert preview"));
-    expect(settingsRoot.style.getPropertyValue("--color-bg")).toBe("");
+    expect(document.documentElement.style.getPropertyValue("--color-bg")).toBe("#111111");
     expect(container.textContent).not.toContain("Previewing");
+    document.documentElement.style.removeProperty("--color-bg");
   });
 
   it("jumps to the shortcuts page when #shortcuts is set", async () => {

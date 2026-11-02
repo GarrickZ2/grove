@@ -22,6 +22,12 @@
 .ows-tb:active:not(:disabled){transform:scale(.92)}
 .ows-tb.is-on{background:var(--o-bg);color:var(--o-text);box-shadow:0 1px 2px var(--o-shadow),inset 0 0 0 .5px var(--o-border)}
 .ows-tb:disabled{cursor:default}
+/* The Agent: first, labelled, accent-tinted while shown. */
+.ows-tb.is-primary{width:auto;gap:5px;padding:0 9px 0 7px;font:inherit;font-size:12px;font-weight:500}
+.ows-tb.is-primary.is-on{background:var(--o-accent-soft);color:color-mix(in oklab,var(--o-accent) 82%,var(--o-text));box-shadow:inset 0 0 0 .5px color-mix(in oklab,var(--o-accent) 30%,transparent)}
+.ows-tb.is-primary.is-on:hover:not(:disabled){color:var(--o-accent)}
+.ows-tb.is-primary>:first-child{filter:none}
+.ows-tb-label{line-height:1}
 .ows-tb:focus-visible{outline:2px solid var(--o-accent);outline-offset:1px}
 .ows-tb-icon{width:15px;height:15px;stroke-width:1.8}
 /* Plugin icons (emoji / images) render in grey until their panel is open. */
@@ -66,6 +72,21 @@
 .ows-grip.is-y::after{top:2.5px;left:50%;width:32px;height:2px;margin-left:-16px}
 .ows-grip:hover::after{opacity:1}
 .ows-grip:active::after{opacity:1;background:var(--o-accent)}
+
+/* ── One header height ── The Agent's header matches the PanelShell header
+   (40px, border-box, same hairline) so bottom borders line up across the
+   left panel, the Agent and the dock. Sizing only; TaskChat owns the content. */
+.ide-workbench.is-orbit.is-orbit-desk .orbit-chat-header,
+.orbit-free-layout .orbit-chat-header {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  min-height: 40px;
+  box-sizing: border-box;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border) 70%, transparent) !important;
+}
+.ide-workbench.is-orbit.is-orbit-desk .orbit-chat-header > div,
+.orbit-free-layout .orbit-chat-header > div { width: 100%; padding: 0 6px 0 12px; }
 
 /* ── Bottom terminal dock ── */
 .ows-term{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--ows-term-bg);color:var(--ows-term-fg)}

@@ -390,6 +390,173 @@ pub async fn get_single_file_diff(
     Ok(Json(result).into_response())
 }
 
+/// Most uncommitted entries returned by the task git status endpoint.
+const MAX_UNCOMMITTED_ENTRIES: usize = 2000;
+
+#[derive(Debug, serde::Serialize, PartialEq, Eq)]
+pub struct UncommittedEntry {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+    /// modified | added | deleted | renamed | copied | typechange | untracked | conflicted
+    pub status: &'static str,
+    pub staged: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additions: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<u32>,
+}
+
+#[derive(Debug, serde::Serialize, PartialEq, Eq)]
+pub struct TaskGitStatusResponse {
+    /// False for Studio tasks and tasks whose worktree is gone or isn't a
+    /// git checkout; every other field is then empty.
+    pub is_git: bool,
+    /// The ref ahead/behind is measured against (the task target, or
+    /// `origin/<target>` when the local target lags it — same base as the diff).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    /// `None` when the base ref can't be resolved locally.
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
+    pub uncommitted: Vec<UncommittedEntry>,
+    /// True when `uncommitted` was cut at `MAX_UNCOMMITTED_ENTRIES`.
+    pub uncommitted_truncated: bool,
+    pub uncommitted_total: usize,
+}
+
+impl TaskGitStatusResponse {
+    fn not_a_repo() -> Self {
+        Self {
+            is_git: false,
+            base: None,
+            ahead: None,
+            behind: None,
+            uncommitted: Vec::new(),
+            uncommitted_truncated: false,
+            uncommitted_total: 0,
+        }
+    }
+}
+
+/// Ahead/behind (local refs only, no fetch) and uncommitted changes of a
+/// task worktree.
+fn task_git_status(worktree_path: &str, target: &str) -> TaskGitStatusResponse {
+    if !std::path::Path::new(worktree_path).is_dir() || !git::is_git_repo(worktree_path) {
+        return TaskGitStatusResponse::not_a_repo();
+    }
+    let base = git::effective_review_base(worktree_path, target);
+    let (ahead, behind) = if base.is_empty() {
+        (None, None)
+    } else {
+        match git::ahead_behind(worktree_path, &base) {
+            Ok((a, b)) => (Some(a), Some(b)),
+            Err(_) => (None, None),
+        }
+    };
+    let changes = git::worktree_status(worktree_path).unwrap_or_default();
+    let total = changes.len();
+    let uncommitted = changes
+        .into_iter()
+        .take(MAX_UNCOMMITTED_ENTRIES)
+        .map(|c| UncommittedEntry {
+            path: c.path,
+            old_path: c.old_path,
+            status: c.kind.as_str(),
+            staged: c.staged,
+            additions: c.additions,
+            deletions: c.deletions,
+        })
+        .collect();
+    TaskGitStatusResponse {
+        is_git: true,
+        base: (!base.is_empty()).then_some(base),
+        ahead,
+        behind,
+        uncommitted,
+        uncommitted_truncated: total > MAX_UNCOMMITTED_ENTRIES,
+        uncommitted_total: total,
+    }
+}
+
+/// GET /api/v1/projects/{id}/tasks/{taskId}/git/status
+pub async fn get_task_git_status(
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Json<TaskGitStatusResponse>, StatusCode> {
+    let (project, project_key) = find_project_by_id(&id)?;
+    if project.project_type == crate::storage::workspace::ProjectType::Studio {
+        return Ok(Json(TaskGitStatusResponse::not_a_repo()));
+    }
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .or_else(|| {
+            tasks::get_archived_task(&project_key, &task_id)
+                .ok()
+                .flatten()
+        })
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let response =
+        tokio::task::spawn_blocking(move || task_git_status(&task.worktree_path, &task.target))
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(response))
+}
+
+#[cfg(test)]
+mod task_git_status_tests {
+    use super::*;
+
+    #[test]
+    fn missing_or_plain_directories_are_not_a_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        assert_eq!(
+            task_git_status(plain.to_str().unwrap(), "main"),
+            TaskGitStatusResponse::not_a_repo()
+        );
+        assert_eq!(
+            task_git_status(dir.path().join("gone").to_str().unwrap(), "main"),
+            TaskGitStatusResponse::not_a_repo()
+        );
+    }
+
+    #[test]
+    fn reports_ahead_behind_and_uncommitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        git::git_cmd(path, &["init", "-b", "main"]).unwrap();
+        git::git_cmd(path, &["config", "user.email", "test@example.com"]).unwrap();
+        git::git_cmd(path, &["config", "user.name", "test"]).unwrap();
+        git::git_cmd(path, &["commit", "--allow-empty", "-m", "base"]).unwrap();
+        git::git_cmd(path, &["checkout", "-b", "task"]).unwrap();
+        git::git_cmd(path, &["commit", "--allow-empty", "-m", "work"]).unwrap();
+        std::fs::write(dir.path().join("new.txt"), "a\nb\n").unwrap();
+
+        let status = task_git_status(path, "main");
+        assert!(status.is_git);
+        assert_eq!(status.base.as_deref(), Some("main"));
+        assert_eq!((status.ahead, status.behind), (Some(1), Some(0)));
+        assert_eq!(
+            status.uncommitted,
+            vec![UncommittedEntry {
+                path: "new.txt".into(),
+                old_path: None,
+                status: "untracked",
+                staged: false,
+                additions: Some(2),
+                deletions: Some(0),
+            }]
+        );
+        assert_eq!(status.uncommitted_total, 1);
+
+        // An unknown target keeps the uncommitted list but drops ahead/behind.
+        let status = task_git_status(path, "missing-target");
+        assert_eq!((status.ahead, status.behind), (None, None));
+        assert_eq!(status.uncommitted.len(), 1);
+    }
+}
+
 #[cfg(test)]
 mod review_diff_tests {
     use super::*;

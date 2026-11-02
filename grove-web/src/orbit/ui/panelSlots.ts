@@ -32,6 +32,8 @@ export interface PanelMenuItem {
   danger?: boolean;
   /** Display string for the keyboard shortcut, e.g. "⌘W". */
   shortcut?: string;
+  /** Hairline above this row (starts a new group). */
+  separator?: boolean;
 }
 
 export interface PanelSlots {

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
-import { ArrowRight, GitCommit, GitCompare, RotateCw } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, GitCommit, GitCompare, RotateCw } from "lucide-react";
 import type { Task } from "../../../data/types";
-import type { DiffResponse } from "../../../api";
+import type { DiffResponse, TaskGitStatusResponse, UncommittedEntry } from "../../../api";
 import { useTaskGit } from "../../../components/Tasks/TaskInfoPanel/tabs/useTaskGit";
 import { EmptyState } from "../../ui/Surface";
 import { Button } from "../../ui/Button";
@@ -9,6 +9,7 @@ import { PanelError, PanelHeaderContext, PanelLoading } from "../../ui/PanelShel
 import { useInPanelShell } from "../../ui/panelSlots";
 import { plural, splitPath } from "./panelModel";
 import { HeaderActions, PanelBody, PanelSection, ShowMore } from "./PanelStates";
+import { useTaskGitStatus } from "./useTaskGitStatus";
 
 const FILES_SHOWN = 10;
 
@@ -32,6 +33,66 @@ function ChangedFile({ file }: { file: DiffResponse["files"][number] }) {
   );
 }
 
+const UNCOMMITTED_SHOWN = 8;
+
+/** Uncommitted status → the one-letter code and label the changed-file rows use. */
+const UNCOMMITTED_CODE: Record<UncommittedEntry["status"], { code: string; cls: string; label: string }> = {
+  modified: { code: "M", cls: "M", label: "Modified" },
+  added: { code: "A", cls: "A", label: "Added" },
+  deleted: { code: "D", cls: "D", label: "Deleted" },
+  renamed: { code: "R", cls: "R", label: "Renamed" },
+  copied: { code: "C", cls: "A", label: "Copied" },
+  typechange: { code: "T", cls: "M", label: "Type changed" },
+  untracked: { code: "?", cls: "U", label: "Untracked" },
+  conflicted: { code: "!", cls: "X", label: "Conflicted" },
+};
+
+function UncommittedFile({ entry }: { entry: UncommittedEntry }) {
+  const { dir, name } = splitPath(entry.path);
+  const st = UNCOMMITTED_CODE[entry.status] ?? UNCOMMITTED_CODE.modified;
+  const label = entry.status === "untracked" ? st.label : `${st.label}, ${entry.staged ? "staged" : "not staged"}`;
+  return (
+    <div className="owp-chg">
+      <span className={`owp-st is-${st.cls}`} title={label} aria-label={label}>{st.code}</span>
+      <span className="owp-path" title={entry.old_path ? `${entry.old_path} → ${entry.path}` : entry.path}>
+        {dir ? <span>{dir}</span> : null}
+        <b>{name}</b>
+      </span>
+      {entry.staged ? <span className="owp-stage" title="Staged in the index">staged</span> : null}
+      <span className="owp-delta">
+        {entry.additions ? <span className="owp-add">+{entry.additions}</span> : null}
+        {entry.deletions ? <span className="owp-del">−{entry.deletions}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+function uncommittedHint(entries: UncommittedEntry[]): string {
+  const staged = entries.filter((e) => e.staged).length;
+  const untracked = entries.filter((e) => e.status === "untracked").length;
+  const unstaged = entries.length - staged - untracked;
+  return [
+    staged ? `${staged} staged` : null,
+    unstaged ? `${unstaged} unstaged` : null,
+    untracked ? `${untracked} untracked` : null,
+  ].filter(Boolean).join(" · ");
+}
+
+/** ↑ahead ↓behind against the base, from local refs. Hidden when unknown. */
+function AheadBehind({ status, target }: { status: TaskGitStatusResponse | null; target: string }) {
+  if (!status || status.ahead === null || status.behind === null) return null;
+  const base = status.base ?? target;
+  if (status.ahead === 0 && status.behind === 0) {
+    return <span className="owp-ab is-even" title={`Even with ${base} (local refs)`}>up to date</span>;
+  }
+  return (
+    <span className="owp-ab" title={`${plural(status.ahead, "commit")} ahead of, ${plural(status.behind, "commit")} behind ${base} (local refs, not fetched)`}>
+      {status.ahead ? <span className="owp-ab-up"><ArrowUp aria-hidden="true" />{status.ahead}<span className="owp-sr"> ahead</span></span> : null}
+      {status.behind ? <span className="owp-ab-down"><ArrowDown aria-hidden="true" />{status.behind}<span className="owp-sr"> behind</span></span> : null}
+    </span>
+  );
+}
+
 /** Outside a panel shell the refresh button stays in the branch row. */
 function InBodyRefresh({ children }: { children: ReactNode }) {
   return useInPanelShell() ? null : <span className="owp-gflow-end">{children}</span>;
@@ -39,8 +100,11 @@ function InBodyRefresh({ children }: { children: ReactNode }) {
 
 /** Git panel body: branch → target, what changed against the target, and the branch's commits. */
 export function OrbitGitPanel({ projectId, task }: { projectId?: string; task: Task }) {
-  const { diffData, commitsData, isLoading, error, reload } = useTaskGit(projectId, task.id);
+  const { diffData, commitsData, isLoading, error, reload: reloadGit } = useTaskGit(projectId, task.id);
+  const { status: gitStatus, reload: reloadStatus } = useTaskGitStatus(projectId, task.id);
+  const reload = async () => { await Promise.all([reloadGit(), reloadStatus()]); };
   const [allFiles, setAllFiles] = useState(false);
+  const [allUncommitted, setAllUncommitted] = useState(false);
   const loaded = diffData !== null || commitsData !== null;
   const refresh = (
     <Button variant="ghost" size="sm" iconOnly onClick={() => void reload()} disabled={isLoading} aria-label="Refresh" title="Refresh">
@@ -72,6 +136,9 @@ export function OrbitGitPanel({ projectId, task }: { projectId?: string; task: T
   const commits = commitsData?.commits ?? [];
   const commitTotal = commitsData?.total ?? commits.length;
   const shownFiles = allFiles ? files : files.slice(0, FILES_SHOWN);
+  const uncommitted = gitStatus?.uncommitted ?? [];
+  const uncommittedTotal = gitStatus?.uncommitted_total ?? uncommitted.length;
+  const shownUncommitted = allUncommitted ? uncommitted : uncommitted.slice(0, UNCOMMITTED_SHOWN);
 
   return (
     <PanelBody label="Git">
@@ -86,6 +153,7 @@ export function OrbitGitPanel({ projectId, task }: { projectId?: string; task: T
               <code title={task.branch}>{task.branch}</code>
               <ArrowRight aria-label="into" />
               <code title={task.target}>{task.target}</code>
+              <AheadBehind status={gitStatus} target={task.target} />
               <InBodyRefresh>{refresh}</InBodyRefresh>
             </div>
             <div className="owp-chips">
@@ -97,6 +165,18 @@ export function OrbitGitPanel({ projectId, task }: { projectId?: string; task: T
             </div>
           </div>
         </section>
+
+        {uncommitted.length ? (
+          <PanelSection label="Uncommitted" hint={uncommittedHint(uncommitted)} end={<span className="owp-tnum">{uncommittedTotal}</span>}>
+            <div className="owp-box">
+              {shownUncommitted.map((entry) => <UncommittedFile key={`${entry.staged ? "i" : "w"}:${entry.path}`} entry={entry} />)}
+              <ShowMore shown={UNCOMMITTED_SHOWN} total={uncommitted.length} expanded={allUncommitted} onToggle={() => setAllUncommitted((value) => !value)} />
+              {gitStatus?.uncommitted_truncated && allUncommitted ? (
+                <p className="owp-trunc">Showing the first {uncommitted.length.toLocaleString()} of {uncommittedTotal.toLocaleString()}.</p>
+              ) : null}
+            </div>
+          </PanelSection>
+        ) : null}
 
         <PanelSection label="Changes" hint={`against ${task.target}`} end={files.length ? <span className="owp-tnum">{files.length}</span> : undefined}>
           <div className="owp-box">
