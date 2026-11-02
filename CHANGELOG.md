@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-11-02
+
+### Added
+
+- **Buddies** — Persistent Buddies with chat, routines, delegation, and paged history.
+- **Orbit plugin pages** — Host plugin pages inside Orbit with theme and navigation bridging.
+- **Standalone review** — Review changes on their own page with merge readiness checks and sending open comments to agents.
+- **Project default links** — Set linked projects at the project level for tasks to inherit.
+- **Artifact downloads** — Download task artifacts as a zip archive.
+
+### Improved
+
+- **Orbit redesign** — Rebuild Orbit pages, workspace, review, projects, overlays, and first run on a shared UI kit.
+- **Chat timelines** — Consolidate tool activity into persistent expandable timelines and answer requests inline.
+- **Icons** — Replace the generic bot icon with context-specific icons.
+
+### Fixed
+
+- **Desktop titlebar** — Preserve window dragging and double-click maximization.
+- **Orbit sidebar** — Keep the chosen sidebar mode when resizing windows.
+- **IME input** — Prevent the IME confirmation Enter from sending a new chat.
+- **Lightbox** — Isolate Escape handling between preview instances.
+- **Session targets** — Reset unavailable session targets to auto new.
+- **Project registration** — Report database errors without panicking.
+- **Transcript selection** — Keep selection gutters transparent in WebKit.
+
 ## [0.13.1] - 2026-10-30
 
 ### Added
