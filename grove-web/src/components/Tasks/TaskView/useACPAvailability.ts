@@ -93,7 +93,7 @@ export function useACPAvailability(): Result {
       if (!failed && marketplace && cfg && personas) {
         // Refresh the global icon CDN map so every icon consumer (chat
         // list, Open Sessions popup, agent picker) gets the same priority:
-        // bundled brand > marketplace CDN > Bot.
+        // bundled brand > marketplace CDN > Sparkle.
         setMarketplaceIcons(
           marketplace.agents.map((a) => ({ id: a.id, icon_url: a.icon_url })),
         );

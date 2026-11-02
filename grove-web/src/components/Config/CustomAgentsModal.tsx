@@ -2,7 +2,7 @@ import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Pencil, Trash2, UserCog, Bot, Globe, Terminal, Check, Loader2 } from "lucide-react";
+import { X, Plus, Pencil, Trash2, UserCog, Sparkle, Globe, Terminal, Check, Loader2 } from "lucide-react";
 import { Button, AgentPicker, Combobox } from "../ui";
 import { MemoryAgentConfig } from "../Memory/MemoryAgentConfig";
 import {
@@ -262,7 +262,7 @@ export function CustomAgentsModal({
         <Terminal className="w-4 h-4 text-[var(--color-text-muted)]" />
       );
     }
-    return <Bot className="w-4 h-4 text-[var(--color-text-muted)]" />;
+    return <Sparkle className="w-4 h-4 text-[var(--color-text-muted)]" />;
   };
 
   const baseLabel = (baseId: string) => baseLookup.get(baseId)?.label ?? baseId;

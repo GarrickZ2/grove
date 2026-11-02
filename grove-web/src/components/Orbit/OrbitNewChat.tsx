@@ -1,5 +1,5 @@
 import { createElement, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { Bot, Box, Brain, ChevronDown, Folder, GitBranch, Globe, Laptop, Loader2, Mic, Paperclip, Send, ShieldCheck, Terminal } from "lucide-react";
+import { Sparkle, Box, Brain, ChevronDown, Folder, GitBranch, Globe, Laptop, Loader2, Mic, Paperclip, Send, ShieldCheck, Terminal } from "lucide-react";
 import { createChat, listChats } from "../../api";
 import type { AgentConfigSelection } from "../../api/agentConfig";
 import { listInstalledAgentConfigs, type InstalledAgentConfig } from "../../api/marketplace";
@@ -209,9 +209,9 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   // createElement: the icon is looked up from a static registry, not defined during render.
   const agentIcon = agentIconType
     ? createElement(agentIconType, { size: 12, className: "shrink-0 text-[var(--color-highlight)]" })
-    : <Bot className="h-3 w-3 shrink-0 text-[var(--color-highlight)]" />;
+    : <Sparkle className="h-3 w-3 shrink-0 text-[var(--color-highlight)]" />;
   const iconOf = (type: ComponentType<{ size?: number; className?: string }> | null | undefined) =>
-    type ? createElement(type, { size: 15 }) : <Bot className="h-3.5 w-3.5" />;
+    type ? createElement(type, { size: 15 }) : <Sparkle className="h-3.5 w-3.5" />;
   // Same entries as TaskChat's New Session picker: Agents and Agent servers, then Custom Agents.
   const agentItems: PickerMenuItem[] = [
     // Static catalog first, then the icon registry — the same fallback AgentPickerMenuItems uses.

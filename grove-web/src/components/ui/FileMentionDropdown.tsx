@@ -15,7 +15,7 @@ import {
   File,
   Link as LinkIcon,
   MessageSquare,
-  Bot,
+  Sparkle,
   Briefcase,
   Globe,
   Palette,
@@ -39,13 +39,13 @@ function iconFor(
   if (item.category === "category_selector") {
     if (item.path === "conversation") return MessageSquare;
     if (item.path === "file") return Folder;
-    if (item.path === "agent") return Bot;
+    if (item.path === "agent") return Sparkle;
     if (item.path === "project") return Briefcase;
     if (item.path === "browsertabs") return Globe;
     if (item.path === "sketch") return Palette;
   }
   // Agent-graph kinds: render the underlying agent's brand icon when known.
-  // `agentIconComponent` already falls back to lucide Bot for unknown keys,
+  // `agentIconComponent` already falls back to lucide Sparkle for unknown keys,
   // so this branch is total.
   if (item.kind && item.kind !== "file") {
     if (item.kind === "browsertabs") return Globe;

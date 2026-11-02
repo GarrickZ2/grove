@@ -20,7 +20,7 @@
  */
 
 import { createElement, useSyncExternalStore, type ComponentType } from "react";
-import { Bot } from "lucide-react";
+import { Sparkle } from "lucide-react";
 import {
   Claude,
   Gemini,
@@ -40,7 +40,7 @@ import {
 } from "../components/ui/AgentIcons";
 
 export interface AgentIconInfo {
-  /** React component rendering the brand icon. Falls back to lucide `Bot`
+  /** React component rendering the brand icon. Falls back to lucide `Sparkle`
    *  for unknown keys so consumers always get something renderable. */
   Component: ComponentType<{ size?: number; className?: string }>;
   /** Direct path to the static SVG, or `null` when no static asset exists. */
@@ -59,7 +59,7 @@ interface AgentRow {
   label: string;
   /** Filename under `/agent-icon/`, no path. `null` if no static asset. */
   staticFile: string | null;
-  /** React component reference (or `null` to fall back to `Bot`). */
+  /** React component reference (or `null` to fall back to `Sparkle`). */
   Component: ComponentType<{ size?: number; className?: string }> | null;
   /** Extra strings that should resolve to this row (skills ids, legacy ids,
    *  icon_id values, alternate filenames, etc.). */
@@ -189,7 +189,7 @@ const TABLE_BY_KEY: Record<string, AgentRow> = (() => {
 // a display name over the `initialize` handshake (`agent_info.name`, e.g. "Claude
 // Agent", "Gemini CLI") that flows through to review-comment author fields and other
 // UI — those names are their own naming space and rarely equal our canonical keys,
-// so exact lookup Bot-fallbacks on perfectly recognizable agents. The name almost
+// so exact lookup Sparkle-fallbacks on perfectly recognizable agents. The name almost
 // always still *contains* the brand word, so a contained-substring pass recovers it.
 // Longest-first so "opencode"/"openclaw" win before a bare "open"-style prefix, and
 // the words are distinctive enough that false positives aren't a real concern.
@@ -220,7 +220,7 @@ function fuzzyBrandRow(key: string): AgentRow | undefined {
 }
 
 const FALLBACK: AgentIconInfo = {
-  Component: Bot,
+  Component: Sparkle,
   url: null,
   label: "",
   canonicalKey: "",
@@ -234,7 +234,7 @@ const FALLBACK: AgentIconInfo = {
 // `setMarketplaceIcons` to refresh this map; resolveAgentIcon then consumes
 // it transparently so consumers everywhere keep using a single util.
 //
-// Priority is fixed:  bundled brand SVG  >  marketplace icon_url  >  Bot.
+// Priority is fixed:  bundled brand SVG  >  marketplace icon_url  >  Sparkle.
 const marketplaceIcons: Map<string, string> = new Map();
 
 /** Wrap a CDN URL as a React component matching the {size, className} contract
@@ -310,7 +310,7 @@ export function setMarketplaceIcons(
 // to React's `useSyncExternalStore` in `usePersonaRegistry()` below — when
 // any caller updates the list, every component that read it re-renders with
 // the new icons / labels. Without this, components mounted before the fetch
-// would keep showing the Bot fallback or stale persona names.
+// would keep showing the Sparkle fallback or stale persona names.
 interface PersonaRegEntry {
   base: string;
   name: string;
@@ -368,7 +368,7 @@ export function getPersonaRegistryVersion(): number {
 
 /**
  * Resolve any agent key (value / id / icon_id / alias / persona id) to the row
- * that owns it. Returns a sentinel info object with `Component = Bot` for
+ * that owns it. Returns a sentinel info object with `Component = Sparkle` for
  * unknown keys.
  *
  * Persona handling: if `key` matches a registered persona, the resolution
@@ -391,7 +391,7 @@ export function resolveAgentIcon(key: string | null | undefined): AgentIconInfo 
   const row = TABLE_BY_KEY[key.toLowerCase()];
   if (row) {
     return {
-      Component: row.Component ?? Bot,
+      Component: row.Component ?? Sparkle,
       url: row.staticFile ? `/agent-icon/${row.staticFile}` : null,
       label: row.label,
       canonicalKey: row.key,
@@ -400,7 +400,7 @@ export function resolveAgentIcon(key: string | null | undefined): AgentIconInfo 
   // No bundled brand icon → fall back to whatever the marketplace CDN
   // shipped for this id (if anything). Centralized here so every consumer
   // (chat list, Open Sessions, Marketplace modal, agent picker) gets the
-  // same priority: local bundle > marketplace CDN > Bot.
+  // same priority: local bundle > marketplace CDN > Sparkle.
   const cdnUrl = marketplaceIcons.get(key);
   if (cdnUrl) {
     return {
@@ -410,14 +410,14 @@ export function resolveAgentIcon(key: string | null | undefined): AgentIconInfo 
       canonicalKey: key,
     };
   }
-  // Last resort before Bot: recover a brand icon from a self-reported ACP display
+  // Last resort before Sparkle: recover a brand icon from a self-reported ACP display
   // name (e.g. "Claude Agent" → claude). Runs only here, so it strictly upgrades the
-  // Bot fallback and can never override an exact-key or marketplace match above.
+  // Sparkle fallback and can never override an exact-key or marketplace match above.
   // Keep the caller's `key` as label/canonicalKey — only the icon is borrowed.
   const brandRow = fuzzyBrandRow(key);
   if (brandRow) {
     return {
-      Component: brandRow.Component ?? Bot,
+      Component: brandRow.Component ?? Sparkle,
       url: brandRow.staticFile ? `/agent-icon/${brandRow.staticFile}` : null,
       label: key,
       canonicalKey: key,
@@ -432,7 +432,7 @@ export function agentIconUrl(key: string | null | undefined): string | null {
 }
 
 /** Convenience for React consumers that already have a key: returns the
- *  component to render. Always renderable (Bot fallback). */
+ *  component to render. Always renderable (Sparkle fallback). */
 export function agentIconComponent(
   key: string | null | undefined,
 ): ComponentType<{ size?: number; className?: string }> {

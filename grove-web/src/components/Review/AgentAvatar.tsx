@@ -1,10 +1,10 @@
 // Agent avatar component — delegates to resolveAgentIcon() from agentIcon.ts
 // so icon resolution is unified across TaskGraph, TaskChat, and Review panels.
-// Unknown agents get a Boring Avatars marble pattern instead of the generic Bot icon.
+// Unknown agents get a Boring Avatars marble pattern instead of the generic Sparkle icon.
 
 import { type CSSProperties, useMemo } from 'react';
 import Avatar from 'boring-avatars';
-import { Bot } from 'lucide-react';
+import { Sparkle } from 'lucide-react';
 import { resolveAgentIcon } from '../../utils/agentIcon';
 
 // Boring-Avatars renders into SVG `fill` attributes, so CSS vars don't resolve there —
@@ -36,7 +36,7 @@ interface AgentAvatarProps {
 
 export function AgentAvatar({ agent, size, className, style }: AgentAvatarProps) {
   const info = resolveAgentIcon(agent);
-  const isFallback = info.Component === Bot;
+  const isFallback = info.Component === Sparkle;
 
   const colors = useMemo(() => hashPalette(agent || 'unknown'), [agent]);
 

@@ -76,7 +76,7 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
       }`}
     >
       <div className="flex items-start gap-2.5">
-        {/* Task type icon: Local=Laptop, Agent=Bot, Regular=Code */}
+        {/* Task type icon: Local=Laptop, Agent=Zap, Regular=Code */}
         <div className="relative flex-shrink-0 mt-0.5">
           {task.isLocal ? (
             <Laptop

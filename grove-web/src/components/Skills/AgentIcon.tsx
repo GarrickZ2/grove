@@ -3,7 +3,7 @@
  * Skills code calling `<AgentIcon iconId="claude" />` keeps compiling.
  * All icon-table data lives in `utils/agentIcon.ts` — the previous local
  * `ICON_MAP` duplicated entries and missed aliases (traex, claude-acp,
- * etc.), surfacing as "right ID, wrong fallback Bot" bugs.
+ * etc.), surfacing as "right ID, wrong fallback Sparkle" bugs.
  */
 import { createElement } from "react";
 import { agentIconComponent } from "../../utils/agentIcon";

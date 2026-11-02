@@ -73,7 +73,8 @@ import {
   Square,
   Paperclip,
   Mic,
-  Bot,
+  Sparkle,
+  Sprout,
   Globe,
   Terminal,
   Eye,
@@ -4027,7 +4028,7 @@ export function TaskChat({
   // customAgents, getChatIcon's own closure). agentIconComponent is module-
   // imported and stable; persona registry is consulted via a singleton util.
   const resolveSender = (sender?: string): { label: string; Icon: React.ComponentType<{ size?: number; className?: string }> } => {
-    if (!sender) return { label: "", Icon: Bot };
+    if (!sender) return { label: "", Icon: Sparkle };
     if (sender === "user") return { label: "user", Icon: User };
     if (sender.startsWith("agent:")) {
       const chatId = sender.slice("agent:".length);
@@ -4042,8 +4043,8 @@ export function TaskChat({
         Icon: MessageSquare,
       };
     }
-    if (sender.startsWith("buddy:")) return { label: "Buddy", Icon: Bot };
-    return { label: sender, Icon: Bot };
+    if (sender.startsWith("buddy:")) return { label: "Buddy", Icon: Sprout };
+    return { label: sender, Icon: Sparkle };
   };
 
   // Agent identity belongs to the persisted ChatSession, not the transient
@@ -12284,7 +12285,7 @@ export function TaskChat({
                           className="shrink-0 text-[var(--color-highlight)]"
                         />
                       ) : (
-                        <Bot className="w-3 h-3 shrink-0 text-[var(--color-highlight)]" />
+                        <Sparkle className="w-3 h-3 shrink-0 text-[var(--color-highlight)]" />
                       )}
                       <span className="chatbox-agent-static-label shrink-0 text-[var(--color-text-muted)]">
                         Agent
@@ -13727,7 +13728,7 @@ const MessageItem = memo(function MessageItem({
               }
               const resolved = resolveSender?.(message.sender) ?? {
                 label: message.sender,
-                Icon: Bot,
+                Icon: Sparkle,
               };
               const SenderIcon = resolved.Icon;
               return (

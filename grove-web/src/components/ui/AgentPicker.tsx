@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, createElement } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Check, Bot, Globe, Terminal, Settings } from "lucide-react";
+import { ChevronDown, Check, Sparkle, Globe, Terminal, Settings, SquareTerminal } from "lucide-react";
 import { agentIconComponent } from "../../utils/agentIcon";
 import type { CustomAgentServer } from "../../api/config";
 import type { CustomAgentPersona } from "../../api";
@@ -381,7 +381,7 @@ export function AgentPicker({
               className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] border-t border-[var(--color-border)] mt-1"
             >
               <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
-                <Bot className="w-5 h-5 text-[var(--color-text-muted)]" />
+                <SquareTerminal className="w-5 h-5 text-[var(--color-text-muted)]" />
               </div>
               <span>Custom command...</span>
             </button>
@@ -499,7 +499,7 @@ export function AgentPicker({
                   />
                 )
               ) : (
-                <Bot
+                <Sparkle
                   className={
                     triggerSize === "compact"
                       ? "w-3.5 h-3.5 text-[var(--color-text-muted)]"

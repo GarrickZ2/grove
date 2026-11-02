@@ -1,5 +1,5 @@
 import {
-  Bot,
+  Sprout,
   LayoutGrid,
   Laptop,
   ListTodo,
@@ -103,9 +103,9 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
 
     if (options.buddies) {
       const { open, leave, items } = options.buddies;
-      commands.push({ id: "nav-buddies", name: leave ? "Leave Buddies" : "Open Buddies", category: "Navigation", icon: Bot, handler: leave ?? (() => open()), keywords: ["buddy", "bot", "teammate"] });
+      commands.push({ id: "nav-buddies", name: leave ? "Leave Buddies" : "Open Buddies", category: "Navigation", icon: Sprout, handler: leave ?? (() => open()), keywords: ["buddy", "bot", "teammate"] });
       commands.push({ id: "buddy-new", name: "New Buddy", category: "Buddies", icon: Plus, handler: () => open(undefined, true) });
-      for (const item of items) commands.push({ id: `buddy-${item.id}`, name: `${item.name} · ${item.status}`, category: "Buddies", icon: Bot, handler: () => open(item.id), keywords: ["buddy", item.name, item.status] });
+      for (const item of items) commands.push({ id: `buddy-${item.id}`, name: `${item.name} · ${item.status}`, category: "Buddies", icon: Sprout, handler: () => open(item.id), keywords: ["buddy", item.name, item.status] });
     }
     // --- Navigation ---
     if (navigation) {

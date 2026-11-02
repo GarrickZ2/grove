@@ -19,7 +19,7 @@ import { createPortal } from "react-dom";
 
 /** Renders an agent icon. Delegates to the central `agentIconComponent`,
  *  which applies the project-wide priority: bundled brand SVG  >  marketplace
- *  CDN icon  >  lucide Bot. The CDN map is populated by `setMarketplaceIcons`
+ *  CDN icon  >  lucide Sparkle. The CDN map is populated by `setMarketplaceIcons`
  *  in the listMarketplace effect below, so every render site (chat list,
  *  Open Sessions, picker, this modal) renders the same icon for the same id. */
 function AgentIcon({
@@ -121,7 +121,7 @@ export function MarketplaceModal({ open, onClose }: MarketplaceModalProps) {
       setData(resp);
       // Refresh the global icon CDN map so chat lists / pickers / Open
       // Sessions show registry icons for agents we don't have a bundled
-      // brand SVG for. Util applies bundle > CDN > Bot priority.
+      // brand SVG for. Util applies bundle > CDN > Sparkle priority.
       setMarketplaceIcons(resp.agents.map((a) => ({ id: a.id, icon_url: a.icon_url })));
       setError(null);
     } catch (e) {
