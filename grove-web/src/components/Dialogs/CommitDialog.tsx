@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { GitCommit, X, Loader2 } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
-import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
+import { formatKeyDisplay, useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
 
 interface CommitDialogProps {
   isOpen: boolean;
@@ -35,6 +38,7 @@ export function CommitDialog({
   // top-level useCommand would otherwise overwrite each other on every
   // re-render — only the last-mounted dialog's binding would be live.
   useKeyboardScope("dialog.commit", isOpen);
+  const orbit = useOrbitInterface();
 
   const handleSubmit = useCallback(
     (e?: React.FormEvent) => {
@@ -52,6 +56,50 @@ export function CommitDialog({
       handleSubmit(e);
     }
   };
+
+  if (orbit) {
+    return (
+      <DialogShell isOpen={isOpen} onClose={onCancel} maxWidth="max-w-[520px]">
+        {isOpen && (
+          <CommitDialogBindings onCancel={onCancel} onSubmit={handleSubmit} messageNotEmpty={message.trim().length > 0} />
+        )}
+        <DialogPanel onSubmit={handleSubmit}>
+          <DialogHead title="Commit changes" />
+          <DialogBody>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={handleKeyDown}
+              aria-label="Commit message"
+              placeholder="Describe your changes…"
+              rows={4}
+              autoFocus
+              className="oui-dlg-textarea"
+            />
+            {error && <p className="oui-dlg-error" role="alert">{error}</p>}
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={onCancel} disabled={isLoading}>
+              Cancel
+            </OrbitButton>
+            <OrbitButton type="submit" variant="primary" disabled={!message.trim() || isLoading}>
+              {isLoading ? (
+                <>
+                  <Loader2 className="oui-spin" aria-hidden="true" />
+                  Committing…
+                </>
+              ) : (
+                <>
+                  Commit
+                  <kbd>{formatKeyDisplay("Mod+Enter")}</kbd>
+                </>
+              )}
+            </OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={onCancel} maxWidth="max-w-lg">

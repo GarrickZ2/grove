@@ -14,6 +14,11 @@ import { handRemoteAuthToShell } from '../utils/tauriShell';
 import { GroveHeroBackground } from './Layout/GroveHeroBackground';
 import { GroveIcon } from './Layout/GroveIcon';
 import { GroveSplash } from './Layout/GroveSplash';
+import { OrbitSignIn } from '../orbit/firstrun/OrbitAuthScreens';
+import { useOrbitLook } from '../orbit/ui/interfaceContext';
+
+/** Orbit: how long "Connected" shows on the green button before loading takes over. */
+const ORBIT_SUCCESS_MS = 650;
 
 type AuthState = 'loading' | 'authenticated' | 'needs_auth' | 'connection_error';
 
@@ -24,6 +29,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [trusted, setTrusted] = useState(isIosClient);
   const [error, setError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
+  // Orbit presentation only: the accepted-key beat and the shake counter.
+  const orbit = useOrbitLook();
+  const [succeeded, setSucceeded] = useState(false);
+  const [errorTick, setErrorTick] = useState(0);
+  const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (successTimer.current) clearTimeout(successTimer.current); }, []);
   const initializing = useRef(false);
   const offeredSecret = useRef<string | null>(null);
 
@@ -156,7 +167,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (verifying) return;
+    if (verifying || succeeded) return;
     setVerifying(true);
     setError(null);
     try {
@@ -166,10 +177,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
       if (info?.device_sessions) {
         await loginDevice(skInput, trusted, canUseTrustedDeviceCookie(info));
       } else { await legacyLogin(skInput); }
-      setSkInput('');
       offeredSecret.current = null;
-      setAuthState('authenticated');
+      const finish = () => { setSkInput(''); setSucceeded(false); setAuthState('authenticated'); };
+      if (orbit) {
+        setSucceeded(true);
+        successTimer.current = setTimeout(finish, ORBIT_SUCCESS_MS);
+      } else finish();
     } catch (err) {
+      setErrorTick(tick => tick + 1);
       if (err instanceof AuthRequestError && err.status === 401) {
         clearSecretKey();
         setError('Invalid secret key or authorization. Please try again.');
@@ -184,6 +199,24 @@ export function AuthGate({ children }: { children: ReactNode }) {
     </GroveSplash>
   );
   if (authState === 'authenticated') return <>{children}</>;
+
+  if (orbit) return (
+    <OrbitSignIn
+      mode={authState === 'connection_error' ? 'connection_error' : 'form'}
+      secret={skInput}
+      onSecretChange={value => { setSkInput(value); setError(null); }}
+      showTrust={!!info?.required}
+      trusted={trusted}
+      onTrustedChange={setTrusted}
+      verifying={verifying}
+      succeeded={succeeded}
+      error={error}
+      errorTick={errorTick}
+      onSubmit={event => { void handleSubmit(event); }}
+      onRetry={() => { void initialize(); }}
+      switchServerHref={isIosClient ? '/_grove/' : undefined}
+    />
+  );
 
   return (
     <div className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-[var(--color-bg)] p-4">

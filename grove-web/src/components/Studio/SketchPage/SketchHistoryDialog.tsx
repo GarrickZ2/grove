@@ -7,6 +7,9 @@ import {
 } from "../../../api";
 import { DialogShell } from "../../ui/DialogShell";
 import { Button } from "../../ui";
+import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../../orbit/ui/Button";
+import { DialogBody, DialogFoot, DialogHead, DialogPanel } from "../../../orbit/ui/Dialog";
 
 interface Props {
   isOpen: boolean;
@@ -43,6 +46,7 @@ export function SketchHistoryDialog({
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const orbit = useOrbitInterface();
 
   useEffect(() => {
     if (!isOpen || !sketchId) return;
@@ -88,6 +92,75 @@ export function SketchHistoryDialog({
   const confirmTarget = confirmId
     ? entries?.find((e) => e.id === confirmId) ?? null
     : null;
+
+  if (orbit) {
+    return (
+      <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-xl">
+        <DialogPanel>
+          <DialogHead title="Sketch history" description={<p>Restore a previous version of <b>{sketchName}</b></p>} />
+          <DialogBody className="oui-dlg-body-list oui-dlg-scroll">
+            {loading && <div className="oui-dlg-list-empty">Loading history…</div>}
+            {!loading && error && <p className="oui-dlg-error" role="alert">{error}</p>}
+            {!loading && !error && entries && (
+              <>
+                {entries.length === 0 && (
+                  <div className="oui-dlg-list-empty">
+                    No checkpoints available for this sketch yet.
+                    <br />
+                    Each AI draw creates a checkpoint — come back after the next agent edit.
+                  </div>
+                )}
+                {entries.map((e) => (
+                  <div key={e.id} className="oui-dlg-row">
+                    <Clock aria-hidden="true" />
+                    <span className="oui-dlg-row-copy">
+                      <b>{formatTimestamp(e.ts)}</b>
+                      <span className="oui-truncate">
+                        {e.label ? e.label : e.element_count != null ? `${e.element_count} elements` : <i>no preview</i>}
+                      </span>
+                    </span>
+                    <OrbitButton size="sm" onClick={() => setConfirmId(e.id)} disabled={restoringId !== null}>
+                      <RotateCcw aria-hidden="true" />
+                      {restoringId === e.id ? "Restoring…" : "Restore"}
+                    </OrbitButton>
+                  </div>
+                ))}
+              </>
+            )}
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton onClick={onClose}>Close</OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+
+        {confirmTarget && (
+          <DialogShell isOpen onClose={() => setConfirmId(null)} maxWidth="max-w-sm" zIndex={60}>
+            <DialogPanel size="sm">
+              <DialogHead
+                icon={AlertTriangle}
+                tone="warning"
+                title="Restore this checkpoint?"
+                description={
+                  <p>
+                    This overwrites the current scene of <b>{sketchName}</b> with the version from{" "}
+                    {formatTimestamp(confirmTarget.ts)}. The overwritten state is not
+                    automatically backed up — if you need it later, open History again and
+                    restore the most recent entry.
+                  </p>
+                }
+              />
+              <DialogFoot>
+                <OrbitButton variant="ghost" onClick={() => setConfirmId(null)}>Cancel</OrbitButton>
+                <OrbitButton variant="primary" onClick={() => { void doRestore(confirmTarget.id); }} disabled={restoringId !== null}>
+                  {restoringId === confirmTarget.id ? "Restoring…" : "Restore"}
+                </OrbitButton>
+              </DialogFoot>
+            </DialogPanel>
+          </DialogShell>
+        )}
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-xl">

@@ -3,6 +3,9 @@ import { Edit3, X } from "lucide-react";
 import { Button, Input } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import { useCommand, useKeyboardScope } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
 
 interface RenameBranchDialogProps {
   isOpen: boolean;
@@ -46,6 +49,52 @@ export function RenameBranchDialog({
   // otherwise overwrite each other on every re-render — only the last-
   // mounted dialog's binding would be live.
   useKeyboardScope("dialog.renameBranch", isOpen);
+  const orbit = useOrbitInterface();
+
+  if (orbit) {
+    return (
+      <DialogShell isOpen={isOpen} onClose={handleClose}>
+        {isOpen && (
+          <RenameBranchDialogBindings
+            onClose={handleClose}
+            onSubmit={handleRename}
+            newName={newName}
+            branchName={branchName}
+          />
+        )}
+        <DialogPanel>
+          <DialogHead title="Rename branch" />
+          <DialogBody>
+            <DialogField label="Current name" as="div">
+              <div className="oui-dlg-static oui-mono oui-truncate">{branchName}</div>
+            </DialogField>
+            <DialogField label="New name">
+              <input
+                className="oui-field oui-mono"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Enter new branch name"
+                spellCheck={false}
+                autoFocus
+              />
+            </DialogField>
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={handleClose}>
+              Cancel
+            </OrbitButton>
+            <OrbitButton
+              variant="primary"
+              onClick={handleRename}
+              disabled={!newName.trim() || newName === branchName}
+            >
+              Rename
+            </OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={handleClose}>

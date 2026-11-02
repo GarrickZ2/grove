@@ -27,6 +27,7 @@ import { useConfig } from "../../../context";
 import { useIsMobile } from "../../../hooks";
 import { useCommand, useKeyboardScope, useContextKey, useVoiceControlContext } from "../../../keyboard";
 import { usePluginPanelCommands } from "../../Plugins/pluginPanelCommands";
+import { Button, PanelMenuButton, type PanelMenuItem } from "../../../orbit/ui";
 
 // --- Workspace Bar Dropdown (for overflow actions) ---
 function OverflowDropdown({ items }: { items: OverflowItem[] }) {
@@ -442,6 +443,37 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     </div>
   ) : undefined, [onBack]);
 
+  // Orbit: compact ghost actions after the panel toggles; the rest under ⋯.
+  const orbitOverflow = useMemo<PanelMenuItem[]>(() => overflowItems.map((item) => ({
+    id: item.id,
+    label: item.label,
+    icon: item.icon,
+    onSelect: item.onClick,
+    disabled: item.disabled,
+    danger: item.variant === "danger",
+    shortcut: item.shortcut,
+  })), [overflowItems]);
+  const orbitWorkspaceActions = useMemo(() => (
+    <>
+      {onCommit && (
+        <Button variant="ghost" size="sm" onClick={onCommit} disabled={isArchived} title="Commit (c)">
+          <GitCommit aria-hidden="true" />Commit
+        </Button>
+      )}
+      {onMerge && (
+        <Button variant="ghost" size="sm" onClick={onMerge} disabled={!canOperate} title="Merge (m)">
+          <GitMerge aria-hidden="true" />Merge
+        </Button>
+      )}
+      {!isLocal && onSync && (
+        <Button variant="ghost" size="sm" iconOnly onClick={onSync} disabled={!canOperate} title="Sync (s)" aria-label="Sync">
+          <RefreshCw aria-hidden="true" />
+        </Button>
+      )}
+      {orbitOverflow.length > 0 && <PanelMenuButton items={orbitOverflow} label="More actions" />}
+    </>
+  ), [onCommit, onMerge, onSync, canOperate, isLocal, isArchived, orbitOverflow]);
+
   const workspaceActions = useMemo(() => (
     <div className="flex items-center gap-1 shrink-0">
       {onCommit && (
@@ -586,9 +618,10 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             task={task}
             projectId={projectId}
             toolbarLeading={workspaceLeading}
-            toolbarTrailing={workspaceActions}
+            toolbarTrailing={orbit && !isMobile ? orbitWorkspaceActions : workspaceActions}
             phoneActions={phoneActions}
             isActive={isActive}
+            onToggleLayoutMode={toggleLayoutMode}
           />
         ) : (
           <FlexLayoutContainer
@@ -599,6 +632,8 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             isActive={isActive}
             fullscreen={fullscreen}
             onToggleFullscreen={toggleFullscreen}
+            toolbarLeading={orbit ? workspaceLeading : undefined}
+            toolbarTrailing={orbit ? orbitWorkspaceActions : undefined}
           />
         )}
       </div>

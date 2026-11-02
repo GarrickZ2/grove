@@ -1,231 +1,27 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { FileText, Edit3, Save, X, Loader2 } from "lucide-react";
 import { Button, MarkdownRenderer, FileMentionDropdown } from "../../../ui";
 import type { Task } from "../../../../data/types";
-import { useProject } from "../../../../context/ProjectContext";
-import { getNotes, updateNotes, getTaskFiles } from "../../../../api";
-import { buildMentionItems, filterMentionItems } from "../../../../utils/fileMention";
+import { useOrbitInterface } from "../../../../orbit/ui/interfaceContext";
+import { OrbitNotesPanel } from "../../../../orbit/workspace/panels/OrbitNotesPanel";
+import { useTaskNotes } from "./useTaskNotes";
 
 interface NotesTabProps {
   projectId?: string;
   task: Task;
 }
 
-export function NotesTab({ projectId, task }: NotesTabProps) {
-  const { selectedProject } = useProject();
-  const resolvedProjectId = projectId || selectedProject?.id;
-  const [isEditing, setIsEditing] = useState(false);
-  const [content, setContent] = useState("");
-  const [originalContent, setOriginalContent] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const resolvedProjectIdRef = useRef(resolvedProjectId);
+export function NotesTab(props: NotesTabProps) {
+  const orbit = useOrbitInterface();
+  if (orbit) return <OrbitNotesPanel projectId={props.projectId} task={props.task} />;
+  return <WorkbenchNotesTab {...props} />;
+}
 
-  // Refs for auto-save on navigate away
-  const isEditingRef = useRef(isEditing);
-  const contentRef = useRef(content);
-  const originalContentRef = useRef(originalContent);
-
-  // Sync refs in effects (cannot mutate refs during render). The ref consumers
-  // are unmount cleanup + async event handlers, both of which run after the
-  // commit/effect phase, so the one-tick delay is safe.
-  useEffect(() => {
-    resolvedProjectIdRef.current = resolvedProjectId;
-  }, [resolvedProjectId]);
-  useEffect(() => {
-    isEditingRef.current = isEditing;
-  }, [isEditing]);
-  useEffect(() => {
-    contentRef.current = content;
-  }, [content]);
-  useEffect(() => {
-    originalContentRef.current = originalContent;
-  }, [originalContent]);
-
-  // @ mention state
-  const [taskFiles, setTaskFiles] = useState<string[]>([]);
-  const [showFileMenu, setShowFileMenu] = useState(false);
-  const [fileFilter, setFileFilter] = useState("");
-  const [fileSelectedIdx, setFileSelectedIdx] = useState(0);
-  const [atCharIdx, setAtCharIdx] = useState(0);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const mentionItems = useMemo(() => buildMentionItems(taskFiles), [taskFiles]);
-  const filteredFiles = useMemo(
-    () => filterMentionItems(mentionItems, fileFilter),
-    [mentionItems, fileFilter],
-  );
-
-  // Only reload when task.id changes — not on project refreshes
-  useEffect(() => {
-    const pid = resolvedProjectIdRef.current;
-    if (!pid) return;
-
-    let cancelled = false;
-    // Initial loading state before async getNotes fetch below; driven by
-    // task.id change with no equivalent event hook upstream.
-    setIsLoading(true);
-    setError(null);
-    setIsEditing(false);
-
-    getNotes(pid, task.id)
-      .then((response) => {
-        if (cancelled) return;
-        setContent(response.content);
-        setOriginalContent(response.content);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("Failed to load notes:", err);
-        setContent("");
-        setOriginalContent("");
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-      // Auto-save on navigate away (task switch or unmount)
-      if (isEditingRef.current && contentRef.current !== originalContentRef.current) {
-        const pid = resolvedProjectIdRef.current;
-        if (pid) {
-          updateNotes(pid, task.id, contentRef.current).catch(() => {});
-        }
-      }
-    };
-  }, [task.id]);
-
-  // Load task files for @ mention
-  useEffect(() => {
-    const pid = resolvedProjectIdRef.current;
-    if (!pid) return;
-    getTaskFiles(pid, task.id)
-      .then((res) => setTaskFiles(res.files))
-      .catch(() => {});
-  }, [task.id]);
-
-  // Close file menu when clicking outside
-  useEffect(() => {
-    if (!showFileMenu) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setShowFileMenu(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showFileMenu]);
-
-  const handleSave = async () => {
-    if (!resolvedProjectId) return;
-
-    try {
-      setIsSaving(true);
-      setError(null);
-      await updateNotes(resolvedProjectId, task.id, content);
-      setOriginalContent(content);
-      setIsEditing(false);
-    } catch (err) {
-      console.error("Failed to save notes:", err);
-      setError("Failed to save notes");
-    }
-    setIsSaving(false);
-  };
-
-  const handleCancel = () => {
-    setContent(originalContent);
-    setIsEditing(false);
-    setShowFileMenu(false);
-  };
-
-  /** Detect @ in textarea and show file menu */
-  const detectAtMention = useCallback(() => {
-    const textarea = textareaRef.current;
-    if (!textarea || taskFiles.length === 0) return;
-
-    const text = textarea.value;
-    const cursor = textarea.selectionStart;
-
-    let atIdx = -1;
-    for (let i = cursor - 1; i >= 0; i--) {
-      if (text[i] === "@") {
-        if (i === 0 || /\s|\n/.test(text[i - 1])) atIdx = i;
-        break;
-      }
-      if (/\s|\n/.test(text[i])) break;
-    }
-
-    if (atIdx >= 0) {
-      setFileFilter(text.slice(atIdx + 1, cursor));
-      setAtCharIdx(atIdx);
-      setShowFileMenu(true);
-      setFileSelectedIdx(0);
-    } else {
-      setShowFileMenu(false);
-    }
-  }, [taskFiles.length]);
-
-  /** Insert a file path at cursor, replacing @query */
-  const insertFileMention = useCallback((filePath: string) => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-
-    const text = textarea.value;
-    const cursor = textarea.selectionStart;
-
-    let atIdx = -1;
-    for (let i = cursor - 1; i >= 0; i--) {
-      if (text[i] === "@") {
-        if (i === 0 || /\s|\n/.test(text[i - 1])) atIdx = i;
-        break;
-      }
-      if (/\s|\n/.test(text[i])) break;
-    }
-    if (atIdx < 0) return;
-
-    const before = text.slice(0, atIdx);
-    const after = text.slice(cursor);
-    const insertion = filePath + " ";
-    const newValue = before + insertion + after;
-    const newCursor = before.length + insertion.length;
-
-    setContent(newValue);
-    setShowFileMenu(false);
-
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(newCursor, newCursor);
-    });
-  }, []);
-
-  /** Handle keyboard navigation in file menu */
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!showFileMenu || filteredFiles.length === 0) return;
-
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setFileSelectedIdx((prev) => (prev + 1) % filteredFiles.length);
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setFileSelectedIdx((prev) => (prev - 1 + filteredFiles.length) % filteredFiles.length);
-      return;
-    }
-    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
-      e.preventDefault();
-      insertFileMention(filteredFiles[fileSelectedIdx].path);
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      setShowFileMenu(false);
-      return;
-    }
-  }, [showFileMenu, filteredFiles, fileSelectedIdx, insertFileMention]);
+function WorkbenchNotesTab({ projectId, task }: NotesTabProps) {
+  const {
+    isEditing, setIsEditing, content, setContent, isLoading, isSaving, error,
+    handleSave, handleCancel, textareaRef, containerRef, detectAtMention, handleKeyDown,
+    filteredFiles, fileSelectedIdx, setFileSelectedIdx, insertFileMention, showFileMenu, atCharIdx,
+  } = useTaskNotes(projectId, task.id);
 
   if (isLoading) {
     return (

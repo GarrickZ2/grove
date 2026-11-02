@@ -4,6 +4,8 @@ import { ChevronRight, FolderOpen, FolderPlus, GitBranch, Palette, type LucideIc
 import { getVersion } from "../../api";
 import { GroveHeroBackground } from "../Layout/GroveHeroBackground";
 import { GroveIcon } from "../Layout/GroveIcon";
+import { OrbitWelcome } from "../../orbit/firstrun/OrbitWelcome";
+import { useOrbitLook } from "../../orbit/ui/interfaceContext";
 import "./welcome.css";
 
 /** How the first project is added; maps onto AddProjectDialog's mode and tab. */
@@ -22,11 +24,17 @@ const ACTIONS: { id: WelcomeAction; icon: LucideIcon; title: string; description
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
+/** First page when Grove has no projects; Orbit has its own presentation. */
+export function WelcomePage({ onAction }: WelcomePageProps) {
+  const orbit = useOrbitLook();
+  return orbit ? <OrbitWelcome onAction={onAction} /> : <WorkbenchWelcomePage onAction={onAction} />;
+}
+
 /**
- * First page when Grove has no projects. Wide windows split into a brand hero
+ * Workbench Welcome. Wide windows split into a brand hero
  * (growing tree, title, tagline) and the ways to add a project; narrow ones stack.
  */
-export function WelcomePage({ onAction }: WelcomePageProps) {
+function WorkbenchWelcomePage({ onAction }: WelcomePageProps) {
   const [version, setVersion] = useState<string>("");
   const reduceMotion = useReducedMotion();
 

@@ -10,6 +10,9 @@ import {
 } from "../../api/plugins";
 import { parseGitInput } from "../../utils/gitUrl";
 import { useBrowseFolder } from "../Projects/useBrowseFolder";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
 
 type Mode = "local" | "git" | "dev" | "create";
 
@@ -43,6 +46,7 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
     next?: string;
   } | null>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
+  const orbit = useOrbitInterface();
 
   const pickFolderThen = async (
     install: (path: string) => Promise<{ plugin: { name: string }; warning?: string | null }>,
@@ -141,6 +145,178 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
       setBusy(false);
     }
   };
+
+  if (orbit) {
+    return (
+      <>
+        <DialogShell isOpen onClose={onClose} maxWidth="max-w-lg">
+          <DialogPanel>
+            {done ? (
+              <>
+                <DialogBody className="oui-dlg-done">
+                  <span className="oui-dlg-done-ic"><CheckCircle2 aria-hidden="true" /></span>
+                  <h2>Plugin added</h2>
+                  <p>“{done.name}” was installed successfully.</p>
+                  {(done.path || done.next) && (
+                    <div className="oui-dlg-facts">
+                      {done.path && (
+                        <div>
+                          <span className="oui-dlg-label">Created at</span>
+                          <code>{done.path}</code>
+                        </div>
+                      )}
+                      {done.next && (
+                        <div>
+                          <span className="oui-dlg-label">Next step</span>
+                          <code className="is-cmd">{done.next}</code>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {done.warning && <p className="oui-dlg-callout is-warn">{done.warning}</p>}
+                </DialogBody>
+                <DialogFoot>
+                  <OrbitButton variant="primary" onClick={onClose}>Done</OrbitButton>
+                </DialogFoot>
+              </>
+            ) : (
+              <>
+                <DialogHead title="Add plugin" />
+                <DialogBody>
+                  <div className="oui-dlg-modes" role="radiogroup" aria-label="Install from">
+                    {(Object.keys(MODE_META) as Mode[]).map((m) => {
+                      const Icon = MODE_META[m].icon;
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          role="radio"
+                          aria-checked={mode === m}
+                          onClick={() => setMode(m)}
+                          className={`oui-dlg-mode${mode === m ? " is-selected" : ""}`}
+                        >
+                          <Icon aria-hidden="true" />
+                          {MODE_META[m].label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {mode === "local" && (
+                    <>
+                      <input
+                        ref={zipInputRef}
+                        type="file"
+                        accept=".zip,application/zip"
+                        hidden
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) void handleZipFile(file);
+                          e.target.value = "";
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => zipInputRef.current?.click()}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setDragOver(true);
+                        }}
+                        onDragLeave={() => setDragOver(false)}
+                        onDrop={handleDrop}
+                        className={`oui-dlg-drop${dragOver ? " is-over" : ""}`}
+                      >
+                        <FileArchive aria-hidden="true" />
+                        <b>{busy ? "Installing…" : "Drop a .zip here, or click to choose"}</b>
+                        <span>Auto-extracted — the zip must contain a <code>plugin.json</code>.</span>
+                      </button>
+                      <div className="oui-dlg-or">or pick a folder</div>
+                      <OrbitButton variant="secondary" onClick={() => void handleLocal()} disabled={busy} className="oui-dlg-wide">
+                        <FolderOpen aria-hidden="true" />
+                        {busy ? "Installing…" : "Choose folder & install"}
+                      </OrbitButton>
+                      <p className="oui-dlg-note">Either way, the plugin is copied into Grove; deleting it removes the copy.</p>
+                    </>
+                  )}
+                  {mode === "dev" && (
+                    <p className="oui-dlg-message">
+                      Reference an existing plugin folder in place — edits hot-reload, and your
+                      folder is left untouched on uninstall. Must contain a <code>plugin.json</code>.
+                    </p>
+                  )}
+                  {mode === "git" && (
+                    <>
+                      <DialogField label="Git URL" note="Any git host. Paste a GitHub tree/blob link and the subpath is filled in automatically.">
+                        <input
+                          value={gitUrl}
+                          onChange={(e) => setGitUrl(e.target.value)}
+                          onBlur={handleGitBlur}
+                          placeholder="URL · owner/repo · tree/blob link"
+                          spellCheck={false}
+                          className="oui-field oui-mono"
+                        />
+                      </DialogField>
+                      <DialogField
+                        label={<>Subpath <span className="oui-dlg-optional">(optional)</span></>}
+                        note="Folder inside the repo that contains plugin.json. Leave empty if it's at the root."
+                      >
+                        <input
+                          value={subpath}
+                          onChange={(e) => setSubpath(e.target.value)}
+                          placeholder="packages/my-plugin"
+                          spellCheck={false}
+                          className="oui-field oui-mono"
+                        />
+                      </DialogField>
+                    </>
+                  )}
+                  {mode === "create" && (
+                    <DialogField
+                      label="Plugin name"
+                      note="Choose a parent folder next. Grove creates a TypeScript plugin starter and registers it as a development plugin."
+                    >
+                      <input
+                        autoFocus
+                        value={newPluginName}
+                        onChange={(event) => setNewPluginName(event.target.value)}
+                        placeholder="my-grove-plugin"
+                        spellCheck={false}
+                        className="oui-field oui-mono"
+                      />
+                    </DialogField>
+                  )}
+                  {error && <p className="oui-dlg-error" role="alert" style={{ overflowWrap: "anywhere" }}>{error}</p>}
+                </DialogBody>
+                <DialogFoot>
+                  <OrbitButton variant="ghost" onClick={onClose}>Cancel</OrbitButton>
+                  {mode === "git" && (
+                    <OrbitButton variant="primary" onClick={() => void handleGit()} disabled={busy}>
+                      <GitBranch aria-hidden="true" />
+                      {busy ? "Cloning…" : "Clone & install"}
+                    </OrbitButton>
+                  )}
+                  {mode === "dev" && (
+                    <OrbitButton variant="primary" onClick={() => void handleDev()} disabled={busy}>
+                      <FolderOpen aria-hidden="true" />
+                      {busy ? "Registering…" : "Choose folder & register"}
+                    </OrbitButton>
+                  )}
+                  {mode === "create" && (
+                    <OrbitButton variant="primary" onClick={() => void handleCreate()} disabled={busy}>
+                      <Sparkles aria-hidden="true" />
+                      {busy ? "Creating…" : "Choose folder & create"}
+                    </OrbitButton>
+                  )}
+                </DialogFoot>
+              </>
+            )}
+          </DialogPanel>
+        </DialogShell>
+        {folderPicker}
+      </>
+    );
+  }
 
   return (
     <>

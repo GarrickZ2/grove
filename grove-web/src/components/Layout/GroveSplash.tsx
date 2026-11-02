@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { GroveHeroBackground } from "./GroveHeroBackground";
 import { GroveIcon } from "./GroveIcon";
+import { OrbitSplash } from "../../orbit/firstrun/OrbitAuthScreens";
+import { useOrbitLook } from "../../orbit/ui/interfaceContext";
 import "./grove-splash.css";
 
 /**
@@ -9,6 +11,8 @@ import "./grove-splash.css";
  * the sign-in form) so the logo stays put when "Connect" hands off to loading.
  */
 export function GroveSplash({ label, children }: { label: string; children?: ReactNode }) {
+  const orbit = useOrbitLook();
+  if (orbit) return <OrbitSplash label={label}>{children}</OrbitSplash>;
   return (
     <div className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-[var(--color-bg)] p-4">
       <GroveHeroBackground />

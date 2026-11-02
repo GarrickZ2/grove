@@ -1,0 +1,438 @@
+/*
+ * Code Review — Orbit presentation (Review board).
+ *
+ * Applies only to `.diff-review-page.is-orbit`, which DiffReviewPage sets when
+ * it renders inside an Orbit workspace PanelShell (the shell provides the
+ * `--o-*` tokens). Chrome, spacing and surfaces only: the diff table, syntax
+ * colours and line backgrounds keep their legacy rules in diffTheme.css.
+ */
+
+.diff-review-page.is-orbit {
+  position: relative;
+  background: var(--o-bg);
+  color: var(--o-text);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Header actions (portalled into the PanelShell header) ─────────────── */
+.oui-panel-actions .orv-scope { margin-right: 4px; }
+
+/* ── Bar over the diff ─────────────────────────────────────────────────── */
+.orv-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 8px 0 12px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--o-border);
+  background: var(--o-bg);
+  min-width: 0;
+}
+.orv-bar-leading { display: flex; align-items: center; min-width: 0; flex: 0 1 220px; }
+.orv-bar-spacer { flex: 1; min-width: 0; }
+.orv-bar-group { display: inline-flex; align-items: center; gap: 1px; }
+.orv-range { display: flex; align-items: center; gap: 6px; min-width: 0; flex-shrink: 1; }
+.orv-range-arrow { color: var(--o-muted); font-size: 12px; user-select: none; }
+
+.orv-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px 0 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: color-mix(in oklab, var(--o-warn) 85%, var(--o-text));
+  background: color-mix(in oklab, var(--o-warn) 13%, transparent);
+  animation: oui-fade-up var(--o-dur-enter) var(--o-ease-out) both;
+}
+.orv-warn-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orv-warn-x {
+  width: 18px; height: 18px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer;
+}
+.orv-warn-x:hover { background: color-mix(in oklab, var(--o-warn) 18%, transparent); }
+.orv-warn-x svg { width: 11px; height: 11px; }
+
+.orv-comments-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--o-radius-sm);
+  background: none;
+  color: var(--o-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--o-dur-fast), color var(--o-dur-fast);
+}
+.orv-comments-btn svg { width: 14px; height: 14px; }
+.orv-comments-btn:hover { background: var(--o-hover); color: var(--o-text); }
+.orv-comments-btn.is-on { background: var(--o-selected); color: var(--o-text); }
+.orv-comments-btn:focus-visible { outline: 2px solid var(--o-accent); outline-offset: 2px; }
+.orv-comments-n {
+  min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+  background: color-mix(in oklab, var(--o-warn) 18%, transparent);
+  color: color-mix(in oklab, var(--o-warn) 85%, var(--o-text));
+  animation: orv-pop var(--o-dur-pop) var(--o-ease-pop) both;
+}
+
+/* Version selectors: Orbit field + popover */
+.diff-review-page.is-orbit .diff-version-trigger {
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--o-border);
+  border-radius: var(--o-radius-sm);
+  background: var(--o-bg);
+  color: var(--o-text);
+  font-size: 12.5px;
+  box-shadow: var(--o-shadow-1);
+  transition: border-color var(--o-dur-fast), box-shadow var(--o-dur-fast);
+}
+.diff-review-page.is-orbit .diff-version-trigger:hover { border-color: var(--o-border-strong); background: var(--o-bg); }
+.diff-review-page.is-orbit .diff-version-trigger.open { border-color: var(--o-border-strong); box-shadow: var(--o-ring-selected); }
+.diff-review-page.is-orbit .diff-version-dropdown {
+  top: calc(100% + 6px);
+  min-width: 220px;
+  padding: 5px;
+  border: 1px solid var(--o-border);
+  border-radius: var(--o-radius-md);
+  background: var(--o-bg);
+  box-shadow: var(--o-shadow-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--o-track) transparent;
+  transform-origin: top left;
+  animation: orv-pop-in 220ms var(--o-ease-out) both;
+}
+.diff-review-page.is-orbit .diff-version-option {
+  height: 30px;
+  padding: 0 9px;
+  border-radius: var(--o-radius-sm);
+  font-size: 12.5px;
+  color: var(--o-text);
+}
+.diff-review-page.is-orbit .diff-version-option:hover { background: var(--o-hover); }
+.diff-review-page.is-orbit .diff-version-option.selected { background: var(--o-selected); font-weight: 500; }
+.diff-review-page.is-orbit .diff-version-footer { padding: 6px 9px 2px; border-top-color: var(--o-border); color: var(--o-muted); }
+
+/* Linked-project switcher, when the task links Projects */
+.diff-review-page.is-orbit .review-project-trigger { border-color: var(--o-border); border-radius: var(--o-radius-sm); background: var(--o-bg); box-shadow: var(--o-shadow-1); }
+.diff-review-page.is-orbit .review-project-menu { border-color: var(--o-border); border-radius: var(--o-radius-md); background: var(--o-bg); box-shadow: var(--o-shadow-2); }
+.diff-review-page.is-orbit .review-project-option { border-radius: var(--o-radius-sm); }
+.diff-review-page.is-orbit .review-project-option:hover { background: var(--o-hover); }
+
+/* ── Content states ────────────────────────────────────────────────────── */
+.diff-review-page.is-orbit .orv-state { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 14px 16px; }
+.diff-review-page.is-orbit .orv-state.is-empty { padding: 0; }
+
+/* ── File tree ─────────────────────────────────────────────────────────── */
+.diff-review-page.is-orbit .diff-sidebar {
+  background: var(--o-group);
+  border-right: 1px solid var(--o-border);
+}
+
+.orv-summary { display: flex; align-items: center; gap: 10px; padding: 12px 14px 8px; flex-shrink: 0; }
+.orv-ring { width: 30px; height: 30px; flex-shrink: 0; transform: rotate(-90deg); }
+.orv-ring circle { fill: none; stroke-width: 3.5; }
+.orv-ring-bg { stroke: var(--o-track); }
+.orv-ring-fg { stroke: var(--o-accent); stroke-linecap: round; transition: stroke-dashoffset var(--o-dur-reflow) var(--o-ease-reflow), stroke 300ms; }
+.orv-summary.is-done .orv-ring-fg { stroke: var(--o-success); }
+.orv-summary-copy { display: flex; flex-direction: column; min-width: 0; }
+.orv-summary-copy b { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.orv-summary-copy > span { font-size: 11.5px; color: var(--o-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.orv-add { color: var(--o-success); }
+.orv-del { color: var(--o-error); }
+
+.diff-review-page.is-orbit .diff-sidebar-search { padding: 4px 10px 8px; border-bottom: 0; gap: 4px; }
+.diff-review-page.is-orbit .diff-sidebar-search-input {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--o-border);
+  border-radius: var(--o-radius-sm);
+  background: var(--o-bg);
+  font-size: 12.5px;
+  color: var(--o-text);
+  transition: border-color var(--o-dur-fast), box-shadow var(--o-dur-fast);
+}
+.diff-review-page.is-orbit .diff-sidebar-search-input:focus { border-color: var(--o-border-strong); box-shadow: var(--o-ring-selected); }
+.diff-review-page.is-orbit .diff-sidebar-hide-viewed-btn { width: 26px; height: 26px; padding: 0; border-radius: var(--o-radius-sm); color: var(--o-muted); opacity: 1; }
+.diff-review-page.is-orbit .diff-sidebar-hide-viewed-btn:hover { background: var(--o-hover); color: var(--o-text); }
+.diff-review-page.is-orbit .diff-sidebar-hide-viewed-btn.active { background: var(--o-selected); color: var(--o-text); }
+
+.diff-review-page.is-orbit .diff-sidebar-list { padding: 0 6px 8px; scrollbar-width: thin; scrollbar-color: var(--o-track) transparent; }
+.diff-review-page.is-orbit .diff-sidebar-item {
+  min-height: 30px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-radius: var(--o-radius-sm);
+  font-size: 12.5px;
+  color: color-mix(in oklab, var(--o-text) 82%, var(--o-muted));
+  transition: background-color var(--o-dur-fast), box-shadow var(--o-dur-fast), color var(--o-dur-fast);
+}
+.diff-review-page.is-orbit .diff-sidebar-item:hover { background: var(--o-hover); color: var(--o-text); }
+.diff-review-page.is-orbit .diff-sidebar-item.active {
+  background: var(--o-bg);
+  color: var(--o-text);
+  box-shadow: var(--o-shadow-1), inset 0 0 0 1px var(--o-border);
+}
+.diff-review-page.is-orbit .diff-sidebar-item.context-target:not(.active) { background: var(--o-selected); box-shadow: inset 0 0 0 1px var(--o-border-strong); }
+.diff-review-page.is-orbit .diff-sidebar-file-viewed { text-decoration-color: var(--o-track); opacity: .5; transition: opacity 240ms; }
+.diff-review-page.is-orbit .diff-sidebar-item-stats { font-size: 11px; font-variant-numeric: tabular-nums; }
+.diff-review-page.is-orbit .diff-sidebar-comment-badge {
+  min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; justify-content: center;
+  border-radius: 999px; font-size: 10px; font-weight: 700;
+  background: color-mix(in oklab, var(--o-warn) 18%, transparent);
+  color: color-mix(in oklab, var(--o-warn) 85%, var(--o-text));
+}
+.diff-review-page.is-orbit .diff-sidebar-comment-badge svg { display: none; }
+.diff-review-page.is-orbit .diff-sidebar-viewed-badge,
+.diff-review-page.is-orbit .diff-sidebar-updated-badge { font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 999px; }
+
+/* Resize grips: a hairline that lights up, like the workspace docks */
+.diff-review-page.is-orbit .diff-resizer:hover::after,
+.diff-review-page.is-orbit .diff-resizer:active::after { left: -1px; width: 2px; background: var(--o-accent); }
+
+/* ── Diff column ───────────────────────────────────────────────────────── */
+.diff-review-page.is-orbit .diff-content { background: var(--o-bg); scrollbar-width: thin; scrollbar-color: var(--o-track) transparent; }
+.diff-review-page.is-orbit .diff-file-header {
+  background: color-mix(in oklab, var(--o-bg) 88%, transparent);
+  -webkit-backdrop-filter: saturate(1.4) blur(12px);
+  backdrop-filter: saturate(1.4) blur(12px);
+  border-top: 1px solid var(--o-border);
+  border-bottom: 1px solid var(--o-border);
+}
+.diff-review-page.is-orbit .diff-file-header-top { min-height: 44px; box-sizing: border-box; padding: 6px 14px; }
+.diff-review-page.is-orbit .diff-file-path { font-family: var(--o-font-mono); font-size: 12.5px; color: var(--o-text); }
+.diff-review-page.is-orbit .diff-file-badge { font-size: 10.5px; font-weight: 500; text-transform: none; line-height: 17px; padding: 0 7px; border-radius: 999px; }
+.diff-review-page.is-orbit .diff-file-viewed-label { font-size: 12px; color: var(--o-muted); gap: 6px; }
+.diff-review-page.is-orbit .diff-file-viewed-checkbox {
+  width: 16px; height: 16px;
+  border: 1.5px solid var(--o-track);
+  border-radius: 5px;
+  background: var(--o-bg);
+  transition: background-color 200ms, border-color 200ms;
+}
+.diff-review-page.is-orbit .diff-file-viewed-checkbox:checked {
+  background: var(--o-accent);
+  border-color: var(--o-accent);
+  animation: orv-pop 400ms var(--o-ease-pop);
+}
+.diff-review-page.is-orbit .diff-file-viewed-checkbox:checked::after { top: 0; left: 3px; font-size: 10px; color: var(--o-on-accent); }
+.diff-review-page.is-orbit .diff-file-collapse-btn,
+.diff-review-page.is-orbit .diff-file-copy-btn,
+.diff-review-page.is-orbit .diff-file-expand-all-btn,
+.diff-review-page.is-orbit .diff-file-preview-btn { border-radius: var(--o-radius-xs); }
+.diff-review-page.is-orbit .diff-file-collapse-btn:hover,
+.diff-review-page.is-orbit .diff-file-copy-btn:hover,
+.diff-review-page.is-orbit .diff-file-expand-all-btn:hover,
+.diff-review-page.is-orbit .diff-file-preview-btn:hover { background: var(--o-hover); color: var(--o-text); }
+.diff-review-page.is-orbit .diff-hunk-header { background: var(--o-group); color: var(--o-muted); font-size: 11.5px; border-bottom-color: var(--o-border); }
+
+/* ── Inline comment threads ───────────────────────────────────────────── */
+.diff-review-page.is-orbit .diff-comment-card {
+  margin: 6px 14px 8px 60px;
+  border: 1px solid var(--o-border);
+  border-radius: var(--o-radius-lg);
+  background: var(--o-bg);
+  box-shadow: 0 10px 26px -18px rgb(0 0 0 / 35%);
+  font-size: 13px;
+  line-height: 1.5;
+  animation: orv-thread-in 360ms var(--o-ease-slide) both;
+}
+.diff-review-page.is-orbit .diff-split-comment-row .diff-comment-card { margin-left: 14px; }
+.diff-review-page.is-orbit .diff-comment-header { padding: 10px 12px 4px; gap: 8px; }
+.diff-review-page.is-orbit .diff-comment-author { font-size: 12.5px; }
+.diff-review-page.is-orbit .diff-comment-time { font-size: 11.5px; color: var(--o-muted); }
+.diff-review-page.is-orbit .diff-comment-status-badge { font-size: 11px; font-weight: 500; line-height: 18px; padding: 0 8px; border-radius: 999px; }
+.diff-review-page.is-orbit .diff-comment-action-btn { width: 26px; height: 26px; border-radius: var(--o-radius-xs); color: var(--o-muted); }
+.diff-review-page.is-orbit .diff-comment-action-btn:hover { background: var(--o-hover); color: var(--o-text); }
+.diff-review-page.is-orbit .diff-comment-body { padding: 0 12px 10px; font-size: 13px; }
+.diff-review-page.is-orbit .diff-comment-reply { border-top: 1px solid var(--o-border); background: none; padding: 10px 12px; }
+.diff-review-page.is-orbit .diff-comment-reply .diff-comment-body { color: var(--o-text); }
+
+.diff-review-page.is-orbit .diff-reply-form { border-top: 1px solid var(--o-border); padding: 10px 12px; background: var(--o-group); }
+.diff-review-page.is-orbit .diff-reply-textarea,
+.diff-review-page.is-orbit .conv-reply-textarea,
+.diff-review-page.is-orbit .project-comment-form textarea {
+  border: 1px solid var(--o-border);
+  border-radius: var(--o-radius);
+  background: var(--o-bg);
+  font-size: 13px;
+  color: var(--o-text);
+  transition: border-color var(--o-dur-fast), box-shadow var(--o-dur-fast);
+}
+.diff-review-page.is-orbit .diff-reply-textarea:focus,
+.diff-review-page.is-orbit .conv-reply-textarea:focus,
+.diff-review-page.is-orbit .project-comment-form textarea:focus { border-color: var(--o-border-strong); box-shadow: var(--o-ring-selected); }
+
+/* Buttons in threads: ink primary, quiet secondary (Orbit buttons). */
+.diff-review-page.is-orbit :is(.diff-reply-submit-btn, .conv-reply-submit, .project-comment-submit) {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--o-radius-sm);
+  background: var(--o-ink);
+  color: var(--o-on-ink);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%), 0 1px 2px rgb(0 0 0 / 18%);
+  transition: transform 140ms var(--o-ease-toggle), opacity 200ms;
+}
+.diff-review-page.is-orbit :is(.diff-reply-resolve-btn, .conv-reply-cancel, .conv-item-resolve-btn) {
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--o-border);
+  border-radius: var(--o-radius-sm);
+  background: var(--o-bg);
+  color: var(--o-text);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: var(--o-shadow-1);
+  transition: transform 140ms var(--o-ease-toggle), border-color var(--o-dur-fast);
+}
+.diff-review-page.is-orbit :is(.diff-reply-resolve-btn, .conv-reply-cancel, .conv-item-resolve-btn):hover { border-color: var(--o-border-strong); background: var(--o-bg); opacity: 1; }
+.diff-review-page.is-orbit :is(.diff-reply-submit-btn, .conv-reply-submit, .project-comment-submit, .diff-reply-resolve-btn, .conv-reply-cancel, .conv-item-resolve-btn):active:not(:disabled) { transform: scale(.96); }
+
+/* ── Comments sidebar ─────────────────────────────────────────────────── */
+.diff-review-page.is-orbit .conv-sidebar { background: var(--o-group); border-left: 1px solid var(--o-border); }
+.diff-review-page.is-orbit .conv-sidebar-header { padding: 12px 14px 8px; border-bottom: 0; font-size: 13.5px; color: var(--o-text); }
+.diff-review-page.is-orbit .conv-sidebar-header > svg { display: none; }
+.diff-review-page.is-orbit .conv-sidebar-count { font-size: 11px; padding: 0 6px; line-height: 17px; border-radius: 999px; background: var(--o-selected); color: var(--o-muted); }
+.diff-review-page.is-orbit .conv-cleanup-btn { border-radius: var(--o-radius-xs); }
+
+/* Filters read as one segmented control */
+.diff-review-page.is-orbit .conv-filter-bar {
+  margin: 0 12px 8px;
+  padding: 2px;
+  gap: 0;
+  border-bottom: 0;
+  border-radius: 9px;
+  background: var(--o-selected);
+  box-shadow: inset 0 0 0 .5px var(--o-border);
+  flex-wrap: nowrap;
+}
+.diff-review-page.is-orbit .conv-filter-btn {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--o-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 200ms, background-color 200ms, box-shadow 200ms;
+}
+.diff-review-page.is-orbit .conv-filter-btn:hover { background: none; color: var(--o-text); }
+.diff-review-page.is-orbit .conv-filter-btn.active {
+  background: var(--o-bg);
+  color: var(--o-text);
+  font-weight: 500;
+  box-shadow: 0 1px 3px var(--o-shadow), 0 0 0 .5px var(--o-border);
+}
+
+.diff-review-page.is-orbit .conv-sidebar-list { padding: 0 8px 8px; scrollbar-width: thin; scrollbar-color: var(--o-track) transparent; }
+.diff-review-page.is-orbit .conv-section { margin-bottom: 10px; }
+.diff-review-page.is-orbit .conv-section-title { padding: 6px 6px 4px; margin-bottom: 2px; font-size: 12px; font-weight: 500; color: var(--o-muted); text-transform: none; letter-spacing: 0; }
+.diff-review-page.is-orbit .conv-file-group { border-bottom: 0; }
+.diff-review-page.is-orbit .conv-file-header { padding: 6px; border-radius: var(--o-radius-sm); background: none; color: var(--o-muted); }
+.diff-review-page.is-orbit .conv-file-header:hover { background: var(--o-hover); color: var(--o-text); }
+.diff-review-page.is-orbit .conv-file-name { font-family: var(--o-font-mono); font-size: 11.5px; }
+.diff-review-page.is-orbit .conv-file-count { border-radius: 999px; background: var(--o-selected); color: var(--o-muted); font-variant-numeric: tabular-nums; }
+.diff-review-page.is-orbit .conv-item {
+  margin: 2px 0;
+  padding: 10px;
+  border-bottom: 0;
+  border-radius: var(--o-radius-md);
+  animation: oui-rowin 320ms var(--o-ease-out) both;
+  transition: background-color var(--o-dur-fast), box-shadow var(--o-dur-fast);
+}
+.diff-review-page.is-orbit .conv-item:hover { background: var(--o-bg); box-shadow: var(--o-shadow-1), inset 0 0 0 1px var(--o-border); }
+.diff-review-page.is-orbit .conv-item-author { font-size: 12px; font-weight: 500; }
+.diff-review-page.is-orbit .conv-item-meta { font-family: var(--o-font-mono); font-size: 11px; }
+.diff-review-page.is-orbit .conv-item-status { font-size: 10.5px; font-weight: 500; line-height: 17px; padding: 0 7px; border-radius: 999px; }
+.diff-review-page.is-orbit .conv-item-content { font-size: 12.5px; line-height: 1.45; color: var(--o-text); }
+.diff-review-page.is-orbit .conv-item-replies { border-top-color: var(--o-border); }
+.diff-review-page.is-orbit .conv-empty { color: var(--o-muted); font-size: 12.5px; }
+.diff-review-page.is-orbit .conv-sidebar-footer { border-top: 1px solid var(--o-border); background: var(--o-group); }
+
+/* ── Find bar ─────────────────────────────────────────────────────────── */
+.orv-search {
+  position: absolute;
+  top: 50px;
+  right: 14px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0 4px 0 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--o-border);
+  border-radius: var(--o-radius-md);
+  background: color-mix(in oklab, var(--o-bg) 90%, transparent);
+  -webkit-backdrop-filter: saturate(1.6) blur(18px);
+  backdrop-filter: saturate(1.6) blur(18px);
+  box-shadow: var(--o-shadow-2);
+  animation: orv-pop-in 240ms var(--o-ease-out) both;
+}
+.orv-search-ic { width: 14px; height: 14px; flex-shrink: 0; color: var(--o-muted); }
+.orv-search-input {
+  width: 200px;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  outline: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--o-text);
+}
+.orv-search-input::placeholder { color: var(--o-muted); }
+.orv-search-count { min-width: 44px; padding: 0 4px; font-size: 11.5px; text-align: center; color: var(--o-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.orv-search-count.is-none { color: var(--o-error); }
+.orv-search-btn {
+  width: 26px; height: 26px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; border-radius: var(--o-radius-xs);
+  background: none; color: var(--o-muted); cursor: pointer;
+  transition: background-color var(--o-dur-fast), color var(--o-dur-fast);
+}
+.orv-search-btn svg { width: 14px; height: 14px; }
+.orv-search-btn:hover:not(:disabled) { background: var(--o-hover); color: var(--o-text); }
+.orv-search-btn:disabled { opacity: .4; cursor: default; }
+.orv-search-btn.is-on { background: var(--o-selected); color: var(--o-text); }
+.orv-search-btn:focus-visible { outline: 2px solid var(--o-accent); outline-offset: 1px; }
+.orv-search:focus-within { border-color: var(--o-border-strong); }
+.orv-search-input:focus, .orv-search-input:focus-visible { outline: none; box-shadow: none; }
+.orv-search-sep { width: 1px; height: 16px; margin: 0 2px; background: var(--o-border); }
+
+/* ── Narrow panels ────────────────────────────────────────────────────── */
+@container (max-width: 640px) {
+  .orv-range-arrow { display: none; }
+  .orv-bar .orv-layout { display: none; }
+  .diff-review-page.is-orbit .diff-comment-card { margin-left: 16px; }
+}
+
+@keyframes orv-thread-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
+@keyframes orv-pop { 0% { transform: scale(.5); } 60% { transform: scale(1.15); } 100% { transform: none; } }
+@keyframes orv-pop-in { from { opacity: 0; transform: translateY(-4px) scale(.97); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .diff-review-page.is-orbit *,
+  .diff-review-page.is-orbit *::after { animation: none !important; transition: none !important; }
+}

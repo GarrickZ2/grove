@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Plus, FolderGit2, Sparkles, Code2, Archive } from "lucide-react";
 import { Button } from "../ui";
@@ -10,57 +10,43 @@ import { useIsMobile } from "../../hooks";
 import { filterProjectsByType } from "../../utils/projectFilter";
 import type { Project } from "../../data/types";
 import { OptionalPerfProfiler } from "../../perf/profilerShim";
-import { listProjects, type ProjectListItem } from "../../api";
+import { useProjectsActions } from "./useProjectsActions";
 
 interface ProjectsPageProps {
   onNavigate?: (page: string) => void;
   initialTab?: "coding" | "studio";
 }
 
-function convertArchivedProject(item: ProjectListItem): Project {
-  return {
-    id: item.id,
-    name: item.name,
-    path: item.path,
-    currentBranch: "",
-    tasks: [],
-    localTask: null,
-    addedAt: new Date(item.added_at),
-    taskCount: item.task_count,
-    isGitRepo: item.is_git_repo,
-    exists: item.exists,
-    projectType: item.project_type === "studio" ? "studio" : "repo",
-    archived: true,
-  };
-}
-
 export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
-  const { projects, selectedProject, selectProject, addProject, createNewProject, cloneProject, deleteProject, renameProject, archiveProject, restoreProject, refreshProjects } = useProject();
+  const { projects, selectedProject } = useProject();
   const { isMobile } = useIsMobile();
   const codingProjects = useMemo(() => filterProjectsByType(projects, "coding"), [projects]);
   const studioProjects = useMemo(() => filterProjectsByType(projects, "studio"), [projects]);
   const [activeTab, setActiveTab] = useState<"studio" | "coding" | "archived">(
     initialTab ?? (selectedProject?.projectType === "studio" ? "studio" : "coding"),
   );
-  const [addDialogMode, setAddDialogMode] = useState<"coding" | "studio">(
-    selectedProject?.projectType === "studio" ? "studio" : "coding",
-  );
-  const [archivedProjects, setArchivedProjects] = useState<Project[]>([]);
-  const [projectActionId, setProjectActionId] = useState<string | null>(null);
-
-  const refreshArchivedProjects = useCallback(async () => {
-    const response = await listProjects(true);
-    setArchivedProjects(response.projects.map(convertArchivedProject));
-  }, []);
-
-  // Refresh project list when navigating to this page
-  useEffect(() => {
-    void refreshProjects();
-    void (async () => {
-      const response = await listProjects(true);
-      setArchivedProjects(response.projects.map(convertArchivedProject));
-    })();
-  }, [refreshProjects]);
+  const {
+    archivedProjects,
+    projectActionId,
+    addDialogMode,
+    showAddDialog,
+    projectToDelete,
+    setProjectToDelete,
+    isAdding,
+    isDeleting,
+    error,
+    openAddDialog,
+    closeAddDialog,
+    handleAddProject,
+    handleCloneProject,
+    handleCreateNewProject,
+    handleDeleteProject,
+    handleSelectProject,
+    handleOpenProject: handleDoubleClick,
+    handleRenameProject,
+    handleArchiveProject,
+    handleRestoreProject,
+  } = useProjectsActions(onNavigate);
 
   // Sync activeTab to selectedProject.projectType. Use a "previous selected
   // project" tracker computed during render instead of useEffect to satisfy
@@ -74,132 +60,6 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
       setActiveTab(selectedProject.projectType === "studio" ? "studio" : "coding");
     }
   }
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
-  const [isAdding, setIsAdding] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const openAddDialog = (mode: "coding" | "studio") => {
-    setAddDialogMode(mode);
-    setShowAddDialog(true);
-    setError(null);
-  };
-
-  const handleAddProject = async (path: string, name?: string) => {
-    try {
-      setIsAdding(true);
-      setError(null);
-      const project = await addProject(path, name);
-      selectProject(project);
-      setShowAddDialog(false);
-    } catch (err: unknown) {
-      console.error("Failed to add project:", err);
-      if (err && typeof err === "object" && "message" in err) {
-        // Backend returns specific error messages in the body; prefer them.
-        const apiErr = err as { status?: number; message: string };
-        setError(apiErr.message || "Failed to add project");
-      } else {
-        setError("Failed to add project");
-      }
-    }
-    setIsAdding(false);
-  };
-
-  const handleCloneProject = async (url: string, name?: string) => {
-    try {
-      setIsAdding(true);
-      setError(null);
-      const project = await cloneProject(url, name);
-      selectProject(project);
-      setShowAddDialog(false);
-    } catch (err: unknown) {
-      console.error("Failed to clone project:", err);
-      if (err && typeof err === "object" && "message" in err) {
-        setError((err as { message: string }).message || "Failed to clone project");
-      } else {
-        setError("Failed to clone project");
-      }
-    }
-    setIsAdding(false);
-  };
-
-  const handleCreateNewProject = async (parentDir: string, name: string, initGit: boolean, projectType?: string) => {
-    try {
-      setIsAdding(true);
-      setError(null);
-      const project = await createNewProject(parentDir, name, initGit, projectType);
-      selectProject(project);
-      setShowAddDialog(false);
-    } catch (err: unknown) {
-      console.error("Failed to create project:", err);
-      if (err && typeof err === "object" && "message" in err) {
-        setError((err as { message: string }).message || "Failed to create project");
-      } else {
-        setError("Failed to create project");
-      }
-    }
-    setIsAdding(false);
-  };
-
-  const handleDeleteProject = async () => {
-    if (projectToDelete) {
-      try {
-        setIsDeleting(true);
-        setError(null);
-        const wasArchived = projectToDelete.archived;
-        await deleteProject(projectToDelete.id);
-        setProjectToDelete(null);
-        if (wasArchived) await refreshArchivedProjects();
-      } catch (err) {
-        console.error("Failed to delete project:", err);
-        setError("Failed to delete project");
-      }
-      setIsDeleting(false);
-    }
-  };
-
-  const handleSelectProject = (project: Project) => {
-    selectProject(project);
-  };
-
-  const handleDoubleClick = (project: Project) => {
-    selectProject(project);
-    onNavigate?.("dashboard");
-  };
-
-  const handleRenameProject = async (project: Project, newName: string) => {
-    await renameProject(project.id, newName);
-    if (project.archived) await refreshArchivedProjects();
-  };
-
-  const handleArchiveProject = async (project: Project) => {
-    try {
-      setProjectActionId(project.id);
-      setError(null);
-      await archiveProject(project.id);
-      await refreshArchivedProjects();
-    } catch (err) {
-      console.error("Failed to archive project:", err);
-      setError("Failed to archive project");
-    } finally {
-      setProjectActionId(null);
-    }
-  };
-
-  const handleRestoreProject = async (project: Project) => {
-    try {
-      setProjectActionId(project.id);
-      setError(null);
-      await restoreProject(project.id);
-      await refreshArchivedProjects();
-    } catch (err) {
-      console.error("Failed to restore project:", err);
-      setError("Failed to restore project");
-    } finally {
-      setProjectActionId(null);
-    }
-  };
 
   const renderProjectGrid = (items: Project[], sectionKey: string, includeAddCard = false) => (
     <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 ${isMobile ? "gap-2" : "gap-4"}`}>
@@ -396,10 +256,7 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
       {/* Dialogs */}
       <AddProjectDialog
         isOpen={showAddDialog}
-        onClose={() => {
-          setShowAddDialog(false);
-          setError(null);
-        }}
+        onClose={closeAddDialog}
         onAdd={handleAddProject}
         onCreateNew={handleCreateNewProject}
         onClone={handleCloneProject}

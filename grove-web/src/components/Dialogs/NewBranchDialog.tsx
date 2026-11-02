@@ -5,6 +5,10 @@ import { Button, Input } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import type { Branch } from "../../data/types";
 import { useCommand, useKeyboardScope } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { Toggle } from "../../orbit/ui/Toggle";
+import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
 
 interface NewBranchDialogProps {
   isOpen: boolean;
@@ -51,6 +55,87 @@ export function NewBranchDialog({
   // useCommand would otherwise overwrite each other on every re-render —
   // only the last-mounted dialog's binding would be live.
   useKeyboardScope("dialog.newBranch", isOpen);
+  const orbit = useOrbitInterface();
+
+  if (orbit) {
+    return (
+      <DialogShell isOpen={isOpen} onClose={handleClose}>
+        {isOpen && (
+          <NewBranchDialogBindings
+            onClose={handleClose}
+            onSubmit={handleCreate}
+            branchName={branchName}
+          />
+        )}
+        <DialogPanel>
+          <DialogHead title="Create new branch" />
+          <DialogBody>
+            <DialogField label="Branch name">
+              <input
+                className="oui-field oui-mono"
+                value={branchName}
+                onChange={(e) => setBranchName(e.target.value)}
+                placeholder="feature/my-new-feature"
+                spellCheck={false}
+                autoFocus
+              />
+            </DialogField>
+            <DialogField label="Based on" as="div">
+              <button
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={showBranchDropdown}
+                onClick={() => setShowBranchDropdown(!showBranchDropdown)}
+                className={`oui-dlg-select${showBranchDropdown ? " is-open" : ""}`}
+              >
+                <GitBranch aria-hidden="true" />
+                <span className="oui-mono">{baseBranch}</span>
+                <ChevronDown className="oui-chev" aria-hidden="true" />
+              </button>
+              {showBranchDropdown && (
+                <div className="oui-pop oui-dlg-menu oui-scroll" role="listbox" aria-label="Base branch">
+                  {localBranches.map((branch) => (
+                    <button
+                      key={branch.name}
+                      type="button"
+                      role="option"
+                      aria-selected={baseBranch === branch.name}
+                      onClick={() => {
+                        setBaseBranch(branch.name);
+                        setShowBranchDropdown(false);
+                      }}
+                      className="oui-dlg-menu-item"
+                    >
+                      <GitBranch aria-hidden="true" />
+                      <span className="oui-mono">{branch.name}</span>
+                      {branch.isCurrent && <span className="oui-dlg-tag">current</span>}
+                      {baseBranch === branch.name && <Check className="oui-dlg-check" aria-hidden="true" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </DialogField>
+            <div className="oui-dlg-opt">
+              <div>Checkout after creation</div>
+              <Toggle checked={checkoutAfter} onChange={setCheckoutAfter} label="Checkout after creation" />
+            </div>
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={handleClose}>
+              Cancel
+            </OrbitButton>
+            <OrbitButton
+              variant="primary"
+              onClick={handleCreate}
+              disabled={!branchName.trim()}
+            >
+              Create branch
+            </OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={handleClose}>

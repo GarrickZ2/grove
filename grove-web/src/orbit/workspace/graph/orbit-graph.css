@@ -1,0 +1,173 @@
+/* Orbit Agent graph panel body (tokens: ../../tokens.css via .orbit-ui). */
+.ogr{container-type:size;container-name:ogr;height:100%;width:100%;min-height:0;background:var(--o-bg);color:var(--o-text);font-size:13px;-webkit-font-smoothing:antialiased}
+.ogr-in{height:100%;display:flex;flex-direction:column;gap:10px;padding:10px;box-sizing:border-box;min-height:0;min-width:0}
+.ogr :is(button,input,textarea):focus-visible{outline:2px solid var(--o-accent);outline-offset:2px}
+.ogr b{font-weight:600}
+
+/* Canvas */
+.ogr-stage{position:relative;flex:1;min-height:180px;min-width:0;display:flex}
+.ogr-canvas{position:relative;flex:1;min-width:0;overflow:hidden;border-radius:var(--o-radius-lg);border:1px solid var(--o-border);background:radial-gradient(circle at 50% 42%,color-mix(in oklab,var(--o-accent) 6%,transparent),transparent 68%),var(--o-bg);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.ogr-canvas.is-panning{cursor:grabbing}
+.ogr-world{position:absolute;left:0;top:0;transform-origin:0 0}
+.ogr-edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+.ogr-edge{transition:opacity 240ms var(--o-ease-out)}
+.ogr-edge.is-dim{opacity:.32}
+.ogr-edge-line{fill:none;stroke:var(--o-track);stroke-width:1.6;transition:stroke 240ms,stroke-width 240ms}
+.ogr-edge.is-in_flight .ogr-edge-line{stroke:var(--o-accent);stroke-width:2}
+.ogr-edge.is-blocked .ogr-edge-line{stroke:var(--o-warn);stroke-width:1.8;stroke-dasharray:5 4}
+.ogr-edge:hover .ogr-edge-line{stroke-width:2.4}
+.ogr-edge.is-sel .ogr-edge-line{stroke-width:2.6}
+.ogr-edge.is-sel.is-idle .ogr-edge-line{stroke:var(--o-text)}
+.ogr-edge-hit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;cursor:pointer}
+.ogr-arrow.is-idle{fill:var(--o-track)}
+.ogr-arrow.is-in_flight{fill:var(--o-accent)}
+.ogr-arrow.is-blocked{fill:var(--o-warn)}
+.ogr-pulse{fill:var(--o-accent);filter:drop-shadow(0 0 3px color-mix(in oklab,var(--o-accent) 70%,transparent))}
+
+/* Edge purpose label: a zero-size anchor at the curve's midpoint. */
+.ogr-elabel{position:absolute;left:0;top:0;width:0;height:0;padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer;transition:opacity 240ms}
+.ogr-elabel>span{position:absolute;left:0;top:0;transform:translate(-50%,-50%);display:block;max-width:132px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 8px;border-radius:999px;border:1px solid var(--o-border);background:var(--o-bg);font-size:10.5px;line-height:15px;color:var(--o-muted);box-shadow:var(--o-shadow-1);transition:border-color var(--o-dur-fast),color var(--o-dur-fast)}
+.ogr-elabel:hover>span,.ogr-elabel.is-sel>span{border-color:var(--o-border-strong);color:var(--o-text)}
+.ogr-elabel.is-dim{opacity:.32}
+
+/* Agent card */
+.ogr-node{position:absolute;left:0;top:0;display:flex;align-items:center;gap:9px;padding:0 10px 0 10px;box-sizing:border-box;border-radius:var(--o-radius-lg);border:1px solid var(--o-border);background:var(--o-bg);box-shadow:0 1px 2px var(--o-shadow),0 10px 22px -16px rgb(0 0 0 / 45%);text-align:left;font:inherit;color:var(--o-text);cursor:pointer;transition:border-color 200ms,box-shadow 200ms,opacity 240ms var(--o-ease-out)}
+.ogr-node:hover{border-color:var(--o-border-strong)}
+.ogr-node.is-sel{border-color:var(--o-accent);box-shadow:var(--o-ring-selected),0 12px 26px -16px color-mix(in oklab,var(--o-accent) 70%,transparent)}
+.ogr-node.is-permission_required:not(.is-sel){border-color:color-mix(in oklab,var(--o-warn) 45%,var(--o-border))}
+.ogr-node.is-disconnected .ogr-tile{filter:grayscale(1);opacity:.65}
+.ogr-node.is-disconnected .ogr-node-copy b{color:var(--o-muted)}
+.ogr-node.is-dim{opacity:.45}
+.ogr-node-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ogr-node-copy b{font-size:12.5px;line-height:1.25}
+.ogr-node-copy small{font-size:11px;line-height:1.25;color:var(--o-muted)}
+.ogr-node-q{min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:600;flex-shrink:0;color:var(--o-accent);background:var(--o-accent-soft)}
+
+/* Agent tile (canvas cards + inspector) */
+.ogr-tile{--ogr-agent:var(--o-muted);position:relative;width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:color-mix(in oklab,var(--ogr-agent) 14%,var(--o-bg));box-shadow:inset 0 0 0 .5px var(--o-border);color:var(--o-text)}
+.ogr-tile.is-sm{width:22px;height:22px;border-radius:7px}
+.ogr-tile.is-plain{background:var(--o-selected);color:var(--o-muted)}
+.ogr-tile.is-danger{background:color-mix(in oklab,var(--o-error) 10%,transparent);color:var(--o-error);box-shadow:none}
+.ogr-tile .ogr-node-dot{position:absolute;right:-2px;bottom:-2px;outline:2px solid var(--o-bg)}
+.ogr-tile.is-sm .ogr-node-dot{width:6px;height:6px;right:-2px;bottom:-2px}
+
+/* Zoom cluster */
+.ogr-zoom{position:absolute;top:8px;right:8px;z-index:2;display:flex;align-items:center;gap:1px;padding:3px;border-radius:10px;border:1px solid var(--o-border);background:var(--o-frost);-webkit-backdrop-filter:saturate(1.6) blur(14px);backdrop-filter:saturate(1.6) blur(14px);box-shadow:var(--o-shadow-1);cursor:default}
+.ogr-zoom button{width:26px;height:26px;border-radius:7px;border:0;background:none;color:var(--o-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background-color var(--o-dur-fast),color var(--o-dur-fast)}
+.ogr-zoom button:hover:not(:disabled){background:var(--o-hover);color:var(--o-text)}
+.ogr-zoom button:disabled{opacity:.4;cursor:default}
+.ogr-zoom svg{width:13px;height:13px}
+.ogr-zoom span{min-width:38px;text-align:center;font-size:11px;color:var(--o-muted)}
+.ogr-zoom i{width:1px;height:14px;margin:0 2px;background:var(--o-border)}
+
+/* Toast */
+.ogr-toast-slot{position:absolute;left:0;right:0;bottom:12px;z-index:3;display:flex;justify-content:center;pointer-events:none;padding:0 12px}
+.ogr-toast{display:inline-flex;align-items:center;gap:7px;max-width:100%;height:30px;padding:0 12px;box-sizing:border-box;border-radius:999px;border:1px solid var(--o-border);background:var(--o-bg);box-shadow:var(--o-shadow-2);font-size:12.5px;color:var(--o-text)}
+.ogr-toast svg{width:13px;height:13px;flex-shrink:0;color:var(--o-accent);stroke-width:2.4}
+.ogr-toast.is-error{color:var(--o-error);border-color:color-mix(in oklab,var(--o-error) 30%,var(--o-border))}
+.ogr-toast.is-error svg{color:var(--o-error);stroke-width:2}
+
+/* Inspector */
+.ogr-side{position:relative;z-index:4;flex-shrink:0;display:flex;flex-direction:column;min-height:0;max-height:52%}
+.ogr-side.is-solo{flex:1;max-height:none;align-items:center;justify-content:center}
+.ogr-side.is-solo .ogr-pane{width:100%;max-width:420px}
+.ogr-pane{display:flex;flex-direction:column;min-height:0;max-height:100%;border:1px solid var(--o-border);border-radius:var(--o-radius-lg);background:var(--o-group);box-shadow:var(--o-shadow-1);animation:oui-rise 300ms var(--o-ease-out) both}
+.ogr-pane-head{display:flex;align-items:center;gap:10px;min-height:48px;padding:8px 8px 8px 12px;box-sizing:border-box;flex-shrink:0}
+.ogr-pane-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.ogr-pane-title b{font-size:13px;line-height:1.3}
+.ogr-pane-title small{font-size:11.5px;line-height:1.35;color:var(--o-muted)}
+.ogr-pane-body{flex:1 1 auto;min-height:0;padding:0 12px 12px}
+/* Menus in the footer open upward, over the canvas. */
+.ogr-pane-foot .oui-pop{top:auto;bottom:calc(100% + 6px);width:min(290px,calc(100cqw - 24px));transform-origin:bottom right}
+.ogr-pane-foot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 10px;border-top:1px solid var(--o-border);flex-shrink:0}
+.ogr-pane.is-form .ogr-pane-foot{border-top:0;padding-top:2px}
+.ogr-sp{flex:1}
+.ogr-hint{font-size:11.5px;color:var(--o-muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ogr-muted{color:var(--o-muted)}
+.ogr-wrap{white-space:normal}
+.ogr-st.is-live,.ogr-st.is-in_flight{color:var(--o-accent)}
+.ogr-st.is-waiting,.ogr-st.is-blocked{color:var(--o-warn)}
+.ogr-st.is-info{color:var(--o-info)}
+
+.ogr-rows{border:1px solid var(--o-border);border-radius:var(--o-radius-md);background:var(--o-bg)}
+.ogr-kv{display:grid;grid-template-columns:86px minmax(0,1fr);gap:10px;padding:8px 11px;font-size:12.5px;line-height:1.45}
+.ogr-kv+.ogr-kv{border-top:1px solid var(--o-border)}
+.ogr-kv>span{color:var(--o-muted)}
+.ogr-kv>div{min-width:0}
+.ogr-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden}
+.ogr-queued+.ogr-queued{margin-top:6px}
+.ogr-queued b{display:block;font-weight:500}
+.ogr-queued span{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;color:var(--o-muted);overflow-wrap:anywhere}
+.ogr-links{display:flex;flex-direction:column;gap:1px;margin:-4px -6px}
+.ogr-link{display:flex;align-items:center;gap:7px;min-width:0;height:28px;padding:0 6px;border:0;border-radius:var(--o-radius-sm);background:none;font:inherit;font-size:12.5px;color:inherit;text-align:left;cursor:pointer;transition:background-color var(--o-dur-fast)}
+.ogr-link:hover{background:var(--o-hover)}
+.ogr-link-dir{width:28px;flex-shrink:0;font-size:11px;color:var(--o-muted)}
+.ogr-link b{font-weight:500;flex:0 0 auto;max-width:48%}
+.ogr-link .ogr-muted{flex:1 1 0;min-width:0}
+.ogr-chip{flex-shrink:0;font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:4px}
+.ogr-chip.is-in_flight{background:var(--o-accent-soft);color:var(--o-accent)}
+.ogr-chip.is-blocked{background:color-mix(in oklab,var(--o-warn) 14%,transparent);color:var(--o-warn)}
+.ogr-namelink{padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer;border-radius:4px}
+.ogr-namelink:hover{text-decoration:underline;text-underline-offset:2px}
+
+.ogr-list{display:flex;flex-direction:column;gap:1px;margin:0 -4px}
+.ogr-list-row{display:flex;align-items:center;gap:9px;width:100%;min-height:34px;padding:0 6px;box-sizing:border-box;border:0;border-radius:var(--o-radius);background:none;font:inherit;color:inherit;text-align:left;cursor:pointer;transition:background-color var(--o-dur-fast),box-shadow var(--o-dur-fast)}
+.ogr-list-row:hover:not(:disabled){background:var(--o-hover)}
+.ogr-list-row:disabled{opacity:.5;cursor:default}
+.ogr-list-row.is-picked{background:var(--o-selected);box-shadow:inset 0 0 0 1px var(--o-accent)}
+.ogr-list-name{flex:1;font-size:12.5px;font-weight:500}
+.ogr-list-st{flex-shrink:0;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--o-muted)}
+.ogr-list-st.is-live{color:var(--o-accent)}
+.ogr-list-st.is-waiting{color:var(--o-warn)}
+.ogr-list-st.is-info{color:var(--o-info)}
+
+/* Forms */
+.ogr-fields{display:flex;flex-direction:column;gap:12px;padding-top:2px}
+.ogr .oui-field{width:100%;box-sizing:border-box}
+.ogr-textarea{display:block;width:100%;box-sizing:border-box;min-height:56px;padding:7px 10px;border-radius:var(--o-radius);border:1px solid var(--o-border);background:var(--o-bg);color:var(--o-text);font:inherit;font-size:12.5px;line-height:1.45;resize:vertical;outline:0;transition:border-color var(--o-dur-fast),box-shadow 200ms}
+.ogr-textarea:focus{border-color:var(--o-border-strong);box-shadow:0 0 0 3px var(--o-hover)}
+.ogr-textarea::placeholder,.ogr .oui-field::placeholder{color:var(--o-muted)}
+.ogr-pick{display:flex;flex-direction:column;gap:1px;max-height:176px;overflow-y:auto;padding:3px;border:1px solid var(--o-border);border-radius:var(--o-radius-md);background:var(--o-bg)}
+
+/* States: PanelLoading / PanelError / PanelEmpty from the shell kit. */
+.ogr-state{flex:1;min-height:0;display:flex;flex-direction:column}
+
+/* In the workspace shell (fill body) the canvas runs edge to edge; the inspector docks below it. */
+.ogr.is-shell .ogr-in{padding:0;gap:0}
+.ogr.is-shell .ogr-canvas{border:0;border-radius:0}
+.ogr.is-shell .ogr-side{padding:10px;border-top:1px solid var(--o-border);background:var(--o-bg)}
+.ogr.is-shell .ogr-state{padding:12px}
+
+/* Narrow dock: the overview is a single strip; the canvas carries the agents. */
+.ogr-pane.is-overview :is(.ogr-pane-body,.ogr-pane-foot){display:none}
+/* In the panel shell the header carries the summary, so a narrow dock gives the canvas everything. */
+.ogr-side:has(>.ogr-pane.is-overview.is-shell){display:none}
+
+/* Wide panel: inspector becomes a column beside the canvas. */
+@container ogr (min-width:720px){
+  .ogr-pane.is-overview .ogr-pane-body{display:block}
+  .ogr-pane.is-overview .ogr-pane-foot{display:flex}
+  .ogr-side:has(>.ogr-pane.is-overview.is-shell){display:flex}
+  .ogr-in{flex-direction:row;padding:12px;gap:12px}
+  .ogr-side{width:min(340px,38%);max-height:none}
+  .ogr-side.is-solo{width:auto}
+  .ogr.is-shell .ogr-in{padding:0;gap:0}
+  .ogr.is-shell .ogr-side{border-top:0;border-left:1px solid var(--o-border)}
+}
+/* Very narrow: keep the footers to their buttons. */
+@container ogr (max-width:380px){
+  .ogr-pane.is-form .ogr-hint{display:none}
+  .ogr-kv{grid-template-columns:72px minmax(0,1fr)}
+}
+/* Short panel (bottom dock): side by side even when narrow-ish. */
+@container ogr (max-height:420px) and (min-width:520px){
+  .ogr-in{flex-direction:row}
+  .ogr-side{width:min(300px,45%);max-height:none}
+  .ogr-pane.is-overview .ogr-pane-body{display:block}
+  .ogr-side:has(>.ogr-pane.is-overview.is-shell){display:flex}
+  .ogr.is-shell .ogr-side{border-top:0;border-left:1px solid var(--o-border)}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .ogr *,.ogr *::before,.ogr *::after{animation-duration:0s!important;animation-delay:0s!important;animation-iteration-count:1!important;transition-duration:0s!important}
+}

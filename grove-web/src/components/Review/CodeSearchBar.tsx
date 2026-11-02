@@ -1,5 +1,6 @@
 import { X, Search, CaseSensitive, ChevronUp, ChevronDown } from 'lucide-react';
 import { useEffect, useRef } from 'react';
+import { useOrbitReview } from './useOrbitReview';
 
 interface CodeSearchBarProps {
   visible: boolean;
@@ -29,6 +30,7 @@ export function CodeSearchBar({
   onClose,
 }: CodeSearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const orbit = useOrbitReview();
 
   // Auto-focus input when visible or when re-triggered (e.g. Ctrl+F while already open)
   useEffect(() => {
@@ -46,6 +48,53 @@ export function CodeSearchBar({
     : query && !hasMatches
     ? 'No matches'
     : '';
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      onClose();
+    } else if (e.key === 'Enter') {
+      if (e.shiftKey) {
+        onPrevious();
+      } else {
+        onNext();
+      }
+    }
+  };
+
+  // Orbit: a frosted find bar pinned to the panel's top-right corner.
+  if (orbit) {
+    return (
+      <div className="orv-search" role="search" aria-label="Find in review">
+        <Search className="orv-search-ic" aria-hidden="true" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+          placeholder="Find in review"
+          aria-label="Find in review"
+          className="orv-search-input"
+          onKeyDown={onKeyDown}
+        />
+        {matchText && (
+          <span className={`orv-search-count ${hasMatches ? '' : 'is-none'}`} aria-live="polite">{matchText}</span>
+        )}
+        <button type="button" className="orv-search-btn" onClick={onPrevious} disabled={!hasMatches} title="Previous match (Shift+Enter)" aria-label="Previous match">
+          <ChevronUp aria-hidden="true" />
+        </button>
+        <button type="button" className="orv-search-btn" onClick={onNext} disabled={!hasMatches} title="Next match (Enter)" aria-label="Next match">
+          <ChevronDown aria-hidden="true" />
+        </button>
+        <button type="button" className={`orv-search-btn ${caseSensitive ? 'is-on' : ''}`} onClick={onCaseSensitiveToggle} title="Case sensitive" aria-label="Case sensitive" aria-pressed={caseSensitive}>
+          <CaseSensitive aria-hidden="true" />
+        </button>
+        <span className="orv-search-sep" aria-hidden="true" />
+        <button type="button" className="orv-search-btn" onClick={onClose} title="Close (Esc)" aria-label="Close find">
+          <X aria-hidden="true" />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -81,17 +130,7 @@ export function CodeSearchBar({
           fontSize: '13px',
           outline: 'none',
         }}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            onClose();
-          } else if (e.key === 'Enter') {
-            if (e.shiftKey) {
-              onPrevious();
-            } else {
-              onNext();
-            }
-          }
-        }}
+        onKeyDown={onKeyDown}
       />
       {matchText && (
         <span

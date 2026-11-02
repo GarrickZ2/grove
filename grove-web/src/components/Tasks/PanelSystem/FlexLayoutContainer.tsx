@@ -8,6 +8,8 @@ import {
   X, XCircle, Trash2,
   Plus, Maximize, Minimize2, FolderOpen, Puzzle,
 } from 'lucide-react';
+import { OrbitWorkspaceBar, type OrbitToolItem } from '../IDELayout/OrbitWorkspace';
+import type { PanelMenuItem } from '../../../orbit/ui';
 import 'flexlayout-react/style/light.css';
 import './flexlayout-theme.css';
 import type { Task } from '../../../data/types';
@@ -29,6 +31,8 @@ import {
 } from '../../Plugins/pluginPanelCommands';
 import {
   renderPanel,
+  renderOrbitPanel,
+  panelGlyph,
   flexWrapStyle,
   buildPanelCatalog,
   getPanelDescriptor,
@@ -217,6 +221,9 @@ interface FlexLayoutContainerProps {
   onLayoutChange?: (model: IJsonModel) => void;
   fullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  /** Orbit: header toolbar slots (the bar is portaled into the window header). */
+  toolbarLeading?: React.ReactNode;
+  toolbarTrailing?: React.ReactNode;
 }
 
 export interface FlexLayoutContainerHandle {
@@ -236,7 +243,7 @@ export interface FlexLayoutContainerHandle {
 export const FlexLayoutContainer = forwardRef<
   FlexLayoutContainerHandle,
   FlexLayoutContainerProps
->(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen, isActive = true }, ref) => {
+>(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen, isActive = true, toolbarLeading, toolbarTrailing }, ref) => {
   const { terminalAvailable, config } = useConfig();
   const { isMobile } = useIsMobile();
   const orbit = !isMobile && config?.web?.interface === 'orbit';
@@ -250,6 +257,16 @@ export const FlexLayoutContainer = forwardRef<
   const hasLinkedReview = linkedReviewProjects.length > 0;
 
   const layoutStorageKey = `grove-flexlayout-${projectId}-${task.id}`;
+
+  // Orbit: the workspace toolbar lives in the window header slot.
+  const [orbitToolbarSlot, setOrbitToolbarSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) setOrbitToolbarSlot(orbit ? document.getElementById('orbit-workspace-toolbar') : null);
+    });
+    return () => { cancelled = true; };
+  }, [orbit]);
 
   // Compute the initial layout once. Doing this in a lazy useState
   // initializer means we never read or write a ref during render (which
@@ -750,7 +767,10 @@ export const FlexLayoutContainer = forwardRef<
   );
   const onRenderTab = useCallback((node: TabNode, renderValues: ITabRenderValues) => {
     const component = node.getComponent() || 'terminal';
-    const { icon: Icon, color } = getPanelIconAndColor(component);
+    const iconAndColor = getPanelIconAndColor(component);
+    const orbitDescriptor = orbit && component !== 'plugin' ? getPanelDescriptor(component) : undefined;
+    const Icon = orbitDescriptor ? panelGlyph(orbitDescriptor, true) as typeof Terminal : iconAndColor.icon;
+    const color = orbit ? 'currentColor' : iconAndColor.color;
     const tabId = node.getId();
     const isEditing = editingTabId === tabId;
 
@@ -820,11 +840,11 @@ export const FlexLayoutContainer = forwardRef<
             }}
           />
         ) : (
-          <span style={{ fontSize: '13px' }}>{node.getName()}</span>
+          <span style={{ fontSize: orbit ? '12.5px' : '13px' }}>{node.getName()}</span>
         )}
       </div>
     );
-  }, [editingTabId, model]);
+  }, [editingTabId, model, orbit]);
 
   // Build dropdown items for [+] Add Panel button
   // Derived entirely from the shared panel catalog — adding a panel/plugin in
@@ -939,11 +959,38 @@ export const FlexLayoutContainer = forwardRef<
       plugins,
       linkedReviewProjects,
     };
+    if (orbit && key !== 'chat') {
+      // Orbit: every panel but the Agent sits in the shared PanelShell.
+      const tabsetId = node.getParent()?.getId();
+      const isMaximized = !!tabsetId && fullscreenPanelId === tabsetId;
+      const menu: PanelMenuItem[] = [
+        ...(tabsetId ? [{
+          id: 'maximize',
+          label: isMaximized ? 'Restore' : 'Maximize',
+          icon: isMaximized ? Minimize2 : Maximize,
+          onSelect: () => {
+            model.doAction(Actions.maximizeToggle(tabsetId));
+            setFullscreenPanelId(isMaximized ? null : tabsetId);
+            onToggleFullscreen?.();
+          },
+        }] : []),
+        {
+          id: 'close-others',
+          label: 'Close other panels',
+          icon: XCircle,
+          disabled: getAllTabs().length < 2,
+          onSelect: () => getAllTabs().forEach((t) => { if (t.getId() !== node.getId()) model.doAction(Actions.deleteTab(t.getId())); }),
+        },
+      ];
+      return <div style={{ display: 'flex', width: '100%', height: '100%' }}>{renderOrbitPanel(key, ctx, { menu })}</div>;
+    }
     return <div style={flexWrapStyle(key)}>{renderPanel(key, ctx)}</div>;
-  }, [projectId, task, model, isStudio, terminalAvailable, orbit, isActive, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, isChatBusy, handleChatBecameIdle, handleBusyStateChange, taskIsGitRepo, plugins, linkedReviewProjects]);
+  }, [projectId, task, model, isStudio, terminalAvailable, orbit, isActive, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, isChatBusy, handleChatBecameIdle, handleBusyStateChange, taskIsGitRepo, plugins, linkedReviewProjects, fullscreenPanelId, onToggleFullscreen, getAllTabs]);
 
   // Track empty state
   const [isEmpty, setIsEmpty] = useState(() => getAllTabs().length === 0);
+  // Bumped on every model change so the Orbit toolbar reflects open tabs.
+  const [modelVersion, setModelVersion] = useState(0);
 
   // Handle model change (for persistence). Strip maximized state from all
   // tabsets before saving — maximized is transient UI state managed by
@@ -972,7 +1019,56 @@ export const FlexLayoutContainer = forwardRef<
     }
     if (onLayoutChange) onLayoutChange(json);
     setIsEmpty(getAllTabs().length === 0);
+    setModelVersion((v) => v + 1);
   }, [layoutStorageKey, onLayoutChange, getAllTabs, orbit, initialLayoutJson]);
+
+  // Orbit header toolbar: a raised button for each panel with an open tab.
+  // Clicking selects (or adds) that panel; clicking the selected one closes it.
+  const orbitBar = (() => {
+    if (!orbit || !isActive || !orbitToolbarSlot) return null;
+    void modelVersion;
+    const tabs = getAllTabs();
+    const keyOf = (t: TabNode) => {
+      const cfg = t.getConfig() as TabNodeConfig | undefined;
+      return t.getComponent() === 'plugin' ? `${PLUGIN_PANEL_PREFIX}${cfg?.pluginId ?? ''}` : t.getComponent() ?? '';
+    };
+    const selected = new Set(tabs.filter((t) => t.isVisible()).map((t) => t.getId()));
+    const catalog = buildPanelCatalog(plugins, { isStudio, terminalAvailable, hasLinkedReview });
+    const toolFor = (d: (typeof catalog)[number]): OrbitToolItem => {
+      const open = tabs.filter((t) => keyOf(t) === d.key);
+      const shown = open.find((t) => selected.has(t.getId()));
+      return {
+        key: d.key,
+        label: d.label,
+        icon: panelGlyph(d, true),
+        shortcut: panelShortcutDisplay(d.key),
+        active: open.length > 0,
+        onToggle: () => {
+          if (shown) { model.doAction(Actions.deleteTab(shown.getId())); return; }
+          if (open[0]) { model.doAction(Actions.selectTab(open[0].getId())); focusPanelContent(); return; }
+          if (d.key.startsWith(PLUGIN_PANEL_PREFIX)) {
+            const plugin = plugins.find((p) => `${PLUGIN_PANEL_PREFIX}${p.id}` === d.key);
+            if (plugin) addPluginPanel(plugin);
+          } else {
+            addPanel(d.key as PanelType);
+          }
+        },
+      };
+    };
+    const info = catalog.filter((d) => d.category === 'info' || d.key === 'graph');
+    const rest = catalog.filter((d) => d.category !== 'info' && d.key !== 'graph');
+    return createPortal(
+      <OrbitWorkspaceBar
+        title={task.name}
+        branch={task.branch || undefined}
+        state={isChatBusy ? 'working' : task.status === 'archived' ? 'archived' : undefined}
+        leading={toolbarLeading}
+        groups={[info.map(toolFor), rest.map(toolFor)]}
+        trailing={toolbarTrailing}
+      />,
+      orbitToolbarSlot,
+    );
+  })();
 
   // Fullscreen: maximize panel to fill entire container
   if (fullscreenPanelId && fullscreen) {
@@ -987,6 +1083,7 @@ export const FlexLayoutContainer = forwardRef<
             onRenderTabSet={onRenderTabSet}
             onModelChange={handleModelChange}
           />
+          {orbitBar}
         </div>
       );
     }
@@ -994,6 +1091,7 @@ export const FlexLayoutContainer = forwardRef<
 
   return (
     <>
+      {orbitBar}
       <div className={`absolute inset-0${orbit ? ' orbit-free-layout' : ''}`}>
         <Layout
           model={model}

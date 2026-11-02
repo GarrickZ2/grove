@@ -3,6 +3,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { DialogShell } from "../../ui/DialogShell";
 import { useDefineCommand, useKeyboardScope } from "../../../keyboard";
+import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../../orbit/ui/Button";
 
 interface ChatComposerPanelProps {
   open: boolean;
@@ -19,6 +21,7 @@ export function ChatComposerPanel({ open, mobileSheet, title, className, onClose
   const sheetRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const sheetOpen = open && mobileSheet;
+  const orbit = useOrbitInterface();
   useKeyboardScope("chat.mobileDetails", sheetOpen);
   useDefineCommand({
     id: "chat.mobileDetails.close",
@@ -39,12 +42,19 @@ export function ChatComposerPanel({ open, mobileSheet, title, className, onClose
     return (
       <DialogShell isOpen={open} onClose={onClose} zIndex={90} swipeToClose>
         <div ref={sheetRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} className="mobile-composer-sheet outline-none" onPointerDown={(event) => event.stopPropagation()}>
+          {orbit ? (
+            <div className="oui-dlg-sheet-head">
+              <h2 id={titleId}>{title}</h2>
+              <OrbitButton variant="ghost" iconOnly onClick={onClose} aria-label="Close Session details"><X /></OrbitButton>
+            </div>
+          ) : (
           <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-4 pb-2">
             <h2 id={titleId} className="text-sm font-semibold text-[var(--color-text)]">{title}</h2>
             <button type="button" onClick={onClose} aria-label="Close Session details" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]">
               <X className="h-4 w-4" />
             </button>
           </div>
+          )}
           <div className="mobile-composer-sheet-body overflow-y-auto overscroll-contain">{children}</div>
         </div>
       </DialogShell>

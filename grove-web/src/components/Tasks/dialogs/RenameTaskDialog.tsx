@@ -2,6 +2,9 @@ import { useState } from "react";
 import { Edit3, X } from "lucide-react";
 import { Button, Input } from "../../ui";
 import { DialogShell } from "../../ui/DialogShell";
+import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../../orbit/ui/Button";
+import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel } from "../../../orbit/ui/Dialog";
 
 interface RenameTaskDialogProps {
   isOpen: boolean;
@@ -17,6 +20,7 @@ export function RenameTaskDialog({
   onRename,
 }: RenameTaskDialogProps) {
   const [newName, setNewName] = useState(taskName);
+  const orbit = useOrbitInterface();
 
   const handleRename = () => {
     if (newName.trim() && newName !== taskName) {
@@ -28,6 +32,41 @@ export function RenameTaskDialog({
     setNewName(taskName);
     onClose();
   };
+
+  if (orbit) {
+    return (
+      <DialogShell isOpen={isOpen} onClose={handleClose}>
+        <DialogPanel>
+          <DialogHead title="Rename task" />
+          <DialogBody>
+            <DialogField label="Current name" as="div">
+              <div className="oui-dlg-static oui-truncate">{taskName}</div>
+            </DialogField>
+            <DialogField label="New name">
+              <input
+                className="oui-field"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Enter new task name"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleRename();
+                  }
+                }}
+              />
+            </DialogField>
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={handleClose}>Cancel</OrbitButton>
+            <OrbitButton variant="primary" onClick={handleRename} disabled={!newName.trim() || newName === taskName}>
+              Rename
+            </OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={handleClose}>

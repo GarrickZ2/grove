@@ -8,6 +8,10 @@ import {
   MessageSquare,
   Puzzle,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  MoveHorizontal,
+  LayoutGrid,
 } from "lucide-react";
 import "./ide-layout.css";
 import type {
@@ -20,9 +24,30 @@ import type {
 import { AUX_PANEL_TYPES } from "./IDELayout.types";
 import { MultiTabTerminalPanel } from "./MultiTabTerminalPanel";
 import { OrbitPhonePanels, type OrbitPhonePanel } from "./OrbitPhonePanels";
+import { OrbitWorkspaceBar, OrbitDock, OrbitGrip, type OrbitToolItem } from "./OrbitWorkspace";
+import {
+  orbitSlotFor,
+  toggleOrbitPanel,
+  openOrbitPanel,
+  isOrbitPanelOpen,
+  migrateToOrbitSlots,
+  withAgentRule,
+  visibilityToPersist,
+  type SurfaceVisibility,
+  fitOrbitWidths,
+  fitOrbitBottom,
+  ORBIT_SIDE_MIN,
+  ORBIT_DOCK_MAX,
+  ORBIT_CHAT_MIN,
+  ORBIT_BOTTOM_MIN,
+  ORBIT_BOTTOM_RESERVE,
+  type OrbitSlot,
+} from "./orbitDock";
+import type { PanelMenuItem } from "../../../orbit/ui";
 import { ORBIT_PHONE_ACTIONS_SLOT, ORBIT_PHONE_SHOW_CHAT_EVENT } from "../../Layout/OrbitPhoneHeader";
 import type { FileNavRequest } from "../../Review";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from "../../ui/sketchChipCache";
+import { OPEN_REVIEW_EVENT, takeOpenReviewRequest, type OpenReviewRequest } from "../../../orbit/workspace/openReview";
 import { useConfig, useProject } from "../../../context";
 import { useIsMobile } from "../../../hooks";
 import { useLinkedReviewProjects } from "../../../hooks/useLinkedReviewProjects";
@@ -35,6 +60,8 @@ import {
 } from "../../Plugins/pluginPanelCommands";
 import {
   renderPanel,
+  renderOrbitPanel,
+  panelGlyph,
   getPanelDescriptor,
   buildPanelCatalog,
   panelShortcutDisplay,
@@ -47,6 +74,10 @@ const CHAT_COL_MIN = 420;
 const AUX_COL_FLOOR = 280;
 const INFO_COL_FLOOR = 320;
 const RESIZER_PX = 8;
+// Orbit desktop dock defaults (Workspace board).
+const ORBIT_AUX_DEFAULT = 520;
+const ORBIT_DOCK_DEFAULT = 384;
+const ORBIT_BOTTOM_DEFAULT = 260;
 
 function ideLayoutStorageKey(projectId: string, taskId: string) {
   return `grove-idelayout-${projectId}-${taskId}`;
@@ -62,6 +93,9 @@ interface PersistedIDEState {
   terminalActiveId: string;
   auxWidth: number;
   infoWidth: number;
+  /** Orbit: the terminal docked under the Agent. */
+  bottomVisible?: boolean;
+  bottomHeight?: number;
 }
 
 function loadPersistedState(projectId: string, taskId: string): Partial<PersistedIDEState> {
@@ -114,6 +148,9 @@ interface IDELayoutInternalState {
   // is instant and doesn't re-fetch data.
   visitedAux: string[];
   visitedInfo: string[];
+  /** Orbit desktop: the bottom terminal dock is open / has been opened once. */
+  bottomVisible: boolean;
+  visitedBottom: boolean;
 }
 
 type ToolbarItem = { d: PanelDescriptor; kind: "aux" | "info" };
@@ -464,7 +501,7 @@ function PanelSlot({
 }
 
 export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainerProps>(
-  function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing, phoneActions, isActive = true }, ref) {
+  function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing, phoneActions, isActive = true, onToggleLayoutMode }, ref) {
     const { selectedProject, projects } = useProject();
     const { terminalAvailable, config } = useConfig();
     const { isMobile } = useIsMobile();
@@ -474,6 +511,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     // On a phone Orbit swaps the toolbar for the header's panel sheet.
     const orbitLayout = config?.web?.interface === "orbit";
     const orbitPhone = orbitLayout && isMobile;
+    // Orbit on a desktop: Agent in the centre, a right dock, the terminal below.
+    const orbitDesk = orbitLayout && !isMobile;
     const orbitSlotId = orbitPhone ? ORBIT_PHONE_ACTIONS_SLOT : "orbit-workspace-toolbar";
     const [orbitToolbarSlot, setOrbitToolbarSlot] = useState<HTMLElement | null>(() =>
       typeof document === "undefined" ? null : document.getElementById(orbitSlotId));
@@ -532,7 +571,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       // Orbit on a phone always opens on the chat.
       const auxVisible = !orbitPhone && (persisted.auxVisible ?? false);
       const infoVisible = !orbitPhone && (persisted.infoVisible ?? false) && (!isMobile || !auxVisible);
-      return {
+      let initial: IDELayoutInternalState = {
         auxType: persisted.auxType ?? null,
         auxVisible,
         chatVisible: isMobile ? !auxVisible && !infoVisible : persisted.chatVisible ?? true,
@@ -544,21 +583,47 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         isChatBusy: false,
         terminalTabs,
         terminalActiveId,
-        visitedAux: persisted.auxType ? [persisted.auxType] : [],
-        visitedInfo: persisted.infoType ? [persisted.infoType] : [],
+        visitedAux: [],
+        visitedInfo: [],
+        bottomVisible: orbitDesk && (persisted.bottomVisible ?? false),
+        visitedBottom: false,
+      };
+      if (orbitDesk) initial = withAgentRule(migrateToOrbitSlots(initial));
+      return {
+        ...initial,
+        visitedAux: initial.auxType ? [initial.auxType] : [],
+        visitedInfo: initial.infoType ? [initial.infoType] : [],
+        visitedBottom: initial.bottomVisible,
       };
     });
     const [auxWidth, setAuxWidth] = useState(() => readStoredWidth(520, persisted.auxWidth));
-    const [infoWidth, setInfoWidth] = useState(() => readStoredWidth(340, persisted.infoWidth));
+    const [infoWidth, setInfoWidth] = useState(() => readStoredWidth(orbitDesk ? ORBIT_DOCK_DEFAULT : 340, persisted.infoWidth));
+    const [bottomHeight, setBottomHeight] = useState(() => readStoredWidth(ORBIT_BOTTOM_DEFAULT, persisted.bottomHeight));
     const [auxWasResized, setAuxWasResized] = useState(false);
     const [infoWasResized, setInfoWasResized] = useState(false);
     const navSeqRef = useRef(0);
     const shellRef = useRef<HTMLDivElement>(null);
+    // Orbit desktop: the shell's size bounds the docks; a drag follows the pointer.
+    const [shellSize, setShellSize] = useState({ w: 0, h: 0 });
+    const [orbitResizing, setOrbitResizing] = useState<"aux" | "dock" | "bottom" | null>(null);
+    useLayoutEffect(() => {
+      const el = shellRef.current;
+      if (!orbitDesk || !el) return;
+      const measure = () => setShellSize((prev) => {
+        const w = Math.round(el.clientWidth);
+        const h = Math.round(el.clientHeight);
+        return prev.w === w && prev.h === h ? prev : { w, h };
+      });
+      measure();
+      const ro = new ResizeObserver(measure);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, [orbitDesk]);
     // Tracks which side panel was most recently focused so Cmd+W /
     // closeActiveTab closes *that* one instead of always preferring info.
     // Defaults to "info" so behavior matches the previous hardcoded rule
     // until the user explicitly interacts with the aux panel.
-    const lastFocusedSideRef = useRef<"aux" | "info">("info");
+    const lastFocusedSideRef = useRef<"aux" | "info" | "bottom">("info");
     // Keep latest state accessible from imperative handle callbacks without
     // invalidating the useImperativeHandle cache on every state change.
     const stateRef = useRef(state);
@@ -569,10 +634,14 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     // Wrap setState so every state transition tags the active panel as
     // "visited" — once visited a panel stays mounted (display:none when
     // hidden) so re-opening is instant and doesn't refetch data.
+    // Orbit desktop: the Agent stays visible unless a left panel is open.
+    const orbitDeskRef = useRef(orbitDesk);
+    useEffect(() => { orbitDeskRef.current = orbitDesk; }, [orbitDesk]);
     const setStateTagged = useCallback(
       (updater: (prev: IDELayoutInternalState) => IDELayoutInternalState) => {
         setState((prev) => {
-          const next = updater(prev);
+          const updated = updater(prev);
+          const next = orbitDeskRef.current ? withAgentRule(updated) : updated;
           let visitedAux = next.visitedAux;
           let visitedInfo = next.visitedInfo;
           if (next.auxVisible && next.auxType && !visitedAux.includes(next.auxType)) {
@@ -581,9 +650,10 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           if (next.infoVisible && next.infoType && !visitedInfo.includes(next.infoType)) {
             visitedInfo = [...visitedInfo, next.infoType];
           }
-          return visitedAux === next.visitedAux && visitedInfo === next.visitedInfo
+          const visitedBottom = next.visitedBottom || next.bottomVisible;
+          return visitedAux === next.visitedAux && visitedInfo === next.visitedInfo && visitedBottom === next.visitedBottom
             ? next
-            : { ...next, visitedAux, visitedInfo };
+            : { ...next, visitedAux, visitedInfo, visitedBottom };
         });
       },
       [],
@@ -623,10 +693,29 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     // toolbar enforce that, but narrowing a desktop window with several
     // surfaces open did not — they painted on top of each other. Collapse to
     // the last-used surface (falling back to chat) on that transition.
+    // The last arrangement the user chose on a desktop-width window (seeded
+    // from what was saved). The stacked collapse below is automatic, so it is
+    // never saved, and widening the window again brings that arrangement back.
+    const desktopVisibilityRef = useRef<SurfaceVisibility>({
+      auxType: persisted.auxType ?? null,
+      auxVisible: persisted.auxVisible ?? false,
+      chatVisible: persisted.chatVisible ?? true,
+      infoVisible: persisted.infoVisible ?? false,
+    });
     const wasMobileRef = useRef(isMobile);
     useEffect(() => {
       const wasMobile = wasMobileRef.current;
       wasMobileRef.current = isMobile;
+      if (!isMobile && wasMobile && !orbitPhone) {
+        const desktop = desktopVisibilityRef.current;
+        setStateTagged((prev) => ({
+          ...prev,
+          auxVisible: desktop.auxVisible && !!prev.auxType,
+          infoVisible: desktop.infoVisible && !!prev.infoType,
+          chatVisible: desktop.chatVisible,
+        }));
+        return;
+      }
       if (!isMobile || wasMobile) return;
       setStateTagged((prev) => {
         const aux = prev.auxVisible && !!prev.auxType;
@@ -645,7 +734,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           chatVisible: keep === "chat",
         };
       });
-    }, [isMobile, setStateTagged]);
+    }, [isMobile, orbitPhone, setStateTagged]);
 
     useEffect(() => {
       if (!orbitPhone) return;
@@ -653,6 +742,16 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       window.addEventListener(ORBIT_PHONE_SHOW_CHAT_EVENT, showChat);
       return () => window.removeEventListener(ORBIT_PHONE_SHOW_CHAT_EVENT, showChat);
     }, [orbitPhone, update]);
+
+    // Entering the Orbit desktop layout (e.g. widening from a phone width):
+    // terminal / graph move out of the left column into their docks.
+    const wasOrbitDeskRef = useRef(orbitDesk);
+    useEffect(() => {
+      const wasOrbitDesk = wasOrbitDeskRef.current;
+      wasOrbitDeskRef.current = orbitDesk;
+      if (!orbitDesk || wasOrbitDesk) return;
+      setStateTagged((prev) => migrateToOrbitSlots(prev));
+    }, [orbitDesk, setStateTagged]);
 
     const handleNavigateToFile = useCallback(
       async (filePath: string, line?: number, mode?: "diff" | "full"): Promise<boolean> => {
@@ -748,6 +847,36 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       return () => window.removeEventListener(OPEN_PLUGIN_PANEL_EVENT, handler);
     }, [projectId, task.id, panelPlugins, setStateTagged]);
 
+    // "Open in Review" from elsewhere (Orbit Dashboard, Comments panel): see
+    // orbit/workspace/openReview.ts. Taken on mount (the caller navigated here)
+    // and on the event (this workspace was already showing).
+    const openReviewPanel = useCallback((request: OpenReviewRequest) => {
+      if (isStudio && !hasLinkedReview) return;
+      const showPanel = () => setStateTagged((prev) => (
+        prev.auxVisible && prev.auxType === "review"
+          ? prev
+          : { ...prev, auxType: "review", auxVisible: true, ...(isMobile ? { chatVisible: false, infoVisible: false } : {}) }
+      ));
+      // A Studio task's own files open in Artifacts, so only jump for coding tasks.
+      if (!request.file || isStudio) {
+        showPanel();
+        return;
+      }
+      const mode = isGitRepo === false ? "full" : request.mode;
+      // A file that no longer exists (deleted in the change) still opens the panel.
+      void handleNavigateToFile(request.file, request.line, mode).then((opened) => { if (!opened) showPanel(); });
+    }, [isStudio, hasLinkedReview, isGitRepo, isMobile, setStateTagged, handleNavigateToFile]);
+
+    useEffect(() => {
+      const take = () => {
+        const request = takeOpenReviewRequest(projectId, task.id);
+        if (request) openReviewPanel(request);
+      };
+      take();
+      window.addEventListener(OPEN_REVIEW_EVENT, take);
+      return () => window.removeEventListener(OPEN_REVIEW_EVENT, take);
+    }, [projectId, task.id, openReviewPanel]);
+
     const handleBusyStateChange = useCallback((busy: boolean) => {
       update({ isChatBusy: busy });
     }, [update]);
@@ -822,29 +951,43 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
 
     // Persist layout state whenever relevant fields change
     useEffect(() => {
+      const current: SurfaceVisibility = {
+        auxType: state.auxType, auxVisible: state.auxVisible, chatVisible: state.chatVisible, infoVisible: state.infoVisible,
+      };
+      if (!isMobile) desktopVisibilityRef.current = current;
+      const saved = visibilityToPersist(current, desktopVisibilityRef.current, isMobile, orbitLayout);
       savePersistedState(projectId, task.id, {
         auxType: state.auxType,
-        auxVisible: state.auxVisible,
-        chatVisible: state.chatVisible,
+        auxVisible: saved.auxVisible,
+        chatVisible: saved.chatVisible,
         infoType: state.infoType,
-        infoVisible: state.infoVisible,
+        infoVisible: saved.infoVisible,
         terminalTabs: state.terminalTabs,
         terminalActiveId: state.terminalActiveId,
         auxWidth: Math.round(auxWidth),
         infoWidth: Math.round(infoWidth),
+        bottomVisible: state.bottomVisible,
+        bottomHeight: Math.round(bottomHeight),
       });
     }, [
       projectId, task.id,
       state.auxType, state.auxVisible, state.chatVisible,
       state.infoType, state.infoVisible,
       state.terminalTabs, state.terminalActiveId,
-      auxWidth, infoWidth,
+      auxWidth, infoWidth, state.bottomVisible, bottomHeight, isMobile, orbitLayout,
     ]);
+
+    const slotOf = useCallback((key: string): OrbitSlot =>
+      orbitSlotFor(key, getPanelDescriptor(key, panelPlugins)?.category ?? "aux"), [panelPlugins]);
 
     useImperativeHandle(
       ref,
       () => ({
         focusPanel: (type: AuxPanelType) => {
+          if (orbitDesk) {
+            setStateTagged((prev) => openOrbitPanel(prev, type, slotOf(type)));
+            return;
+          }
           setStateTagged((prev) => {
             if (prev.auxType === type && prev.auxVisible) return prev;
             return { ...prev, auxType: type, auxVisible: true };
@@ -857,6 +1000,11 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           // others — omitting `chatVisible: false` here is what made the
           // shortcut render Chat overlaid on top of Review. On desktop they sit
           // side by side, so Chat is intentionally left untouched.
+          if (orbitDesk) {
+            // Orbit: terminal docks below, graph in the right dock.
+            setStateTagged((prev) => toggleOrbitPanel(prev, type, slotOf(type)));
+            return;
+          }
           setStateTagged((prev) => {
             const active = prev.auxVisible && prev.auxType === type;
             if (isMobile) {
@@ -870,6 +1018,10 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           });
         },
         focusInfoPanel: (type: InfoTabType) => {
+          if (orbitDesk) {
+            setStateTagged((prev) => toggleOrbitPanel(prev, type, "dock"));
+            return;
+          }
           setStateTagged((prev) => {
             const active = prev.infoVisible && prev.infoType === type;
             if (isMobile) {
@@ -906,7 +1058,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             (type !== "artifacts" || isStudio) &&
             (type !== "sketch" || isStudio) &&
             (type !== "review" || !isStudio || hasLinkedReview) &&
-            (type !== "terminal" || terminalAvailable)
+            (type !== "terminal" || terminalAvailable) &&
+            // Orbit docks these outside the left column.
+            (!orbitDesk || slotOf(type) === "aux")
           );
           if (auxTypes.length === 0) return false;
           setStateTagged((prev) => {
@@ -922,6 +1076,23 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         },
         addTerminalTab: () => {
           const current = stateRef.current;
+          if (orbitDesk) {
+            // Orbit: the terminal is the bottom dock. Reuse the first tab the
+            // first time it opens; otherwise add a tab next to what's running.
+            if (!current.bottomVisible && current.terminalTabs.length > 0) {
+              const reusedId = current.terminalTabs[0].id;
+              setStateTagged((prev) => ({ ...prev, bottomVisible: true, terminalActiveId: reusedId }));
+              return reusedId;
+            }
+            const id = `term-run-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+            setStateTagged((prev) => ({
+              ...prev,
+              terminalTabs: [...prev.terminalTabs, { id, label: `Terminal (${prev.terminalTabs.length + 1})` }],
+              terminalActiveId: id,
+              bottomVisible: true,
+            }));
+            return id;
+          }
           const terminalWasOpen =
             current.auxVisible && current.auxType === "terminal";
 
@@ -951,6 +1122,11 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           return newId;
         },
         closeActiveTab: () => {
+          if (orbitDesk && lastFocusedSideRef.current === "bottom" && stateRef.current.bottomVisible) {
+            setStateTagged((prev) => ({ ...prev, bottomVisible: false }));
+            lastFocusedSideRef.current = "info";
+            return;
+          }
           setStateTagged((prev) => {
             // Prefer closing the side that was most recently focused. Fall
             // back to whichever side is visible if the recorded side isn't.
@@ -969,7 +1145,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           });
         },
       }),
-      [isStudio, hasLinkedReview, terminalAvailable, setStateTagged, isMobile],
+      [isStudio, hasLinkedReview, terminalAvailable, setStateTagged, isMobile, orbitDesk, slotOf],
     );
 
     // Shared render context (registry-driven). onClose differs per column;
@@ -1123,6 +1299,188 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           : { infoType: panel.d.key, infoVisible: true, chatVisible: false, auxVisible: false })}
       />
     );
+
+    if (orbitDesk) {
+      const dockable = catalog.filter((d) => d.category !== "chat");
+      const dockPanels = dockable
+        .filter((d) => slotOf(d.key) === "dock")
+        .map((d, i) => ({ d, rank: d.key.startsWith(PLUGIN_PANEL_PREFIX) ? 2 : d.key === "graph" ? 1 : 0, i }))
+        .sort((a, b) => a.rank - b.rank || a.i - b.i)
+        .map((x) => x.d);
+      const leftPanels = dockable.filter((d) => slotOf(d.key) === "aux");
+      const terminalPanel = dockable.find((d) => slotOf(d.key) === "bottom");
+      const toolFor = (d: PanelDescriptor): OrbitToolItem => {
+        const slot = slotOf(d.key);
+        return {
+          key: d.key,
+          label: d.label,
+          icon: panelGlyph(d, true),
+          shortcut: panelShortcutDisplay(d.key),
+          active: isOrbitPanelOpen(state, d.key, slot),
+          onToggle: () => {
+            if (slot === "bottom") lastFocusedSideRef.current = "bottom";
+            setStateTagged((prev) => toggleOrbitPanel(prev, d.key, slot));
+          },
+        };
+      };
+      const orbitShowAux = Boolean(state.auxVisible && state.auxType && slotOf(state.auxType) === "aux");
+      const orbitShowDock = Boolean(state.infoVisible && state.infoType);
+      const orbitShowChat = state.chatVisible || !orbitShowAux;
+      const orbitShowBottom = state.bottomVisible && terminalAvailable;
+      const chatDescriptor = getPanelDescriptor("chat");
+      const agentTool: OrbitToolItem | null = chatDescriptor ? {
+        key: "chat",
+        label: orbitShowChat ? "Hide Agent" : "Show Agent",
+        icon: panelGlyph(chatDescriptor, true),
+        shortcut: panelShortcutDisplay("chat"),
+        active: orbitShowChat,
+        onToggle: () => update({ chatVisible: !orbitShowChat }),
+      } : null;
+      const fitted = fitOrbitWidths(shellSize.w, { aux: auxWidth, dock: infoWidth }, { aux: orbitShowAux, dock: orbitShowDock, chat: orbitShowChat });
+      // With the Agent hidden the left panel takes the whole centre.
+      const auxSize = orbitShowChat ? fitted.aux : Math.max(ORBIT_SIDE_MIN, shellSize.w - (orbitShowDock ? fitted.dock : 0));
+      const bottomSize = fitOrbitBottom(shellSize.h, bottomHeight);
+
+      const layoutMenu: PanelMenuItem[] = onToggleLayoutMode
+        ? [{ id: "free-layout", label: "Switch to free layout", icon: LayoutGrid, onSelect: onToggleLayoutMode }]
+        : [];
+      const dockMenu: PanelMenuItem[] = [
+        ...(infoWidth !== ORBIT_DOCK_DEFAULT
+          ? [{ id: "reset-width", label: "Reset width", icon: MoveHorizontal, onSelect: () => setInfoWidth(ORBIT_DOCK_DEFAULT) }]
+          : []),
+        ...layoutMenu,
+      ];
+      const auxMenu: PanelMenuItem[] = [
+        orbitShowChat
+          ? { id: "hide-agent", label: "Hide Agent", icon: PanelLeftOpen, onSelect: () => update({ chatVisible: false }) }
+          : { id: "show-agent", label: "Show Agent", icon: PanelLeftClose, onSelect: () => update({ chatVisible: true }) },
+        ...(orbitShowChat && auxWidth !== ORBIT_AUX_DEFAULT
+          ? [{ id: "reset-width", label: "Reset width", icon: MoveHorizontal, onSelect: () => setAuxWidth(ORBIT_AUX_DEFAULT) }]
+          : []),
+        ...layoutMenu,
+      ];
+
+      const startOrbitResize = (which: "aux" | "dock" | "bottom", event: React.PointerEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const centre = orbitShowChat ? ORBIT_CHAT_MIN : 0;
+        const startAux = fitted.aux;
+        const startDock = fitted.dock;
+        const startBottom = bottomSize;
+        const auxMax = shellSize.w - centre - (orbitShowDock ? fitted.dock : 0);
+        const dockMax = Math.min(ORBIT_DOCK_MAX, shellSize.w - centre - (orbitShowAux ? fitted.aux : 0));
+        const bottomMax = shellSize.h - ORBIT_BOTTOM_RESERVE;
+        setOrbitResizing(which);
+        document.body.classList.add("grove-resizing");
+        const onMove = (e: PointerEvent) => {
+          if (which === "aux") setAuxWidth(clampWidth(startAux + e.clientX - startX, ORBIT_SIDE_MIN, Math.max(ORBIT_SIDE_MIN, auxMax)));
+          else if (which === "dock") setInfoWidth(clampWidth(startDock + startX - e.clientX, ORBIT_SIDE_MIN, Math.max(ORBIT_SIDE_MIN, dockMax)));
+          else setBottomHeight(clampWidth(startBottom + startY - e.clientY, ORBIT_BOTTOM_MIN, Math.max(ORBIT_BOTTOM_MIN, bottomMax)));
+        };
+        const onUp = () => {
+          document.body.classList.remove("grove-resizing");
+          setOrbitResizing(null);
+          document.removeEventListener("pointermove", onMove);
+          document.removeEventListener("pointerup", onUp);
+        };
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+      };
+
+      const bar = (
+        <OrbitWorkspaceBar
+          title={task.name}
+          branch={task.branch || undefined}
+          state={state.isChatBusy ? "working" : task.status === "archived" ? "archived" : undefined}
+          leading={toolbarLeading}
+          groups={[
+            dockPanels.map(toolFor),
+            [
+              ...(orbitShowAux && agentTool ? [agentTool] : []),
+              ...leftPanels.map(toolFor),
+              ...(terminalPanel ? [toolFor(terminalPanel)] : []),
+            ],
+          ]}
+          trailing={toolbarTrailing}
+        />
+      );
+
+      return (
+        <div className="ide-workbench is-orbit is-orbit-desk">
+          {orbitToolbarTarget && createPortal(bar, orbitToolbarTarget)}
+          <div ref={shellRef} className="ows-shell orbit-ui">
+            <div className="ows-main">
+              <div className="ows-row">
+                <OrbitDock open={orbitShowAux} axis="x" size={auxSize} resizing={orbitResizing === "aux" || !shellSize.w} className="is-left">
+                  <div
+                    className="ows-pane"
+                    onFocusCapture={() => { lastFocusedSideRef.current = "aux"; lastSurfaceRef.current = "aux"; }}
+                    onMouseDownCapture={() => { lastFocusedSideRef.current = "aux"; lastSurfaceRef.current = "aux"; }}
+                  >
+                    {state.visitedAux.filter((type) => slotOf(type) === "aux").map((type) => (
+                      <div key={type} className="ows-pane" style={{ display: state.auxType === type ? "flex" : "none" }}>
+                        {renderOrbitPanel(type, buildCtx(() => update({ auxVisible: false, chatVisible: true })), { menu: auxMenu })}
+                      </div>
+                    ))}
+                  </div>
+                </OrbitDock>
+                {orbitShowAux && orbitShowChat && (
+                  <OrbitGrip axis="x" label="Resize panel" onPointerDown={(e) => startOrbitResize("aux", e)} onDoubleClick={() => setAuxWidth(ORBIT_AUX_DEFAULT)} />
+                )}
+                <div
+                  className="ide-chat-surface"
+                  style={{ display: orbitShowChat ? "block" : "none" }}
+                  onFocusCapture={() => { lastSurfaceRef.current = "chat"; }}
+                  onMouseDownCapture={() => { lastSurfaceRef.current = "chat"; }}
+                >
+                  {renderChat()}
+                </div>
+              </div>
+              {orbitShowBottom && (
+                <OrbitGrip axis="y" label="Resize terminal" onPointerDown={(e) => startOrbitResize("bottom", e)} onDoubleClick={() => setBottomHeight(ORBIT_BOTTOM_DEFAULT)} />
+              )}
+              <OrbitDock open={orbitShowBottom} axis="y" size={bottomSize} resizing={orbitResizing === "bottom" || !shellSize.h} className="is-bottom">
+                <div
+                  className="ows-pane"
+                  onFocusCapture={() => { lastFocusedSideRef.current = "bottom"; }}
+                  onMouseDownCapture={() => { lastFocusedSideRef.current = "bottom"; }}
+                >
+                  {state.visitedBottom && terminalAvailable && (
+                    <MultiTabTerminalPanel
+                      orbit
+                      projectId={projectId}
+                      task={task}
+                      side="left"
+                      tabs={state.terminalTabs}
+                      activeId={state.terminalActiveId}
+                      onTabsChange={(tabs, activeId) => update({ terminalTabs: tabs, terminalActiveId: activeId })}
+                      onClose={() => update({ bottomVisible: false })}
+                    />
+                  )}
+                </div>
+              </OrbitDock>
+            </div>
+            {orbitShowDock && (
+              <OrbitGrip axis="x" label="Resize dock" onPointerDown={(e) => startOrbitResize("dock", e)} onDoubleClick={() => setInfoWidth(ORBIT_DOCK_DEFAULT)} />
+            )}
+            <OrbitDock open={orbitShowDock} axis="x" size={fitted.dock} resizing={orbitResizing === "dock" || !shellSize.w} className="is-right">
+              <div
+                className="ows-pane"
+                onFocusCapture={() => { lastFocusedSideRef.current = "info"; lastSurfaceRef.current = "info"; }}
+                onMouseDownCapture={() => { lastFocusedSideRef.current = "info"; lastSurfaceRef.current = "info"; }}
+              >
+                {state.visitedInfo.map((type) => (
+                  <div key={type} className="ows-pane" style={{ display: state.infoType === type ? "flex" : "none" }}>
+                    {renderOrbitPanel(type, buildCtx(() => update({ infoVisible: false })), { menu: dockMenu })}
+                  </div>
+                ))}
+              </div>
+            </OrbitDock>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className={`ide-workbench${orbitLayout ? " is-orbit" : ""}${orbitPhone ? " is-phone" : ""}${isMobile ? " is-stacked" : ""}`}>

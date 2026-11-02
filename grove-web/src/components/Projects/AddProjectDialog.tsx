@@ -7,6 +7,11 @@ import { useBrowseFolder } from "./useBrowseFolder";
 import { useIsMobile } from "../../hooks";
 import { filesystemBasename, isAbsoluteFilesystemPath, joinFilesystemPath } from "../../utils/filesystemPath";
 import { useCommand, useKeyboardScope } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
+import { Segmented } from "../../orbit/ui/Segmented";
+import { Toggle } from "../../orbit/ui/Toggle";
 
 type ProjectMode = "coding" | "studio";
 export type CodingTab = "existing" | "new" | "git";
@@ -105,6 +110,7 @@ export function AddProjectDialog({
 }: AddProjectDialogProps) {
   const [mode, setMode] = useState<ProjectMode>(initialMode);
   const [codingTab, setCodingTab] = useState<CodingTab>("existing");
+  const orbit = useOrbitInterface();
 
   // Existing-tab state. `existingNameTouched` flips to true once the user
   // edits the name field; until then, we keep auto-syncing it from the path.
@@ -317,6 +323,209 @@ export function AddProjectDialog({
   // other on every re-render — only the last-mounted dialog's binding
   // would be live.
   useKeyboardScope("dialog.addProject", isOpen);
+
+  if (orbit) {
+    const shownError = error || externalError;
+    const browse = (onClick: () => void) => !isMobile && (
+      <OrbitButton variant="secondary" onClick={onClick}>
+        <FolderOpen aria-hidden="true" />
+        Browse
+      </OrbitButton>
+    );
+    return (
+      <>
+        <DialogShell isOpen={isOpen} onClose={resetAndClose} maxWidth="max-w-[500px]">
+          {isOpen && (
+            <AddProjectDialogBindings onClose={resetAndClose} onSubmit={handleSubmit} />
+          )}
+          <DialogPanel>
+            <DialogHead title="New project" />
+            <DialogBody>
+              <div className="oui-dlg-modes is-cards" role="radiogroup" aria-label="Project type">
+                {([
+                  { id: "coding", icon: Code2, title: "Coding", description: "Git repos & local folders" },
+                  { id: "studio", icon: Sparkles, title: "Studio", description: "AI agent workspace" },
+                ] as const).map((card) => (
+                  <button
+                    key={card.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={mode === card.id}
+                    onClick={() => { setMode(card.id); setError(""); }}
+                    className={`oui-dlg-mode${mode === card.id ? " is-selected" : ""}`}
+                  >
+                    <span className={`oui-dlg-mode-ic is-${card.id}`}><card.icon aria-hidden="true" /></span>
+                    <span>
+                      <b>{card.title}</b>
+                      <small>{card.description}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </DialogBody>
+            <FormArea mode={mode} codingTab={codingTab}>
+              <DialogBody>
+                {mode === "studio" ? (
+                  <>
+                    <DialogField label="Studio name">
+                      <input
+                        type="text"
+                        value={studioName}
+                        onChange={(e) => { setStudioName(e.target.value); setError(""); }}
+                        placeholder="My AI Workspace"
+                        className={`oui-field${error ? " is-invalid" : ""}`}
+                      />
+                    </DialogField>
+                    <p className="oui-dlg-callout">
+                      <Sparkles aria-hidden="true" />
+                      Upload files, chat with AI agents, and get results — perfect for data
+                      analysis, document processing, and report generation.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <Segmented
+                      value={codingTab}
+                      options={[
+                        { value: "existing", label: "Add existing" },
+                        { value: "new", label: "Create new" },
+                        { value: "git", label: "From Git" },
+                      ]}
+                      onChange={(tab) => { setCodingTab(tab); setError(""); }}
+                      ariaLabel="How to add the project"
+                      block
+                    />
+                    {codingTab === "git" ? (
+                      <>
+                        <DialogField label="Git URL">
+                          <input
+                            type="text"
+                            value={gitUrl}
+                            onChange={(e) => { setGitUrl(e.target.value); setError(""); }}
+                            onBlur={handleGitUrlBlur}
+                            placeholder="https://github.com/user/repo.git"
+                            spellCheck={false}
+                            className={`oui-field oui-mono${error ? " is-invalid" : ""}`}
+                          />
+                        </DialogField>
+                        <DialogField label="Project name">
+                          <input
+                            type="text"
+                            value={displayedGitName}
+                            onChange={(e) => {
+                              setGitName(e.target.value);
+                              setGitNameTouched(true);
+                              setError("");
+                            }}
+                            placeholder="Auto-derived from URL"
+                            className="oui-field"
+                          />
+                        </DialogField>
+                        <p className="oui-dlg-callout">
+                          <Globe aria-hidden="true" />
+                          <span>
+                            Clones into <code>~/.grove/cloned/</code> and registers
+                            it as a Grove project. HTTPS works with public repos; SSH URLs
+                            require an active <code>ssh-agent</code> with the
+                            key loaded (interactive prompts are disabled and will fail fast).
+                            Times out after 5 minutes.
+                          </span>
+                        </p>
+                      </>
+                    ) : codingTab === "existing" ? (
+                      <>
+                        <DialogField label="Project path" as="div">
+                          <span className="oui-dlg-inline">
+                            <input
+                              type="text"
+                              aria-label="Project path"
+                              value={path}
+                              onChange={(e) => { setPath(e.target.value); setError(""); }}
+                              placeholder="/path/to/your/project"
+                              spellCheck={false}
+                              className={`oui-field oui-mono${error ? " is-invalid" : ""}`}
+                            />
+                            {browse(handleBrowseExisting)}
+                          </span>
+                        </DialogField>
+                        <DialogField label="Project name">
+                          <input
+                            type="text"
+                            value={displayedExistingName}
+                            onChange={(e) => {
+                              setExistingName(e.target.value);
+                              setExistingNameTouched(true);
+                              setError("");
+                            }}
+                            placeholder="Auto-derived from path"
+                            className="oui-field"
+                          />
+                        </DialogField>
+                        <p className="oui-dlg-callout">
+                          Register an existing folder as a Grove project. Git repositories get full
+                          task support; non-git folders can be initialized later.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <DialogField label="Parent directory" as="div">
+                          <span className="oui-dlg-inline">
+                            <input
+                              type="text"
+                              aria-label="Parent directory"
+                              value={parentDir}
+                              onChange={(e) => { setParentDir(e.target.value); setError(""); }}
+                              placeholder="/Users/you/code"
+                              spellCheck={false}
+                              className="oui-field oui-mono"
+                            />
+                            {browse(handleBrowseParent)}
+                          </span>
+                        </DialogField>
+                        <DialogField label="Project name" note="Used as both the directory name and the Grove project name.">
+                          <input
+                            type="text"
+                            value={name}
+                            onChange={(e) => { setName(e.target.value); setError(""); }}
+                            placeholder="my-new-project"
+                            className="oui-field"
+                          />
+                        </DialogField>
+                        {fullPath && (
+                          <div className="oui-dlg-facts">
+                            <div>
+                              <span className="oui-dlg-label">Full path</span>
+                              <code>{fullPath}</code>
+                            </div>
+                          </div>
+                        )}
+                        <div className="oui-dlg-opt">
+                          <div>
+                            Initialize as Git repository
+                            <span>Runs <code>git init</code> with an empty initial commit.</span>
+                          </div>
+                          <Toggle checked={initGit} onChange={setInitGit} label="Initialize as Git repository" />
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+                {shownError && <p className="oui-dlg-error" role="alert">{shownError}</p>}
+              </DialogBody>
+            </FormArea>
+            <DialogFoot>
+              <OrbitButton variant="ghost" onClick={resetAndClose} disabled={isLoading}>Cancel</OrbitButton>
+              <OrbitButton variant="primary" onClick={() => void handleSubmit()} disabled={isLoading}>
+                <Plus aria-hidden="true" />
+                {submitLabel()}
+              </OrbitButton>
+            </DialogFoot>
+          </DialogPanel>
+        </DialogShell>
+        {folderPicker}
+      </>
+    );
+  }
 
   return (
     <>

@@ -4,39 +4,23 @@
 // Re-introducing these as compiler-friendly patterns is a separate refactor.
 /* eslint-disable react-hooks/refs, react-hooks/preserve-manual-memoization */
 
+
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
-import {
-  updateChatTitle,
-  sendGraphChatMessage,
-  getTaskGraph,
-  spawnGraphNode,
-  addGraphEdge,
-  updateGraphChatDuty,
-  updateGraphEdgePurpose,
-  deleteGraphEdge,
-  remindGraphEdge,
-  getConfig,
-  deleteChat,
-} from "../../../api";
-import type { NodeStatus } from "../../../api/walkieTalkie";
-import { useRadioEvents } from "../../../hooks/useRadioEvents";
 import { AgentPicker } from "../../ui/AgentPicker";
-import { agentOptions } from "../../../data/agents";
 import { agentIconUrl, usePersonaRegistry } from "../../../utils/agentIcon";
-import { useACPAvailability } from "./useACPAvailability";
+import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
+import { OrbitTaskGraph } from "../../../orbit/workspace/graph/OrbitTaskGraph";
 import { GraphContextToolbar, type ToolbarModeShape } from "./GraphContextToolbar";
 import {
   STATUS_COLORS,
-  type GraphNode,
-  type GraphEdge,
   type PendingMessageInfo,
 } from "./graphShared";
+import { useTaskGraphData, useTaskGraphActions } from "./useTaskGraphModel";
 import { X } from "lucide-react";
 import {
   forceCenter,
@@ -48,32 +32,6 @@ import {
   forceY,
 } from "d3-force";
 import type { Simulation, SimulationNodeDatum } from "d3-force";
-
-interface GraphData {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-}
-
-function graphApiError(e: unknown): { code: string; message: string } {
-  if (e && typeof e === "object") {
-    const data = (e as { data?: unknown }).data;
-    if (data && typeof data === "object") {
-      const payload = data as { code?: unknown; error?: unknown; message?: unknown };
-      return {
-        code: typeof payload.code === "string" ? payload.code : "internal_error",
-        message:
-          typeof payload.error === "string"
-            ? payload.error
-            : typeof payload.message === "string"
-              ? payload.message
-              : String(e),
-      };
-    }
-    const message = (e as { message?: unknown }).message;
-    if (typeof message === "string") return { code: "internal_error", message };
-  }
-  return { code: "internal_error", message: String(e) };
-}
 
 interface SimNode extends SimulationNodeDatum {
   id: string;
@@ -121,34 +79,54 @@ const EDGE_COLORS: Record<string, string> = {
   blocked: "var(--color-warning)",
 };
 
-const ERROR_HINTS: Record<string, string> = {
-  name_taken: "Name already taken",
-  cycle_would_form: "Would create a cycle",
-  bidirectional_edge: "Reverse edge already exists",
-  duplicate_edge: "Edge already exists",
-  same_task_required: "Cannot connect across tasks",
-  target_not_found: "Target not found",
-  no_pending_to_remind: "No pending message to remind",
-  target_not_idle: "Target is not idle",
-  target_is_busy: "Target is busy",
-  duty_forbidden: "Duty is locked",
-  timeout: "Operation timed out",
-  agent_spawn_failed: "Agent failed to start",
-  internal_error: "Internal error",
-};
-
 function truncate(str: string, max: number): string {
   if (str.length <= max) return str;
   return str.slice(0, max - 1) + "\u2026";
 }
 
-export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
+export function TaskGraph(props: TaskGraphProps) {
+  // Orbit renders its own body (layered DAG, inspector); Workbench keeps the
+  // force layout below. Both share useTaskGraphData / useTaskGraphActions.
+  const orbit = useOrbitInterface();
+  return orbit ? <OrbitTaskGraph {...props} /> : <WorkbenchTaskGraph {...props} />;
+}
+
+function WorkbenchTaskGraph({ projectId, taskId }: TaskGraphProps) {
+  const {
+    data,
+    loading,
+    error,
+    refreshGraph,
+    getNodeStatus,
+    deriveEdgeState,
+  } = useTaskGraphData(projectId, taskId);
+  const {
+    customAgents,
+    customAgentPersonas,
+    acpAvailabilityLoaded,
+    acpAgentOptions,
+    defaultAgent,
+    toast,
+    setToast,
+    spawnLoading,
+    edgeLoading,
+    sendingMessage,
+    sendMessage,
+    spawnNode,
+    createEdge: createEdgeRequest,
+    checkEdgeValidity,
+    saveNode,
+    updatePurpose: handleUpdatePurpose,
+    deleteEdge,
+    remindEdge: handleRemind,
+    deleteNode,
+  } = useTaskGraphActions(projectId, taskId, data, refreshGraph);
+  // Re-render on persona registry mutations so node icons & spawn pill labels
+  // pick up adds/edits/deletes from any other page without manual refetch.
+  usePersonaRegistry();
   const svgRef = useRef<SVGSVGElement>(null);
   const panRef = useRef<{ x: number; y: number; viewX: number; viewY: number } | null>(null);
   const panMovedRef = useRef(false);
-  const [data, setData] = useState<GraphData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<number | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -179,7 +157,6 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
       }
     | null
   >(null);
-  const [spawnLoading, setSpawnLoading] = useState(false);
   const [dragEdge, setDragEdge] = useState<{ from: string } | null>(null);
   // Mirror of dragEdge in a ref so the document-level mouseup listener and
   // the per-node onMouseUp handler agree on whether a drop is in progress
@@ -213,7 +190,6 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
       }
     | null
   >(null);
-  const [edgeLoading, setEdgeLoading] = useState(false);
   /**
    * The floating toolbar morphs between four modes. `null` is the default
    * compact pill (context info + action buttons). Other modes expand the
@@ -224,398 +200,36 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   // ToolbarProps stays self-contained — TaskGraph imports it back here.
   const [toolbarMode, setToolbarMode] = useState<ToolbarModeShape | null>(null);
   const [directMessage, setDirectMessage] = useState("");
-  const [sendingMessage, setSendingMessage] = useState(false);
-
-  // ─── In-memory state machines, kept live by RadioEvents ────────────────
-  // After the initial /graph hydration these maps become the source of truth
-  // for node status and edge derivation. Subsequent /graph re-fetches (only
-  // for topology changes — chat list / edges / duty) re-seed them.
-  const [nodeStatusMap, setNodeStatusMap] = useState<Map<string, NodeStatus>>(new Map());
-  const [pendingPairsMap, setPendingPairsMap] = useState<Map<string, string | undefined>>(new Map());
-  const pendingKey = (from: string, to: string) => `${from}::${to}`;
-
-  // Stable ref to refreshGraph (assigned in a later useEffect) — lets handlers
-  // declared above the refreshGraph definition still trigger a refresh.
-  const refreshGraphRef = useRef<(() => Promise<void>) | null>(null);
-
-  // Monotonic counter for /graph fetches. Each fetch records its seq at the
-  // moment it's issued; on response we drop it iff a newer fetch has already
-  // been issued (a still-newer response will arrive). Events DON'T poison
-  // future fetches — they only invalidate fetches whose seq <= a "discard
-  // up to" watermark captured at the moment the event was processed. This
-  // keeps spawn-then-event-then-fetch sequences from silently dropping the
-  // refresh of newly-added topology.
-  const fetchSeqRef = useRef(0);
-  const discardFetchUpToRef = useRef(0);
-  const {
-    baseAgents,
-    customAgents,
-    customAgentPersonas,
-    acpAvailabilityLoaded,
-  } = useACPAvailability();
-  // Re-render on persona registry mutations so node icons & spawn pill labels
-  // pick up adds/edits/deletes from any other page without manual refetch.
-  usePersonaRegistry();
-  // Default agent for the Spawn bubble — read from Settings (acp.agent_command)
-  // so the user's preferred agent is pre-selected instead of forcing them to
-  // pick from scratch every time.
-  const [defaultAgent, setDefaultAgent] = useState<string>("");
-
-  useEffect(() => {
-    let cancelled = false;
-    getConfig()
-      .then((cfg) => {
-        if (!cancelled && cfg.acp?.agent_command)
-          setDefaultAgent(cfg.acp.agent_command);
-      })
-      .catch(() => {
-        /* fail-open */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Build the spawn picker option list from launchable marketplace rows.
-  // Wait for backend availability before offering spawn candidates.
-  const acpAgentOptions = useMemo(() => {
-    if (!acpAvailabilityLoaded) return [];
-    return baseAgents
-      .filter((b) => b.available)
-      .map((b) => {
-        const local = agentOptions.find(
-          (a) => a.value === b.id || a.id === b.id,
-        );
-        const opt = local ?? { id: b.id, label: b.display_name, value: b.id };
-        return { ...opt, label: b.display_name, value: b.id };
-      });
-  }, [baseAgents, acpAvailabilityLoaded]);
-  const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(null), toast.type === "error" ? 4000 : 2000);
-    return () => clearTimeout(timer);
-  }, [toast]);
-
-  const showError = useCallback((code: string, message: string) => {
-    const hint = ERROR_HINTS[code] || message;
-    setToast({ message: hint, type: "error" });
-  }, []);
 
   const handleDirectSend = useCallback(
     async (chatId: string, text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed) return;
-      setSendingMessage(true);
-      try {
-        await sendGraphChatMessage(projectId, taskId, chatId, trimmed);
-        setDirectMessage("");
-        setToast({ message: "Message sent", type: "success" });
-        // No manual refresh — the backend's ChatStatus(busy)/PendingChanged
-        // events drive the graph. Calling refreshGraph here would race the
-        // events and could overwrite live state with stale /graph data.
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        showError("internal_error", msg);
-      } finally {
-        setSendingMessage(false);
-      }
+      if (await sendMessage(chatId, text)) setDirectMessage("");
     },
-    [projectId, taskId, showError],
+    [sendMessage],
+  );
+
+  const submitSpawn = useCallback(async () => {
+    if (!spawnBubble || !spawnBubble.agent || !spawnBubble.name.trim()) return;
+    const ok = await spawnNode({
+      fromChatId: spawnBubble.fromChatId ?? null,
+      agent: spawnBubble.agent,
+      name: spawnBubble.name,
+      duty: spawnBubble.duty,
+    });
+    if (ok) setSpawnBubble(null);
+  }, [spawnBubble, spawnNode]);
+
+  const handleDeleteEdge = useCallback(
+    async (edgeId: number) => {
+      // Confirmation happens in the toolbar `confirm-delete-edge` mode
+      // before this is invoked — no second window.confirm.
+      if (await deleteEdge(edgeId)) setSelectedEdge(null);
+    },
+    [deleteEdge],
   );
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-
-
-  const refreshGraph = useCallback(async () => {
-    fetchSeqRef.current += 1;
-    const mySeq = fetchSeqRef.current;
-    try {
-      const raw = (await getTaskGraph(projectId, taskId)) as GraphData;
-      // Drop iff: a newer fetch was issued after us (it'll deliver fresher
-      // data), OR an event was processed while we were in flight (its
-      // mutation is on top of older state than ours and ours is older than
-      // the event's view).
-      if (mySeq < fetchSeqRef.current || mySeq <= discardFetchUpToRef.current) return;
-      const sanitized: GraphData = {
-        nodes: (raw.nodes ?? []).map((n) => ({
-          ...n,
-          pending_in: n.pending_in ?? 0,
-          pending_out: n.pending_out ?? 0,
-          pending_messages: n.pending_messages ?? [],
-        })),
-        edges: (raw.edges ?? []).map((e) => ({
-          ...e,
-          pending_message: e.pending_message ?? undefined,
-        })),
-      };
-      setData(sanitized);
-      const ns = new Map<string, NodeStatus>();
-      for (const n of sanitized.nodes) ns.set(n.chat_id, n.status as NodeStatus);
-      setNodeStatusMap(ns);
-      const pp = new Map<string, string | undefined>();
-      for (const e of sanitized.edges) {
-        if (e.state !== "idle") pp.set(pendingKey(e.from, e.to), e.pending_message?.body_excerpt);
-      }
-      setPendingPairsMap(pp);
-    } catch (e) {
-      console.error("Failed to refresh graph", e);
-    }
-  }, [projectId, taskId]);
-
-  useEffect(() => {
-    refreshGraphRef.current = refreshGraph;
-  }, [refreshGraph]);
-
-  // Pure event-driven sync: chat-grained ChatStatus and PendingChanged
-  // mutate local maps; topology changes (chat list) still trigger a full
-  // /graph refetch. No more polling, no more wholesale refresh on every
-  // status flip.
-  useRadioEvents({
-    onChatStatus: (evtProjectId, evtTaskId, chatId, status) => {
-      if (evtProjectId !== projectId || evtTaskId !== taskId) return;
-      // Only discard fetches issued STRICTLY BEFORE this event. The current
-      // in-flight fetch (if any) was triggered by an event sibling like
-      // ChatListChanged and contains the topology change we still need —
-      // killing it would leave the graph stuck without the new node until
-      // another event happens.
-      discardFetchUpToRef.current = Math.max(
-        discardFetchUpToRef.current,
-        fetchSeqRef.current - 1,
-      );
-      setNodeStatusMap((prev) => {
-        if (prev.get(chatId) === status) return prev;
-        const next = new Map(prev);
-        next.set(chatId, status);
-        return next;
-      });
-    },
-    onPendingChanged: (evtProjectId, evtTaskId, payload) => {
-      if (evtProjectId !== projectId || evtTaskId !== taskId) return;
-      discardFetchUpToRef.current = Math.max(
-        discardFetchUpToRef.current,
-        fetchSeqRef.current - 1,
-      );
-      setPendingPairsMap((prev) => {
-        const next = new Map(prev);
-        const k = pendingKey(payload.from_chat_id, payload.to_chat_id);
-        if (payload.op === "inserted") next.set(k, payload.body_excerpt);
-        else next.delete(k);
-        return next;
-      });
-    },
-    onChatListChanged: (evtProjectId, evtTaskId) => {
-      if (evtProjectId === projectId && evtTaskId === taskId) {
-        void refreshGraph();
-      }
-    },
-    onConnected: () => {
-      // WS just (re)opened — re-sync everything in case events were missed
-      // during the disconnect window.
-      void refreshGraph();
-    },
-  });
-
-  const submitSpawn = useCallback(async () => {
-    if (!spawnBubble || !spawnBubble.agent || !spawnBubble.name.trim()) return;
-    setSpawnLoading(true);
-    try {
-      await spawnGraphNode(projectId, taskId, {
-          from_chat_id: spawnBubble.fromChatId ?? null,
-          agent: spawnBubble.agent,
-          name: spawnBubble.name.trim(),
-          duty: spawnBubble.duty.trim() || undefined,
-      });
-      setSpawnBubble(null);
-      refreshGraph();
-      setToast({ message: "Node created", type: "success" });
-    } catch (e) {
-      const err = graphApiError(e);
-      showError(err.code, err.message);
-    } finally {
-      setSpawnLoading(false);
-    }
-  }, [projectId, taskId, spawnBubble, showError, refreshGraph]);
-
-  const createEdgeRequest = useCallback(
-    async (
-      from: string,
-      to: string,
-      opts?: { duty?: string; purpose?: string },
-    ): Promise<boolean> => {
-      setEdgeLoading(true);
-      try {
-        await addGraphEdge(projectId, taskId, {
-            from,
-            to,
-            duty: opts?.duty?.trim() || undefined,
-            purpose: opts?.purpose?.trim() || undefined,
-        });
-        refreshGraph();
-        setToast({ message: "Connection created", type: "success" });
-        return true;
-      } catch (e) {
-        const err = graphApiError(e);
-        showError(err.code, err.message);
-        return false;
-      } finally {
-        setEdgeLoading(false);
-      }
-    },
-    [projectId, taskId, showError, refreshGraph],
-  );
-
-  // Client-side pre-flight: surface obvious errors during drag so the server doesn't
-  // have to reject after the fact. Server remains the source of truth.
-  const checkEdgeValidity = useCallback(
-    (from: string, to: string): { ok: true } | { ok: false; reason: string } => {
-      if (from === to) return { ok: false, reason: "Cannot connect a node to itself" };
-      if (!data) return { ok: true };
-      for (const e of data.edges) {
-        if (e.from === from && e.to === to) return { ok: false, reason: ERROR_HINTS.duplicate_edge };
-        if (e.from === to && e.to === from) return { ok: false, reason: ERROR_HINTS.bidirectional_edge };
-      }
-      // Cycle: would `from -> to` create a cycle? Yes iff `from` is reachable from `to`.
-      const adj = new Map<string, string[]>();
-      for (const e of data.edges) {
-        const list = adj.get(e.from) ?? [];
-        list.push(e.to);
-        adj.set(e.from, list);
-      }
-      const seen = new Set<string>();
-      const stack = [to];
-      while (stack.length) {
-        const cur = stack.pop()!;
-        if (cur === from) return { ok: false, reason: ERROR_HINTS.cycle_would_form };
-        if (seen.has(cur)) continue;
-        seen.add(cur);
-        for (const nb of adj.get(cur) ?? []) stack.push(nb);
-      }
-      return { ok: true };
-    },
-    [data],
-  );
-
-  // Guards against the Enter→onBlur double-fire: Enter handler kicks off the
-  // save, the resulting setEditingName(null) re-renders and removes the input,
-  // which fires onBlur → another save call. Tracking in-flight chat ids
-  // collapses the duplicate into a no-op.
-  const nameSaveInFlightRef = useRef<Set<string>>(new Set());
-  const handleSaveName = useCallback(
-    async (chatId: string, next: string) => {
-      const trimmed = next.trim();
-      if (!trimmed) return;
-      if (nameSaveInFlightRef.current.has(chatId)) return;
-      nameSaveInFlightRef.current.add(chatId);
-      try {
-        await updateChatTitle(projectId, taskId, chatId, trimmed);
-        refreshGraph();
-      } catch (e) {
-        showError("internal_error", String(e));
-      } finally {
-        nameSaveInFlightRef.current.delete(chatId);
-      }
-    },
-    [projectId, taskId, refreshGraph, showError],
-  );
-
-  const handleUpdateDuty = useCallback(
-    async (chatId: string, duty: string) => {
-      try {
-        await updateGraphChatDuty(projectId, taskId, chatId, duty || undefined);
-        refreshGraph();
-        setToast({ message: "Duty updated", type: "success" });
-      } catch (e) {
-        const err = graphApiError(e);
-        showError(err.code, err.message);
-      }
-    },
-    [projectId, taskId, showError, refreshGraph],
-  );
-
-  const handleUpdatePurpose = useCallback(
-    async (edgeId: number, purpose: string) => {
-      try {
-        await updateGraphEdgePurpose(projectId, taskId, edgeId, purpose || undefined);
-        refreshGraph();
-      } catch (e) {
-        const err = graphApiError(e);
-        showError(err.code, err.message);
-      }
-    },
-    [projectId, taskId, showError, refreshGraph],
-  );
-
-  const handleDeleteEdge = useCallback(
-    async (edgeId: number) => {
-      // Confirmation now happens in the toolbar `confirm-delete-edge` mode
-      // before this is invoked — no second window.confirm.
-      try {
-        await deleteGraphEdge(projectId, taskId, edgeId);
-        setSelectedEdge(null);
-        refreshGraph();
-        setToast({ message: "Connection deleted", type: "success" });
-      } catch (e) {
-        const err = graphApiError(e);
-        showError(err.code, err.message);
-      }
-    },
-    [projectId, taskId, showError, refreshGraph],
-  );
-
-  const handleRemind = useCallback(
-    async (edgeId: number) => {
-      try {
-        await remindGraphEdge(projectId, taskId, edgeId);
-        refreshGraph();
-        setToast({ message: "Reminder sent", type: "success" });
-      } catch (e) {
-        const err = graphApiError(e);
-        showError(err.code, err.message);
-      }
-    },
-    [projectId, taskId, showError, refreshGraph],
-  );
-
-  useEffect(() => {
-    const fetchGraph = async () => {
-      fetchSeqRef.current += 1;
-      const mySeq = fetchSeqRef.current;
-      try {
-        const raw = (await getTaskGraph(projectId, taskId)) as GraphData;
-        if (mySeq < fetchSeqRef.current || mySeq <= discardFetchUpToRef.current) return;
-        const sanitized: GraphData = {
-          nodes: (raw.nodes ?? []).map((n) => ({
-            ...n,
-            pending_in: n.pending_in ?? 0,
-            pending_out: n.pending_out ?? 0,
-            pending_messages: n.pending_messages ?? [],
-          })),
-          edges: (raw.edges ?? []).map((e) => ({
-            ...e,
-            pending_message: e.pending_message ?? undefined,
-          })),
-        };
-        setData(sanitized);
-        // Initial hydration of the in-memory state machines.
-        const ns = new Map<string, NodeStatus>();
-        for (const n of sanitized.nodes) ns.set(n.chat_id, n.status as NodeStatus);
-        setNodeStatusMap(ns);
-        const pp = new Map<string, string | undefined>();
-        for (const e of sanitized.edges) {
-          if (e.state !== "idle") pp.set(pendingKey(e.from, e.to), e.pending_message?.body_excerpt);
-        }
-        setPendingPairsMap(pp);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load graph");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchGraph();
-  }, [projectId, taskId]);
 
   useEffect(() => {
     if (!data) return;
@@ -869,18 +483,6 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
 
   const getNode = (id: string) =>
     nodes.find((n) => n.id === id) ?? { x: 0, y: 0 };
-
-  // Live derivations from in-memory state machines. These ignore the
-  // potentially stale `node.status` / `link.state` baked into sim data.
-  const getNodeStatus = (chatId: string): NodeStatus =>
-    nodeStatusMap.get(chatId) ?? "disconnected";
-  const deriveEdgeState = (
-    fromId: string,
-    toId: string,
-  ): "idle" | "in_flight" | "blocked" => {
-    if (!pendingPairsMap.has(pendingKey(fromId, toId))) return "idle";
-    return getNodeStatus(toId) === "busy" ? "in_flight" : "blocked";
-  };
 
   return (
     <div
@@ -1781,39 +1383,13 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
           })
         }
         onSubmitEdit={async (chatId, nextName, nextDuty) => {
-          const fresh = data?.nodes.find((n) => n.chat_id === chatId);
-          const tasks: Promise<unknown>[] = [];
-          if (nextName.trim() && nextName.trim() !== fresh?.name) {
-            tasks.push(handleSaveName(chatId, nextName));
-          }
-          if (nextDuty !== (fresh?.duty ?? "")) {
-            tasks.push(handleUpdateDuty(chatId, nextDuty));
-          }
-          await Promise.all(tasks);
+          await saveNode(chatId, nextName, nextDuty);
           setToolbarMode(null);
         }}
         onSubmitSpawn={async (fromChatId, agent, name, duty, purpose) => {
           if (!agent || !name.trim()) return;
-          setSpawnLoading(true);
-          try {
-            await spawnGraphNode(projectId, taskId, {
-              from_chat_id: fromChatId,
-              agent,
-              name: name.trim(),
-              duty: duty.trim() || undefined,
-              // purpose only travels along an edge — drop it for orphan
-              // spawns where there's no edge to label.
-              purpose: fromChatId && purpose.trim() ? purpose.trim() : undefined,
-            });
-            setToolbarMode(null);
-            refreshGraph();
-            setToast({ message: "Node created", type: "success" });
-          } catch (e) {
-            const err = graphApiError(e);
-            showError(err.code, err.message);
-          } finally {
-            setSpawnLoading(false);
-          }
+          const ok = await spawnNode({ fromChatId, agent, name, duty, purpose });
+          if (ok) setToolbarMode(null);
         }}
         spawning={spawnLoading}
         onDeleteNode={(node) =>
@@ -1824,15 +1400,10 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
           })
         }
         onConfirmDeleteNode={async (chatId) => {
-          try {
-            await deleteChat(projectId, taskId, chatId);
+          if (await deleteNode(chatId)) {
             setSelectedNodeId(null);
             setSelectedNode(null);
             setToolbarMode(null);
-            refreshGraph();
-            setToast({ message: "Session deleted", type: "success" });
-          } catch (e) {
-            showError("internal_error", String(e));
           }
         }}
         onEditEdge={(edge) =>

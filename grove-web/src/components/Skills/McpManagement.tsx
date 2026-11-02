@@ -55,6 +55,10 @@ import {
   type Definition,
 } from "./mcpSetupTypes";
 import { PackageAddForm, PackageManagedConnection } from "./McpPackageSetup";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogHead } from "../../orbit/ui/Dialog";
+import { Segmented } from "../../orbit/ui/Segmented";
 
 const schema =
   "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json";
@@ -76,6 +80,7 @@ export function AddMcpDialog({
   const [runtime, setRuntime] = useState<Runtime>("remote");
   const [remoteSetupActive, setRemoteSetupActive] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const orbit = useOrbitInterface();
   const created = useRef<ManagedMcpServer | null>(null);
   const [definitionLocked, setDefinitionLocked] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -191,8 +196,17 @@ export function AddMcpDialog({
     <DialogShell isOpen onClose={close} maxWidth="max-w-[620px]">
       <div
         ref={root}
-        className="flex max-h-[min(88dvh,760px)] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] shadow-2xl"
+        className={orbit ? "oui-dlg oui-dlg-wizard" : "flex max-h-[min(88dvh,760px)] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] shadow-2xl"}
       >
+        {orbit ? (
+          <DialogHead
+            title={completed ? "MCP server added" : "Add MCP server"}
+            description={completed
+              ? "Server and Agent access have been saved."
+              : "Connect a server, then choose where your Agents can use it."}
+            aside={<OrbitButton variant="ghost" iconOnly size="sm" aria-label="Close" onClick={close} disabled={saving}><X /></OrbitButton>}
+          />
+        ) : (
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[var(--color-border)] px-6 py-5">
           <div>
             <h2 className="text-lg font-semibold">
@@ -214,6 +228,7 @@ export function AddMcpDialog({
             <X className="h-4 w-4" />
           </button>
         </header>
+        )}
         {completed ? (
           <>
             <div
@@ -270,7 +285,18 @@ export function AddMcpDialog({
           </>
         ) : (
           <>
-            {!remoteSetupActive && (
+            {!remoteSetupActive && orbit && (
+              <div className="oui-dlg-wizard-seg">
+                <Segmented
+                  value={runtime}
+                  options={(["remote", "npm", "pypi", "oci"] as const).map((type) => ({ value: type, label: runtimeLabel(type), disabled: saving || definitionLocked }))}
+                  onChange={setRuntime}
+                  ariaLabel="Server runtime"
+                  block
+                />
+              </div>
+            )}
+            {!remoteSetupActive && !orbit && (
               <div className="shrink-0 px-6 pt-5">
                 <div
                   className="flex rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 p-1"

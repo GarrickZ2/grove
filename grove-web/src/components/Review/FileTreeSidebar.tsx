@@ -1,5 +1,5 @@
 import { useEscapeScope } from "../../keyboard/useEscapeScope";
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { DiffFile } from '../../api/review';
 import type { DirEntry } from '../../api/tasks';
@@ -12,6 +12,8 @@ interface FileCommentCount {
 }
 
 interface FileTreeSidebarProps {
+  /** Shown above the filter box (Orbit: the reviewed-progress summary). */
+  summary?: ReactNode;
   files: DiffFile[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
@@ -78,6 +80,7 @@ export function FileTreeSidebar({
   onUpdateAutoViewedRules,
   hideViewed = false,
   onToggleHideViewed,
+  summary,
 }: FileTreeSidebarProps) {
   const [searchFocused, setSearchFocused] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -201,6 +204,7 @@ export function FileTreeSidebar({
 
   return (
     <div className={`diff-sidebar ${collapsed ? 'collapsed' : ''}`} onClick={handleCloseContextMenu}>
+      {summary}
       {/* Search box */}
       {onSearchChange && (
         <div className="diff-sidebar-search">

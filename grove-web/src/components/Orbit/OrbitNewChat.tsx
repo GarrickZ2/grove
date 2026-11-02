@@ -1,5 +1,5 @@
 import { createElement, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { Sparkle, Box, Brain, ChevronDown, Folder, GitBranch, Globe, Laptop, Loader2, Mic, Paperclip, Send, ShieldCheck, Terminal } from "lucide-react";
+import { Sparkle, BookOpen, Box, Brain, ChevronDown, FileText, FlaskConical, Folder, GitBranch, Globe, Laptop, Loader2, Mic, Paperclip, Send, ShieldCheck, Terminal, type LucideIcon } from "lucide-react";
 import { createChat, listChats } from "../../api";
 import type { AgentConfigSelection } from "../../api/agentConfig";
 import { listInstalledAgentConfigs, type InstalledAgentConfig } from "../../api/marketplace";
@@ -20,6 +20,7 @@ import { buildDefaultSessionTitle } from "../Tasks/TaskView/useInitialChatLoad";
 import { AttachmentError, attachmentLabel, prepareFileAttachment, type Attachment } from "../Tasks/TaskView/chatAttachments";
 import { promptConfigFromSelection } from "./orbitDraftConfig";
 import { setOrbitFirstMessage } from "./orbitFirstMessage";
+import { hasSeen, markSeen, STARTERS_DONE_KEY } from "../../orbit/firstrun/storage";
 import "./orbit-new-chat.css";
 
 const LAST_AGENT_KEY = "grove-orbit-new-agent";
@@ -28,6 +29,13 @@ const HANDOFF_MS = 320;
 const NO_PENDING_CONFIG = new Set<string>();
 /** Phone: recent Sessions listed above the composer as quick ways back in. */
 const RECENT_LIMIT = 3;
+
+/** First-run starter prompts for a code project; a pick only fills the composer. */
+const STARTERS: { label: string; icon: LucideIcon }[] = [
+  { label: "Explain how this project is organized", icon: BookOpen },
+  { label: "Find and fix a failing test", icon: FlaskConical },
+  { label: "Add a section to the README", icon: FileText },
+];
 
 type RecentSession = { taskId: string; taskName?: string; chatId: string; title: string; agent: string; createdAt: string };
 
@@ -121,6 +129,8 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   const [selection, setSelection] = useState<AgentConfigSelection>({ source: "default" });
   const [taskId, setTaskId] = useState(initialTaskId);
   const [text, setText] = useState(readDraft);
+  // Starters only until the first message is sent from here.
+  const [startersDone, setStartersDone] = useState(() => hasSeen(STARTERS_DONE_KEY));
   const [sending, setSending] = useState(false);
   const [handoffOffset, setHandoffOffset] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -347,6 +357,8 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
       setOrbitFirstMessage(chat.id, { text: text.trim(), config: promptConfigFromSelection(selection), chat, attachments });
       writeLastAgent(agentId);
       writeDraft("");
+      markSeen(STARTERS_DONE_KEY);
+      setStartersDone(true);
       leaveComposerGhost(composerRef.current);
       // Switch an already-mounted (keep-alive) TaskChat to the new chat before
       // its page becomes visible; a not-yet-mounted one picks up the pending chat.
@@ -531,6 +543,26 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
               onSelect={setTaskId}
             />
           </div>
+          {!phone && !startersDone && !text && attachments.length === 0 && selectedProject && selectedProject.projectType !== "studio" && (
+            <div className="orbit-new__starters" aria-label="Starter prompts">
+              {STARTERS.map(({ label, icon: Icon }, index) => (
+                <button
+                  key={label}
+                  type="button"
+                  className="orbit-new__starter"
+                  style={{ animationDelay: `${120 + index * 60}ms` }}
+                  onClick={() => {
+                    setText(label);
+                    writeDraft(label);
+                    const input = inputRef.current;
+                    if (input) requestAnimationFrame(() => { input.focus(); input.setSelectionRange(label.length, label.length); });
+                  }}
+                >
+                  <Icon size={13} strokeWidth={1.8} aria-hidden="true" />{label}
+                </button>
+              ))}
+            </div>
+          )}
           {agent && !snapshot && (
             <p className="orbit-new__hint">{agent.name} hasn't connected yet, so it starts with its default model and mode. Options show up here after its first session.</p>
           )}

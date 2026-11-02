@@ -1,45 +1,23 @@
-import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { GitBranch, GitCommit, FileCode, Loader2 } from "lucide-react";
 import type { Task } from "../../../../data/types";
-import { useProject } from "../../../../context/ProjectContext";
-import { getDiff, getCommits, type DiffResponse, type CommitsResponse } from "../../../../api";
+import { useOrbitInterface } from "../../../../orbit/ui/interfaceContext";
+import { OrbitGitPanel } from "../../../../orbit/workspace/panels/OrbitGitPanel";
+import { useTaskGit } from "./useTaskGit";
 
 interface GitTabProps {
   projectId?: string;
   task: Task;
 }
 
-export function GitTab({ projectId, task }: GitTabProps) {
-  const { selectedProject } = useProject();
-  const resolvedProjectId = projectId || selectedProject?.id;
-  const [diffData, setDiffData] = useState<DiffResponse | null>(null);
-  const [commitsData, setCommitsData] = useState<CommitsResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export function GitTab(props: GitTabProps) {
+  const orbit = useOrbitInterface();
+  if (orbit) return <OrbitGitPanel projectId={props.projectId} task={props.task} />;
+  return <WorkbenchGitTab {...props} />;
+}
 
-  const loadGitData = useCallback(async () => {
-    if (!resolvedProjectId) return;
-
-    try {
-      setIsLoading(true);
-      setError(null);
-      const [diff, commits] = await Promise.all([
-        getDiff(resolvedProjectId, task.id),
-        getCommits(resolvedProjectId, task.id),
-      ]);
-      setDiffData(diff);
-      setCommitsData(commits);
-    } catch (err) {
-      console.error("Failed to load git data:", err);
-      setError("Failed to load git data. The task may have been deleted or archived.");
-    }
-    setIsLoading(false);
-  }, [resolvedProjectId, task.id]);
-
-  useEffect(() => {
-    Promise.resolve().then(loadGitData);
-  }, [loadGitData]);
+function WorkbenchGitTab({ projectId, task }: GitTabProps) {
+  const { diffData, commitsData, isLoading, error } = useTaskGit(projectId, task.id);
 
   if (isLoading) {
     return (

@@ -31,6 +31,9 @@ import {
   Zap,
 } from "lucide-react";
 import { DialogShell } from "../ui/DialogShell";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogFoot, DialogHead } from "../../orbit/ui/Dialog";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Combobox, type ComboboxOption } from "../ui/Combobox";
@@ -45,7 +48,7 @@ import {
   type InstalledAgentConfig,
 } from "../../api/marketplace";
 import { configForAgent, reconcileAgentConfig } from "../../utils/agentConfig";
-import { useCommand, useKeyboardScope } from "../../keyboard";
+import { formatKeyDisplay, useCommand, useKeyboardScope } from "../../keyboard";
 import type {
   AgentConfigSelection,
   Automation,
@@ -678,6 +681,7 @@ export function AutomationDialog({
   // mounted dialog's binding would be live.
   useKeyboardScope("dialog.automation", isOpen);
 
+  const orbit = useOrbitInterface();
   const handleCloseGuarded = () => {
     if (branchDropdownOpen) return;
     onClose();
@@ -691,8 +695,14 @@ export function AutomationDialog({
           onSubmit={handleSubmit}
         />
       )}
-      <div className="flex max-h-[calc(100dvh-1rem)] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] shadow-xl sm:max-h-[90vh]">
-        {/* Header */}
+      <div className={orbit ? "oui-dlg oui-dlg-tall" : "flex max-h-[calc(100dvh-1rem)] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] shadow-xl sm:max-h-[90vh]"}>
+        {orbit ? (
+          <DialogHead
+            title={buddy ? initial ? "Edit routine" : "New routine" : initial ? "Edit automation" : "New automation"}
+            description="Scheduled prompts sent into a chat session."
+            aside={<OrbitButton variant="ghost" iconOnly size="sm" onClick={onClose} aria-label={buddy ? "Close routine" : "Close Automation"}><X /></OrbitButton>}
+          />
+        ) : (
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3.5 sm:px-5 sm:py-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-[var(--color-highlight)]/10">
@@ -715,9 +725,10 @@ export function AutomationDialog({
             <X className="w-5 h-5" />
           </button>
         </div>
+        )}
 
         {/* Body */}
-        <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
+        <div className={orbit ? "oui-dlg-legacy-body oui-scroll flex-1 space-y-4 overflow-y-auto" : "flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5"}>
           {/* Name + toggle row */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <div className="flex-1 min-w-0">
@@ -1129,7 +1140,15 @@ export function AutomationDialog({
           )}
         </div>
 
-        {/* Footer */}
+        {orbit ? (
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={onClose} disabled={submitting}>Cancel</OrbitButton>
+            <OrbitButton variant="primary" onClick={() => void handleSubmit()} disabled={submitting}>
+              {submitting ? "Saving…" : initial ? "Save" : "Create"}
+              {!submitting && <kbd>{formatKeyDisplay("Mod+Enter")}</kbd>}
+            </OrbitButton>
+          </DialogFoot>
+        ) : (
         <div className="flex items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 sm:justify-between sm:px-5">
           <p className="hidden text-xs text-[var(--color-text-muted)] sm:block">
             <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">
@@ -1150,6 +1169,7 @@ export function AutomationDialog({
             </Button>
           </div>
         </div>
+        )}
       </div>
     </DialogShell>
   );

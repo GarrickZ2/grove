@@ -1,0 +1,22 @@
+/* First-turn coach bubbles (Onboarding board): an ink bubble under a toolbar
+   button, with a pulsing ring around the button. */
+.oth-ring{position:fixed;z-index:9000;border-radius:10px;pointer-events:none}
+.oth-ring::before,.oth-ring::after{content:"";position:absolute;inset:0;border-radius:inherit;border:2px solid var(--o-accent);opacity:0;animation:oth-ring 1.6s ease-out infinite}
+.oth-ring::after{animation-delay:.8s}
+@keyframes oth-ring{0%{opacity:.8;transform:scale(1)}100%{opacity:0;transform:scale(1.5)}}
+.oth-pop{position:fixed;z-index:9001;box-sizing:border-box;padding:14px;border-radius:14px;background:var(--o-ink);color:var(--o-on-ink);font-size:13px;box-shadow:0 24px 50px -20px rgb(0 0 0 / 50%);animation:oth-in 460ms cubic-bezier(.3,1.4,.5,1) both}
+.oth-pop::before{content:"";position:absolute;top:-6px;left:var(--arrow);width:12px;height:12px;background:inherit;transform:rotate(45deg);border-radius:2px}
+@keyframes oth-in{from{opacity:0;transform:translateY(-8px) scale(.96)}}
+.oth-pop b{display:block;font-size:13.5px;font-weight:600}
+.oth-pop p{margin:4px 0 12px;font-size:12.5px;line-height:1.5;opacity:.75}
+.oth-row{display:flex;align-items:center;gap:8px}
+.oth-row small{flex:1;font-size:11.5px;opacity:.55}
+.oth-btn{height:28px;padding:0 11px;border:0;border-radius:7px;font:inherit;font-size:12.5px;font-weight:600;background:var(--o-on-ink);color:var(--o-ink);cursor:pointer}
+.oth-btn.is-ghost{background:transparent;color:var(--o-on-ink);opacity:.7}
+.oth-btn.is-ghost:hover{opacity:1}
+.oth-btn:focus-visible{outline:2px solid var(--o-accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){
+  .oth-pop{animation:none}
+  .oth-ring::before{animation:none;opacity:.8}
+  .oth-ring::after{display:none}
+}

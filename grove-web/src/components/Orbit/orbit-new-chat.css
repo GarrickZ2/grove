@@ -46,3 +46,13 @@
 .orbit-new.is-phone .orbit-new__context { position: relative; }
 .orbit-new.is-phone .orbit-new__tray-picker { position: static; }
 .orbit-new.is-phone .orbit-new__context .picker-menu { right: 0; left: 0; width: auto; max-width: none; max-height: min(320px, 55dvh); }
+
+/* First-run starter prompts (Onboarding board): fill the composer, never send. */
+.orbit-new__starters { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 16px 20px 0; transition: opacity .2s ease; }
+.orbit-new.is-handing-off .orbit-new__starters { opacity: 0; }
+.orbit-new__starter { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid color-mix(in oklab, var(--color-border) 70%, transparent); background: var(--color-bg); font-size: 12.5px; color: color-mix(in oklab, var(--color-text) 85%, var(--color-text-muted)); cursor: pointer; animation: orbit-new-starter-in .6s cubic-bezier(.25, 1, .5, 1) both; transition: border-color .15s, transform .2s cubic-bezier(.3, 1.5, .5, 1); }
+.orbit-new__starter:hover { border-color: color-mix(in oklab, var(--color-text) 22%, var(--color-border)); transform: translateY(-1px); }
+.orbit-new__starter:focus-visible { outline: 2px solid var(--color-highlight); outline-offset: 2px; }
+.orbit-new__starter svg { color: var(--color-text-muted); }
+@keyframes orbit-new-starter-in { from { opacity: 0; transform: translateY(10px); filter: blur(4px); } }
+@media (prefers-reduced-motion: reduce) { .orbit-new__starter { animation: none; transition: none; } }

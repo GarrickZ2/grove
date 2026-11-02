@@ -2,6 +2,9 @@ import { useEffect, useState, useCallback } from "react";
 import { Radio, X, Copy, Check, Loader2, Smartphone } from "lucide-react";
 import { DialogShell } from "../ui/DialogShell";
 import { apiClient } from "../../api/client";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
 
 /** Which mobile surface the QR points at. `"radio"` = walkie-talkie (default),
  *  `"tray"` = the menubar task panel (served at /phone-tray). */
@@ -51,6 +54,7 @@ function RadioConnectDialogContent({
   page: RadioPage;
 }) {
   const isTray = page === "tray";
+  const orbit = useOrbitInterface();
   const [connectState, setConnectState] = useState<ConnectState>("starting");
   const [radioInfo, setRadioInfo] = useState<RadioStartResult | null>(null);
   const [copied, setCopied] = useState(false);
@@ -104,6 +108,76 @@ function RadioConnectDialogContent({
     const t = setTimeout(() => setCopied(false), 2000);
     return () => clearTimeout(t);
   }, [copied]);
+
+  const retry = () => {
+    setConnectState("starting");
+    setError(null);
+    apiClient
+      .post<{ page: RadioPage }, RadioStartResult>("/api/v1/radio/start", { page })
+      .then((info) => {
+        if (info.error) {
+          setError(info.error);
+          setConnectState("error");
+        } else {
+          setRadioInfo(info);
+          setConnectState("ready");
+        }
+      })
+      .catch((err) => {
+        setError(String(err?.message ?? "Failed"));
+        setConnectState("error");
+      });
+  };
+
+  if (orbit) {
+    return (
+      <DialogPanel size="sm" className="oui-dlg-radio">
+        <DialogHead
+          title={isTray ? "Sync to phone" : "Grove Radio"}
+          description={isTray ? "Task Panel" : "Walkie-Talkie Mode"}
+          aside={<OrbitButton variant="ghost" iconOnly size="sm" aria-label="Close" onClick={handleClose}><X /></OrbitButton>}
+        />
+        <DialogBody className="oui-dlg-center">
+          {connectState === "starting" && (
+            <div className="oui-dlg-state">
+              <Loader2 className="oui-spin" aria-hidden="true" />
+              <p>{isTray ? "Starting server..." : "Starting Radio server..."}</p>
+            </div>
+          )}
+          {connectState === "error" && (
+            error === "transcribe_not_configured" ? (
+              <div className="oui-dlg-state">
+                <span className="oui-dlg-ic is-warning"><Radio aria-hidden="true" /></span>
+                <b>Audio transcription not configured</b>
+                <p>Radio requires an AI provider for audio transcription. Please configure it in AI settings first.</p>
+                <OrbitButton variant="primary" onClick={() => { handleClose(); onGoToSettings?.(); }}>Go to AI Settings</OrbitButton>
+              </div>
+            ) : (
+              <div className="oui-dlg-state">
+                <p className="oui-dlg-error" role="alert">{error}</p>
+                <OrbitButton variant="secondary" size="sm" onClick={retry}>Retry</OrbitButton>
+              </div>
+            )
+          )}
+          {connectState === "ready" && radioInfo && (
+            <div className="oui-dlg-state">
+              {radioInfo.qr_svg && (
+                <div className="oui-dlg-qr" dangerouslySetInnerHTML={{ __html: radioInfo.qr_svg }} />
+              )}
+              <p>Scan with your phone to connect</p>
+              <div className="oui-dlg-flow oui-dlg-host">
+                <span className="oui-dot is-ok has-ring" aria-hidden="true" />
+                <span className="oui-mono oui-truncate">{radioInfo.host}:{radioInfo.port}</span>
+                <OrbitButton variant="ghost" iconOnly size="sm" onClick={() => void handleCopy()} title="Copy URL" aria-label="Copy URL">
+                  {copied ? <Check /> : <Copy />}
+                </OrbitButton>
+              </div>
+            </div>
+          )}
+        </DialogBody>
+      </DialogPanel>
+    );
+  }
 
   return (
     <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden w-[360px] mx-auto">
@@ -172,25 +246,7 @@ function RadioConnectDialogContent({
               <>
                 <p className="text-sm text-[var(--color-error)] text-center">{error}</p>
                 <button
-                  onClick={() => {
-                    setConnectState("starting");
-                    setError(null);
-                    apiClient
-                      .post<{ page: RadioPage }, RadioStartResult>("/api/v1/radio/start", { page })
-                      .then((info) => {
-                        if (info.error) {
-                          setError(info.error);
-                          setConnectState("error");
-                        } else {
-                          setRadioInfo(info);
-                          setConnectState("ready");
-                        }
-                      })
-                      .catch((err) => {
-                        setError(String(err?.message ?? "Failed"));
-                        setConnectState("error");
-                      });
-                  }}
+                  onClick={retry}
                   className="text-xs text-[var(--color-highlight)] hover:underline"
                 >
                   Retry

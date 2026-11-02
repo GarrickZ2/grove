@@ -1,8 +1,18 @@
 import { motion } from "framer-motion";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, Info, X } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import { useCommand, useKeyboardScope } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogFoot, DialogHead, DialogPanel, HoldButton } from "../../orbit/ui/Dialog";
+
+/** Confirm labels that destroy something; Orbit asks for a press-and-hold on these. */
+const DESTRUCTIVE_LABEL = /^(delet|remov|uninstall|reset|clean|discard|eras|wipe|purg|drop|destroy|force)/i;
+
+function holdLabel(label: string): string {
+  return `Hold to ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+}
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -40,6 +50,7 @@ export function ConfirmDialog({
   // register the same handler and noisily overwrite each other on every
   // re-render — only the last-mounted one would actually be live.
   useKeyboardScope("dialog.confirm", isOpen);
+  const orbit = useOrbitInterface();
 
   const variantStyles = {
     danger: {
@@ -60,6 +71,61 @@ export function ConfirmDialog({
   };
 
   const styles = variantStyles[variant];
+
+  if (orbit) {
+    const size = compactActions ? "sm" : "md";
+    // In-progress labels ("Deleting…") arrive with actions disabled; they
+    // keep the hold button so the footer doesn't jump.
+    const hold = variant === "danger" && DESTRUCTIVE_LABEL.test(confirmLabel);
+    const stringMessage = typeof message === "string";
+    return (
+      <DialogShell isOpen={isOpen} onClose={onCancel} maxWidth="max-w-[420px]">
+        {isOpen && (
+          <ConfirmDialogBindings onConfirm={onConfirm} onCancel={onCancel} />
+        )}
+        <DialogPanel>
+          <DialogHead
+            icon={variant === "info" ? Info : AlertTriangle}
+            tone={variant}
+            title={title}
+            description={stringMessage ? <p className="oui-dlg-message">{message}</p> : undefined}
+          />
+          {!stringMessage && (
+            <DialogBody>
+              <div className="oui-dlg-message is-node">{message}</div>
+            </DialogBody>
+          )}
+          <DialogFoot
+            lead={secondaryActionLabel && onSecondaryAction ? (
+              <OrbitButton variant="ghost" size={size} onClick={onSecondaryAction} disabled={actionsDisabled}>
+                {secondaryActionLabel}
+              </OrbitButton>
+            ) : undefined}
+          >
+            <OrbitButton variant="ghost" size={size} onClick={onCancel} disabled={actionsDisabled}>
+              {cancelLabel}
+            </OrbitButton>
+            {hold ? (
+              <HoldButton onConfirm={onConfirm} disabled={actionsDisabled} size={size}>
+                {actionsDisabled ? confirmLabel : holdLabel(confirmLabel)}
+              </HoldButton>
+            ) : (
+              <OrbitButton
+                variant="primary"
+                size={size}
+                onClick={onConfirm}
+                disabled={actionsDisabled}
+                className={variant === "danger" ? "oui-btn-tone" : undefined}
+                style={variant === "danger" ? ({ "--oui-tone": "var(--o-error)" } as React.CSSProperties) : undefined}
+              >
+                {confirmLabel}
+              </OrbitButton>
+            )}
+          </DialogFoot>
+        </DialogPanel>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={onCancel}>

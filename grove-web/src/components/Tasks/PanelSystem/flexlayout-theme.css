@@ -156,9 +156,74 @@
 }
 
 /* ── Drag & Drop ── */
-.orbit-free-layout .flexlayout__tabset { border: 0; }
-.orbit-free-layout .flexlayout__splitter { background: var(--color-border); }
-.orbit-free-layout .flexlayout__splitter:hover { background: var(--color-highlight); opacity: 1; }
+/* ── Orbit (free layout) ── hairline splitters, a slim tab strip with raised
+   selected tabs, and soft accent drop targets. Panel chrome itself is the
+   PanelShell inside each tab. */
+.orbit-free-layout {
+  --ofl-border: color-mix(in oklab, var(--color-border) 70%, transparent);
+  --ofl-selected: color-mix(in oklab, var(--color-text) 7%, transparent);
+  --ofl-accent-soft: color-mix(in oklab, var(--color-highlight) 16%, transparent);
+}
+.orbit-free-layout .flexlayout__layout { background: var(--color-bg); }
+.orbit-free-layout .flexlayout__tabset { border: 0; background: var(--color-bg); }
+.orbit-free-layout .flexlayout__tabset_content { background: var(--color-bg); }
+.orbit-free-layout .flexlayout__splitter { background: var(--ofl-border); opacity: 1; transition: background-color 150ms; }
+.orbit-free-layout .flexlayout__splitter:hover { background: color-mix(in oklab, var(--color-text) 25%, transparent); opacity: 1; }
+.orbit-free-layout .flexlayout__splitter_drag { background: var(--color-highlight); opacity: 1; border-radius: 0; }
+.orbit-free-layout .flexlayout__tabset_tabbar_outer {
+  height: 36px;
+  padding: 0 6px 0 6px;
+  background: color-mix(in oklab, var(--color-bg) 96%, var(--color-text) 4%);
+  border-bottom: 1px solid var(--ofl-border);
+}
+.orbit-free-layout .flexlayout__tabset_tabbar_inner_tab_container { gap: 2px; align-items: center; }
+.orbit-free-layout .flexlayout__tab_button {
+  height: 26px;
+  padding: 0 6px 0 9px;
+  margin: 0;
+  border: 0;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 450;
+  color: var(--color-text-muted);
+  transition: color 150ms, background-color 150ms, box-shadow 200ms;
+}
+.orbit-free-layout .flexlayout__tab_button:hover { background: color-mix(in oklab, var(--color-text) 4.5%, transparent); color: var(--color-text); }
+.orbit-free-layout .flexlayout__tab_button--selected {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 7%), inset 0 0 0 .5px var(--ofl-border);
+}
+.orbit-free-layout .flexlayout__tab_button--selected::after { display: none; }
+.orbit-free-layout .flexlayout__tab_button_trailing { margin-left: 4px; border-radius: 5px; }
+.orbit-free-layout .flexlayout__tab_toolbar button { border-radius: 7px !important; }
+.orbit-free-layout .flexlayout__outline_rect {
+  border: 1.5px solid var(--color-highlight);
+  background: var(--ofl-accent-soft);
+  border-radius: 12px;
+  box-shadow: 0 0 0 3px var(--ofl-accent-soft);
+  transition: all 160ms cubic-bezier(.3, 1.2, .45, 1);
+}
+.orbit-free-layout .flexlayout__outline_rect_edge {
+  background: var(--ofl-accent-soft);
+  border: 1.5px solid var(--color-highlight);
+  border-radius: 8px;
+}
+.orbit-free-layout .flexlayout__edge_rect { background: var(--ofl-accent-soft); border-radius: 6px; }
+.orbit-free-layout .flexlayout__drag_rect {
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--ofl-border);
+  border-radius: 9px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 7%), 0 16px 36px -14px rgb(0 0 0 / 30%);
+  font-size: 12.5px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .orbit-free-layout .flexlayout__outline_rect,
+  .orbit-free-layout .flexlayout__splitter,
+  .orbit-free-layout .flexlayout__tab_button { transition: none; }
+}
 
 .grove-flex-flexlayout__outline_rect {
   border: 2px dashed var(--color-highlight);

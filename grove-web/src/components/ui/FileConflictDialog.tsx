@@ -1,5 +1,8 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel, OrbitDialogLayer } from "../../orbit/ui/Dialog";
 
 export interface FileConflictDialogProps {
   /** The filename that caused the conflict */
@@ -31,6 +34,7 @@ export function FileConflictDialog({
   onOverwrite,
   onRename,
 }: FileConflictDialogProps) {
+  const orbit = useOrbitInterface();
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const id = setTimeout(() => {
@@ -49,6 +53,50 @@ export function FileConflictDialog({
     if (isOverwrite) onOverwrite();
     else onRename();
   };
+
+  if (orbit) {
+    return createPortal(
+      <OrbitDialogLayer open onClose={onCancel} zIndex={9999} maxWidth="max-w-[380px]">
+        <DialogPanel>
+          <DialogHead
+            title="File already exists"
+            description={<p><span className="oui-mono">{fileName}</span> already exists at the destination. Choose what to do:</p>}
+          />
+          <DialogBody>
+            <DialogField
+              label="Save as"
+              note={isOverwrite ? <span className="oui-dlg-warn">This will replace the existing file.</span> : undefined}
+            >
+              <input
+                ref={inputRef}
+                value={newName}
+                onChange={(e) => onNewNameChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleConfirm();
+                  if (e.key === "Escape") onCancel();
+                }}
+                spellCheck={false}
+                className="oui-field oui-mono"
+              />
+            </DialogField>
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={onCancel}>Cancel</OrbitButton>
+            <OrbitButton
+              variant="primary"
+              onClick={handleConfirm}
+              disabled={!canConfirm}
+              className={isOverwrite ? "oui-btn-tone" : undefined}
+              style={isOverwrite ? ({ "--oui-tone": "var(--o-warn)" } as React.CSSProperties) : undefined}
+            >
+              {isOverwrite ? "Overwrite" : "Rename"}
+            </OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+      </OrbitDialogLayer>,
+      document.body,
+    );
+  }
 
   return createPortal(
     <div

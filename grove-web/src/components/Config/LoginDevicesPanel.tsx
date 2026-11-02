@@ -1,6 +1,9 @@
 import { Monitor, Smartphone, Pencil, LogOut, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import { dateTime, deviceIsMobile, lastUsed, useLoginDevices } from './useLoginDevices';
 import { DialogShell } from '../ui/DialogShell';
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
 
 const buttonClass = 'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50';
 
@@ -10,6 +13,7 @@ export function LoginDevicesPanel() {
     editing, setEditing, name, setName,
     refresh, rename, signOut, trust,
   } = useLoginDevices();
+  const orbit = useOrbitInterface();
 
   return (
     <div className="space-y-3">
@@ -70,6 +74,19 @@ export function LoginDevicesPanel() {
         </div>
       )}
       <DialogShell isOpen={!!editing} onClose={() => { if (!busy) setEditing(null); }}>
+        {orbit ? (
+          <DialogPanel onSubmit={rename}>
+            <DialogHead title="Device name" />
+            <DialogBody>
+              <input autoFocus aria-label="Device name" value={name} onChange={event => setName(event.target.value)} maxLength={80} className="oui-field" />
+              {error && <p role="alert" className="oui-dlg-error">{error}</p>}
+            </DialogBody>
+            <DialogFoot>
+              <OrbitButton variant="ghost" disabled={busy} onClick={() => setEditing(null)}>Cancel</OrbitButton>
+              <OrbitButton type="submit" variant="primary" disabled={busy || !name.trim()}>{busy ? 'Saving…' : 'Save'}</OrbitButton>
+            </DialogFoot>
+          </DialogPanel>
+        ) : (
         <form onSubmit={rename} className="p-5 space-y-4 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
           <div className="flex items-center justify-between">
             <h2 className="font-medium text-[var(--color-text)]">Device name</h2>
@@ -83,6 +100,7 @@ export function LoginDevicesPanel() {
             <button type="submit" disabled={busy || !name.trim()} className={`${buttonClass} bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]`}>{busy ? 'Saving…' : 'Save'}</button>
           </div>
         </form>
+        )}
       </DialogShell>
     </div>
   );

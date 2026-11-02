@@ -14,6 +14,8 @@ import type { FileNavRequest } from "../../Review";
 import { useProject, useTheme } from "../../../context";
 import type { LinkedReviewProject } from "../../../hooks/useLinkedReviewProjects";
 import { getProjectStyle } from "../../../utils/projectStyle";
+import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
+import { useInPanelShell } from "../../../orbit/ui/panelSlots";
 
 /** One Code Review the panel can show: the task's own, or a linked Project's. */
 interface ReviewTarget {
@@ -185,19 +187,25 @@ export function TaskCodeReview({
     writeSelection(selectionKey, id);
   };
   const showSwitcher = (linkedProjects?.length ?? 0) > 0;
+  // In an Orbit panel shell the shell header is the title (and owns close);
+  // Review puts its controls in that header (see Review/OrbitReviewChrome).
+  const orbit = useOrbitInterface();
+  const inShell = useInPanelShell();
+  const shellOwnsHeader = orbit && inShell;
 
-  const containerClass = `h-full min-h-0 flex-1 flex flex-col bg-[var(--color-bg-secondary)] overflow-hidden ${fullscreen ? '' : 'rounded-lg border border-[var(--color-border)]'}`;
+  const containerClass = `h-full min-h-0 flex-1 flex flex-col bg-[var(--color-bg-secondary)] overflow-hidden ${fullscreen || shellOwnsHeader ? '' : 'rounded-lg border border-[var(--color-border)]'}`;
 
   return (
     <motion.div
-      initial={{ x: "100%", opacity: 0 }}
+      // In Orbit the dock and PanelShell already animate the panel in.
+      initial={shellOwnsHeader ? false : { x: "100%", opacity: 0 }}
       animate={{ x: 0, opacity: 1, transitionEnd: { transform: "none" } }}
       exit={{ x: "100%", opacity: 0 }}
       transition={{ type: "spring", damping: 25, stiffness: 200 }}
       className={containerClass}
     >
       {/* Header - 只在非 hideHeader 模式下显示 */}
-      {!hideHeader && (
+      {!hideHeader && !shellOwnsHeader && (
       <div className="flex items-center justify-between px-4 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2 text-sm text-[var(--color-text)]">
           <Code className="w-4 h-4" />

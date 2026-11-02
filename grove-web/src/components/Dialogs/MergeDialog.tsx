@@ -3,6 +3,15 @@ import { GitMerge, X, Loader2, GitBranch } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { Segmented } from "../../orbit/ui/Segmented";
+import { DialogBody, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
+
+const ORBIT_METHODS: { value: MergeMethod; label: string; note: string }[] = [
+  { value: "squash", label: "Squash and merge", note: "Combine all commits into one commit on the target branch" },
+  { value: "merge-commit", label: "Merge commit", note: "Create a merge commit preserving all individual commits" },
+];
 
 type MergeMethod = "squash" | "merge-commit";
 
@@ -35,6 +44,7 @@ export function MergeDialog({
   // would otherwise overwrite each other on every re-render — only the
   // last-mounted dialog's binding would be live.
   useKeyboardScope("dialog.merge", isOpen);
+  const orbit = useOrbitInterface();
 
   const handleSubmit = useCallback(
     (e?: React.FormEvent) => {
@@ -45,6 +55,54 @@ export function MergeDialog({
     },
     [isLoading, onMerge, selectedMethod],
   );
+
+  if (orbit) {
+    const method = ORBIT_METHODS.find((m) => m.value === selectedMethod) ?? ORBIT_METHODS[0];
+    return (
+      <DialogShell isOpen={isOpen} onClose={onCancel} maxWidth="max-w-[520px]">
+        {isOpen && (
+          <MergeDialogBindings onCancel={onCancel} onSubmit={handleSubmit} methodSelected={!!selectedMethod} />
+        )}
+        <DialogPanel onSubmit={handleSubmit}>
+          <DialogHead title={<>Merge “{taskName}”</>} />
+          <DialogBody>
+            <Segmented
+              value={selectedMethod}
+              options={ORBIT_METHODS.map(({ value, label }) => ({ value, label }))}
+              onChange={setSelectedMethod}
+              ariaLabel="Merge method"
+              block
+            />
+            <div className="oui-dlg-flow">
+              <span className="oui-mono" title={branchName}>{branchName}</span>
+              <span className="oui-dlg-arrow" aria-label="into">→</span>
+              <span className="oui-mono" title={targetBranch}>{targetBranch}</span>
+            </div>
+            <p key={method.value} className="oui-dlg-note oui-dlg-flow-note">{method.note}</p>
+            {error && <p className="oui-dlg-error" role="alert">{error}</p>}
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={onCancel} disabled={isLoading}>
+              Cancel
+            </OrbitButton>
+            <OrbitButton type="submit" variant="primary" disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Loader2 className="oui-spin" aria-hidden="true" />
+                  Merging…
+                </>
+              ) : (
+                <>
+                  <GitMerge aria-hidden="true" />
+                  Merge
+                </>
+              )}
+            </OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={onCancel}>

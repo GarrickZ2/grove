@@ -15,6 +15,8 @@ import {
   parseWhen,
   userKeymapStore,
 } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { OrbitCommandPalette, PaletteEmpty, PaletteItem, PaletteKeys } from "../../orbit/ui/CommandPalette";
 
 /**
  * The Command Palette — Cmd+Shift+P opens a fuzzy-searchable list of
@@ -34,6 +36,7 @@ export function ActionCommandPalette() {
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const orbit = useOrbitInterface();
 
   // While open, push a scope so palette.command.close (Escape) sits on
   // top of the stack. Also expose `paletteOpen` as a context key so
@@ -171,6 +174,45 @@ export function ActionCommandPalette() {
 
   if (typeof document === "undefined") return null;
 
+  if (orbit) {
+    return (
+      <OrbitCommandPalette
+        open={open}
+        onClose={() => setOpen(false)}
+        label="Run a command"
+        query={search}
+        onQueryChange={setSearch}
+        placeholder="Search commands…"
+        inputRef={inputRef}
+        onInputKeyDown={handleKeyDown}
+        listRef={listRef}
+        scope="Commands"
+        zIndex={60}
+        hints={[
+          { keys: ["↑", "↓"], label: "Navigate" },
+          { keys: ["↵"], label: "Run" },
+          { keys: ["Esc"], label: "Close" },
+        ]}
+        footerAside={`${filtered.length} of ${visibleCommands.length}`}
+      >
+        {filtered.length === 0 ? (
+          <PaletteEmpty>No commands match “{search}”</PaletteEmpty>
+        ) : (
+          filtered.map((cmd, i) => (
+            <OrbitPaletteRow
+              key={cmd.id}
+              index={i}
+              cmd={cmd}
+              highlighted={i === highlightedIndex}
+              onClick={() => executeAt(i)}
+              onHover={() => setHighlightedIndex(i)}
+            />
+          ))
+        )}
+      </OrbitCommandPalette>
+    );
+  }
+
   return createPortal(
     <AnimatePresence>
       {open && (
@@ -300,6 +342,27 @@ function PaletteRow({ index, cmd, highlighted, onClick, onHover }: PaletteRowPro
         )}
       </div>
     </div>
+  );
+}
+
+function OrbitPaletteRow({ index, cmd, highlighted, onClick, onHover }: PaletteRowProps) {
+  const override = userKeymapStore.getOverrides(cmd.id);
+  const bindings: KeyBinding[] = effectiveBindings(cmd, override);
+
+  return (
+    <PaletteItem
+      data-index={index}
+      active={highlighted}
+      title={cmd.name}
+      description={cmd.description ? `${cmd.category} · ${cmd.description}` : cmd.category}
+      trailing={bindings.length === 0 ? (
+        <span>No binding</span>
+      ) : (
+        bindings.map((b, i) => <PaletteKeys key={i} keys={[formatKeyDisplay(b.key)]} />)
+      )}
+      onClick={onClick}
+      onMouseMove={onHover}
+    />
   );
 }
 

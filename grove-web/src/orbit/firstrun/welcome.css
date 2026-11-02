@@ -1,0 +1,48 @@
+/* Orbit Welcome (Welcome board): aurora backdrop, the logo, the ways to add a
+   first project, and which coding agents are ready. */
+.owl{position:fixed;inset:0;z-index:50;overflow-y:auto;display:flex;align-items:center;justify-content:center;padding:48px 16px;background:var(--o-bg);color:var(--o-text);font-size:13px;-webkit-font-smoothing:antialiased}
+.owl-aurora{position:fixed;inset:-20%;pointer-events:none;filter:blur(60px);opacity:.7}
+.owl-aurora i{position:absolute;border-radius:50%}
+.owl-aurora .a1{width:46%;height:46%;left:18%;top:8%;background:color-mix(in oklab,#34d399 40%,transparent);animation:owl-drift1 16s ease-in-out infinite}
+.owl-aurora .a2{width:40%;height:40%;right:14%;top:20%;background:color-mix(in oklab,#60a5fa 32%,transparent);animation:owl-drift2 19s ease-in-out infinite}
+.owl-aurora .a3{width:36%;height:36%;left:36%;bottom:4%;background:color-mix(in oklab,#f9a8d4 30%,transparent);animation:owl-drift3 22s ease-in-out infinite}
+@keyframes owl-drift1{50%{transform:translate(8%,10%) scale(1.1)}}
+@keyframes owl-drift2{50%{transform:translate(-10%,6%) scale(.92)}}
+@keyframes owl-drift3{50%{transform:translate(6%,-10%) scale(1.08)}}
+.owl-veil{position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 42%,transparent 0,color-mix(in oklab,var(--o-bg) 70%,transparent) 55%,var(--o-bg) 85%)}
+.owl-center{position:relative;width:min(820px,100%);margin:auto 0;text-align:center}
+.owl-mark{width:96px;height:96px;margin:0 auto;display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 16px 30px color-mix(in oklab,var(--o-accent) 30%,transparent));animation:owl-markin 900ms cubic-bezier(.3,1.5,.5,1) both}
+@keyframes owl-markin{0%{opacity:0;transform:scale(.5) rotate(-12deg)}60%{opacity:1;transform:scale(1.06) rotate(3deg)}100%{transform:none}}
+.owl h1{margin:26px 0 8px;font-size:40px;font-weight:700;letter-spacing:-.04em;line-height:1.08;animation:owl-up 700ms 120ms var(--o-ease-out) both}
+.owl-lead{margin:0 auto;max-width:520px;font-size:15px;line-height:1.6;color:var(--o-muted);animation:owl-up 700ms 200ms var(--o-ease-out) both}
+@keyframes owl-up{from{opacity:0;transform:translateY(12px);filter:blur(6px)}}
+.owl-choices{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:34px}
+.owl-choice{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:18px;border-radius:16px;border:1px solid var(--o-border);background:color-mix(in oklab,var(--o-bg) 82%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);font:inherit;color:inherit;text-align:left;cursor:pointer;box-shadow:var(--o-shadow-1);animation:owl-up 700ms var(--o-ease-out) both;transition:transform 280ms cubic-bezier(.3,1.4,.5,1),box-shadow 280ms,border-color 200ms}
+.owl-choice:hover{transform:translateY(-4px);border-color:var(--o-border-strong);box-shadow:0 26px 50px -28px var(--glow)}
+.owl-choice:focus-visible{outline:2px solid var(--o-accent);outline-offset:3px}
+.owl-choice.is-primary{border-color:color-mix(in oklab,var(--o-accent) 40%,var(--o-border))}
+.owl-cic{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:inset 0 1px 0 rgb(255 255 255 / 35%),0 10px 22px -10px var(--glow);transition:transform 320ms var(--o-ease-pop)}
+.owl-choice:hover .owl-cic{transform:rotate(-6deg) scale(1.08)}
+.owl-choice b{font-size:14px;font-weight:600}
+.owl-choice span:last-child{font-size:12.5px;color:var(--o-muted);line-height:1.45}
+.owl-agents{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:28px;font-size:12.5px;color:var(--o-muted);animation:owl-up 700ms 560ms var(--o-ease-out) both}
+.owl-ag{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px 0 6px;border-radius:999px;border:1px solid var(--o-border);background:color-mix(in oklab,var(--o-bg) 80%,transparent);color:var(--o-text);animation:owl-chip 420ms cubic-bezier(.3,1.5,.5,1) both}
+@keyframes owl-chip{from{opacity:0;transform:scale(.8)}}
+.owl-ag-icon{flex-shrink:0}
+.owl-ag.is-more{padding:0 10px;color:var(--o-muted)}
+.owl-ag.is-scan{color:var(--o-muted)}
+.owl-ag.is-scan i{width:16px;height:16px;border-radius:5px;background:var(--o-track);animation:owl-pulse 1s ease-in-out infinite}
+@keyframes owl-pulse{50%{opacity:.4}}
+.owl-ok{color:var(--o-success)}
+.owl-link{display:inline-flex;align-items:center;gap:5px;border:0;background:none;padding:0;font:inherit;color:var(--o-text);cursor:pointer;text-decoration:underline;text-decoration-color:var(--o-track);text-underline-offset:3px}
+.owl-noag{display:flex;flex-direction:column;align-items:center;gap:4px;max-width:440px;margin:28px auto 0;padding:16px 18px;border-radius:16px;border:1px solid color-mix(in oklab,var(--o-warn) 35%,var(--o-border));background:color-mix(in oklab,var(--o-bg) 86%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);animation:owl-up 600ms var(--o-ease-out) both}
+.owl-noag b{font-size:14px;font-weight:600}
+.owl-noag span{font-size:12.5px;line-height:1.5;color:var(--o-muted)}
+.owl-noag-row{display:flex;gap:6px;margin-top:10px}
+.owl-spin{animation:owl-spin .8s linear infinite}
+@keyframes owl-spin{to{transform:rotate(360deg)}}
+.owl-version{position:fixed;left:0;right:0;bottom:16px;margin:0;display:flex;justify-content:center;align-items:center;gap:8px;font-size:12px;color:var(--o-muted);pointer-events:none}
+.owl-remote{padding:1px 6px;border-radius:5px;border:1px solid color-mix(in oklab,var(--o-accent) 25%,transparent);background:var(--o-accent-soft);color:var(--o-accent);font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+@media (max-width:900px){.owl-choices{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.owl h1{font-size:30px}.owl-choices{grid-template-columns:minmax(0,1fr)}.owl-version{position:static;margin-top:24px}}
+@media (prefers-reduced-motion:reduce){.owl *{animation:none!important;transition:none!important}}

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Link2, Plus, X } from "lucide-react";
+import { useProject } from "../../context";
+import { requestOpenReview } from "../workspace/openReview";
 import { Button, Card, EmptyState, StatusDot, formatDateTime, shortAgo } from "../ui";
 import type { LinkedProjectItem } from "../../api";
 import type { Project, Task } from "../../data/types";
@@ -130,6 +132,7 @@ function TaskRow({ index, task, activity, open, onToggle, now, props }: TaskRowP
           <span className="odb-ago" title={formatDateTime(task.updatedAt)}>{shortAgo(task.updatedAt.getTime(), now)}</span>
         </span>
         <span className="odb-row-acts">
+          <ReviewAction task={task} onOpen={onOpen} />
           <Button variant="primary" size="sm" onClick={() => onOpen(task, activity?.chatId ?? null)}>Open</Button>
         </span>
       </div>
@@ -183,5 +186,26 @@ function TaskRow({ index, task, activity, open, onToggle, now, props }: TaskRowP
         ) : null}
       </AnimatePresence>
     </motion.div>
+  );
+}
+
+/** Opens the task with its Code Review panel showing (see orbit/workspace/openReview.ts). */
+function ReviewAction({ task, onOpen }: { task: Task; onOpen: InFlightCardProps["onOpen"] }) {
+  const { selectedProject } = useProject();
+  // Studio tasks review linked Projects only; their own work is in Artifacts.
+  if (!selectedProject || selectedProject.projectType === "studio") return null;
+  const projectId = selectedProject.id;
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      title="Open this task with Code Review showing"
+      onClick={() => {
+        requestOpenReview({ projectId, taskId: task.id });
+        onOpen(task, null);
+      }}
+    >
+      Review
+    </Button>
   );
 }

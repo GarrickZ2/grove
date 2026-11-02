@@ -69,6 +69,10 @@ import { ConversationSidebar } from './ConversationSidebar';
 import { CodeSearchBar } from './CodeSearchBar';
 import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText, RefreshCw, Code, Columns2, Eye, ZoomIn, ZoomOut } from 'lucide-react';
 import { VersionSelector } from './VersionSelector';
+import { OrbitReviewBar, OrbitReviewHeader, OrbitReviewSummary } from './OrbitReviewChrome';
+import { useOrbitReview } from './useOrbitReview';
+import { PanelEmpty, PanelError, PanelLoading } from '../../orbit/ui/PanelShell';
+import { Button as OrbitButton } from '../../orbit/ui/Button';
 import { useIsMobile } from '../../hooks';
 import { useKeyboardScope, useCommand, useContextKey } from '../../keyboard';
 import './diffTheme.css';
@@ -2012,13 +2016,57 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     setTimeout(() => tryScroll(1), 150);
   }, [scrollToFile]);
 
+  // Orbit (inside a workspace PanelShell): the shell header carries the
+  // scope switch, refresh and the view options; see OrbitReviewChrome.
+  const orbit = useOrbitReview();
+  const handleOpenSearch = useCallback(() => {
+    setCodeSearchVisible(true);
+    setCodeSearchFocusTrigger((n) => n + 1);
+  }, []);
+  const handleToggleSidebar = useCallback(() => setSidebarVisible((v) => !v), [setSidebarVisible]);
+  const handleToggleConvSidebar = useCallback(() => setConvSidebarVisible((v) => !v), [setConvSidebarVisible]);
+  const handleToggleFocusModeClick = useCallback(() => { void handleToggleFocusMode(); }, [handleToggleFocusMode]);
+
   // Comments for a specific file
   const getFileComments = (filePath: string) => {
     return comments.filter((c) => c.file_path === filePath);
   };
 
+  const orbitHeader = orbit ? (
+    <OrbitReviewHeader
+      isGitRepo={isGitRepo}
+      viewMode={viewMode}
+      onSetViewMode={handleSetViewMode}
+      refreshing={refreshing}
+      onRefresh={handleRefresh}
+      sidebarVisible={sidebarVisible}
+      onToggleSidebar={handleToggleSidebar}
+      convSidebarVisible={convSidebarVisible}
+      onToggleConvSidebar={handleToggleConvSidebar}
+      focusMode={focusMode}
+      onToggleFocusMode={handleToggleFocusModeClick}
+      displayMode={displayMode}
+      onSetDisplayMode={setDisplayMode}
+      fontSize={fontSize}
+      onZoomIn={handleZoomIn}
+      onZoomOut={handleZoomOut}
+      onZoomReset={handleZoomReset}
+      onOpenSearch={handleOpenSearch}
+    />
+  ) : null;
+
   // Loading state
   // Error state
+  if (error && orbit) {
+    return (
+      <div className={`diff-review-page is-orbit ${isEmbedded ? 'embedded' : ''}`}>
+        {orbitHeader}
+        <div className="orv-state">
+          <PanelError title="Couldn’t load the review" onRetry={handleRefresh} retrying={refreshing}>{error}</PanelError>
+        </div>
+      </div>
+    );
+  }
   if (error) {
     return (
       <div className={`diff-review-page ${isEmbedded ? 'embedded' : ''}`}>
@@ -2043,15 +2091,46 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
   // Ensure selectedFile is valid - if not, use first file
   const validSelectedFile = activeFilePath;
+  const openCommentCount = orbit ? comments.filter((c) => c.status === 'open' || c.status === 'outdated').length : 0;
+  const hasVersionRange = viewMode === 'diff' && fromOptions.length > 0 && toOptions.length > 0;
 
   return (
     <div
-      className={`diff-review-page ${isEmbedded ? 'embedded' : ''}`}
+      className={`diff-review-page ${isEmbedded ? 'embedded' : ''}${orbit ? ' is-orbit' : ''}`}
       style={{
         '--diff-font-size': `${fontSize}px`,
         '--diff-line-height': `${fontSize + 8}px`,
       } as React.CSSProperties}
     >
+      {orbit ? (
+        <>
+          {orbitHeader}
+          <OrbitReviewBar
+            leading={title}
+            range={hasVersionRange ? (
+              <>
+                <VersionSelector options={fromOptions} selected={fromVersion} onChange={handleFromVersionChange} footer={versionFooter} />
+                <span className="orv-range-arrow" aria-hidden="true">&rarr;</span>
+                <VersionSelector options={toOptions} selected={toVersion} onChange={handleToVersionChange} footer={versionFooter} />
+              </>
+            ) : undefined}
+            showLayout={viewMode === 'diff'}
+            viewType={viewType}
+            onSetViewType={setViewType}
+            allowSplit={!isMobile}
+            canPrev={totalFiles > 0 && currentFileIndex > 0}
+            canNext={totalFiles > 0 && currentFileIndex < totalFiles - 1}
+            onPrev={goToPrevFile}
+            onNext={goToNextFile}
+            convSidebarVisible={convSidebarVisible}
+            onToggleConvSidebar={handleToggleConvSidebar}
+            openComments={openCommentCount}
+            warning={focusModeWarn}
+            onDismissWarning={() => setFocusModeWarn(null)}
+          />
+        </>
+      ) : (
+      <>
       {/* Page Header with Mode Selector */}
       <div className="diff-page-header">
         {title ?? <div className="diff-page-title">Code Review</div>}
@@ -2220,6 +2299,8 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
           </button>
         </div>
       </div>
+      </>
+      )}
 
       {/* Layout */}
       <div
@@ -2229,7 +2310,27 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
           '--diff-conv-sidebar-width': `${convSidebarWidth}px`,
         } as React.CSSProperties}
       >
-        {loading ? (
+        {loading && orbit ? (
+          <div className="diff-content orv-state">
+            <PanelLoading boxes={3} label="Loading review" />
+          </div>
+        ) : !loading && isEmpty && orbit ? (
+          <div className="diff-content orv-state is-empty">
+            <PanelEmpty
+              icon={viewMode === 'diff' ? GitCompare : FileText}
+              title={viewMode === 'diff' ? 'No changes to review' : 'No files to show'}
+              action={viewMode === 'diff' && isGitRepo !== false ? (
+                <OrbitButton variant="secondary" size="sm" onClick={() => handleSetViewMode('full')}>
+                  <FileText aria-hidden="true" />Browse all files
+                </OrbitButton>
+              ) : undefined}
+            >
+              {viewMode === 'diff'
+                ? 'Nothing differs between the selected versions. When the agent edits files, they show up here.'
+                : 'This worktree has no files yet.'}
+            </PanelEmpty>
+          </div>
+        ) : loading ? (
           <div className="diff-content" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 8 }}>
             <div className="spinner" />
             <span style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>Loading...</span>
@@ -2259,6 +2360,14 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
             {/* Sidebar */}
             <FileTreeSidebar
+              summary={orbit ? (
+                <OrbitReviewSummary
+                  viewed={viewedCount}
+                  total={totalFiles}
+                  additions={viewMode === 'diff' ? diffData?.total_additions ?? 0 : undefined}
+                  deletions={viewMode === 'diff' ? diffData?.total_deletions ?? 0 : undefined}
+                />
+              ) : undefined}
               files={displayFiles}
               selectedFile={validSelectedFile}
               onSelectFile={handleSelectFile}

@@ -18,6 +18,8 @@ interface MultiTabTerminalPanelProps {
   activeId: string;
   onTabsChange: (tabs: TerminalTab[], activeId: string) => void;
   onClose?: () => void;
+  /** Orbit: the bottom-dock frame (dark tab strip in the terminal's colours). */
+  orbit?: boolean;
 }
 
 export function MultiTabTerminalPanel({
@@ -28,6 +30,7 @@ export function MultiTabTerminalPanel({
   activeId,
   onTabsChange,
   onClose,
+  orbit = false,
 }: MultiTabTerminalPanelProps) {
   const { terminalTheme } = useTerminalTheme();
 
@@ -97,6 +100,73 @@ export function MultiTabTerminalPanel({
   const switchTab = useCallback((id: string) => {
     if (id !== activeId) onTabsChange(tabs, id);
   }, [tabs, activeId, onTabsChange]);
+
+  if (orbit) {
+    const termStyle = {
+      "--ows-term-bg": terminalTheme.colors.background,
+      "--ows-term-fg": terminalTheme.colors.foreground,
+    } as React.CSSProperties;
+    return (
+      <div className="ows-term" style={termStyle}>
+        <div className="ows-term-head" role="tablist" aria-label="Terminals">
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeId;
+            const isRenaming = renamingId === tab.id;
+            return (
+              <div
+                key={tab.id}
+                role="tab"
+                aria-selected={isActive}
+                tabIndex={0}
+                className={`ows-ttab${isActive ? " is-on" : ""}`}
+                onClick={() => !isRenaming && switchTab(tab.id)}
+                onKeyDown={(e) => { if (!isRenaming && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); switchTab(tab.id); } }}
+              >
+                {isRenaming ? (
+                  <input
+                    autoFocus
+                    value={draftName}
+                    aria-label="Terminal name"
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={() => commitRename(tab.id)}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+                      else if (e.key === "Escape") setRenamingId(null);
+                    }}
+                  />
+                ) : (
+                  <span
+                    className="ows-ttab-label"
+                    title="Double-click to rename"
+                    onDoubleClick={(e) => { e.stopPropagation(); beginRename(tab); }}
+                  >
+                    {tab.label}
+                  </span>
+                )}
+                <button type="button" className="ows-ttab-x" aria-label={`Close ${tab.label}`} onClick={(e) => closeTab(tab.id, e)}>
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            );
+          })}
+          <button type="button" className="ows-term-ib" aria-label="New terminal" title="New terminal" onClick={addTab}>
+            <Plus />
+          </button>
+          <span className="ows-term-spacer" />
+          {onClose && (
+            <button type="button" className="ows-term-ib" aria-label="Close terminal" title="Close terminal" onClick={onClose}>
+              <X />
+            </button>
+          )}
+        </div>
+        <div className="ows-term-body">
+          <XTerminal key={activeId} projectId={projectId} taskId={task.id} instanceId={activeId} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`ide-panel-slot ide-panel-slot--${side} ide-panel-slot--terminal`}>

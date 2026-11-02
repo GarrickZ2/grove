@@ -3,6 +3,9 @@ import { Folder, GitBranch, ChevronUp, ChevronRight, Home as HomeIcon, Check, X 
 import { Button, DialogShell } from "../ui";
 import { getFolderRoots, listFolder, type ListFolderResponse } from "../../api/projects";
 import { filesystemBreadcrumbs } from "../../utils/filesystemPath";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
 
 interface Props {
   isOpen: boolean;
@@ -42,6 +45,7 @@ export function FolderTreePickerDialog({
   const [roots, setRoots] = useState<string[]>([]);
   const [home, setHome] = useState<string | null>(null);
   const [directPath, setDirectPath] = useState("");
+  const orbit = useOrbitInterface();
 
   const reqIdRef = useRef(0);
   const prevIsOpenRef = useRef(false);
@@ -97,6 +101,84 @@ export function FolderTreePickerDialog({
   const crumbs = data ? filesystemBreadcrumbs(data.path) : [];
 
   const currentName = crumbs.length ? crumbs[crumbs.length - 1].label : "";
+
+  if (orbit) {
+    return (
+      <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-2xl" zIndex={300}>
+        <DialogPanel>
+          <DialogHead title={title} />
+          <DialogBody>
+            <div className="oui-dlg-toolbar">
+              {roots.length > 0 && roots[0] !== "/" && (
+                <select
+                  aria-label="Drive"
+                  value={roots.find((root) => data?.path.slice(0, 2).toLowerCase() === root.slice(0, 2).toLowerCase()) || ""}
+                  onChange={(e) => void load(e.target.value)}
+                  className="oui-field oui-dlg-drive"
+                >
+                  <option value="" disabled>Drive</option>
+                  {roots.map((root) => <option key={root} value={root}>{root}</option>)}
+                </select>
+              )}
+              <OrbitButton variant="ghost" size="sm" onClick={() => data?.parent && void load(data.parent)} disabled={!data?.parent || loading}>
+                <ChevronUp aria-hidden="true" /> Up
+              </OrbitButton>
+              <OrbitButton variant="ghost" size="sm" onClick={() => home && void load(home)} disabled={!home || loading}>
+                <HomeIcon aria-hidden="true" /> Home
+              </OrbitButton>
+              <nav className="oui-dlg-crumbs" aria-label="Path">
+                {crumbs.map((c, i) => (
+                  <span key={c.path}>
+                    {i > 0 && <ChevronRight aria-hidden="true" />}
+                    <button type="button" onClick={() => void load(c.path)} disabled={loading} title={c.path}>{c.label}</button>
+                  </span>
+                ))}
+              </nav>
+            </div>
+            <form
+              className="oui-dlg-inline"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (directPath.trim()) void load(directPath.trim());
+              }}
+            >
+              <input
+                aria-label="Folder path"
+                value={directPath}
+                onChange={(event) => setDirectPath(event.target.value)}
+                placeholder="Go to an absolute path, including network shares"
+                spellCheck={false}
+                className="oui-field oui-mono"
+              />
+              <OrbitButton type="submit" disabled={!directPath.trim() || loading}>Go</OrbitButton>
+            </form>
+            <div className="oui-dlg-list oui-scroll is-tall">
+              {loading && <div className="oui-dlg-list-empty">Loading…</div>}
+              {error && !loading && <p className="oui-dlg-error" role="alert">{error}</p>}
+              {data && !loading && !error && data.entries.length === 0 && (
+                <div className="oui-dlg-list-empty">No sub-directories.</div>
+              )}
+              {data && !loading && !error && data.entries.map((e) => (
+                <button key={e.name} type="button" onClick={() => void load(e.path)} disabled={loading} className="oui-dlg-choice">
+                  <Folder aria-hidden="true" className={e.is_git_repo ? "is-accent" : undefined} />
+                  <span className="oui-truncate">{e.name}</span>
+                  {e.is_git_repo && <span className="oui-dlg-tag"><GitBranch aria-hidden="true" />git</span>}
+                  <ChevronRight aria-hidden="true" className="oui-dlg-choice-chev" />
+                </button>
+              ))}
+            </div>
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={onClose}>Cancel</OrbitButton>
+            <OrbitButton variant="primary" onClick={() => data && onSelect(data.path)} disabled={!data || loading}>
+              <Check aria-hidden="true" />
+              {currentName ? `Select “${currentName}”` : "Select this folder"}
+            </OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-2xl" zIndex={300}>

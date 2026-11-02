@@ -3,6 +3,10 @@ import { X, GitBranchPlus, Check, Search } from "lucide-react";
 import { Button } from "../../ui";
 import { DialogShell } from "../../ui/DialogShell";
 import { useCommand, useContextKey, useKeyboardScope } from "../../../keyboard";
+import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../../orbit/ui/Button";
+import { DialogBody, DialogFoot, DialogHead, DialogPanel } from "../../../orbit/ui/Dialog";
+import { SearchField } from "../../../orbit/ui/SearchField";
 
 interface RebaseDialogProps {
   isOpen: boolean;
@@ -23,6 +27,7 @@ export function RebaseDialog({
 }: RebaseDialogProps) {
   const [selectedBranch, setSelectedBranch] = useState(currentTarget);
   const [searchQuery, setSearchQuery] = useState("");
+  const orbit = useOrbitInterface();
 
   const handleClose = useCallback(() => {
     setSelectedBranch(currentTarget);
@@ -66,6 +71,65 @@ export function RebaseDialog({
     },
     [selectedBranch, currentTarget, onRebase, onClose],
   );
+
+  if (orbit) {
+    const changed = selectedBranch !== currentTarget;
+    return (
+      <DialogShell isOpen={isOpen} onClose={handleClose}>
+        {isOpen && (
+          <RebaseDialogBindings onCancel={handleClose} onSubmit={handleSubmit} canSubmit={changed} />
+        )}
+        <DialogPanel onSubmit={handleSubmit}>
+          <DialogHead
+            title="Change target branch"
+            description={taskName ? <p>{taskName} · currently targets <span className="oui-mono">{currentTarget}</span></p> : undefined}
+          />
+          <DialogBody>
+            <SearchField value={searchQuery} onChange={setSearchQuery} label="Search branches" placeholder="Search branches…" />
+            <div className="oui-dlg-list oui-scroll" role="listbox" aria-label="Target branch">
+              {filteredBranches.length === 0 ? (
+                <div className="oui-dlg-list-empty">No branches found</div>
+              ) : (
+                filteredBranches.map((branch) => {
+                  const isCurrent = branch === currentTarget;
+                  const isSelected = selectedBranch === branch;
+                  return (
+                    <button
+                      key={branch}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      onClick={() => setSelectedBranch(branch)}
+                      disabled={isCurrent}
+                      className={`oui-dlg-choice${isSelected && !isCurrent ? " is-selected" : ""}`}
+                    >
+                      <span className="oui-mono oui-truncate">{branch}</span>
+                      {isCurrent && <span className="oui-dlg-tag">current</span>}
+                      {isSelected && !isCurrent && <Check className="oui-dlg-check" aria-hidden="true" />}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            {changed && (
+              <div className="oui-dlg-flow">
+                <span className="oui-mono">{currentTarget}</span>
+                <span className="oui-dlg-arrow" aria-label="to">→</span>
+                <span className="oui-mono">{selectedBranch}</span>
+              </div>
+            )}
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={handleClose}>Cancel</OrbitButton>
+            <OrbitButton type="submit" variant="primary" disabled={!changed}>
+              <GitBranchPlus aria-hidden="true" />
+              Change target
+            </OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={handleClose}>

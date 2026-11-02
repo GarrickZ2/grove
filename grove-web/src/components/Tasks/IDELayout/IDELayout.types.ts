@@ -24,6 +24,8 @@ export interface IDELayoutContainerProps {
   /** Orbit on a phone: the workspace actions, listed in the panel sheet. */
   phoneActions?: OrbitPhoneAction[];
   isActive?: boolean;
+  /** Flip the workspace between this layout and the free (FlexLayout) one. */
+  onToggleLayoutMode?: () => void;
 }
 
 export interface IDELayoutHandle {

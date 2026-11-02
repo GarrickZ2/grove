@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { MessageSquare, CheckCircle, Clock, FileCode, Loader2 } from "lucide-react";
 import { MarkdownRenderer } from "../../../ui";
 import type { Task } from "../../../../data/types";
-import { useProject } from "../../../../context/ProjectContext";
-import { getReviewComments, type ReviewCommentEntry } from "../../../../api";
+import type { ReviewCommentEntry } from "../../../../api";
+import { useOrbitInterface } from "../../../../orbit/ui/interfaceContext";
+import { OrbitCommentsPanel } from "../../../../orbit/workspace/panels/OrbitCommentsPanel";
+import { useReviewComments } from "./useReviewComments";
 import { AgentAvatar } from "../../../Review/AgentAvatar";
 import { AgentDisplay } from "../../../Review/agentDisplay";
 
@@ -138,36 +140,15 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
 
 type FilterType = "all" | "open" | "resolved";
 
-export function CommentsTab({ projectId, task }: CommentsTabProps) {
-  const { selectedProject } = useProject();
-  const resolvedProjectId = projectId || selectedProject?.id;
-  const [comments, setComments] = useState<ReviewCommentEntry[]>([]);
-  const [openCount, setOpenCount] = useState(0);
-  const [resolvedCount, setResolvedCount] = useState(0);
-  const [outdatedCount, setOutdatedCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+export function CommentsTab(props: CommentsTabProps) {
+  const orbit = useOrbitInterface();
+  if (orbit) return <OrbitCommentsPanel projectId={props.projectId} task={props.task} />;
+  return <WorkbenchCommentsTab {...props} />;
+}
+
+function WorkbenchCommentsTab({ projectId, task }: CommentsTabProps) {
+  const { comments, openCount, resolvedCount, outdatedCount, isLoading } = useReviewComments(projectId, task.id);
   const [filter, setFilter] = useState<FilterType>("all");
-
-  const loadComments = useCallback(async () => {
-    if (!resolvedProjectId) return;
-
-    try {
-      setIsLoading(true);
-      const response = await getReviewComments(resolvedProjectId, task.id);
-      setComments(response.comments);
-      setOpenCount(response.open_count);
-      setResolvedCount(response.resolved_count);
-      setOutdatedCount(response.outdated_count);
-    } catch (err) {
-      console.error("Failed to load review comments:", err);
-      setComments([]);
-    }
-    setIsLoading(false);
-  }, [resolvedProjectId, task.id]);
-
-  useEffect(() => {
-    Promise.resolve().then(loadComments);
-  }, [loadComments]);
 
   if (isLoading) {
     return (

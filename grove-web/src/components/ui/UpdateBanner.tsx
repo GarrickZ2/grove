@@ -9,6 +9,9 @@ import {
   type AppUpdateProgress,
 } from "../../api";
 import { DialogShell } from "./DialogShell";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
 
 interface UpdateBannerProps {
   onClose?: () => void;
@@ -20,6 +23,7 @@ export function UpdateBanner({ onClose }: UpdateBannerProps) {
   const [isDismissed, setIsDismissed] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<AppUpdateProgress | null>(null);
   const [showRestartDialog, setShowRestartDialog] = useState(false);
+  const orbit = useOrbitInterface();
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = () => {
@@ -263,6 +267,18 @@ export function UpdateBanner({ onClose }: UpdateBannerProps) {
         onClose={handleRestartLater}
         maxWidth="max-w-sm"
       >
+        {orbit ? (
+          <DialogPanel size="sm">
+            <DialogHead
+              title="Restart now?"
+              description={<p>Grove {downloadProgress?.version ?? updateInfo.latest_version} has been downloaded. Restart the app to apply the update.</p>}
+            />
+            <DialogFoot>
+              <OrbitButton variant="ghost" onClick={handleRestartLater}>Later</OrbitButton>
+              <OrbitButton variant="primary" onClick={handleRestartNow}>Restart now</OrbitButton>
+            </DialogFoot>
+          </DialogPanel>
+        ) : (
         <div className="p-5">
           <h3
             className="text-sm font-semibold mb-2"
@@ -297,6 +313,7 @@ export function UpdateBanner({ onClose }: UpdateBannerProps) {
             </button>
           </div>
         </div>
+        )}
       </DialogShell>
     </>
   );

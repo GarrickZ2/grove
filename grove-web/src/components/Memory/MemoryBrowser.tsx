@@ -10,6 +10,9 @@ import { MarkdownRenderer } from "../ui/MarkdownRenderer";
 import { MemoryGraph } from "./MemoryGraph";
 import { SearchBar, Score, TagList, InlineNotice, CenteredLoading, EmptyPage } from "./MemoryPrimitives";
 import { formatNumber, formatDate, relativeDate, plural, humanize, shortId } from "./memoryFormat";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogHead } from "../../orbit/ui/Dialog";
 export function MemoriesTab({ projectId, refreshTick, onChanged, compact = false, source = memorySource }: { compact?: boolean; source?: MemorySource; projectId: string; refreshTick: number; onChanged: () => void }) {
   const { isMobile } = useIsMobile();
   const [view, setView] = useState<"graph" | "list">(() => compact || isMobile ? "list" : "graph");
@@ -166,6 +169,7 @@ export function MemoryEntityList({ entities, onOpen, compact = false }: { entiti
 }
 
 export function MemoryDocumentDialog({ inline = false, isOpen, onClose, detail, error, onRetry, relations, relatedNames, onOpen, onDelete }: { inline?: boolean; isOpen: boolean; onClose: () => void; detail: MemoryEntityDocument | null; error: string | null; onRetry: () => void; relations: MemoryRelation[]; relatedNames: Record<string, string>; onOpen: (id: string) => void; onDelete: (detail: MemoryEntityDocument) => void }) {
+  const orbit = useOrbitInterface();
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -195,6 +199,24 @@ export function MemoryDocumentDialog({ inline = false, isOpen, onClose, detail, 
         </div>
       </div>
   );
+  if (orbit && !inline) {
+    const documentBody = error ? <div role="alert" className="mx-auto flex min-h-[360px] max-w-xl flex-col items-center justify-center gap-3 px-6 text-center"><CircleAlert className="h-6 w-6 text-[var(--color-error)]" /><p className="text-sm font-medium text-[var(--color-text)]">Could not open this Memory</p><p className="break-words text-sm text-[var(--color-text-muted)]">{error}</p><OrbitButton size="sm" onClick={onRetry}>Try again</OrbitButton></div> : !detail ? <div className="flex min-h-[360px] items-center justify-center"><CenteredLoading compact /></div> : <MemoryDetail detail={detail} relations={relations} relatedNames={relatedNames} onOpen={onOpen} />;
+    return (
+      <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-[min(1080px,calc(100vw-48px))]">
+        <div className="oui-dlg oui-dlg-document">
+          <DialogHead
+            title="Memory document"
+            description="Durable project knowledge"
+            aside={<>
+              <OrbitButton variant="ghost" iconOnly size="sm" danger onClick={() => { if (detail) onDelete(detail); }} disabled={!detail} aria-label="Delete Memory" title="Delete"><Trash2 /></OrbitButton>
+              <OrbitButton variant="ghost" iconOnly size="sm" onClick={onClose} aria-label="Close Memory document" title="Close"><X /></OrbitButton>
+            </>}
+          />
+          <div className="oui-dlg-document-body oui-scroll">{documentBody}</div>
+        </div>
+      </DialogShell>
+    );
+  }
   return inline ? isOpen ? <div className="buddy-memory-document">{content}</div> : null : <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-[min(1080px,calc(100vw-48px))]">{content}</DialogShell>;
 }
 

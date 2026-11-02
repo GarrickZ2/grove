@@ -7,6 +7,10 @@ import { addSource, updateSource } from "../../api";
 import type { SkillSource } from "../../api";
 import { useCommand, useKeyboardScope } from "../../keyboard";
 import { extractNameFromUrl, parseGitInput } from "../../utils/gitUrl";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
+import { Segmented } from "../../orbit/ui/Segmented";
 
 interface AddSourceDialogProps {
   isOpen: boolean;
@@ -29,6 +33,7 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved, initi
   const { isMobile } = useIsMobile();
 
   const isEditing = editingSource !== null;
+  const orbit = useOrbitInterface();
 
   // Sync form fields to (editingSource, isOpen) without setState-in-effect:
   // detect prop changes during render and reset state synchronously.
@@ -143,6 +148,82 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved, initi
     }
     setIsSaving(false);
   };
+
+  if (orbit) {
+    return (
+      <>
+        <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-lg">
+          {isOpen && (
+            <AddSourceDialogBindings onClose={onClose} onSubmit={handleSubmit} />
+          )}
+          <DialogPanel>
+            <DialogHead title={isEditing ? "Edit source" : "Add source"} />
+            <DialogBody>
+              <DialogField label="Name">
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => { setName(e.target.value); setIsNameAutoFilled(false); }}
+                  placeholder="Auto-filled from URL"
+                  disabled={isEditing}
+                  className="oui-field"
+                />
+              </DialogField>
+              <DialogField label="Type" as="div">
+                <Segmented
+                  value={sourceType}
+                  options={[{ value: "git", label: "Git" }, { value: "local", label: "Local" }]}
+                  onChange={setSourceType}
+                  ariaLabel="Source type"
+                  block
+                />
+              </DialogField>
+              <DialogField label={sourceType === "git" ? "Repository URL" : "Local path"} as="div">
+                <span className="oui-dlg-inline">
+                  <input
+                    type="text"
+                    aria-label={sourceType === "git" ? "Repository URL" : "Local path"}
+                    value={url}
+                    onChange={(e) => handleUrlChange(e.target.value)}
+                    onBlur={handleUrlBlur}
+                    placeholder={sourceType === "git" ? "URL · owner/repo · npx skills add ..." : "/home/user/extensions"}
+                    spellCheck={false}
+                    className="oui-field oui-mono"
+                  />
+                  {sourceType === "local" && !isMobile && (
+                    <OrbitButton variant="secondary" iconOnly onClick={() => void handleBrowse()} disabled={isBrowsing} aria-label="Browse" title="Browse">
+                      <FolderOpen />
+                    </OrbitButton>
+                  )}
+                </span>
+              </DialogField>
+              <DialogField
+                label={<>Subpath <span className="oui-dlg-optional">(optional)</span></>}
+                note="Only scan extensions from this subdirectory within the repository."
+              >
+                <input
+                  type="text"
+                  value={subpath}
+                  onChange={(e) => setSubpath(e.target.value)}
+                  placeholder="e.g., skills/coding"
+                  spellCheck={false}
+                  className="oui-field oui-mono"
+                />
+              </DialogField>
+              {error && <p className="oui-dlg-error" role="alert">{error}</p>}
+            </DialogBody>
+            <DialogFoot>
+              <OrbitButton variant="ghost" onClick={onClose}>Cancel</OrbitButton>
+              <OrbitButton variant="primary" onClick={() => void handleSubmit()} disabled={isSaving}>
+                {isSaving ? "Saving…" : isEditing ? "Save" : "Add source"}
+              </OrbitButton>
+            </DialogFoot>
+          </DialogPanel>
+        </DialogShell>
+        {folderPicker}
+      </>
+    );
+  }
 
   return (
     <>

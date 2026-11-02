@@ -1,11 +1,13 @@
 import { useEscapeScope } from "../../keyboard/useEscapeScope";
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { Fragment, useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search } from "lucide-react";
 import { useCommandPalette } from "../../context/CommandPaletteContext";
 import type { Command } from "../../context/CommandPaletteContext";
 import { KeyBadge } from "./KeyBadge";
 import { rankCommands, type CommandUsageMap } from "../../utils/commandPaletteRanking";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { OrbitCommandPalette, PaletteEmpty, PaletteGroup, PaletteItem, PaletteKeys } from "../../orbit/ui/CommandPalette";
 
 interface CommandGroup {
   key: string;
@@ -18,6 +20,7 @@ const COMMAND_PALETTE_USAGE_KEY = "grove.command-palette.usage";
 export function CommandPalette() {
   const { isOpen, close, getCommands, pageContext } = useCommandPalette();
   useEscapeScope(isOpen, close);
+  const orbit = useOrbitInterface();
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [usageStats, setUsageStats] = useState<CommandUsageMap>({});
@@ -194,6 +197,53 @@ export function CommandPalette() {
       groupStartIndices.push(acc);
       acc += g.commands.length;
     }
+  }
+
+  if (orbit) {
+    return (
+      <OrbitCommandPalette
+        open={isOpen}
+        onClose={close}
+        label="Command palette"
+        query={searchQuery}
+        onQueryChange={setSearchQuery}
+        placeholder="Type a command…"
+        inputRef={inputRef}
+        onKeyDown={handleKeyDown}
+        listRef={listRef}
+        hints={[
+          { keys: ["↑", "↓"], label: "Navigate" },
+          { keys: ["↵"], label: "Select" },
+          { keys: ["Esc"], label: "Close" },
+        ]}
+      >
+        {flatCommands.length === 0 ? (
+          <PaletteEmpty>No commands found</PaletteEmpty>
+        ) : (
+          groups.map((group, groupIdx) => (
+            <Fragment key={group.key}>
+              <PaletteGroup>{group.category}</PaletteGroup>
+              {group.commands.map((cmd, cmdIdx) => {
+                const idx = groupStartIndices[groupIdx] + cmdIdx;
+                const Icon = cmd.icon;
+                return (
+                  <PaletteItem
+                    key={cmd.id}
+                    data-cmd-item
+                    active={idx === highlightedIndex}
+                    icon={Icon ? <Icon aria-hidden="true" /> : undefined}
+                    title={cmd.name}
+                    trailing={cmd.shortcut ? <PaletteKeys keys={[cmd.shortcut]} /> : undefined}
+                    onClick={() => handleSelect(cmd)}
+                    onMouseEnter={() => setHighlightedIndex(idx)}
+                  />
+                );
+              })}
+            </Fragment>
+          ))
+        )}
+      </OrbitCommandPalette>
+    );
   }
 
   return (

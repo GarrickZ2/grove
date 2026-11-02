@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { X, GitBranch, Plus, FileText, ChevronDown, Loader2 } from "lucide-react";
+import { X, GitBranch, Plus, FileText, ChevronDown, Loader2, Check } from "lucide-react";
 import { Button, Input } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import { useProject } from "../../context";
 import { previewBranchName } from "../../utils/branch";
 import { getBranches } from "../../api";
-import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
+import { formatKeyDisplay, useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
 
 interface NewTaskDialogProps {
   isOpen: boolean;
@@ -28,6 +31,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const [isDragging, setIsDragging] = useState(false);
+  const orbit = useOrbitInterface();
 
   // Mirror the ACP Chat drop-handler pattern (TaskChat.tsx:5388-5403):
   // `dragover` fires continuously while the cursor hovers the target, so we
@@ -180,6 +184,121 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
 
   // Generate branch preview
   const branchPreview = previewBranchName(taskName);
+
+  if (orbit) {
+    const nameError = error || externalError || undefined;
+    return (
+      <DialogShell isOpen={isOpen} onClose={handleClose} maxWidth="max-w-[520px]">
+        {isOpen && (
+          <NewTaskDialogBindings onClose={handleCancelOrCloseDropdown} onSubmit={handleSubmit} />
+        )}
+        <DialogPanel>
+          <DialogHead title="New task" />
+          <DialogBody>
+            <DialogField label="Task name" note={nameError ? <span className="oui-dlg-warn is-error">{nameError}</span> : undefined}>
+              <input
+                className={`oui-field${nameError ? " is-invalid" : ""}`}
+                placeholder="fix/auth-bug or feature/new-feature"
+                autoFocus
+                value={taskName}
+                onChange={(e) => {
+                  setTaskName(e.target.value);
+                  setError("");
+                }}
+              />
+            </DialogField>
+            <DialogField label={<>Notes <span className="oui-dlg-optional">(optional)</span></>} as="div">
+              <div
+                className={`oui-dlg-dropzone${isDragging ? " is-dragging" : ""}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
+                <textarea
+                  aria-label="Notes"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Describe the task, requirements, or any relevant context...  (or drop a .md / .txt file)"
+                  rows={4}
+                  className="oui-dlg-textarea"
+                />
+                {isDragging && (
+                  <div aria-hidden className="oui-dlg-dropzone-overlay">
+                    <span><FileText aria-hidden="true" />Drop a Markdown file to fill notes</span>
+                  </div>
+                )}
+              </div>
+            </DialogField>
+            {!isStudio && (
+              <DialogField label="Target branch" as="div" note={hasValidBranch ? "New branch will be created from this branch" : undefined}>
+                {hasValidBranch ? (
+                  <div ref={dropdownRef} className="oui-dlg-anchor">
+                    <button
+                      type="button"
+                      aria-haspopup="listbox"
+                      aria-expanded={showBranchDropdown}
+                      onClick={() => setShowBranchDropdown(!showBranchDropdown)}
+                      className={`oui-dlg-select${showBranchDropdown ? " is-open" : ""}`}
+                    >
+                      <GitBranch aria-hidden="true" />
+                      <span className="oui-mono">{targetBranch}</span>
+                      {isLoadingBranches ? <Loader2 className="oui-spin" aria-hidden="true" /> : <ChevronDown className="oui-chev" aria-hidden="true" />}
+                    </button>
+                    {showBranchDropdown && (
+                      <div className="oui-pop oui-dlg-menu oui-scroll" role="listbox" aria-label="Target branch">
+                        {isLoadingBranches ? (
+                          <div className="oui-dlg-list-empty"><Loader2 className="oui-spin" aria-hidden="true" /> Loading branches...</div>
+                        ) : branches.length > 0 ? (
+                          branches.map((branch) => (
+                            <button
+                              key={branch}
+                              type="button"
+                              role="option"
+                              aria-selected={branch === targetBranch}
+                              onClick={() => {
+                                setTargetBranch(branch);
+                                setShowBranchDropdown(false);
+                              }}
+                              className="oui-dlg-menu-item"
+                            >
+                              <GitBranch aria-hidden="true" />
+                              <span className="oui-mono">{branch}</span>
+                              {branch === selectedProject?.currentBranch && <span className="oui-dlg-tag">current</span>}
+                              {branch === targetBranch && <Check className="oui-dlg-check" aria-hidden="true" />}
+                            </button>
+                          ))
+                        ) : (
+                          <div className="oui-dlg-list-empty">No branches found</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="oui-dlg-error">No valid branch found</p>
+                )}
+              </DialogField>
+            )}
+            {isStudio ? (
+              <p className="oui-dlg-callout">A new task workspace will be created with input, output, and scripts folders.</p>
+            ) : hasValidBranch ? (
+              <p className="oui-dlg-callout">
+                A new worktree will be created with branch <code>{branchPreview}</code> based on <code>{targetBranch}</code>.
+              </p>
+            ) : (
+              <p className="oui-dlg-error">This repository has no commits yet. Please create an initial commit before creating tasks.</p>
+            )}
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={handleClose} disabled={isLoading}>Cancel</OrbitButton>
+            <OrbitButton variant="primary" onClick={() => void handleSubmit()} disabled={isLoading || (!isStudio && !hasValidBranch)}>
+              {isLoading ? "Creating…" : "Create task"}
+              {!isLoading && <kbd>{formatKeyDisplay("Mod+Enter")}</kbd>}
+            </OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={handleClose}>

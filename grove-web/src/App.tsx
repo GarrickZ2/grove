@@ -32,6 +32,7 @@ import { BlitzPage } from "./components/Blitz";
 import { TasksPage } from "./components/Tasks/TasksPage";
 import { ResourcePage } from "./components/Studio";
 import { OrbitStudioPage } from "./orbit/studio/OrbitStudioPage";
+import { OrbitProjectsPage } from "./orbit/projects/OrbitProjectsPage";
 import { WorkPage } from "./components/Work";
 import { ProjectsPage } from "./components/Projects";
 import { MissingProjectState } from "./components/Projects/MissingProjectState";
@@ -69,6 +70,8 @@ import { readNavigationState, restoredTaskNavigation, writeNavigationState } fro
 import { fuzzyFindByName } from "./utils/fuzzySearch";
 import { useCommand, useContextKey, commandRegistry, useVoiceControlContext } from "./keyboard";
 import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette";
+import { OrbitInterfaceProvider } from "./orbit/ui/OrbitInterfaceProvider";
+import { OrbitFirstRun } from "./orbit/firstrun/OrbitFirstRun";
 
 export type TasksMode = "zen" | "blitz";
 
@@ -782,12 +785,14 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   if (globalConfig && !orbit && activeItem === "new") {
     setActiveItem("dashboard");
   }
-  // Orbit on a phone opens on the New page, like a chat app — once per app
-  // load, after the project restore above has settled.
+  // Orbit's home is the New page: a fresh launch opens there, once per app
+  // load, after the project restore above has settled. A reload in the same
+  // window keeps its place (restored navigation), except on phones, which
+  // always open on New like a chat app.
   const [orbitPhoneLandingChecked, setOrbitPhoneLandingChecked] = useState(false);
   if (!orbitPhoneLandingChecked && globalConfig && !isLoading && selectedProject) {
     setOrbitPhoneLandingChecked(true);
-    if (orbitPhone && activeItem !== "new") {
+    if (orbit && (orbitPhone || !restoredNavigation) && activeItem !== "new") {
       setActiveItem("new");
       setNavigationData(null);
     }
@@ -1473,7 +1478,9 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       case "dashboard":
         return orbit ? <OrbitDashboardPage onNavigate={handleNavigate} /> : <DashboardPage onNavigate={handleNavigate} />;
       case "projects":
-        return <ProjectsPage onNavigate={setActiveItem} key={"projects-" + (navigationData?.tab ?? "coding")} initialTab={navigationData?.tab as "coding" | "studio" | undefined} />;
+        return orbit
+          ? <OrbitProjectsPage onNavigate={handleNavigate} key={"projects-" + (navigationData?.tab ?? "coding")} initialTab={navigationData?.tab as "coding" | "studio" | undefined} />
+          : <ProjectsPage onNavigate={setActiveItem} key={"projects-" + (navigationData?.tab ?? "coding")} initialTab={navigationData?.tab as "coding" | "studio" | undefined} />;
       // NOTE: "work" is NOT rendered here — WorkPage is keep-alive (mirroring
       // TasksPage) and lives in its own display:none host in the layout below.
       case "resource":
@@ -1585,7 +1592,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // except when the collapsed sidebar's controls need a bar to sit on.
   const orbitHeaderVisible = ((activeItem === "tasks" || activeItem === "work") && globalConfig?.web.workspace_layout !== "flex") || effectiveSidebarMode === "collapsed";
   // Orbit pages that own their whole surface (own scroll, no outer padding).
-  const isOrbitEdgeToEdgePage = orbit && (activeItem === "settings" || activeItem === "dashboard" || activeItem === "skills" || activeItem === "memory" || activeItem === "automation" || activeItem === "statistics" || activeItem === "resource");
+  const isOrbitEdgeToEdgePage = orbit && (activeItem === "settings" || activeItem === "dashboard" || activeItem === "skills" || activeItem === "memory" || activeItem === "automation" || activeItem === "statistics" || activeItem === "resource" || activeItem === "projects");
   const isFullWidthPage =
     isOrbitEdgeToEdgePage ||
     isDashboardPage ||
@@ -1940,6 +1947,7 @@ function App() {
       <BannerProvider>
         <AuthGate>
           <ConfigProvider>
+            <OrbitInterfaceProvider>
             <TerminalThemeProvider>
               <ProjectProvider>
                 <NotificationProvider>
@@ -1947,6 +1955,7 @@ function App() {
                     <PreviewCommentProvider>
                       <OptionalPerfProfiler id="App">
                         <GlobalAgentVoiceRuntime />
+                        <OrbitFirstRun />
                         <BuddyOverlay open={buddyOpen} onOpen={openBuddies} onExit={closeBuddies}><AppContent pageVisible={!buddyOpen} /></BuddyOverlay>
                         {isIosClient && <IosLiveActivity />}
                       </OptionalPerfProfiler>
@@ -1955,6 +1964,7 @@ function App() {
                 </NotificationProvider>
               </ProjectProvider>
             </TerminalThemeProvider>
+            </OrbitInterfaceProvider>
           </ConfigProvider>
         </AuthGate>
       </BannerProvider>

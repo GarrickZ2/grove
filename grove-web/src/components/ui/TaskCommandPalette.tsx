@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Search, Code, Laptop, Zap } from "lucide-react";
 import type { Task } from "../../data/types";
 import { useCommand } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { OrbitCommandPalette, PaletteEmpty, PaletteItem } from "../../orbit/ui/CommandPalette";
 
 interface TaskCommandPaletteProps {
   isOpen: boolean;
@@ -24,6 +26,7 @@ export function TaskCommandPalette({ isOpen, onClose, tasks, selectedTask, onTas
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   useEscapeScope(isOpen, onClose);
+  const orbit = useOrbitInterface();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const isKeyboardNav = useRef(false);
@@ -113,6 +116,50 @@ export function TaskCommandPalette({ isOpen, onClose, tasks, selectedTask, onTas
         break;
     }
   }, [filteredTasks, highlightedIndex, handleSelect, onClose]);
+
+  if (orbit) {
+    return (
+      <OrbitCommandPalette
+        open={isOpen}
+        onClose={onClose}
+        label="Switch task"
+        query={searchQuery}
+        onQueryChange={setSearchQuery}
+        placeholder="Search tasks…"
+        inputRef={inputRef}
+        onKeyDown={handleKeyDown}
+        listRef={listRef}
+        scope="Tasks"
+        hints={[
+          { keys: ["↑", "↓"], label: "Navigate" },
+          { keys: ["↵"], label: "Select" },
+          { keys: ["Esc"], label: "Close" },
+        ]}
+      >
+        {filteredTasks.length === 0 ? (
+          <PaletteEmpty>{activeTasks.length === 0 ? "No active tasks in this project" : "No tasks found"}</PaletteEmpty>
+        ) : (
+          filteredTasks.map((task, index) => {
+            const { Icon, color } = getTaskIcon(task);
+            return (
+              <PaletteItem
+                key={task.id}
+                data-palette-item
+                active={index === highlightedIndex}
+                icon={<Icon aria-hidden="true" />}
+                iconStyle={{ color }}
+                title={task.name}
+                meta={task.branch ? <span className="oui-mono">{task.branch}</span> : undefined}
+                trailing={selectedTask?.id === task.id ? <span className="oui-pal-current">Current</span> : undefined}
+                onClick={() => handleSelect(task)}
+                onMouseEnter={() => setHighlightedIndex(index)}
+              />
+            );
+          })
+        )}
+      </OrbitCommandPalette>
+    );
+  }
 
   return (
     <AnimatePresence>

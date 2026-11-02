@@ -11,6 +11,8 @@ import { Button, DialogShell, Input, Switch } from '../ui';
 import { useConnectTargets } from './useConnectTargets';
 import { getConnectFrontendAdapter } from './ConnectAdapters/registry';
 import { PlatformMark } from './PlatformMark';
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
 
 type NewStep = 'platform' | 'qr' | 'manual';
 const newDraft = (domain = 'feishu', platform = 'feishu'): ConnectInput => ({ name: `${platform} Connect`, platform, domain, enabled: true, adapter_config: {}, project_id: '', task_id: '', session_id: '' });
@@ -73,6 +75,7 @@ export function ConnectDialog({ isOpen, onClose, lock }: { isOpen: boolean; onCl
 function ConnectManager({ items, onItemsChange, onClose, lock }: { items: ConnectItem[]; onItemsChange: () => Promise<void>; onClose: () => void; lock?: ConnectLock }) {
   const lockTarget = lock ? { target: { kind: 'buddy' as const, buddy_id: lock.buddyId } } : {};
   const { isMobile } = useIsMobile();
+  const orbit = useOrbitInterface();
   const [platforms, setPlatforms] = useState<ConnectPlatform[]>([]);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | 'new'>(items[0]?.id ?? 'new');
@@ -234,12 +237,20 @@ function ConnectManager({ items, onItemsChange, onClose, lock }: { items: Connec
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow]);
 
-  return <div className={`flex min-h-0 flex-col overflow-hidden bg-[var(--color-bg)] ${isMobile ? (lock ? 'max-h-[calc(100dvh-5rem)]' : 'h-[min(780px,calc(100dvh-5rem))]') : `${lock ? 'max-h-[min(780px,calc(100vh-3rem))]' : 'h-[min(780px,calc(100vh-3rem))] min-h-[560px]'} rounded-2xl border border-[var(--color-border)] shadow-2xl`}`}>
+  return <div className={orbit ? `oui-dlg oui-dlg-manager flex min-h-0 flex-col overflow-hidden ${isMobile ? (lock ? 'max-h-[calc(100dvh-5rem)]' : 'h-[min(780px,calc(100dvh-5rem))]') : lock ? 'max-h-[min(780px,calc(100vh-3rem))]' : 'h-[min(780px,calc(100vh-3rem))] min-h-[560px]'}` : `flex min-h-0 flex-col overflow-hidden bg-[var(--color-bg)] ${isMobile ? (lock ? 'max-h-[calc(100dvh-5rem)]' : 'h-[min(780px,calc(100dvh-5rem))]') : `${lock ? 'max-h-[min(780px,calc(100vh-3rem))]' : 'h-[min(780px,calc(100vh-3rem))] min-h-[560px]'} rounded-2xl border border-[var(--color-border)] shadow-2xl`}`}>
+    {orbit ? (
+      <div className="oui-dlg-manager-head">
+        <span className="oui-dlg-manager-glyph"><Link2 aria-hidden="true" /></span>
+        <div className="oui-dlg-title-copy"><h2>IM Connect</h2><p>{lock ? `Messages go to ${lock.name}` : 'External messages, native Grove Sessions'}</p></div>
+        <OrbitButton variant="ghost" iconOnly aria-label="Close IM Connect" title="Close" onClick={onClose}><X /></OrbitButton>
+      </div>
+    ) : (
     <header className={`flex h-16 shrink-0 items-center gap-3 border-b border-[var(--color-border)] ${isMobile ? 'px-4' : 'px-5'}`}>
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#3370ff] to-[#5ed3ff]/80 shadow-sm shadow-[#3370ff]/30"><Link2 className="h-4 w-4 text-white" /></div>
       <div className="min-w-0 flex-1"><h1 className="text-base font-semibold text-[var(--color-text)]">IM Connect</h1><p className="truncate text-xs text-[var(--color-text-muted)]">{lock ? `Messages go to ${lock.name}` : 'External messages, native Grove Sessions'}</p></div>
       <button type="button" aria-label="Close IM Connect" onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
     </header>
+    )}
     <div className={`flex min-h-0 flex-1 ${isMobile ? 'flex-col' : 'flex-row'}`}>
       {!lock && <aside className={`shrink-0 bg-[var(--color-bg-secondary)]/60 p-3 ${isMobile ? 'border-b border-[var(--color-border)]' : 'w-[300px] overflow-y-auto border-r border-[var(--color-border)]'}`}>
         <nav aria-label="Connections" className={isMobile ? 'flex items-center gap-2 overflow-x-auto overscroll-x-contain' : 'space-y-1'}>

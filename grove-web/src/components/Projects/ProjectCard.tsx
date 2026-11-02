@@ -1,4 +1,3 @@
-import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Trash2, AlertCircle, FolderX, Pencil, Archive, RotateCcw } from "lucide-react";
 import type { Project } from "../../data/types";
@@ -7,6 +6,7 @@ import { compactPath } from "../../utils/pathUtils";
 import { useTheme } from "../../context";
 import { OptionalPerfProfiler } from "../../perf/profilerShim";
 import { ProjectTypeBadge } from "../ui/ProjectTypeBadge";
+import { MAX_PROJECT_NAME_LEN, useProjectRename } from "./useProjectRename";
 
 interface ProjectCardProps {
   project: Project;
@@ -35,99 +35,23 @@ function ProjectCardInner({ project, isSelected, onSelect, onDoubleClick, onDele
   const isMissing = !project.exists;
   const isStudio = project.projectType === "studio";
 
-  const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState(project.name);
-  const [isRenaming, setIsRenaming] = useState(false);
-  const [renameError, setRenameError] = useState<string | null>(null);
-  // Set when the user clicks the Trash button while editing — prevents
-  // the input's onBlur from accidentally committing a rename when the
-  // user's actual intent was to delete the project.
-  const skipBlurSubmitRef = useRef(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Caps & validation. Mirrors what the backend would accept; rejecting
-  // here gives the user immediate feedback instead of an opaque 500.
-  const MAX_NAME_LEN = 128;
-
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditing]);
+  const {
+    isEditing,
+    editName,
+    isRenaming,
+    renameError,
+    inputRef,
+    skipBlurSubmitRef,
+    beginEditing,
+    changeName,
+    handleBlur,
+    handleKeyDown,
+  } = useProjectRename(project.name, onRename);
+  const MAX_NAME_LEN = MAX_PROJECT_NAME_LEN;
 
   const startEditing = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setEditName(project.name);
-    setRenameError(null);
-    setIsEditing(true);
-  };
-
-  const cancelEditing = () => {
-    setIsEditing(false);
-    setEditName(project.name);
-    setRenameError(null);
-  };
-
-  const validateName = (name: string): string | null => {
-    if (!name) return "Name cannot be empty.";
-    if (name.length > MAX_NAME_LEN) return `Name must be ${MAX_NAME_LEN} characters or fewer.`;
-    // Reject path separators, NUL, and control chars — anything that
-    // would confuse downstream filesystem / display code.
-    // eslint-disable-next-line no-control-regex
-    if (/[\x00-\x1f\x7f/\\]/.test(name)) {
-      return "Name cannot contain slashes or control characters.";
-    }
-    return null;
-  };
-
-  const submitRename = async () => {
-    if (isRenaming) return;
-    const trimmed = editName.trim();
-    if (!trimmed || trimmed === project.name) {
-      cancelEditing();
-      return;
-    }
-    const validationError = validateName(trimmed);
-    if (validationError) {
-      setRenameError(validationError);
-      return;
-    }
-    setIsRenaming(true);
-    setRenameError(null);
-    try {
-      await onRename(trimmed);
-      setIsEditing(false);
-    } catch (err) {
-      // Surface the error inline instead of silently reverting; the
-      // user just lost their edit otherwise.
-      const msg =
-        err instanceof Error
-          ? err.message
-          : (typeof err === "string" ? err : "Rename failed.");
-      setRenameError(msg);
-      // Keep the edited name visible so the user can adjust.
-    } finally {
-      setIsRenaming(false);
-    }
-  };
-
-  const handleBlur = () => {
-    if (skipBlurSubmitRef.current) {
-      skipBlurSubmitRef.current = false;
-      cancelEditing();
-      return;
-    }
-    submitRename();
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      submitRename();
-    } else if (e.key === "Escape") {
-      cancelEditing();
-    }
+    beginEditing();
   };
 
   return (
@@ -168,10 +92,7 @@ function ProjectCardInner({ project, isSelected, onSelect, onDoubleClick, onDele
                 type="text"
                 value={editName}
                 maxLength={MAX_NAME_LEN}
-                onChange={(e) => {
-                  setEditName(e.target.value);
-                  if (renameError) setRenameError(null);
-                }}
+                onChange={(e) => changeName(e.target.value)}
                 onBlur={handleBlur}
                 onKeyDown={handleKeyDown}
                 disabled={isRenaming}

@@ -1,0 +1,92 @@
+/* Orbit desktop workspace shell (Workspace board): header toolbar, right
+   dock, bottom terminal dock, grips. Scoped to Orbit-only class names. */
+
+/* ── Header toolbar (portaled into the window header) ── */
+.ows-bar{display:flex;align-items:center;gap:8px;width:100%;height:100%;min-width:0;padding:0 2px 0 10px;box-sizing:border-box;color:var(--o-text);font-size:13px;-webkit-font-smoothing:antialiased;user-select:none}
+.ows-bar-leading{display:flex;align-items:center;flex-shrink:0}
+.ows-bar-title{margin:0;flex:0 1 auto;min-width:0;display:flex;align-items:baseline;gap:8px;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden}
+.ows-bar-name{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ows-bar-branch{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--o-font-mono);font-size:12px;font-weight:400;color:var(--o-muted)}
+.ows-state{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:999px;flex-shrink:0;font-size:11.5px;font-weight:500;animation:oui-fade-up 240ms var(--o-ease-out) both}
+.ows-state.is-working{background:var(--o-accent-soft);color:color-mix(in oklab,var(--o-accent) 80%,var(--o-text))}
+.ows-state.is-working i{width:6px;height:6px;border-radius:50%;background:var(--o-accent);animation:ows-live 1.8s ease-in-out infinite}
+.ows-state.is-archived{background:var(--o-selected);color:var(--o-muted)}
+@keyframes ows-live{50%{box-shadow:0 0 0 3px var(--o-accent-soft)}}
+.ows-bar-spacer{flex:1 1 auto;min-width:8px}
+.ows-tools{display:flex;align-items:center;flex:0 1 auto;min-width:0;padding:3px;border-radius:10px;background:var(--o-selected);overflow-x:auto;scrollbar-width:none}
+.ows-tools::-webkit-scrollbar{display:none}
+.ows-tools-group{display:flex;align-items:center;gap:2px;flex-shrink:0}
+.ows-tsep{width:1px;height:16px;margin:0 3px;background:var(--o-border);flex-shrink:0}
+.ows-tb{position:relative;width:30px;height:24px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:7px;background:none;color:var(--o-muted);cursor:pointer;transition:color var(--o-dur-fast),background-color var(--o-dur-fast),box-shadow 200ms,transform 140ms var(--o-ease-toggle)}
+.ows-tb:hover:not(:disabled){color:var(--o-text)}
+.ows-tb:active:not(:disabled){transform:scale(.92)}
+.ows-tb.is-on{background:var(--o-bg);color:var(--o-text);box-shadow:0 1px 2px var(--o-shadow),inset 0 0 0 .5px var(--o-border)}
+.ows-tb:disabled{cursor:default}
+.ows-tb:focus-visible{outline:2px solid var(--o-accent);outline-offset:1px}
+.ows-tb-icon{width:15px;height:15px;stroke-width:1.8}
+/* Plugin icons (emoji / images) render in grey until their panel is open. */
+.ows-tb:not(.is-on)>:first-child{filter:grayscale(1)}
+.ows-bar-trailing{display:flex;align-items:center;gap:2px;flex-shrink:0;padding-left:6px;margin-left:2px;border-left:1px solid var(--o-border)}
+.ows-tip{position:fixed;z-index:120;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:7px;background:var(--color-text);color:var(--color-bg);font-size:11.5px;line-height:1.3;white-space:nowrap;pointer-events:none;animation:oui-fade-up 120ms var(--o-ease-out) both}
+.ows-tip kbd{font:inherit;opacity:.6}
+
+/* ── Shell: [ [aux | Agent] / terminal ] | dock ── */
+.ide-workbench.is-orbit-desk{--ows-term-bg:#1a1917;--ows-term-fg:#e7e5e4}
+.ows-shell{position:relative;display:flex;flex:1;min-height:0;min-width:0;overflow:hidden}
+.ows-main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}
+.ows-row{display:flex;flex:1;min-height:0;min-width:0}
+.ows-row>.ide-chat-surface{flex:1;min-width:0;height:auto}
+.ows-aux-fill{display:flex;flex:1;min-width:0;min-height:0}
+
+.ows-dock{position:relative;flex-shrink:0;overflow:hidden;min-width:0;min-height:0}
+.ows-dock.is-x{height:100%}
+.ows-dock.is-y{width:100%}
+.ows-dock-inner{position:absolute;display:flex;flex-direction:column;min-width:0;min-height:0}
+.ows-dock.is-x .ows-dock-inner{top:0;bottom:0}
+.ows-dock.is-y .ows-dock-inner{left:0;right:0;top:0}
+/* The right dock's content hugs the right edge while it grows; the left one hugs the left. */
+.ows-dock.is-right .ows-dock-inner{left:0}
+.ows-dock.is-left .ows-dock-inner{right:0}
+.ows-dock.is-right{border-left:1px solid transparent}
+.ows-dock.is-right.is-open{border-left-color:var(--o-border)}
+.ows-dock.is-left.is-open{border-right:1px solid var(--o-border)}
+.ows-dock.is-bottom.is-open{border-top:1px solid var(--o-border)}
+.ows-pane{display:flex;flex:1;min-width:0;min-height:0}
+
+/* Grips: a zero-size host between docks; the hairline itself is the dock's
+   border, the grip shows a pill on hover over a 7px hit area. */
+.ows-grip-host{position:relative;z-index:6;flex-shrink:0}
+.ows-grip-host.is-x{width:0;height:100%}
+.ows-grip-host.is-y{height:0;width:100%}
+.ows-grip{position:absolute;touch-action:none}
+.ows-grip.is-x{top:0;bottom:0;left:-4px;width:7px;cursor:col-resize}
+.ows-grip.is-y{left:0;right:0;top:-4px;height:7px;cursor:row-resize}
+.ows-grip::after{content:"";position:absolute;border-radius:2px;background:var(--o-track);opacity:0;transition:opacity var(--o-dur-fast),background-color var(--o-dur-fast)}
+.ows-grip.is-x::after{left:2.5px;top:50%;width:2px;height:32px;margin-top:-16px}
+.ows-grip.is-y::after{top:2.5px;left:50%;width:32px;height:2px;margin-left:-16px}
+.ows-grip:hover::after{opacity:1}
+.ows-grip:active::after{opacity:1;background:var(--o-accent)}
+
+/* ── Bottom terminal dock ── */
+.ows-term{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--ows-term-bg);color:var(--ows-term-fg)}
+.ows-term-head{display:flex;align-items:center;gap:4px;height:36px;padding:0 8px 0 12px;flex-shrink:0;border-bottom:1px solid color-mix(in oklab,var(--ows-term-fg) 10%,transparent);overflow-x:auto;scrollbar-width:none}
+.ows-term-head::-webkit-scrollbar{display:none}
+.ows-ttab{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 4px 0 10px;flex-shrink:0;border:0;border-radius:6px;background:none;font:inherit;font-size:12px;color:color-mix(in oklab,var(--ows-term-fg) 55%,transparent);cursor:pointer;transition:background-color var(--o-dur-fast),color var(--o-dur-fast)}
+.ows-ttab:hover{color:var(--ows-term-fg)}
+.ows-ttab.is-on{background:color-mix(in oklab,var(--ows-term-fg) 9%,transparent);color:var(--ows-term-fg)}
+.ows-ttab-label{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ows-ttab input{width:110px;height:20px;padding:0 4px;border:1px solid color-mix(in oklab,var(--ows-term-fg) 25%,transparent);border-radius:4px;background:transparent;font:inherit;font-size:12px;color:var(--ows-term-fg);outline:none}
+.ows-ttab-x{width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:4px;background:none;color:inherit;cursor:pointer;opacity:0;transition:opacity var(--o-dur-fast),background-color var(--o-dur-fast)}
+.ows-ttab:hover .ows-ttab-x,.ows-ttab.is-on .ows-ttab-x{opacity:.7}
+.ows-ttab-x:hover{opacity:1;background:color-mix(in oklab,var(--ows-term-fg) 12%,transparent)}
+.ows-term-ib{width:26px;height:26px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:6px;background:none;color:color-mix(in oklab,var(--ows-term-fg) 55%,transparent);cursor:pointer;transition:background-color var(--o-dur-fast),color var(--o-dur-fast)}
+.ows-term-ib:hover{background:color-mix(in oklab,var(--ows-term-fg) 9%,transparent);color:var(--ows-term-fg)}
+.ows-term-ib svg{width:13px;height:13px}
+.ows-term-spacer{flex:1}
+.ows-term-body{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.ows-term :is(.ows-ttab,.ows-term-ib,.ows-ttab-x):focus-visible{outline:2px solid var(--o-accent);outline-offset:1px}
+
+@media (prefers-reduced-motion:reduce){
+  .ows-state,.ows-state i,.ows-tip{animation:none!important}
+  .ows-tb,.ows-grip::after{transition:none!important}
+}

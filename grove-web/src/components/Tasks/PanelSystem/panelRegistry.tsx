@@ -13,8 +13,9 @@
 import type { CSSProperties, ElementType, ReactNode } from "react";
 import {
   Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText,
-  MessageCircle, FolderOpen, Pencil, Network,
+  MessageCircle, FolderOpen, Pencil, Network, Info, Eye, Puzzle,
 } from "lucide-react";
+import { PanelShell, PanelEmpty, PANEL_HUES, type PanelHue, type PanelMenuItem } from "../../../orbit/ui";
 import type { Task } from "../../../data/types";
 import type { FileNavRequest } from "../../Review";
 import type { Plugin } from "../../../api/plugins";
@@ -92,6 +93,18 @@ export interface PanelAvailabilityCtx {
  *  clipped — canvas-y panels). IDE Layout ignores this (uses PanelSlot + CSS). */
 export type FlexWrap = "fill" | "scroll" | "hidden";
 
+/** Orbit presentation of a panel: what its PanelShell header shows. */
+export interface OrbitPanelMeta {
+  /** Glyph tile colours. */
+  hue: PanelHue;
+  /** Replaces `icon` in Orbit (toolbar button + glyph tile). */
+  glyph?: ElementType;
+  /** Default muted context after the title (a body can override it with PanelHeaderContext). */
+  context?: (ctx: PanelRenderCtx) => ReactNode;
+  /** `scroll` (padded, scrolls) or `fill` (edge to edge). Default `fill`. */
+  body?: "scroll" | "fill";
+}
+
 export interface PanelDescriptor {
   key: string;
   label: string;
@@ -102,6 +115,8 @@ export interface PanelDescriptor {
   /** Whether this panel applies to the current task/project. */
   available: (ctx: PanelAvailabilityCtx) => boolean;
   render: (ctx: PanelRenderCtx) => ReactNode;
+  /** Orbit frame meta. Optional: panels without it get a neutral frame. */
+  orbit?: OrbitPanelMeta;
 }
 
 // FlexLayout tab content wrapping (IDE Layout uses PanelSlot + CSS instead).
@@ -127,6 +142,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-info)",
     category: "chat",
     available: always,
+    orbit: { hue: PANEL_HUES.slate },
     render: (ctx) => (
       <OptionalPerfProfiler id="TaskChat">
         <TaskChat
@@ -152,6 +168,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-success)",
     category: "aux",
     available: (c) => c.terminalAvailable,
+    orbit: { hue: PANEL_HUES.slate },
     render: (ctx) => ctx.renderTerminal?.() ?? null,
   },
   {
@@ -162,6 +179,11 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     category: "aux",
     // Studio tasks have no Review of their own, but can review linked Projects.
     available: (c) => !c.isStudio || !!c.hasLinkedReview,
+    orbit: {
+      hue: PANEL_HUES.violet,
+      glyph: Eye,
+      context: (ctx) => (!ctx.isStudio && ctx.task.branch ? `${ctx.task.branch} → ${ctx.task.target}` : undefined),
+    },
     render: (ctx) => (
       <TaskCodeReview
         projectId={ctx.projectId}
@@ -184,6 +206,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-warning)",
     category: "aux",
     available: always,
+    orbit: { hue: PANEL_HUES.indigo, glyph: Code },
     render: (ctx) => (
       <TaskEditor
         projectId={ctx.projectId}
@@ -201,6 +224,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-accent)",
     category: "aux",
     available: always,
+    orbit: { hue: PANEL_HUES.green },
     render: (ctx) => <TaskGraph projectId={ctx.projectId} taskId={ctx.task.id} />,
   },
   {
@@ -210,6 +234,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-highlight)",
     category: "aux",
     available: (c) => c.isStudio,
+    orbit: { hue: PANEL_HUES.pink },
     render: (ctx) => (
       <ArtifactsTab
         projectId={ctx.projectId}
@@ -227,6 +252,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-accent)",
     category: "aux",
     available: (c) => c.isStudio,
+    orbit: { hue: PANEL_HUES.teal },
     render: (ctx) => (
       <SketchPage
         projectId={ctx.projectId}
@@ -243,6 +269,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-accent)",
     category: "info",
     available: always,
+    orbit: { hue: PANEL_HUES.stone, glyph: Info, context: () => "This task at a glance", body: "scroll" },
     render: (ctx) => <StatsTab projectId={ctx.projectId} task={ctx.task} variant={ctx.orbitHeader ? "orbit" : "default"} />,
   },
   {
@@ -252,6 +279,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-success)",
     category: "info",
     available: (c) => !c.isStudio,
+    orbit: { hue: PANEL_HUES.orange, context: (ctx) => ctx.task.branch || undefined, body: "scroll" },
     render: (ctx) => <GitTab projectId={ctx.projectId} task={ctx.task} />,
   },
   {
@@ -261,6 +289,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-info)",
     category: "info",
     available: always,
+    orbit: { hue: PANEL_HUES.blue, context: () => "Shared with agents", body: "scroll" },
     render: (ctx) => <NotesTab projectId={ctx.projectId} task={ctx.task} />,
   },
   {
@@ -270,6 +299,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-error)",
     category: "info",
     available: (c) => !c.isStudio,
+    orbit: { hue: PANEL_HUES.amber, context: () => "From code review", body: "scroll" },
     render: (ctx) => <CommentsTab projectId={ctx.projectId} task={ctx.task} />,
   },
 ];
@@ -296,6 +326,7 @@ function pluginDescriptor(plugin: Plugin): PanelDescriptor {
     color: "var(--color-highlight)",
     category: side === "right" ? "info" : "aux",
     available: always,
+    orbit: { hue: PANEL_HUES.slate },
     render: (ctx) => (
       <PluginFrame
         plugin={plugin}
@@ -344,4 +375,43 @@ export function renderPanel(key: string, ctx: PanelRenderCtx): ReactNode {
     );
   }
   return descriptor.render(ctx);
+}
+
+export interface OrbitPanelFrame {
+  /** The workspace's own ⋯ rows for this panel. */
+  menu?: PanelMenuItem[];
+}
+
+/** Orbit: a panel's content inside the shared PanelShell (header, states,
+ *  error boundary). Chat keeps its own header and is never framed. */
+export function renderOrbitPanel(key: string, ctx: PanelRenderCtx, frame: OrbitPanelFrame = {}): ReactNode {
+  const d = getPanelDescriptor(key, ctx.plugins);
+  if (!d) {
+    return (
+      <PanelShell glyph={Puzzle} hue={PANEL_HUES.slate} title="Panel" onClose={ctx.onClose} menu={frame.menu}>
+        <PanelEmpty icon={Puzzle} title="This panel is no longer available">
+          Its plugin was removed or turned off. Close the panel, or reinstall the plugin from Extensions.
+        </PanelEmpty>
+      </PanelShell>
+    );
+  }
+  const meta = d.orbit;
+  return (
+    <PanelShell
+      glyph={meta?.glyph ?? d.icon}
+      hue={meta?.hue ?? PANEL_HUES.slate}
+      title={d.label}
+      context={meta?.context?.(ctx)}
+      onClose={ctx.onClose}
+      menu={frame.menu}
+      body={meta?.body ?? "fill"}
+    >
+      {d.render(ctx)}
+    </PanelShell>
+  );
+}
+
+/** The icon a panel shows in the current interface. */
+export function panelGlyph(d: PanelDescriptor, orbit: boolean): ElementType {
+  return orbit ? d.orbit?.glyph ?? d.icon : d.icon;
 }

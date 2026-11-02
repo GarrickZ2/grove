@@ -5,6 +5,9 @@ import { DialogShell } from "../ui/DialogShell";
 import { addAgent, updateAgent } from "../../api";
 import type { AgentDef } from "../../api";
 import { useCommand, useKeyboardScope } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
 
 interface AddAgentDialogProps {
   isOpen: boolean;
@@ -21,6 +24,7 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
   const [error, setError] = useState<string | null>(null);
 
   const isEditing = editingAgent !== null;
+  const orbit = useOrbitInterface();
 
   // Sync form fields to (editingAgent, isOpen) using the "previous prop"
   // pattern: detect changes during render and reset state synchronously
@@ -87,6 +91,57 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
     }
     setIsSaving(false);
   };
+
+  if (orbit) {
+    return (
+      <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-lg">
+        {isOpen && (
+          <AddAgentDialogBindings onClose={onClose} onSubmit={handleSubmit} />
+        )}
+        <DialogPanel>
+          <DialogHead title={isEditing ? "Edit agent" : "Add custom agent"} />
+          <DialogBody>
+            <DialogField label="Name">
+              <input
+                type="text"
+                value={displayName}
+                onChange={(e) => handleDisplayNameChange(e.target.value)}
+                placeholder="e.g., My Agent"
+                className="oui-field"
+              />
+            </DialogField>
+            <DialogField label="Global skills directory" note="Where skills are installed globally for this agent.">
+              <input
+                type="text"
+                value={globalDir}
+                onChange={(e) => setGlobalDir(e.target.value)}
+                placeholder="~/.my-agent/skills"
+                spellCheck={false}
+                className="oui-field oui-mono"
+              />
+            </DialogField>
+            <DialogField label="Project skills directory" note="Relative path from project root for project-scoped skills.">
+              <input
+                type="text"
+                value={projectDir}
+                onChange={(e) => setProjectDir(e.target.value)}
+                placeholder=".my-agent/skills"
+                spellCheck={false}
+                className="oui-field oui-mono"
+              />
+            </DialogField>
+            {error && <p className="oui-dlg-error" role="alert">{error}</p>}
+          </DialogBody>
+          <DialogFoot>
+            <OrbitButton variant="ghost" onClick={onClose}>Cancel</OrbitButton>
+            <OrbitButton variant="primary" onClick={() => void handleSubmit()} disabled={isSaving}>
+              {isSaving ? "Saving…" : isEditing ? "Save" : "Add agent"}
+            </OrbitButton>
+          </DialogFoot>
+        </DialogPanel>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-lg">

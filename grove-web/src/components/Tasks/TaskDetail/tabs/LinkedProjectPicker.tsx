@@ -11,6 +11,11 @@ interface LinkedProjectPickerProps {
   projects: ProjectListItem[];
   disabled?: boolean;
   onSelect: (project: ProjectListItem) => void;
+  /** Replaces the trigger's classes (Orbit restyles it). */
+  triggerClassName?: string;
+  triggerLabel?: string;
+  /** Icon-only trigger; the label becomes its accessible name and tooltip. */
+  triggerIconOnly?: boolean;
 }
 
 interface PickerPosition {
@@ -24,6 +29,9 @@ export function LinkedProjectPicker({
   projects,
   disabled = false,
   onSelect,
+  triggerClassName,
+  triggerLabel = "Link Project",
+  triggerIconOnly = false,
 }: LinkedProjectPickerProps) {
   const { theme } = useTheme();
   const [open, setOpen] = useState(false);
@@ -175,10 +183,12 @@ export function LinkedProjectPicker({
         }}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50"
+        aria-label={triggerIconOnly ? triggerLabel : undefined}
+        title={triggerIconOnly ? triggerLabel : undefined}
+        className={triggerClassName ?? "flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50"}
       >
-        <Link2 className="h-3.5 w-3.5" />
-        <span>Link Project</span>
+        <Link2 className="h-3.5 w-3.5" aria-hidden={triggerIconOnly || undefined} />
+        {triggerIconOnly ? null : <span>{triggerLabel}</span>}
       </button>
 
       {open && position && typeof document !== "undefined" &&

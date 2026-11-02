@@ -7,6 +7,8 @@ import type { Project } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
 import { useCommand } from "../../keyboard";
 import { ProjectTypeBadge } from "./ProjectTypeBadge";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { OrbitCommandPalette, PaletteEmpty, PaletteItem } from "../../orbit/ui/CommandPalette";
 
 interface ProjectCommandPaletteProps {
   isOpen: boolean;
@@ -17,6 +19,7 @@ interface ProjectCommandPaletteProps {
 export function ProjectCommandPalette({ isOpen, onClose, onProjectSelect }: ProjectCommandPaletteProps) {
   const { selectedProject, projects, selectProject, refreshProjects } = useProject();
   const { theme } = useTheme();
+  const orbit = useOrbitInterface();
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   useEscapeScope(isOpen, onClose);
@@ -106,6 +109,52 @@ export function ProjectCommandPalette({ isOpen, onClose, onProjectSelect }: Proj
         break;
     }
   }, [filteredProjects, highlightedIndex, handleSelect, onClose]);
+
+  if (orbit) {
+    return (
+      <OrbitCommandPalette
+        open={isOpen}
+        onClose={onClose}
+        label="Switch project"
+        query={searchQuery}
+        onQueryChange={setSearchQuery}
+        placeholder="Search projects…"
+        inputRef={inputRef}
+        onKeyDown={handleKeyDown}
+        listRef={listRef}
+        scope="Projects"
+        hints={[
+          { keys: ["↑", "↓"], label: "Navigate" },
+          { keys: ["↵"], label: "Select" },
+          { keys: ["Esc"], label: "Close" },
+        ]}
+      >
+        {filteredProjects.length === 0 ? (
+          <PaletteEmpty>No projects found</PaletteEmpty>
+        ) : (
+          filteredProjects.map((project, index) => {
+            const { color, Icon } = getProjectStyle(project.id, theme.accentPalette);
+            const totalCount = project.taskCount ?? project.tasks.length;
+            return (
+              <PaletteItem
+                key={project.id}
+                data-palette-item
+                active={index === highlightedIndex}
+                icon={<Icon aria-hidden="true" />}
+                iconStyle={{ background: color.bg, color: color.fg, boxShadow: "none" }}
+                title={project.name}
+                meta={project.projectType === "studio" ? "Studio" : "Code"}
+                description={`${totalCount} task${totalCount !== 1 ? "s" : ""}`}
+                trailing={selectedProject?.id === project.id ? <span className="oui-pal-current">Current</span> : undefined}
+                onClick={() => handleSelect(project)}
+                onMouseEnter={() => setHighlightedIndex(index)}
+              />
+            );
+          })
+        )}
+      </OrbitCommandPalette>
+    );
+  }
 
   return (
     <AnimatePresence>

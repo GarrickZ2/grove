@@ -8,14 +8,9 @@ import {
 } from "lucide-react";
 import type { Task } from "../../../../data/types";
 import {
-  listArtifacts, previewArtifact, artifactDownloadUrl, deleteArtifact,
-  uploadArtifacts, createArtifactLink, updateArtifactLink, syncArtifactToResource, listArtifactWorkdirs, addArtifactWorkdir, deleteArtifactWorkdir, openArtifactWorkdir, openArtifactFile, revealArtifactFile,
-  listResources,
+  artifactDownloadUrl,
   type ArtifactFile, type ArtifactWorkDirectoryEntry, type DisplayItem,
 } from "../../../../api";
-import { apiClient } from "../../../../api/client";
-import { useBrowseFolder } from "../../../Projects/useBrowseFolder";
-import { filesystemBasename } from "../../../../utils/filesystemPath";
 import { useAuthenticatedFileUrl } from "../../../../hooks/useAuthenticatedFileUrl";
 import {
   VSCodeIcon,
@@ -23,18 +18,19 @@ import {
   getPreviewType,
   canPreviewFile,
   getExtBadge,
-  downloadViaIframe,
   formatSize,
   formatTime,
   FileConflictDialog,
   AddLinkDialog,
   isLinkFile,
   linkDisplayName,
-  parseLinkFile,
 } from "../../../ui";
-import { openExternalUrl } from "../../../../utils/openExternal";
-import { previewCommentMarkerData, previewCommentTaskLabel, usePreviewComments, type PreviewCommentLocator } from "../../../../context";
-import { getPreviewRenderer, type PreviewCommentMarker } from "../../../Review/previewRenderers";
+import { useOrbitInterface } from "../../../../orbit/ui/interfaceContext";
+import { OrbitArtifactsPanel } from "../../../../orbit/workspace/artifacts/OrbitArtifactsPanel";
+import { useArtifactsPanel, type ArtifactPreviewRequest } from "./useArtifactsPanel";
+import { dragCarriesGrovePath, dropContainsDirectory, getDirectChildren, parentPath } from "./artifactsModel";
+
+export type { ArtifactPreviewRequest } from "./useArtifactsPanel";
 
 interface ArtifactsTabProps {
   projectId?: string;
@@ -44,181 +40,47 @@ interface ArtifactsTabProps {
   isChatBusy?: boolean;
 }
 
-interface LoadFilesOptions {
-  silent?: boolean;
+/** Task Artifacts panel: Orbit renders its own body; Workbench keeps the split Uploads / Downloads layout. */
+export function ArtifactsTab(props: ArtifactsTabProps) {
+  const orbit = useOrbitInterface();
+  return orbit ? <OrbitArtifactsPanel {...props} /> : <WorkbenchArtifactsTab {...props} />;
 }
 
-export interface ArtifactPreviewRequest {
-  file: string;
-  seq: number;
-}
-
-function dropContainsDirectory(dataTransfer: DataTransfer): boolean {
-  for (const item of Array.from(dataTransfer.items || [])) {
-    const entry = (item as DataTransferItem & {
-      webkitGetAsEntry?: () => { isDirectory?: boolean } | null;
-    }).webkitGetAsEntry?.();
-    if (entry?.isDirectory) return true;
-  }
-  return false;
-}
-
-export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy }: ArtifactsTabProps) {
-  const { browseFolder, folderPicker } = useBrowseFolder("Select Artifact Folder");
-  const { drafts: previewCommentDrafts, addDraft, updateDraft, removeDraft } = usePreviewComments();
-  const [inputFiles, setInputFiles] = useState<ArtifactFile[]>([]);
-  const [outputFiles, setOutputFiles] = useState<ArtifactFile[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [syncConflict, setSyncConflict] = useState<{
-    file: ArtifactFile;
-    newName: string;
-    existingNames: Set<string>;
-  } | null>(null);
-
-  const [previewFile, setPreviewFile] = useState<{ file: ArtifactFile; content: string; downloadUrl?: string } | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-
-  const [isUploading, setIsUploading] = useState(false);
-  const isUploadingRef = useRef(false);
-  const [addLinkOpen, setAddLinkOpen] = useState(false);
-  const [editLink, setEditLink] = useState<{
-    file: ArtifactFile;
-    initial: { name: string; url: string; description?: string; favicon?: string };
-  } | null>(null);
+function WorkbenchArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy }: ArtifactsTabProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCountRef = useRef(0);
   const [uploadsOpen, setUploadsOpen] = useState(true);
   const [downloadsOpen, setDownloadsOpen] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [workdirs, setWorkdirs] = useState<ArtifactWorkDirectoryEntry[]>([]);
-  const [isLoadingWorkdirs, setIsLoadingWorkdirs] = useState(true);
-  const [isAddingWorkdir, setIsAddingWorkdir] = useState(false);
   const [currentOutputPath, setCurrentOutputPath] = useState("");
+
+  const revealTarget = useCallback((target: ArtifactFile) => {
+    if (target.directory === "input") {
+      setUploadsOpen(true);
+    } else if (target.directory === "output") {
+      setDownloadsOpen(true);
+      setCurrentOutputPath(parentPath(target.path));
+    }
+  }, []);
+
+  const {
+    inputFiles, outputFiles, isLoading, error, setError, toastMessage,
+    syncConflict, setSyncConflict, overwriteSyncConflict, renameSyncConflict,
+    previewFile, previewLoading, previewError, closePreview,
+    isUploading, addLinkOpen, setAddLinkOpen, editLink, setEditLink,
+    workdirs, isLoadingWorkdirs, isAddingWorkdir,
+    loadFiles, loadWorkdirs, handleUpload, handleAddWorkdir, handleDeleteWorkdir, handleOpenWorkdir,
+    handlePreview, handleDownload, handleOpenInApp, handleRevealInFileManager,
+    handleCreatePreviewComment, handleUpdatePreviewComment, removePreviewComment,
+    currentFilePreviewDrafts, currentFilePreviewMarkers,
+    handleOpenLink, handleEditLink, handleDelete, handleSyncToResource, handleOpenFolder,
+    submitAddLink, submitEditLink, folderPicker,
+  } = useArtifactsPanel({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy, onRevealTarget: revealTarget });
 
   // Resizable split
   const containerRef = useRef<HTMLDivElement>(null);
   const [splitRatio, setSplitRatio] = useState(0.5);
   const isDraggingRef = useRef(false);
-  const lastPreviewSeqRef = useRef(0);
-  const lastGoodContentRef = useRef<string | null>(null);
-  const liveRefreshSeqRef = useRef(0);
-  const previousChatBusyRef = useRef(!!isChatBusy);
-  const previewFileRef = useRef(previewFile);
-  useEffect(() => { previewFileRef.current = previewFile; }, [previewFile]);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-
-  const refreshPreviewContent = useCallback((file: ArtifactFile, seq: number) => {
-    if (!projectId) return;
-    const t = getPreviewType(file.name);
-    // Image and binary previews load their own bytes; neither can be
-    // re-polled via the text endpoint.
-    if (t === "image" || t === "binary") return;
-    previewArtifact(projectId, task.id, file.directory, file.path)
-      .then((content) => {
-        if (seq !== liveRefreshSeqRef.current) return;
-        lastGoodContentRef.current = content;
-        // Short-circuit when content is unchanged: skipping setState keeps
-        // the preview DOM stable, which preserves the user's scroll
-        // position across Live Preview polls. A real content change still
-        // re-renders (and may shift scroll), which is acceptable.
-        const prev = previewFileRef.current;
-        if (prev && prev.content === content) {
-          setPreviewError(null);
-          return;
-        }
-        setPreviewFile({ file, content });
-        setPreviewError(null);
-      })
-      .catch(() => {});
-  }, [projectId, task.id]);
-
-  useEffect(() => {
-    if (!isChatBusy || !previewFile || !projectId) return;
-    const seq = ++liveRefreshSeqRef.current;
-    const file = previewFile.file;
-    const timer = setInterval(() => {
-      refreshPreviewContent(file, seq);
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [isChatBusy, previewFile, projectId, refreshPreviewContent]);
-
-  // Auto-dismiss toast after 3 seconds
-  useEffect(() => {
-    if (!toastMessage) return;
-    const timer = setTimeout(() => setToastMessage(null), 3000);
-    return () => clearTimeout(timer);
-  }, [toastMessage]);
-
-  const loadFiles = useCallback(async (options?: LoadFilesOptions) => {
-    if (!projectId) return;
-    const silent = options?.silent === true;
-    if (!silent) setIsLoading(true);
-    setError(null);
-    try {
-      const data = await listArtifacts(projectId, task.id);
-      setInputFiles(data.input);
-      setOutputFiles(data.output);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load files");
-    }
-    if (!silent) setIsLoading(false);
-  }, [projectId, task.id]);
-
-  const loadWorkdirs = useCallback(async () => {
-    if (!projectId) return;
-    setIsLoadingWorkdirs(true);
-    try {
-      const data = await listArtifactWorkdirs(projectId, task.id);
-      setWorkdirs(data.entries);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load work directories");
-    }
-    setIsLoadingWorkdirs(false);
-  }, [projectId, task.id]);
-
-  useEffect(() => {
-    Promise.resolve().then(() => { void loadFiles(); void loadWorkdirs(); });
-  }, [loadFiles, loadWorkdirs]);
-
-  // Refresh when ACP chat finishes work.
-  // Use isUploadingRef (not isUploading state) to avoid stale closure:
-  // the ref always reflects the current upload state when this effect fires.
-  useEffect(() => {
-    if (lastChatIdleAt === undefined) return;
-    // loadFiles is async and any setState inside happens after `await`, so the
-    // setState is not synchronous within this effect body.
-    if (!isUploadingRef.current) void loadFiles({ silent: true });
-  }, [lastChatIdleAt, loadFiles]);
-
-  const handleUpload = useCallback(async (files: FileList | File[]) => {
-    if (!projectId || files.length === 0) return;
-    isUploadingRef.current = true;
-    setIsUploading(true);
-    setError(null);
-    try {
-      await uploadArtifacts(projectId, task.id, Array.from(files));
-      await loadFiles();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-    }
-    isUploadingRef.current = false;
-    setIsUploading(false);
-  }, [projectId, task.id, loadFiles]);
-
-  /** True if the current drag carries a grove file path — i.e. it's an internal
-   *  drag from another FileCard or from FileTree, not an OS file upload. We use
-   *  this to suppress the "Drop files to upload" overlay (misleading when the
-   *  user is moving a chip to the chat composer) and to no-op the drop handler. */
-  const dragCarriesGrovePath = (dt: DataTransfer): boolean => {
-    const types = dt.types;
-    if (!types) return false;
-    for (let i = 0; i < types.length; i++) {
-      if (types[i] === "application/x-grove-file-path") return true;
-    }
-    return false;
-  };
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     // Internal file drag (from FileCard / FileTree) — let it propagate to other
@@ -238,356 +100,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       return;
     }
     if (e.dataTransfer.files.length > 0) handleUpload(e.dataTransfer.files);
-  }, [handleUpload]);
-
-  const handleAddWorkdir = useCallback(async () => {
-    if (!projectId) return;
-    setIsAddingWorkdir(true);
-    let data: { path: string | null } | null = null;
-    let err: unknown = null;
-    try {
-      const path = await browseFolder();
-      data = { path };
-      if (path) {
-        await addArtifactWorkdir(projectId, task.id, path);
-        await loadWorkdirs();
-      }
-    } catch (e) {
-      err = e;
-    }
-    if (err) {
-      setError(err instanceof Error ? err.message : "Failed to add folder");
-    } else if (data && data.path) {
-      const folderPath = data.path;
-      const folderName = filesystemBasename(folderPath);
-      setToastMessage(`Added folder "${folderName}"`);
-    }
-    setIsAddingWorkdir(false);
-  }, [projectId, task.id, loadWorkdirs, browseFolder]);
-
-  const handleDeleteWorkdir = useCallback(async (entry: ArtifactWorkDirectoryEntry) => {
-    if (!projectId) return;
-    try {
-      await deleteArtifactWorkdir(projectId, task.id, entry.name);
-      await loadWorkdirs();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to remove folder");
-    }
-  }, [projectId, task.id, loadWorkdirs]);
-
-  const handleOpenWorkdir = useCallback(async (entry: ArtifactWorkDirectoryEntry) => {
-    if (!projectId) return;
-    try {
-      await openArtifactWorkdir(projectId, task.id, entry.name);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to open folder");
-    }
-  }, [projectId, task.id]);
-
-  const handlePreview = useCallback(async (file: ArtifactFile, force?: boolean) => {
-    if (!projectId || file.is_dir) return;
-    const previewType = getPreviewType(file.name);
-    if (previewType === "image") {
-      const url = artifactDownloadUrl(projectId, task.id, file.directory, file.path);
-      setPreviewFile({ file, content: url });
-      lastGoodContentRef.current = url;
-      setPreviewError(null);
-      return;
-    }
-    if (previewType === "binary") {
-      // Renderer fetches the URL itself (e.g. xlsx via SheetJS). We just
-      // hand it the download URL; content is unused.
-      const url = artifactDownloadUrl(projectId, task.id, file.directory, file.path);
-      setPreviewFile({ file, content: "", downloadUrl: url });
-      lastGoodContentRef.current = "";
-      setPreviewError(null);
-      return;
-    }
-    setPreviewLoading(true);
-    setPreviewError(null);
-    let content: string | null = null;
-    let err: unknown = null;
-    let succeeded = false;
-    try {
-      content = await previewArtifact(projectId, task.id, file.directory, file.path);
-      succeeded = true;
-    } catch (e) {
-      err = e;
-    }
-    if (succeeded) {
-      // Treat a literal `null` from the API as a valid empty preview, not
-      // an error. The previous `err === null && content !== null` form
-      // misclassified empty/missing files as failures.
-      const safeContent = content ?? "";
-      lastGoodContentRef.current = safeContent;
-      // Skip setState when the previewed file and its content are unchanged.
-      // This covers the busy→idle final refresh where the agent
-      // didn't actually touch this file — unconditional setState would
-      // re-render FilePreviewDrawer and reset the user's scroll position.
-      const prev = previewFileRef.current;
-      if (!prev || prev.file.path !== file.path || prev.content !== safeContent) {
-        setPreviewFile({ file, content: safeContent });
-      }
-    } else {
-      const renderer = getPreviewRenderer(file.name, 'full');
-      if (renderer && renderer.id === 'source') {
-        downloadViaIframe(
-          artifactDownloadUrl(projectId, task.id, file.directory, file.path),
-          file.name,
-        );
-        setPreviewLoading(false);
-        return;
-      }
-      const hasMessage = err && typeof err === 'object' && 'message' in err;
-      const message = hasMessage ? (err as { message: string }).message : 'Failed to load preview';
-      const lastGood = lastGoodContentRef.current;
-      const currentPreview = previewFileRef.current;
-      const sameFile = currentPreview !== null && currentPreview.file.path === file.path;
-      if (force || !lastGood) {
-        setPreviewFile({ file, content: `Error: ${message}` });
-        setPreviewError(message);
-      } else if (lastGood && sameFile) {
-        setPreviewFile({ file, content: lastGood });
-      }
-    }
-    setPreviewLoading(false);
-  }, [projectId, task.id]);
-
-  useEffect(() => {
-    const wasBusy = previousChatBusyRef.current;
-    const busy = !!isChatBusy;
-    previousChatBusyRef.current = busy;
-    if (!wasBusy || busy || !previewFile) return;
-    // Use the silent refresher (no loading toggle, no setState when content
-    // is unchanged) so the busy→idle final refresh doesn't unmount the
-    // preview DOM and reset the user's scroll position. handlePreview is
-    // still used for the manual Refresh button where a spinner is expected.
-    const seq = ++liveRefreshSeqRef.current;
-    refreshPreviewContent(previewFile.file, seq);
-  }, [isChatBusy, previewFile, refreshPreviewContent]);
-
-  const [pendingPreview, setPendingPreview] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!previewRequest || previewRequest.seq === lastPreviewSeqRef.current) return;
-    lastPreviewSeqRef.current = previewRequest.seq;
-    // previewRequest is a seq-bumped external prop; we have no event handler
-    // to consume it, so the queued path is staged here for the next effect to drain.
-    setPendingPreview(previewRequest.file);
-  }, [previewRequest]);
-
-  useEffect(() => {
-    if (isLoading || !pendingPreview) return;
-    const requestedPath = pendingPreview;
-    // Defer the consume-queued-action setState so the rule can see this as
-    // a callback (microtask) rather than a synchronous setState in render.
-    Promise.resolve().then(() => setPendingPreview(null));
-
-    const trimmedPath = requestedPath.trim().replace(/^\.?\//, "");
-    if (!trimmedPath) return;
-    const requestedSegments = trimmedPath.split("/");
-
-    let requestedDir = requestedSegments[0] === "input" || requestedSegments[0] === "output"
-      ? requestedSegments[0]
-      : null;
-    const normalizedRequestedPath = requestedDir
-      ? requestedSegments.slice(1).join("/")
-      : trimmedPath;
-
-    const allFiles = [...inputFiles, ...outputFiles].filter((file) => !file.is_dir);
-
-    let target = allFiles.find((file) =>
-      (requestedDir === null || file.directory === requestedDir) && (
-        file.path === normalizedRequestedPath ||
-        file.name === normalizedRequestedPath ||
-        file.path.endsWith(`/${normalizedRequestedPath}`)
-      )
-    );
-
-    if (!target && !requestedDir) {
-      const inputIdx = requestedSegments.findIndex(s => s === "input" || s === "output");
-      if (inputIdx !== -1) {
-        requestedDir = requestedSegments[inputIdx];
-        const remainingSegments = requestedSegments.slice(inputIdx + 1);
-        const relativePath = remainingSegments.join("/");
-        target = allFiles.find((file) =>
-          file.directory === requestedDir && (
-            file.path === relativePath ||
-            file.name === relativePath ||
-            file.path.endsWith(`/${relativePath}`) ||
-            file.name === relativePath.split("/").pop()
-          )
-        );
-      }
-    }
-
-    if (!target) {
-      const fileName = trimmedPath.split("/").pop() || trimmedPath;
-      target = allFiles.find((file) => file.name === fileName);
-    }
-
-    if (!target) {
-      const msg = `"${trimmedPath.split("/").pop() || trimmedPath}" is outside scope`;
-      Promise.resolve().then(() => setToastMessage(msg));
-      return;
-    }
-
-    const finalTarget = target;
-    Promise.resolve().then(() => {
-      if (finalTarget.directory === "input") {
-        setUploadsOpen(true);
-      } else if (finalTarget.directory === "output") {
-        setDownloadsOpen(true);
-        setCurrentOutputPath(parentPath(finalTarget.path));
-      }
-      void handlePreview(finalTarget);
-    });
-  }, [isLoading, pendingPreview, inputFiles, outputFiles, handlePreview]);
-
-  const handleDownload = useCallback((file: ArtifactFile) => {
-    if (!projectId || file.is_dir) return;
-    downloadViaIframe(
-      artifactDownloadUrl(projectId, task.id, file.directory, file.path),
-      file.name,
-    );
-  }, [projectId, task.id]);
-
-  const handleOpenInApp = useCallback((file: ArtifactFile) => {
-    if (!projectId || file.is_dir) return;
-    void openArtifactFile(projectId, task.id, file.directory, file.path);
-  }, [projectId, task.id]);
-
-  const handleRevealInFileManager = useCallback((file: ArtifactFile) => {
-    if (!projectId || file.is_dir) return;
-    void revealArtifactFile(projectId, task.id, file.directory, file.path);
-  }, [projectId, task.id]);
-
-  const handleCreatePreviewComment = useCallback((file: ArtifactFile, locator: PreviewCommentLocator, comment: string, rendererId: string) => {
-    if (!projectId) return;
-    addDraft({
-      source: "artifact",
-      projectId,
-      taskId: task.id,
-      filePath: `${file.directory}/${file.path}`,
-      fileName: file.name,
-      rendererId,
-      locator,
-      comment,
-    });
-    setToastMessage("Preview comment added to chat");
-  }, [addDraft, projectId, task.id]);
-
-  const previewFilePath = useMemo(
-    () => (previewFile ? `${previewFile.file.directory}/${previewFile.file.path}` : null),
-    [previewFile],
-  );
-  const currentFilePreviewDrafts = useMemo(() => {
-    if (!projectId || !previewFilePath) return [];
-    return previewCommentDrafts.filter(
-      (d) => d.projectId === projectId && d.taskId === task.id && d.filePath === previewFilePath,
-    );
-  }, [previewCommentDrafts, projectId, task.id, previewFilePath]);
-  const currentFilePreviewMarkers = useMemo<PreviewCommentMarker[]>(
-    () => currentFilePreviewDrafts.map((draft) =>
-      previewCommentMarkerData(
-        draft,
-        previewCommentTaskLabel(previewCommentDrafts, draft),
-      ),
-    ),
-    [currentFilePreviewDrafts, previewCommentDrafts],
-  );
-
-  const handleUpdatePreviewComment = useCallback(
-    (id: string, comment: string) => updateDraft(id, { comment }),
-    [updateDraft],
-  );
-  const handleOpenLink = useCallback(async (file: ArtifactFile) => {
-    if (!projectId) return;
-    try {
-      const raw = await previewArtifact(projectId, task.id, file.directory, file.path);
-      const parsed = parseLinkFile(raw);
-      if (!parsed) {
-        setError("Malformed link file");
-        return;
-      }
-      openExternalUrl(parsed.url);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to open link");
-    }
-  }, [projectId, task.id]);
-
-  const handleEditLink = useCallback(async (file: ArtifactFile) => {
-    if (!projectId) return;
-    try {
-      const raw = await previewArtifact(projectId, task.id, file.directory, file.path);
-      const parsed = parseLinkFile(raw);
-      if (!parsed) {
-        setError("Malformed link file");
-        return;
-      }
-      setEditLink({
-        file,
-        initial: { name: parsed.name, url: parsed.url, description: parsed.description, favicon: parsed.favicon },
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load link");
-    }
-  }, [projectId, task.id]);
-
-  const handleDelete = useCallback(async (file: ArtifactFile) => {
-    if (!projectId) return;
-    try {
-      await deleteArtifact(projectId, task.id, file.directory, file.path);
-      await loadFiles();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete file");
-    }
-  }, [projectId, task.id, loadFiles]);
-
-  const handleSyncToResource = useCallback(async (
-    file: ArtifactFile,
-    options?: { force?: boolean; renameTo?: string },
-    cachedExistingNames?: Set<string>,
-  ) => {
-    if (!projectId) return;
-    const renameTo = options?.renameTo;
-    const newName = renameTo ?? file.name;
-    let err: unknown = null;
-    try {
-      await syncArtifactToResource(projectId, task.id, file.directory, file.path, options);
-    } catch (e) {
-      err = e;
-    }
-    if (!err) {
-      setToastMessage(`Synced "${newName}" to Shared Assets`);
-      return;
-    }
-    const apiErr = err as { status?: number; data?: unknown };
-    if (apiErr.status === 409) {
-      // Fetch resource root filenames once and cache them for the dialog
-      let existingNames: Set<string>;
-      if (cachedExistingNames) {
-        existingNames = cachedExistingNames;
-      } else {
-        let data: Awaited<ReturnType<typeof listResources>> | null = null;
-        try {
-          data = await listResources(projectId);
-        } catch {
-          data = null;
-        }
-        existingNames = data ? new Set(data.files.map(f => f.name)) : new Set<string>();
-      }
-      setSyncConflict({ file, newName, existingNames });
-      return;
-    }
-    setError(err instanceof Error ? err.message : "Sync failed");
-  }, [projectId, task.id]);
-
-  const handleOpenFolder = (dir: string, subpath?: string) => {
-    if (!projectId) return;
-    const pathQuery = subpath ? encodeURIComponent(subpath) : ".";
-    apiClient.post(`/api/v1/projects/${projectId}/tasks/${task.id}/open-folder?dir=${encodeURIComponent(dir)}&path=${pathQuery}`).catch(() => {});
-  };
+  }, [handleUpload, setError]);
 
   useEffect(() => {
     if (!currentOutputPath) return;
@@ -685,14 +198,14 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
             loading={previewLoading}
             error={previewError}
             isLive={!!isChatBusy}
-            onClose={() => { setPreviewFile(null); lastGoodContentRef.current = null; setPreviewError(null); }}
+            onClose={closePreview}
             onDownload={() => handleDownload(previewFile.file)}
             onRefresh={() => handlePreview(previewFile.file, true)}
             onCreatePreviewComment={(locator, comment, rendererId) =>
               handleCreatePreviewComment(previewFile.file, locator, comment, rendererId)
             }
             onUpdatePreviewComment={handleUpdatePreviewComment}
-            onDeletePreviewComment={removeDraft}
+            onDeletePreviewComment={removePreviewComment}
             previewCommentDrafts={currentFilePreviewDrafts}
             previewCommentMarkers={currentFilePreviewMarkers}
             sketchContext={projectId ? { projectId, taskId: task.id } : undefined}
@@ -934,17 +447,8 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
           existingNames={syncConflict.existingNames}
           onNewNameChange={(v) => setSyncConflict({ ...syncConflict, newName: v })}
           onCancel={() => setSyncConflict(null)}
-          onOverwrite={() => {
-            const { file, existingNames } = syncConflict;
-            setSyncConflict(null);
-            void handleSyncToResource(file, { force: true }, existingNames);
-          }}
-          onRename={() => {
-            const { file, newName, existingNames } = syncConflict;
-            if (!newName.trim()) return;
-            setSyncConflict(null);
-            void handleSyncToResource(file, { renameTo: newName.trim() }, existingNames);
-          }}
+          onOverwrite={overwriteSyncConflict}
+          onRename={renameSyncConflict}
         />
       )}
 
@@ -964,12 +468,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
         open={addLinkOpen}
         title="Add Link to Uploads"
         onClose={() => setAddLinkOpen(false)}
-        onSubmit={async (payload) => {
-          if (!projectId) return;
-          await createArtifactLink(projectId, task.id, payload);
-          await loadFiles();
-          setToastMessage(`Added link "${payload.name}"`);
-        }}
+        onSubmit={submitAddLink}
       />
       <AddLinkDialog
         open={!!editLink}
@@ -977,36 +476,11 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
         submitLabel="Save"
         initial={editLink?.initial}
         onClose={() => setEditLink(null)}
-        onSubmit={async (payload) => {
-          if (!projectId || !editLink) return;
-          await updateArtifactLink(projectId, task.id, editLink.file.path, payload);
-          await loadFiles();
-          setToastMessage(`Updated link "${payload.name}"`);
-        }}
+        onSubmit={submitEditLink}
       />
       {folderPicker}
     </div>
   );
-}
-
-function parentPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  if (parts.length <= 1) return "";
-  return parts.slice(0, -1).join("/");
-}
-
-function getDirectChildren(files: ArtifactFile[], parent: string): ArtifactFile[] {
-  const normalizedParent = parent.trim().replace(/^\/+|\/+$/g, "");
-  return files
-    .filter((file) => parentPath(file.path) === normalizedParent)
-    .sort((a, b) => {
-      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-      // Sort by modified_at descending (newest first)
-      const timeA = a.modified_at ? new Date(a.modified_at).getTime() : 0;
-      const timeB = b.modified_at ? new Date(b.modified_at).getTime() : 0;
-      if (timeB !== timeA) return timeB - timeA;
-      return a.name.localeCompare(b.name);
-    });
 }
 
 /* ─── Section Header ─── */

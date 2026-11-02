@@ -4,6 +4,8 @@ import { InteractionContext } from "../../keyboard/InteractionContext";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useIsMobile } from "../../hooks";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { OrbitDialogLayer } from "../../orbit/ui/Dialog";
 
 /** Track the visualViewport so a dialog can be positioned exactly inside it
  *  (above any virtual keyboard, below the iOS top bar, etc). Returns the
@@ -53,7 +55,9 @@ interface DialogShellProps {
 
 /**
  * Shared dialog wrapper that renders as centered modal on desktop
- * and as a bottom sheet on mobile.
+ * and as a bottom sheet on mobile. Under the Orbit interface it renders the
+ * Orbit layer (frosted scrim, spring motion) instead; open state, stacking,
+ * scroll lock and swipe-to-close stay the same for both.
  */
 export function DialogShell({
   isOpen: requestedOpen,
@@ -73,6 +77,7 @@ export function DialogShell({
   // `centered` callers opt out of the width-based bottom-sheet entirely.
   const isMobile = variant === "responsive" && isNarrow;
   const vvRect = useVisualViewportRect(isMobile && isOpen);
+  const orbit = useOrbitInterface();
 
   // iOS-safe body scroll lock for mobile dialogs. The naive
   // `overflow:hidden` on body breaks touch-scroll inside the dialog on
@@ -109,7 +114,40 @@ export function DialogShell({
   // Task" path wouldn't actually show the dialog). Portal also dodges any
   // ancestor stacking context / overflow:hidden / transform that would
   // otherwise clip a centered modal.
+  const handleSwipeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    swipeStartRef.current = event.clientY;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const handleSwipeEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (start !== null && event.clientY - start > 48) onClose();
+  };
+  const handleSwipeCancel = () => { swipeStartRef.current = null; };
+
   if (typeof document === "undefined") return null;
+  if (orbit) {
+    return createPortal(
+      <OrbitDialogLayer
+        open={isOpen}
+        onClose={onClose}
+        zIndex={zIndex}
+        maxWidth={maxWidth}
+        sheet={isMobile}
+        sheetRect={vvRect}
+        swipeable={swipeToClose}
+        handleProps={{
+          onPointerDown: swipeToClose ? handleSwipeStart : undefined,
+          onPointerUp: swipeToClose ? handleSwipeEnd : undefined,
+          onPointerCancel: handleSwipeCancel,
+        }}
+      >
+        <DialogLayerContext.Provider value={zIndex + 10}>{children}</DialogLayerContext.Provider>
+      </OrbitDialogLayer>,
+      document.body,
+    );
+  }
   return createPortal(
     <AnimatePresence>
       {isOpen && (
@@ -158,17 +196,9 @@ export function DialogShell({
                   {/* Drag indicator */}
                   <div
                     className={`flex justify-center ${swipeToClose ? "touch-none cursor-grab py-3" : "pt-3 pb-1"}`}
-                    onPointerDown={swipeToClose ? (event) => {
-                      event.stopPropagation();
-                      swipeStartRef.current = event.clientY;
-                      event.currentTarget.setPointerCapture(event.pointerId);
-                    } : undefined}
-                    onPointerUp={swipeToClose ? (event) => {
-                      const start = swipeStartRef.current;
-                      swipeStartRef.current = null;
-                      if (start !== null && event.clientY - start > 48) onClose();
-                    } : undefined}
-                    onPointerCancel={() => { swipeStartRef.current = null; }}
+                    onPointerDown={swipeToClose ? handleSwipeStart : undefined}
+                    onPointerUp={swipeToClose ? handleSwipeEnd : undefined}
+                    onPointerCancel={handleSwipeCancel}
                   >
                     <div className="w-10 h-1 rounded-full bg-[var(--color-border)]" />
                   </div>

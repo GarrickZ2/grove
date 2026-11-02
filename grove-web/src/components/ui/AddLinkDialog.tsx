@@ -5,11 +5,15 @@
 // the link via the appropriate backend endpoint.
 
 import { useEffect, useRef, useState, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { Link as LinkIcon, Loader2, X, Globe } from "lucide-react";
 import { fetchUrlMetadata, type ApiError } from "../../api";
 import { listExtensionTabs, type ExtensionTab } from "../../api/extension";
 import { hostnameOf } from "./linkFile";
 import { useCommand, useKeyboardScope } from "../../keyboard";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { Button as OrbitButton } from "../../orbit/ui/Button";
+import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel, OrbitDialogLayer } from "../../orbit/ui/Dialog";
 
 interface AddLinkDialogProps {
   open: boolean;
@@ -78,6 +82,7 @@ export function AddLinkDialog({ open, title = "Add Link", initial, submitLabel, 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const urlInputRef = useRef<HTMLInputElement | null>(null);
+  const orbit = useOrbitInterface();
 
   // Tabs snapshot fetched on dialog open.
   const [extensionTabs, setExtensionTabs] = useState<ExtensionTab[]>([]);
@@ -268,6 +273,125 @@ export function AddLinkDialog({ open, title = "Add Link", initial, submitLabel, 
   // useCommand would otherwise overwrite each other on every re-render —
   // only the last-mounted dialog's binding would be live.
   useKeyboardScope("dialog.addLink", open);
+
+  if (orbit) {
+    if (typeof document === "undefined") return null;
+    return (
+      <>
+        {open && <AddLinkDialogBindings onClose={onClose} onSubmit={handleSubmit} />}
+        {createPortal(
+          <OrbitDialogLayer open={open} onClose={onClose} zIndex={9999} maxWidth="max-w-[480px]">
+            <DialogPanel>
+              <DialogHead title={title} />
+              <DialogBody>
+                <DialogField
+                  label="Link"
+                  as="div"
+                  aside={extensionConnected ? <><Globe aria-hidden="true" />Extension connected · open tabs ready</> : undefined}
+                  note={url ? <span className="oui-truncate" style={{ display: "block" }}>{hostnameOf(url)}</span> : undefined}
+                >
+                  <input
+                    ref={urlInputRef}
+                    type="url"
+                    aria-label="Link"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    // Only show the open-tabs dropdown when the field is empty.
+                    onFocus={() => {
+                      if (url.trim() === "") setShowDropdown(true);
+                    }}
+                    onBlur={() => setTimeout(() => setShowDropdown(false), 250)}
+                    placeholder="https://example.com/page"
+                    spellCheck={false}
+                    className="oui-field"
+                  />
+                  {showDropdown && filteredTabs.length > 0 && (
+                    <div className="oui-pop oui-dlg-menu oui-dlg-suggest oui-scroll" role="listbox" aria-label="Open browser tabs">
+                      {filteredTabs.map((tab, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          role="option"
+                          aria-selected={false}
+                          onMouseDown={(e) => {
+                            e.preventDefault(); // prevent input blur
+                            setUrl(tab.url);
+                            setName(tab.title);
+                            setNameTouched(true);
+                            setShowDropdown(false);
+                          }}
+                          className="oui-dlg-menu-item"
+                        >
+                          <img
+                            src={tab.favIconUrl || deriveFaviconUrl(tab.url)}
+                            alt=""
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
+                          />
+                          <span className="oui-dlg-suggest-copy">
+                            <b>{tab.title}</b>
+                            <small>{tab.url}</small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </DialogField>
+                <DialogField
+                  label="Name"
+                  aside={metadataLoading ? <Loader2 className="oui-spin" aria-label="Fetching title" /> : undefined}
+                >
+                  <span className="oui-dlg-inline">
+                    {favicon && (
+                      <img
+                        src={favicon}
+                        alt=""
+                        className="oui-dlg-favicon"
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    )}
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(e) => {
+                        setName(e.target.value);
+                        setNameTouched(true);
+                      }}
+                      placeholder="Auto-filled from link title"
+                      className="oui-field"
+                    />
+                  </span>
+                </DialogField>
+                <DialogField label={<>Description <span style={{ color: "var(--o-muted)", fontWeight: 400 }}>(optional)</span></>}>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Why this link is useful for the task / project"
+                    rows={3}
+                    className="oui-dlg-textarea"
+                    style={{ minHeight: 76 }}
+                  />
+                </DialogField>
+                {error && <p className="oui-dlg-error" role="alert">{error}</p>}
+              </DialogBody>
+              <DialogFoot>
+                <OrbitButton variant="ghost" onClick={onClose} disabled={submitting}>
+                  Cancel
+                </OrbitButton>
+                <OrbitButton variant="primary" onClick={() => void handleSubmit()} disabled={!canSubmit}>
+                  {submitting ? "Saving…" : (submitLabel ?? "Add Link")}
+                </OrbitButton>
+              </DialogFoot>
+            </DialogPanel>
+          </OrbitDialogLayer>,
+          document.body,
+        )}
+      </>
+    );
+  }
 
   if (!open) return null;
 
