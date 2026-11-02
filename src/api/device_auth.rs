@@ -24,7 +24,8 @@ use crate::storage::auth_devices::{self, Device};
 
 type HmacSha256 = Hmac<sha2::Sha256>;
 const COOKIE: &str = "__Host-grove_device";
-// Cookie persistence only; authorizations have no server-side expiration.
+// Cookie persistence only; an authorization ends when revoked or after
+// `auth_devices::IDLE_EXPIRY_SECS` without use, never because of its age.
 // Refreshing a trusted session renews browser cookie retention.
 const COOKIE_MAX_AGE: i64 = i32::MAX as i64;
 
@@ -87,6 +88,21 @@ impl ServerAuth {
     pub(crate) fn cookie_device_id<'a>(&self, headers: &'a HeaderMap) -> Option<&'a str> {
         let (id, _) = self.cookie_value(headers)?.split_once('.')?;
         valid_id(id).then_some(id)
+    }
+
+    /// Whether this request reached Grove over HTTPS, so a `Secure` HttpOnly
+    /// cookie can hold a remembered device. Otherwise the browser keeps a
+    /// signing key instead; either way, trusting a device works.
+    pub(crate) fn cookies_available(&self, headers: &HeaderMap) -> bool {
+        if self.secure_cookies.load(Ordering::Relaxed) {
+            return true;
+        }
+        self.trust_forwarded_proto.load(Ordering::Relaxed)
+            && headers
+                .get("x-forwarded-proto")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.split(',').next())
+                .is_some_and(|proto| proto.trim().eq_ignore_ascii_case("https"))
     }
 
     pub(crate) fn device_is_active(&self, id: &str) -> bool {
@@ -183,7 +199,7 @@ impl ServerAuth {
         self: &Arc<Self>,
         headers: &HeaderMap,
     ) -> Option<RequestAuth> {
-        if !self.secure_cookies.load(Ordering::Relaxed) {
+        if !self.cookies_available(headers) {
             return None;
         }
         let value = self.cookie_value(headers)?;
@@ -275,7 +291,7 @@ pub(crate) struct LoginRequest {
 }
 
 /// Fresh master-key signature authorizes a new device. The ID and trust choice
-/// are in the signed query; a captured static /auth/verify proof cannot mint one.
+/// are in the signed query, so a captured signature cannot mint one.
 pub(crate) async fn login(
     State(auth): State<Arc<ServerAuth>>,
     Extension(identity): Extension<RequestAuth>,
@@ -298,8 +314,8 @@ pub(crate) async fn login(
     }
     let cookie = query
         .cookie
-        .unwrap_or(query.trusted && auth.secure_cookies.load(Ordering::Relaxed));
-    if cookie && (!query.trusted || !auth.secure_cookies.load(Ordering::Relaxed)) {
+        .unwrap_or(query.trusted && auth.cookies_available(&headers));
+    if cookie && (!query.trusted || !auth.cookies_available(&headers)) {
         return Err(StatusCode::BAD_REQUEST);
     }
     if query.browser_id.as_deref().is_some_and(|id| !valid_id(id)) {
@@ -344,6 +360,7 @@ pub(crate) async fn login(
     if !replaced_ids.is_empty() {
         auth.notify_revocation();
     }
+    auth.logins.send_replace(Some(device.client.clone()));
     let mut response = Json(device.clone()).into_response();
     if let Some(token) = token {
         response.headers_mut().insert(
@@ -438,10 +455,8 @@ pub(crate) async fn trust(
     Query(query): Query<TrustQuery>,
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
-    let cookie = query
-        .cookie
-        .unwrap_or(auth.secure_cookies.load(Ordering::Relaxed));
-    if cookie && !auth.secure_cookies.load(Ordering::Relaxed) {
+    let cookie = query.cookie.unwrap_or(auth.cookies_available(&headers));
+    if cookie && !auth.cookies_available(&headers) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let old_id = identity.id().ok_or(StatusCode::FORBIDDEN)?;
@@ -777,6 +792,120 @@ mod tests {
         )
     }
 
+    fn forwarded_https() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-proto", "https".parse().unwrap());
+        headers
+    }
+
+    #[tokio::test]
+    async fn idle_devices_stop_working_and_leave_the_list() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let _dir = Sandbox::new();
+        let auth = Arc::new(ServerAuth::hmac("idle-password".into(), false));
+        let (active, _) = authorize(&auth, true).await;
+        let (idle, _) = authorize(&auth, true).await;
+        let stale = chrono::Utc::now().timestamp() - auth_devices::IDLE_EXPIRY_SECS - 1;
+        crate::storage::database::connection()
+            .execute(
+                "UPDATE auth_devices SET last_used_at = ?1 WHERE id = ?2",
+                rusqlite::params![stale, idle],
+            )
+            .unwrap();
+
+        assert!(signed_session(&auth, &active, "active").is_some());
+        assert!(signed_session(&auth, &idle, "idle").is_none());
+        assert!(!auth.device_is_active(&idle));
+        let listed: Vec<String> = auth_devices::list(&auth.scope())
+            .unwrap()
+            .into_iter()
+            .map(|device| device.id)
+            .collect();
+        assert_eq!(listed, vec![active]);
+    }
+
+    #[tokio::test]
+    async fn https_reverse_proxy_enables_cookies_only_for_a_loopback_server() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let _dir = Sandbox::new();
+        let auth = Arc::new(ServerAuth::hmac("proxy-password".into(), false));
+        auth.initialize_device_auth("127.0.0.1:3443".parse().unwrap())
+            .unwrap();
+
+        // Listening beyond loopback: anyone could claim HTTPS, so ignore it.
+        assert!(!auth.cookies_available(&forwarded_https()));
+        assert!(!auth.cookies_available(&HeaderMap::new()));
+
+        auth.trust_forwarded_proto.store(true, Ordering::Relaxed);
+        assert!(auth.cookies_available(&forwarded_https()));
+        // Plain HTTP (a home LAN, or a proxy without TLS) keeps signing keys.
+        let mut http = HeaderMap::new();
+        http.insert("x-forwarded-proto", "http".parse().unwrap());
+        assert!(!auth.cookies_available(&http));
+
+        let response = login(
+            State(auth.clone()),
+            Extension(RequestAuth::master()),
+            Query(LoginQuery {
+                device_id: super::super::auth::generate_secret_key(),
+                previous_device_id: None,
+                browser_id: None,
+                trusted: true,
+                cookie: None,
+            }),
+            forwarded_https(),
+            Json(LoginRequest {
+                name: None,
+                standalone: false,
+            }),
+        )
+        .await
+        .unwrap();
+        let set_cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+        assert!(set_cookie.contains("HttpOnly; Secure; SameSite=Strict"));
+        let mut request = forwarded_https();
+        request.insert(
+            header::COOKIE,
+            set_cookie.split(';').next().unwrap().parse().unwrap(),
+        );
+        assert!(auth.authenticate_cookie(&request).is_some());
+        // The same cookie is not honoured once the request is not HTTPS.
+        request.remove("x-forwarded-proto");
+        assert!(auth.authenticate_cookie(&request).is_none());
+    }
+
+    #[tokio::test]
+    async fn trusting_over_plain_http_keeps_working_without_cookies() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let _dir = Sandbox::new();
+        let auth = Arc::new(ServerAuth::hmac("lan-password".into(), false));
+        auth.trust_forwarded_proto.store(true, Ordering::Relaxed);
+        let (id, _) = authorize(&auth, true).await;
+        let device = auth_devices::get(&auth.scope(), &id).unwrap().unwrap();
+        assert!(device.trusted);
+        assert!(device.token_hash.is_none());
+        assert!(signed_session(&auth, &id, "lan").is_some());
+    }
+
+    #[tokio::test]
+    async fn master_key_login_announces_the_device_for_the_key_screen() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let _dir = Sandbox::new();
+        let auth = Arc::new(ServerAuth::hmac("generated".into(), true));
+        let mut logins = auth.logins.subscribe();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::USER_AGENT,
+            "Mozilla/5.0 (iPhone) Safari".parse().unwrap(),
+        );
+        authorize_with_headers(&auth, false, headers).await;
+        assert!(logins.has_changed().unwrap());
+        assert_eq!(
+            logins.borrow_and_update().as_deref(),
+            Some("iPhone · Safari")
+        );
+    }
+
     #[tokio::test]
     async fn native_banner_uses_the_device_and_stops_working_after_revocation() {
         let _lock = crate::storage::database::test_lock().lock().await;
@@ -1034,7 +1163,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trusted_cookie_retention_is_renewed_and_authorization_has_no_expiry() {
+    async fn trusted_cookie_retention_is_renewed_and_authorization_lapses_only_when_idle() {
         let _lock = crate::storage::database::test_lock().lock().await;
         let _dir = Sandbox::new();
         let auth = Arc::new(ServerAuth::hmac("password".into(), false));
@@ -1052,10 +1181,21 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(body["device"].get("expires_at").is_none());
-        crate::storage::database::connection().execute(
-            "UPDATE auth_devices SET created_at = 1, last_used_at = 1, expires_at = 1 WHERE id = ?1", [&id],
-        ).unwrap();
+        // Age alone never ends an authorization that is still in use.
+        crate::storage::database::connection()
+            .execute(
+                "UPDATE auth_devices SET created_at = 1, expires_at = 1 WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
         assert!(auth_devices::get(&auth.scope(), &id).unwrap().is_some());
+        crate::storage::database::connection()
+            .execute(
+                "UPDATE auth_devices SET last_used_at = 1 WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
+        assert!(auth_devices::get(&auth.scope(), &id).unwrap().is_none());
     }
 
     #[tokio::test]
@@ -1063,7 +1203,9 @@ mod tests {
         let _lock = crate::storage::database::test_lock().lock().await;
         let _dir = Sandbox::new();
         let auth = Arc::new(ServerAuth::hmac("password".into(), false));
-        let info = super::super::auth::auth_info(State(auth.clone())).await.0;
+        let info = super::super::auth::auth_info(State(auth.clone()), HeaderMap::new())
+            .await
+            .0;
         assert!(info.trusted_devices);
         assert!(!info.trusted_device_cookies);
         let (id, _) = authorize(&auth, true).await;
@@ -1151,7 +1293,9 @@ mod tests {
         duplicate.id = first_id.clone();
         auth_devices::insert(&second.scope(), &duplicate, &[second_id]).unwrap();
         let local = Arc::new(ServerAuth::no_auth());
-        let info = super::super::auth::auth_info(State(local.clone())).await.0;
+        let info = super::super::auth::auth_info(State(local.clone()), HeaderMap::new())
+            .await
+            .0;
         assert!(info.device_sessions);
         assert!(!info.required);
         let result = list(State(local.clone()), Extension(RequestAuth::master()))

@@ -71,6 +71,23 @@ fn publish_revocation() -> Result<()> {
     Ok(())
 }
 
+/// Authorizations unused for this long stop working, so a forgotten phone or
+/// browser does not keep access forever. Using a device renews it.
+pub const IDLE_EXPIRY_SECS: i64 = 30 * 24 * 60 * 60;
+
+fn idle_cutoff() -> i64 {
+    chrono::Utc::now().timestamp() - IDLE_EXPIRY_SECS
+}
+
+/// Forget authorizations that have been idle past the expiry.
+fn prune_idle(db: &rusqlite::Connection) -> Result<()> {
+    db.execute(
+        "DELETE FROM auth_devices WHERE last_used_at < ?1",
+        params![idle_cutoff()],
+    )?;
+    Ok(())
+}
+
 #[derive(Clone, Serialize)]
 pub struct Device {
     pub id: String,
@@ -138,12 +155,14 @@ pub fn insert(scope: &str, device: &Device, replaced_ids: &[String]) -> Result<(
     Ok(())
 }
 
+/// An authorization idle past [`IDLE_EXPIRY_SECS`] reads as absent, which is
+/// what every authentication path checks.
 pub fn get(scope: &str, id: &str) -> Result<Option<Device>> {
     Ok(database::connection()
         .query_row(
             "SELECT id, name, client, trusted, created_at, last_used_at, token_hash, browser_id
-         FROM auth_devices WHERE scope = ?1 AND id = ?2",
-            params![scope, id],
+         FROM auth_devices WHERE scope = ?1 AND id = ?2 AND last_used_at >= ?3",
+            params![scope, id, idle_cutoff()],
             read_device,
         )
         .optional()?)
@@ -151,6 +170,7 @@ pub fn get(scope: &str, id: &str) -> Result<Option<Device>> {
 
 pub fn list(scope: &str) -> Result<Vec<Device>> {
     let db = database::connection();
+    prune_idle(&db)?;
     let mut statement = db.prepare(
         "SELECT id, name, client, trusted, created_at, last_used_at, token_hash, browser_id
          FROM auth_devices WHERE scope = ?1 ORDER BY last_used_at DESC",
@@ -163,6 +183,7 @@ pub fn list(scope: &str) -> Result<Vec<Device>> {
 /// The scope remains internal and must never be returned to the browser.
 pub(crate) fn list_all() -> Result<Vec<(String, Device)>> {
     let db = database::connection();
+    prune_idle(&db)?;
     let mut statement = db.prepare(
         "SELECT id, name, client, trusted, created_at, last_used_at, token_hash, browser_id, scope
          FROM auth_devices ORDER BY last_used_at DESC",

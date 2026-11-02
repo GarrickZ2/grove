@@ -13,10 +13,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use hmac::{Hmac, Mac};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::Sha256;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -70,8 +70,15 @@ pub struct ServerAuth {
     /// Per-process key for narrowly scoped plugin-asset capabilities. This is
     /// separate from the mobile HMAC secret and rotates on every restart.
     plugin_asset_key: [u8; 32],
+    /// Grove itself serves HTTPS, so remembered devices can use HttpOnly cookies.
     pub(crate) secure_cookies: AtomicBool,
+    /// Grove listens on loopback only, so the sole client is a local reverse
+    /// proxy and its `X-Forwarded-Proto` says whether the browser used HTTPS.
+    pub(crate) trust_forwarded_proto: AtomicBool,
     pub(crate) device_changes: tokio::sync::watch::Sender<u64>,
+    /// Client label of the latest device that signed in with the master key.
+    /// Lets the one-time key screen close as soon as the key has been used.
+    pub(crate) logins: tokio::sync::watch::Sender<Option<String>>,
     pub(crate) device_scope: OnceLock<String>,
     pub(crate) device_cookie_name: OnceLock<String>,
 }
@@ -88,7 +95,9 @@ impl ServerAuth {
             used_nonces: Mutex::new(HashMap::new()),
             plugin_asset_key,
             secure_cookies: AtomicBool::new(false),
+            trust_forwarded_proto: AtomicBool::new(false),
             device_changes: tokio::sync::watch::channel(0).0,
+            logins: tokio::sync::watch::channel(None).0,
             device_scope: OnceLock::new(),
             device_cookie_name: OnceLock::new(),
         }
@@ -105,7 +114,9 @@ impl ServerAuth {
             used_nonces: Mutex::new(HashMap::new()),
             plugin_asset_key,
             secure_cookies: AtomicBool::new(false),
+            trust_forwarded_proto: AtomicBool::new(false),
             device_changes: tokio::sync::watch::channel(0).0,
+            logins: tokio::sync::watch::channel(None).0,
             device_scope: OnceLock::new(),
             device_cookie_name: OnceLock::new(),
         }
@@ -248,6 +259,11 @@ impl ServerAuth {
 
         true
     }
+}
+
+/// Compare secrets without leaking, through timing, how much of a guess matched.
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Generate a cryptographically random 64-character hex secret key.
@@ -456,52 +472,28 @@ pub struct AuthInfoResponse {
 /// `GET /api/v1/auth/info` — tells the SPA whether auth is required and which mode.
 pub async fn auth_info(
     axum::extract::State(auth): axum::extract::State<Arc<ServerAuth>>,
+    headers: axum::http::HeaderMap,
 ) -> Json<AuthInfoResponse> {
     Json(AuthInfoResponse {
         required: auth.secret_key.is_some(),
         mode: auth.mode,
         device_sessions: true,
         trusted_devices: auth.secret_key.is_some(),
-        trusted_device_cookies: auth.secure_cookies.load(Ordering::Relaxed),
+        trusted_device_cookies: auth.cookies_available(&headers),
     })
-}
-
-#[derive(Deserialize)]
-pub struct VerifyRequest {
-    pub proof: String,
-}
-
-#[derive(Serialize)]
-pub struct VerifyResponse {
-    pub valid: bool,
-}
-
-/// `POST /api/v1/auth/verify` — client sends `HMAC(SK, "grove-verify")` as proof.
-pub async fn auth_verify(
-    axum::extract::State(auth): axum::extract::State<Arc<ServerAuth>>,
-    Json(req): Json<VerifyRequest>,
-) -> Result<Json<VerifyResponse>, StatusCode> {
-    match &auth.secret_key {
-        None => Ok(Json(VerifyResponse { valid: true })),
-        Some(sk) => {
-            let mut mac =
-                HmacSha256::new_from_slice(sk.as_bytes()).expect("HMAC accepts any key length");
-            mac.update(b"grove-verify");
-            if hex::decode(req.proof)
-                .ok()
-                .is_some_and(|proof| mac.verify_slice(&proof).is_ok())
-            {
-                Ok(Json(VerifyResponse { valid: true }))
-            } else {
-                Err(StatusCode::UNAUTHORIZED)
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_path, ServerAuth};
+    use super::{canonical_path, constant_time_eq, ServerAuth};
+
+    #[test]
+    fn token_comparison_requires_an_exact_match() {
+        assert!(constant_time_eq(b"abc123", b"abc123"));
+        assert!(!constant_time_eq(b"abc123", b"abc124"));
+        assert!(!constant_time_eq(b"abc123", b"abc12"));
+        assert!(!constant_time_eq(b"", b"a"));
+    }
 
     #[test]
     fn no_query() {

@@ -5,6 +5,7 @@ pub mod csrf;
 pub mod device_auth;
 pub mod error;
 pub mod handlers;
+pub(crate) mod mobile_banner;
 #[cfg(feature = "perf-monitor")]
 pub mod perf_middleware;
 #[cfg(feature = "perf-monitor")]
@@ -1325,6 +1326,11 @@ pub fn create_router(
             axum::http::HeaderName::from_static("x-grove-device-id"),
         ]);
 
+    // `grove mobile` has no cross-origin clients: its own frontend is served
+    // from the same origin, and the iOS app and remote GUI reach it through
+    // server-side proxies. Plugin assets set their own CORS header.
+    let mobile = auth.secret_key.is_some();
+
     let api_router = if let Some(remote) = remote_url {
         create_proxy_router(remote)
     } else {
@@ -1333,7 +1339,6 @@ pub fn create_router(
         // Auth endpoints are NOT protected by middleware
         let auth_router = Router::new()
             .route("/auth/info", get(auth::auth_info))
-            .route("/auth/verify", post(auth::auth_verify))
             .layer(middleware::from_fn(device_auth::no_store))
             .with_state(auth.clone());
 
@@ -1395,7 +1400,7 @@ pub fn create_router(
             .layer(DefaultBodyLimit::max(16 * 1024 * 1024));
 
         // CSRF guard wraps EVERYTHING under /api/v1 — including auth_router, so
-        // /auth/verify can't be probed cross-origin. Sec-Fetch-Site / Origin /
+        // the sign-in endpoints can't be probed cross-origin. Sec-Fetch-Site / Origin /
         // Referer are checked for non-safe methods; safe methods (GET/HEAD/OPTIONS,
         // including WebSocket upgrades and CORS preflight) pass through.
         Router::new()
@@ -1417,21 +1422,43 @@ pub fn create_router(
 
     // Priority: external static_dir > embedded assets
     // Static files are NOT auth-protected (SPA needs to load to show login page)
-    if let Some(dir) = static_dir {
+    let router = if let Some(dir) = static_dir {
         let index_file = dir.join("index.html");
         let serve_dir = ServeDir::new(&dir).not_found_service(ServeFile::new(&index_file));
         api_router
             .fallback_service(serve_dir)
             .layer(middleware::from_fn(sw_cache_control_middleware))
-            .layer(cors)
     } else if has_embedded_assets() {
         api_router
             .fallback(serve_embedded)
             .layer(middleware::from_fn(sw_cache_control_middleware))
-            .layer(cors)
     } else {
-        api_router.layer(cors)
+        api_router
+    };
+    if mobile {
+        router.layer(middleware::from_fn(frame_guard_middleware))
+    } else {
+        router.layer(cors)
     }
+}
+
+/// Keep other sites from framing Grove (clickjacking). Grove frames only its
+/// own content: review previews and plugin panels. Responses that already
+/// carry a CSP, such as sandboxed plugin assets, keep theirs.
+async fn frame_guard_middleware(request: Request, next: Next) -> impl IntoResponse {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::X_FRAME_OPTIONS,
+        header::HeaderValue::from_static("SAMEORIGIN"),
+    );
+    if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            header::HeaderValue::from_static("frame-ancestors 'self'"),
+        );
+    }
+    response
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1882,60 +1909,12 @@ pub fn get_lan_ip() -> Option<String> {
     None
 }
 
-/// Print a QR code to the terminal using Unicode block characters.
-fn print_qr_code(content: &str) {
-    use qrcode::QrCode;
-
-    let code = match QrCode::new(content) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to generate QR code: {}", e);
-            return;
-        }
-    };
-
-    let modules = code.to_colors();
-    let width = code.width();
-
-    // Use Unicode block characters for compact rendering
-    // Each character represents 2 vertical pixels
-    // Upper half: \u{2580}, Lower half: \u{2584}, Full: \u{2588}, Empty: space
-    let quiet_zone = 2;
-
-    // Top quiet zone
-    for _ in 0..quiet_zone / 2 {
-        println!("   {}", " ".repeat(width + quiet_zone * 2));
-    }
-
-    let rows: Vec<&[qrcode::Color]> = modules.chunks(width).collect();
-    let mut y = 0;
-    while y < rows.len() {
-        let mut line = String::from("   ");
-        // Left quiet zone
-        for _ in 0..quiet_zone {
-            line.push(' ');
-        }
-        for x in 0..width {
-            let top = rows[y][x] == qrcode::Color::Dark;
-            let bottom = if y + 1 < rows.len() {
-                rows[y + 1][x] == qrcode::Color::Dark
-            } else {
-                false
-            };
-            match (top, bottom) {
-                (true, true) => line.push('\u{2588}'),  // Full block
-                (true, false) => line.push('\u{2580}'), // Upper half
-                (false, true) => line.push('\u{2584}'), // Lower half
-                (false, false) => line.push(' '),       // Empty
-            }
-        }
-        // Right quiet zone
-        for _ in 0..quiet_zone {
-            line.push(' ');
-        }
-        println!("{}", line);
-        y += 2;
-    }
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_matches(|c| c == '[' || c == ']')
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// Determine the display host for URLs and QR codes.
@@ -2103,6 +2082,13 @@ pub async fn start_server(
     let app = create_router(static_dir, auth.clone(), None);
 
     let is_mobile = auth.secret_key.is_some();
+    auth.trust_forwarded_proto.store(
+        is_mobile && is_loopback_host(host),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    if is_mobile {
+        radio_server::disable();
+    }
 
     // In HMAC mode the hooks-report endpoint authenticates same-machine CLIs
     // with a per-boot token instead of the mobile secret — mint and publish
@@ -2150,29 +2136,7 @@ pub async fn start_server(
 
         let display_host = display_host_for(host, lan_ip.as_deref());
         let base_url = format!("https://{}:{}", display_host, port);
-        let sk = auth.secret_key.as_deref().unwrap_or("");
-
-        println!();
-        println!("Grove Mobile UI: {}", base_url);
-        println!();
-        println!("  Authentication: HMAC-SHA256");
-        println!("  TLS: enabled ({})", tls_label);
-        println!("  Secret Key: {}", sk);
-        if auth.key_is_generated {
-            println!(
-                "    (auto-generated; not persisted — type a passkey at the prompt for a stable key)"
-            );
-        }
-        println!();
-
-        let qr_url = format!("{}/#sk={}", base_url, sk);
-        println!("  Scan to connect:");
-        print_qr_code(&qr_url);
-        println!();
-        println!("  Connect with Grove GUI:");
-        println!("    grove gui --remote-url {}", base_url);
-        println!("    (enter the Secret Key above when prompted)");
-        println!();
+        mobile_banner::present(auth.clone(), base_url, Some(tls_label));
 
         // Set env vars so handlers (e.g. connect_info) can discover port & protocol
         std::env::set_var("GROVE_PORT", port.to_string());
@@ -2207,29 +2171,7 @@ pub async fn start_server(
         let lan_ip = get_lan_ip();
         let display_host = display_host_for(host, lan_ip.as_deref());
         let base_url = format!("http://{}:{}", display_host, actual_port);
-        let sk = auth.secret_key.as_deref().unwrap_or("");
-
-        println!();
-        println!("Grove Mobile UI: {}", base_url);
-        println!();
-        println!("  Authentication: HMAC-SHA256");
-        println!("  Secret Key: {}", sk);
-        if auth.key_is_generated {
-            println!(
-                "    (auto-generated; not persisted — type a passkey at the prompt for a stable key)"
-            );
-        }
-        println!();
-
-        // QR code with SK embedded in URL hash fragment
-        let qr_url = format!("{}/#sk={}", base_url, sk);
-        println!("  Scan to connect:");
-        print_qr_code(&qr_url);
-        println!();
-        println!("  Connect with Grove GUI:");
-        println!("    grove gui --remote-url {}", base_url);
-        println!("    (enter the Secret Key above when prompted)");
-        println!();
+        mobile_banner::present(auth.clone(), base_url, None);
     } else if has_ui {
         println!("Grove Web UI: http://localhost:{}", actual_port);
     } else {
@@ -2273,6 +2215,38 @@ pub async fn start_server(
 mod tests {
     use super::*;
     use tower::ServiceExt;
+
+    async fn auth_info_response(auth: ServerAuth) -> axum::response::Response {
+        create_router(None, Arc::new(auth), None)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/auth/info")
+                    .header(header::ORIGIN, "https://evil.example")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn mobile_mode_allows_no_cross_origin_reads_and_cannot_be_framed() {
+        let response = auth_info_response(ServerAuth::hmac("mobile-pass1".into(), false)).await;
+        let headers = response.headers();
+        assert!(headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+        assert_eq!(headers[header::X_FRAME_OPTIONS], "SAMEORIGIN");
+        assert_eq!(
+            headers[header::CONTENT_SECURITY_POLICY],
+            "frame-ancestors 'self'"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_web_mode_keeps_cors_for_the_dev_server() {
+        let response = auth_info_response(ServerAuth::no_auth()).await;
+        assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert!(response.headers().get(header::X_FRAME_OPTIONS).is_none());
+    }
 
     #[tokio::test]
     async fn chat_attachment_accepts_requests_larger_than_default_body_limit() {

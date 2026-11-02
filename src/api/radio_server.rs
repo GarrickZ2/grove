@@ -43,12 +43,29 @@ struct RadioServerHandle {
     pub shutdown_tx: tokio::sync::oneshot::Sender<()>,
 }
 
+/// Set when the main server already serves phones (`grove mobile`). Phones
+/// then use the main server's device authentication, so a second listener
+/// guarded by a single bearer token must never come up.
+static DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Permanently refuse to start the Radio server in this process.
+pub fn disable() {
+    DISABLED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn is_disabled() -> bool {
+    DISABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Global singleton for the radio server handle.
 static RADIO_SERVER: once_cell::sync::Lazy<Mutex<Option<RadioServerHandle>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(None));
 
 /// Start the Radio server if not already running. Returns connection info.
 pub async fn start() -> Result<RadioServerInfo, String> {
+    if is_disabled() {
+        return Err("The Radio server is unavailable while Grove Mobile is serving".to_string());
+    }
     let mut guard = RADIO_SERVER.lock().await;
     if let Some(ref handle) = *guard {
         return Ok(RadioServerInfo {
@@ -212,7 +229,9 @@ async fn radio_auth_middleware(
     });
 
     match provided {
-        Some(t) if t == *expected_token => next.run(request).await,
+        Some(t) if super::auth::constant_time_eq(t.as_bytes(), expected_token.as_bytes()) => {
+            next.run(request).await
+        }
         _ => (StatusCode::UNAUTHORIZED, "Invalid or missing token").into_response(),
     }
 }

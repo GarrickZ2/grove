@@ -9,7 +9,9 @@ import { DesktopTrayPopover } from './DesktopTrayPopover';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
-vi.mock('./TrayPopover', () => ({ TrayPopover: () => <div>Tray</div> }));
+vi.mock('./TrayPopover', () => ({
+  TrayPopover: ({ platform }: { platform: { syncToPhone?: () => void } }) => <div data-sync={platform.syncToPhone ? 'yes' : 'no'}>Tray</div>,
+}));
 vi.mock('../Blitz/RadioConnectDialog', () => ({ RadioConnectDialog: () => null }));
 vi.mock('../../api/auth', async importOriginal => ({
   ...await importOriginal<typeof import('../../api/auth')>(), getAuthSession: vi.fn(),
@@ -98,4 +100,15 @@ it('stops the mounted tray when a request reports revocation', async () => {
   vi.mocked(getAuthSession).mockRejectedValue(new AuthRequestError(401, 'Unauthorized'));
   await act(async () => window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT)));
   expect(container.textContent).toBe('');
+});
+
+it('hides the phone task panel when the server requires sign-in', async () => {
+  await act(async () => root.render(<DesktopTrayPopover />));
+  expect(container.querySelector('[data-sync]')?.getAttribute('data-sync')).toBe('no');
+});
+
+it('offers the phone task panel for a local server', async () => {
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ required: false });
+  await act(async () => root.render(<DesktopTrayPopover />));
+  expect(container.querySelector('[data-sync]')?.getAttribute('data-sync')).toBe('yes');
 });

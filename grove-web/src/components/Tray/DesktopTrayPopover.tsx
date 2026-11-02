@@ -20,6 +20,9 @@ import type { RemoteAuthorization } from "../../utils/tauriShell";
 export function DesktopTrayPopover() {
   const [syncOpen, setSyncOpen] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  // Signed-in servers (`grove mobile`) serve phones directly; the separate
+  // phone task panel and its bearer-token server are local-only.
+  const [remoteServer, setRemoteServer] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,6 +33,7 @@ export function DesktopTrayPopover() {
       const current = ++generation;
       try {
         const info = await apiClient.get<{ required?: boolean }>("/api/v1/auth/info");
+        if (!cancelled && current === generation) setRemoteServer(!!info.required);
         if (!info.required) {
           if (!cancelled && current === generation) setAuthReady(true);
           return;
@@ -112,7 +116,7 @@ export function DesktopTrayPopover() {
       invoke("tray_open_settings").catch((e) =>
         console.error("[tray] open_settings failed", e),
       ),
-    syncToPhone: () => setSyncOpen(true),
+    syncToPhone: remoteServer ? undefined : () => setSyncOpen(true),
     sendPrompt: async (item, text) => {
       const res = await apiClient.post<unknown, { status?: string; error?: string }>(
         "/api/v1/tray/send-prompt",
