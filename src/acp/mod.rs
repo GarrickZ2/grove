@@ -1563,14 +1563,14 @@ Before publishing, review the Memory from the perspective of a future Agent. Con
 
 Read only evidence made available through the provided tools. Modify files only within the managed Entity directory, and publish the completed organization through the provided completion tool."#;
 
-fn working_project_kind_instruction(config: &AcpStartConfig) -> Option<&'static str> {
-    crate::storage::workspace::load_project_by_hash(&config.project_key)
+fn working_project_kind_instruction(project_key: &str, task_id: &str) -> Option<&'static str> {
+    crate::storage::workspace::load_project_by_hash(project_key)
         .ok()
         .flatten()
         .and_then(|project| match project.project_type {
             crate::storage::workspace::ProjectType::Studio => Some(WORKING_STUDIO_INSTRUCTION),
             crate::storage::workspace::ProjectType::Repo
-                if config.task_id == crate::storage::tasks::LOCAL_TASK_ID =>
+                if task_id == crate::storage::tasks::LOCAL_TASK_ID =>
             {
                 Some(WORKING_CODING_LOCAL_INSTRUCTION)
             }
@@ -1583,16 +1583,18 @@ fn working_project_kind_instruction(config: &AcpStartConfig) -> Option<&'static 
         })
 }
 
-fn build_working_session_instruction(
-    config: &AcpStartConfig,
+/// The `<grove-instructions>` sections of a Working Session, in order.
+fn working_grove_sections(
+    project_key: &str,
+    task_id: &str,
     agent_runtime_available: bool,
-) -> String {
+) -> Vec<&'static str> {
     let mut grove_sections = vec![WORKING_GROVE_INSTRUCTION];
-    if let Some(task_kind) = working_project_kind_instruction(config) {
+    if let Some(task_kind) = working_project_kind_instruction(project_key, task_id) {
         grove_sections.push(task_kind);
     }
     if agent_runtime_available {
-        if crate::storage::memory::project_memory_enabled(&config.project_key).unwrap_or(false) {
+        if crate::storage::memory::project_memory_enabled(project_key).unwrap_or(false) {
             grove_sections.push(WORKING_MEMORY_INSTRUCTION);
         }
         grove_sections.push(WORKING_AGENT_RUNTIME_INSTRUCTION);
@@ -1603,11 +1605,92 @@ fn build_working_session_instruction(
             grove_sections.push(WORKING_BROWSER_INSTRUCTION);
         }
     }
+    grove_sections
+}
 
-    let mut instruction = format!(
+fn wrap_grove_instructions(sections: &[&str]) -> String {
+    format!(
         "<grove-instructions>\n{}\n</grove-instructions>",
-        grove_sections.join("\n\n")
+        sections.join("\n\n")
+    )
+}
+
+/// What a fresh Working Session in a new Task of this project receives as
+/// Grove's appended system instruction, split so callers can attribute the
+/// Memory section separately. Persona prompts are excluded (the project's
+/// default agent has none). Assumes the agent runtime (agent_graph MCP) is
+/// available, as it is whenever the HTTP API is serving.
+pub struct WorkingInstructionPreview {
+    /// The full `<grove-instructions>` block minus the Memory section.
+    pub grove: String,
+    /// The Memory section, when Project Memory is enabled.
+    pub memory: Option<&'static str>,
+}
+
+pub fn preview_working_instructions(project_key: &str) -> WorkingInstructionPreview {
+    // A new Task: never the Local Task, so Repo projects get the worktree text.
+    let sections = working_grove_sections(project_key, "", true);
+    let memory = sections
+        .iter()
+        .copied()
+        .find(|section| *section == WORKING_MEMORY_INSTRUCTION);
+    let rest: Vec<&str> = sections
+        .into_iter()
+        .filter(|section| *section != WORKING_MEMORY_INSTRUCTION)
+        .collect();
+    WorkingInstructionPreview {
+        grove: wrap_grove_instructions(&rest),
+        memory,
+    }
+}
+
+/// Names of the plugin-contributed MCP servers a Working Session would get
+/// (plugins whose manifest declares `contributes.mcp.command`). Executable
+/// resolution happens at session start, so a server whose command is
+/// missing on disk is still listed here.
+pub fn planned_plugin_mcp_server_names() -> Vec<String> {
+    crate::storage::plugins::list()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|plugin| {
+            let manifest_path = std::path::Path::new(&plugin.local_path).join("plugin.json");
+            std::fs::read_to_string(manifest_path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|m| {
+                    m.get("contributes")
+                        .and_then(|c| c.get("mcp"))
+                        .and_then(|mcp| mcp.get("command"))
+                        .and_then(|c| c.as_str())
+                        .map(|c| !c.is_empty())
+                })
+                .unwrap_or(false)
+        })
+        .map(|plugin| plugin_mcp_server_name(&plugin))
+        .collect()
+}
+
+/// Sanitized names of the installed (Extensions) MCP servers resolved for
+/// `agent_id` in `project_path`, as `load_standalone_mcp_servers` would pass
+/// them. Servers that fail authorization at session start are skipped then.
+pub fn planned_standalone_mcp_server_names(agent_id: &str, project_path: &str) -> Vec<String> {
+    crate::storage::extensions::resolve_effective_mcp_configs(agent_id, Some(project_path))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|config| sanitize_mcp_server_name(&config.name))
+        .collect()
+}
+
+fn build_working_session_instruction(
+    config: &AcpStartConfig,
+    agent_runtime_available: bool,
+) -> String {
+    let grove_sections = working_grove_sections(
+        &config.project_key,
+        &config.task_id,
+        agent_runtime_available,
     );
+    let mut instruction = wrap_grove_instructions(&grove_sections);
     if let Some(persona) = config.persona_injection.as_ref() {
         if !persona.system_prompt.trim().is_empty() {
             instruction.push_str("\n\n");

@@ -1,12 +1,9 @@
-import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ChevronLeft, ChevronRight, Download, FolderOpen, GitBranch, Search, SlidersHorizontal, X } from "lucide-react";
 import { Button, DrawerShell } from "../ui";
 import { SkillDetailPanel } from "./SkillDetailPanel";
 import { PluginDetailDialog } from "../Config/PluginDetailDialog";
-import { exploreExtensions, installCatalogPlugin } from "../../api/extensions";
-import { listInstalledAgentConfigs, type InstalledAgentConfig } from "../../api/marketplace";
-import { listPlugins, type Plugin } from "../../api/plugins";
+import type { Plugin } from "../../api/plugins";
 import type { AgentDef, ExtensionArtifact, InstalledSkill, SkillSource } from "../../api";
 import {
   ExtensionTypeIcon,
@@ -17,20 +14,14 @@ import {
 import { MultiSelectFilter } from "./MultiSelectFilter";
 import { AgentIcon } from "./AgentIcon";
 import { ExtensionIdentityIcon } from "./ExtensionIdentityIcon";
-import { resolveInstalledPlugin } from "./installedPlugin";
 import { pluginAttentionReasons } from "./pluginAttention";
 import { McpManagementDrawer } from "./McpManagement";
 import { connectionPresentation, needsMcpAgentSetup } from "./mcpManagementState";
+import { useExtensionCatalog, type CatalogRecord, type CatalogView } from "./useExtensionCatalog";
 export { AddMcpDialog } from "./McpManagement";
 import { useIsMobile } from "../../hooks/useIsMobile";
 
 type InstallationFilter = "installed" | "partial" | "not_installed";
-type CatalogView = "all" | "installed" | "available" | "development" | "attention";
-
-interface CatalogRecord {
-  item: ExtensionArtifact;
-  plugin?: Plugin;
-}
 
 interface Props {
   agents: AgentDef[];
@@ -42,11 +33,8 @@ interface Props {
 }
 
 export function ExtensionsExplore({ agents, sources, installed, projectPath, refreshToken, onInstalled }: Props) {
-  const catalogRevision = useAgentCatalogRevision();
   const { isMobile } = useIsMobile();
-  const [items, setItems] = useState<ExtensionArtifact[]>([]);
-  const [plugins, setPlugins] = useState<Plugin[]>([]);
-  const [agentOptions, setAgentOptions] = useState<InstalledAgentConfig[]>([]);
+  const { agentOptions, loading, error, reload, records, matchesView, installPlugin, busyKey } = useExtensionCatalog({ sources, refreshToken });
   const [kinds, setKinds] = useState<string[]>([]);
   const [sourceNames, setSourceNames] = useState<string[]>([]);
   const [installations, setInstallations] = useState<string[]>([]);
@@ -57,49 +45,11 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const tableBodyRef = useRef<HTMLDivElement>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<{ source: string; name: string } | null>(null);
   const [selectedMcp, setSelectedMcp] = useState<ExtensionArtifact | null>(null);
   const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null);
   const [selectedPluginArtifact, setSelectedPluginArtifact] = useState<ExtensionArtifact | null>(null);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [artifacts, installedAgents, installedPlugins] = await Promise.all([
-        exploreExtensions(),
-        listInstalledAgentConfigs(),
-        listPlugins(),
-      ]);
-      setItems(artifacts);
-      setAgentOptions(installedAgents);
-      setPlugins(installedPlugins);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load extensions.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { void Promise.resolve().then(reload); }, [reload, refreshToken, catalogRevision]);
-
-  const records = useMemo<CatalogRecord[]>(() => items.map((item) => {
-    const plugin = resolveInstalledPlugin(item, plugins);
-    return { item, plugin };
-  }), [items, plugins]);
-
-  const sourcesByName = useMemo(() => new Map(sources.map((source) => [source.name, source])), [sources]);
-  const matchesView = useCallback(({ item, plugin }: CatalogRecord, target: CatalogView) => {
-    if (target === "all") return true;
-    if (target === "installed") return item.install_status !== "not_installed";
-    if (target === "available") return item.install_status === "not_installed";
-    if (target === "development") return plugin?.source === "dev" || sourcesByName.get(item.source)?.management_mode === "development";
-    return needsMcpAgentSetup(item) || item.mcp_connections?.some((connection) => ["auth_required", "expired", "error"].includes(connection.status)) || pluginAttentionReasons(plugin).length > 0;
-  }, [sourcesByName]);
 
   const views = useMemo(() => ([
     { id: "all" as const, label: "All extensions", count: records.length },
@@ -141,13 +91,6 @@ export function ExtensionsExplore({ agents, sources, installed, projectPath, ref
   const pageItems = visible.slice((safePage - 1) * pageSize, safePage * pageSize);
   const rangeStart = visible.length === 0 ? 0 : (safePage - 1) * pageSize + 1;
   const rangeEnd = Math.min(safePage * pageSize, visible.length);
-
-  const installPlugin = async (item: ExtensionArtifact) => {
-    const key = `${item.repo_key}/${item.repo_path}`;
-    setBusyKey(key);
-    try { await installCatalogPlugin(item.repo_key, item.repo_path); await reload(); }
-    finally { setBusyKey(null); }
-  };
 
   const openRecord = ({ item, plugin }: CatalogRecord) => {
     if (item.kind === "skill") {

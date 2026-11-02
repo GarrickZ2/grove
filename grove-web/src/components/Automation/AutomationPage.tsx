@@ -8,7 +8,7 @@ import { BuddyRoutines } from "../Buddy/BuddySidePanel/BuddyRoutines";
 // CTA use the same icon-pill + Plus-icon convention as NewTaskDialog so the
 // whole page reads as one design system.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { describeAutomationSchedule, formatRelative, scheduleEnded } from "./automationFormat";
 import { ToggleSwitch } from "./ToggleSwitch";
@@ -38,20 +38,10 @@ import {
   Settings2,
 } from "lucide-react";
 import { useProject } from "../../context";
-import { useCommand, useContextKey } from "../../keyboard";
 import { ConfirmDialog } from "../Dialogs/ConfirmDialog";
-import {
-  type Automation,
-  type AutomationRun,
-  type AutomationUpsert,
-  cancelAutomationRun,
-  createAutomation,
-  deleteAutomation,
-  listAutomations,
-  listAutomationRuns,
-  triggerAutomation,
-  updateAutomation,
-} from "../../api/automations";
+import type { Automation, AutomationRun, AutomationUpsert } from "../../api/automations";
+import { formatDuration, isSystemManagedAutomation, managedAutomationOwner, MEMORY_AUTOMATION_HANDLER } from "./automationModel";
+import { useAutomationCommands, useAutomationRuns, useNow, useProjectAutomations } from "./useAutomations";
 import { AutomationDialog } from "./AutomationDialog";
 
 interface AutomationPageProps {
@@ -63,18 +53,6 @@ interface AutomationPageProps {
   onOpenManagedAutomation?: (handlerKey: string) => void;
 }
 
-const USER_AUTOMATION_HANDLER = "builtin.task_prompt";
-const MEMORY_AUTOMATION_HANDLER = "grove.memory.organization";
-
-function isSystemManagedAutomation(automation: Automation) {
-  return automation.handler_key !== USER_AUTOMATION_HANDLER;
-}
-
-function managedAutomationOwner(handlerKey: string) {
-  if (handlerKey === MEMORY_AUTOMATION_HANDLER) return "Memory";
-  return "Grove";
-}
-
 function ProjectAutomationPage({
   onOpenChat,
   onOpenManagedAutomation,
@@ -82,99 +60,30 @@ function ProjectAutomationPage({
   const { selectedProject } = useProject();
   const projectId = selectedProject?.id ?? null;
 
-  const [automations, setAutomations] = useState<Automation[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const {
+    automations, isLoading, errorMsg, setErrorMsg, runsRefreshTick, triggeringId, togglingId,
+    submit, trigger, cancelRun, remove, toggleEnabled,
+  } = useProjectAutomations(projectId);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Automation | null>(null);
-  const [triggeringId, setTriggeringId] = useState<string | null>(null);
-  // Row whose enable/disable PUT is in flight. The toggle itself flips
-  // optimistically; this only drives the disabled/dim affordance.
-  const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingTarget, setDeletingTarget] = useState<Automation | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   // Single-expand model — opening a card collapses the previous one so the
   // run history isn't competing for attention with another card's data.
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  // Bumped when something happens that might affect the visible run list
-  // (manual trigger, delete-with-runs). Cards re-fetch on increment.
-  const [runsRefreshTick, setRunsRefreshTick] = useState(0);
   // Page-level relative-time tick. The heartbeat lives in the reusable
-  // `useNow` hook below so RunRow / any nested component that renders
-  // relative time can opt in directly — that way a future React.memo on
-  // a row component won't silently kill the refresh by blocking prop
-  // bubbling from this page.
+  // `useNow` hook so RunRow / any nested component that renders relative
+  // time can opt in directly — that way a future React.memo on a row
+  // component won't silently kill the refresh by blocking prop bubbling
+  // from this page.
   useNow();
 
-  const refresh = useCallback(async () => {
-    if (!projectId) {
-      setAutomations([]);
-      setIsLoading(false);
-      return;
-    }
-    setIsLoading(true);
-    try {
-      const data = await listAutomations(projectId);
-      setAutomations(data);
-      setErrorMsg(null);
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [projectId]);
-
-  useEffect(() => {
-    void Promise.resolve().then(refresh);
-    const recovered = () => { void refresh(); };
-    window.addEventListener("grove:transport-ready", recovered);
-    return () => window.removeEventListener("grove:transport-ready", recovered);
-  }, [refresh]);
-
   async function handleSubmit(input: AutomationUpsert) {
-    if (!projectId) return;
-    if (editing) {
-      await updateAutomation(projectId, editing.id, input);
-    } else {
-      await createAutomation(projectId, input);
-    }
-    void refresh();
+    await submit(editing, input);
   }
 
   async function handleTrigger(id: string) {
-    if (!projectId) return;
-    setTriggeringId(id);
-    try {
-      const result = await triggerAutomation(projectId, id);
-      setErrorMsg(result.error ?? null);
-      // Trigger is async now — the row is `queued` and the agent will
-      // complete in the background. Bump the refresh tick so any open
-      // run-history panel re-fetches and shows the new row immediately,
-      // plus refresh the cards so last-run pills update once the agent
-      // finishes (the parent automation row is updated by record_run_result).
-      setRunsRefreshTick((n) => n + 1);
-      // Auto-open the row so the user sees their run land in the queue.
-      setExpandedId(id);
-      void refresh();
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setTriggeringId(null);
-    }
-  }
-
-  /// Cancel callback wired into each RunRow. The backend decides whether
-  /// to dequeue (status=queued) or send ACP Cancel (status=running) — we
-  /// just kick the request and let the watcher's polling refresh sweep
-  /// the visible status badge.
-  async function handleCancelRun(automationId: string, runId: string) {
-    if (!projectId) return;
-    try {
-      await cancelAutomationRun(projectId, automationId, runId);
-      setRunsRefreshTick((n) => n + 1);
-      void refresh();
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
-    }
+    // Auto-open the row so the user sees their run land in the queue.
+    if (await trigger(id)) setExpandedId(id);
   }
 
   /// Rerun is a glorified manual trigger — same lifecycle, new run row.
@@ -188,64 +97,8 @@ function ProjectAutomationPage({
     if (!projectId || !deletingTarget) return;
     const id = deletingTarget.id;
     setDeletingTarget(null);
-    try {
-      await deleteAutomation(projectId, id);
-      void refresh();
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
-    }
+    await remove(id);
   }
-
-  async function handleToggleEnabled(a: Automation) {
-    if (!projectId || togglingId) return;
-    setTogglingId(a.id);
-    // Optimistic flip — the toggle must react on click, not when the PUT
-    // round-trips. `refresh()` reconciles with the server row afterwards.
-    setAutomations((prev) =>
-      prev.map((x) => (x.id === a.id ? { ...x, enabled: !a.enabled } : x)),
-    );
-    try {
-      const payload: AutomationUpsert = {
-        name: a.name,
-        enabled: !a.enabled,
-        agent_config: a.agent_config,
-        task_mode: a.task_mode,
-        task_id: a.task_id,
-        task_template: a.task_template,
-        session_mode: a.session_mode,
-        chat_id: a.chat_id,
-        session_template: a.session_template,
-        prompt: a.prompt,
-        schedule_cron: a.schedule_cron,
-        event_triggers: a.event_triggers,
-        run_once_at: a.run_once_at,
-        starts_at: a.starts_at,
-        ends_at: a.ends_at,
-      };
-      await updateAutomation(projectId, a.id, payload);
-      void refresh();
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
-      // Revert to whatever the server actually has — the optimistic flip
-      // must never survive a failed request.
-      void refresh();
-    } finally {
-      setTogglingId(null);
-    }
-  }
-
-  // Catalog-declared "New Automation" command — opens the create dialog,
-  // same path the header "New Automation" button takes. Gated on having a
-  // project context; without one the page itself shows a placeholder.
-  useCommand(
-    "automation.new",
-    () => {
-      setEditing(null);
-      setDialogOpen(true);
-    },
-    { enabled: () => !!projectId },
-    [projectId],
-  );
 
   const userAutomations = useMemo(
     () => automations.filter((automation) => !isSystemManagedAutomation(automation)),
@@ -263,33 +116,20 @@ function ProjectAutomationPage({
     () => userAutomations.find((a) => a.id === expandedId) ?? null,
     [userAutomations, expandedId],
   );
-  useContextKey("automationSelected", !!expandedAutomation);
-  useCommand(
-    "automation.edit",
-    () => {
-      if (!expandedAutomation) return;
-      setEditing(expandedAutomation);
+  useAutomationCommands({
+    projectId,
+    current: expandedAutomation,
+    onNew: () => {
+      setEditing(null);
       setDialogOpen(true);
     },
-    { enabled: () => !!expandedAutomation },
-    [expandedAutomation],
-  );
-  useCommand(
-    "automation.delete",
-    () => {
-      if (expandedAutomation) setDeletingTarget(expandedAutomation);
+    onEdit: (a) => {
+      setEditing(a);
+      setDialogOpen(true);
     },
-    { enabled: () => !!expandedAutomation },
-    [expandedAutomation],
-  );
-  useCommand(
-    "automation.run",
-    () => {
-      if (expandedAutomation) void handleTrigger(expandedAutomation.id);
-    },
-    { enabled: () => !!expandedAutomation },
-    [expandedAutomation],
-  );
+    onDelete: setDeletingTarget,
+    onRun: (a) => void handleTrigger(a.id),
+  });
 
   if (!projectId) {
     return (
@@ -390,9 +230,9 @@ function ProjectAutomationPage({
                     }}
                     onTrigger={() => handleTrigger(a.id)}
                     onDelete={() => setDeletingTarget(a)}
-                    onToggleEnabled={() => handleToggleEnabled(a)}
+                    onToggleEnabled={() => toggleEnabled(a)}
                     onOpenChat={onOpenChat}
-                    onCancelRun={(runId) => handleCancelRun(a.id, runId)}
+                    onCancelRun={(runId) => cancelRun(a.id, runId)}
                     onRerun={() => handleRerun(a.id)}
                   />
                 ))}
@@ -766,84 +606,7 @@ function RunsPanel({
   onRerun,
   readOnly = false,
 }: RunsPanelProps) {
-  const [runs, setRuns] = useState<AutomationRun[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    void Promise.resolve().then(async () => {
-      try {
-        const all = await listAutomationRuns(projectId, automationId);
-        if (alive) {
-          // Cap to the 10 most recent. The backend already trims to 100
-          // when persisting; here we keep the UI density manageable.
-          setRuns(all.slice(0, 10));
-          setError(null);
-        }
-      } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : String(e));
-      }
-    });
-    return () => {
-      alive = false;
-    };
-  }, [projectId, automationId, refreshTick]);
-
-  // Whether any visible run is still in flight. Derived state with a
-  // `useMemo` so the polling effect below can depend on a boolean rather
-  // than the full `runs` array — without this the effect would tear down
-  // and rebuild its interval+listener on every successful 3s poll (which
-  // setRuns'd a new array reference even when in-flight presence didn't
-  // change), introducing a small per-poll drift on the cadence.
-  const hasInflight = useMemo(
-    () => runs?.some((r) => r.status === "queued" || r.status === "running") ?? false,
-    [runs],
-  );
-
-  // Poll while any visible run is still queued OR running so the
-  // in-flight agent turn updates in place once Complete lands on the
-  // backend. Stops on its own when nothing is in flight, and pauses when
-  // the tab is hidden so a background window doesn't generate ~20 reqs/min
-  // per open card for the entire duration of a 30-min agent turn.
-  useEffect(() => {
-    if (!hasInflight) return;
-    const fetchRuns = async () => {
-      try {
-        const all = await listAutomationRuns(projectId, automationId);
-        setRuns(all.slice(0, 10));
-      } catch {
-        /* swallow — refreshTick path will surface persistent errors */
-      }
-    };
-    let intervalId: number | null = null;
-    const start = () => {
-      if (intervalId !== null) return;
-      intervalId = window.setInterval(() => {
-        void fetchRuns();
-      }, 3000);
-    };
-    const stop = () => {
-      if (intervalId === null) return;
-      window.clearInterval(intervalId);
-      intervalId = null;
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        // Immediately refetch on re-show so the user doesn't stare at
-        // stale rows for up to 3 seconds before the next interval fires.
-        void fetchRuns();
-        start();
-      } else {
-        stop();
-      }
-    };
-    if (document.visibilityState === "visible") start();
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      stop();
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [hasInflight, projectId, automationId]);
+  const { runs, error } = useAutomationRuns(projectId, automationId, refreshTick);
 
   if (error) {
     return (
@@ -1167,15 +930,6 @@ function TriggerKindBadge({ kind }: { kind: string }) {
   );
 }
 
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rest = s % 60;
-  return rest === 0 ? `${m}m` : `${m}m ${rest}s`;
-}
-
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center flex-1 px-6 text-center">
@@ -1270,19 +1024,6 @@ function IconButton({
       {children}
     </motion.button>
   );
-}
-
-/// Heartbeat hook: re-renders the caller every `intervalMs` so any
-/// `formatRelative(...)` it computes during render stays in sync with wall
-/// time. Memo-safe — each component that renders relative time calls this
-/// directly so a React.memo wrapping a parent can't break the refresh.
-function useNow(intervalMs: number = 60_000): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), intervalMs);
-    return () => window.clearInterval(id);
-  }, [intervalMs]);
-  return now;
 }
 
 // Render a date as a short relative-or-absolute string. Anything within a

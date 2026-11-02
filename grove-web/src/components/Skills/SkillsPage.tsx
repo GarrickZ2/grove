@@ -1,81 +1,35 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Bot, Boxes, FolderGit2, PackagePlus, Plus, Server } from "lucide-react";
+import { Sparkle, Boxes, FolderGit2, PackagePlus, Plus, Server } from "lucide-react";
 import { ExtensionsExplore, AddMcpDialog } from "./ExtensionsExplore";
 import { SourcesTab } from "./SourcesTab";
 import { AgentsTab } from "./AgentsTab";
 import { AddSourceDialog } from "./AddSourceDialog";
 import { AddPluginDialog } from "../Config/AddPluginDialog";
 import { DropdownMenu } from "../ui";
-import type { AgentDef, SkillSource, InstalledSkill } from "../../api";
-import { getAgentDefs, listSources, listInstalled } from "../../api";
 import { useProject } from "../../context";
 import { useCommand } from "../../keyboard";
+import { useExtensionsData } from "./useExtensionsData";
 
 type TabId = "catalog" | "sources" | "agents";
 
 const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "catalog", label: "Catalog", icon: Boxes },
   { id: "sources", label: "Sources", icon: FolderGit2 },
-  { id: "agents", label: "Agents", icon: Bot },
+  { id: "agents", label: "Agents", icon: Sparkle },
 ];
 
 export function SkillsPage() {
   const { selectedProject } = useProject();
   const projectPath = selectedProject?.path ?? null;
   const [activeTab, setActiveTab] = useState<TabId>("catalog");
-  const [agents, setAgents] = useState<AgentDef[]>([]);
-  const [sources, setSources] = useState<SkillSource[]>([]);
-  const [installed, setInstalled] = useState<InstalledSkill[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [refreshToken, setRefreshToken] = useState(0);
+  const {
+    agents, enabledAgents, sources, installed, isLoading, refreshToken,
+    refreshAgents, refreshSources, refreshAfterInstall, bumpCatalog,
+  } = useExtensionsData();
   const [sourceDialog, setSourceDialog] = useState<"git" | "local" | null>(null);
   const [showAddPlugin, setShowAddPlugin] = useState(false);
   const [showAddMcp, setShowAddMcp] = useState(false);
-
-  // Only enabled agents are used for install/display
-  const enabledAgents = useMemo(() => agents.filter((a) => a.enabled), [agents]);
-
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const [agentData, sourceData, installedData] = await Promise.all([
-        getAgentDefs(),
-        listSources(),
-        listInstalled(),
-      ]);
-      setAgents(agentData);
-      setSources(sourceData);
-      setInstalled(installedData);
-    } catch (err) {
-      console.error("Failed to load skills data:", err);
-    }
-    setIsLoading(false);
-  }, []);
-
-  useEffect(() => {
-    void Promise.resolve().then(loadData);
-  }, [loadData]);
-
-  const refreshAgents = useCallback(async () => {
-    const data = await getAgentDefs();
-    setAgents(data);
-  }, []);
-
-  const refreshSources = useCallback(async () => {
-    const data = await listSources();
-    setSources(data);
-  }, []);
-
-  // After an install/update, both the installed set AND per-source update
-  // state change (server recomputes `has_remote_updates`/`skill_count`).
-  // Refresh both so "Update Available" badges clear promptly.
-  const refreshAfterInstall = useCallback(async () => {
-    await Promise.all([
-      listInstalled().then(setInstalled),
-      listSources().then(setSources),
-    ]);
-  }, []);
 
   // Catalog-declared tab switchers — Command Palette / Settings shortcut
   // both call setActiveTab so the page jumps to that tab regardless of
@@ -167,9 +121,9 @@ export function SkillsPage() {
           />
         )}
       </div>
-      <AddSourceDialog isOpen={sourceDialog !== null} editingSource={null} initialSourceType={sourceDialog ?? "git"} onClose={() => setSourceDialog(null)} onSaved={async () => { setSourceDialog(null); await refreshSources(); setRefreshToken((value) => value + 1); }} />
-      {showAddPlugin && <AddPluginDialog onClose={() => { setShowAddPlugin(false); setRefreshToken((value) => value + 1); }} />}
-      {showAddMcp && <AddMcpDialog projectPath={projectPath} onClose={() => { setShowAddMcp(false); void refreshSources(); setRefreshToken((value) => value + 1); }} onCreated={async () => { setShowAddMcp(false); await refreshSources(); setRefreshToken((value) => value + 1); }} />}
+      <AddSourceDialog isOpen={sourceDialog !== null} editingSource={null} initialSourceType={sourceDialog ?? "git"} onClose={() => setSourceDialog(null)} onSaved={async () => { setSourceDialog(null); await refreshSources(); bumpCatalog(); }} />
+      {showAddPlugin && <AddPluginDialog onClose={() => { setShowAddPlugin(false); bumpCatalog(); }} />}
+      {showAddMcp && <AddMcpDialog projectPath={projectPath} onClose={() => { setShowAddMcp(false); void refreshSources(); bumpCatalog(); }} onCreated={async () => { setShowAddMcp(false); await refreshSources(); bumpCatalog(); }} />}
     </div>
   );
 }

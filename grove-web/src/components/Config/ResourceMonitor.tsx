@@ -2,28 +2,13 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { createPortal } from 'react-dom';
 import { Activity, ArrowLeft, ArrowDownWideNarrow, ChevronDown, ChevronRight, Cpu, Database, File, Folder, HardDrive, Layers, Loader2, MemoryStick, RefreshCw, Search, X } from 'lucide-react';
 import { useTheme } from '../../context';
-import { getResourceProcesses, getResourceStorage, getStorageChildren, refreshResourceStorage, type ProcessNode, type ProcessSnapshot, type StorageNode, type StoragePage, type StorageStatus } from '../../api/resourceMonitor';
+import { getStorageChildren, type ProcessNode, type ProcessSnapshot, type StorageNode, type StoragePage, type StorageStatus } from '../../api/resourceMonitor';
+import { bytes, groupColor, memoryLabel, memoryValue, message, percent, storageKey, valueOf, type Metric } from './resourceFormat';
+import { useResourceMonitorData } from './useResourceMonitorData';
 
-type Metric = 'cpu' | 'memory' | 'storage';
-type Sample = { at: string; cpu: number | null; memory: number | null };
 const muted = 'text-[var(--color-text-muted)]';
 const surface = 'rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]';
 const control = 'rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors';
-
-function bytes(value: number): string {
-  if (value === 0) return '0 B';
-  const unit = Math.min(Math.floor(Math.log(value) / Math.log(1024)), 4);
-  return `${(value / 1024 ** unit).toLocaleString(undefined, { maximumFractionDigits: unit === 0 ? 0 : 1 })} ${['B', 'KiB', 'MiB', 'GiB', 'TiB'][unit]}`;
-}
-
-function memoryValue(value: number, unavailable = 0): string {
-  return unavailable ? value > 0 ? `${bytes(value)} (partial)` : 'Unavailable' : bytes(value);
-}
-function memoryLabel(processes: ProcessSnapshot | null): string {
-  return processes?.memory_basis === 'physical_footprint' ? 'Memory footprint' : 'Memory (RSS sum)';
-}
-
-function percent(value: number): string { return `${value.toFixed(1)}%`; }
 
 function ChartTooltip({ id, x, y, children }: { id: string; x: number; y: number; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -35,14 +20,6 @@ function ChartTooltip({ id, x, y, children }: { id: string; x: number; y: number
     element.style.top = `${Math.max(12, y + height + 14 > window.innerHeight - 12 ? y - height - 14 : y + 14)}px`;
   }, [x, y, children]);
   return createPortal(<div ref={ref} id={id} role="tooltip" className="pointer-events-none fixed z-[120] w-60 max-w-[calc(100vw-24px)] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text)] shadow-xl">{children}</div>, document.body);
-}
-function message(error: unknown): string { return error && typeof error === 'object' && 'message' in error ? String(error.message) : 'Could not load resource usage. Try again.'; }
-function valueOf(node: ProcessNode, metric: Metric) { return metric === 'cpu' ? node.cpu_percent ?? 0 : node.memory_bytes; }
-function storageKey(node: StorageNode) { return `${node.kind}:${node.detail}`; }
-function groupColor(key: string, palette: string[]) {
-  let hash = 0;
-  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return palette[hash % palette.length];
 }
 function processMatches(node: ProcessNode, query: string): boolean {
   return `${node.name} ${node.detail}`.toLowerCase().includes(query) || node.children.some(child => processMatches(child, query));
@@ -60,7 +37,7 @@ function orderProcesses(nodes: ProcessNode[], previous: ProcessNode[], metric: M
   }).map(node => ({ ...node, children: orderProcesses(node.children, oldNodes.get(node.id)?.children ?? [], metric) }));
 }
 
-function Sparkline({ values, color }: { values: number[]; color: string }) {
+export function Sparkline({ values, color }: { values: number[]; color: string }) {
   const max = Math.max(...values, 1);
   const points = values.map((value, i) => `${i / Math.max(values.length - 1, 1) * 160},${32 - value / max * 26}`).join(' ');
   return <svg viewBox="0 0 160 36" className="mt-3 h-9 w-full" aria-hidden="true" preserveAspectRatio="none">
@@ -201,7 +178,7 @@ function useStorageLevel(scanId: string | null, path: Crumb[]) {
   return { data: result?.key === requestKey ? result : null, retry: () => setRetry(value => value + 1) };
 }
 
-function ResourceExplorer({ metric, processes, storage, palette, refreshing, onRefresh, processError, storageError }: {
+export function ResourceExplorer({ metric, processes, storage, palette, refreshing, onRefresh, processError, storageError }: {
   metric: Metric; processes: ProcessSnapshot | null; storage: StorageStatus | null; palette: string[];
   refreshing: boolean; onRefresh: () => void; processError: string | null; storageError: string | null;
 }) {
@@ -335,58 +312,16 @@ function ResourceExplorer({ metric, processes, storage, palette, refreshing, onR
   </>;
 }
 
+/** Measurement basis and caveats for the chosen metric. */
+export function ResourceNote({ metric, processes, storage }: { metric: Metric; processes: ProcessSnapshot | null; storage: StorageStatus | null }) {
+  return <>{metric === 'storage' ? <>{storage?.scanned_at ? `Scanned ${new Date(storage.scanned_at).toLocaleString()}. ` : ''}{storage?.root?.files.toLocaleString() ?? 'All'} file entries · {storage?.size_basis === 'allocated' ? 'Allocated file bytes' : 'Logical file sizes'} · worktrees included. Hard links count once; symbolic-link targets and original repositories outside .grove are excluded. Filesystem metadata and shared copy-on-write blocks may differ from disk free space.{!!storage?.read_errors && ` ${storage.read_errors} entries could not be read; totals are partial.`}</> : <>Local Grove runtime, recognized task processes and their descendants. CPU is a share of the host’s total capacity; new processes need two samples. {processes?.memory_basis === 'physical_footprint' ? 'Memory footprint sums macOS process charges, including compressed and swapped memory; it is not current physical RAM usage and may exceed installed RAM.' : 'Memory is a sum of process RSS, not host RAM usage. Shared pages can be counted repeatedly, so the sum may exceed installed RAM.'}{!!processes?.memory_unavailable_count && ` Memory unavailable for ${processes.memory_unavailable_count} ${processes.memory_unavailable_count === 1 ? 'process' : 'processes'}; totals and shares include measured processes only.`} Remote agents and processes the OS cannot attribute are unavailable.{processes && ` Sampled ${new Date(processes.sampled_at).toLocaleTimeString()}.`}</>}</>;
+}
+
 export function ResourceMonitor() {
   const { theme } = useTheme();
   const palette = theme.accentPalette.length ? theme.accentPalette : ['var(--color-highlight)'];
   const [metric, setMetric] = useState<Metric>('storage');
-  const [processes, setProcesses] = useState<ProcessSnapshot | null>(null);
-  const [storage, setStorage] = useState<StorageStatus | null>(null);
-  const [samples, setSamples] = useState<Sample[]>([]);
-  const [processError, setProcessError] = useState<string | null>(null);
-  const [storageError, setStorageError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const mounted = useRef(false);
-  const storageGeneration = useRef(0);
-  useEffect(() => {
-    mounted.current = true;
-    const controller = new AbortController();
-    let processTimer: ReturnType<typeof setTimeout>;
-    let storageTimer: ReturnType<typeof setTimeout>;
-    async function pollProcesses() {
-      try {
-        if (document.visibilityState !== 'hidden') {
-          const data = await getResourceProcesses(controller.signal);
-          if (controller.signal.aborted) return;
-          setProcesses(data); setProcessError(null);
-          setSamples(previous => previous.at(-1)?.at === data.sampled_at ? previous : [...previous.slice(-59), { at: data.sampled_at, cpu: data.cpu_percent, memory: data.memory_unavailable_count ? null : data.memory_bytes }]);
-        }
-      } catch (error) { if (!controller.signal.aborted) setProcessError(message(error)); }
-      if (!controller.signal.aborted) processTimer = setTimeout(pollProcesses, 10000);
-    }
-    async function pollStorage() {
-      const generation = storageGeneration.current;
-      let scanning = true;
-      try {
-        if (document.visibilityState !== 'hidden') {
-          const data = await getResourceStorage(controller.signal);
-          if (controller.signal.aborted) return;
-          if (generation === storageGeneration.current) { setStorage(data); setStorageError(null); }
-          scanning = data.scanning;
-        }
-      } catch (error) { if (!controller.signal.aborted && generation === storageGeneration.current) setStorageError(message(error)); }
-      if (!controller.signal.aborted) storageTimer = setTimeout(pollStorage, scanning ? 2000 : 5000);
-    }
-    void pollProcesses(); void pollStorage();
-    return () => { mounted.current = false; controller.abort(); clearTimeout(processTimer); clearTimeout(storageTimer); };
-  }, []);
-
-  async function refreshStorage() {
-    setRefreshing(true);
-    storageGeneration.current++;
-    try { const data = await refreshResourceStorage(); if (mounted.current) { setStorage(data); setStorageError(null); } }
-    catch (error) { if (mounted.current) setStorageError(message(error)); }
-    finally { if (mounted.current) setRefreshing(false); }
-  }
+  const { processes, storage, samples, processError, storageError, refreshing, refreshStorage } = useResourceMonitorData();
 
   const chooseMetric = (next: Metric) => setMetric(next);
 
@@ -405,6 +340,6 @@ export function ResourceMonitor() {
 
     <ResourceExplorer key={metric} metric={metric} processes={processes} storage={storage} palette={palette}
       refreshing={refreshing} onRefresh={() => void refreshStorage()} processError={processError} storageError={storageError} />
-    <p className={`text-[10px] leading-relaxed ${muted}`}>{metric === 'storage' ? <>{storage?.scanned_at ? `Scanned ${new Date(storage.scanned_at).toLocaleString()}. ` : ''}{storage?.root?.files.toLocaleString() ?? 'All'} file entries · {storage?.size_basis === 'allocated' ? 'Allocated file bytes' : 'Logical file sizes'} · worktrees included. Hard links count once; symbolic-link targets and original repositories outside .grove are excluded. Filesystem metadata and shared copy-on-write blocks may differ from disk free space.{!!storage?.read_errors && ` ${storage.read_errors} entries could not be read; totals are partial.`}</> : <>Local Grove runtime, recognized task processes and their descendants. CPU is a share of the host’s total capacity; new processes need two samples. {processes?.memory_basis === 'physical_footprint' ? 'Memory footprint sums macOS process charges, including compressed and swapped memory; it is not current physical RAM usage and may exceed installed RAM.' : 'Memory is a sum of process RSS, not host RAM usage. Shared pages can be counted repeatedly, so the sum may exceed installed RAM.'}{!!processes?.memory_unavailable_count && ` Memory unavailable for ${processes.memory_unavailable_count} ${processes.memory_unavailable_count === 1 ? 'process' : 'processes'}; totals and shares include measured processes only.`} Remote agents and processes the OS cannot attribute are unavailable.{processes && ` Sampled ${new Date(processes.sampled_at).toLocaleTimeString()}.`}</>}</p>
+    <p className={`text-[10px] leading-relaxed ${muted}`}><ResourceNote metric={metric} processes={processes} storage={storage} /></p>
   </div>;
 }

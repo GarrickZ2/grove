@@ -292,7 +292,11 @@ fn current_task_env_kind() -> TaskEnvKind {
 }
 
 fn get_instructions() -> &'static str {
-    match current_task_env_kind() {
+    instructions_for(current_task_env_kind())
+}
+
+fn instructions_for(kind: TaskEnvKind) -> &'static str {
+    match kind {
         TaskEnvKind::NotInTask => MANAGEMENT_INSTRUCTIONS,
         TaskEnvKind::Coding => CODING_EXECUTION_INSTRUCTIONS,
         TaskEnvKind::Studio => STUDIO_EXECUTION_INSTRUCTIONS,
@@ -301,6 +305,25 @@ fn get_instructions() -> &'static str {
 }
 
 fn filter_tools(all: Vec<Tool>) -> Vec<Tool> {
+    filter_tools_for(current_task_env_kind(), all)
+}
+
+/// The tools and server instructions the stdio `grove` MCP server advertises
+/// to an agent inside a Coding or Studio Task — what a Working Session sees
+/// at initialize / tools/list.
+pub fn task_surface(studio: bool) -> (Vec<Tool>, &'static str) {
+    let kind = if studio {
+        TaskEnvKind::Studio
+    } else {
+        TaskEnvKind::Coding
+    };
+    (
+        filter_tools_for(kind, GroveMcpServer::new().tool_router.list_all()),
+        instructions_for(kind),
+    )
+}
+
+fn filter_tools_for(kind: TaskEnvKind, all: Vec<Tool>) -> Vec<Tool> {
     // Visible in every in-task context (Coding, Studio, and the unknown-project
     // fallback state).
     let common_in_task: HashSet<&'static str> = HashSet::from(["status", "read_notes"]);
@@ -331,7 +354,7 @@ fn filter_tools(all: Vec<Tool>) -> Vec<Tool> {
         .copied()
         .collect();
 
-    match current_task_env_kind() {
+    match kind {
         TaskEnvKind::NotInTask => {
             // Orchestrator: everything except in-task tools (sketch included —
             // sketch is Studio-worker-exclusive).

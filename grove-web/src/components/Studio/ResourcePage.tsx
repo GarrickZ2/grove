@@ -1,5 +1,5 @@
 import { useEscapeScope } from "../../keyboard/useEscapeScope";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -9,276 +9,78 @@ import {
   FolderPlus, ChevronRight, Pencil, Check, CornerLeftUp, Edit3,
   Link as LinkIcon, SquareArrowOutUpRight,
 } from "lucide-react";
-import { useBanner, useProject } from "../../context";
-import {
-  listResources, uploadResource, deleteResource,
-  previewResource, resourceDownloadUrl, openResourceFile, revealResourceFile,
-  createResourceFolder, moveResource, createResourceLink, updateResourceLink,
-  getInstructions, updateInstructions,
-  getMemory, migrateMemory,
-  listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir,
-  type ResourceFile, type WorkDirectoryEntry,
-} from "../../api";
+import { useProject } from "../../context";
+import { type ResourceFile, type WorkDirectoryEntry } from "../../api";
 import { useBrowseFolder } from "../Projects/useBrowseFolder";
-import type { DisplayItem } from "../../api/studio-types";
 import {
   VSCodeIcon,
   FilePreviewDrawer,
   MarkdownRenderer,
-  getPreviewType,
   canPreviewFile,
   getExtBadge,
-  downloadViaIframe,
   formatSize,
   formatTime,
   FileConflictDialog,
   AddLinkDialog,
   isLinkFile,
   linkDisplayName,
-  parseLinkFile,
-  type FileConflictState,
 } from "../ui";
 import { ConfirmDialog } from "../Dialogs/ConfirmDialog";
-import { openExternalUrl } from "../../utils/openExternal";
-import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
-
-const DRAG_TYPE = "application/x-grove-resource-path";
-
-function countInstructionLines(text: string): number {
-  if (!text.trim()) return 0;
-  return text.split("\n").filter((line) => line.trim().length > 0).length;
-}
-
-const INSTRUCTION_TEMPLATES = [
-  {
-    label: "Frontend Style Guide",
-    content: `# Frontend style guide
-
-- Keep layouts clean and high-signal
-- Prefer consistent spacing and clear section hierarchy
-- Preserve the established design language unless a page is explicitly being redesigned
-- Avoid placeholder copy in final UI`,
-  },
-  {
-    label: "Agent Behavior Rules",
-    content: `# Agent behavior rules
-
-- Be concise and execution-focused
-- Prefer practical solutions over broad speculation
-- Explain assumptions when they affect correctness
-- Reference files in resource/ when they are relevant`,
-  },
-  {
-    label: "Project Context",
-    content: `# Project context
-
-- This Studio shares files through resource/
-- Instructions are available to every task as instructions.md
-- Prefer using shared files before recreating context in each task`,
-  },
-];
-
-function errorMessage(err: unknown, fallback: string): string {
-  if (err instanceof Error) return err.message;
-  return fallback;
-}
-
-function dropContainsDirectory(dataTransfer: DataTransfer): boolean {
-  for (const item of Array.from(dataTransfer.items || [])) {
-    const entry = (item as DataTransferItem & {
-      webkitGetAsEntry?: () => { isDirectory?: boolean } | null;
-    }).webkitGetAsEntry?.();
-    if (entry?.isDirectory) return true;
-  }
-  return false;
-}
+import { DRAG_TYPE, INSTRUCTION_TEMPLATES, mergeResourceItems, resourceStats } from "./resourceModel";
+import { useResourceLibrary } from "./useResourceLibrary";
+import { useWorkspaceInstructions } from "./useWorkspaceInstructions";
+import { useLegacyMemory } from "./useLegacyMemory";
+import { useStudioCommands } from "./useStudioCommands";
 
 export function ResourcePage() {
   const { browseFolder, folderPicker } = useBrowseFolder("Select Resource Folder");
   const { selectedProject } = useProject();
-  const { showBanner } = useBanner();
   const projectId = selectedProject?.id;
 
-  const [files, setFiles] = useState<ResourceFile[]>([]);
-  const [isLoadingFiles, setIsLoadingFiles] = useState(true);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCountRef = useRef(0);
-  const isMoveInProgressRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [mainPanel, setMainPanel] = useState<"assets" | "instructions" | "memory">("assets");
-  const [workdirs, setWorkdirs] = useState<WorkDirectoryEntry[]>([]);
-  const [isLoadingWorkdirs, setIsLoadingWorkdirs] = useState(true);
-  const [workdirError, setWorkdirError] = useState<string | null>(null);
-  const [addLinkOpen, setAddLinkOpen] = useState(false);
-  const [isAddingWorkdir, setIsAddingWorkdir] = useState(false);
-  const [editLink, setEditLink] = useState<{
-    file: ResourceFile;
-    initial: { name: string; url: string; description?: string; favicon?: string };
-  } | null>(null);
 
-  // File manager state
-  const [currentPath, setCurrentPath] = useState("");
-  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
-  const [moveConflict, setMoveConflict] = useState<FileConflictState | null>(null);
-  const [newFolderName, setNewFolderName] = useState("");
-  const [renamingPath, setRenamingPath] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
+  const library = useResourceLibrary(projectId, browseFolder);
+  const {
+    files, workdirs, isLoadingFiles, isLoadingWorkdirs, fileError, workdirError,
+    isUploading, isAddingWorkdir, loadFiles, loadWorkdirs,
+    currentPath, navigateTo, searchQuery, setSearchQuery,
+    isCreatingFolder, setIsCreatingFolder, newFolderName, setNewFolderName, handleCreateFolder,
+    renamingPath, setRenamingPath, renameValue, setRenameValue, handleRenameFile,
+    moveConflict, setMoveConflict, handleMoveFile, overwriteConflict, renameConflict,
+    handleUpload, uploadFromDrop, handleAddWorkdir, handleDeleteWorkdir, handleOpenWorkdir,
+    handleDelete, handlePreview, handleDownload, handleOpenInApp, handleRevealInFileManager,
+    handleOpenLink, handleEditLink,
+    addLinkOpen, setAddLinkOpen, submitAddLink, editLink, setEditLink, submitEditLink,
+    previewFile, setPreviewFile, previewLoading,
+  } = library;
   const newFolderInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
-  const [instructions, setInstructions] = useState("");
-  const [savedInstructions, setSavedInstructions] = useState("");
-  const [isLoadingInstructions, setIsLoadingInstructions] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [isEditingInstructions, setIsEditingInstructions] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const instructionsState = useWorkspaceInstructions(projectId);
+  const {
+    instructions, setInstructions, savedInstructions, isLoadingInstructions, isSaving, saveMessage,
+    isEditingInstructions, setIsEditingInstructions, hasUnsaved, instructionLineCount,
+    handleSaveInstructions, insertTemplate,
+  } = instructionsState;
   const [searchFocused, setSearchFocused] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   useEscapeScope(searchFocused, () => { setSearchQuery(""); searchRef.current?.blur(); });
-  const [previewFile, setPreviewFile] = useState<{ file: ResourceFile; content: string; downloadUrl?: string } | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
 
-  const hasUnsaved = instructions !== savedInstructions;
-  const instructionLineCount = countInstructionLines(instructions);
+  const {
+    memory, isLoadingMemory, isMigratingMemory, memoryMigrationOpen, setMemoryMigrationOpen, handleMigrateMemory,
+  } = useLegacyMemory(projectId, { onMigrated: () => setMainPanel("assets") });
 
-  const [memory, setMemory] = useState("");
-  const [isLoadingMemory, setIsLoadingMemory] = useState(true);
-  const [isMigratingMemory, setIsMigratingMemory] = useState(false);
-  const [memoryMigrationOpen, setMemoryMigrationOpen] = useState(false);
-
-  const fileOnlyList = files.filter(f => !f.is_dir);
-  const filteredFiles = files
-    .filter((file) => file.name.toLowerCase().includes(searchQuery.toLowerCase()))
-    .sort((a, b) => {
-      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-
-  const filteredWorkdirs = workdirs.filter((w) =>
-    w.name.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
-
-  const mergedItems: DisplayItem<ResourceFile>[] = [
-    ...filteredWorkdirs.map<DisplayItem<ResourceFile>>((w) => ({ type: "workdir", data: w })),
-    ...filteredFiles.map<DisplayItem<ResourceFile>>((f) => ({ type: "file", data: f })),
-  ];
-  mergedItems.sort((a, b) => {
-    const aIsDirLike = a.type === "workdir" || (a.type === "file" && a.data.is_dir);
-    const bIsDirLike = b.type === "workdir" || (b.type === "file" && b.data.is_dir);
-    if (aIsDirLike !== bIsDirLike) return aIsDirLike ? -1 : 1;
-    const aName = a.type === "workdir" ? a.data.name : a.data.name;
-    const bName = b.type === "workdir" ? b.data.name : b.data.name;
-    return aName.localeCompare(bName);
-  });
-
-  const totalBytes = fileOnlyList.reduce((sum, file) => sum + file.size, 0);
-  const latestUpdate = fileOnlyList.reduce<string | null>((latest, file) => {
-    if (!latest) return file.modified_at;
-    return new Date(file.modified_at) > new Date(latest) ? file.modified_at : latest;
-  }, null);
-
-  const loadFiles = useCallback(async () => {
-    if (!projectId) return;
-    setIsLoadingFiles(true);
-    setFileError(null);
-    const pathArg = currentPath || undefined;
-    let caught: unknown = null;
-    try {
-      const data = await listResources(projectId, pathArg);
-      setFiles(data.files);
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setFileError(errorMessage(caught, "Failed to load"));
-    }
-    setIsLoadingFiles(false);
-  }, [projectId, currentPath]);
-
-  const loadWorkdirs = useCallback(async () => {
-    if (!projectId) return;
-    setIsLoadingWorkdirs(true);
-    setWorkdirError(null);
-    let caught: unknown = null;
-    try {
-      const data = await listResourceWorkdirs(projectId);
-      setWorkdirs(data.entries);
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setWorkdirError(errorMessage(caught, "Failed to load"));
-    }
-    setIsLoadingWorkdirs(false);
-  }, [projectId]);
-
-  const loadInstructions = useCallback(async () => {
-    if (!projectId) return;
-    setIsLoadingInstructions(true);
-    try {
-      const data = await getInstructions(projectId);
-      setInstructions(data.content);
-      setSavedInstructions(data.content);
-    } catch (err) {
-      console.error('Failed to load instructions:', err);
-      setInstructions("");
-      setSavedInstructions("");
-    }
-    setIsLoadingInstructions(false);
-  }, [projectId]);
-
-  const loadMemory = useCallback(async () => {
-    if (!projectId) return;
-    setIsLoadingMemory(true);
-    try {
-      const data = await getMemory(projectId);
-      setMemory(data.content);
-    } catch (err) {
-      console.error('Failed to load memory:', err);
-      setMemory("");
-    }
-    setIsLoadingMemory(false);
-  }, [projectId]);
-
-  const handleMigrateMemory = useCallback(async () => {
-    if (!projectId) return;
-    setIsMigratingMemory(true);
-    try {
-      await migrateMemory(projectId);
-      setMemory("");
-      setMainPanel("assets");
-      setMemoryMigrationOpen(false);
-      showBanner("Legacy Project Memory migrated to a Memory Log.", "success");
-    } catch (err) {
-      showBanner(errorMessage(err, "Failed to migrate legacy Project Memory"), "error", 5000);
-    }
-    setIsMigratingMemory(false);
-  }, [projectId, showBanner]);
-
-  useEffect(() => { void Promise.resolve().then(loadFiles); }, [loadFiles]);
-  useEffect(() => {
-    void Promise.resolve().then(() => {
-      void loadWorkdirs();
-      void loadInstructions();
-      void loadMemory();
-    });
-  }, [loadWorkdirs, loadInstructions, loadMemory]);
+  const mergedItems = mergeResourceItems(files, workdirs, searchQuery);
+  const { fileCount: fileOnlyCount, totalBytes, latestUpdate } = resourceStats(files);
 
   useEffect(() => {
     if (!isLoadingMemory && !memory.trim() && mainPanel === "memory") {
       void Promise.resolve().then(() => setMainPanel("assets"));
     }
   }, [isLoadingMemory, mainPanel, memory]);
-
-  // Auto-dismiss save messages with proper cleanup
-  useEffect(() => {
-    if (!saveMessage) return;
-    const t = setTimeout(() => setSaveMessage(null), 2000);
-    return () => clearTimeout(t);
-  }, [saveMessage]);
 
   // Focus new folder input when it appears
   useEffect(() => {
@@ -290,371 +92,14 @@ export function ResourcePage() {
     if (renamingPath) setTimeout(() => { renameInputRef.current?.focus(); renameInputRef.current?.select(); }, 0);
   }, [renamingPath]);
 
-  const handleUpload = useCallback(async (fileList: FileList | File[]) => {
-    if (!projectId || fileList.length === 0) return;
-    setIsUploading(true);
-    setFileError(null);
-    const pathArg = currentPath || undefined;
-    let caught: unknown = null;
-    try {
-      await uploadResource(projectId, Array.from(fileList), pathArg);
-      await loadFiles();
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setFileError(errorMessage(caught, "Upload failed"));
-    }
-    setIsUploading(false);
-  }, [projectId, currentPath, loadFiles]);
+  const openFilePicker = useCallback(() => fileInputRef.current?.click(), []);
+  useStudioCommands({ library, instructions: instructionsState, openFilePicker });
 
-  const handleCreateFolder = useCallback(async () => {
-    if (!projectId || !newFolderName.trim()) return;
-    const trimmedName = newFolderName.trim();
-    const folderPath = currentPath ? `${currentPath}/${trimmedName}` : trimmedName;
-    let caught: unknown = null;
-    try {
-      await createResourceFolder(projectId, folderPath);
-      setNewFolderName("");
-      setIsCreatingFolder(false);
-      await loadFiles();
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setFileError(errorMessage(caught, "Failed to create folder"));
-    }
-  }, [projectId, currentPath, newFolderName, loadFiles]);
-
-  const handleMoveFile = useCallback(async (
-    fromPath: string,
-    toFolderPath: string,
-    options?: { force?: boolean; renameTo?: string },
-    cachedExistingNames?: Set<string>,
-  ) => {
-    if (!projectId || isMoveInProgressRef.current) return;
-    isMoveInProgressRef.current = true;
-    const filename = fromPath.split("/").pop()!;
-    const toPath = toFolderPath ? `${toFolderPath}/${filename}` : filename;
-    const renameTo = options?.renameTo;
-    const newName = renameTo ?? filename;
-    let err: unknown = null;
-    try {
-      await moveResource(projectId, fromPath, toPath, options);
-      await loadFiles();
-    } catch (e) {
-      err = e;
-    }
-    if (!err) {
-      isMoveInProgressRef.current = false;
-      return;
-    }
-    const apiErr = err as { status?: number };
-    if (apiErr.status === 409) {
-      // Fetch destination folder contents to know which names are taken
-      let existingNames: Set<string>;
-      if (cachedExistingNames) {
-        existingNames = cachedExistingNames;
-      } else {
-        const folderArg = toFolderPath || undefined;
-        let data: Awaited<ReturnType<typeof listResources>> | null = null;
-        try {
-          data = await listResources(projectId, folderArg);
-        } catch {
-          data = null;
-        }
-        existingNames = data ? new Set(data.files.map(f => f.name)) : new Set<string>();
-      }
-      setMoveConflict({
-        fromPath,
-        toFolderPath,
-        newName,
-        existingNames,
-      });
-      isMoveInProgressRef.current = false;
-      return;
-    }
-    setFileError(err instanceof Error ? err.message : "Failed to move");
-    isMoveInProgressRef.current = false;
-  }, [projectId, loadFiles]);
-
-  const handleRenameFile = useCallback(async (oldPath: string, newName: string) => {
-    if (!projectId || !newName.trim()) { setRenamingPath(null); return; }
-    const parts = oldPath.split("/");
-    parts[parts.length - 1] = newName.trim();
-    const newPath = parts.join("/");
-    if (newPath === oldPath) { setRenamingPath(null); return; }
-    let caught: unknown = null;
-    try {
-      await moveResource(projectId, oldPath, newPath);
-      setRenamingPath(null);
-      await loadFiles();
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setFileError(errorMessage(caught, "Failed to rename"));
-    }
-  }, [projectId, loadFiles]);
-
-  const handleAddWorkdir = useCallback(async () => {
-    if (!projectId) return;
-    setIsAddingWorkdir(true);
-    setWorkdirError(null);
-    let caught: unknown = null;
-    try {
-      const path = await browseFolder();
-      if (path) {
-        await addResourceWorkdir(projectId, path);
-        await loadWorkdirs();
-      }
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setWorkdirError(errorMessage(caught, "Failed to add folder"));
-    }
-    setIsAddingWorkdir(false);
-  }, [projectId, loadWorkdirs, browseFolder]);
-
-  const handleDeleteWorkdir = useCallback(async (entry: WorkDirectoryEntry) => {
-    if (!projectId) return;
-    let caught: unknown = null;
-    try {
-      await deleteResourceWorkdir(projectId, entry.name);
-      await loadWorkdirs();
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setWorkdirError(errorMessage(caught, "Failed to remove folder"));
-    }
-  }, [projectId, loadWorkdirs]);
-
-  const handleOpenWorkdir = useCallback(async (entry: WorkDirectoryEntry) => {
-    if (!projectId) return;
-    let caught: unknown = null;
-    try {
-      await openResourceWorkdir(projectId, entry.name);
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setWorkdirError(errorMessage(caught, "Failed to open folder"));
-    }
-  }, [projectId]);
-
-  const handleDelete = useCallback(async (file: ResourceFile) => {
-    if (!projectId) return;
-    let caught: unknown = null;
-    try {
-      await deleteResource(projectId, file.path);
-      await loadFiles();
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setFileError(errorMessage(caught, "Failed to delete"));
-    }
-  }, [projectId, loadFiles]);
-
-  const handleSaveInstructions = useCallback(async () => {
-    if (!projectId) return;
-    setIsSaving(true);
-    let caught: unknown = null;
-    try {
-      await updateInstructions(projectId, instructions);
-      setSavedInstructions(instructions);
-      setSaveMessage("Saved");
-      setIsEditingInstructions(false);
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setSaveMessage(errorMessage(caught, "Failed to save"));
-    }
-    setIsSaving(false);
-  }, [projectId, instructions]);
-
-  // Cmd/Ctrl+S → save instructions, routed through the Scoped Command
-  // Registry. Context keys keep the binding inert when the buffer is clean.
-  // - studioMode: ResourcePage only mounts inside Studio surfaces.
-  // - instructionsEdited: surfaces the "has unsaved" boolean.
-  // - The catalog entries have passThroughTextInput: true so the binding
-  //   fires while the Monaco editor (which suppresses commands by default)
-  //   owns focus.
-  // The catalog scopes save commands to "workspace"; ResourcePage is
-  // rendered directly under App (not inside TaskView, which would have
-  // already pushed it), so we push the scope ourselves.
-  useKeyboardScope("workspace");
-  useContextKey("studioMode", true);
-  useContextKey("instructionsEdited", hasUnsaved);
-
-  // `enabled` keeps the focus-bound behavior — Cmd+S only saves while the
-  // Workspace Instructions editor owns focus.
-  useCommand(
-    "studio.instructions.save",
-    () => {
-      if (hasUnsaved) handleSaveInstructions();
-    },
-    {
-      enabled: () =>
-        document.activeElement?.id === "resource-instructions-editor",
-    },
-    [hasUnsaved, handleSaveInstructions],
-  );
-  // Edit-mode toggle for Workspace Instructions. Legacy Project Memory is
-  // intentionally migration-only so the old and new systems cannot diverge.
-  useCommand(
-    "studio.instructions.edit",
-    () => setIsEditingInstructions(true),
-    { enabled: () => !isLoadingInstructions && !isEditingInstructions },
-    [isLoadingInstructions, isEditingInstructions],
-  );
-
-  // Import = primary file upload button (Upload). Disabled while a previous
-  // upload is in flight, mirroring the toolbar button's `disabled` state.
-  useCommand(
-    "studio.resource.import",
-    () => fileInputRef.current?.click(),
-    { enabled: () => !isUploading },
-    [isUploading],
-  );
-
-  // Refresh both the file list and the linked workdirs — same handler as
-  // the toolbar's Refresh button.
-  useCommand(
-    "studio.resource.refresh",
-    () => {
-      void loadFiles();
-      void loadWorkdirs();
-    },
-    [loadFiles, loadWorkdirs],
-  );
-
-  // Add Link / Add Folder — mirror the toolbar buttons. AddLink opens the
-  // dialog; AddFolder triggers the native folder picker via the existing
-  // handler. AddFolder is gated by `isAddingWorkdir` to match the button's
-  // disabled state and avoid stacking duplicate picker invocations.
-  useCommand(
-    "studio.resource.addLink",
-    () => setAddLinkOpen(true),
-    [],
-  );
-  useCommand(
-    "studio.resource.addFolder",
-    () => { void handleAddWorkdir(); },
-    { enabled: () => !isAddingWorkdir },
-    [handleAddWorkdir, isAddingWorkdir],
-  );
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     dragCountRef.current = 0;
     setIsDragOver(false);
-    if (e.dataTransfer.types.includes(DRAG_TYPE)) return;
-    if (dropContainsDirectory(e.dataTransfer)) {
-      setFileError("Folders are not supported in drag-and-drop upload. Use Add Folder to link a directory.");
-      return;
-    }
-    if (e.dataTransfer.files.length > 0) handleUpload(e.dataTransfer.files);
-  }, [handleUpload]);
-
-  const insertTemplate = (content: string) => {
-    setInstructions((current) => {
-      if (!current.trim()) return content;
-      return `${current.trim()}\n\n${content}`;
-    });
-  };
-
-  const handlePreview = async (file: ResourceFile) => {
-    if (!projectId || file.is_dir) return;
-    const previewType = getPreviewType(file.name);
-    if (previewType === "image") {
-      setPreviewFile({ file, content: resourceDownloadUrl(projectId, file.path) });
-      return;
-    }
-    if (previewType === "binary") {
-      // Renderer (e.g. xlsx) fetches the URL itself.
-      setPreviewFile({ file, content: "", downloadUrl: resourceDownloadUrl(projectId, file.path) });
-      return;
-    }
-    setPreviewLoading(true);
-    try {
-      const content = await previewResource(projectId, file.path);
-      setPreviewFile({ file, content });
-    } catch {
-      setPreviewFile({ file, content: "(Failed to load preview)" });
-    }
-    setPreviewLoading(false);
-  };
-
-  const handleDownload = (file: ResourceFile) => {
-    if (!projectId || file.is_dir) return;
-    downloadViaIframe(resourceDownloadUrl(projectId, file.path), file.name);
-  };
-
-  const handleOpenInApp = (file: ResourceFile) => {
-    if (!projectId || file.is_dir) return;
-    void openResourceFile(projectId, file.path);
-  };
-
-  const handleRevealInFileManager = (file: ResourceFile) => {
-    if (!projectId || file.is_dir) return;
-    void revealResourceFile(projectId, file.path);
-  };
-
-  const handleOpenLink = useCallback(async (file: ResourceFile) => {
-    if (!projectId) return;
-    let raw: string | null = null;
-    let caught: unknown = null;
-    try {
-      raw = await previewResource(projectId, file.path);
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setFileError(errorMessage(caught, "Failed to open link"));
-      return;
-    }
-    const parsed = raw !== null ? parseLinkFile(raw) : null;
-    if (!parsed) {
-      setFileError("Malformed link file");
-      return;
-    }
-    openExternalUrl(parsed.url);
-  }, [projectId]);
-
-  const handleEditLink = useCallback(async (file: ResourceFile) => {
-    if (!projectId) return;
-    let raw: string | null = null;
-    let caught: unknown = null;
-    try {
-      raw = await previewResource(projectId, file.path);
-    } catch (err) {
-      caught = err;
-    }
-    if (caught !== null) {
-      setFileError(errorMessage(caught, "Failed to load link"));
-      return;
-    }
-    const parsed = raw !== null ? parseLinkFile(raw) : null;
-    if (!parsed) {
-      setFileError("Malformed link file");
-      return;
-    }
-    setEditLink({
-      file,
-      initial: { name: parsed.name, url: parsed.url, description: parsed.description, favicon: parsed.favicon },
-    });
-  }, [projectId]);
-
-  const navigateTo = (path: string) => {
-    setCurrentPath(path);
-    setSearchQuery("");
-    setIsCreatingFolder(false);
-    setNewFolderName("");
-    setRenamingPath(null);
+    uploadFromDrop(e.dataTransfer);
   };
 
   if (!selectedProject || selectedProject.projectType !== "studio") {
@@ -1218,17 +663,8 @@ export function ResourcePage() {
           existingNames={moveConflict.existingNames}
           onNewNameChange={(v) => setMoveConflict({ ...moveConflict, newName: v })}
           onCancel={() => setMoveConflict(null)}
-          onOverwrite={() => {
-            const { fromPath, toFolderPath, existingNames } = moveConflict;
-            setMoveConflict(null);
-            void handleMoveFile(fromPath, toFolderPath, { force: true }, existingNames);
-          }}
-          onRename={() => {
-            const { fromPath, toFolderPath, newName, existingNames } = moveConflict;
-            if (!newName.trim()) return;
-            setMoveConflict(null);
-            void handleMoveFile(fromPath, toFolderPath, { renameTo: newName.trim() }, existingNames);
-          }}
+          onOverwrite={overwriteConflict}
+          onRename={renameConflict}
         />
       )}
 
@@ -1254,14 +690,7 @@ export function ResourcePage() {
         open={addLinkOpen}
         title="Add Link to Shared Assets"
         onClose={() => setAddLinkOpen(false)}
-        onSubmit={async (payload) => {
-          if (!projectId) return;
-          await createResourceLink(projectId, {
-            ...payload,
-            path: currentPath || undefined,
-          });
-          await loadFiles();
-        }}
+        onSubmit={submitAddLink}
       />
       <AddLinkDialog
         open={!!editLink}
@@ -1269,11 +698,7 @@ export function ResourcePage() {
         submitLabel="Save"
         initial={editLink?.initial}
         onClose={() => setEditLink(null)}
-        onSubmit={async (payload) => {
-          if (!projectId || !editLink) return;
-          await updateResourceLink(projectId, editLink.file.path, payload);
-          await loadFiles();
-        }}
+        onSubmit={submitEditLink}
       />
 
       <ConfirmDialog
@@ -1339,8 +764,8 @@ export function ResourcePage() {
               <HeroStat
                 icon={Files}
                 label="Uploads"
-                value={String(fileOnlyList.length)}
-                subtext={fileOnlyList.length > 0 ? formatSize(totalBytes) : "No files yet"}
+                value={String(fileOnlyCount)}
+                subtext={fileOnlyCount > 0 ? formatSize(totalBytes) : "No files yet"}
               />
               <HeroStat
                 icon={Clock3}

@@ -1,127 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Activity, ChevronDown, ChevronRight, CircleAlert, FileText, Trash2, X } from "lucide-react";
 import type { MemoryEntity, MemoryEntityDocument, MemoryRelation, MemoryLog } from "../../api/memory";
+import { useMemoryEntities } from "./useMemoryEntities";
 import { memorySource, type MemorySource } from "./memorySource";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { DialogShell } from "../ui/DialogShell";
 import { ConfirmDialog } from "../Dialogs";
 import { MarkdownRenderer } from "../ui/MarkdownRenderer";
 import { MemoryGraph } from "./MemoryGraph";
-import { memoryCategoryColor } from "./MemoryGraphPalette";
 import { SearchBar, Score, TagList, InlineNotice, CenteredLoading, EmptyPage } from "./MemoryPrimitives";
-import { errorMessage, formatNumber, formatDate, relativeDate, plural, humanize, shortId } from "./memoryFormat";
+import { formatNumber, formatDate, relativeDate, plural, humanize, shortId } from "./memoryFormat";
 export function MemoriesTab({ projectId, refreshTick, onChanged, compact = false, source = memorySource }: { compact?: boolean; source?: MemorySource; projectId: string; refreshTick: number; onChanged: () => void }) {
   const { isMobile } = useIsMobile();
-  const [query, setQuery] = useState("");
-  const [submitted, setSubmitted] = useState("");
-  const [items, setItems] = useState<MemoryEntity[]>([]);
-  const [allRelations, setAllRelations] = useState<MemoryRelation[]>([]);
-  const [hasMore, setHasMore] = useState(false);
   const [view, setView] = useState<"graph" | "list">(() => compact || isMobile ? "list" : "graph");
-  const [category, setCategory] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<MemoryEntityDocument | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
-  const [detailRetry, setDetailRetry] = useState(0);
-  const [relations, setRelations] = useState<MemoryRelation[]>([]);
-  const [relatedNames, setRelatedNames] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<MemoryEntityDocument | null>(null);
-  const [deleting, setDeleting] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [entityPage, relationPage] = await Promise.all([
-        source.listMemoryEntities(projectId, submitted, undefined, 100),
-        source.listMemoryRelations(projectId, undefined, 100),
-      ]);
-      setItems(entityPage.items);
-      setAllRelations(relationPage.items);
-      setHasMore(Boolean(entityPage.next_cursor || relationPage.next_cursor));
-    } catch (reason) { setError(errorMessage(reason)); }
-    finally { setLoading(false); }
-  }, [projectId, submitted, source]);
-
-  useEffect(() => { void Promise.resolve().then(load); }, [load, refreshTick]);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setSubmitted(query.trim()), 250);
-    return () => window.clearTimeout(timer);
-  }, [query]);
-  useEffect(() => {
-    let active = true;
-    void Promise.resolve().then(async () => {
-      if (!active) return;
-      if (!selectedId) {
-        setDetail(null);
-        setRelations([]);
-        setRelatedNames({});
-        return;
-      }
-      setDetail(null);
-      setDetailError(null);
-      try {
-        const [document, relationPage] = await Promise.all([
-          source.getMemoryEntity(projectId, selectedId),
-          source.listMemoryRelations(projectId, selectedId),
-        ]);
-        if (!active) return;
-        setDetail(document);
-        setRelations(relationPage.items);
-        const known = new Map(items.map((entity) => [entity.entity_id, entity.title]));
-        const relatedIds = [...new Set(relationPage.items.map((relation) => relation.source_entity_id === selectedId ? relation.target_entity_id : relation.source_entity_id))].slice(0, 6);
-        const missing = relatedIds.filter((id) => !known.has(id));
-        const loaded = await Promise.all(missing.map((id) => source.getMemoryEntity(projectId, id).catch(() => null)));
-        if (!active) return;
-        loaded.forEach((entity) => { if (entity) known.set(entity.entity_id, entity.title); });
-        setRelatedNames(Object.fromEntries(known));
-      } catch (reason) {
-        if (active) setDetailError(errorMessage(reason));
-      }
-    });
-    return () => { active = false; };
-  }, [items, projectId, selectedId, detailRetry, source]);
-
-  const categories = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const entity of items) {
-      for (const key of new Set(entity.tags.map((tag) => tag.key))) {
-        counts.set(key, (counts.get(key) ?? 0) + 1);
-      }
-    }
-    return [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
-  }, [items]);
-  const categoryColors = useMemo(() => {
-    const names = categories.map(([name]) => name);
-    return new Map(names.map((name) => [name, memoryCategoryColor(name, names)]));
-  }, [categories]);
-  const visibleItems = category
-    ? items.filter((entity) => entity.tags.some((tag) => tag.key === category))
-    : items;
+  const {
+    query, setQuery, submitted, setSubmitted, items, allRelations, hasMore, category, setCategory, loading,
+    selectedId, setSelectedId, detail, detailError, retryDetail, relations, relatedNames, error, setError,
+    deleteTarget, setDeleteTarget, deleting, confirmDelete, categories, categoryColors, visibleItems,
+  } = useMemoryEntities({ projectId, refreshTick, onChanged, source });
   const resultSummary = submitted
     ? `${formatNumber(items.length)}${hasMore ? "+" : ""} matching ${plural(items.length, "memory", "memories")}`
     : hasMore
       ? `Showing the ${formatNumber(items.length)} strongest memories`
       : `${formatNumber(items.length)} ${plural(items.length, "memory", "memories")}`;
-
-  const confirmDelete = async () => {
-    if (!deleteTarget || deleting) return;
-    setDeleting(true);
-    try {
-      await source.deleteMemoryEntity(projectId, deleteTarget.entity_id);
-      setItems((current) => current.filter((entity) => entity.entity_id !== deleteTarget.entity_id));
-      setAllRelations((current) => current.filter((relation) => relation.source_entity_id !== deleteTarget.entity_id && relation.target_entity_id !== deleteTarget.entity_id));
-      setSelectedId(null);
-      setDeleteTarget(null);
-      onChanged();
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setDeleting(false);
-    }
-  };
 
   return (
     <div className={compact ? "buddy-memory-browser" : "flex min-h-0 flex-col sm:h-full"}>
@@ -207,7 +108,7 @@ export function MemoriesTab({ projectId, refreshTick, onChanged, compact = false
         onClose={() => setSelectedId(null)}
         detail={detail}
         error={detailError}
-        onRetry={() => setDetailRetry((count) => count + 1)}
+        onRetry={retryDetail}
         relations={relations}
         relatedNames={relatedNames}
         onOpen={setSelectedId}

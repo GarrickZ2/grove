@@ -1,0 +1,106 @@
+/* Voice & AI settings pages. Prefixed `ost-v-` so Orbit's reduced-motion rule
+   (which matches [class*="ost-"]) covers every animation here. */
+
+/* Try it: hold-to-talk mic, live waveform, transcript */
+.ost-v-try{display:grid;grid-template-columns:auto minmax(0,1fr);gap:18px;align-items:center}
+.ost-v-mic{position:relative;width:64px;height:64px;border-radius:50%;border:0;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--o-on-ink);background:var(--o-ink);box-shadow:inset 0 1px 0 rgb(255 255 255 / 16%),0 12px 26px -12px rgb(0 0 0 / 45%);user-select:none;touch-action:none;transition:transform 200ms var(--o-ease-toggle),background-color 200ms}
+.ost-v-mic svg{width:24px;height:24px;stroke-width:2}
+.ost-v-mic:focus-visible{outline:2px solid var(--o-accent);outline-offset:3px}
+.ost-v-mic:disabled{opacity:.45;cursor:default}
+.ost-v-mic.is-on{transform:scale(.94);background:var(--o-accent);color:var(--o-on-accent)}
+.ost-v-mic::before,.ost-v-mic::after{content:"";position:absolute;inset:0;border-radius:50%;border:2px solid var(--o-accent);opacity:0;pointer-events:none}
+.ost-v-mic.is-on::before{animation:ost-v-ripple 1.6s ease-out infinite}
+.ost-v-mic.is-on::after{animation:ost-v-ripple 1.6s .8s ease-out infinite}
+@keyframes ost-v-ripple{0%{transform:scale(1);opacity:.55}100%{transform:scale(1.7);opacity:0}}
+.ost-v-wave{display:flex;align-items:center;gap:3px;height:34px}
+.ost-v-wave i{display:block;width:3px;border-radius:2px;background:var(--o-track);transition:height 90ms linear,background-color 200ms}
+.ost-v-wave.is-on i{background:var(--o-accent)}
+.ost-v-transcript{margin-top:8px;min-height:44px;font-size:13.5px;line-height:1.55;color:var(--o-text)}
+.ost-v-transcript p{margin:0}
+.ost-v-hint{color:var(--o-muted);font-size:12.5px}
+.ost-v-raw{display:block;color:var(--o-muted);font-size:12.5px}
+.ost-v-raw s{text-decoration-color:color-mix(in oklab,var(--o-accent) 60%,transparent)}
+.ost-v-clean{display:block;animation:ost-v-in 320ms var(--o-ease-out) both}
+.ost-v-caret{display:inline-block;width:2px;height:15px;margin-left:2px;vertical-align:-2px;background:var(--o-accent);animation:ost-v-blink 1s steps(2) infinite}
+@keyframes ost-v-blink{50%{opacity:0}}
+@keyframes ost-v-in{from{opacity:0;transform:translateY(3px)}}
+
+/* Number field with a unit */
+.ost-v-num{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--o-muted)}
+.ost-v-num .oui-field{width:76px;text-align:right;font-variant-numeric:tabular-nums}
+
+/* Text inputs that fill their row control */
+.ost-v-input{width:260px;max-width:100%}
+.ost-v-textarea{display:block;width:100%;box-sizing:border-box;height:auto;min-height:88px;margin-top:10px;padding:8px 10px;line-height:1.5;resize:vertical}
+.ost-v-textarea[readonly]{background:var(--o-code);color:color-mix(in oklab,var(--o-text) 85%,var(--o-muted))}
+
+/* Toolbars inside a Block */
+.ost-v-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.ost-v-toolbar .ost-search{flex:1 1 200px;margin:0}
+.ost-v-spacer{flex:1}
+.ost-v-blockhead{display:flex;align-items:center;gap:10px}
+.ost-v-blockhead .oui-row-copy{flex:1}
+
+.ost-v-dim{opacity:.4;pointer-events:none;transition:opacity 260ms}
+
+/* Long lists scroll inside their card */
+.ost-v-scroll{max-height:440px;overflow-y:auto;overscroll-behavior:contain}
+.ost-v-scroll>*+*{border-top:1px solid var(--o-border)}
+
+/* Small pills */
+.ost-v-badge{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:500;white-space:nowrap;color:var(--o-muted);background:var(--o-selected)}
+.ost-v-badge.is-accent{color:var(--o-accent);background:var(--o-accent-soft)}
+.ost-v-id{font-family:var(--o-font-mono);font-size:11px;color:var(--o-muted)}
+.ost-v-step{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:11px;font-weight:600;color:var(--o-muted);background:var(--o-selected)}
+.ost-v-arrow{display:inline-block;margin:0 6px;color:var(--o-muted)}
+
+/* Inline notices */
+.ost-v-banner{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:12.5px;line-height:1.45;color:var(--o-error);background:color-mix(in oklab,var(--o-error) 7%,transparent)}
+.ost-v-banner span{flex:1;min-width:0}
+.ost-v-banner.is-warn{color:var(--o-warn);background:color-mix(in oklab,var(--o-warn) 8%,transparent)}
+.ost-v-banner.is-standalone{margin-top:12px;border-radius:var(--o-radius-lg);border:1px solid color-mix(in oklab,var(--o-error) 22%,transparent)}
+
+/* Agent voice: preview hero */
+.ost-v-voice{display:flex;align-items:center;gap:16px}
+.ost-v-voice-art{position:relative;flex-shrink:0;display:flex}
+.ost-v-voice-empty{display:flex;align-items:center;justify-content:center;width:96px;height:96px;border-radius:50%;background:var(--o-selected);color:var(--o-muted)}
+.ost-v-voice-empty svg{width:24px;height:24px}
+.ost-v-voice-play{position:absolute;right:-4px;bottom:-4px;width:28px;height:28px;border-radius:50%;border:2px solid var(--o-group);display:flex;align-items:center;justify-content:center;cursor:pointer;background:var(--o-ink);color:var(--o-on-ink);transition:transform 160ms var(--o-ease-toggle)}
+.ost-v-voice-play:hover:not(:disabled){transform:scale(1.08)}
+.ost-v-voice-play:disabled{opacity:.6;cursor:default}
+.ost-v-voice-play svg{width:12px;height:12px}
+.ost-v-voice-play:focus-visible{outline:2px solid var(--o-accent);outline-offset:2px}
+.ost-v-voice-copy{flex:1;min-width:0}
+.ost-v-voice-copy b{display:block;font-size:14px;font-weight:600}
+.ost-v-voice-copy p{margin:2px 0 0;font-size:12.5px;line-height:1.45;color:var(--o-muted)}
+.ost-v-pills{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.ost-v-picker-wide{width:320px;max-width:100%}
+
+/* Range slider row control */
+.ost-v-range{display:inline-flex;align-items:center;gap:10px}
+.ost-v-range input{width:180px;accent-color:var(--o-accent)}
+.ost-v-range output{min-width:34px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--o-muted)}
+
+/* Footer actions */
+/* Floating save bar: sticks to the bottom of the pane, only while saveable. */
+.ost-v-savebar{position:sticky;bottom:20px;z-index:4;display:flex;justify-content:center;height:0;pointer-events:none}
+.ost-v-savebar-in{display:flex;align-items:center;gap:14px;padding:6px 6px 6px 16px;transform:translateY(calc(-100% + 12px)) scale(.96);opacity:0;border:1px solid var(--o-border);border-radius:999px;background:var(--o-frost);-webkit-backdrop-filter:saturate(1.8) blur(16px);backdrop-filter:saturate(1.8) blur(16px);box-shadow:var(--o-shadow-2);transition:opacity 180ms var(--o-ease-out),transform 260ms var(--o-ease-pop)}
+.ost-v-savebar.is-on .ost-v-savebar-in{opacity:1;transform:translateY(-100%);pointer-events:auto}
+.ost-v-savebar-text{font-size:12.5px;color:var(--o-muted);white-space:nowrap}
+
+/* AI providers: inline edit form */
+.ost-v-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
+.ost-v-form :is(label,.ost-v-form-label){display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px;font-weight:500;color:var(--o-muted)}
+.ost-v-form .oui-field{width:100%;box-sizing:border-box}
+.ost-v-form-actions{display:flex;align-items:center;gap:8px;margin-top:14px}
+.ost-v-status{--oui-status:var(--o-warn)}
+.ost-v-status.is-verified{--oui-status:var(--o-success)}
+.ost-v-status.is-failed{--oui-status:var(--o-error)}
+
+@media (max-width:760px){
+  .ost-v-try{grid-template-columns:minmax(0,1fr);justify-items:start}
+  .ost-v-form{grid-template-columns:minmax(0,1fr)}
+  .ost-v-range input{width:120px}
+}
+
+.ost-v-logo{width:16px;height:16px;display:block}

@@ -1,0 +1,199 @@
+/* Orbit Memory: one-viewport page. Lists and documents scroll inside their cards. */
+.orbit-ui{--om-mem:color-mix(in oklab,#7c3aed 84%,var(--o-text));--om-mem-soft:color-mix(in oklab,var(--om-mem) 14%,transparent);--om-mem-ring:color-mix(in oklab,var(--om-mem) 9%,transparent)}
+.om b,.om small,.oui-sheet-root b,.oui-sheet-root small{font-variant-numeric:tabular-nums}
+
+.om-runs-btn{position:relative}
+.om-badge{position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--om-mem);box-shadow:0 0 0 2px var(--o-bg);animation:om-pulse 1.8s ease-in-out infinite}
+@keyframes om-pulse{50%{box-shadow:0 0 0 2px var(--o-bg),0 0 0 6px var(--om-mem-soft)}}
+.om-notice{display:flex;align-items:center;gap:10px;margin:0;padding:8px 12px;border-radius:var(--o-radius-md);font-size:12.5px;color:var(--o-error);background:color-mix(in oklab,var(--o-error) 8%,transparent);flex-shrink:0}
+.om-notice button,.oms-problem button,.oml-error button{margin-left:auto;border:0;background:none;font:inherit;font-size:12px;color:inherit;opacity:.8;cursor:pointer;text-decoration:underline}
+
+/* Pipeline: notes → organizer → memories */
+.om-pipe{display:grid;grid-template-columns:minmax(0,auto) minmax(32px,1fr) minmax(0,auto) minmax(32px,1fr) minmax(0,auto);align-items:center;padding:8px;border:1px solid var(--o-border);border-radius:var(--o-radius-lg);background:var(--o-group);box-shadow:var(--o-shadow-1);flex-shrink:0}
+.om-stage{display:flex;align-items:center;gap:8px;min-width:0;border-radius:var(--o-radius-md)}
+.om-stage-hit{flex:1;display:flex;align-items:center;gap:12px;min-width:0;padding:6px 8px;border:0;border-radius:var(--o-radius-md);background:none;font:inherit;color:inherit;text-align:left;cursor:pointer;transition:background-color var(--o-dur-fast)}
+.om-stage-hit:hover{background:var(--o-hover)}
+.om-stage-mid{padding-right:6px}
+.om-stage-ic{width:36px;height:36px;border-radius:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--o-selected);color:var(--o-muted);transition:background-color 300ms,color 300ms,box-shadow 300ms}
+.om-stage-ic svg{width:16px;height:16px}
+.om-stage-ic.is-on{background:var(--om-mem-soft);color:var(--om-mem);box-shadow:0 0 0 4px var(--om-mem-ring)}
+.om-stage.is-attention .om-stage-ic{background:color-mix(in oklab,var(--o-warn) 16%,transparent);color:var(--o-warn);box-shadow:0 0 0 4px color-mix(in oklab,var(--o-warn) 9%,transparent)}
+.om-stage-copy{flex:1;min-width:0}
+.om-stage-copy b{display:block;font-size:15px;font-weight:650;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.om-stage-copy>span{display:block;margin-top:1px;font-size:12px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.om-bump{animation:om-bump 460ms var(--o-ease-pop)}
+@keyframes om-bump{0%{transform:translateY(-8px) scale(.9);opacity:0}100%{transform:none;opacity:1}}
+/* The connector runs from one stage's text right up to the next stage's
+   icon, ending in a small arrowhead, so the three read as one flow. */
+.om-flow{position:relative;height:2px;margin:0 6px 0 14px;border-radius:2px;background:var(--o-track);overflow:visible}
+.om-flow::after{content:"";position:absolute;right:-1px;top:50%;width:6px;height:6px;border-top:2px solid var(--o-track);border-right:2px solid var(--o-track);transform:translateY(-50%) rotate(45deg)}
+.om-flow.is-on::after{border-color:var(--om-mem)}
+/* Busy: a highlight sweeps along the line itself, so nothing spills past it. */
+.om-flow.is-on{background:linear-gradient(90deg,var(--o-track) 0%,var(--o-track) 35%,var(--om-mem) 50%,var(--o-track) 65%,var(--o-track) 100%);background-size:300% 100%;animation:om-flow 1.4s linear infinite}
+@keyframes om-flow{from{background-position:100% 0}to{background-position:0 0}}
+
+/* Grid of two cards fills the rest of the viewport */
+.om-grid{flex:1 1 0;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);grid-template-rows:minmax(0,1fr);gap:var(--oui-gap)}
+.om-col{display:flex;flex-direction:column;min-height:0}
+.om-col>.oui-card{flex:1}
+
+/* List card */
+.oml .oml-search{flex:1;min-width:0}
+.oml-chips{display:flex;gap:6px;padding:0 14px 8px;overflow-x:auto;scrollbar-width:none;flex-shrink:0}
+.oml-chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:999px;font:inherit;font-size:12px;color:var(--o-muted);border:1px solid var(--o-border);background:var(--o-bg);white-space:nowrap;cursor:pointer;transition:color var(--o-dur-fast),border-color var(--o-dur-fast),background-color var(--o-dur-fast),transform 140ms var(--o-ease-toggle)}
+.oml-chip small{font-size:11px;opacity:.75}
+.oml-chip:hover{color:var(--o-text)}
+.oml-chip:active{transform:scale(.96)}
+.oml-chip.is-on{color:var(--om-mem);border-color:color-mix(in oklab,var(--om-mem) 35%,var(--o-border));background:var(--om-mem-soft)}
+.oml-skel,.omd-skel,.omr-loading{display:flex;flex-direction:column;gap:14px;padding:14px 10px}
+.oml-skel .oui-skel:nth-child(2),.omd-skel .oui-skel:nth-child(3){width:72%}
+.oml-skel .oui-skel:nth-child(3),.omd-skel .oui-skel:nth-child(4){width:48%}
+.oml-error{display:flex;gap:8px;margin:0 14px 8px;padding:6px 10px;border-radius:var(--o-radius);font-size:12px;color:var(--o-error);background:color-mix(in oklab,var(--o-error) 8%,transparent)}
+.oml-foot,.oml-more{display:flex;align-items:center;justify-content:center;gap:10px;margin:6px 0 2px;font-size:12px;color:var(--o-muted)}
+.oml-mem{display:flex;gap:12px;width:100%;padding:10px;border:0;border-radius:var(--o-radius-md);background:none;font:inherit;color:inherit;text-align:left;cursor:pointer;animation:oui-rowin 380ms var(--o-ease-out) both;transition:background-color var(--o-dur-fast),box-shadow 200ms}
+.oml-mem:hover{background:var(--o-hover)}
+.oml-mem.is-sel{background:var(--o-bg);box-shadow:0 1px 3px var(--o-shadow),inset 0 0 0 1px var(--o-border)}
+.oml-mem.is-new{animation:om-newin 700ms var(--o-ease-pop) both}
+@keyframes om-newin{0%{opacity:0;transform:translateY(-8px) scale(.97);box-shadow:0 0 0 0 var(--om-mem-soft)}60%{opacity:1;box-shadow:0 0 0 6px var(--om-mem-soft)}100%{transform:none;box-shadow:0 0 0 0 transparent}}
+.oml-strength{width:4px;align-self:stretch;min-height:28px;border-radius:2px;background:var(--o-track);position:relative;overflow:hidden;flex-shrink:0}
+.oml-strength i{position:absolute;left:0;right:0;bottom:0;border-radius:2px;background:var(--om-mem);transition:height 500ms var(--o-ease-out)}
+.oml-copy{flex:1;min-width:0}
+.oml-copy b{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden}
+.oml-copy b>span{overflow:hidden;text-overflow:ellipsis}
+.oml-copy small{display:block;margin-top:2px;font-size:12px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.oml-new{font-style:normal;font-size:10.5px;font-weight:600;padding:0 5px;border-radius:4px;background:var(--om-mem-soft);color:var(--om-mem);flex-shrink:0}
+.orbit-ui .oml-tags{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;min-width:0}
+.orbit-ui .oml-tag{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;padding:1px 6px;border-radius:4px;background:var(--o-selected);color:var(--o-muted)}
+.oml-uses{font-size:11.5px;color:var(--o-muted);white-space:nowrap;padding-top:2px;font-variant-numeric:tabular-nums}
+.oml-note{position:relative;display:flex;align-items:flex-start;gap:4px;padding:2px 4px 2px 2px;border-radius:var(--o-radius-md);animation:oui-rowin 380ms var(--o-ease-out) both;transition:background-color var(--o-dur-fast)}
+.oml-note:hover,.oml-note.is-open{background:var(--o-hover)}
+.oml-check{position:relative;display:flex;align-items:center;justify-content:center;width:26px;height:36px;flex-shrink:0}
+.oml-dot{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--om-mem);transition:transform 200ms var(--o-ease-pop),background-color var(--o-dur-fast),border-radius 200ms}
+.oml-note:hover .oml-dot{transform:scale(1.25)}
+.oml-note-main{flex:1;min-width:0;display:flex;gap:8px;padding:8px 2px 8px 0;border:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.oml-note-body{display:block;margin-top:6px;animation:oui-rise 260ms var(--o-ease-out) both}
+.oml-note-desc{display:block;font-size:12.5px;line-height:1.55;color:color-mix(in oklab,var(--o-text) 82%,var(--o-muted));white-space:pre-wrap;overflow-wrap:anywhere}
+.oml-caret{width:14px;height:14px;margin-top:2px;flex-shrink:0;color:var(--o-muted);transition:transform 260ms var(--o-ease-pop)}
+.oml-caret.is-flipped{transform:rotate(180deg)}
+
+/* Detail card */
+.omd-doc{flex:1;min-height:0;padding:4px 22px 18px}
+.omd-sec{animation:oui-enter 380ms var(--o-ease-out) both}
+.omd-sec+.omd-sec{margin-top:18px}
+.omd-sec:nth-child(2){animation-delay:45ms}.omd-sec:nth-child(3){animation-delay:90ms}
+.omd-doc h2{margin:0;font-size:18px;font-weight:650;letter-spacing:-.02em;line-height:1.3;overflow-wrap:anywhere}
+.omd-meta{display:flex;align-items:center;gap:6px 14px;margin-top:8px;font-size:12px;color:var(--o-muted);flex-wrap:wrap}
+.omd-meter{display:inline-flex;align-items:center;gap:6px}
+.omd-meter>span{width:60px;height:4px;border-radius:2px;background:var(--o-track);overflow:hidden;display:inline-block}
+.omd-meter>span i{display:block;height:100%;background:var(--om-mem);border-radius:2px;animation:oui-growx 600ms 120ms var(--o-ease-out) both;transform-origin:left}
+.omd-meter b{font-weight:500;color:var(--o-text)}
+.omd-tags{margin-top:10px}
+.omd-tags small{opacity:.7}
+.omd-body{font-size:13.5px;line-height:1.65;color:color-mix(in oklab,var(--o-text) 90%,var(--o-muted))}
+.omd-lead{margin:0 0 10px;font-size:13.5px;color:var(--o-text)}
+.omd-rel-title{margin-bottom:8px;font-size:12px;font-weight:600;color:var(--o-muted)}
+.omd-rels{display:flex;flex-direction:column;gap:6px}
+.omd-rel{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;border:1px solid var(--o-border);background:var(--o-bg);font:inherit;font-size:12.5px;color:var(--o-text);text-align:left;cursor:pointer;transition:border-color var(--o-dur-fast),transform 200ms var(--o-ease-pop)}
+.omd-rel:hover{border-color:color-mix(in oklab,var(--om-mem) 35%,var(--o-border));transform:translateX(2px)}
+.omd-rel em{font-style:normal;font-size:11px;color:var(--om-mem);background:var(--om-mem-soft);padding:1px 6px;border-radius:4px;white-space:nowrap}
+.omd-rel span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.omd-foot{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 16px;border-top:1px solid var(--o-border);flex-shrink:0}
+.omd-foot>span{flex:1;min-width:0;font-size:11.5px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The shared canvas graph fills the card; its own minimum height would overflow it. */
+.omd-graph{position:relative;flex:1;min-height:0;margin:0 12px 12px;border-radius:var(--o-radius-lg);border:1px solid var(--o-border);background:var(--o-bg);overflow:hidden}
+.omd-graph>div{height:100%!important;min-height:0!important}
+/* The graph's "Hover to explore" hint sits bottom-right, the zoom controls
+   bottom-left; in a narrow card the hint wraps beside the controls, and
+   gives way entirely when there's no room for it. */
+.omd-graph{container-type:inline-size}
+@container (max-width:620px){
+  .omd-graph>div>p:last-child{left:188px;right:14px;bottom:16px;text-align:right;line-height:1.35}
+}
+@container (max-width:400px){
+  .omd-graph>div>p:last-child{display:none}
+}
+
+/* Off: what Memory is and one way to turn it on */
+.om-off{flex:1;min-height:0;display:grid;place-items:center;border:1px solid var(--o-border);border-radius:var(--o-radius-lg);background:var(--o-group);box-shadow:var(--o-shadow-1);overflow:auto}
+.om-off-in{max-width:640px;padding:24px;text-align:center}
+.om-off-in h2{margin:18px 0 6px;font-size:22px;font-weight:650;letter-spacing:-.02em}
+.om-off-in>p{margin:0 auto 22px;max-width:470px;font-size:13.5px;line-height:1.6;color:var(--o-muted)}
+.om-orb{width:88px;height:88px;margin:0 auto;border-radius:28px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(150deg,#c4b5fd,#6d28d9);box-shadow:inset 0 1px 0 rgb(255 255 255 / 40%),0 24px 50px -20px rgb(109 40 217 / 80%);animation:om-breathe 3.2s ease-in-out infinite}
+.om-orb svg{width:40px;height:40px;stroke-width:1.6}
+@keyframes om-breathe{50%{transform:translateY(-4px);box-shadow:inset 0 1px 0 rgb(255 255 255 / 40%),0 30px 60px -20px rgb(109 40 217 / 90%)}}
+.om-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0 0 24px;padding:0;list-style:none;text-align:left}
+.om-steps li{padding:14px;border-radius:var(--o-radius-lg);border:1px solid var(--o-border);background:var(--o-bg);animation:oui-rise 500ms var(--o-ease-out) both}
+.om-steps em{display:inline-flex;width:22px;height:22px;border-radius:7px;align-items:center;justify-content:center;font-style:normal;font-size:11.5px;font-weight:700;background:var(--om-mem-soft);color:var(--om-mem)}
+.om-steps b{display:block;margin-top:10px;font-size:13px;font-weight:600}
+.om-steps span{display:block;margin-top:3px;font-size:12px;line-height:1.45;color:var(--o-muted)}
+.om-off-acts{display:flex;justify-content:center;gap:8px}
+
+/* Sheet content (the sheet itself: ../ui) */
+.oms-block-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px}
+.oms-block-head b{font-size:13.5px;font-weight:500}
+.oms-block-head span{min-width:0;font-size:12px;color:var(--o-muted);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oms-block-head span.is-bad{color:var(--o-error)}
+.oms-num{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--o-muted)}
+.orbit-ui .oms-num .oui-field{width:64px;text-align:right}
+.oms-problem{display:flex;gap:8px;margin:0 0 4px;padding:8px 12px;border-radius:var(--o-radius);font-size:12.5px;color:var(--o-warn);background:color-mix(in oklab,var(--o-warn) 10%,transparent);animation:oui-rise 260ms var(--o-ease-out) both}
+.oui-sheet>.oms-problem{margin:0 20px 8px;color:var(--o-error);background:color-mix(in oklab,var(--o-error) 8%,transparent)}
+
+/* Runs */
+.omr-list{flex:1;min-height:0;padding:0 10px 12px}
+.omr-row{display:flex;align-items:center;gap:4px;padding-right:6px;border-radius:var(--o-radius-md);animation:oui-rowin 380ms var(--o-ease-out) both;transition:background-color var(--o-dur-fast)}
+.omr-row:hover{background:var(--o-hover)}
+.omr-open{flex:1;min-width:0;display:flex;align-items:flex-start;gap:12px;padding:10px;border:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.omr-glyph{width:28px;height:28px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--o-selected);color:var(--o-muted)}
+.omr-glyph svg{width:15px;height:15px}
+.omr-glyph.is-ok{background:color-mix(in oklab,var(--o-success) 13%,transparent);color:var(--o-success)}
+.omr-glyph.is-warn{background:color-mix(in oklab,var(--o-warn) 14%,transparent);color:var(--o-warn)}
+.omr-glyph.is-bad{background:color-mix(in oklab,var(--o-error) 12%,transparent);color:var(--o-error)}
+.omr-glyph.is-live{background:var(--om-mem-soft);color:var(--om-mem)}
+.omr-copy{flex:1;min-width:0}
+.omr-copy b{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden}
+.omr-copy b em{font-style:normal;font-size:11px;font-weight:400;padding:0 6px;border-radius:4px;background:var(--o-selected);color:var(--o-muted)}
+.omr-copy small{display:block;margin-top:2px;font-size:12px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.omr-copy small.omr-changes{color:color-mix(in oklab,var(--om-mem) 70%,var(--o-muted))}
+.omr-acts{display:flex;align-items:center;gap:2px;flex-shrink:0}
+.omr-viewer{flex:1;min-height:0;display:flex;border-top:1px solid var(--o-border)}
+.omr-viewer>*{flex:1;min-width:0}
+.omr-transcript{min-height:0;padding:14px 20px}
+
+/* Short windows: tighten before anything scrolls. */
+@media (max-height:760px){
+  .om-pipe{padding:5px 8px}
+  .om-stage-ic{width:32px;height:32px;border-radius:10px}
+  .om-off-in{padding:16px}
+  .om-off-in h2{margin-top:12px}
+  .om-orb{width:72px;height:72px;border-radius:22px}
+}
+
+/* Narrow: one column, the page scrolls instead of the cards. */
+@media (max-width:860px){
+  .om-pipe{grid-template-columns:minmax(0,1fr);gap:4px}
+  .om-flow{display:none}
+  .om-grid{display:flex;flex-direction:column}
+  .om-col>.oui-card{min-height:420px;max-height:80vh}
+  .om-steps{grid-template-columns:minmax(0,1fr)}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .orbit-ui :is([class*="om-"],[class*="oml-"],[class*="omd-"],[class*="oms-"],[class*="omr-"]),
+  .orbit-ui :is([class*="om-"],[class*="oml-"],[class*="omd-"],[class*="oms-"],[class*="omr-"])::before,
+  .orbit-ui :is([class*="om-"],[class*="oml-"],[class*="omd-"],[class*="oms-"],[class*="omr-"])::after{animation-duration:0s!important;animation-delay:0s!important;animation-iteration-count:1!important;transition-duration:0s!important}
+  .orbit-ui .om-spin{animation:none!important}
+}
+
+/* Guided setup footer: why it can't finish yet, Cancel, Turn on */
+.oms-setup-foot{display:flex;align-items:center;gap:8px;padding:12px 18px;border-top:1px solid var(--o-border);background:var(--o-group)}
+.oms-setup-foot>span{flex:1;min-width:0;font-size:12.5px;color:var(--o-muted)}
+.oms-setup-foot>span.is-bad{color:var(--o-warn, var(--o-muted))}
+
+/* Setup guide: step rail, one step's controls at a time */
+.oms-steps{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 14px;padding:0;list-style:none}
+.oms-steps li{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:var(--o-radius);border:1px solid var(--o-border);background:var(--o-bg);color:var(--o-muted);transition:border-color var(--o-dur-fast),background-color var(--o-dur-fast),color var(--o-dur-fast)}
+.oms-steps li.is-on{border-color:color-mix(in oklab,var(--om-mem) 45%,var(--o-border));background:var(--om-mem-soft);color:var(--o-text)}
+.oms-steps em{display:inline-flex;flex-shrink:0;width:20px;height:20px;border-radius:6px;align-items:center;justify-content:center;font-style:normal;font-size:11px;font-weight:700;background:var(--o-selected);color:var(--o-muted)}
+.oms-steps li.is-on em,.oms-steps li.is-done em{background:var(--om-mem);color:#fff}
+.oms-steps b{display:block;font-size:12.5px;font-weight:600}
+.oms-steps small{display:block;margin-top:2px;font-size:11.5px;color:var(--o-muted)}

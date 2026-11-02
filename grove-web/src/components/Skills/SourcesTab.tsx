@@ -4,24 +4,14 @@ import { Button, DialogShell } from "../ui";
 import { ConfirmDialog } from "../Dialogs";
 import { AddSourceDialog } from "./AddSourceDialog";
 import { TableEmpty, TableFrame } from "./ExtensionTable";
-import { deleteSource as apiDeleteSource, syncAllSources, syncSource } from "../../api";
 import type { SkillSource } from "../../api";
 import { useCommand } from "../../keyboard";
 import { MultiSelectFilter } from "./MultiSelectFilter";
+import { formatMode, formatRelativeTime, isPluginSource, sourceDisplayName, useSourceActions } from "./useSourceActions";
 
 interface SourcesTabProps {
   sources: SkillSource[];
   onRefresh: () => Promise<void>;
-}
-
-function isPluginSource(source: SkillSource) {
-  return source.name.startsWith("plugin:");
-}
-
-function sourceDisplayName(source: SkillSource) {
-  if (!isPluginSource(source)) return source.name;
-  const parts = source.url.replace(/[\\/]+$/, "").split(/[\\/]/);
-  return parts.length >= 2 ? parts[parts.length - 2] : source.name;
 }
 
 export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
@@ -31,9 +21,8 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
   const [editSource, setEditSource] = useState<SkillSource | null>(null);
   const [selectedSource, setSelectedSource] = useState<SkillSource | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<SkillSource | null>(null);
-  const [syncingName, setSyncingName] = useState<string | null>(null);
-  const [syncingAll, setSyncingAll] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const actions = useSourceActions(onRefresh);
+  const { syncingName, syncingAll, error } = actions;
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -53,39 +42,17 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
   }, [modes, search, sourceTypes, sources]);
 
   const syncOne = async (name: string) => {
-    setError(null);
-    setSyncingName(name);
-    try {
-      await syncSource(name);
-      await onRefresh();
-      setSelectedSource(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not sync source.");
-    } finally {
-      setSyncingName(null);
-    }
+    if (await actions.syncOne(name)) setSelectedSource(null);
   };
 
-  const syncAll = async () => {
-    setError(null);
-    setSyncingAll(true);
-    try {
-      await syncAllSources();
-      await onRefresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not sync sources.");
-    } finally {
-      setSyncingAll(false);
-    }
-  };
+  const syncAll = actions.syncAll;
 
   const removeSource = async () => {
     if (!deleteConfirm) return;
     const name = deleteConfirm.name;
     setDeleteConfirm(null);
     if (selectedSource?.name === name) setSelectedSource(null);
-    await apiDeleteSource(name);
-    await onRefresh();
+    await actions.remove(name);
   };
 
   useCommand("skills.source.syncAll", () => { void syncAll(); }, { enabled: () => sources.length > 0 && !syncingAll }, [sources.length, syncingAll]);
@@ -145,20 +112,4 @@ function ContentSummary({ source }: { source: SkillSource }) {
   const present = entries.filter(([, count]) => count > 0);
   if (present.length === 0) return <span className="text-xs text-[var(--color-text-muted)]">No extensions found</span>;
   return <div className="flex flex-wrap gap-1.5">{present.map(([label, count, className]) => <span key={label} className={`text-xs font-medium md:rounded-md md:px-2 md:py-1 ${className}`}>{count} {label}</span>)}</div>;
-}
-
-function formatMode(mode: SkillSource["management_mode"]) {
-  if (mode === "managed") return "Managed by Grove";
-  if (mode === "referenced") return "Linked folder";
-  return "Development";
-}
-
-function formatRelativeTime(iso: string | null, now: number) {
-  if (!iso) return "Never";
-  const minutes = Math.floor((now - new Date(iso).getTime()) / 60000);
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
 }

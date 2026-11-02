@@ -1,0 +1,270 @@
+/* Orbit Dashboard: one-viewport project home (shell, header, cards: ../ui). */
+.odb b,.odb .odb-stat,.odb .odb-diff,.odb .odb-ago,.odb .odb-tok,.odb .odb-sess-ago{font-variant-numeric:tabular-nums}
+
+.odb-new kbd{font:inherit;font-size:11px;opacity:.6;margin-left:2px;letter-spacing:.04em}
+.odb-tag{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:999px;font-size:12px;font-weight:500;flex-shrink:0;color:var(--o-accent);background:var(--o-accent-soft)}
+.odb-tag svg{width:12px;height:12px}
+
+/* Branch switcher */
+.odb-anchor{position:relative;display:inline-flex;min-width:0}
+.odb-branch{display:inline-flex;align-items:center;gap:6px;max-width:280px;height:26px;padding:0 8px 0 9px;border-radius:999px;border:1px solid var(--o-border);background:var(--o-bg);color:var(--o-text);font:inherit;font-size:12.5px;font-weight:500;box-shadow:var(--o-shadow-1);cursor:pointer;transition:border-color var(--o-dur-fast),transform 140ms var(--o-ease-toggle)}
+.odb-branch:hover:not(:disabled),.odb-branch[aria-expanded=true]{border-color:var(--o-border-strong)}
+.odb-branch:active:not(:disabled){transform:scale(.97)}
+.odb-branch:disabled{opacity:.6;cursor:default}
+.odb-branch svg{width:13px;height:13px;flex-shrink:0;color:var(--o-muted);transition:transform 260ms var(--o-ease-pop)}
+.odb-branch svg.is-flipped{transform:rotate(180deg)}
+.odb .odb-pop{width:320px}
+.odb-pop-search{display:flex;align-items:center;gap:7px;height:32px;padding:0 8px;margin-bottom:4px;border-bottom:1px solid var(--o-border);color:var(--o-muted)}
+.odb-pop-search svg{width:14px;height:14px}
+.odb-pop-search input{flex:1;min-width:0;border:0;outline:0!important;background:transparent;font:inherit;font-size:13px;color:var(--o-text)}
+.odb-pop-list{max-height:264px}
+.odb-pop-list.is-history{max-height:300px}
+.odb-pop-item{display:flex;align-items:center;gap:8px;width:100%;height:32px;padding:0 8px;border:0;border-radius:var(--o-radius-sm);background:none;color:var(--o-text);font:inherit;font-size:12.5px;text-align:left;cursor:pointer}
+.odb-pop-item.is-cursor{background:var(--o-hover)}
+.odb-pop-item .oui-truncate{flex:1}
+.odb-pop-item small{font-size:11.5px;color:var(--o-muted)}
+.odb-pop-check{width:14px;height:14px;color:var(--o-accent);animation:oui-pop 420ms var(--o-ease-pop)}
+.odb-pop-empty{display:flex;align-items:center;min-height:36px;padding:0 8px;font-size:12.5px;color:var(--o-muted)}
+.odb-pop-empty .oui-skel{flex:1}
+.odb-commit{display:grid;grid-template-columns:14px minmax(0,1fr) auto;column-gap:8px;align-items:center;padding:6px 8px;border-radius:var(--o-radius-sm);font-size:12.5px}
+.odb-commit:hover{background:var(--o-hover)}
+.odb-commit svg{width:14px;height:14px;color:var(--o-muted);grid-row:span 2}
+.odb-commit-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.odb-commit code{font-size:11px;color:var(--o-muted)}
+.odb-commit small{grid-column:2/4;font-size:11.5px;color:var(--o-muted)}
+.odb-pop-foot{display:flex;gap:4px;margin-top:4px;padding-top:4px;border-top:1px solid var(--o-border)}
+.odb-pop-foot button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:5px;height:28px;border:0;border-radius:var(--o-radius-sm);background:none;font:inherit;font-size:12.5px;color:var(--o-muted);cursor:pointer;transition:background-color var(--o-dur-fast),color var(--o-dur-fast)}
+.odb-pop-foot button:hover,.odb-pop-foot button.is-on{background:var(--o-hover);color:var(--o-text)}
+.odb-pop-foot svg{width:13px;height:13px}
+
+/* Main checkout strip */
+.odb-repo{display:flex;align-items:center;gap:10px;padding:7px 8px 7px 14px;border:1px solid var(--o-border);border-radius:var(--o-radius-lg);background:var(--o-group);box-shadow:var(--o-shadow-1);flex-shrink:0;min-height:44px}
+.odb-repo.is-warn{border-color:color-mix(in oklab,var(--o-warn) 35%,var(--o-border))}
+.odb-repo-l{display:flex;align-items:center;gap:7px;min-width:0;max-width:40%;font-size:12.5px;white-space:nowrap;color:var(--o-muted)}
+.odb-repo-l svg{width:14px;height:14px;flex-shrink:0}
+.odb-repo-l .oui-mono{color:var(--o-text)}
+.odb-repo.is-warn .odb-repo-l{color:var(--o-warn)}
+.odb-repo-note{flex:1;min-width:0;font-size:12.5px;color:var(--o-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.odb-stats{display:flex;align-items:center;gap:6px;flex:1;min-width:0;overflow:hidden}
+.odb-stat{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:999px;background:var(--o-selected);font-size:12.5px;color:var(--o-muted);white-space:nowrap;transition:background-color 300ms,color 300ms}
+.odb-stat b{color:var(--o-text);font-weight:600}
+.odb-stat svg{width:12px;height:12px}
+.odb-stat.is-hot{background:color-mix(in oklab,var(--o-accent) 12%,transparent);color:color-mix(in oklab,var(--o-accent) 80%,var(--o-text))}
+.odb-stat.is-hot b{color:inherit}
+.odb-stat.is-danger{background:color-mix(in oklab,var(--o-error) 12%,transparent);color:var(--o-error);font-weight:500}
+.odb-bump{display:inline-block;animation:odb-bump 420ms var(--o-ease-pop)}
+@keyframes odb-bump{from{transform:translateY(-6px);opacity:0}}
+.odb-spin-y{animation:odb-nudge 900ms var(--o-ease-out) infinite}
+@keyframes odb-nudge{50%{transform:translateY(-2px);opacity:.55}}
+.odb-toast{display:inline-flex;align-items:center;gap:6px;max-width:320px;font-size:12px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:odb-toast 3s var(--o-ease-out) both}
+.odb-toast svg{width:13px;height:13px;flex-shrink:0;color:var(--o-accent);stroke-width:2.4}
+@keyframes odb-toast{0%{opacity:0;transform:translateX(6px)}8%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0}}
+
+/* Cards */
+/* The grid fills the rest of the viewport. Each column ends in a card that
+   takes the remaining height (In flight, Recent sessions), so both bottoms
+   sit level on the page's bottom padding. */
+.odb-grid{flex:1 1 0;min-height:0;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:14px}
+.odb-col{display:flex;flex-direction:column;gap:14px;min-height:0}
+.odb-fill{flex:1;min-height:0}
+/* Needs you sizes to its content (capped); In flight takes the rest of the
+   column and scrolls inside when long. */
+.odb-fill-wrap,.odb-inbox-wrap{display:flex;flex-direction:column;min-height:0}
+.odb-fill-wrap{flex:1 1 auto;min-height:150px}
+.odb-fill-wrap>.odb-card,.odb-inbox-wrap>.odb-card{flex:1 1 auto}
+.odb-count{min-width:18px;height:18px;padding:0 5px;border-radius:999px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;background:var(--o-warn);color:#fff;box-shadow:0 2px 8px -2px color-mix(in oklab,var(--o-warn) 70%,transparent);animation:oui-pop 420ms var(--o-ease-pop)}
+
+/* Needs you */
+.odb-inbox-wrap{max-height:46%;flex-shrink:0}
+.odb-inbox-list{min-height:0;padding:0 8px 8px}
+.odb-item{overflow:hidden}
+.odb-item-in{display:flex;align-items:center;gap:12px;padding:10px;border-radius:var(--o-radius-md);transition:background-color var(--o-dur-fast)}
+.odb-item-in:hover{background:var(--o-hover)}
+/* Notifications are secondary to live requests: neutral icon, quieter title. */
+.odb-item.is-note .odb-kind{width:26px;height:26px;margin:2px;border-radius:8px;background:var(--o-selected);color:var(--o-muted)}
+.odb-item.is-note .odb-kind svg{width:13px;height:13px}
+.odb-item.is-note .odb-kind.is-critical{color:var(--o-error)}
+.odb-item.is-note .odb-kind.is-warn{color:var(--o-warn)}
+.odb-item.is-note .odb-item-copy b{font-weight:400;color:color-mix(in oklab,var(--o-text) 82%,var(--o-muted))}
+.odb-item.is-request+.odb-item.is-note{border-top:1px solid var(--o-border);margin-top:4px;padding-top:4px}
+.odb-kind{width:30px;height:30px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.odb-kind svg{width:15px;height:15px}
+.odb-kind.is-permission,.odb-kind.is-warn{background:color-mix(in oklab,var(--o-warn) 14%,transparent);color:var(--o-warn)}
+.odb-kind.is-input{background:color-mix(in oklab,var(--o-info) 14%,transparent);color:var(--o-info)}
+.odb-kind.is-critical{background:color-mix(in oklab,var(--o-error) 12%,transparent);color:var(--o-error)}
+.odb-kind.is-notice{background:var(--o-accent-soft);color:var(--o-accent)}
+.odb-item-copy{flex:1;min-width:0}
+.odb-item-copy b{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.odb-item-copy>span{display:block;margin-top:2px;font-size:12px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.odb-item-copy code{font-size:11.5px;padding:0 4px;border-radius:4px;background:var(--o-selected);color:var(--o-text)}
+.odb-acts{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.odb-clear{display:flex;align-items:center;gap:12px;padding:2px 10px 8px;animation:oui-rise 420ms var(--o-ease-out) both}
+.odb-clear-mark{width:30px;height:30px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--o-accent-soft);color:var(--o-accent)}
+.odb-clear-mark svg{width:15px;height:15px}
+.odb-clear-mark path{stroke-dasharray:24;stroke-dashoffset:24;animation:oui-draw 520ms 160ms var(--o-ease-draw) forwards}
+.odb-clear b{display:block;font-size:13px;font-weight:500}
+.odb-clear span span{display:block;margin-top:1px;font-size:12px;color:var(--o-muted)}
+
+/* In flight */
+.odb-flight{flex:1 1 auto;min-height:0;padding-bottom:6px;display:flex;flex-direction:column}
+.odb-flight>.oui-empty{flex:1}
+.odb-task-row .odb-st{justify-self:center}
+.odb-task{flex-shrink:0}
+.odb-task{border-top:1px solid var(--o-border);animation:oui-rise 420ms var(--o-ease-out) both}
+.odb-task-row{position:relative;display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:12px;min-height:56px;padding:7px 16px;transition:background-color var(--o-dur-fast)}
+.odb-task-row:hover{background:var(--o-hover)}
+.odb-task-copy{min-width:0}
+.odb-tname{display:block;font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.odb-tmeta{display:flex;align-items:center;gap:8px;margin-top:2px;font-size:12px;color:var(--o-muted);white-space:nowrap;overflow:hidden}
+.odb-tbranch{font-size:11.5px;flex-shrink:1;min-width:0;max-width:40%;overflow:hidden;text-overflow:ellipsis}
+.odb-doing{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.odb-doing.is-live{color:color-mix(in oklab,var(--o-accent) 70%,var(--o-text))}
+.odb-doing.is-waiting{color:color-mix(in oklab,var(--o-warn) 80%,var(--o-text))}
+.odb-typing{display:inline-block;width:14px;text-align:left;vertical-align:bottom}
+.odb-typing::after{content:"…";display:inline-block;width:0;overflow:hidden;vertical-align:bottom;animation:odb-dots 1.4s steps(4) infinite}
+@keyframes odb-dots{to{width:14px}}
+.odb-lchip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:999px;font:inherit;font-size:11.5px;color:var(--o-muted);border:1px solid var(--o-border);background:var(--o-bg);flex-shrink:0;cursor:pointer;transition:border-color var(--o-dur-fast),color var(--o-dur-fast)}
+.odb-lchip:hover,.odb-lchip.is-open{color:var(--o-text);border-color:var(--o-border-strong)}
+.odb-lchip svg{width:11px;height:11px}
+/* No links yet: collapsed until the row is hovered or focused. */
+.odb-lchip.is-hint{max-width:0;padding:0;margin-right:-8px;border-color:transparent;opacity:0;overflow:hidden;transition:max-width 260ms var(--o-ease-out),padding 260ms var(--o-ease-out),margin 260ms var(--o-ease-out),opacity 180ms,border-color 180ms}
+.odb-task-row:is(:hover,:focus-within) .odb-lchip.is-hint,.odb-lchip.is-hint.is-open{max-width:80px;padding:0 7px;margin-right:0;opacity:1;border-color:var(--o-border)}
+.odb-task-facts{display:flex;align-items:center;gap:12px;transition:opacity 160ms}
+.odb-diff{font-size:12px;white-space:nowrap}
+.odb-diff .is-add{color:color-mix(in oklab,var(--o-success) 85%,var(--o-text))}
+.odb-diff .is-del{color:var(--o-error);margin-left:6px}
+.odb-agent{width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;background:var(--o-selected)}
+.odb-ago{min-width:28px;font-size:12px;color:var(--o-muted);text-align:right}
+.odb-row-acts{position:absolute;right:12px;top:50%;display:flex;gap:6px;opacity:0;transform:translate(8px,-50%);pointer-events:none;transition:opacity 180ms,transform 260ms cubic-bezier(.3,1.4,.5,1)}
+.odb-task-row:hover .odb-row-acts,.odb-task-row:focus-within .odb-row-acts{opacity:1;transform:translate(0,-50%);pointer-events:auto}
+.odb-task-row:hover .odb-task-facts,.odb-task-row:focus-within .odb-task-facts{opacity:0}
+.odb-tl{overflow:hidden}
+.odb-tl-in{margin:0 16px 12px 46px;padding:10px 12px;border-radius:var(--o-radius-md);background:var(--o-bg);border:1px solid var(--o-border)}
+.odb-tl-cap{font-size:11.5px;color:var(--o-muted);margin-bottom:4px}
+.odb-tl-none{font-size:12.5px;color:var(--o-muted);padding:4px 0}
+.odb-tl-row{display:flex;align-items:center;gap:8px;height:32px;font-size:12.5px}
+.odb-tl-row .oui-truncate{flex:1}
+.odb-tl-row.is-missing .oui-truncate{color:var(--o-muted);text-decoration:line-through;text-decoration-color:var(--o-track)}
+.odb-src{font-size:11px;padding:0 6px;border-radius:4px;background:var(--o-selected);color:var(--o-muted)}
+.odb-pav{width:18px;height:18px;border-radius:5px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--o-text);background:var(--o-selected);box-shadow:inset 0 0 0 .5px var(--o-border)}
+.odb-x{width:24px;height:24px;border:0;border-radius:6px;display:flex;align-items:center;justify-content:center;background:none;color:var(--o-muted);flex-shrink:0;cursor:pointer}
+.odb-x:hover:not(:disabled){background:var(--o-hover);color:var(--o-text)}
+.odb-x:disabled{opacity:.4;cursor:default}
+.odb-x svg{width:12px;height:12px}
+.odb-tl-add{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.odb-addchip{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border:0;border-radius:var(--o-radius-sm);background:none;font:inherit;font-size:12px;color:var(--o-muted);cursor:pointer;transition:background-color var(--o-dur-fast),color var(--o-dur-fast)}
+.odb-addchip:hover:not(:disabled){background:var(--o-hover);color:var(--o-text)}
+.odb-addchip:disabled{opacity:.4;cursor:default}
+.odb-addchip svg{width:11px;height:11px}
+.odb-tl-error{margin-top:6px;font-size:12px;color:var(--o-error)}
+
+/* Agent context */
+.odb-ctx-loading{display:flex;flex-direction:column;gap:22px;padding:18px 10px}
+.odb-src-row{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:8px;border:0;border-radius:var(--o-radius-md);background:none;color:var(--o-text);font:inherit;text-align:left;cursor:pointer;transition:background-color var(--o-dur-fast);animation:oui-rise 420ms var(--o-ease-out) both}
+.odb-src-row:hover,.odb-src-row.is-hot{background:var(--o-hover)}
+div.odb-src-row{cursor:default}
+.odb-src-ic{width:30px;height:30px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(150deg,var(--odb-src-a),var(--odb-src-b));box-shadow:inset 0 1px 0 rgb(255 255 255 / 30%);transition:filter 300ms,opacity 300ms}
+.odb-src-ic svg{width:15px;height:15px}
+.odb-src-row.is-instructions{--odb-src-a:#a8a29e;--odb-src-b:#57534e}
+.odb-src-row.is-memory{--odb-src-a:#c4b5fd;--odb-src-b:#7c3aed}
+.odb-src-row.is-skills{--odb-src-a:#fcd34d;--odb-src-b:#d97706}
+.odb-src-row.is-mcp{--odb-src-a:#93c5fd;--odb-src-b:#1d4ed8}
+.odb-src-copy{flex:1;min-width:0}
+.odb-src-copy b{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500}
+.odb-src-copy>span{display:block;margin-top:2px;font-size:12px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.odb-off{font-size:11px;font-weight:500;padding:0 6px;border-radius:4px;background:var(--o-selected);color:var(--o-muted)}
+.odb-tok{min-width:44px;font-size:12px;color:var(--o-text);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;transition:opacity var(--o-dur-fast)}
+.odb-tok.is-dim{color:var(--o-muted);opacity:.55}
+.odb-chev-gap{width:14px;flex-shrink:0}
+/* Total + budget bar: one segment per source, sized by its estimate. */
+.odb-ctx-sum{padding:0 16px 2px;flex-shrink:0;display:flex;align-items:baseline;gap:6px}
+.odb-ctx-sum b{font-size:24px;font-weight:650;letter-spacing:-.03em}
+.odb-ctx-sum span{font-size:12.5px;color:var(--o-muted)}
+.odb-budget{display:flex;gap:2px;height:8px;margin:8px 16px 6px;border-radius:999px;overflow:hidden;flex-shrink:0;background:var(--o-selected)}
+.odb-seg{height:100%;flex-basis:0;min-width:3px;transform-origin:left;animation:oui-growx 700ms var(--o-ease-reflow) both;transition:flex-grow var(--o-dur-reflow) var(--o-ease-reflow),opacity 200ms}
+.odb-seg.is-instructions{background:#a8a29e}
+.odb-seg.is-memory{background:#c084fc}
+.odb-seg.is-mcp{background:#60a5fa}
+.odb-seg.is-skills{background:#fbbf24}
+.odb-budget.is-hovering .odb-seg{opacity:.3}
+.odb-budget.is-hovering .odb-seg.is-hot{opacity:1}
+.odb-chev{width:14px;height:14px;flex-shrink:0;color:var(--o-muted);transition:transform 260ms var(--o-ease-pop),color var(--o-dur-fast)}
+.odb-src-row:hover .odb-chev{transform:translateX(3px);color:var(--o-text)}
+
+/* Usage */
+/* Right column: Agent context shows every source at full height; Usage takes
+   the rest, its chart growing a little (capped) so the bottoms stay level. */
+.odb-ctx{flex:none}
+/* Every source shows at full height; WebKit (the desktop app) doesn't size a
+   flexed list to its content inside a non-flexing card, so pin it. */
+.odb-ctx .oui-card-list{flex:none;overflow:visible;max-height:none}
+.odb-usage{flex:1 1 auto;min-height:224px}
+.odb-use-num{padding:0 16px;flex-shrink:0}
+.odb-use-num b{font-size:22px;font-weight:650;letter-spacing:-.03em}
+.odb-use-num span{display:block;margin-top:2px;font-size:12px;color:var(--o-muted);white-space:nowrap}
+.odb-use-num em{font-style:normal;font-weight:500;margin-left:6px}
+.odb-use-num em.is-up{color:var(--o-success)}
+.odb-use-num em.is-down{color:var(--o-warn)}
+.odb-chart{flex:none;height:124px;box-sizing:border-box;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;padding:12px 16px 4px}
+/* Taller windows give the chart more room with explicit heights: WebKit
+   won't resolve the bars' percentage heights against a flexed chart. */
+@media (min-height:900px){.odb-chart{height:150px}}
+@media (min-height:1000px){.odb-chart{height:180px}}
+.odb-bar{display:flex;flex-direction:column;align-items:stretch;gap:6px;min-height:0}
+.odb-bar small{font-size:10.5px;color:var(--o-muted);text-align:center}
+.odb-bar.is-today small{color:var(--o-text);font-weight:600}
+.odb-bar-track{flex:1;min-height:0;display:flex;align-items:flex-end;border-radius:4px;transition:background-color var(--o-dur-fast)}
+.odb-bar:hover .odb-bar-track{background:var(--o-hover)}
+.odb-bar-fill{width:100%;display:flex;flex-direction:column-reverse;overflow:hidden;border-radius:4px 4px 2px 2px;transform-origin:bottom;animation:oui-grow 700ms var(--o-ease-reflow) both;transition:height var(--o-dur-reflow) var(--o-ease-reflow)}
+.odb-bar-fill span{display:block;min-height:1px;flex-basis:0}
+.odb-bar-fill.is-zero{height:3px;background:var(--o-track);opacity:.6}
+.odb-use-break{min-height:0;padding:8px 16px 12px;border-top:1px solid var(--o-border);margin-top:8px}
+.odb-use-peak{font-size:12px;color:var(--o-muted);margin-bottom:6px}
+.odb-use-peak b{font-weight:500;color:var(--o-text)}
+.odb-agent-row{display:grid;grid-template-columns:20px minmax(0,1fr) minmax(60px,34%) auto 34px;align-items:center;gap:8px;height:28px;font-size:12.5px;animation:oui-rise 420ms var(--o-ease-out) both}
+.odb-agent-ic{width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;background:color-mix(in oklab,var(--odb-agent) 16%,transparent)}
+.odb-agent-share{height:6px;border-radius:999px;background:var(--o-selected);overflow:hidden}
+.odb-agent-share i{display:block;height:100%;border-radius:inherit;background:var(--odb-agent);transform-origin:left;animation:oui-growx 700ms var(--o-ease-reflow) both;transition:width var(--o-dur-reflow) var(--o-ease-reflow)}
+.odb-agent-tok{font-variant-numeric:tabular-nums}
+.odb-agent-pct{font-size:12px;color:var(--o-muted);text-align:right;font-variant-numeric:tabular-nums}
+
+/* Recent sessions */
+/* Left column, under In flight: sized to its rows, capped so In flight keeps
+   most of the column; it gives way first in short windows. */
+.odb-recent-wrap{flex:0 1 auto;min-height:120px;max-height:38%;display:flex;flex-direction:column}
+.odb-recent{flex:1 1 auto}
+.odb-sess{display:flex;align-items:center;gap:10px;width:100%;height:40px;padding:0 8px;border:0;border-radius:var(--o-radius-md);background:none;color:var(--o-text);font:inherit;text-align:left;cursor:pointer;transition:background-color var(--o-dur-fast);animation:oui-rise 420ms var(--o-ease-out) both}
+.odb-sess:hover{background:var(--o-hover)}
+.odb-sess-ic{width:22px;height:22px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--o-selected)}
+.odb-sess-copy{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px}
+.odb-sess-copy b{min-width:0;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.odb-sess-copy span{flex-shrink:0;max-width:45%;font-size:12px;color:var(--o-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.odb-sess-ago{min-width:26px;font-size:12px;color:var(--o-muted);text-align:right;font-variant-numeric:tabular-nums}
+
+/* Short windows: tighten before anything scrolls. */
+@media (max-height:760px){
+  .odb-grid,.odb-col{gap:10px}
+  .odb-task-row{min-height:50px}
+}
+
+/* Narrow: one column, the page scrolls instead of the cards. */
+@media (max-width:860px){
+  .odb-grid{display:flex;flex-direction:column}
+  .odb-inbox-wrap{max-height:none}
+  .odb-ctx{max-height:none}
+  .odb-ctx,.odb-usage,.odb-recent-wrap,.odb-fill-wrap{min-height:0}
+  .odb .oui-card-list,.odb-use-break{max-height:none;overflow:visible}
+  .odb-flight,.odb-inbox-list{max-height:none;overflow:visible}
+  .odb-repo{flex-wrap:wrap}
+  .odb-repo-l{max-width:none;flex-basis:100%}
+  .odb-stats{flex-basis:100%}
+  .odb-row-acts{position:static;opacity:1;transform:none;pointer-events:auto}
+  .odb-task-row{grid-template-columns:18px minmax(0,1fr) auto}
+  .odb-task-facts{display:none}
+  .odb .odb-pop{width:min(320px,calc(100vw - 32px))}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .orbit-ui [class*="odb-"],.orbit-ui [class*="odb-"]::before,.orbit-ui [class*="odb-"]::after{animation-duration:0s!important;animation-delay:0s!important;animation-iteration-count:1!important;transition-duration:0s!important}
+  .orbit-ui .odb-toast{animation:none!important}
+}

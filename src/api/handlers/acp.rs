@@ -1912,6 +1912,10 @@ pub struct ChatSessionResponse {
     /// Pinned to the top of its task's session list. Only `list_chats` and
     /// `set_chat_pinned` fill this in; other responses report false.
     pub pinned: bool,
+    /// Last activity (`COALESCE(updated_at, created_at)`, RFC 3339) — the
+    /// value the list is ordered by. Only `list_chats` fills it in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1980,6 +1984,7 @@ impl ChatSessionResponse {
             history_path,
             launch_mode: chat.launch_mode.clone(),
             pinned: false,
+            updated_at: None,
         }
     }
 }
@@ -2075,12 +2080,15 @@ pub async fn list_chats(
         .map_err(|e| AcpError::Internal(e.to_string()))?;
     let pinned = tasks::load_pinned_chat_ids(&project_key, &task_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?;
+    let activity = tasks::load_chat_activity(&project_key, &task_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?;
 
     // Pinned sessions first; the stable sort keeps recency order within each group.
     let mut chats: Vec<ChatSessionResponse> = chats
         .iter()
         .map(|c| ChatSessionResponse {
             pinned: pinned.contains(&c.id),
+            updated_at: activity.get(&c.id).cloned(),
             ..ChatSessionResponse::build(&project_key, &task_id, c)
         })
         .collect();

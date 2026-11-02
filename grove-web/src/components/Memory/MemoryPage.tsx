@@ -1,14 +1,12 @@
 import { MemoriesTab, LogRow } from "./MemoryBrowser";
 import { SearchBar, InlineNotice, CenteredLoading, EmptyPage } from "./MemoryPrimitives";
-import { errorMessage, formatNumber, formatDate, plural, humanize } from "./memoryFormat";
+import { formatNumber, formatDate, plural, humanize } from "./memoryFormat";
 import { memorySource, type MemorySource } from "./memorySource";
 import type { Buddy } from "../../api/buddies";
 import { BuddyMemory } from "../Buddy/BuddySidePanel/BuddyMemory";
-import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import cronstrue from "cronstrue";
 import {
   Activity,
   Brain,
@@ -43,34 +41,13 @@ import { AgentPicker } from "../ui/AgentPicker";
 import { MarkdownRenderer } from "../ui/MarkdownRenderer";
 import { MemoryAgentConfig } from "./MemoryAgentConfig";
 import { ConfirmDialog } from "../Dialogs";
-import { agentOptions, type AgentOption } from "../../data/agents";
-import {
-  type AgentConfigSelection,
-  type AutomationRun,
-  cancelAutomationRun,
-  finishAutomationRun,
-  listAutomationRuns,
-  triggerAutomation,
-} from "../../api/automations";
 import {
   type MemoryConfig,
-  type MemoryConfigInput,
   type MemoryEntity,
-  type MemoryLog,
   type MemoryOverview,
-  deleteMemoryRun,
-  getMemoryConfig,
-  getMemoryOverview,
-  getMemoryRunHistory,
   listMemoryEntities,
-  updateMemoryConfig,
 } from "../../api/memory";
-import {
-  type InstalledAgentConfig,
-  listInstalledAgentConfigs,
-} from "../../api/marketplace";
-import { configForAgent, reconcileAgentConfig } from "../../utils/agentConfig";
-import { appendHmacToUrl, getApiHost } from "../../api/client";
+import type { InstalledAgentConfig } from "../../api/marketplace";
 import {
   applyToolCallCreated,
   applyToolCallUpdated,
@@ -81,17 +58,28 @@ import {
 } from "../Tasks/TaskView/toolCallReducer";
 import { TaskChat } from "../Tasks/TaskView/TaskChat";
 import { useIsMobile } from "../../hooks/useIsMobile";
+import {
+  EMPTY_OVERVIEW,
+  compactNumber,
+  describeSchedule,
+  durationLabel,
+  formatCosts,
+  formatMetricCost,
+  isAgentRunning,
+  isTerminal,
+  memoryState,
+  relativeTime,
+  runChanges,
+  runTitle,
+  tagCategories,
+} from "./memoryModel";
+import { useMemoryProject, type MemoryRunStreamUpdate } from "./useMemoryProject";
+import { useMemoryConfigDraft } from "./useMemoryConfigDraft";
+import { useMemoryLogs } from "./useMemoryLogs";
+import { useMemoryRuns } from "./useMemoryRuns";
 import "./memory-page.css";
 
 type Tab = "overview" | "memories" | "logs" | "runs";
-
-type MemoryRunStreamUpdate = {
-  automation_id: string;
-  run_id: string;
-  run?: AutomationRun;
-  event?: Record<string, unknown>;
-  sequence: number;
-};
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -99,35 +87,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "logs", label: "Memory Logs" },
   { id: "runs", label: "Runs" },
 ];
-
-const EMPTY_OVERVIEW: MemoryOverview = {
-  entity_count: 0,
-  relation_count: 0,
-  log_count: 0,
-  run_count: 0,
-  successful_run_count: 0,
-  failed_run_count: 0,
-  in_progress_run_count: 0,
-  waiting_run_count: 0,
-  active_run_count: 0,
-  usage: {
-    input_tokens: 0,
-    cached_input_tokens: 0,
-    output_tokens: 0,
-    total_tokens: 0,
-    cost_by_currency: {},
-  },
-};
-
-const DEFAULT_DRAFT: MemoryConfigInput = {
-  enabled: false,
-  deep_organization: false,
-  pending_log_threshold: null,
-  organization_enabled: true,
-  agent_config: { source: "default" },
-  schedule_cron: "0 2 * * *",
-  event_triggers: ["task.finished"],
-};
 
 interface MemoryPageProps {
   buddy?: Buddy;
@@ -138,107 +97,13 @@ interface MemoryPageProps {
 }
 
 function ProjectMemoryPage({ initialRunChatId, projectId: explicitProjectId }: MemoryPageProps = {}) {
-  const catalogRevision = useAgentCatalogRevision();
   const { selectedProject } = useProject();
   const projectId = explicitProjectId ?? selectedProject?.id ?? null;
   const [tab, setTab] = useState<Tab>(initialRunChatId ? "runs" : "overview");
-  const [config, setConfig] = useState<MemoryConfig | null>(null);
-  const [overview, setOverview] = useState<MemoryOverview>(EMPTY_OVERVIEW);
-  const [agents, setAgents] = useState<InstalledAgentConfig[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [agentsLoading, setAgentsLoading] = useState(true);
-  const [agentsError, setAgentsError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshTick, setRefreshTick] = useState(0);
-  const [runStarting, setRunStarting] = useState(false);
-  const [liveRunUpdates, setLiveRunUpdates] = useState<MemoryRunStreamUpdate[]>([]);
-  const liveRunSequence = useRef(0);
-  const activeTabRef = useRef(tab);
-  const { showBanner } = useBanner();
-
-  useEffect(() => {
-    activeTabRef.current = tab;
-  }, [tab]);
-
-  const refresh = useCallback(async () => {
-    if (!projectId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const [configResult, overviewResult] = await Promise.allSettled([
-        getMemoryConfig(projectId),
-        getMemoryOverview(projectId),
-      ]);
-      if (configResult.status === "fulfilled") setConfig(configResult.value);
-      if (overviewResult.status === "fulfilled") setOverview(overviewResult.value);
-      const failure = [configResult, overviewResult].find(
-        (result) => result.status === "rejected",
-      );
-      if (failure?.status === "rejected") setError(errorMessage(failure.reason));
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId]);
-
-  const loadAgents = useCallback(async () => {
-    setAgentsLoading(true);
-    setAgentsError(null);
-    try {
-      setAgents(await listInstalledAgentConfigs());
-    } catch (reason) {
-      setAgentsError(errorMessage(reason));
-    } finally {
-      setAgentsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void Promise.resolve().then(refresh);
-  }, [refresh, refreshTick]);
-
-  useEffect(() => {
-    void Promise.resolve().then(loadAgents);
-  }, [loadAgents, tab, catalogRevision]);
-
-  useEffect(() => {
-    void Promise.resolve().then(() => {
-      setLiveRunUpdates([]);
-      liveRunSequence.current = 0;
-    });
-  }, [projectId]);
-
-  const handleRunUpdate = useCallback((update: Omit<MemoryRunStreamUpdate, "sequence">) => {
-    if (update.event && activeTabRef.current !== "runs") return;
-    const sequence = ++liveRunSequence.current;
-    setLiveRunUpdates((current) => [...current, { ...update, sequence }].slice(-500));
-    if (!update.event || update.event.type === "complete" || (update.run && isTerminal(update.run.status))) {
-      setRefreshTick((value) => value + 1);
-    }
-  }, []);
-  useMemoryRunUpdates(projectId, config?.organization.id, handleRunUpdate);
-
-  const runOrganization = useCallback(async () => {
-    if (!projectId || !config) {
-      showBanner("Save Memory settings before starting a run.", "error", 5000);
-      return;
-    }
-    setRunStarting(true);
-    try {
-      const result = await triggerAutomation(projectId, config.organization.id);
-      if (result.error) throw new Error(result.error);
-      showBanner("Memory organization started.", "success");
-      setRefreshTick((value) => value + 1);
-    } catch (reason) {
-      showBanner(errorMessage(reason), "error", 5000);
-    } finally {
-      setRunStarting(false);
-    }
-  }, [config, projectId, showBanner]);
+  const {
+    config, setConfig, overview, agents, loading, agentsLoading, agentsError, error, setError,
+    refreshTick, bump, loadAgents, runStarting, runOrganization, liveRunUpdates,
+  } = useMemoryProject(projectId, { liveEvents: tab === "runs", agentsReloadKey: tab });
 
   if (!projectId) {
     return <EmptyPage title="Select a project" description="Memory is stored and organized per project." />;
@@ -263,7 +128,7 @@ function ProjectMemoryPage({ initialRunChatId, projectId: explicitProjectId }: M
               </p>
             </div>
           </div>
-          <Button className="absolute right-0 top-0 h-10 w-10 self-start !p-0 sm:static sm:h-auto sm:w-auto sm:self-auto sm:!px-3" variant="ghost" size="sm" onClick={() => { setRefreshTick((value) => value + 1); void loadAgents(); }} disabled={loading} title="Refresh Memory" aria-label="Refresh Memory">
+          <Button className="absolute right-0 top-0 h-10 w-10 self-start !p-0 sm:static sm:h-auto sm:w-auto sm:self-auto sm:!px-3" variant="ghost" size="sm" onClick={() => { bump(); void loadAgents(); }} disabled={loading} title="Refresh Memory" aria-label="Refresh Memory">
             <RefreshCw className={`h-4 w-4 sm:mr-1.5 sm:h-3.5 sm:w-3.5 ${loading ? "animate-spin" : ""}`} />
             <span className="hidden sm:inline">Refresh</span>
           </Button>
@@ -296,10 +161,10 @@ function ProjectMemoryPage({ initialRunChatId, projectId: explicitProjectId }: M
             agentsError={agentsError}
             runStarting={runStarting}
             onRunOrganization={runOrganization}
-            onSaved={(next) => { setConfig(next); setRefreshTick((value) => value + 1); }}
+            onSaved={(next) => { setConfig(next); bump(); }}
           />
         ) : tab === "memories" ? (
-          <MemoriesTab projectId={projectId} refreshTick={refreshTick} onChanged={() => setRefreshTick((value) => value + 1)} />
+          <MemoriesTab projectId={projectId} refreshTick={refreshTick} onChanged={bump} />
         ) : tab === "logs" ? (
           <LogsTab
             projectId={projectId}
@@ -308,7 +173,7 @@ function ProjectMemoryPage({ initialRunChatId, projectId: explicitProjectId }: M
             refreshTick={refreshTick}
             runStarting={runStarting}
             onRunOrganization={runOrganization}
-            onChanged={() => setRefreshTick((value) => value + 1)}
+            onChanged={bump}
           />
         ) : (
           <RunsTab
@@ -318,7 +183,7 @@ function ProjectMemoryPage({ initialRunChatId, projectId: explicitProjectId }: M
             refreshTick={refreshTick}
             liveUpdates={liveRunUpdates}
             openRunChatId={initialRunChatId}
-            onChanged={() => setRefreshTick((value) => value + 1)}
+            onChanged={bump}
           />
         )}
       </main>
@@ -347,48 +212,12 @@ function OverviewTab({
   onRunOrganization: () => Promise<void>;
   onSaved: (config: MemoryConfig) => void;
 }) {
-  const [draft, setDraft] = useState<MemoryConfigInput>(() => configToDraft(config));
-  const [saving, setSaving] = useState(false);
   const [snapshotEntities, setSnapshotEntities] = useState<MemoryEntity[]>([]);
+  const {
+    draft, setDraft, isDirty, saving, save: saveDraft,
+    selectedAgentId, options, modes, installedAgentOptions, chooseAgent,
+  } = useMemoryConfigDraft({ projectId, config, agents, agentsLoading, agentsError, onSaved });
   const { showBanner } = useBanner();
-
-  useEffect(() => {
-    const next = configToDraft(config);
-    void Promise.resolve().then(() => setDraft(next));
-  }, [config]);
-
-  useEffect(() => {
-    if (agents.length === 0) return;
-    void Promise.resolve().then(() => setDraft((current) => {
-      const agentId = current.agent_config.agent_id;
-      const agent = agents.find((candidate) => candidate.id === agentId) ?? (
-        !agentId && !config ? agents[0] : undefined
-      );
-      if (!agent) return current;
-      return {
-        ...current,
-        agent_config: agentId
-          ? reconcileAgentConfig(current.agent_config, agent)
-          : configForAgent(agent),
-      };
-    }));
-  }, [agents, config]);
-
-  useEffect(() => {
-    if (agentsError) {
-      showBanner(`Could not load installed Agents: ${agentsError}`, "error", 5000);
-    }
-  }, [agentsError, showBanner]);
-
-  useEffect(() => {
-    if (!agentsLoading && !agentsError && agents.length === 0) {
-      showBanner(
-        "No installed Agent is available. Install and run an Agent once so Grove can learn its configuration capabilities.",
-        "error",
-        5000,
-      );
-    }
-  }, [agents, agentsError, agentsLoading, showBanner]);
 
   // The overview itself is available from the inexpensive aggregate query.
   // Entity previews enrich the page independently and never block its first
@@ -405,44 +234,7 @@ function OverviewTab({
     return () => { disposed = true; };
   }, [projectId, overview.entity_count, overview.last_organized_at]);
 
-  const savedDraft = useMemo(() => {
-    const saved = configToDraft(config);
-    const agent = agents.find((candidate) => candidate.id === saved.agent_config.agent_id);
-    if (agent) saved.agent_config = reconcileAgentConfig(saved.agent_config, agent);
-    return saved;
-  }, [agents, config]);
-  const isDirty = useMemo(() => !sameMemoryConfig(draft, savedDraft), [draft, savedDraft]);
-
-  const selectedAgentId = draft.agent_config.agent_id ?? "";
-  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
-  const options = selectedAgent?.capability_snapshot?.config_options ?? [];
-  const modes = selectedAgent?.capability_snapshot?.modes?.available ?? [];
-  const installedAgentOptions = useMemo<AgentOption[]>(() => agents.map((agent) => {
-    const metadata = agentOptions.find((option) => option.id === agent.id || option.value === agent.id);
-    return {
-      ...metadata,
-      id: agent.id,
-      value: agent.id,
-      label: agent.name,
-    };
-  }), [agents]);
-
-  const save = async () => {
-    if (draft.enabled && !draft.agent_config.agent_id) {
-      showBanner("Choose an installed Agent first.", "error", 5000);
-      return;
-    }
-    setSaving(true);
-    try {
-      const next = await updateMemoryConfig(projectId, draft);
-      onSaved(next);
-      showBanner("Memory settings saved.", "success");
-    } catch (reason) {
-      showBanner(errorMessage(reason), "error", 5000);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const save = () => { void saveDraft(); };
 
   const runNow = async () => {
     if (!config) {
@@ -456,58 +248,9 @@ function OverviewTab({
     await onRunOrganization();
   };
 
-  const state = overview.in_progress_run_count > 0
-    ? {
-        label: "Organizing",
-        tone: "active" as const,
-        title: "Grove is organizing recent project knowledge.",
-        description: "Follow the active run to see what is being consolidated.",
-      }
-    : overview.waiting_run_count > 0
-      ? {
-          label: "Waiting",
-          tone: "pending" as const,
-          title: "Memory organization is waiting for you.",
-          description: "Open the Run to provide input, guidance, or permission.",
-        }
-      : !draft.enabled
-        ? {
-            label: "Disabled",
-            tone: "muted" as const,
-            title: "Memory is disabled for this project.",
-            description: "Enable Memory to collect short-term observations and organize them over time.",
-          }
-        : overview.log_count > 0
-          ? {
-              label: `${formatNumber(overview.log_count)} pending`,
-              tone: "pending" as const,
-              title: `${formatNumber(overview.log_count)} ${plural(overview.log_count, "Memory Log is", "Memory Logs are")} waiting to be organized.`,
-              description: overview.failed_run_count > 0
-                ? `A previous attempt failed, but these Logs are ready for a new organization run. · ${lastOrganizedText(overview.last_organized_at)}`
-                : `${lastOrganizedText(overview.last_organized_at)} · ${config?.organization.enabled ? "Automatic organization is enabled." : "Automatic organization is paused."}`,
-            }
-          : overview.failed_run_count > 0
-            ? {
-                label: "Failed",
-                tone: "error" as const,
-                title: "A Memory organization attempt failed.",
-                description: "Open the Run to review the error, or start a new organization attempt.",
-              }
-            : {
-                label: "Up to date",
-                tone: "success" as const,
-                title: "No Memory Logs are waiting to be organized.",
-                description: `${lastOrganizedText(overview.last_organized_at)} · ${config?.organization.enabled ? "Automatic organization is enabled." : "Run an organization when you are ready."}`,
-              };
+  const state = memoryState(overview, draft.enabled, config?.organization.enabled);
 
-  const categoryCounts = [...snapshotEntities.reduce((counts, entity) => {
-    for (const key of new Set(entity.tags.map((tag) => tag.key))) {
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    return counts;
-  }, new Map<string, number>()).entries()]
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-    .slice(0, 5);
+  const categoryCounts = tagCategories(snapshotEntities).slice(0, 5);
   const strongestMemories = snapshotEntities.slice(0, 4);
 
   return (
@@ -677,10 +420,7 @@ function OverviewTab({
               <OrganizationControlRow title="Agent" description="Installed Agent used for organization">
                 <AgentPicker
                   value={selectedAgentId}
-                  onChange={(agentId) => {
-                    const agent = agents.find((item) => item.id === agentId);
-                    setDraft((current) => ({ ...current, agent_config: agent ? configForAgent(agent) : { source: "default" } }));
-                  }}
+                  onChange={chooseAgent}
                   options={installedAgentOptions}
                   allowCustom={false}
                   triggerSize="compact"
@@ -952,53 +692,11 @@ export function LogsTab({
   onRunOrganization?: () => Promise<void>;
   onChanged: () => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [submitted, setSubmitted] = useState("");
-  const [items, setItems] = useState<MemoryLog[]>([]);
-  const [cursor, setCursor] = useState<string | undefined>();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [deleteTargetIds, setDeleteTargetIds] = useState<string[]>([]);
-  const [deleting, setDeleting] = useState(false);
-  const load = useCallback(async (append = false) => {
-    setLoading(true);
-    try {
-      const page = await source.listMemoryLogs(projectId, submitted, append ? cursor : undefined);
-      setItems((current) => append ? [...current, ...page.items] : page.items);
-      setCursor(page.next_cursor);
-    } catch (reason) { setError(errorMessage(reason)); }
-    finally { setLoading(false); }
-  }, [projectId, submitted, cursor, source]);
-  useEffect(() => { void Promise.resolve().then(() => load(false)); }, [projectId, submitted, refreshTick, source]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    const visibleIds = new Set(items.map((item) => item.id));
-    void Promise.resolve().then(() => {
-      setSelectedIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
-    });
-  }, [items]);
-
-  const confirmDelete = async () => {
-    if (deleteTargetIds.length === 0 || deleting) return;
-    setDeleting(true);
-    try {
-      for (let offset = 0; offset < deleteTargetIds.length; offset += 200) {
-        await source.deleteMemoryLogs(projectId, deleteTargetIds.slice(offset, offset + 200));
-      }
-      const deleted = new Set(deleteTargetIds);
-      setItems((current) => current.filter((item) => !deleted.has(item.id)));
-      setSelectedIds((current) => new Set([...current].filter((id) => !deleted.has(id))));
-      setDeleteTargetIds([]);
-      onChanged();
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const allLoadedSelected = items.length > 0 && items.every((item) => selectedIds.has(item.id));
+  const {
+    query, setQuery, submitted, setSubmitted, items, cursor, loading, error, setError, load,
+    selectedIds, setSelected, allLoadedSelected, toggleSelectLoaded,
+    deleteTargetIds, setDeleteTargetIds, deleting, confirmDelete,
+  } = useMemoryLogs({ projectId, refreshTick, onChanged, source });
 
   return <div className="h-full min-h-0 overflow-y-auto pr-1 pb-2">
     <div className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-bg)] pb-4">
@@ -1007,7 +705,7 @@ export function LogsTab({
           <SearchBar value={query} onChange={setQuery} onSubmit={() => setSubmitted(query.trim())} placeholder="Search Memory Logs" />
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {items.length > 0 && <Button variant="ghost" size="sm" onClick={() => setSelectedIds(allLoadedSelected ? new Set() : new Set(items.map((item) => item.id)))}>{allLoadedSelected ? "Clear selection" : "Select loaded"}</Button>}
+          {items.length > 0 && <Button variant="ghost" size="sm" onClick={toggleSelectLoaded}>{allLoadedSelected ? "Clear selection" : "Select loaded"}</Button>}
           {selectedIds.size > 0 && <Button variant="danger" size="sm" onClick={() => setDeleteTargetIds([...selectedIds])}><Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete {selectedIds.size}</Button>}
           {!compact && overview && <OrganizeMemoryButton
             config={config ?? null}
@@ -1020,7 +718,7 @@ export function LogsTab({
     </div>
     <div className="space-y-4 pt-4">
       {error && <InlineNotice tone="error" message={error} onClose={() => setError(null)} />}
-      {!loading && items.length === 0 ? <EmptyPage title="No Memory Logs" description={submitted ? "No logs match this search." : "Working Agents will append short-term memories here."} /> : <div className="space-y-2">{items.map((log) => <LogRow key={log.id} log={log} selected={selectedIds.has(log.id)} onSelectedChange={(selected) => setSelectedIds((current) => { const next = new Set(current); if (selected) next.add(log.id); else next.delete(log.id); return next; })} onDelete={() => setDeleteTargetIds([log.id])} />)}</div>}
+      {!loading && items.length === 0 ? <EmptyPage title="No Memory Logs" description={submitted ? "No logs match this search." : "Working Agents will append short-term memories here."} /> : <div className="space-y-2">{items.map((log) => <LogRow key={log.id} log={log} selected={selectedIds.has(log.id)} onSelectedChange={(selected) => setSelected(log.id, selected)} onDelete={() => setDeleteTargetIds([log.id])} />)}</div>}
       {loading && <CenteredLoading compact />}
       {cursor && !loading && (
         <div className="flex items-center justify-center gap-3 py-2">
@@ -1097,155 +795,12 @@ function RunsTab({
   openRunChatId?: string;
   onChanged: () => void;
 }) {
-  const [runs, setRuns] = useState<AutomationRun[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [history, setHistory] = useState<Record<string, unknown>[]>([]);
-  const [historyUsage, setHistoryUsage] = useState<MemoryOverview["usage"] | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<AutomationRun | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [finishingRunId, setFinishingRunId] = useState<string | null>(null);
-  const historySequenceRef = useRef(0);
-  const loadGenerationRef = useRef(0);
-  const load = useCallback(async () => {
-    const generation = ++loadGenerationRef.current;
-    if (!config || config.project_id !== projectId) {
-      setRuns([]);
-      setError(null);
-      setLoading(Boolean(config && config.project_id !== projectId));
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const nextRuns = await listAutomationRuns(projectId, config.organization.id);
-      if (generation === loadGenerationRef.current) setRuns(nextRuns);
-    } catch (reason) {
-      if (generation === loadGenerationRef.current) setError(errorMessage(reason));
-    } finally {
-      if (generation === loadGenerationRef.current) setLoading(false);
-    }
-  }, [projectId, config]);
-  useEffect(() => { void Promise.resolve().then(load); }, [load, refreshTick]);
-
-  const latestUpdate = liveUpdates[liveUpdates.length - 1];
-  useEffect(() => {
-    if (!latestUpdate || latestUpdate.automation_id !== config?.organization.id) return;
-    let active = true;
-    void Promise.resolve().then(() => {
-      if (!active) return;
-      if (latestUpdate.run) {
-        if (!isAgentRunning(latestUpdate.run.status)) {
-          setFinishingRunId((current) =>
-            current === latestUpdate.run_id ? null : current,
-          );
-        }
-        setRuns((current) => {
-          const index = current.findIndex((run) => run.id === latestUpdate.run_id);
-          if (index < 0) return [latestUpdate.run!, ...current];
-          const next = [...current];
-          next[index] = latestUpdate.run!;
-          return next;
-        });
-      }
-      if (
-        expanded === latestUpdate.run_id
-        && latestUpdate.event
-        && latestUpdate.sequence > historySequenceRef.current
-      ) {
-        historySequenceRef.current = latestUpdate.sequence;
-        setHistory((current) => [...current, latestUpdate.event!]);
-        if (latestUpdate.event.type === "complete") {
-          void getMemoryRunHistory(projectId, latestUpdate.run_id)
-            .then((response) => {
-              if (!active) return;
-              setHistory(response.events);
-              setHistoryUsage(response.usage);
-            })
-            .catch((reason) => { if (active) setError(errorMessage(reason)); });
-        }
-      }
-    });
-    return () => { active = false; };
-  }, [config?.organization.id, expanded, latestUpdate, projectId]);
-
-  const toggle = (runId: string) => {
-    if (expanded === runId) { setExpanded(null); return; }
-    setExpanded(runId);
-    historySequenceRef.current = liveUpdates[liveUpdates.length - 1]?.sequence ?? 0;
-    setHistoryLoading(true);
-    setHistory([]);
-    setHistoryUsage(null);
-  };
-  // Open the requested run once the list has it (only the first time).
-  const openedRunChatRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!openRunChatId || openedRunChatRef.current === openRunChatId) return;
-    const run = runs.find((candidate) => candidate.resolved_chat_id === openRunChatId);
-    if (!run) return;
-    openedRunChatRef.current = openRunChatId;
-    void Promise.resolve().then(() => toggle(run.id));
-    // toggle reads current state; only a newly loaded run list should trigger this.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openRunChatId, runs]);
-  useEffect(() => {
-    if (!expanded) return;
-    let disposed = false;
-    const loadHistory = async () => {
-      try {
-        const response = await getMemoryRunHistory(projectId, expanded);
-        if (disposed) return;
-        setHistory(response.events);
-        setHistoryUsage(response.usage);
-        historySequenceRef.current = liveUpdates[liveUpdates.length - 1]?.sequence ?? 0;
-      } catch (reason) {
-        if (!disposed) setError(errorMessage(reason));
-      } finally {
-        if (!disposed) setHistoryLoading(false);
-      }
-    };
-    void loadHistory();
-    return () => { disposed = true; };
-    // WebSocket events keep an active run current after this initial snapshot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, projectId]);
-
-  const confirmDelete = async () => {
-    if (!deleteTarget || deleting) return;
-    setDeleting(true);
-    try {
-      await deleteMemoryRun(projectId, deleteTarget.id);
-      setRuns((current) => current.filter((run) => run.id !== deleteTarget.id));
-      if (expanded === deleteTarget.id) {
-        setExpanded(null);
-        setHistory([]);
-        setHistoryUsage(null);
-      }
-      setDeleteTarget(null);
-      onChanged();
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const finishRun = async (run: AutomationRun) => {
-    if (!config || finishingRunId) return;
-    setFinishingRunId(run.id);
-    try {
-      await finishAutomationRun(projectId, config.organization.id, run.id);
-    } catch (reason) {
-      setFinishingRunId(null);
-      setError(errorMessage(reason));
-    }
-  };
-
-  const selectedRun = expanded
-    ? runs.find((run) => run.id === expanded) ?? null
-    : null;
+  const {
+    runs, loading, expanded, setExpanded, toggle, selectedRun,
+    history, historyUsage, historyLoading, error, setError,
+    deleteTarget, setDeleteTarget, deleting, confirmDelete,
+    finishingRunId, finishRun, cancelRun,
+  } = useMemoryRuns({ projectId, config, refreshTick, liveUpdates, openRunChatId, onChanged });
 
   useEffect(() => {
     if (!selectedRun) return;
@@ -1254,7 +809,7 @@ function RunsTab({
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [selectedRun]);
+  }, [selectedRun, setExpanded]);
 
   if (!config) return <EmptyPage title="Memory is not configured" description="Open Overview, choose an Agent, and save the project settings first." />;
   return <div className="h-full min-h-0">
@@ -1269,7 +824,7 @@ function RunsTab({
             <RunCounts result={run.result} />
           </button>
           {["running", "waiting", "failed"].includes(run.status) && <Button variant="ghost" size="sm" disabled={finishingRunId === run.id} onClick={() => void finishRun(run)}>{finishingRunId === run.id ? "Finishing…" : "Finish"}</Button>}
-          {!isTerminal(run.status) && <Button variant="ghost" size="sm" onClick={() => void cancelAutomationRun(projectId, config.organization.id, run.id)}>Cancel</Button>}
+          {!isTerminal(run.status) && <Button variant="ghost" size="sm" onClick={() => cancelRun(run)}>Cancel</Button>}
           {isTerminal(run.status) && <button type="button" onClick={() => setDeleteTarget(run)} className="rounded-lg p-2 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-error)]/10 hover:text-[var(--color-error)]" aria-label="Delete organization run" title="Delete run"><Trash2 className="h-4 w-4" /></button>}
           <button onClick={() => toggle(run.id)} className="p-1 text-[var(--color-text-muted)]" aria-label={expanded === run.id ? "Close run" : "Open run"}><ChevronRight className={`w-4 h-4 transition-transform ${expanded === run.id ? "rotate-180" : ""}`} /></button>
         </div>
@@ -1314,7 +869,7 @@ function RunsTab({
                   <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">{formatDate(selectedRun.triggered_at * 1000)} · {durationLabel(selectedRun)}{selectedRun.agent_snapshot ? ` · ${selectedRun.agent_snapshot}` : ""}</p>
                 </div>
                 {["running", "waiting", "failed"].includes(selectedRun.status) && <Button variant="ghost" size="sm" disabled={finishingRunId === selectedRun.id} onClick={() => void finishRun(selectedRun)}>{finishingRunId === selectedRun.id ? "Finishing…" : "Finish"}</Button>}
-                {!isTerminal(selectedRun.status) && <Button variant="ghost" size="sm" onClick={() => void cancelAutomationRun(projectId, config.organization.id, selectedRun.id)}>Cancel</Button>}
+                {!isTerminal(selectedRun.status) && <Button variant="ghost" size="sm" onClick={() => cancelRun(selectedRun)}>Cancel</Button>}
                 <button type="button" onClick={() => setExpanded(null)} className="rounded-lg p-1.5 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]" aria-label="Close run"><X className="h-4 w-4" /></button>
               </header>
 
@@ -1386,7 +941,7 @@ const SCHEDULE_DAY_OPTIONS: ComboboxOption[] = [
   { id: "sunday", label: "Sunday", value: "0" },
 ];
 
-function ScheduleField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+export function ScheduleField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const detectedKind = detectScheduleKind(value);
   const [kind, setKind] = useState<ScheduleKind>(detectedKind);
   const parts = value.trim().split(/\s+/);
@@ -1420,14 +975,6 @@ function ScheduleField({ value, onChange }: { value: string; onChange: (value: s
   );
 }
 
-function describeSchedule(value: string) {
-  try {
-    return cronstrue.toString(value, { use24HourTimeFormat: true });
-  } catch {
-    return "Enter a valid cron expression.";
-  }
-}
-
 function ScheduleTime({ hour, minute, onChange }: { hour: number; minute: number; onChange: (hour: number, minute: number) => void }) {
   return <div className="flex min-w-0 items-center gap-1"><div className="w-16 flex-shrink-0"><Combobox options={SCHEDULE_HOUR_OPTIONS} value={String(hour)} onChange={(next) => onChange(parseSchedulePart(next, 0), minute)} allowCustom={false} size="compact" /></div><span className="font-mono text-xs text-[var(--color-text-muted)]">:</span><div className="w-16 flex-shrink-0"><Combobox options={SCHEDULE_MINUTE_OPTIONS} value={String(minute)} onChange={(next) => onChange(hour, parseSchedulePart(next, 0))} allowCustom={false} size="compact" /></div></div>;
 }
@@ -1458,7 +1005,7 @@ type MemoryRunActivitySource =
   | { kind: "tool"; id: string; tool: ToolCallMessage }
   | { kind: "error"; id: string; text: string };
 
-function RunTranscript({
+export function RunTranscript({
   events,
   usage,
   loading,
@@ -1635,62 +1182,7 @@ function RunStatus({ status }: { status: string }) {
   if (status === "failed") return <div title="Failed" className="w-8 h-8 rounded-lg flex items-center justify-center bg-[var(--color-error)]/10 text-[var(--color-error)]"><CircleX className="w-4 h-4" /></div>;
   return <div title="In Progress" className="w-8 h-8 rounded-lg flex items-center justify-center bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"><Loader2 className="w-4 h-4 animate-spin" /></div>;
 }
-function RunCounts({ result }: { result?: Record<string, unknown> }) { if (!result) return null; const changed = ["entities_created", "entities_updated", "entities_deleted"].reduce((sum, key) => sum + Number(result[key] ?? 0), 0); return <div className="hidden sm:flex items-center gap-3 text-xs text-[var(--color-text-muted)]"><span>{changed} memories changed</span><span>{Number(result.relations_changed ?? 0)} relations</span></div>; }
-
-function configToDraft(config: MemoryConfig | null): MemoryConfigInput { return config ? { enabled: config.enabled, deep_organization: config.deep_organization, pending_log_threshold: config.pending_log_threshold, organization_enabled: config.organization.enabled, agent_config: config.organization.agent_config, schedule_cron: config.organization.schedule_cron, event_triggers: config.organization.event_triggers } : { ...DEFAULT_DRAFT, event_triggers: [...DEFAULT_DRAFT.event_triggers] }; }
-function sameMemoryConfig(left: MemoryConfigInput, right: MemoryConfigInput) {
-  const stableAgentConfig = (config: AgentConfigSelection) => config.source === "config_options"
-    ? { ...config, values: Object.fromEntries(Object.entries(config.values).sort(([a], [b]) => a.localeCompare(b))) }
-    : config;
-  return left.enabled === right.enabled
-    && left.deep_organization === right.deep_organization
-    && left.pending_log_threshold === right.pending_log_threshold
-    && left.organization_enabled === right.organization_enabled
-    && left.schedule_cron === right.schedule_cron
-    && JSON.stringify([...left.event_triggers].sort()) === JSON.stringify([...right.event_triggers].sort())
-    && JSON.stringify(stableAgentConfig(left.agent_config)) === JSON.stringify(stableAgentConfig(right.agent_config));
-}
-
-
-function compactNumber(value: number) { return new Intl.NumberFormat(undefined, { notation: value >= 1000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value); }
-
-
-function formatCosts(costs: Record<string, number>) { const entries = Object.entries(costs); if (!entries.length) return "No reported cost"; return entries.map(([currency, amount]) => `${amount.toFixed(2)} ${currency.toUpperCase()}`).join(" · "); }
-function formatMetricCost(costs: Record<string, number>) {
-  const entries = Object.entries(costs);
-  if (entries.length === 0) return "—";
-  return entries.map(([currency, amount]) => {
-    try {
-      return new Intl.NumberFormat(undefined, {
-        style: "currency",
-        currency: currency.toUpperCase(),
-        currencyDisplay: "narrowSymbol",
-        maximumFractionDigits: 2,
-      }).format(amount);
-    } catch {
-      return `${amount.toFixed(2)} ${currency.toUpperCase()}`;
-    }
-  }).join(" · ");
-}
-
-function relativeTime(timestampSeconds: number) {
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000) - timestampSeconds);
-  if (seconds < 60) return "now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86400)}d`;
-}
-function lastOrganizedText(timestampSeconds?: number) { return timestampSeconds ? `Last organized ${relativeTime(timestampSeconds)} ago` : "Not organized yet"; }
-
-function isTerminal(status: string) { return status === "success" || status === "cancelled"; }
-function isAgentRunning(status: string) { return status === "queued" || status === "running"; }
-function durationLabel(run: AutomationRun) { const end = run.completed_at ?? Math.floor(Date.now() / 1000); const start = run.started_at ?? run.triggered_at; const seconds = Math.max(0, end - start); if (seconds < 60) return `${seconds}s`; return `${Math.floor(seconds / 60)}m ${seconds % 60}s`; }
-function runTitle(run: AutomationRun) {
-  if (run.trigger_kind === "manual") return "Manual organization";
-  if (["cron", "schedule", "scheduled"].includes(run.trigger_kind)) return "Scheduled organization";
-  if (["event", "task", "task.finished"].includes(run.trigger_kind)) return "Task-triggered organization";
-  return "Memory organization";
-}
+function RunCounts({ result }: { result?: Record<string, unknown> }) { const changes = runChanges(result); if (!changes) return null; const changed = changes.memories; return <div className="hidden sm:flex items-center gap-3 text-xs text-[var(--color-text-muted)]"><span>{changed} memories changed</span><span>{changes.relations} relations</span></div>; }
 
 function normalizeRunActivities(events: Record<string, unknown>[]): MemoryRunActivity[] {
   const rows: MemoryRunActivitySource[] = [];
@@ -1923,50 +1415,6 @@ function findErrorMessage(value: unknown): string {
     if (message) return message;
   }
   return "";
-}
-
-function useMemoryRunUpdates(projectId: string | null, automationId: string | undefined, onUpdate: (update: Omit<MemoryRunStreamUpdate, "sequence">) => void) {
-  useEffect(() => {
-    if (!projectId || !automationId) return;
-    let ws: WebSocket | null = null;
-    let disposed = false;
-    let reconnectTimer: number | undefined;
-    const connect = async () => {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const url = await appendHmacToUrl(`${protocol}//${getApiHost()}/api/v1/projects/${projectId}/automation-runs/ws`);
-      if (disposed) return;
-      ws = new WebSocket(url);
-      ws.onmessage = (message) => {
-        try {
-          const update = JSON.parse(message.data) as {
-            automation_id?: string;
-            run_id?: string;
-            run?: AutomationRun;
-            event?: Record<string, unknown>;
-          };
-          const updateAutomationId = update.automation_id ?? update.run?.automation_id;
-          const updateRunId = update.run_id ?? update.run?.id;
-          if (updateAutomationId === automationId && updateRunId) {
-            onUpdate({
-              automation_id: updateAutomationId,
-              run_id: updateRunId,
-              run: update.run,
-              event: update.event,
-            });
-          }
-        } catch { /* ignore malformed updates */ }
-      };
-      ws.onclose = () => {
-        if (!disposed) reconnectTimer = window.setTimeout(() => void connect(), 1500);
-      };
-    };
-    void connect();
-    return () => {
-      disposed = true;
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      ws?.close();
-    };
-  }, [projectId, automationId, onUpdate]);
 }
 
 export function MemoryPage(props: MemoryPageProps = {}) {

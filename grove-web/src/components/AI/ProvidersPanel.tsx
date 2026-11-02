@@ -1,26 +1,14 @@
-import { useState } from "react";
 import { BadgePlus, Edit3, KeyRound, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Combobox } from "../ui/Combobox";
-import { providerPresets } from "./mock";
-import { formatProviderError } from "../../utils/providerErrors";
+import { CUSTOM_BASE_URL_TYPE, modelBelongsToFeatureProfile, providerStatusLabel, providerTypeOptions, useProviderEditor } from "./useProviderEditor";
 import type { ProviderProfile, ProviderStatus } from "./types";
-
-function statusLabel(status: ProviderStatus) {
-  if (status === "verified") return "Connected";
-  if (status === "failed") return "Connect Failed";
-  return "Draft";
-}
 
 function statusClassName(status: ProviderStatus) {
   if (status === "verified") return "bg-emerald-500/12 text-emerald-500";
   if (status === "failed") return "bg-rose-500/12 text-rose-500";
   return "bg-amber-500/12 text-amber-500";
-}
-
-function modelBelongsToFeatureProfile(providerType: string) {
-  return providerType.toLowerCase() === "elevenlabs";
 }
 
 interface ProvidersPanelProps {
@@ -34,166 +22,23 @@ interface ProvidersPanelProps {
 }
 
 export function ProvidersPanel({ providers, loadError, onRetryLoad, onCreate, onUpdate, onDelete, onVerify }: ProvidersPanelProps) {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingDraft, setEditingDraft] = useState<ProviderProfile | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [verifyingId, setVerifyingId] = useState<string | null>(null);
-  const [operationError, setOperationError] = useState<string | null>(null);
-  const [verificationError, setVerificationError] = useState<{ providerId: string; message: string } | null>(null);
-  const providerOptions = providerPresets.map((item) => ({
-    id: item.id,
-    label: item.label,
-    value: item.label,
-  }));
-
-  const createDraftProfile = (): ProviderProfile => ({
-    id: `draft-${Date.now()}`,
-    name: "OpenAI",
-    type: "OpenAI",
-    baseUrl: "https://api.openai.com/v1",
-    apiKey: "",
-    model: "",
-    status: "draft",
-    supportsSpeaking: false,
-  });
-
-  const handleCreateProfile = () => {
-    const draft = createDraftProfile();
-    setEditingId(draft.id);
-    setEditingDraft(draft);
-    setIsCreating(true);
-  };
-
-  const handleStartEdit = (profile: ProviderProfile) => {
-    // When starting edit, clear the apiKey so user enters fresh value
-    setEditingId(profile.id);
-    setEditingDraft({ ...profile, apiKey: "" });
-    setIsCreating(false);
-    if (verificationError?.providerId === profile.id) setVerificationError(null);
-  };
-
-  const handleFieldChange = (field: keyof ProviderProfile, value: string) => {
-    setEditingDraft((current) => {
-      if (!current) return current;
-      if (field === "type") {
-        const nextPreset = providerPresets.find((item) => item.label === value);
-        return {
-          ...current,
-          name: !current.name.trim() || current.name === current.type ? value : current.name,
-          type: value,
-          baseUrl: nextPreset ? nextPreset.baseUrl : current.baseUrl,
-          status: "draft",
-        };
-      }
-
-      const shouldResetStatus = field === "apiKey" || field === "model" || field === "baseUrl";
-      return { ...current, [field]: value, status: shouldResetStatus ? "draft" : current.status };
-    });
-  };
-
-  const handleSave = async () => {
-    if (!editingDraft || saving) return;
-    setOperationError(null);
-    if (!editingDraft.name.trim() || !editingDraft.baseUrl.trim() || (isCreating && !editingDraft.apiKey.trim())) {
-      setOperationError("Provider name, Base URL, and API Key are required.");
-      return;
-    }
-    setSaving(true);
-    try {
-      if (isCreating) {
-        await onCreate({
-          name: editingDraft.name,
-          type: editingDraft.type,
-          baseUrl: editingDraft.baseUrl,
-          apiKey: editingDraft.apiKey,
-          model: editingDraft.model,
-        });
-      } else {
-        // Only send fields that have values; skip empty apiKey (means no change)
-        const patch: Partial<ProviderProfile> = {
-          name: editingDraft.name,
-          type: editingDraft.type,
-          baseUrl: editingDraft.baseUrl,
-          model: editingDraft.model,
-          status: editingDraft.status,
-        };
-        if (editingDraft.apiKey) {
-          patch.apiKey = editingDraft.apiKey;
-        }
-        await onUpdate(editingDraft.id, patch);
-      }
-      setEditingId(null);
-      setEditingDraft(null);
-      setIsCreating(false);
-    } catch (e) {
-      setOperationError(e instanceof Error ? e.message : "Failed to save provider");
-    }
-    setSaving(false);
-  };
-
-  const handleCancel = () => {
-    setEditingId(null);
-    setEditingDraft(null);
-    setIsCreating(false);
-    setOperationError(null);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Delete this provider profile?")) return;
-    setOperationError(null);
-    try {
-      await onDelete(id);
-      if (editingId === id) setEditingId(null);
-      setEditingDraft(null);
-      setIsCreating(false);
-    } catch (e) {
-      setOperationError(e instanceof Error ? e.message : "Failed to delete provider");
-    }
-  };
-
-  const handleVerify = async (providerId: string) => {
-    if (verifyingId) return;
-
-    setVerifyingId(providerId);
-    setVerificationError(null);
-    const draft = editingDraft;
-    const draftIsTarget = draft !== null && draft.id === providerId;
-    const pendingApiKey = draftIsTarget && draft.apiKey ? draft.apiKey : null;
-    let result: { status: string; message: string } | null = null;
-    let error: unknown = null;
-    try {
-      // If editing and there's a new apiKey, save it first
-      if (pendingApiKey) {
-        await onUpdate(providerId, { apiKey: pendingApiKey });
-      }
-      result = await onVerify(providerId);
-    } catch (e) {
-      error = e;
-    }
-    if (error) {
-      setVerificationError({
-        providerId,
-        message: formatProviderError(error, { fallback: "Failed to verify provider" }),
-      });
-    } else if (result) {
-      if (result.status === "failed") {
-        setVerificationError({
-          providerId,
-          message: formatProviderError({ message: result.message }, { fallback: "Failed to verify provider" }),
-        });
-      }
-      if (draftIsTarget) {
-        const status = result.status as ProviderStatus;
-        setEditingDraft((current) =>
-          current ? { ...current, status } : current,
-        );
-      }
-    }
-    setVerifyingId(null);
-  };
-
-  const rows = isCreating && editingDraft ? [editingDraft, ...providers] : providers;
+  const {
+    rows,
+    editingId,
+    editingDraft,
+    isCreating,
+    saving,
+    verifyingId,
+    operationError,
+    verificationError,
+    startCreate: handleCreateProfile,
+    startEdit: handleStartEdit,
+    changeField: handleFieldChange,
+    save: handleSave,
+    cancel: handleCancel,
+    remove: handleDelete,
+    verify: handleVerify,
+  } = useProviderEditor({ providers, onCreate, onUpdate, onDelete, onVerify });
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -273,7 +118,7 @@ export function ProvidersPanel({ providers, loadError, onRetryLoad, onCreate, on
                       : currentProvider.model || "Default"}
                   </span>
                   <div className="col-span-2 flex items-center justify-between md:contents">
-                  <span className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClassName(currentProvider.status)}`}>{statusLabel(currentProvider.status)}</span>
+                  <span className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClassName(currentProvider.status)}`}>{providerStatusLabel(currentProvider.status)}</span>
                   <div className="flex justify-end gap-1 md:col-auto">
                     {!isEditing && currentProvider.status !== "verified" && <button type="button" onClick={() => handleVerify(provider.id)} disabled={verifyingId === provider.id} className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]" title="Test connection"><RefreshCw className={`h-3.5 w-3.5 ${verifyingId === provider.id ? "animate-spin" : ""}`} /></button>}
                     {!isEditing && <button type="button" onClick={() => handleStartEdit(provider)} disabled={Boolean(editingId)} className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]" title="Edit Provider"><Edit3 className="h-3.5 w-3.5" /></button>}
@@ -289,7 +134,7 @@ export function ProvidersPanel({ providers, loadError, onRetryLoad, onCreate, on
                   <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
                   <Combobox
                     label="Provider type"
-                    options={providerOptions}
+                    options={providerTypeOptions}
                     value={currentProvider.type}
                     onChange={(value) => handleFieldChange("type", value)}
                     allowCustom={false}
@@ -312,7 +157,7 @@ export function ProvidersPanel({ providers, loadError, onRetryLoad, onCreate, on
                       onChange={(e) => handleFieldChange("model", e.target.value)}
                     />
                   )}
-                  {currentProvider.type === "Custom Base URL" && (
+                  {currentProvider.type === CUSTOM_BASE_URL_TYPE && (
                     <Input
                       label="Custom Base URL"
                       value={currentProvider.baseUrl}

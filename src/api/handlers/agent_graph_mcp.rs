@@ -293,6 +293,20 @@ impl ServerHandler for AgentGraphMcpService {
     }
 }
 
+/// The `grove_agent` tools a Working Session is offered, split into the
+/// Memory tools (only advertised when Project Memory is enabled) and the
+/// rest. Mirrors the filtering in `list_tools`.
+pub fn advertised_tools(memory_enabled: bool) -> (Vec<rmcp::model::Tool>, Vec<rmcp::model::Tool>) {
+    let mut tools = AgentGraphMcpService::new().tool_router.list_all();
+    if !config::load_config().browser_control.enabled {
+        tools.retain(|tool| !tool.name.starts_with("browser_"));
+    }
+    let (memory, general): (Vec<_>, Vec<_>) = tools
+        .into_iter()
+        .partition(|tool| WORKING_MEMORY_TOOLS.contains(&tool.name.as_ref()));
+    (general, if memory_enabled { memory } else { Vec::new() })
+}
+
 const WORKING_MEMORY_TOOLS: &[&str] = &[
     "memory_append_log",
     "memory_recall",

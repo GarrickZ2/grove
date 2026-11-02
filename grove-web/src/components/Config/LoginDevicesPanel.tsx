@@ -1,92 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
 import { Monitor, Smartphone, Pencil, LogOut, RefreshCw, ShieldCheck, X } from 'lucide-react';
-import {
-  listLoginDevices, logoutDevice, renameLoginDevice, revokeLoginDevice,
-  type LoginDevice,
-  canTrustDevice, canUseTrustedDeviceCookie, getAuthInfo, trustCurrentDevice,
-} from '../../api/auth';
+import { dateTime, deviceIsMobile, lastUsed, useLoginDevices } from './useLoginDevices';
 import { DialogShell } from '../ui/DialogShell';
 
-function lastUsed(timestamp: number) {
-  const minutes = Math.max(0, Math.floor((Date.now() / 1000 - timestamp) / 60));
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)}h ago`;
-  return new Date(timestamp * 1000).toLocaleDateString();
-}
-
-const dateTime = (timestamp: number) => new Date(timestamp * 1000).toLocaleString();
 const buttonClass = 'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50';
 
 export function LoginDevicesPanel() {
-  const [devices, setDevices] = useState<LoginDevice[]>([]);
-  const [currentId, setCurrentId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<LoginDevice | null>(null);
-  const [name, setName] = useState('');
-  const [trustAvailable, setTrustAvailable] = useState(false);
-  const [cookieTrustAvailable, setCookieTrustAvailable] = useState(false);
-
-  const refresh = useCallback(async () => {
-    try {
-      const info = await getAuthInfo();
-      if (!info.device_sessions) {
-        setError('Device management requires an updated Grove backend. Rebuild and restart Grove, then refresh.');
-        return;
-      }
-      setTrustAvailable(canTrustDevice(info));
-      setCookieTrustAvailable(canUseTrustedDeviceCookie(info));
-      const result = await listLoginDevices();
-      setDevices(result.devices);
-      setCurrentId(result.current_device_id);
-      setError(null);
-    } catch { setError('Unable to load devices. Please try again.'); }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => { void Promise.resolve().then(refresh); }, [refresh]);
-
-  const rename = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!editing || !name.trim() || busy) return;
-    setBusy(true);
-    try {
-      await renameLoginDevice(editing.id, name.trim());
-      setEditing(null);
-      await refresh();
-    } catch { setError('Unable to rename this device. Please try again.'); }
-    finally { setBusy(false); }
-  };
-
-  const signOut = async (target: LoginDevice) => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      if (target.id === currentId) { await logoutDevice(); return; }
-      else await revokeLoginDevice(target.id);
-      await refresh();
-    } catch { setError('Unable to sign out. Please try again.'); }
-    finally { setBusy(false); }
-  };
-
-  const trust = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await trustCurrentDevice(cookieTrustAvailable);
-      await refresh();
-    } catch { setError('Unable to trust this device. Please try again.'); }
-    finally { setBusy(false); }
-  };
-
-  const ports = [...new Set(devices.map(device => device.port))];
-  const showPorts = ports.filter(port => port !== undefined).length > 1;
-  const groups = showPorts
-    ? ports.sort((a, b) => (a ?? Infinity) - (b ?? Infinity))
-      .map(port => ({ port, devices: devices.filter(device => device.port === port) }))
-    : [{ port: undefined, devices }];
+  const {
+    loading, busy, error, currentId, trustAvailable, showPorts, groups,
+    editing, setEditing, name, setName,
+    refresh, rename, signOut, trust,
+  } = useLoginDevices();
 
   return (
     <div className="space-y-3">
@@ -104,7 +27,7 @@ export function LoginDevicesPanel() {
               <div className="@container divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
                 {group.devices.map(device => {
                   const current = device.id === currentId;
-                  const Icon = /iPhone|iPad|Android/.test(device.client) ? Smartphone : Monitor;
+                  const Icon = deviceIsMobile(device) ? Smartphone : Monitor;
                   return (
                     <div key={device.id} className="flex items-center gap-3 p-3">
                       <div className="flex min-w-0 flex-1 items-center gap-3">

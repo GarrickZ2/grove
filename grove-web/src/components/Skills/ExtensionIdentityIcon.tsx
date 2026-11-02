@@ -2,6 +2,7 @@ import Avatar from "boring-avatars";
 import type { ExtensionArtifact } from "../../api";
 import type { Plugin } from "../../api/plugins";
 import { PluginIcon } from "../Plugins/PluginIcon";
+import { manifestIcon } from "./manifestIcon";
 
 type Kind = ExtensionArtifact["kind"];
 
@@ -44,16 +45,6 @@ export function ExtensionIdentityIcon({
       )}
     </span>
   );
-}
-
-function manifestIcon(manifest?: Record<string, unknown> | null) {
-  if (!manifest) return null;
-  if (typeof manifest.icon === "string" && manifest.icon.trim()) return manifest.icon.trim();
-  if (Array.isArray(manifest.icons)) {
-    const first = manifest.icons.find((entry) => entry && typeof entry === "object" && typeof (entry as Record<string, unknown>).src === "string") as Record<string, unknown> | undefined;
-    if (typeof first?.src === "string") return first.src;
-  }
-  return null;
 }
 
 function renderManifestIcon(icon: string, compact: boolean) {

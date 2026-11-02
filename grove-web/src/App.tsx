@@ -20,11 +20,18 @@ import { GroveSplash } from "./components/Layout/GroveSplash";
 import { OrbitPhoneHeader, ORBIT_PHONE_SHOW_CHAT_EVENT } from "./components/Layout/OrbitPhoneHeader";
 import { useOrbitDrawerSwipe } from "./components/Layout/useOrbitDrawerSwipe";
 import { OrbitNewChat } from "./components/Orbit/OrbitNewChat";
+import { OrbitSettingsPage } from "./orbit/settings/OrbitSettingsPage";
+import { OrbitDashboardPage } from "./orbit/dashboard/OrbitDashboardPage";
+import { OrbitStatisticsPage } from "./orbit/statistics/OrbitStatisticsPage";
+import { OrbitMemoryPage } from "./orbit/memory/OrbitMemoryPage";
+import { OrbitExtensionsPage } from "./orbit/extensions/OrbitExtensionsPage";
+import { OrbitAutomationPage } from "./orbit/automation/OrbitAutomationPage";
 import { ConnectDialog, SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
 import { BlitzPage } from "./components/Blitz";
 import { TasksPage } from "./components/Tasks/TasksPage";
 import { ResourcePage } from "./components/Studio";
+import { OrbitStudioPage } from "./orbit/studio/OrbitStudioPage";
 import { WorkPage } from "./components/Work";
 import { ProjectsPage } from "./components/Projects";
 import { MissingProjectState } from "./components/Projects/MissingProjectState";
@@ -174,6 +181,21 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   const { isMobile: viewportMobile, isTablet } = useIsMobile();
   const { config: globalConfig } = useConfig();
   const orbit = globalConfig?.web.interface === "orbit";
+  // Orbit folds the AI page into Settings → Voice & AI; Workbench keeps the page.
+  const openAISettings = useCallback(() => {
+    if (!orbit) {
+      setActiveItem("ai");
+      return;
+    }
+    const tab = window.sessionStorage.getItem("grove:ai-settings-tab");
+    window.sessionStorage.removeItem("grove:ai-settings-tab");
+    const page = tab === "agent_voice" ? "avoice" : tab === "providers" ? "providers" : tab === "voice_control" ? "vcontrol" : "voice";
+    setActiveItem("settings");
+    // OrbitSettingsPage opens the page named by #settings-<id>.
+    setTimeout(() => {
+      window.location.hash = `#settings-${page}`;
+    }, 50);
+  }, [orbit]);
   // Orbit keeps its desktop layout on tablets; only phones get the mobile one.
   const isMobile = viewportMobile && !(orbit && isTablet);
   const orbitPhone = orbit && isMobile;
@@ -385,10 +407,9 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   }, []);
 
   useEffect(() => {
-    const open = () => setActiveItem("ai");
-    window.addEventListener("grove:open-ai-settings", open);
-    return () => window.removeEventListener("grove:open-ai-settings", open);
-  }, []);
+    window.addEventListener("grove:open-ai-settings", openAISettings);
+    return () => window.removeEventListener("grove:open-ai-settings", openAISettings);
+  }, [openAISettings]);
 
   // Mobile virtual-keyboard tracker: exposes the keyboard height as a global
   // CSS variable (--grove-kb-inset). Bottom-anchored UI uses
@@ -599,7 +620,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
           listMarketplace(),
         ]);
 
-        // Refresh the global icon CDN map (bundled brand > CDN > Bot).
+        // Refresh the global icon CDN map (bundled brand > CDN > Sparkle).
         setMarketplaceIcons(
           marketplace.agents.map((a) => ({ id: a.id, icon_url: a.icon_url })),
         );
@@ -1102,7 +1123,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   useCommand("nav.memory", () => setActiveItem("memory"), []);
   useCommand("nav.automation", () => setActiveItem("automation"), []);
   useCommand("nav.skills", () => setActiveItem("skills"), []);
-  useCommand("nav.ai", () => setActiveItem("ai"), []);
+  useCommand("nav.ai", openAISettings, [openAISettings]);
   useCommand("nav.statistics", () => setActiveItem("statistics"), []);
   useCommand("nav.settings", () => setActiveItem("settings"), []);
   useCommand("nav.projects", () => setActiveItem("projects"), []);
@@ -1357,7 +1378,8 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   const nextGlobalOptions: UseCommandsOptions = {
     buddies,
     navigation: {
-      onNavigate: setActiveItem,
+      // ⌘K "Go to AI" goes to Settings → Voice & AI in Orbit.
+      onNavigate: (page: string) => (page === "ai" ? openAISettings() : setActiveItem(page)),
       activeItem,
     },
     project: {
@@ -1449,16 +1471,18 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   const renderContent = () => {
     switch (activeItem) {
       case "dashboard":
-        return <DashboardPage onNavigate={handleNavigate} />;
+        return orbit ? <OrbitDashboardPage onNavigate={handleNavigate} /> : <DashboardPage onNavigate={handleNavigate} />;
       case "projects":
         return <ProjectsPage onNavigate={setActiveItem} key={"projects-" + (navigationData?.tab ?? "coding")} initialTab={navigationData?.tab as "coding" | "studio" | undefined} />;
       // NOTE: "work" is NOT rendered here — WorkPage is keep-alive (mirroring
       // TasksPage) and lives in its own display:none host in the layout below.
       case "resource":
-        return <ResourcePage />;
-      case "automation":
+        return orbit ? <OrbitStudioPage /> : <ResourcePage />;
+      case "automation": {
+        // Same props either way; Orbit only swaps the presentation.
+        const AutomationView = orbit ? OrbitAutomationPage : AutomationPage;
         return (
-          <AutomationPage
+          <AutomationView
             onOpenManagedAutomation={(handlerKey) => {
               if (handlerKey === "grove.memory.organization") {
                 setActiveItem("memory");
@@ -1509,16 +1533,20 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
             }}
           />
         );
+      }
       case "memory":
-        return <MemoryPage key={(navigationData?.memoryRunChatId as string | undefined) ?? "memory"} initialRunChatId={navigationData?.memoryRunChatId as string | undefined} />;
+        return orbit
+          ? <OrbitMemoryPage key={(navigationData?.memoryRunChatId as string | undefined) ?? "memory"} initialRunChatId={navigationData?.memoryRunChatId as string | undefined} />
+          : <MemoryPage key={(navigationData?.memoryRunChatId as string | undefined) ?? "memory"} initialRunChatId={navigationData?.memoryRunChatId as string | undefined} />;
       case "skills":
-        return <SkillsPage />;
+        return orbit ? <OrbitExtensionsPage /> : <SkillsPage />;
       case "ai":
         return <AIPage />;
       case "statistics":
-        return <ProjectStatsPage projectId={selectedProject?.id} />;
+        return orbit ? <OrbitStatisticsPage /> : <ProjectStatsPage projectId={selectedProject?.id} />;
+      // Orbit forks presentation per page; Workbench keeps the legacy UI.
       case "settings":
-        return <SettingsPage />;
+        return orbit ? <OrbitSettingsPage /> : <SettingsPage />;
       case "new":
         return <OrbitNewChat key={(navigationData?.taskId as string | undefined) ?? "_local"} initialTaskId={navigationData?.taskId as string | undefined} onNavigate={handleNavigate} />;
       default: {
@@ -1556,7 +1584,10 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // Orbit's window header only hosts the workspace toolbar. Other pages drop it,
   // except when the collapsed sidebar's controls need a bar to sit on.
   const orbitHeaderVisible = ((activeItem === "tasks" || activeItem === "work") && globalConfig?.web.workspace_layout !== "flex") || effectiveSidebarMode === "collapsed";
+  // Orbit pages that own their whole surface (own scroll, no outer padding).
+  const isOrbitEdgeToEdgePage = orbit && (activeItem === "settings" || activeItem === "dashboard" || activeItem === "skills" || activeItem === "memory" || activeItem === "automation" || activeItem === "statistics" || activeItem === "resource");
   const isFullWidthPage =
+    isOrbitEdgeToEdgePage ||
     isDashboardPage ||
     activeItem === "projects" ||
     activeItem === "work" ||
@@ -1838,7 +1869,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
                 )}
               </div>
               {activeItem !== "tasks" && activeItem !== "work" && (
-                <div className={isMobile ? orbitPhone && activeItem === "new" ? "h-full" : activeItem === "ai" ? "h-full p-3" : isFullWidthPage ? "min-h-full p-3" : "max-w-5xl mx-auto p-3" : isFullWidthPage ? "h-full transition-[padding] duration-300 ease-out p-6" : "max-w-5xl mx-auto p-6"}>
+                <div className={`${isOrbitEdgeToEdgePage ? "h-full" : isMobile ? orbitPhone && activeItem === "new" ? "h-full" : activeItem === "ai" ? "h-full p-3" : isFullWidthPage ? "min-h-full p-3" : "max-w-5xl mx-auto p-3" : isFullWidthPage ? "h-full transition-[padding] duration-300 ease-out p-6" : "max-w-5xl mx-auto p-6"}${orbit ? " orbit-ui" : ""}`}>
                   {/* One shared enter transition for every routed page (pages don't animate their own root). */}
                   <motion.div
                     key={activeItem}

@@ -5,9 +5,9 @@ import { ConfirmDialog } from "../Dialogs";
 import { AgentIcon } from "./AgentIcon";
 import { AddAgentDialog } from "./AddAgentDialog";
 import { TableEmpty } from "./ExtensionTable";
-import { deleteAgent as apiDeleteAgent, toggleAgentEnabled } from "../../api";
 import type { AgentDef, InstalledSkill } from "../../api";
 import { useCommand } from "../../keyboard";
+import { useSkillAgentActions } from "./useSkillAgentActions";
 
 interface AgentsTabProps {
   agents: AgentDef[];
@@ -20,13 +20,7 @@ export function AgentsTab({ agents, installed, onRefresh }: AgentsTabProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [editAgent, setEditAgent] = useState<AgentDef | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<AgentDef | null>(null);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
-
-  const installCountByAgent = useMemo(() => {
-    const counts = new Map<string, number>();
-    installed.forEach((skill) => skill.agents.forEach((binding) => counts.set(binding.agent_id, (counts.get(binding.agent_id) ?? 0) + 1)));
-    return counts;
-  }, [installed]);
+  const { togglingId, installCountByAgent, toggle, remove: removeAgent } = useSkillAgentActions(installed, onRefresh);
 
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -37,22 +31,11 @@ export function AgentsTab({ agents, installed, onRefresh }: AgentsTabProps) {
       || agent.project_skills_dir.toLowerCase().includes(query));
   }, [agents, search]);
 
-  const toggle = async (agentId: string) => {
-    setTogglingId(agentId);
-    try {
-      await toggleAgentEnabled(agentId);
-      await onRefresh();
-    } finally {
-      setTogglingId(null);
-    }
-  };
-
   const remove = async () => {
     if (!deleteConfirm) return;
     const id = deleteConfirm.id;
     setDeleteConfirm(null);
-    await apiDeleteAgent(id);
-    await onRefresh();
+    await removeAgent(id);
   };
 
   useCommand("skills.agent.add", () => setShowAdd(true), []);

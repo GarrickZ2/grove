@@ -9,6 +9,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { Bucket, TimeseriesBucket } from "../../../api/statistics";
+import { agentOrderOf, agentStackValues, bucketValue } from "../statsModel";
 import { agentColor } from "../agentColors";
 import { formatTokens, formatCost } from "../formatters";
 import { TOKEN_TYPE_COLORS } from "./KpiRow";
@@ -42,56 +43,6 @@ function singleColor(m: MetricType): string {
   return "var(--color-highlight)";
 }
 
-function bucketValue(b: TimeseriesBucket, m: MetricType, u: Unit, r: AverageRates): number {
-  let cost_in = b.tokens_in * r.input;
-  let cost_cached = b.tokens_cached * r.cached;
-  let cost_out = b.tokens_out * r.output;
-
-  if (u === "cost" && b.cost_total > 0) {
-    const est_total = cost_in + cost_cached + cost_out;
-    if (est_total > 0) {
-      const ratio = b.cost_total / est_total;
-      cost_in *= ratio;
-      cost_cached *= ratio;
-      cost_out *= ratio;
-    } else {
-      // No token-derived split available — distribute evenly across the three
-      // segments so input/cached/output charts don't show the whole cost as
-      // "input only" (which was visually misleading).
-      const third = b.cost_total / 3;
-      cost_in = third;
-      cost_cached = third;
-      cost_out = third;
-    }
-  }
-
-  if (u === "cost") {
-    switch (m) {
-      case "total":
-        return b.cost_total > 0 ? b.cost_total : cost_in + cost_cached + cost_out;
-      case "input":
-        return cost_in;
-      case "cached":
-        return cost_cached;
-      case "output":
-        return cost_out;
-    }
-    return 0;
-  } else {
-    switch (m) {
-      case "total":
-        return b.tokens_in + b.tokens_cached + b.tokens_out;
-      case "input":
-        return b.tokens_in;
-      case "cached":
-        return b.tokens_cached;
-      case "output":
-        return b.tokens_out;
-    }
-    return 0;
-  }
-}
-
 interface ActivityOverTimeProps {
   buckets: TimeseriesBucket[];
   bucket?: Bucket;
@@ -111,64 +62,19 @@ export function ActivityOverTime({
   // Stable agent ordering used both for stacking order and the legend in
   // agent-stacked modes. Sort by total contribution descending so the
   // heaviest agent sits at the bottom of the stack.
-  const agentOrder = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const b of buckets) {
-      for (const a of b.per_agent) {
-        totals.set(a.agent, (totals.get(a.agent) ?? 0) + a.tokens);
-      }
-    }
-    return [...totals.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([k]) => k);
-  }, [buckets]);
+  const agentOrder = useMemo(() => agentOrderOf(buckets), [buckets]);
 
   const stacks: Stack[] = useMemo(() => {
     if (isAgentStacked(metricType)) {
       return buckets.map((b) => {
-        const map = new Map(b.per_agent.map((a) => [a.agent, a]));
-
-        // For cost mode, build avg_cost_per_token from ONLY the non-reporting
-        // agents' subset of total cost & tokens. Otherwise reporting agents'
-        // cost gets double-counted: their own cost shows directly AND their
-        // tokens contribute to the shared avg that non-reporting agents
-        // inherit, causing the stack to overshoot bucket.cost_total.
-        const reportingCost = b.per_agent
-          .filter((a) => (a.cost ?? 0) > 0)
-          .reduce((s, a) => s + (a.cost ?? 0), 0);
-        // Sum tokens DIRECTLY from the non-reporting subset rather than
-        // deriving via (bucket_total - reporting). The two domains don't
-        // necessarily share a denominator (backend can produce per_agent
-        // totals that drift from bucket.tokens_in/cached/out), and the
-        // subtraction-based approach mis-allocates avg_cost_per_token when
-        // they diverge.
-        const nonReportingTokens = b.per_agent
-          .filter((a) => (a.cost ?? 0) === 0)
-          .reduce((s, a) => s + a.tokens, 0);
-        const cost_in = b.tokens_in * averageRates.input;
-        const cost_cached = b.tokens_cached * averageRates.cached;
-        const cost_out = b.tokens_out * averageRates.output;
-        const total_cost = b.cost_total > 0 ? b.cost_total : cost_in + cost_cached + cost_out;
-        const nonReportingCost = Math.max(0, total_cost - reportingCost);
-        const avg_cost_per_token = nonReportingTokens > 0 ? nonReportingCost / nonReportingTokens : 0;
-
+        const values = agentStackValues(b, agentOrder, unit, averageRates);
         return {
           ts: b.bucket_start,
-          segs: agentOrder.map((agent) => {
-            const agentBucket = map.get(agent);
-            const agentTokens = agentBucket?.tokens ?? 0;
-            const agentCost = agentBucket?.cost ?? 0;
-
-            const value = unit === "cost"
-              ? (agentCost > 0 ? agentCost : agentTokens * avg_cost_per_token)
-              : agentTokens;
-
-            return {
-              label: agent,
-              value,
-              color: agentColor(agent),
-            };
-          }),
+          segs: agentOrder.map((agent, i) => ({
+            label: agent,
+            value: values[i],
+            color: agentColor(agent),
+          })),
         };
       });
     }

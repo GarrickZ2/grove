@@ -1,0 +1,255 @@
+/* Orbit UI primitives. Tokens come from ../tokens.css (scoped to .orbit-ui). */
+.orbit-ui .oui-i{width:15px;height:15px;flex-shrink:0;stroke-width:1.8}
+.orbit-ui :is(.oui-btn,.oui-seg-btn,.oui-tg,.oui-row-link,.oui-menu-item):focus-visible{outline:2px solid var(--o-accent);outline-offset:2px}
+
+/* Page header: glyph tile + title, condenses into a frosted bar on scroll */
+.oui-hdr{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:16px;padding:34px 0 20px;border-bottom:1px solid transparent;transition:padding var(--o-dur-condense) var(--o-ease-out),border-color var(--o-dur-condense),background-color var(--o-dur-condense)}
+.oui-hdr.is-condensed{padding:12px 0 11px;border-color:var(--o-border);background:var(--o-frost);-webkit-backdrop-filter:saturate(1.8) blur(16px);backdrop-filter:saturate(1.8) blur(16px)}
+.oui-glyph{width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;background:linear-gradient(150deg,var(--oui-hue-a),var(--oui-hue-b));box-shadow:inset 0 1px 0 rgb(255 255 255 / 38%),inset 0 -1px 0 rgb(0 0 0 / 14%),0 10px 24px -10px var(--oui-hue-strong);animation:oui-glyph-in 560ms var(--o-ease-pop) both;transition:width var(--o-dur-condense) var(--o-ease-out),height var(--o-dur-condense) var(--o-ease-out),border-radius var(--o-dur-condense)}
+.oui-glyph svg{width:22px;height:22px;stroke-width:1.9;transition:width var(--o-dur-condense),height var(--o-dur-condense)}
+.oui-hdr.is-condensed .oui-glyph{width:26px;height:26px;border-radius:8px}
+.oui-hdr.is-condensed .oui-glyph svg{width:14px;height:14px}
+@keyframes oui-glyph-in{0%{transform:scale(.6) rotate(-8deg);opacity:0}55%{transform:scale(1.08) rotate(2deg);opacity:1}100%{transform:none}}
+.oui-hdr-copy{flex:1;min-width:0}
+.oui-hdr h1{margin:0;font-size:24px;font-weight:650;letter-spacing:-.025em;line-height:1.2;color:var(--o-text);transition:font-size var(--o-dur-condense) var(--o-ease-out)}
+.oui-hdr.is-condensed h1{font-size:15px}
+.oui-hdr p{margin:4px 0 0;font-size:13px;line-height:1.5;color:var(--o-muted);max-height:40px;overflow:hidden;transition:opacity 200ms,max-height var(--o-dur-condense),margin var(--o-dur-condense)}
+.oui-hdr.is-condensed p{opacity:0;max-height:0;margin:0}
+.oui-hdr-aside{display:flex;align-items:center;gap:8px;flex-shrink:0}
+
+/* Chip note + Saved confirmation (pops in, draws its check, fades out) */
+.oui-chipnote{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px 0 7px;border-radius:999px;font-size:12px;color:var(--o-muted);background:var(--o-group);border:1px solid var(--o-border);white-space:nowrap}
+.oui-saved{animation:oui-saved 2s var(--o-ease-out) both}
+.oui-saved svg{width:13px;height:13px;color:var(--o-accent);stroke-width:2.4}
+.oui-draw path,.oui-draw polyline{stroke-dasharray:24;stroke-dashoffset:24;animation:oui-draw 420ms 120ms var(--o-ease-draw) forwards}
+@keyframes oui-saved{0%{opacity:0;transform:translateY(4px) scale(.94)}10%{opacity:1;transform:none}78%{opacity:1}100%{opacity:0}}
+@keyframes oui-draw{to{stroke-dashoffset:0}}
+
+/* Grouped list (macOS style) */
+.oui-gwrap{scroll-margin-top:76px}
+.oui-glabel{display:flex;align-items:baseline;gap:8px;margin:30px 2px 8px;font-size:12.5px;font-weight:600;color:var(--o-muted)}
+.oui-glabel small{font-weight:400;font-size:12px}
+.oui-glabel-actions{margin-left:auto;display:flex;align-items:center;gap:4px;align-self:center;margin-block:-6px}
+.oui-group{border:1px solid var(--o-border);border-radius:var(--o-radius-lg);background:var(--o-group);box-shadow:var(--o-shadow-1);overflow:hidden;color:var(--o-text)}
+.oui-footnote{font-size:12px;line-height:1.5;color:var(--o-muted);margin:8px 2px 0}
+.oui-footnote code{font-family:var(--o-font-mono);font-size:11.5px;padding:1px 5px;border-radius:4px;background:var(--o-selected);color:var(--o-text)}
+.oui-row{display:flex;align-items:center;gap:12px;min-height:54px;padding:10px 16px;width:100%;text-align:left;box-sizing:border-box;transition:opacity 260ms}
+.oui-block{transition:opacity 260ms}
+.oui-group>*+*{border-top:1px solid var(--o-border)}
+.oui-block{padding:14px 16px 16px}
+.oui-row-copy{flex:1;min-width:0}
+.oui-row-title{display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:500;line-height:1.35;color:var(--o-text)}
+.oui-row-desc{display:block;font-size:12.5px;color:var(--o-muted);margin-top:2px;line-height:1.45}
+.oui-mono{font-family:var(--o-font-mono)}
+.oui-row.is-dim,.oui-block.is-dim{opacity:.4;pointer-events:none}
+.oui-row-control{display:flex;align-items:center;gap:8px;flex-shrink:0;min-width:0}
+.oui-row-link{cursor:pointer;background:none;border:0;font:inherit;color:inherit;text-decoration:none}
+.oui-row-link:hover{background:var(--o-hover)}
+.oui-row-link .oui-chev{color:var(--o-muted);transition:transform 260ms var(--o-ease-pop),color var(--o-dur-fast)}
+.oui-row-link:hover .oui-chev{transform:translateX(3px);color:var(--o-text)}
+.oui-lead{width:30px;height:30px;border-radius:var(--o-radius);display:flex;align-items:center;justify-content:center;background:var(--o-selected);box-shadow:inset 0 0 0 .5px var(--o-border);flex-shrink:0;color:var(--o-text)}
+.oui-lead svg{width:15px;height:15px}
+.oui-count{font-size:11.5px;color:var(--o-muted);padding:1px 7px;border-radius:999px;background:var(--o-selected);font-weight:400}
+
+/* Buttons: ink primary, hairline secondary, ghost */
+.oui-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 12px;border-radius:var(--o-radius);font:inherit;font-size:13px;font-weight:500;flex-shrink:0;cursor:pointer;border:1px solid transparent;background:none;color:var(--o-text);white-space:nowrap;transition:transform 140ms var(--o-ease-toggle),box-shadow 200ms,background-color var(--o-dur-fast),border-color var(--o-dur-fast),color var(--o-dur-fast)}
+.oui-btn:active:not(:disabled){transform:scale(.96)}
+.oui-btn:disabled{opacity:.45;cursor:default}
+.oui-btn svg{width:14px;height:14px}
+.oui-btn-primary{background:var(--o-ink);color:var(--o-on-ink);box-shadow:inset 0 1px 0 rgb(255 255 255 / 14%),0 1px 2px rgb(0 0 0 / 18%),0 6px 16px -8px rgb(0 0 0 / 40%)}
+.oui-btn-secondary{border-color:var(--o-border);background:var(--o-bg);box-shadow:var(--o-shadow-1)}
+.oui-btn-secondary:hover:not(:disabled){border-color:var(--o-border-strong)}
+.oui-btn-ghost{color:var(--o-muted)}
+.oui-btn-ghost:hover:not(:disabled){background:var(--o-hover);color:var(--o-text)}
+.oui-btn-icon{width:30px;padding:0}
+.oui-btn-sm{height:28px;padding:0 10px;font-size:12.5px;border-radius:var(--o-radius-sm)}
+.oui-btn-sm svg{width:13px;height:13px}
+.oui-btn-sm.oui-btn-icon{width:28px;padding:0}
+.oui-btn-sm.oui-btn-icon svg{width:14px;height:14px}
+/* Destructive: red text; icon-only ones stay muted until hovered. */
+.oui-btn-danger{color:var(--o-error)}
+.oui-btn-danger.oui-btn-icon:not(:hover){color:var(--o-muted)}
+.oui-btn-danger:hover:not(:disabled){color:var(--o-error);background:color-mix(in oklab,var(--o-error) 9%,transparent)}
+
+/* Toggle: thumb springs across and stretches while pressed */
+.oui-tg{position:relative;width:38px;height:22px;border-radius:999px;background:var(--o-track);flex-shrink:0;border:0;padding:0;cursor:pointer;transition:background-color 220ms ease,box-shadow 300ms ease}
+.oui-tg.is-on{background:var(--o-accent);box-shadow:0 0 0 4px var(--o-accent-soft)}
+.oui-tg:disabled{opacity:.45;cursor:default}
+.oui-tg-k{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:999px;background:#fff;box-shadow:0 1px 3px rgb(0 0 0 / 22%),0 0 0 .5px rgb(0 0 0 / 5%);transition:left var(--o-dur-toggle) var(--o-ease-toggle),width 180ms ease}
+.oui-tg.is-on .oui-tg-k{left:18px}
+.oui-tg:active:not(:disabled) .oui-tg-k{width:23px}
+.oui-tg.is-on:active:not(:disabled) .oui-tg-k{left:13px}
+
+/* Segmented control: one thumb, placed from the selected index, slides to the chosen option */
+.oui-seg{position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;padding:2px;border-radius:9px;background:var(--o-selected);box-shadow:inset 0 0 0 .5px var(--o-border);flex-shrink:0}
+.oui-seg.is-block{display:grid}
+.oui-seg-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:26px;padding:0 14px;border:0;background:none;font:inherit;font-size:12.5px;font-weight:500;color:var(--o-muted);white-space:nowrap;cursor:pointer;border-radius:7px;transition:color 200ms}
+.oui-seg-btn:hover:not(:disabled),.oui-seg-btn.is-sel{color:var(--o-text)}
+.oui-seg-btn:disabled{opacity:.45;cursor:default}
+.oui-seg-btn>*{position:relative}
+.oui-seg-thumb{position:absolute;top:2px;bottom:2px;left:2px;border-radius:7px;background:var(--o-bg);box-shadow:0 1px 3px var(--o-shadow),0 0 0 .5px var(--o-border);pointer-events:none;transition:transform var(--o-dur-slide) var(--o-ease-slide)}
+.oui-seg-n{font-size:11px;font-weight:500;color:var(--o-muted);font-variant-numeric:tabular-nums;animation:oui-fade-up 260ms var(--o-ease-out) both}
+.oui-seg.is-sm .oui-seg-btn{height:24px;padding:0 10px;font-size:12px}
+.oui-seg.is-sm .oui-seg-n{font-size:10.5px}
+
+/* Text field */
+.oui-field{min-width:0;height:30px;padding:0 10px;border-radius:var(--o-radius);border:1px solid var(--o-border);background:var(--o-bg);color:var(--o-text);font:inherit;font-size:12.5px;outline:0;transition:border-color var(--o-dur-fast),box-shadow 200ms}
+.oui-field:focus{border-color:var(--o-border-strong);box-shadow:0 0 0 3px var(--o-hover)}
+.oui-field[type=number]{width:84px}
+
+/* Status dot + label */
+.oui-status{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--o-muted);white-space:nowrap}
+.oui-status i{width:7px;height:7px;border-radius:50%;background:var(--oui-status, var(--o-accent));box-shadow:0 0 0 3px color-mix(in oklab,var(--oui-status, var(--o-accent)) 18%,transparent)}
+.oui-status.is-off i{background:var(--o-track);box-shadow:none}
+
+/* Placeholder skeleton */
+.oui-skel{height:8px;border-radius:4px;background:linear-gradient(90deg,var(--o-selected) 0%,var(--o-hover) 50%,var(--o-selected) 100%);background-size:200% 100%;animation:oui-shimmer 1.6s linear infinite}
+@keyframes oui-shimmer{to{background-position:-200% 0}}
+
+@media (prefers-reduced-motion:reduce){
+  .orbit-ui :is([class*="oui-"],[class*="ost-"]),
+  .orbit-ui :is([class*="oui-"],[class*="ost-"])::before,
+  .orbit-ui :is([class*="oui-"],[class*="ost-"])::after,
+  .orbit-ui :is([class*="oui-"],[class*="ost-"]) *{animation-duration:0s!important;animation-delay:0s!important;animation-iteration-count:1!important;transition-duration:0s!important}
+  /* The Saved chip ends faded out; without motion it simply shows until it unmounts. */
+  .orbit-ui .oui-saved{animation:none!important}
+}
+
+/* Keycaps + shortcut recorder */
+.oui-keys{display:inline-flex;align-items:center;gap:3px}
+.oui-kbd{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:6px;border:1px solid var(--o-border);border-bottom-width:2px;background:var(--o-bg);font-family:inherit;font-size:11.5px;font-weight:500;color:var(--o-text);box-shadow:var(--o-shadow-1)}
+.oui-keys.is-muted .oui-kbd{color:var(--o-muted);text-decoration:line-through}
+.oui-recorder{display:inline-flex;align-items:center;gap:6px}
+.oui-recorder-value{display:inline-flex;align-items:center;min-height:30px;padding:0 4px}
+.oui-recorder-empty{font-size:12.5px;color:var(--o-muted)}
+.oui-recorder-prompt{font-size:12.5px;color:var(--o-accent);animation:oui-pulse 1.2s ease-in-out infinite}
+.oui-recorder.is-invalid .oui-kbd{border-color:color-mix(in oklab,var(--o-error) 60%,var(--o-border));color:var(--o-error)}
+@keyframes oui-pulse{50%{opacity:.45}}
+
+/* Utilities shared by the Orbit pages */
+.orbit-ui .oui-scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--o-track) transparent}
+.orbit-ui .oui-truncate{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.orbit-ui .oui-tnum{font-variant-numeric:tabular-nums}
+.orbit-ui .oui-spin{animation:oui-spin 800ms linear infinite}
+.oui-rise{animation:oui-rise 460ms var(--o-ease-out) both}
+/* Anything that opens a popover sits above later siblings' animation layers. */
+.oui-layer-top{position:relative;z-index:30}
+@keyframes oui-rise{from{opacity:0;transform:translateY(10px)}}
+@keyframes oui-rowin{from{opacity:0;transform:translateY(5px)}}
+@keyframes oui-enter{from{opacity:0;transform:translateY(8px);filter:blur(3px)}}
+@keyframes oui-fade-up{from{opacity:0;transform:translateY(2px)}}
+@keyframes oui-spin{to{transform:rotate(360deg)}}
+@keyframes oui-pop{0%{transform:scale(.4)}55%{transform:scale(1.15)}100%{transform:none}}
+@keyframes oui-popin{from{opacity:0;transform:scale(.96) translateY(-4px)}}
+@keyframes oui-grow{from{transform:scaleY(0)}}
+@keyframes oui-growx{from{transform:scaleX(0)}}
+@keyframes oui-breathe{50%{box-shadow:0 0 0 5px color-mix(in oklab,var(--oui-dot,var(--o-accent)) 6%,transparent)}}
+
+/* One-viewport page: centered column; the last block (the card grid) fills the rest */
+.oui-page{--oui-page-glow:transparent;--oui-gap:14px;position:relative;height:100%;min-height:0;width:100%;overflow:hidden;display:flex;color:var(--o-text);font-size:13px;-webkit-font-smoothing:antialiased;background:radial-gradient(760px 300px at 8% -110px,var(--oui-page-glow),transparent 72%) no-repeat,var(--o-bg)}
+.oui-page :is(button,input,textarea,a):focus-visible{outline:2px solid var(--o-accent);outline-offset:2px}
+/* Pages fill the window (one-page rule): only ultra-wide screens are capped. */
+.oui-page-inner{flex:1;width:100%;min-width:0;min-height:0;max-width:2000px;margin:0 auto;box-sizing:border-box;display:flex;flex-direction:column;gap:var(--oui-gap);padding:26px 36px 24px}
+.oui-page-message{margin:auto;color:var(--o-muted)}
+
+/* Page header: glyph tile + title + subtitle + actions */
+.oui-page-head{display:flex;align-items:center;gap:14px;flex-shrink:0;min-height:46px}
+.oui-page-head-copy{flex:1;min-width:0}
+.oui-page-title{display:flex;align-items:center;gap:10px;min-width:0}
+.oui-page-head h1{margin:0;min-width:0;font-size:24px;font-weight:650;letter-spacing:-.025em;line-height:1.2;color:var(--o-text)}
+.oui-page-head p{margin:4px 0 0;font-size:13px;line-height:1.5;color:var(--o-muted)}
+.oui-page-head p.oui-mono{font-size:12px}
+.oui-page-head p b{font-weight:500;color:var(--o-text)}
+.oui-page-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.oui-page-actions .oui-btn{height:32px}
+.oui-page-actions .oui-btn-icon{width:32px}
+.oui-page-actions .oui-seg-btn{height:28px}
+
+/* Card: head (title + hint + actions) stays; the body below scrolls inside */
+.oui-card{border:1px solid var(--o-border);border-radius:var(--o-radius-lg);background:var(--o-group);box-shadow:var(--o-shadow-1);display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;color:var(--o-text)}
+.oui-card-head{display:flex;align-items:center;gap:10px;min-height:42px;padding:7px 10px 5px 16px;flex-shrink:0;box-sizing:border-box}
+.oui-card-head h2{margin:0;flex:1;min-width:0;display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;white-space:nowrap}
+.oui-card-head h2 small{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--o-muted);font-weight:400;font-size:12.5px}
+.oui-card-list{flex:1;min-height:0;padding:0 8px 8px}
+
+/* Empty state: glyph tile + title + body + call to action */
+.oui-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:0;padding:18px 16px 22px;text-align:center}
+.oui-empty>b{font-size:13px;font-weight:600}
+.oui-empty-body{max-width:300px;font-size:12.5px;line-height:1.5;color:var(--o-muted)}
+.oui-empty-ic{width:34px;height:34px;margin-bottom:8px;border-radius:var(--o-radius-md);flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--o-selected);color:var(--o-muted);box-shadow:inset 0 0 0 .5px var(--o-border)}
+.oui-empty-ic svg{width:16px;height:16px}
+.oui-empty-ic.is-error{background:color-mix(in oklab,var(--o-error) 10%,transparent);color:var(--o-error);box-shadow:none}
+.oui-empty-ic.is-hue{color:#fff;background:linear-gradient(150deg,var(--oui-hue-a),var(--oui-hue-b));box-shadow:inset 0 1px 0 rgb(255 255 255 / 38%),0 12px 26px -12px var(--oui-hue-strong);animation:oui-glyph-in 560ms var(--o-ease-pop) both}
+.oui-empty-acts{display:flex;justify-content:center;gap:8px;margin-top:10px}
+.oui-empty.is-lg{gap:6px;padding:24px}
+.oui-empty.is-lg .oui-empty-ic{width:52px;height:52px;border-radius:15px}
+.oui-empty.is-lg .oui-empty-ic svg{width:24px;height:24px}
+.oui-empty.is-lg>b{font-size:15px}
+.oui-empty.is-lg .oui-empty-body{max-width:360px;font-size:13px}
+.oui-empty.is-lg .oui-empty-acts{margin-top:12px}
+
+/* Status dot */
+.oui-dot{--oui-dot:var(--o-track);display:inline-block;width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--oui-dot);transition:background-color 300ms,box-shadow 300ms}
+.oui-dot.is-sm{width:6px;height:6px}
+.oui-dot.is-lg{width:10px;height:10px}
+.oui-dot.is-live{--oui-dot:var(--o-accent)}
+.oui-dot.is-waiting,.oui-dot.is-warn{--oui-dot:var(--o-warn)}
+.oui-dot.is-ok{--oui-dot:var(--o-success)}
+.oui-dot.is-fail{--oui-dot:var(--o-error)}
+.oui-dot.is-info{--oui-dot:var(--o-info)}
+.oui-dot.is-idle{background:transparent;box-shadow:inset 0 0 0 1.5px var(--o-track)}
+.oui-dot.has-ring{box-shadow:0 0 0 3px color-mix(in oklab,var(--oui-dot) 18%,transparent)}
+.oui-dot.is-pulse{animation:oui-breathe 1.8s ease-in-out infinite}
+
+/* Search field */
+.oui-search{display:flex;align-items:center;gap:7px;height:30px;padding:0 9px;border:1px solid var(--o-border);border-radius:var(--o-radius);background:var(--o-bg);color:var(--o-muted);box-sizing:border-box;transition:border-color var(--o-dur-fast),box-shadow 200ms}
+.oui-search:focus-within{border-color:var(--o-border-strong);box-shadow:0 0 0 3px var(--o-hover)}
+.oui-search svg{width:14px;height:14px;flex-shrink:0}
+.oui-search input{flex:1;min-width:0;border:0;outline:0!important;background:transparent;font:inherit;font-size:13px;color:var(--o-text)}
+.oui-search input::placeholder{color:var(--o-muted)}
+.oui-search input::-webkit-search-cancel-button{display:none}
+
+/* Popover surface + described-action menu */
+.oui-pop-anchor{position:relative;display:inline-flex}
+.oui-pop{position:absolute;z-index:40;top:calc(100% + 8px);right:0;width:290px;padding:6px;box-sizing:border-box;border-radius:var(--o-radius-lg);color:var(--o-text);background:color-mix(in oklab,var(--o-bg) 94%,transparent);-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);border:1px solid var(--o-border);box-shadow:var(--o-shadow-2);transform-origin:top right;animation:oui-popin 220ms cubic-bezier(.3,1.3,.5,1) both}
+.oui-pop.is-start{left:0;right:auto;transform-origin:top left}
+.oui-menu-item{display:flex;align-items:flex-start;gap:10px;width:100%;padding:8px;border:0;border-radius:var(--o-radius);background:none;font:inherit;color:var(--o-text);text-align:left;cursor:pointer;transition:background-color var(--o-dur-fast)}
+.oui-menu-item:hover{background:var(--o-hover)}
+.oui-menu-item b{display:block;font-size:13px;font-weight:500}
+.oui-menu-item b+span{display:block;margin-top:1px;font-size:12px;line-height:1.4;color:var(--o-muted)}
+.oui-menu-ic{width:28px;height:28px;border-radius:var(--o-radius);flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--o-selected)}
+.oui-menu-ic svg{width:14px;height:14px}
+
+/* Right-edge sheet (portaled; carries .orbit-ui itself) */
+.oui-sheet-root{position:fixed;inset:0;z-index:80;color:var(--o-text);font-size:13px;-webkit-font-smoothing:antialiased}
+/* Animating out: the page under it takes clicks right away. */
+.oui-sheet-root.is-leaving,.oui-sheet-root.is-leaving *{pointer-events:none!important}
+.oui-sheet-scrim{position:absolute;inset:0;border:0;padding:0;cursor:default;background:color-mix(in oklab,var(--o-text) 12%,transparent);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+.oui-sheet{position:absolute;top:12px;right:12px;bottom:12px;width:420px;max-width:calc(100vw - 24px);display:flex;flex-direction:column;border-radius:16px;background:var(--o-bg);border:1px solid var(--o-border);box-shadow:0 30px 80px -30px rgb(0 0 0 / 45%),0 0 0 .5px var(--o-border);overflow:hidden;transition:width 440ms var(--o-ease-slide)}
+.oui-sheet.is-wide{width:min(72vw,1120px)}
+.oui-sheet-head{display:flex;align-items:flex-start;gap:10px;padding:16px 12px 10px 20px;flex-shrink:0}
+.oui-sheet-head-copy{flex:1;min-width:0}
+.oui-sheet-head h2{margin:4px 0 0;font-size:16px;font-weight:650;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.oui-sheet-head p{margin:4px 0 0;font-size:12.5px;line-height:1.45;color:var(--o-muted)}
+.oui-sheet-head .oui-chipnote{margin-top:3px}
+.oui-sheet-body{flex:1;min-height:0;padding:0 20px 20px}
+.oui-sheet-body .oui-glabel{margin-top:22px}
+.oui-sheet-body .oui-row{min-height:50px;padding:9px 14px}
+.oui-sheet-body .oui-block{padding:12px 14px 14px}
+
+/* Short windows: tighten before anything scrolls. */
+@media (max-height:760px){
+  .oui-page{--oui-gap:10px}
+  .oui-page-inner{padding-top:18px;padding-bottom:16px}
+}
+
+/* Narrow: one column, the page scrolls instead of the cards. */
+@media (max-width:860px){
+  .oui-page{overflow-y:auto}
+  .oui-page-inner{display:block;padding:20px 16px 40px}
+  .oui-page-inner>*+*{margin-top:14px}
+  .oui-page-head{flex-wrap:wrap}
+  .oui-page-head-copy{flex-basis:calc(100% - 60px)}
+  .oui-page-head p{white-space:normal}
+  .oui-sheet,.oui-sheet.is-wide{left:12px;width:auto}
+}

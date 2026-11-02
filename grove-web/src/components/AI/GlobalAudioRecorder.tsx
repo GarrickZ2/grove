@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAudioRecorder } from "../../hooks/useAudioRecorder";
 import { useStreamingTranscription } from "../../hooks/useStreamingTranscription";
 import { getAudioSettings, saveAudioGlobal, transcribeAudio } from "../../api";
-import { matchesShortcut, matchesPTTKey } from "./utils";
+import { formatTranscribeError, matchesShortcut, matchesPTTKey } from "./utils";
 import { RecordingIndicator } from "./RecordingIndicator";
 import type { AudioSettings } from "./types";
 import { useCommand, useContextKey, userKeymapStore, persistOverride } from "../../keyboard";
@@ -65,30 +65,6 @@ const PTT_ACTIVATION_DELAY_MIN_MS = 50;
 function pttActivationDelayMs(s: AudioSettings | null): number {
   const v = s?.pttActivationDelayMs ?? 500;
   return Math.max(PTT_ACTIVATION_DELAY_MIN_MS, v);
-}
-
-const STATUS_HINTS: Record<number, string> = {
-  400: "Bad request — check transcribe provider config",
-  401: "Unauthorized — check API key",
-  403: "Forbidden — provider rejected the request",
-  413: "Recording too large",
-  429: "Rate limited — slow down",
-  502: "Provider unreachable",
-  503: "Provider unavailable",
-};
-
-function formatTranscribeError(err: unknown): string {
-  if (!err || typeof err !== "object") return "Transcription failed";
-  const e = err as { status?: number; message?: string };
-  const parts: string[] = [];
-  if (typeof e.status === "number") {
-    const hint = STATUS_HINTS[e.status];
-    parts.push(hint ? `${e.status}: ${hint}` : `HTTP ${e.status}`);
-  }
-  if (e.message && e.message.trim()) {
-    parts.push(e.message.trim().slice(0, 120));
-  }
-  return parts.length > 0 ? parts.join(" — ") : "Transcription failed";
 }
 
 export type IndicatorStatus = "idle" | "warming" | "recording" | "processing" | "error";

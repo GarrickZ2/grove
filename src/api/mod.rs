@@ -521,6 +521,10 @@ pub fn create_api_router() -> Router {
                 .patch(handlers::projects::update_resource_link),
         )
         .route(
+            "/projects/{id}/agent-context",
+            get(handlers::projects::get_agent_context),
+        )
+        .route(
             "/projects/{id}/instructions",
             get(handlers::projects::get_instructions).put(handlers::projects::update_instructions),
         )

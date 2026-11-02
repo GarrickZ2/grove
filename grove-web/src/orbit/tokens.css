@@ -1,0 +1,55 @@
+/* Orbit design tokens. Scoped to `.orbit-ui` so Workbench never sees them;
+   every color derives from the active theme's --color-* variables. */
+.orbit-ui {
+  --o-bg: var(--color-bg);
+  --o-text: var(--color-text);
+  --o-muted: var(--color-text-muted);
+  --o-border: color-mix(in oklab, var(--color-border) 70%, transparent);
+  --o-border-strong: color-mix(in oklab, var(--color-text) 22%, var(--o-border));
+  --o-hover: color-mix(in oklab, var(--color-text) 4.5%, transparent);
+  --o-selected: color-mix(in oklab, var(--color-text) 7%, transparent);
+  --o-group: color-mix(in oklab, var(--color-bg) 98%, var(--color-text) 2%);
+  --o-track: color-mix(in oklab, var(--color-text) 15%, var(--color-bg));
+  --o-code: color-mix(in oklab, var(--color-text) 4%, var(--color-bg));
+  --o-frost: color-mix(in oklab, var(--color-bg) 76%, transparent);
+  --o-accent: var(--color-highlight);
+  --o-accent-soft: color-mix(in oklab, var(--color-highlight) 16%, transparent);
+  --o-success: var(--color-success);
+  --o-warn: var(--color-warning);
+  --o-error: var(--color-error);
+  --o-info: var(--color-info);
+  /* Primary buttons are ink: the text color as a fill. */
+  --o-ink: var(--color-text);
+  --o-on-ink: var(--color-bg);
+  --o-on-accent: #fff;
+
+  /* Elevation: group card, popover/dialog, selected. */
+  --o-shadow: rgb(0 0 0 / 7%);
+  --o-shadow-1: 0 1px 2px var(--o-shadow);
+  --o-shadow-2: 0 1px 2px var(--o-shadow), 0 16px 36px -14px rgb(0 0 0 / 22%);
+  --o-ring-selected: 0 0 0 3px var(--o-accent-soft);
+
+  --o-radius-xs: 6px;
+  --o-radius-sm: 7px;
+  --o-radius: 8px;
+  --o-radius-md: 10px;
+  --o-radius-lg: 12px;
+
+  --o-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Motion (Components board): selection slide, toggle, enter, pop, condense. */
+  --o-ease-slide: cubic-bezier(.3, 1.25, .45, 1);
+  --o-ease-toggle: cubic-bezier(.3, 1.5, .5, 1);
+  --o-ease-out: cubic-bezier(.25, 1, .5, 1);
+  --o-ease-pop: cubic-bezier(.3, 1.6, .5, 1);
+  --o-ease-draw: cubic-bezier(.65, 0, .35, 1);
+  --o-ease-reflow: cubic-bezier(.3, 1.2, .45, 1);
+  --o-dur-fast: 150ms;
+  --o-dur-slide: 440ms;
+  --o-dur-toggle: 360ms;
+  --o-dur-enter: 380ms;
+  --o-dur-pop: 520ms;
+  --o-dur-condense: 280ms;
+  --o-dur-reflow: 560ms;
+  --o-stagger: 40ms;
+}

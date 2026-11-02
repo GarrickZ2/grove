@@ -1,6 +1,4 @@
-import { isIosClient } from "../../utils/platform";
-import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -12,7 +10,6 @@ import {
   ChevronDown,
   Check,
   Copy,
-  Info,
   ExternalLink,
   RefreshCw,
   Palette,
@@ -23,67 +20,39 @@ import {
   Plus,
   Globe,
   X,
-  Volume2,
-  Bot,
+  Sparkle,
   Server,
   UserCog,
   Package,
-  Trash2,
-  Download,
-  Share2,
   ChevronRight,
-  Clock,
   MonitorSmartphone,
   Activity,
 } from "lucide-react";
-import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal, VSCodeIcon } from "../ui";
-import type { ComboboxOption } from "../ui";
-import { useTheme, useConfig, useBanner } from "../../context";
-import { type Theme } from "../../context/ThemeContext";
-import {
-  getConfig,
-  patchConfig,
-  checkAllDependencies,
-  listApplications,
-  listCustomAgents,
-  type AppInfo,
-  type CustomAgentServer,
-  type CustomAgentPersona,
-} from "../../api";
-import {
-  previewNotificationSound,
-  requestBrowserNotificationPermission,
-} from "../../notifications/desktopNotifier";
-import { listMarketplace, type MarketplaceAgent } from "../../api/marketplace";
-import type { BaseAgent } from "../Tasks/TaskView/useACPAvailability";
-import { LayoutEditor, type CustomLayoutConfig, type PaneType, type LayoutNode, createDefaultLayout, countPanes } from "./LayoutEditor";
+import { Button, AgentPicker, CustomAgentModal, VSCodeIcon } from "../ui";
+import { useTheme } from "../../context";
+import { LayoutEditor, type PaneType, type LayoutNode, countPanes } from "./LayoutEditor";
 import { CustomAgentsModal } from "./CustomAgentsModal";
 import { MarketplaceModal } from "./MarketplaceModal";
-import { CustomThemeDialog } from "./CustomThemeDialog";
-import { AppIconSettings } from "./AppIconSettings";
 import { InstallExtensionDialog } from "./InstallExtensionDialog";
 import { ShortcutSettingsPanel } from "./ShortcutSettingsPanel";
-import {
-  setCustomAgentPersonas as setCustomAgentPersonasIconRegistry,
-  loadCustomAgentPersonas as loadCustomAgentPersonasIcon,
-  setMarketplaceIcons,
-} from "../../utils/agentIcon";
-import { getExtensionStatusDetails, type ExtensionStatus } from "../../api/extension";
-import { formatShortcut } from "../AI/utils";
 import { useKeyboardScope } from "../../keyboard";
-import { loadChatHistoryPreferences, saveChatHistoryPreferences } from "../Tasks/TaskView/chatHistoryPreferences";
 import { LoginDevicesPanel } from "./LoginDevicesPanel";
 import { ResourceMonitor } from "./ResourceMonitor";
-
-// Keep the last successful snapshot across Settings navigation. Every mount
-// still refreshes it; background refreshes must not unmount an open picker.
-let lastAgentSnapshot: {
-  baseAgents: BaseAgent[];
-  customAgents: CustomAgentServer[];
-  terminalLaunchableIds: Set<string>;
-} | undefined;
-
-const MCP_CONNECTION = { name: "grove", type: "stdio", command: "grove", args: ["mcp"] };
+import { useSettingsState } from "./useSettingsState";
+import { ToggleSwitch } from "./SettingsControls";
+import { AppearanceSettings } from "./AppearanceSettings";
+import { GeneralSettings } from "./GeneralSettings";
+import { NotificationSettings } from "./NotificationSettings";
+import {
+  AUTOLINK_PRESETS,
+  CLAUDE_CODE_MCP_CONFIG,
+  CODEX_MCP_CONFIG,
+  MCP_CONNECTION,
+  dependencyInfo,
+  layoutPresets,
+  paneTypeColors,
+  paneTypeLabels,
+} from "./settingsConstants";
 
 interface SectionProps {
   id: string;
@@ -147,86 +116,75 @@ function Section({
   );
 }
 
-// Layout presets
-interface LayoutPreset {
-  id: string;
-  name: string;
-  description: string;
-  panes: string[];
-  layout?: "horizontal" | "left-right-split"; // for special layouts
-}
-
-const layoutPresets: LayoutPreset[] = [
-  { id: "single", name: "Single", description: "Shell only", panes: ["shell"] },
-  { id: "agent", name: "Agent", description: "Agent only", panes: ["agent"] },
-  { id: "agent-shell", name: "Agent + Shell", description: "60% + 40%", panes: ["agent", "shell"] },
-  { id: "agent-grove-shell", name: "3 Panes", description: "Left + Right split", panes: ["agent", "grove", "shell"], layout: "left-right-split" },
-  { id: "grove-agent", name: "Grove + Agent", description: "40% + 60%", panes: ["grove", "agent"] },
-  { id: "custom", name: "Custom", description: "Configure your own", panes: [] },
-];
-
-// Default custom layouts - create once and reuse
-const defaultCustomLayouts: CustomLayoutConfig[] = [createDefaultLayout()];
-
-// Map pane type to display info
-const paneTypeColors: Record<PaneType | string, { bg: string; text: string }> = {
-  agent: { bg: "var(--color-highlight)", text: "var(--color-highlight)" },
-  grove: { bg: "var(--color-info)", text: "var(--color-info)" },
-  "file-picker": { bg: "var(--color-accent)", text: "var(--color-accent)" },
-  shell: { bg: "var(--color-text-muted)", text: "var(--color-text-muted)" },
-  custom: { bg: "var(--color-warning)", text: "var(--color-warning)" },
-};
-
-const paneTypeLabels: Record<PaneType, string> = {
-  agent: "Agent",
-  grove: "Grove",
-  "file-picker": "FP",
-  shell: "Shell",
-  custom: "Cmd",
-};
-
-// Note: Agent options are imported from AgentPicker
-// IDE and Terminal options are imported from AppPicker
-
-// Sound options for hooks (macOS system sounds)
-const soundOptions: ComboboxOption[] = [
-  { id: "none", label: "NONE", value: "none" },
-  { id: "Basso", label: "Basso", value: "Basso" },
-  { id: "Blow", label: "Blow", value: "Blow" },
-  { id: "Bottle", label: "Bottle", value: "Bottle" },
-  { id: "Frog", label: "Frog", value: "Frog" },
-  { id: "Funk", label: "Funk", value: "Funk" },
-  { id: "Glass", label: "Glass", value: "Glass" },
-  { id: "Hero", label: "Hero", value: "Hero" },
-  { id: "Morse", label: "Morse", value: "Morse" },
-  { id: "Ping", label: "Ping", value: "Ping" },
-  { id: "Pop", label: "Pop", value: "Pop" },
-  { id: "Purr", label: "Purr", value: "Purr" },
-  { id: "Sosumi", label: "Sosumi", value: "Sosumi" },
-  { id: "Submarine", label: "Submarine", value: "Submarine" },
-  { id: "Tink", label: "Tink", value: "Tink" },
-];
-
-// Dependency display info
-const dependencyInfo: Record<string, { name: string; description: string; docsUrl?: string }> = {
-  git: { name: "Git", description: "Version control system", docsUrl: "https://git-scm.com/doc" },
-  tmux: { name: "tmux", description: "Terminal multiplexer", docsUrl: "https://github.com/tmux/tmux/wiki" },
-  zellij: { name: "Zellij", description: "Terminal multiplexer", docsUrl: "https://zellij.dev/documentation/" },
-  fzf: { name: "fzf", description: "Fuzzy finder for file picker", docsUrl: "https://github.com/junegunn/fzf" },
-};
-
-type DependencyStatusType = "checking" | "installed" | "not_installed" | "error";
-
-interface DependencyState {
-  status: DependencyStatusType;
-  version?: string;
-  installCommand: string;
-}
-
 export function SettingsPage() {
-  const catalogRevision = useAgentCatalogRevision();
-  const { theme, mode, lightThemeId, darkThemeId, customThemes, themes, setAppearance } = useTheme();
-  const { config: currentGlobalConfig, updateAvailability, refresh: refreshGlobalConfig } = useConfig();
+  const { theme, mode } = useTheme();
+  const settings = useSettingsState();
+  const {
+    depStates,
+    isChecking,
+    checkDependencies,
+    acpAgent,
+    setAcpAgent,
+    agentCommand,
+    setAgentCommand,
+    customAgents,
+    saveCustomAgentServers,
+    customAgentPersonas,
+    customAgentPersonasLoading,
+    updateCustomAgentPersonas,
+    baseAgentsLoading,
+    loadBaseAgents,
+    chatAgentOptions,
+    terminalAgentOptions,
+    isChatAvailable,
+    chatHistoryRecentTurns,
+    setChatHistoryRecentTurns,
+    chatHistoryRecentTurnsDraft,
+    setChatHistoryRecentTurnsDraft,
+    chatHistoryIncludeMedia,
+    setChatHistoryIncludeMedia,
+    chatHistoryIncludeToolDetails,
+    setChatHistoryIncludeToolDetails,
+    chatRenderWindowLimit,
+    chatRenderWindowLimitDraft,
+    setChatRenderWindowLimitDraft,
+    chatRenderWindowTriggerDraft,
+    setChatRenderWindowTriggerDraft,
+    commitChatRenderWindowLimit,
+    commitChatRenderWindowTrigger,
+    setChatRenderWindowMode,
+    webTerminalMode,
+    setWebTerminalMode,
+    terminalMultiplexer,
+    setTerminalMultiplexer,
+    hasMultiplexer,
+    isTerminalAvailable,
+    selectedLayout,
+    setSelectedLayout,
+    customLayouts,
+    updateCustomLayouts,
+    selectedCustomLayoutId,
+    setSelectedCustomLayoutId,
+    autoLinkPatterns,
+    setAutoLinkPatterns,
+    indexingEnabled,
+    setIndexingEnabled,
+    indexingDisabledLangs,
+    setIndexingDisabledLangs,
+    indexingSupportedLangs,
+    browserControlEnabled,
+    setBrowserControlEnabled,
+    browserControlAutoGroups,
+    setBrowserControlAutoGroups,
+    extensionStatus,
+    extensionConnected,
+    extensionCurrent,
+    extensionNeedsUpdate,
+    extensionStatusLabel,
+    extensionStatusColor,
+    copiedField,
+    handleCopy,
+  } = settings;
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     terminal: false,
     chat: false,
@@ -241,151 +199,16 @@ export function SettingsPage() {
     shortcuts: false,
     resources: false,
   });
-
-  // Environment state
-  const [depStates, setDepStates] = useState<Record<string, DependencyState>>({});
-  const [isChecking, setIsChecking] = useState(false);
-
-  // Config state (from API)
-  const [isLoaded, setIsLoaded] = useState(false); // Prevent auto-save during initial load
-
-  // Local state for Development Tools
-  const [agentCommand, setAgentCommand] = useState((currentGlobalConfig?.layout.agent_command ?? ""));
-  const [ideCommand, setIdeCommand] = useState("");
-  const [terminalCommand, setTerminalCommand] = useState("");
-  const [applications, setApplications] = useState<AppInfo[]>([]);
-  const [isLoadingApps, setIsLoadingApps] = useState(false);
-  // null = unknown until listApplications() resolves — prevents the IDE/Terminal
-  // pickers from briefly rendering on Windows/Linux during initial load.
-  const [serverPlatform, setServerPlatform] = useState<string | null>(null);
-
-  // ACP / Custom agents state
-  const [acpAgent, setAcpAgent] = useState(""); // Chat mode agent — populated from config.acp.agent_command after load
-  const [customAgents, setCustomAgents] = useState<CustomAgentServer[]>(() => lastAgentSnapshot?.customAgents ?? []);
   const [showCustomAgentModal, setShowCustomAgentModal] = useState(false);
   const [showCustomAgentsModal, setShowCustomAgentsModal] = useState(false);
   const [showMarketplaceModal, setShowMarketplaceModal] = useState(false);
-  const [customAgentPersonas, setCustomAgentPersonas] = useState<CustomAgentPersona[]>([]);
-  const [customAgentPersonasLoading, setCustomAgentPersonasLoading] = useState(false);
-  const [baseAgents, setBaseAgents] = useState<BaseAgent[]>(() => lastAgentSnapshot?.baseAgents ?? []);
-  const [baseAgentsLoading, setBaseAgentsLoading] = useState(() => !lastAgentSnapshot);
-  const [chatRenderWindowLimit, setChatRenderWindowLimit] = useState(0);
-  const [chatRenderWindowTrigger, setChatRenderWindowTrigger] = useState(1500);
-  const [chatRenderWindowLimitDraft, setChatRenderWindowLimitDraft] = useState("0");
-  const [chatRenderWindowTriggerDraft, setChatRenderWindowTriggerDraft] = useState("1500");
-  const [chatHistoryRecentTurns, setChatHistoryRecentTurns] = useState(0);
-  const [chatHistoryRecentTurnsDraft, setChatHistoryRecentTurnsDraft] = useState("0");
-  const [chatHistoryIncludeMedia, setChatHistoryIncludeMedia] = useState(true);
-  const [chatHistoryIncludeToolDetails, setChatHistoryIncludeToolDetails] = useState(true);
-  // Agent command availability: command name → exists on PATH
-  const [commandAvailability, setCommandAvailability] = useState<Record<string, boolean>>((): Record<string, boolean> => lastAgentSnapshot ? { __marketplace_loaded__: true } : {});
-
-  // Mode state
-  const [terminalMultiplexer, setTerminalMultiplexer] = useState("tmux");
-  // Web terminal backend: "multiplexer" (default) | "direct"
-  const [webTerminalMode, setWebTerminalMode] = useState("multiplexer");
-  const [workspaceLayout, setWorkspaceLayout] = useState<"flex" | "ide">("flex");
-  const [showHideWindowShortcut, setShowHideWindowShortcut] = useState("");
-  const [isRecordingWindowShortcut, setIsRecordingWindowShortcut] = useState(false);
-
-  const lastTerminalMuxRef = useRef<string>("tmux");
-
-  // Layout state
-  const [selectedLayout, setSelectedLayout] = useState((currentGlobalConfig?.layout.default ?? ""));
-  const [customLayouts, setCustomLayouts] = useState<CustomLayoutConfig[]>(defaultCustomLayouts);
-  const [selectedCustomLayoutId, setSelectedCustomLayoutId] = useState<string | null>(defaultCustomLayouts[0]?.id || null);
-  const [customLayoutsLoaded, setCustomLayoutsLoaded] = useState(false); // Track if custom layouts were loaded from API
   const [isLayoutEditorOpen, setIsLayoutEditorOpen] = useState(false);
-  const [isCustomThemeDialogOpen, setIsCustomThemeDialogOpen] = useState(false);
-  const [isDraggingTheme, setIsDraggingTheme] = useState(false);
+  const [installDialogOpen, setInstallDialogOpen] = useState(false);
 
-  const { showBanner } = useBanner();
-
-  const [hooksResponseSoundEnabled, setHooksResponseSoundEnabled] = useState(true);
-  const [hooksResponseSound, setHooksResponseSound] = useState("Glass");
-  const [hooksPermissionSoundEnabled, setHooksPermissionSoundEnabled] = useState(true);
-  const [hooksPermissionSound, setHooksPermissionSound] = useState("Purr");
-
-  // Notifications (menubar tray + system notifications)
-  const [trayEnabled, setTrayEnabled] = useState(true);
-  const [trayShowPermission, setTrayShowPermission] = useState(true);
-  const [trayShowDone, setTrayShowDone] = useState(true);
-  const [trayShowRunning, setTrayShowRunning] = useState(true);
-  const [menubarShortcut, setMenubarShortcut] = useState("");
-  const [isRecordingMenubarShortcut, setIsRecordingMenubarShortcut] = useState(false);
-  const [systemNotifEnabled, setSystemNotifEnabled] = useState(false);
-  const [systemNotifShowPermission, setSystemNotifShowPermission] = useState(true);
-  const [systemNotifShowElicitation, setSystemNotifShowElicitation] = useState(true);
-  const [systemNotifShowDone, setSystemNotifShowDone] = useState(true);
-  const [systemNotifShowRunning, setSystemNotifShowRunning] = useState(false);
-
-  // Tray "Done" chat retention. Two-mode UI: `forever` keeps everything
-  // until the user dismisses; `expire` auto-prunes done chats after N
-  // hours/days. Wire shape matches the Rust enum (externally tagged):
-  //   forever → { "forever": null }
-  //   expire  → { "expire": { "value": <u32>, "unit": "hours" | "days" } }
-  const [trayDoneRetentionMode, setTrayDoneRetentionMode] = useState<"forever" | "expire">("expire");
-  const [trayDoneRetentionValue, setTrayDoneRetentionValue] = useState<number>(3);
-  const [trayDoneRetentionUnit, setTrayDoneRetentionUnit] = useState<"hours" | "days">("days");
-
-  // MCP state
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-
-  // AutoLink state
-  const [autoLinkPatterns, setAutoLinkPatterns] = useState<string[]>([]);
-
-  // Symbol indexing state (cmd+click navigation)
-  const [indexingEnabled, setIndexingEnabled] = useState(true);
-  const [indexingDisabledLangs, setIndexingDisabledLangs] = useState<string[]>([]);
-  const [indexingSupportedLangs, setIndexingSupportedLangs] = useState<
-    { id: string; display_name: string; extensions: string[] }[]
-  >([]);
   const [indexingLangPickerOpen, setIndexingLangPickerOpen] = useState(false);
   const indexingAddBtnRef = useRef<HTMLButtonElement>(null);
   const indexingPickerRef = useRef<HTMLDivElement>(null);
   const [indexingPickerPos, setIndexingPickerPos] = useState<{ top: number; left: number } | null>(null);
-
-  // Browser Control state
-  const [browserControlEnabled, setBrowserControlEnabled] = useState(true);
-  const [browserControlAutoGroups, setBrowserControlAutoGroups] = useState(true);
-  // Status polling is deliberately limited to the cheap in-process status
-  // endpoint. It never queries Chrome tabs, and lets update/reload state change
-  // while the installation dialog is open.
-  const [extensionStatus, setExtensionStatus] = useState<ExtensionStatus | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => {
-      getExtensionStatusDetails()
-        .then((status) => { if (!cancelled) setExtensionStatus(status); })
-        .catch(() => { if (!cancelled) setExtensionStatus(null); });
-    };
-    refresh();
-    const timer = window.setInterval(refresh, 2000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, []);
-  const extensionConnected = extensionStatus?.connected ?? false;
-  const extensionCurrent = extensionStatus?.compatible && !extensionStatus.updateAvailable;
-  const extensionNeedsUpdate = extensionStatus?.updateRequired || extensionStatus?.updateAvailable;
-  const extensionStatusLabel = !extensionConnected
-    ? "Disconnected"
-    : extensionStatus?.handshakeStatus === "pending"
-      ? "Checking…"
-      : extensionStatus?.updateRequired
-        ? "Update required"
-        : extensionStatus?.updateAvailable
-          ? "Update available"
-          : extensionStatus?.compatible
-            ? "Connected"
-            : "Incompatible";
-  const extensionStatusColor = extensionCurrent
-    ? "success"
-    : extensionConnected
-      ? "warning"
-      : "error";
-  const [installDialogOpen, setInstallDialogOpen] = useState(false);
 
   // Anchor the language picker to the trigger button. Wrapped in
   // useCallback so the effect can call it without doing setState
@@ -433,985 +256,6 @@ export function SettingsPage() {
   // catalog's `settings.close` (Escape) fires only inside the page.
   useKeyboardScope("settings", true);
 
-  const handleCopy = (field: string, value: string) => {
-    navigator.clipboard.writeText(value);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
-  };
-
-  // Helper: apply config to all state — defined first so loadConfig can list it
-  // as a dependency. Kept outside try/catch so optional chaining and ternaries
-  // don't bail out the React Compiler.
-  const applyLoadedConfig = useCallback((cfg: Awaited<ReturnType<typeof getConfig>>) => {
-    const agentCmd = cfg.layout.agent_command || (currentGlobalConfig?.layout.agent_command ?? "");
-    setAgentCommand(agentCmd);
-    setIdeCommand(cfg.web.ide || "");
-    setTerminalCommand(cfg.web.terminal || "");
-    setSelectedLayout(cfg.layout.default);
-
-    const mux = cfg.terminal_multiplexer || "tmux";
-    setTerminalMultiplexer(mux);
-    lastTerminalMuxRef.current = mux;
-    setWebTerminalMode(cfg.web.terminal_mode || "multiplexer");
-    setWorkspaceLayout(cfg.web.workspace_layout || "ide");
-    setShowHideWindowShortcut(cfg.web.show_hide_window_shortcut || "");
-
-    // NOTE: theme/customThemes loading is owned by ThemeContext (it fetches
-    // /api/v1/config on mount + focus). Calling setAppearance here would echo
-    // the values back through patchConfig and trigger a redundant Radio
-    // ThemeChanged broadcast on every Settings-page mount.
-
-    // Load custom layouts
-    if (cfg.layout.custom_layouts) {
-      let parsed: unknown = null;
-      let parseFailed = false;
-      try {
-        parsed = JSON.parse(cfg.layout.custom_layouts);
-      } catch {
-        parseFailed = true;
-      }
-      if (parseFailed) {
-        console.error("Failed to parse custom layouts");
-      } else if (Array.isArray(parsed) && parsed.length > 0) {
-        // Check if it's an array (Web format) vs object (TUI format)
-        const layouts = parsed as CustomLayoutConfig[];
-        setCustomLayouts(layouts);
-        setCustomLayoutsLoaded(true); // Mark as loaded from Web format
-        // Use saved selected_custom_id or fallback to first layout
-        const savedId = cfg.layout.selected_custom_id;
-        if (savedId && layouts.some(l => l.id === savedId)) {
-          setSelectedCustomLayoutId(savedId);
-        } else {
-          setSelectedCustomLayoutId(layouts[0].id);
-        }
-      }
-      // If it's TUI format (object), keep the default customLayouts
-      // customLayoutsLoaded stays false, so we won't overwrite TUI data
-    } else {
-      // No existing custom layouts, mark as loaded so we can save new ones
-      setCustomLayoutsLoaded(true);
-    }
-
-    // Load AutoLink config
-    setAutoLinkPatterns(cfg.auto_link.patterns);
-
-    // Load ACP config
-    const acp = cfg.acp;
-    if (acp?.agent_command) {
-      setAcpAgent(acp.agent_command);
-    }
-    if (acp?.custom_agents) {
-      setCustomAgents(acp.custom_agents);
-    }
-    const preferences = loadChatHistoryPreferences(acp);
-    const renderWindowLimit = preferences.renderWindowLimit;
-    const renderWindowTrigger = preferences.renderWindowTrigger;
-    setChatRenderWindowLimit(renderWindowLimit);
-    setChatRenderWindowTrigger(renderWindowTrigger);
-    setChatRenderWindowLimitDraft(String(renderWindowLimit));
-    setChatRenderWindowTriggerDraft(String(renderWindowTrigger));
-    setChatHistoryRecentTurns(preferences.recentTurns);
-    setChatHistoryRecentTurnsDraft(String(preferences.recentTurns));
-    setChatHistoryIncludeMedia(preferences.includeMedia);
-    setChatHistoryIncludeToolDetails(preferences.includeToolDetails);
-
-    if (cfg.hooks) {
-      setHooksResponseSoundEnabled(cfg.hooks.response_sound_enabled);
-      setHooksResponseSound(cfg.hooks.response_sound || "Glass");
-      setHooksPermissionSoundEnabled(cfg.hooks.permission_sound_enabled);
-      setHooksPermissionSound(cfg.hooks.permission_sound || "Purr");
-    }
-
-    if (cfg.notifications) {
-      setTrayEnabled(cfg.notifications.tray_enabled);
-      setTrayShowPermission(cfg.notifications.tray_show_permission);
-      setTrayShowDone(cfg.notifications.tray_show_done);
-      setTrayShowRunning(cfg.notifications.tray_show_running);
-      setMenubarShortcut(cfg.notifications.menubar_shortcut || "");
-      setSystemNotifEnabled(cfg.notifications.notification_enabled);
-      setSystemNotifShowPermission(cfg.notifications.notification_show_permission);
-      setSystemNotifShowElicitation(cfg.notifications.notification_show_elicitation ?? true);
-      setSystemNotifShowDone(cfg.notifications.notification_show_done);
-      setSystemNotifShowRunning(cfg.notifications.notification_show_running);
-      const ret = cfg.notifications.tray_done_retention;
-      if (ret && "forever" in ret) {
-        setTrayDoneRetentionMode("forever");
-      } else if (ret && "expire" in ret && ret.expire) {
-        setTrayDoneRetentionMode("expire");
-        setTrayDoneRetentionValue(Math.max(1, Math.floor(ret.expire.value ?? 3)));
-        setTrayDoneRetentionUnit(ret.expire.unit === "hours" ? "hours" : "days");
-      }
-    }
-
-    if (cfg.indexing) {
-      setIndexingEnabled(cfg.indexing.enabled);
-      setIndexingDisabledLangs(cfg.indexing.disabled_languages ?? []);
-      setIndexingSupportedLangs(cfg.indexing.supported_languages ?? []);
-    }
-
-    if (cfg.browser_control) {
-      setBrowserControlEnabled(cfg.browser_control.enabled ?? true);
-      setBrowserControlAutoGroups(cfg.browser_control.auto_groups ?? true);
-    }
-
-    setIsLoaded(true);
-  }, [currentGlobalConfig?.layout.agent_command]);
-
-  // Load config from API
-  const loadConfig = useCallback(async () => {
-    let cfg: Awaited<ReturnType<typeof getConfig>> | null = null;
-    try {
-      cfg = await getConfig();
-    } catch {
-      cfg = null;
-    }
-    if (!cfg) {
-      // API not available, use props config
-      console.warn("Config API not available, using local config");
-      setIsLoaded(true);
-      return;
-    }
-    applyLoadedConfig(cfg);
-  }, [applyLoadedConfig]);
-
-  // Check dependencies via API
-  const checkDependencies = useCallback(async () => {
-    setIsChecking(true);
-
-    // Set all to checking
-    setDepStates((prev) => {
-      const newStates: Record<string, DependencyState> = {};
-      for (const key of Object.keys(prev)) {
-        newStates[key] = { ...prev[key], status: "checking" };
-      }
-      // Also add expected deps if not present
-      for (const name of ["git", "tmux", "zellij", "fzf"]) {
-        if (!newStates[name]) {
-          newStates[name] = { status: "checking", installCommand: "" };
-        }
-      }
-      return newStates;
-    });
-
-    let response: Awaited<ReturnType<typeof checkAllDependencies>> | null = null;
-    let failed = false;
-    try {
-      response = await checkAllDependencies();
-    } catch {
-      failed = true;
-    }
-    if (failed || !response) {
-      // API not available, show error state
-      setDepStates((prev) => {
-        const newStates: Record<string, DependencyState> = {};
-        for (const key of Object.keys(prev)) {
-          newStates[key] = { ...prev[key], status: "error" };
-        }
-        return newStates;
-      });
-    } else {
-      const newStates: Record<string, DependencyState> = {};
-      for (const dep of response.dependencies) {
-        const status: "installed" | "not_installed" = dep.installed ? "installed" : "not_installed";
-        const version = dep.version ? dep.version : undefined;
-        newStates[dep.name] = {
-          status,
-          version,
-          installCommand: dep.install_command,
-        };
-      }
-      setDepStates(newStates);
-    }
-    setIsChecking(false);
-  }, []);
-
-  // Terminal-capable installed agent ids (canonical form). Populated from
-  // marketplace data; replaces the old PATH-probe via `checkCommands`.
-  const [terminalLaunchableIds, setTerminalLaunchableIds] = useState<Set<string>>(
-    () => lastAgentSnapshot?.terminalLaunchableIds ?? new Set(),
-  );
-
-  const loadBaseAgents = useCallback(async () => {
-    try {
-      const [resp, cfg] = await Promise.all([listMarketplace(), getConfig()]);
-      setCustomAgents(cfg.acp?.custom_agents ?? []);
-      setMarketplaceIcons(
-        resp.agents.map((a) => ({ id: a.id, icon_url: a.icon_url })),
-      );
-      const launchable = resp.agents.filter(
-        (a: MarketplaceAgent) =>
-          (a.install_state === "grove-installed" ||
-            a.install_state === "auto-detected") &&
-          !(a.installed?.hidden ?? false),
-      );
-      const snapshot = {
-        baseAgents: launchable.map((a) => ({
-          id: a.id,
-          display_name: a.name,
-          icon_id: a.id,
-          icon_url: a.icon_url,
-          available: true,
-        })),
-        customAgents: cfg.acp?.custom_agents ?? [],
-        terminalLaunchableIds: new Set(
-          launchable
-            .filter((a) => a.supports_terminal_launch)
-            .map((a) => a.id),
-        ),
-      };
-      lastAgentSnapshot = snapshot;
-      setBaseAgents(snapshot.baseAgents);
-      setTerminalLaunchableIds(snapshot.terminalLaunchableIds);
-      // Trigger downstream `hasAvailability` gating that watches a non-empty
-      // commandAvailability map. Marker entry stands in for the old probe map.
-      setCommandAvailability({ __marketplace_loaded__: true });
-    } catch (error) {
-      // A transient refresh failure must not erase the last usable catalog.
-      console.error("Failed to refresh Settings agents:", error);
-      setCommandAvailability({ __marketplace_loaded__: true });
-    } finally {
-      setBaseAgentsLoading(false);
-    }
-  }, []);
-
-  // Save config to API (called automatically)
-  // Note: themeId parameter allows immediate save with new theme value
-  const saveConfig = useCallback(async () => {
-    if (!isLoaded) return; // Don't save during initial load
-
-    const layoutAgentCommand = agentCommand ? agentCommand : undefined;
-    const layoutExtras = customLayoutsLoaded
-      ? {
-          custom_layouts: JSON.stringify(customLayouts),
-          selected_custom_id: selectedCustomLayoutId ? selectedCustomLayoutId : undefined,
-        }
-      : {};
-    const webIde = ideCommand ? ideCommand : undefined;
-    const webTerminal = terminalCommand ? terminalCommand : undefined;
-    const acpAgentCommand = acpAgent ? acpAgent : undefined;
-    const patch = {
-      layout: {
-        default: selectedLayout,
-        // 仅当 Terminal 启用时保存 agent_command
-        agent_command: layoutAgentCommand,
-        // Only save custom layouts if they were loaded/created in Web format
-        // This prevents overwriting TUI's custom layout format
-        ...layoutExtras,
-      },
-      web: {
-        ide: webIde,
-        terminal: webTerminal,
-        terminal_mode: webTerminalMode,
-        workspace_layout: workspaceLayout,
-        show_hide_window_shortcut: showHideWindowShortcut,
-      },
-      terminal_multiplexer: terminalMultiplexer,
-      acp: {
-        agent_command: acpAgentCommand,
-      },
-      auto_link: {
-        patterns: autoLinkPatterns,
-      },
-      hooks: {
-        response_sound_enabled: hooksResponseSoundEnabled,
-        response_sound: hooksResponseSound,
-        permission_sound_enabled: hooksPermissionSoundEnabled,
-        permission_sound: hooksPermissionSound,
-      },
-      notifications: {
-        tray_enabled: trayEnabled,
-        tray_show_permission: trayShowPermission,
-        tray_show_done: trayShowDone,
-        tray_show_running: trayShowRunning,
-        notification_enabled: systemNotifEnabled,
-        notification_show_permission: systemNotifShowPermission,
-        notification_show_elicitation: systemNotifShowElicitation,
-        notification_show_done: systemNotifShowDone,
-        notification_show_running: systemNotifShowRunning,
-        menubar_shortcut: menubarShortcut,
-        tray_done_retention:
-          trayDoneRetentionMode === "forever"
-            ? { forever: null }
-            : { expire: { value: Math.max(1, Math.floor(trayDoneRetentionValue)), unit: trayDoneRetentionUnit } },
-      },
-      indexing: {
-        enabled: indexingEnabled,
-        disabled_languages: indexingDisabledLangs,
-      },
-      browser_control: {
-        enabled: browserControlEnabled,
-        auto_groups: browserControlAutoGroups,
-      },
-    };
-    try {
-      await patchConfig(patch);
-      // Refresh the global config cache so other pages see the changes immediately
-      await refreshGlobalConfig();
-    } catch {
-      console.error("Failed to save config");
-    }
-  }, [isLoaded, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, trayDoneRetentionMode, trayDoneRetentionUnit, trayDoneRetentionValue, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, refreshGlobalConfig]);
-
-  // Handle theme change with immediate save
-  const handleModeChange = useCallback((newMode: "auto" | "light" | "dark") => {
-    setAppearance({ mode: newMode });
-  }, [setAppearance]);
-
-  const handleLightThemeChange = useCallback((id: string) => {
-    setAppearance({ lightThemeId: id });
-  }, [setAppearance]);
-
-  const handleDarkThemeChange = useCallback((id: string) => {
-    setAppearance({ darkThemeId: id });
-  }, [setAppearance]);
-
-  const handleSaveCustomTheme = useCallback((newTheme: Theme) => {
-    setAppearance({ customThemes: [...customThemes, newTheme] });
-  }, [customThemes, setAppearance]);
-
-  const processThemeData = useCallback((text: string) => {
-    try {
-      const parsed = JSON.parse(text);
-      if (!parsed || typeof parsed !== 'object') throw new Error("Theme file is not a JSON object.");
-      if (!parsed.name || typeof parsed.name !== 'string') throw new Error("Missing 'name'.");
-      if (typeof parsed.isLight !== 'boolean') throw new Error("Missing 'isLight' boolean.");
-      const c = parsed.colors;
-      if (!c || typeof c !== 'object' || Array.isArray(c)) throw new Error("Missing 'colors' object.");
-      // Validate the 12 required color tokens are present and look like CSS colors.
-      // Anything that slips through here propagates to style.setProperty("--color-X", undefined)
-      // which silently sets the var to the string "undefined" and breaks the UI.
-      const requiredColors: (keyof Theme["colors"])[] = [
-        "bg", "bgSecondary", "bgTertiary", "border", "text", "textMuted",
-        "highlight", "accent", "success", "warning", "error", "info",
-      ];
-      // Browser CSS.supports parses the value the same way it'd parse it in a
-      // stylesheet — rejects "rgb(/*x*/)" and friends that the previous loose
-      // regex accepted. Also reject var(...) refs: those are accepted by
-      // CSS.supports but, when assigned to a --color-X var, create a self-
-      // referential cycle that silently breaks the palette.
-      const isValidColor = (v: string): boolean => {
-        // Reject var() anywhere (also blocks `/* */ var(--x)` since regex
-        // doesn't anchor to start). var() references would silently create
-        // a self-referential cycle when assigned to --color-X.
-        if (/var\s*\(/i.test(v)) return false;
-        // Reject CSS-wide keywords that CSS.supports accepts but are
-        // meaningless / fragile as concrete color values for our palette.
-        if (/^(inherit|currentcolor|transparent|initial|unset|revert|revert-layer)$/i.test(v)) return false;
-        if (typeof CSS !== 'undefined' && typeof CSS.supports === 'function') {
-          return CSS.supports("color", v);
-        }
-        return /^(#[0-9a-f]{3,8}|rgb[a]?\([\d\s,./%]+\)|hsl[a]?\([\d\s,./%deg]+\)|oklch\([\d\s,./%]+\)|[a-z]+)$/i.test(v);
-      };
-      for (const key of requiredColors) {
-        const v = (c as Record<string, unknown>)[key];
-        if (typeof v !== 'string' || !isValidColor(v.trim())) {
-          throw new Error(`Invalid color value for '${key}'.`);
-        }
-      }
-      // accentPalette is consumed via spread into newTheme; if user supplies
-      // a non-array or non-string entries, downstream consumers (getProjectStyle
-      // etc.) silently default away. Validate before propagating.
-      if (parsed.accentPalette !== undefined) {
-        if (!Array.isArray(parsed.accentPalette) || parsed.accentPalette.length === 0) {
-          throw new Error("'accentPalette' must be a non-empty array.");
-        }
-        for (const entry of parsed.accentPalette) {
-          if (typeof entry !== 'string' || !isValidColor(entry.trim())) {
-            throw new Error("'accentPalette' contains an invalid color.");
-          }
-        }
-      }
-      const newTheme: Theme = {
-        ...parsed,
-        id: (typeof crypto !== "undefined" && "randomUUID" in crypto)
-          ? `custom-${crypto.randomUUID()}`
-          : `custom-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        isCustom: true
-      };
-      setAppearance({ customThemes: [...customThemes, newTheme] });
-      showBanner(`Theme "${newTheme.name}" imported successfully!`, "success");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      showBanner(`Import failed: ${message}`, "error");
-    }
-  }, [customThemes, setAppearance, showBanner]);
-
-  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    // Reset the input's value so picking the same file twice (e.g. after a
-    // parse error → user edits file externally → re-tries) fires onChange again.
-    const inputEl = e.target;
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (re) => {
-        const text = re.target?.result as string;
-        processThemeData(text);
-        inputEl.value = "";
-      };
-      reader.onerror = () => { inputEl.value = ""; };
-      reader.readAsText(file);
-    } else {
-      inputEl.value = "";
-    }
-  };
-
-  const handleExportTheme = useCallback((themeToExport: Theme) => {
-    const { id: _id, isCustom: _isCustom, ...rest } = themeToExport;
-    void _id;
-    void _isCustom;
-    const json = JSON.stringify(rest, null, 2);
-    
-    try {
-      const blob = new Blob([json], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${themeToExport.name.replace(/\s+/g, "_").toLowerCase()}.grovetheme`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      showBanner(`Theme "${themeToExport.name}" exported to file!`, "success");
-    } catch (err) {
-      showBanner(`Download failed: ${err}`, "error");
-    }
-  }, [showBanner]);
-
-  // These preferences belong to this browser, never to the shared Grove server.
-  useEffect(() => {
-    if (!isLoaded) return;
-    saveChatHistoryPreferences({
-      recentTurns: chatHistoryRecentTurns,
-      includeMedia: chatHistoryIncludeMedia,
-      includeToolDetails: chatHistoryIncludeToolDetails,
-      renderWindowLimit: chatRenderWindowLimit,
-      renderWindowTrigger: chatRenderWindowTrigger,
-    });
-  }, [isLoaded, chatHistoryRecentTurns, chatHistoryIncludeMedia, chatHistoryIncludeToolDetails, chatRenderWindowLimit, chatRenderWindowTrigger]);
-
-  // Auto-save when any server config value changes (debounced)
-  useEffect(() => {
-    if (!isLoaded) return;
-
-    const timer = setTimeout(() => {
-      saveConfig();
-    }, 500); // 500ms debounce
-
-    return () => clearTimeout(timer);
-  }, [selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, isLoaded, saveConfig]);
-
-  useEffect(() => {
-    if (!isRecordingWindowShortcut) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-
-      if (event.key === "Escape") {
-        setIsRecordingWindowShortcut(false);
-        return;
-      }
-
-      const shortcut = formatShortcut(event);
-      if (!shortcut) return;
-      setShowHideWindowShortcut(shortcut);
-      setIsRecordingWindowShortcut(false);
-    };
-
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [isRecordingWindowShortcut]);
-
-  useEffect(() => {
-    if (!isRecordingMenubarShortcut) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-
-      if (event.key === "Escape") {
-        setIsRecordingMenubarShortcut(false);
-        return;
-      }
-
-      const shortcut = formatShortcut(event);
-      if (!shortcut) return;
-      setMenubarShortcut(shortcut);
-      setIsRecordingMenubarShortcut(false);
-    };
-
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [isRecordingMenubarShortcut]);
-
-  // Load applications list
-  const loadApplications = useCallback(async () => {
-    setIsLoadingApps(true);
-    try {
-      const { apps, platform } = await listApplications();
-      setApplications(apps);
-      setServerPlatform(platform);
-    } catch {
-      console.error("Failed to load applications");
-    }
-    setIsLoadingApps(false);
-  }, []);
-
-  const loadCustomAgentPersonas = useCallback(async () => {
-    setCustomAgentPersonasLoading(true);
-    try {
-      // Centralized loader — collapses concurrent fetches and ensures the
-      // most-recent result is the only one written into the icon registry.
-      const list = await loadCustomAgentPersonasIcon(() => listCustomAgents());
-      setCustomAgentPersonas(list);
-    } catch (err) {
-      console.error("Failed to load custom agents:", err);
-    }
-    setCustomAgentPersonasLoading(false);
-  }, []);
-
-  // Initial load
-  useEffect(() => {
-    void (async () => {
-      await Promise.all([
-        loadConfig(),
-        checkDependencies(),
-        loadApplications(),
-      ]);
-    })();
-  }, [loadConfig, checkDependencies, loadApplications]);
-
-  useEffect(() => {
-    void Promise.resolve().then(() => {
-      void loadBaseAgents();
-      void loadCustomAgentPersonas();
-    });
-  }, [loadBaseAgents, loadCustomAgentPersonas, catalogRevision]);
-
-  // Terminal availability
-  const tmuxInstalled = depStates["tmux"]?.status === "installed";
-  const zellijInstalled = depStates["zellij"]?.status === "installed";
-  const hasMultiplexer = tmuxInstalled || zellijInstalled;
-  const canUseTerminal = webTerminalMode === "direct" || hasMultiplexer;
-
-  // (enable states are auto-synced from dependency availability below)
-
-  // Auto-correct on first load:
-  // 1. If multiplexer mode but no multiplexer installed → fallback to direct
-  // 2. If selected multiplexer not installed but other is → switch
-  //
-  // Uses the documented "Adjusting state on prop change" pattern (gated on a
-  // one-shot state flag) so the corrective setState runs during render rather
-  // than inside an effect.
-  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
-  const [defaultsApplied, setDefaultsApplied] = useState(false);
-  if (
-    !defaultsApplied &&
-    isLoaded &&
-    !isChecking &&
-    Object.keys(depStates).length > 0
-  ) {
-    setDefaultsApplied(true);
-    if (webTerminalMode === "multiplexer" && !hasMultiplexer) {
-      // No multiplexer available → fallback to direct
-      setWebTerminalMode("direct");
-    } else if (webTerminalMode === "multiplexer") {
-      // Auto-correct multiplexer selection (the ref mirror is kept in sync
-      // by the effect below that watches `terminalMultiplexer`).
-      if (terminalMultiplexer === "tmux" && !tmuxInstalled && zellijInstalled) {
-        setTerminalMultiplexer("zellij");
-      } else if (terminalMultiplexer === "zellij" && !zellijInstalled && tmuxInstalled) {
-        setTerminalMultiplexer("tmux");
-      }
-    }
-  }
-  // Keep `lastTerminalMuxRef` in sync with the latest selected multiplexer.
-  // Writing the ref in an effect avoids the react-hooks/refs render-time
-  // mutation flag while still letting the explicit ref-setters elsewhere
-  // (e.g. on user-driven dropdown change) take precedence within a single
-  // render — the effect just confirms the post-render value.
-  useEffect(() => {
-    lastTerminalMuxRef.current = terminalMultiplexer || "tmux";
-  }, [terminalMultiplexer]);
-
-  // Filter and mark agent options based on mode + command availability
-  const hasAvailability = Object.keys(commandAvailability).length > 0;
-  const baseAgentStatusById = useMemo(() => {
-    const map = new Map<string, BaseAgent>();
-    for (const agent of baseAgents) {
-      map.set(agent.id, agent);
-    }
-    return map;
-  }, [baseAgents]);
-
-  // Terminal Agent options — derived from marketplace data. An agent is
-  // enabled iff the marketplace reports it installed (grove-installed or
-  // auto-detected) AND `supports_terminal_launch === true` (i.e. its
-  // registry entry declares a `terminal_launch` config).
-  const terminalAgentOptions = useMemo(() => {
-    if (!hasAvailability) return [];
-    return agentOptions.filter(
-      (agent) =>
-        terminalLaunchableIds.has(agent.id) ||
-        terminalLaunchableIds.has(agent.value),
-    );
-  }, [terminalLaunchableIds, hasAvailability]);
-
-  // Chat Agent 选项：ACP base agent availability comes from backend.
-  const chatAgentOptions = useMemo(() => {
-    // Only surface available agents — the Marketplace modal is the place to
-    // see/install everything else. Hiding unavailable ones from the picker
-    // gets rid of the long list of `<agent> not found — install to enable`
-    // rows that used to fill the dropdown and let users pick something
-    // grove couldn't actually launch.
-    return baseAgents
-      .filter((base) => base.available)
-      .map((base) => {
-        const local = agentOptions.find(
-          (a) => a.value === base.id || a.id === base.id,
-        );
-        const option = local ?? {
-          id: base.id,
-          label: base.display_name,
-          value: base.id,
-        };
-        return { ...option, label: base.display_name, value: base.id };
-      });
-  }, [baseAgents]);
-
-  // Feature availability (auto-derived from dependencies)
-  const isTerminalAvailable = canUseTerminal;
-  const isChatAvailable = chatAgentOptions.length > 0 || customAgents.length > 0;
-
-  // Sync availability to ConfigContext for Task panel components
-  useEffect(() => {
-    if (Object.keys(depStates).length > 0) {
-      updateAvailability(isTerminalAvailable);
-    }
-  }, [depStates, commandAvailability, isTerminalAvailable, updateAvailability]);
-
-  // Auto-correct agent selection: pick first available, or clear if none available
-  useEffect(() => {
-    if (!isLoaded) return;
-    const hasTerminalAvailability = Object.keys(commandAvailability).length > 0;
-
-    // Compute corrections synchronously, but apply them after a microtask so
-    // the setStates aren't synchronous within the effect body.
-    let nextAgentCommand: string | undefined;
-    if (hasTerminalAvailability && agentCommand) {
-      const currentOption = terminalAgentOptions.find(a => a.id === agentCommand);
-      if (currentOption?.disabled) {
-        const firstAvailable = terminalAgentOptions.find(a => !a.disabled);
-        nextAgentCommand = firstAvailable?.id ?? "";
-      }
-    }
-
-    let nextAcpAgent: string | undefined;
-    if (baseAgents.length > 0 && acpAgent) {
-      const currentBaseAgent = baseAgentStatusById.get(acpAgent);
-      if (currentBaseAgent && !currentBaseAgent.available) {
-        const firstAvailable = chatAgentOptions.find(a => !a.disabled);
-        nextAcpAgent = firstAvailable?.value ?? "";
-      }
-    }
-
-    if (nextAgentCommand !== undefined || nextAcpAgent !== undefined) {
-      void Promise.resolve().then(() => {
-        if (nextAgentCommand !== undefined) setAgentCommand(nextAgentCommand);
-        if (nextAcpAgent !== undefined) setAcpAgent(nextAcpAgent);
-      });
-    }
-  }, [isLoaded, commandAvailability, agentCommand, acpAgent, terminalAgentOptions, chatAgentOptions, baseAgentStatusById, baseAgents.length]);
-
-  const suggestedChatRenderWindowTrigger = useCallback((limit: number) => {
-    return Math.max(limit + 1, Math.ceil(limit * 1.5));
-  }, []);
-
-  const commitChatRenderWindowLimit = useCallback((value: string) => {
-    const parsed = Number(value);
-    const nextLimit = Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
-    setChatRenderWindowLimit(nextLimit);
-    setChatRenderWindowLimitDraft(String(nextLimit));
-    if (nextLimit > 0) {
-      setChatRenderWindowTrigger((current) =>
-        current > nextLimit ? current : suggestedChatRenderWindowTrigger(nextLimit),
-      );
-      setChatRenderWindowTriggerDraft((current) => {
-        const currentNumber = Number(current);
-        const nextTrigger =
-          Number.isFinite(currentNumber) && currentNumber > nextLimit
-            ? Math.floor(currentNumber)
-            : suggestedChatRenderWindowTrigger(nextLimit);
-        return String(nextTrigger);
-      });
-    }
-  }, [suggestedChatRenderWindowTrigger]);
-
-  const commitChatRenderWindowTrigger = useCallback((value: string) => {
-    const parsed = Number(value);
-    const nextTrigger = Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
-    const normalizedTrigger =
-      chatRenderWindowLimit > 0
-        ? Math.max(nextTrigger, chatRenderWindowLimit + 1)
-        : nextTrigger || 1500;
-    setChatRenderWindowTrigger(normalizedTrigger);
-    setChatRenderWindowTriggerDraft(String(normalizedTrigger));
-  }, [chatRenderWindowLimit]);
-
-  const setChatRenderWindowMode = useCallback((mode: "unlimited" | "custom") => {
-    if (mode === "unlimited") {
-      setChatRenderWindowLimit(0);
-      setChatRenderWindowLimitDraft("0");
-      return;
-    }
-    setChatRenderWindowLimit((current) => {
-      const next = current > 0 ? current : 1000;
-      setChatRenderWindowLimitDraft(String(next));
-      return next;
-    });
-    setChatRenderWindowTrigger((current) => {
-      const next = current > 1000 ? current : 1500;
-      setChatRenderWindowTriggerDraft(String(next));
-      return next;
-    });
-  }, []);
-
-  const claudeCodeConfig = JSON.stringify(
-    {
-      mcpServers: {
-        grove: {
-          type: MCP_CONNECTION.type,
-          command: MCP_CONNECTION.command,
-          args: MCP_CONNECTION.args,
-        },
-      },
-    },
-    null,
-    2
-  );
-
-  const codexConfig = `[mcp_servers.grove]
-command = "${MCP_CONNECTION.command}"
-args = ${JSON.stringify(MCP_CONNECTION.args)}
-env_vars = [
-  "GROVE_TASK_ID",
-  "GROVE_TASK_NAME",
-  "GROVE_BRANCH",
-  "GROVE_TARGET",
-  "GROVE_WORKTREE",
-  "GROVE_PROJECT_NAME",
-  "GROVE_PROJECT"
-]`;
-
-  const isTauriGui = !isIosClient && !!((window as Window & {
-    __TAURI__?: unknown;
-    __TAURI_INTERNALS__?: unknown;
-  }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
-  const menubarShortcutConflict =
-    !!menubarShortcut && menubarShortcut === showHideWindowShortcut;
-  const menubarShortcutControl = isTauriGui ? (
-    <div>
-      <div className="flex items-center gap-2 mb-3 select-none">
-        <Keyboard className="w-4 h-4 text-[var(--color-warning)]" />
-        <span className="text-sm font-medium text-[var(--color-text)]">
-          Show or Hide Menu bar
-        </span>
-      </div>
-      <div className="flex items-center gap-2">
-        <div
-          className={`flex h-10 min-w-0 flex-1 items-center rounded-lg border bg-[var(--color-bg-secondary)] px-3 text-sm text-[var(--color-text)] ${
-            menubarShortcutConflict
-              ? "border-[var(--color-error)]/60"
-              : "border-[var(--color-border)]"
-          }`}
-        >
-          {isRecordingMenubarShortcut ? (
-            <span className="text-[var(--color-warning)]">Press shortcut...</span>
-          ) : menubarShortcut ? (
-            menubarShortcut
-          ) : (
-            <span className="text-[var(--color-text-muted)]">Not set</span>
-          )}
-        </div>
-        {menubarShortcut && (
-          <button
-            type="button"
-            onClick={() => {
-              setMenubarShortcut("");
-              setIsRecordingMenubarShortcut(false);
-            }}
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-error)]/60 hover:text-[var(--color-error)]"
-            title="Clear shortcut"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setIsRecordingMenubarShortcut((value) => !value)}
-          className={`inline-flex h-10 shrink-0 items-center justify-center rounded-lg border px-3 text-xs font-medium transition-colors ${
-            isRecordingMenubarShortcut
-              ? "border-[var(--color-warning)] bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
-              : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text)] hover:border-[var(--color-warning)]/50"
-          }`}
-        >
-          {isRecordingMenubarShortcut ? "Cancel" : "Record"}
-        </button>
-      </div>
-      {menubarShortcutConflict ? (
-        <div className="mt-2 text-[11px] text-[var(--color-error)]">
-          This shortcut is already bound to the main window. Pick a different
-          combination — the menubar binding will not register until you do.
-        </div>
-      ) : null}
-    </div>
-    ) : null;
-  const trayRetentionControl = (
-    <div>
-      <div className="flex items-center gap-2 mb-3 select-none">
-        <Clock className="w-4 h-4 text-[var(--color-highlight)]" />
-        <span className="text-sm font-medium text-[var(--color-text)]">
-          Done chat retention
-        </span>
-      </div>
-      <div className="space-y-2.5">
-        {/* Mode toggle — "Keep forever" vs "Auto-expire after". Two equal
-            chips so it reads as a question, not a checkbox. */}
-        <div
-          className="grid grid-cols-2 rounded-lg border p-0.5"
-          style={{
-            borderColor: "var(--color-border)",
-            backgroundColor: "var(--color-bg-secondary)",
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => setTrayDoneRetentionMode("forever")}
-            className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-            style={{
-              color: trayDoneRetentionMode === "forever" ? "var(--color-highlight)" : "var(--color-text-muted)",
-              backgroundColor: trayDoneRetentionMode === "forever" ? "color-mix(in srgb, var(--color-highlight) 15%, transparent)" : "transparent",
-            }}
-          >
-            Keep forever
-          </button>
-          <button
-            type="button"
-            onClick={() => setTrayDoneRetentionMode("expire")}
-            className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-            style={{
-              color: trayDoneRetentionMode === "expire" ? "var(--color-highlight)" : "var(--color-text-muted)",
-              backgroundColor: trayDoneRetentionMode === "expire" ? "color-mix(in srgb, var(--color-highlight) 15%, transparent)" : "transparent",
-            }}
-          >
-            Auto-expire after…
-          </button>
-        </div>
-        {trayDoneRetentionMode === "expire" ? (
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              min={1}
-              max={365}
-              value={trayDoneRetentionValue}
-              onChange={(e) => {
-                const n = Math.floor(Number(e.target.value));
-                if (!Number.isFinite(n)) return;
-                setTrayDoneRetentionValue(Math.min(365, Math.max(1, n)));
-              }}
-              className="h-9 w-20 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 text-sm text-[var(--color-text)] focus:border-[var(--color-highlight)] focus:outline-none"
-            />
-            <div
-              className="grid grid-cols-2 rounded-lg border p-0.5"
-              style={{
-                borderColor: "var(--color-border)",
-                backgroundColor: "var(--color-bg-secondary)",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setTrayDoneRetentionUnit("hours")}
-                className="rounded-md px-3 py-1 text-xs font-medium transition-colors"
-                style={{
-                  color: trayDoneRetentionUnit === "hours" ? "var(--color-highlight)" : "var(--color-text-muted)",
-                  backgroundColor: trayDoneRetentionUnit === "hours" ? "color-mix(in srgb, var(--color-highlight) 15%, transparent)" : "transparent",
-                }}
-              >
-                Hours
-              </button>
-              <button
-                type="button"
-                onClick={() => setTrayDoneRetentionUnit("days")}
-                className="rounded-md px-3 py-1 text-xs font-medium transition-colors"
-                style={{
-                  color: trayDoneRetentionUnit === "days" ? "var(--color-highlight)" : "var(--color-text-muted)",
-                  backgroundColor: trayDoneRetentionUnit === "days" ? "color-mix(in srgb, var(--color-highlight) 15%, transparent)" : "transparent",
-                }}
-              >
-                Days
-              </button>
-            </div>
-            <span className="text-xs text-[var(--color-text-muted)]">
-              Running and permission-required chats are never auto-pruned.
-            </span>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-  const menubarExtraControl = menubarShortcutControl ? (
-    <div className="space-y-4">
-      {menubarShortcutControl}
-      <div className="border-t border-[color-mix(in_srgb,var(--color-border)_60%,transparent)]" />
-      {trayRetentionControl}
-    </div>
-  ) : (
-    trayRetentionControl
-  );
-  const windowShortcutControl = isTauriGui ? (
-    <div>
-      <div className="flex items-center gap-2 mb-3 select-none">
-        <Keyboard className="w-4 h-4 text-[var(--color-highlight)]" />
-        <span className="text-sm font-medium text-[var(--color-text)]">Show or Hide Window</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="flex h-10 min-w-0 flex-1 items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 text-sm text-[var(--color-text)]">
-          {isRecordingWindowShortcut ? (
-            <span className="text-[var(--color-highlight)]">Press shortcut...</span>
-          ) : showHideWindowShortcut ? (
-            showHideWindowShortcut
-          ) : (
-            <span className="text-[var(--color-text-muted)]">Not set</span>
-          )}
-        </div>
-        {showHideWindowShortcut && (
-          <button
-            type="button"
-            onClick={() => {
-              setShowHideWindowShortcut("");
-              setIsRecordingWindowShortcut(false);
-            }}
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-error)]/60 hover:text-[var(--color-error)]"
-            title="Clear shortcut"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setIsRecordingWindowShortcut((value) => !value)}
-          className={`inline-flex h-10 shrink-0 items-center justify-center rounded-lg border px-3 text-xs font-medium transition-colors ${
-            isRecordingWindowShortcut
-              ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
-              : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text)] hover:border-[var(--color-highlight)]/50"
-          }`}
-        >
-          {isRecordingWindowShortcut ? "Cancel" : "Record"}
-        </button>
-      </div>
-    </div>
-  ) : null;
-
   return (
     <motion.div>
       {/* Compact Header */}
@@ -1437,7 +281,7 @@ env_vars = [
                 ? "Ready"
                 : "Setup required"
           }
-          icon={Bot}
+          icon={Sparkle}
           iconColor="#a855f7"
           isOpen={openSections.chat}
           onToggle={() => toggleSection("chat")}
@@ -1722,7 +566,6 @@ env_vars = [
                                   e.stopPropagation();
                                   if (isInstalled) {
                                     setTerminalMultiplexer(mux);
-                                    lastTerminalMuxRef.current = mux;
                                   }
                                 }}
                                 className={`flex items-center justify-between px-2.5 py-1.5 rounded-md transition-all ${
@@ -1909,192 +752,7 @@ env_vars = [
           isOpen={openSections.appearance}
           onToggle={() => toggleSection("appearance")}
         >
-          <div className="space-y-8">
-            {/* Mode Selection & Action Header */}
-            <div 
-              onDragOver={(e) => { e.preventDefault(); setIsDraggingTheme(true); }}
-              onDragLeave={() => setIsDraggingTheme(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setIsDraggingTheme(false);
-                const file = e.dataTransfer.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onload = (re) => processThemeData(re.target?.result as string);
-                  reader.readAsText(file);
-                }
-              }}
-              className={`flex flex-col gap-4 transition-all ${isDraggingTheme ? 'p-4 rounded-xl border-2 border-dashed border-[var(--color-highlight)] bg-[var(--color-highlight)]/5' : ''}`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider select-none">
-                  {isDraggingTheme ? "Drop file to import theme" : "Appearance Mode"}
-                </div>
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="file" 
-                    id="theme-import-input" 
-                    className="hidden" 
-                    accept=".grovetheme,.json" 
-                    onChange={handleImportFile} 
-                  />
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => document.getElementById('theme-import-input')?.click()}
-                  >
-                    <Download className="w-3.5 h-3.5 mr-1.5" /> Import
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setIsCustomThemeDialogOpen(true)}
-                  >
-                    <Plus className="w-3.5 h-3.5 mr-1.5" /> Create
-                  </Button>
-                </div>
-              </div>
-              <div className="flex p-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl max-w-sm">
-                {(["auto", "light", "dark"] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => handleModeChange(m)}
-                    className={`flex-1 py-1.5 text-xs font-semibold uppercase tracking-wider rounded-lg transition-all
-                      ${mode === m 
-                        ? "bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm border border-[var(--color-border)]" 
-                        : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Light Themes */}
-            {(mode === "auto" || mode === "light") && (
-              <div className="space-y-4">
-                <div className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-                  {mode === "auto" ? "Preferred Light Theme" : "Light Themes"}
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                  {themes.filter(t => t.isLight).map((t) => (
-                    <motion.button
-                      key={t.id}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={() => handleLightThemeChange(t.id)}
-                      className={`relative p-3 rounded-lg border text-center transition-all group
-                        ${lightThemeId === t.id
-                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
-                          : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
-                        }`}
-                    >
-                      {lightThemeId === t.id && (
-                        <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
-                          <Check className="w-2.5 h-2.5 text-white" />
-                        </div>
-                      )}
-                      <div className="flex gap-1 mb-2 justify-center">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.highlight }} />
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.accent }} />
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.info }} />
-                      </div>
-                      <div className="text-xs font-medium text-[var(--color-text)] truncate">{t.name}</div>
-                      {t.isCustom && (
-                        <div className="absolute top-1 right-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleExportTheme(t);
-                            }}
-                            title="Export Theme"
-                            className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-highlight)] bg-[var(--color-bg)]/80 backdrop-blur rounded-md border border-[var(--color-border)] shadow-sm"
-                          >
-                            <Share2 className="w-3 h-3" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const newCustoms = customThemes.filter((ct: Theme) => ct.id !== t.id);
-                              const nextLightThemeId = lightThemeId === t.id ? "light" : lightThemeId;
-                              setAppearance({ customThemes: newCustoms, lightThemeId: nextLightThemeId });
-                            }}
-                            title="Delete Theme"
-                            className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-error)] bg-[var(--color-bg)]/80 backdrop-blur rounded-md border border-[var(--color-border)] shadow-sm"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      )}
-                    </motion.button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Dark Themes */}
-            {(mode === "auto" || mode === "dark") && (
-              <div>
-                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-3 select-none">
-                  {mode === "auto" ? "Preferred Dark Theme" : "Dark Themes"}
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                  {themes.filter(t => !t.isLight).map((t) => (
-                    <motion.button
-                      key={t.id}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={() => handleDarkThemeChange(t.id)}
-                      className={`relative p-3 rounded-lg border text-center transition-all group
-                        ${darkThemeId === t.id
-                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
-                          : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
-                        }`}
-                    >
-                      {darkThemeId === t.id && (
-                        <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
-                          <Check className="w-2.5 h-2.5 text-white" />
-                        </div>
-                      )}
-                      <div className="flex gap-1 mb-2 justify-center">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.highlight }} />
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.accent }} />
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.info }} />
-                      </div>
-                      <div className="text-xs font-medium text-[var(--color-text)] truncate">{t.name}</div>
-                      {t.isCustom && (
-                        <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleExportTheme(t);
-                            }}
-                            title="Export Theme"
-                            className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-highlight)] bg-[var(--color-bg)]/80 backdrop-blur rounded-md border border-[var(--color-border)] shadow-sm"
-                          >
-                            <Share2 className="w-3 h-3" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const newCustoms = customThemes.filter((ct: Theme) => ct.id !== t.id);
-                              const nextDarkThemeId = darkThemeId === t.id ? "dark" : darkThemeId;
-                              setAppearance({ customThemes: newCustoms, darkThemeId: nextDarkThemeId });
-                            }}
-                            title="Delete Theme"
-                            className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-error)] bg-[var(--color-bg)]/80 backdrop-blur rounded-md border border-[var(--color-border)] shadow-sm"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      )}
-                    </motion.button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <AppIconSettings />
-          </div>
+          <AppearanceSettings />
         </Section>
 
         {/* General Section (IDE + Terminal App) */}
@@ -2107,120 +765,7 @@ env_vars = [
           isOpen={openSections.devtools}
           onToggle={() => toggleSection("devtools")}
         >
-          <div className="space-y-6">
-            {serverPlatform === null ? (
-              <div className="flex items-center gap-3 p-4 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
-                <p className="text-sm text-[var(--color-text-muted)]">Detecting platform...</p>
-              </div>
-            ) : serverPlatform !== "macos" ? (
-              <div className="flex items-center gap-3 p-4 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
-                <Info className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
-                <p className="text-sm text-[var(--color-text-muted)]">
-                  IDE and terminal application detection is not yet supported on {
-                    serverPlatform === "windows" ? "Windows"
-                    : serverPlatform === "linux" ? "Linux"
-                    : serverPlatform
-                  }.
-                </p>
-              </div>
-            ) : (
-              <>
-                {/* Default IDE */}
-                <div>
-                  <div className="flex items-center gap-2 mb-3 select-none">
-                    <Code className="w-4 h-4 text-[var(--color-info)]" />
-                    <span className="text-sm font-medium text-[var(--color-text)]">Default IDE</span>
-                  </div>
-                  <AppPicker
-                    options={ideAppOptions}
-                    value={ideCommand}
-                    onChange={setIdeCommand}
-                    placeholder="Select IDE..."
-                    applications={applications}
-                    isLoadingApps={isLoadingApps}
-                    appFilter={(app) =>
-                      // Filter for common IDEs/editors
-                      /code|studio|idea|storm|rider|cursor|zed|sublime|atom|vim|emacs|nova|bbedit|textmate|xcode/i.test(app.name) ||
-                      /com\.(microsoft|jetbrains|apple|sublimehq|github)/i.test(app.bundle_id || "")
-                    }
-                  />
-                </div>
-
-                {/* Default Terminal */}
-                <div>
-                  <div className="flex items-center gap-2 mb-3 select-none">
-                    <Terminal className="w-4 h-4 text-[var(--color-accent)]" />
-                    <span className="text-sm font-medium text-[var(--color-text)]">Default Terminal</span>
-                  </div>
-                  <AppPicker
-                    options={terminalAppOptions}
-                    value={terminalCommand}
-                    onChange={setTerminalCommand}
-                    placeholder="System Default"
-                    applications={applications}
-                    isLoadingApps={isLoadingApps}
-                    appFilter={(app) =>
-                      // Filter for terminals
-                      /terminal|iterm|warp|ghostty|kitty|alacritty|hyper|konsole|tilix|wezterm|cmux/i.test(app.name) ||
-                      /com\.(apple\.Terminal|googlecode\.iterm|warp|kovidgoyal|wez|feh)|io\.github\.mlfwka/i.test(app.bundle_id || "")
-                    }
-                  />
-                </div>
-              </>
-            )}
-
-            {windowShortcutControl}
-
-            {/* Interface selection is saved independently from other settings. */}
-            <div>
-              <div className="flex items-center gap-2 mb-3 select-none">
-                <LayoutGrid className="w-4 h-4 text-[var(--color-info)]" />
-                <span className="text-sm font-medium text-[var(--color-text)]">Interface</span>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <button type="button" aria-pressed={currentGlobalConfig?.web.interface === "orbit"} onClick={() => { void patchConfig({ web: { interface: "orbit" } }).then(refreshGlobalConfig).catch(() => showBanner("Failed to switch interface", "error")); }} className={`p-3 rounded-lg border text-left ${currentGlobalConfig?.web.interface === "orbit" ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10" : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]"}`}>
-                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Orbit</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">Start with a conversation and follow your work</div>
-                </button>
-                <button type="button" aria-pressed={currentGlobalConfig?.web.interface !== "orbit"} onClick={() => { void patchConfig({ web: { interface: "workbench" } }).then(refreshGlobalConfig).catch(() => showBanner("Failed to switch interface", "error")); }} className={`p-3 rounded-lg border text-left ${currentGlobalConfig?.web.interface !== "orbit" ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10" : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]"}`}>
-                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Workbench</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">Projects, tasks, and panels in a flexible workspace</div>
-                </button>
-              </div>
-            </div>
-
-            {/* Workspace Layout */}
-            <div>
-              <div className="flex items-center gap-2 mb-3 select-none">
-                <LayoutGrid className="w-4 h-4 text-[var(--color-warning)]" />
-                <span className="text-sm font-medium text-[var(--color-text)]">Workspace Layout</span>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => setWorkspaceLayout("ide")}
-                  className={`p-3 rounded-lg border text-left transition-all ${
-                    workspaceLayout === "ide"
-                      ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
-                      : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-highlight)]/50"
-                  }`}
-                >
-                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Agent Layout</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">Fixed panels with Chat-centric view</div>
-                </button>
-                <button
-                  onClick={() => setWorkspaceLayout("flex")}
-                  className={`p-3 rounded-lg border text-left transition-all ${
-                    workspaceLayout === "flex"
-                      ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
-                      : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-highlight)]/50"
-                  }`}
-                >
-                  <div className="text-xs font-medium text-[var(--color-text)] mb-1">Free Layout</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">Drag and arrange panels freely</div>
-                </button>
-              </div>
-            </div>
-          </div>
+          <GeneralSettings settings={settings} />
         </Section>
 
         {/* Keyboard Shortcuts Section (moved here, right under General) */}
@@ -2313,19 +858,7 @@ env_vars = [
                   Quick Add Presets
                 </h5>
                 <div className="flex flex-wrap gap-2">
-                  {[
-                    { label: "**/node_modules", pattern: "**/node_modules" },
-                    { label: "target", pattern: "target" },
-                    { label: "build", pattern: "build" },
-                    { label: "dist", pattern: "dist" },
-                    { label: ".next", pattern: ".next" },
-                    { label: ".nuxt", pattern: ".nuxt" },
-                    { label: ".turbo", pattern: ".turbo" },
-                    { label: ".cache", pattern: ".cache" },
-                    { label: "vendor", pattern: "vendor" },
-                    { label: "**/venv", pattern: "**/venv" },
-                    { label: "**/__pycache__", pattern: "**/__pycache__" },
-                  ].map((preset) => (
+                  {AUTOLINK_PRESETS.map((pattern) => ({ label: pattern, pattern })).map((preset) => (
                     <button
                       key={preset.pattern}
                       onClick={() => {
@@ -2548,137 +1081,7 @@ env_vars = [
           isOpen={openSections.hooks}
           onToggle={() => toggleSection("hooks")}
         >
-          <div className="space-y-4">
-            {/* System Notifications card — sound + banner per event type */}
-            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div>
-                  <div className="text-sm font-semibold text-[var(--color-text)]">System Notifications</div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Native OS banner and sounds for agent events</div>
-                </div>
-                <ToggleSwitch
-                  checked={systemNotifEnabled}
-                  onChange={(enabled) => {
-                    setSystemNotifEnabled(enabled);
-                    if (enabled) void requestBrowserNotificationPermission();
-                  }}
-                />
-              </div>
-              <AnimatePresence initial={false}>
-                {systemNotifEnabled ? (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.18 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="mt-2 space-y-2.5 border-t border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] pt-3">
-                      {/* Permission required */}
-                      <div className="flex items-center gap-3">
-                        <span className="flex-shrink-0 inline-block w-2 h-2 rounded-full bg-[var(--color-warning)]" />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[13px] text-[var(--color-text)]">Permission required</div>
-                          <div className="text-[11px] text-[var(--color-text-muted)]">When the agent needs your approval for an action</div>
-                        </div>
-                        <AnimatePresence initial={false}>
-                          {systemNotifShowPermission && (
-                            <motion.div
-                              initial={{ opacity: 0, width: 0 }}
-                              animate={{ opacity: 1, width: "auto" }}
-                              exit={{ opacity: 0, width: 0 }}
-                              transition={{ duration: 0.15 }}
-                              className="overflow-hidden flex-shrink-0 flex items-center gap-1"
-                            >
-                              <div className="w-[140px]">
-                                <Combobox
-                                  options={soundOptions}
-                                  value={hooksPermissionSoundEnabled ? hooksPermissionSound : "none"}
-                                  onChange={(value) => {
-                                    if (value === "none") { setHooksPermissionSoundEnabled(false); return; }
-                                    setHooksPermissionSoundEnabled(true);
-                                    setHooksPermissionSound(value);
-                                  }}
-                                  placeholder="Sound..."
-                                  allowCustom={false}
-                                />
-                              </div>
-                              <button onClick={() => void previewNotificationSound(hooksPermissionSound)} title={!hooksPermissionSoundEnabled ? "Select a sound to preview" : "Preview sound"} disabled={!hooksPermissionSoundEnabled} className="h-8 w-8 flex-shrink-0 flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40 transition-colors">
-                                <Volume2 className="w-3.5 h-3.5" />
-                              </button>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                        <ToggleSwitch checked={systemNotifShowPermission} onChange={setSystemNotifShowPermission} />
-                      </div>
-                      {/* Input requested */}
-                      <div className="flex items-center gap-3">
-                        <span className="flex-shrink-0 inline-block w-2 h-2 rounded-full bg-[var(--color-info)]" />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[13px] text-[var(--color-text)]">Input requested</div>
-                          <div className="text-[11px] text-[var(--color-text-muted)]">When the agent presents an Elicitation form or URL</div>
-                        </div>
-                        <ToggleSwitch checked={systemNotifShowElicitation} onChange={setSystemNotifShowElicitation} />
-                      </div>
-                      {/* Turn completed */}
-                      <div className="flex items-center gap-3">
-                        <span className="flex-shrink-0 inline-block w-2 h-2 rounded-full bg-[var(--color-highlight)]" />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[13px] text-[var(--color-text)]">Turn completed</div>
-                          <div className="text-[11px] text-[var(--color-text-muted)]">When the agent finishes responding to a prompt</div>
-                        </div>
-                        <AnimatePresence initial={false}>
-                          {systemNotifShowDone && (
-                            <motion.div
-                              initial={{ opacity: 0, width: 0 }}
-                              animate={{ opacity: 1, width: "auto" }}
-                              exit={{ opacity: 0, width: 0 }}
-                              transition={{ duration: 0.15 }}
-                              className="overflow-hidden flex-shrink-0 flex items-center gap-1"
-                            >
-                              <div className="w-[140px]">
-                                <Combobox
-                                  options={soundOptions}
-                                  value={hooksResponseSoundEnabled ? hooksResponseSound : "none"}
-                                  onChange={(value) => {
-                                    if (value === "none") { setHooksResponseSoundEnabled(false); return; }
-                                    setHooksResponseSoundEnabled(true);
-                                    setHooksResponseSound(value);
-                                  }}
-                                  placeholder="Sound..."
-                                  allowCustom={false}
-                                />
-                              </div>
-                              <button onClick={() => void previewNotificationSound(hooksResponseSound)} title={!hooksResponseSoundEnabled ? "Select a sound to preview" : "Preview sound"} disabled={!hooksResponseSoundEnabled} className="h-8 w-8 flex-shrink-0 flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40 transition-colors">
-                                <Volume2 className="w-3.5 h-3.5" />
-                              </button>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                        <ToggleSwitch checked={systemNotifShowDone} onChange={setSystemNotifShowDone} />
-                      </div>
-                    </div>
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
-            </div>
-
-            {/* Menu bar */}
-            <NotifChannel
-              title="Menu bar"
-              subtitle="Persistent popover anchored to the menubar icon"
-              enabled={trayEnabled}
-              onEnabledChange={setTrayEnabled}
-              showPermission={trayShowPermission}
-              onShowPermissionChange={setTrayShowPermission}
-              showDone={trayShowDone}
-              onShowDoneChange={setTrayShowDone}
-              showRunning={trayShowRunning}
-              onShowRunningChange={setTrayShowRunning}
-              extraControl={menubarExtraControl}
-              note="Disabling the tray takes effect on next Grove launch."
-            />
-          </div>
+          <NotificationSettings settings={settings} />
         </Section>
 
         {/* Code Repo Indexing Section */}
@@ -2838,7 +1241,7 @@ env_vars = [
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => handleCopy("code", claudeCodeConfig)}
+                  onClick={() => handleCopy("code", CLAUDE_CODE_MCP_CONFIG)}
                 >
                   {copiedField === "code" ? (
                     <Check className="w-4 h-4 text-[var(--color-success)]" />
@@ -2848,7 +1251,7 @@ env_vars = [
                 </Button>
               </div>
               <pre className="p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] overflow-x-auto">
-                {claudeCodeConfig}
+                {CLAUDE_CODE_MCP_CONFIG}
               </pre>
               <p className="text-xs text-[var(--color-text-muted)] mt-2 select-none">
                 Add to your <code className="text-[var(--color-highlight)]">~/.claude.json</code> file.
@@ -2862,7 +1265,7 @@ env_vars = [
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => handleCopy("codex", codexConfig)}
+                  onClick={() => handleCopy("codex", CODEX_MCP_CONFIG)}
                 >
                   {copiedField === "codex" ? (
                     <Check className="w-4 h-4 text-[var(--color-success)]" />
@@ -2872,7 +1275,7 @@ env_vars = [
                 </Button>
               </div>
               <pre className="p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] overflow-x-auto">
-                {codexConfig}
+                {CODEX_MCP_CONFIG}
               </pre>
               <p className="text-xs text-[var(--color-text-muted)] mt-2 select-none">
                 Add to your <code className="text-[var(--color-highlight)]">~/.codex/config.toml</code> file.
@@ -2910,15 +1313,7 @@ env_vars = [
         isOpen={showCustomAgentModal}
         onClose={() => setShowCustomAgentModal(false)}
         agents={customAgents}
-        onSave={async (agents) => {
-          setCustomAgents(agents);
-          try {
-            await patchConfig({ acp: { custom_agents: agents } });
-            await refreshGlobalConfig();
-          } catch {
-            console.error("Failed to save custom agents");
-          }
-        }}
+        onSave={saveCustomAgentServers}
       />
 
       {/* Custom Agents (Persona) Modal */}
@@ -2929,10 +1324,7 @@ env_vars = [
         baseAgentOptions={chatAgentOptions}
         customServers={customAgents}
         loading={customAgentPersonasLoading}
-        onChanged={(next) => {
-          setCustomAgentPersonas(next);
-          setCustomAgentPersonasIconRegistry(next);
-        }}
+        onChanged={updateCustomAgentPersonas}
       />
 
       <MarketplaceModal
@@ -2949,29 +1341,14 @@ env_vars = [
         isOpen={isLayoutEditorOpen}
         onClose={() => setIsLayoutEditorOpen(false)}
         layouts={customLayouts}
-        onChange={(layouts) => {
-          setCustomLayouts(layouts);
-          setCustomLayoutsLoaded(true); // Mark as edited, so we can save
-        }}
+        onChange={updateCustomLayouts}
         selectedLayoutId={selectedCustomLayoutId}
         onSelectLayout={setSelectedCustomLayoutId}
       />
 
-      {/* Custom Theme Dialog — conditionally mounted so it picks up fresh
-          default state every time the user opens it (no stale name/colors
-          from a previous Cancel). */}
-      {isCustomThemeDialogOpen && (
-        <CustomThemeDialog
-          isOpen={isCustomThemeDialogOpen}
-          onClose={() => setIsCustomThemeDialogOpen(false)}
-          onSave={handleSaveCustomTheme}
-        />
-      )}
     </motion.div>
   );
 }
-
-// ─── Notification channel sub-card ──────────────────────────────────────────
 
 // ─── Settings-style row used by Agent section hub ──────────────────────────
 
@@ -3009,156 +1386,6 @@ function HubRow({ icon, iconBg, label, subtitle, count, onClick }: HubRowProps) 
         <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">{subtitle}</div>
       </div>
       <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-text-muted)] transition-transform group-hover:translate-x-0.5" />
-    </button>
-  );
-}
-
-interface NotifChannelProps {
-  title: string;
-  subtitle: string;
-  enabled: boolean;
-  onEnabledChange: (v: boolean) => void;
-  showPermission: boolean;
-  onShowPermissionChange: (v: boolean) => void;
-  showDone: boolean;
-  onShowDoneChange: (v: boolean) => void;
-  showRunning?: boolean;
-  onShowRunningChange?: (v: boolean) => void;
-  note?: string;
-  /** Optional slot rendered inside the expanded body, below the toggles
-   *  (e.g. a shortcut recorder for the menubar channel). */
-  extraControl?: React.ReactNode;
-}
-
-function NotifChannel({
-  title,
-  subtitle,
-  enabled,
-  onEnabledChange,
-  showPermission,
-  onShowPermissionChange,
-  showDone,
-  onShowDoneChange,
-  showRunning,
-  onShowRunningChange,
-  note,
-  extraControl,
-}: NotifChannelProps) {
-  return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div>
-          <div className="text-sm font-semibold text-[var(--color-text)]">{title}</div>
-          <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{subtitle}</div>
-        </div>
-        <ToggleSwitch checked={enabled} onChange={onEnabledChange} />
-      </div>
-      <AnimatePresence initial={false}>
-        {enabled ? (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.18 }}
-            className="overflow-hidden"
-          >
-            <div className="mt-2 space-y-2.5 border-t border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] pt-3">
-              <CategoryToggle
-                label="Permission required"
-                description="Pending tool-call approvals"
-                accent="var(--color-warning)"
-                checked={showPermission}
-                onChange={onShowPermissionChange}
-              />
-              <CategoryToggle
-                label="Turn completed"
-                description="Hooks fired by finished agent turns"
-                accent="var(--color-highlight)"
-                checked={showDone}
-                onChange={onShowDoneChange}
-              />
-              {showRunning !== undefined && onShowRunningChange && (
-                <CategoryToggle
-                  label="Running session"
-                  description="Tasks actively processing a prompt"
-                  accent="var(--color-info)"
-                  checked={showRunning}
-                  onChange={onShowRunningChange}
-                />
-              )}
-            </div>
-            {extraControl ? (
-              <div className="mt-3 border-t border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] pt-3">
-                {extraControl}
-              </div>
-            ) : null}
-            {note ? (
-              <div className="mt-3 text-[11px] italic text-[var(--color-text-muted)]">{note}</div>
-            ) : null}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function CategoryToggle({
-  label,
-  description,
-  accent,
-  checked,
-  onChange,
-}: {
-  label: string;
-  description: string;
-  accent: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 py-1">
-      <div className="flex items-center gap-2.5">
-        <span
-          className="h-1.5 w-1.5 rounded-full"
-          style={{ background: accent, boxShadow: `0 0 6px ${accent}` }}
-        />
-        <div>
-          <div className="text-[13px] text-[var(--color-text)]">{label}</div>
-          <div className="text-[11px] text-[var(--color-text-muted)]">{description}</div>
-        </div>
-      </div>
-      <ToggleSwitch checked={checked} onChange={onChange} />
-    </div>
-  );
-}
-
-function ToggleSwitch({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  label?: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-label={label}
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className="relative h-[20px] w-[34px] rounded-full border transition-all"
-      style={{
-        background: checked ? "color-mix(in srgb, var(--color-highlight) 70%, transparent)" : "var(--color-bg-tertiary)",
-        borderColor: checked ? "var(--color-highlight)" : "var(--color-border)",
-      }}
-    >
-      <motion.span
-        className="absolute top-[1px] block h-[16px] w-[16px] rounded-full"
-        animate={{ left: checked ? 15 : 1, background: checked ? "#ffffff" : "var(--color-text-muted)" }}
-        transition={{ type: "spring", stiffness: 500, damping: 30 }}
-      />
     </button>
   );
 }

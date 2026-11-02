@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import {
   Bell, Blocks, Brain, BarChart2, ChevronDown, ChevronRight, Folder, FolderOpen,
   LayoutDashboard, Layers, MonitorSmartphone, MoreHorizontal, PanelLeftClose, PanelLeftOpen,
-  Plus, Repeat, Search, Settings, Sparkles, SquarePen, Pencil, Archive, Trash2, ArrowUp, ArrowDown, Pin, PinOff,
+  Plus, Repeat, Search, Settings, SquarePen, Pencil, Archive, Trash2, ArrowUp, ArrowDown, Pin, PinOff,
 } from "lucide-react";
 import { listChats, renameTask, archiveTask, deleteTask, archiveChat, deleteChat, updateChatTitle, setChatPinned } from "../../api";
 import type { ChatSessionResponse } from "../../api/tasks";
@@ -276,7 +276,6 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
   ];
   const moreNavigation = [
     { id: "automation", label: "Automation", icon: Repeat },
-    { id: "ai", label: "AI", icon: Sparkles },
     { id: "statistics", label: "Statistics", icon: BarChart2 },
   ];
   const moreOpen = moreExpanded || moreNavigation.some(({ id }) => id === activeItem);

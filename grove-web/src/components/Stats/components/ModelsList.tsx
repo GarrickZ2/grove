@@ -7,7 +7,7 @@ import type { ModelItem } from "../../../api/statistics";
 import { agentShades } from "../agentColors";
 import { formatTokens, formatCost } from "../formatters";
 import type { MetricType, Unit } from "../ProjectStatsPage";
-import { getModelRates } from "./pricing";
+import { valueModels } from "../statsModel";
 
 interface ModelsListProps {
   items: ModelItem[];
@@ -16,48 +16,8 @@ interface ModelsListProps {
 }
 
 export function ModelsList({ items, metricType, unit }: ModelsListProps) {
-  // Map items to include their exact costs
-  const enrichedItems = items.map((it) => {
-    const rates = getModelRates(it.model || it.agent);
-    let cost_in = it.input_tokens * rates.input;
-    let cost_cached = it.cached_tokens * rates.cached;
-    let cost_out = it.output_tokens * rates.output;
-    const cost_total = it.cost > 0 ? it.cost : cost_in + cost_cached + cost_out;
-
-    if (it.cost > 0) {
-      const est_total = cost_in + cost_cached + cost_out;
-      if (est_total > 0) {
-        const ratio = it.cost / est_total;
-        cost_in *= ratio;
-        cost_cached *= ratio;
-        cost_out *= ratio;
-      } else {
-        cost_in = it.cost;
-      }
-    }
-
-    const v_total = unit === "cost" ? cost_total : it.tokens;
-    const v_in = unit === "cost" ? cost_in : it.input_tokens;
-    const v_cached = unit === "cost" ? cost_cached : it.cached_tokens;
-    const v_out = unit === "cost" ? cost_out : it.output_tokens;
-
-    let displayValue = v_total;
-    if (metricType === "input") displayValue = v_in;
-    else if (metricType === "cached") displayValue = v_cached;
-    else if (metricType === "output") displayValue = v_out;
-
-    return {
-      ...it,
-      v_total,
-      v_in,
-      v_cached,
-      v_out,
-      displayValue,
-    };
-  });
-
-  // Sort by display value descending
-  const sortedItems = [...enrichedItems].sort((a, b) => b.displayValue - a.displayValue);
+  // Valued under the metric, largest first.
+  const sortedItems = valueModels(items, metricType, unit);
   const max = Math.max(...sortedItems.map((i) => i.displayValue), 0.0001);
 
   return (

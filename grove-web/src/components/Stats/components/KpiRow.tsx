@@ -26,6 +26,7 @@ import {
   computeDelta,
 } from "../formatters";
 import type { MetricType, Unit } from "../ProjectStatsPage";
+import { kpiSplit, kpiValue } from "../statsModel";
 import type { AverageRates } from "./pricing";
 
 interface KpiRowProps {
@@ -43,53 +44,8 @@ export function KpiRow({
   unit,
   averageRates,
 }: KpiRowProps) {
-  const getValue = (k: KpiData | undefined): number => {
-    if (!k) return 0;
-    if (unit === "cost") {
-      const cost_in_est = k.tokens_in * averageRates.input;
-      const cost_cached_est = k.tokens_cached * averageRates.cached;
-      const cost_out_est = k.tokens_out * averageRates.output;
-      const cost_total_est = cost_in_est + cost_cached_est + cost_out_est;
-      const actual_cost = k.cost_total > 0 ? k.cost_total : cost_total_est;
-
-      if (metricType === "total") return actual_cost;
-
-      // Distribute actual_cost proportionally if we have it
-      if (k.cost_total > 0 && cost_total_est > 0) {
-        const ratio = k.cost_total / cost_total_est;
-        switch (metricType) {
-          case "input": return cost_in_est * ratio;
-          case "cached": return cost_cached_est * ratio;
-          case "output": return cost_out_est * ratio;
-        }
-      } else if (k.cost_total > 0) {
-        // cost_total > 0 but no token-derived split — match TokenSplitBar's
-        // three-way fallback so the KPI card sums to cost_total instead of
-        // showing all components as $0.
-        const third = k.cost_total / 3;
-        switch (metricType) {
-          case "input":
-          case "cached":
-          case "output": return third;
-        }
-      } else {
-        switch (metricType) {
-          case "input": return cost_in_est;
-          case "cached": return cost_cached_est;
-          case "output": return cost_out_est;
-        }
-      }
-      return 0;
-    } else {
-      switch (metricType) {
-        case "total": return k.tokens_total;
-        case "input": return k.tokens_in;
-        case "cached": return k.tokens_cached;
-        case "output": return k.tokens_out;
-      }
-      return 0;
-    }
-  };
+  const getValue = (k: KpiData | undefined): number =>
+    kpiValue(k, metricType, unit, averageRates);
 
   const currVal = getValue(current);
   const prevVal = getValue(previous);
@@ -213,31 +169,7 @@ function TokenSplitBar({
   unit: Unit;
   averageRates: AverageRates;
 }) {
-  let cost_in = kpi.tokens_in * averageRates.input;
-  let cost_cached = kpi.tokens_cached * averageRates.cached;
-  let cost_out = kpi.tokens_out * averageRates.output;
-
-  if (unit === "cost" && kpi.cost_total > 0) {
-    const est_total = cost_in + cost_cached + cost_out;
-    if (est_total > 0) {
-      const ratio = kpi.cost_total / est_total;
-      cost_in *= ratio;
-      cost_cached *= ratio;
-      cost_out *= ratio;
-    } else {
-      // No token-derived split available — distribute evenly across the three
-      // segments so the bar doesn't render 100% "input" color. Matches
-      // ActivityOverTime's bucketValue fallback for the same shape.
-      const third = kpi.cost_total / 3;
-      cost_in = third;
-      cost_cached = third;
-      cost_out = third;
-    }
-  }
-
-  const v_in = unit === "cost" ? cost_in : kpi.tokens_in;
-  const v_cached = unit === "cost" ? cost_cached : kpi.tokens_cached;
-  const v_out = unit === "cost" ? cost_out : kpi.tokens_out;
+  const { input: v_in, cached: v_cached, output: v_out } = kpiSplit(kpi, unit, averageRates);
 
   const total = v_in + v_cached + v_out;
   if (total === 0) return null;

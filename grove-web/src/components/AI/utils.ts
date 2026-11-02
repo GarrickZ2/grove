@@ -1,5 +1,15 @@
 import type { AudioSettings } from "./types";
 
+/** Languages offered as recognition hints; users can add any other by name. */
+export const voiceLanguageOptions = [
+  { id: "zh", label: "Chinese", value: "Chinese" },
+  { id: "en", label: "English", value: "English" },
+  { id: "ja", label: "Japanese", value: "Japanese" },
+  { id: "ko", label: "Korean", value: "Korean" },
+  { id: "de", label: "German", value: "German" },
+  { id: "fr", label: "French", value: "French" },
+];
+
 export type VocabularyTab = "preferred" | "forbidden" | "replacement";
 
 export type VocabularyRow = {
@@ -173,4 +183,30 @@ export function matchesPTTKey(event: KeyboardEvent, pttKey: string): boolean {
   // Match by normalised key (e.g. "F5", "X")
   const eventKey = event.key.length === 1 ? event.key.toUpperCase() : event.key;
   return eventKey === pttKey;
+}
+
+// ─── Transcription errors ───────────────────────────────────────────────────
+
+const STATUS_HINTS: Record<number, string> = {
+  400: "Bad request — check transcribe provider config",
+  401: "Unauthorized — check API key",
+  403: "Forbidden — provider rejected the request",
+  413: "Recording too large",
+  429: "Rate limited — slow down",
+  502: "Provider unreachable",
+  503: "Provider unavailable",
+};
+
+export function formatTranscribeError(err: unknown): string {
+  if (!err || typeof err !== "object") return "Transcription failed";
+  const e = err as { status?: number; message?: string };
+  const parts: string[] = [];
+  if (typeof e.status === "number") {
+    const hint = STATUS_HINTS[e.status];
+    parts.push(hint ? `${e.status}: ${hint}` : `HTTP ${e.status}`);
+  }
+  if (e.message && e.message.trim()) {
+    parts.push(e.message.trim().slice(0, 120));
+  }
+  return parts.length > 0 ? parts.join(" — ") : "Transcription failed";
 }

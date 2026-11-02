@@ -532,6 +532,8 @@ export interface ChatSessionResponse {
   launch_mode: string;
   /** Pinned to the top of its task's session list. */
   pinned?: boolean;
+  /** Last activity (RFC 3339); only the chat list returns it, on newer servers. */
+  updated_at?: string;
 }
 
 export interface ImportableSession {

@@ -10,152 +10,53 @@
  * combinations (e.g. 24h + Monthly) auto-disable.
  */
 
-import { useState, useMemo, useEffect, useCallback } from "react";
 import { Globe2, Folder, RefreshCw, Loader2 } from "lucide-react";
 
-import {
-  getGlobalStatistics,
-  getProjectStatistics,
-  type Bucket,
-  type StatisticsResponse,
-} from "../../api/statistics";
+import type { Bucket } from "../../api/statistics";
 import { KpiRow } from "./components/KpiRow";
 import { ActivityOverTime } from "./components/ActivityOverTime";
 import { AgentShare } from "./components/AgentShare";
 import { ModelsList } from "./components/ModelsList";
 import { TopList } from "./components/TopList";
 import { ActivityHeatmap } from "./components/ActivityHeatmap";
-import { computeAverageRates } from "./components/pricing";
+import {
+  BUCKET_OPTIONS,
+  RANGE_OPTIONS,
+  type MetricType,
+  type RangeId,
+  type Scope,
+  type Unit,
+} from "./statsModel";
+import { useStatisticsState } from "./useStatisticsState";
 
-export type MetricType = "total" | "input" | "cached" | "output";
-export type Unit = "token" | "cost";
-
-
-// ── Range & bucket presets ──────────────────────────────────────────────
-
-type RangeId = "24h" | "7d" | "30d" | "90d" | "1y";
-
-const RANGE_SECS: Record<RangeId, number> = {
-  "24h": 24 * 3600,
-  "7d": 7 * 24 * 3600,
-  "30d": 30 * 24 * 3600,
-  "90d": 90 * 24 * 3600,
-  "1y": 365 * 24 * 3600,
-};
-
-const RANGE_OPTIONS: { id: RangeId; label: string }[] = [
-  { id: "24h", label: "24h" },
-  { id: "7d", label: "7d" },
-  { id: "30d", label: "30d" },
-  { id: "90d", label: "90d" },
-  { id: "1y", label: "1y" },
-];
-
-const BUCKET_OPTIONS: { id: Bucket; label: string }[] = [
-  { id: "hourly", label: "Hourly" },
-  { id: "daily", label: "Daily" },
-  { id: "weekly", label: "Weekly" },
-  { id: "monthly", label: "Monthly" },
-];
-
-/**
- * Bucket compatibility matrix:
- *   - 24h: only Hourly makes sense (Daily would be 1 point)
- *   - 7d:  Hourly produces 168 buckets — fine. Daily preferred. Weekly/Monthly too coarse.
- *   - 30d: Hourly = 720 buckets, allowed but heavy. Daily/Weekly are sweet spot.
- *   - 90d: Hourly disabled (renders too many points). Daily/Weekly/Monthly OK.
- *   - 1y:  Hourly disabled. Daily allowed but dense. Weekly/Monthly preferred.
- */
-const ALLOWED_BUCKETS: Record<RangeId, Bucket[]> = {
-  "24h": ["hourly"],
-  "7d": ["hourly", "daily"],
-  "30d": ["hourly", "daily", "weekly"],
-  "90d": ["daily", "weekly", "monthly"],
-  "1y": ["daily", "weekly", "monthly"],
-};
-
-const DEFAULT_BUCKET: Record<RangeId, Bucket> = {
-  "24h": "hourly",
-  "7d": "daily",
-  "30d": "daily",
-  "90d": "weekly",
-  "1y": "monthly",
-};
+export type { MetricType, Unit } from "./statsModel";
 
 // ── Page ────────────────────────────────────────────────────────────────
-
-type Scope = "global" | "project";
 
 interface ProjectStatsPageProps {
   projectId?: string;
 }
 
 export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
-  const [scopeRaw, setScopeRaw] = useState<Scope>(
-    projectId ? "project" : "global",
-  );
-  const [range, setRange] = useState<RangeId>("7d");
-  const [bucket, setBucket] = useState<Bucket>(DEFAULT_BUCKET["7d"]);
-  const [metricType, setMetricType] = useState<MetricType>("total");
-  const [unit, setUnit] = useState<Unit>("token");
-  const [data, setData] = useState<StatisticsResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Derived: if user picked Project but no project is loaded, fall back to
-  // Global for fetching purposes. We render the empty state separately.
-  const effectiveScope: Scope =
-    scopeRaw === "project" && !projectId ? "global" : scopeRaw;
-
-  // Switching range can leave the current bucket invalid — collapse onto
-  // a sensible default *for fetching*, while letting the UI stay in sync
-  // via setRange's wrapper below.
-  const setRangeAndCoerce = useCallback(
-    (newRange: RangeId) => {
-      setRange(newRange);
-      if (!ALLOWED_BUCKETS[newRange].includes(bucket)) {
-        setBucket(DEFAULT_BUCKET[newRange]);
-      }
-    },
-    [bucket],
-  );
-
-  const allowedBuckets = useMemo(() => ALLOWED_BUCKETS[range], [range]);
-
-  const currentModels = data?.current.models;
-  const averageRates = useMemo(() => {
-    return computeAverageRates(currentModels ?? []);
-  }, [currentModels]);
-
-  const fetchData = useCallback(async () => {
-    if (effectiveScope === "project" && !projectId) {
-      setData(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    const now = Math.floor(Date.now() / 1000);
-    const from = now - RANGE_SECS[range];
-    try {
-      const resp =
-        effectiveScope === "global"
-          ? await getGlobalStatistics({ from, to: now, bucket })
-          : await getProjectStatistics(projectId!, { from, to: now, bucket });
-      setData(resp);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [effectiveScope, projectId, range, bucket]);
-
-  useEffect(() => {
-    // Fetching is an external-system call; setState inside the callback is
-    // the canonical loading-state pattern. Lint exemption is intentional.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchData();
-  }, [fetchData]);
+  const {
+    scope: scopeRaw,
+    setScope: setScopeRaw,
+    effectiveScope,
+    range,
+    setRange: setRangeAndCoerce,
+    bucket,
+    setBucket,
+    allowedBuckets,
+    metricType,
+    setMetricType,
+    unit,
+    setUnit,
+    data,
+    loading,
+    error,
+    averageRates,
+    refresh: fetchData,
+  } = useStatisticsState(projectId);
 
   return (
     <div className="flex h-full min-w-0 select-none flex-col gap-3 overflow-y-auto overflow-x-hidden md:overflow-hidden">

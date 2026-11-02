@@ -692,6 +692,26 @@ pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSessio
     Ok(chats)
 }
 
+/// Last activity per active Session of a Task: session_id →
+/// `COALESCE(updated_at, created_at)` as stored (RFC 3339). This is the value
+/// `load_chat_sessions` orders by.
+pub fn load_chat_activity(
+    project: &str,
+    task_id: &str,
+) -> Result<std::collections::HashMap<String, String>> {
+    let conn = crate::storage::database::connection();
+    let mut stmt = conn.prepare(
+        "SELECT session_id, COALESCE(updated_at, created_at) FROM session
+         WHERE project = ?1 AND task_id = ?2 AND archived_at IS NULL",
+    )?;
+    let rows = stmt
+        .query_map(params![project, task_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(rows)
+}
+
 /// Every active Session of a Project as (task_id, session_id, title), newest first.
 pub fn list_project_sessions(project: &str) -> Result<Vec<(String, String, String)>> {
     let conn = crate::storage::database::connection();

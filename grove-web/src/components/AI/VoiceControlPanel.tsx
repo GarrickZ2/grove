@@ -1,24 +1,15 @@
-import React, { useCallback, useEffect, useState, useMemo } from "react";
+import { useState } from "react";
 import { ArrowRight, Ban, Check, ChevronDown, Globe2, Keyboard, Mic, Search, Settings, X } from "lucide-react";
 import { SettingsModeSwitch, SettingsToggle } from "./components/PipelineLayout";
 import type { ProviderProfile, VoiceControlSettings } from "./types";
-import { formatShortcut, formatPTTKey, pttKeyLabel } from "./utils";
-import { commandRegistry, persistOverride, persistRemoveOverride } from "../../keyboard";
+import { pttKeyLabel, voiceLanguageOptions } from "./utils";
+import { useVoiceControlEditor } from "./useVoiceControlEditor";
 
 interface VoiceControlPanelProps {
   settings: VoiceControlSettings;
   providers: ProviderProfile[];
   onSettingsSaved: (next: VoiceControlSettings) => void;
 }
-
-const languageOptions = [
-  { id: "zh", label: "Chinese", value: "Chinese" },
-  { id: "en", label: "English", value: "English" },
-  { id: "ja", label: "Japanese", value: "Japanese" },
-  { id: "ko", label: "Korean", value: "Korean" },
-  { id: "de", label: "German", value: "German" },
-  { id: "fr", label: "French", value: "French" },
-];
 
 function VoiceLanguagePicker({ value, disabled, onToggle, onAddCustom }: {
   value: string[];
@@ -48,7 +39,7 @@ function VoiceLanguagePicker({ value, disabled, onToggle, onAddCustom }: {
       </summary>
       <div className="absolute right-0 z-20 mt-2 w-full min-w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-2 shadow-xl">
         <div className="grid grid-cols-2 gap-1">
-          {languageOptions.map((language) => (
+          {voiceLanguageOptions.map((language) => (
             <label key={language.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]">
               <input type="checkbox" checked={value.includes(language.value)} onChange={() => onToggle(language.value)} />
               {language.label}
@@ -77,251 +68,37 @@ function VoiceLanguagePicker({ value, disabled, onToggle, onAddCustom }: {
   );
 }
 
-function isRecommendedAction(cmdId: string): boolean {
-  // Navigation, help, palette, panel, radio
-  const prefixes = ["nav.", "help.", "palette.", "panel.", "radio."];
-  if (prefixes.some((p) => cmdId.startsWith(p))) return true;
-
-  const exactMatches = [
-    "task.new",
-    "task.open",
-    "task.close",
-    "task.selectNext",
-    "task.selectPrevious",
-    "task.search",
-    "agent.switch.next",
-    "agent.switch.previous",
-    "project.open",
-    "chat.switchSession",
-  ];
-  if (exactMatches.includes(cmdId)) return true;
-
-  return false;
-}
-
 export function VoiceControlPanel({
   settings,
   providers,
   onSettingsSaved,
 }: VoiceControlPanelProps) {
-  // Track registry version so dynamically registered commands (e.g.
-  // voiceControl.* from GlobalVoiceControlRecorder) appear in the list even
-  // when this panel mounts before those components complete their first render.
-  const [registryVersion, setRegistryVersion] = useState(0);
-  useEffect(() => commandRegistry.subscribe(() => setRegistryVersion((v) => v + 1)), []);
-  const allCommands = useMemo(() => {
-    return commandRegistry.listCommands().filter((c) => !c.hidden);
-  // registryVersion is intentionally the only dep: it increments on every
-  // registry mutation, causing the list to be recomputed from the live registry.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registryVersion]);
-
-  // Compute recommended settings once on load if settings.hasInitializedActions is false
-  const initialSettings = useMemo(() => {
-    if (!settings.hasInitializedActions) {
-      const recommendedSet = new Set(allCommands.filter((c) => isRecommendedAction(c.id)).map((c) => c.id));
-      const defaultDisabled = allCommands.filter((c) => !recommendedSet.has(c.id)).map((c) => c.id);
-      return {
-        ...settings,
-        disabledActions: defaultDisabled,
-        hasInitializedActions: true,
-      };
-    }
-    return settings;
-  }, [settings, allCommands]);
-
-  const [localSettings, setLocalSettings] = useState<VoiceControlSettings>(initialSettings);
-  const [recordingTarget, setRecordingTarget] = useState<"toggle" | "ptt" | null>(null);
-
-  const [drafts, setDrafts] = useState({
-    minDuration: String(initialSettings.minDuration),
-    maxDuration: String(initialSettings.maxDuration),
-    pttActivationDelayMs: String(initialSettings.pttActivationDelayMs),
-  });
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const {
+    settings: localSettings,
+    patchSettings,
+    recordingTarget,
+    toggleRecordingTarget,
+    clearShortcut,
+    togglePreferredLanguage,
+    addCustomLanguage,
+    drafts,
+    setDraft,
+    resetDraft,
+    commitDuration,
+    allCommands,
+    categories,
+    filteredCommands,
+    searchQuery,
+    setSearchQuery,
+    categoryFilter,
+    setCategoryFilter,
+    isActionEnabled,
+    toggleActionEnabled,
+    applyRecommendedActions,
+    enableAllActions,
+    disableAllActions,
+  } = useVoiceControlEditor(settings, onSettingsSaved);
   const [activeSection, setActiveSection] = useState<"settings" | "actions">("settings");
-
-  // Sync local state when parent passes a new settings object (React adjusted-state pattern).
-  // Three setState calls are batched by React 18 into a single re-render.
-  const [lastSyncedSettings, setLastSyncedSettings] = useState(settings);
-  if (lastSyncedSettings !== settings) {
-    setLastSyncedSettings(settings);
-    setLocalSettings(initialSettings);
-    setDrafts({
-      minDuration: String(initialSettings.minDuration),
-      maxDuration: String(initialSettings.maxDuration),
-      pttActivationDelayMs: String(initialSettings.pttActivationDelayMs),
-    });
-  }
-
-  const onSettingsSavedRef = React.useRef(onSettingsSaved);
-  useEffect(() => {
-    onSettingsSavedRef.current = onSettingsSaved;
-  }, [onSettingsSaved]);
-
-  const patchSettingsState = useCallback(
-    (updater: (prev: VoiceControlSettings) => VoiceControlSettings) => {
-      setLocalSettings((prev) => {
-        const next = updater(prev);
-        queueMicrotask(() => onSettingsSavedRef.current?.(next));
-        return next;
-      });
-    },
-    []
-  );
-
-  const patchSettings = useCallback(
-    <K extends keyof VoiceControlSettings>(key: K, value: VoiceControlSettings[K]) => {
-      patchSettingsState((prev) => ({ ...prev, [key]: value }));
-    },
-    [patchSettingsState]
-  );
-
-  // Auto-initialize disabledActions on mount with recommended values if not set
-  useEffect(() => {
-    if (!settings.hasInitializedActions) {
-      onSettingsSavedRef.current?.(initialSettings);
-    }
-  }, [settings.hasInitializedActions, initialSettings]);
-
-  const mirrorPTTToKeymap = useCallback(async (key: string) => {
-    try {
-      if (key) {
-        await persistOverride({
-          command_id: "voiceControl.ptt.start",
-          key,
-          when_ctx: undefined,
-          scope: undefined,
-        });
-      } else {
-        await persistRemoveOverride("voiceControl.ptt.start");
-      }
-    } catch (err) {
-      console.error("[VoiceControlPanel] mirror PTT → keymap failed:", err);
-    }
-  }, []);
-
-  const commitMinDuration = useCallback(() => {
-    const parsed = Number(drafts.minDuration);
-    const next = Number.isFinite(parsed)
-      ? Math.max(1, Math.min(10, Math.floor(parsed)))
-      : localSettings.minDuration;
-    setDrafts((d) => ({ ...d, minDuration: String(next) }));
-    if (next !== localSettings.minDuration) {
-      patchSettings("minDuration", next);
-    }
-  }, [localSettings.minDuration, drafts.minDuration, patchSettings]);
-
-  const commitMaxDuration = useCallback(() => {
-    const parsed = Number(drafts.maxDuration);
-    const next = Number.isFinite(parsed)
-      ? Math.max(5, Math.min(60, Math.floor(parsed)))
-      : localSettings.maxDuration;
-    setDrafts((d) => ({ ...d, maxDuration: String(next) }));
-    if (next !== localSettings.maxDuration) {
-      patchSettings("maxDuration", next);
-    }
-  }, [localSettings.maxDuration, drafts.maxDuration, patchSettings]);
-
-  const commitPttActivationDelay = useCallback(() => {
-    const parsed = Number(drafts.pttActivationDelayMs);
-    const next = Number.isFinite(parsed)
-      ? Math.max(0, Math.min(2000, Math.floor(parsed)))
-      : localSettings.pttActivationDelayMs;
-    setDrafts((d) => ({ ...d, pttActivationDelayMs: String(next) }));
-    if (next !== localSettings.pttActivationDelayMs) {
-      patchSettings("pttActivationDelayMs", next);
-    }
-  }, [localSettings.pttActivationDelayMs, drafts.pttActivationDelayMs, patchSettings]);
-
-  useEffect(() => {
-    if (!recordingTarget) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-
-      if (event.key === "Escape") {
-        setRecordingTarget(null);
-        return;
-      }
-
-      if (recordingTarget === "toggle") {
-        const combo = formatShortcut(event);
-        if (combo) {
-          patchSettingsState((prev) => ({ ...prev, toggleShortcut: combo }));
-          setRecordingTarget(null);
-        }
-      } else {
-        const key = formatPTTKey(event);
-        if (key) {
-          patchSettingsState((prev) => ({ ...prev, pushToTalkKey: key }));
-          void mirrorPTTToKeymap(key);
-          setRecordingTarget(null);
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [recordingTarget, patchSettingsState, mirrorPTTToKeymap]);
-
-  const togglePreferredLanguage = (language: string) => {
-    patchSettingsState((prev) => ({
-      ...prev,
-      preferredLanguages: (prev.preferredLanguages || []).includes(language)
-        ? (prev.preferredLanguages || []).filter((item) => item !== language)
-        : [...(prev.preferredLanguages || []), language],
-    }));
-  };
-
-  const addCustomLanguage = (language: string) => {
-    patchSettingsState((prev) => ({
-      ...prev,
-      preferredLanguages: [...(prev.preferredLanguages || []), language],
-    }));
-  };
-
-  const toggleActionEnabled = useCallback(
-    (actionId: string) => {
-      const currentDisabled = localSettings.disabledActions || [];
-      let nextDisabled: string[];
-      if (currentDisabled.includes(actionId)) {
-        nextDisabled = currentDisabled.filter((id) => id !== actionId);
-      } else {
-        nextDisabled = [...currentDisabled, actionId];
-      }
-      patchSettings("disabledActions", nextDisabled);
-    },
-    [localSettings.disabledActions, patchSettings]
-  );
-
-  // Compute categories from command registry
-  const categories = useMemo(() => {
-    const set = new Set<string>();
-    for (const cmd of allCommands) {
-      if (cmd.category) {
-        set.add(cmd.category);
-      }
-    }
-    return Array.from(set).sort();
-  }, [allCommands]);
-
-  // Filter commands by search query and category
-  const filteredCommands = useMemo(() => {
-    return allCommands.filter((cmd) => {
-      const matchSearch =
-        cmd.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        cmd.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (cmd.description || "").toLowerCase().includes(searchQuery.toLowerCase());
-
-      const matchCategory = categoryFilter === "all" || cmd.category === categoryFilter;
-
-      return matchSearch && matchCategory;
-    });
-  }, [allCommands, searchQuery, categoryFilter]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-sm">
@@ -369,11 +146,7 @@ export function VoiceControlPanel({
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => {
-                const recommendedSet = new Set(allCommands.filter((c) => isRecommendedAction(c.id)).map((c) => c.id));
-                const defaultDisabled = allCommands.filter((c) => !recommendedSet.has(c.id)).map((c) => c.id);
-                patchSettings("disabledActions", defaultDisabled);
-              }}
+              onClick={applyRecommendedActions}
               disabled={!localSettings.enabled}
               className="flex items-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:bg-[var(--color-bg-secondary)]"
             >
@@ -382,7 +155,7 @@ export function VoiceControlPanel({
             </button>
             <button
               type="button"
-              onClick={() => patchSettings("disabledActions", [])}
+              onClick={enableAllActions}
               disabled={!localSettings.enabled}
               className="flex items-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:bg-[var(--color-bg-secondary)]"
             >
@@ -391,7 +164,7 @@ export function VoiceControlPanel({
             </button>
             <button
               type="button"
-              onClick={() => patchSettings("disabledActions", allCommands.map((c) => c.id))}
+              onClick={disableAllActions}
               disabled={!localSettings.enabled}
               className="flex items-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:bg-[var(--color-bg-secondary)]"
             >
@@ -476,10 +249,10 @@ export function VoiceControlPanel({
                   <div className="truncate rounded-lg bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text)]">
                     {recordingTarget === "toggle" ? <span className="text-[var(--color-highlight)]">Press shortcut</span> : localSettings.toggleShortcut || <span className="text-[var(--color-text-muted)]">Not set</span>}
                   </div>
-                  <button type="button" onClick={() => setRecordingTarget(recordingTarget === "toggle" ? null : "toggle")} disabled={!localSettings.enabled} className="h-9 rounded-lg border border-[var(--color-border)] px-3 text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]">
+                  <button type="button" onClick={() => toggleRecordingTarget("toggle")} disabled={!localSettings.enabled} className="h-9 rounded-lg border border-[var(--color-border)] px-3 text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]">
                     {recordingTarget === "toggle" ? "Cancel" : "Change"}
                   </button>
-                  <button type="button" onClick={() => patchSettings("toggleShortcut", "")} disabled={!localSettings.toggleShortcut} aria-label="Clear toggle shortcut" className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-error)] disabled:invisible">
+                  <button type="button" onClick={() => clearShortcut("toggle")} disabled={!localSettings.toggleShortcut} aria-label="Clear toggle shortcut" className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-error)] disabled:invisible">
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
@@ -494,10 +267,10 @@ export function VoiceControlPanel({
                   <div className="truncate rounded-lg bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text)]">
                     {recordingTarget === "ptt" ? <span className="text-[var(--color-highlight)]">Press a key</span> : localSettings.pushToTalkKey ? pttKeyLabel(localSettings.pushToTalkKey) : <span className="text-[var(--color-text-muted)]">Not set</span>}
                   </div>
-                  <button type="button" onClick={() => setRecordingTarget(recordingTarget === "ptt" ? null : "ptt")} disabled={!localSettings.enabled} className="h-9 rounded-lg border border-[var(--color-border)] px-3 text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]">
+                  <button type="button" onClick={() => toggleRecordingTarget("ptt")} disabled={!localSettings.enabled} className="h-9 rounded-lg border border-[var(--color-border)] px-3 text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]">
                     {recordingTarget === "ptt" ? "Cancel" : "Change"}
                   </button>
-                  <button type="button" onClick={() => { patchSettings("pushToTalkKey", ""); void mirrorPTTToKeymap(""); }} disabled={!localSettings.pushToTalkKey} aria-label="Clear push-to-talk key" className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-error)] disabled:invisible">
+                  <button type="button" onClick={() => clearShortcut("ptt")} disabled={!localSettings.pushToTalkKey} aria-label="Clear push-to-talk key" className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-error)] disabled:invisible">
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
@@ -511,9 +284,9 @@ export function VoiceControlPanel({
               </div>
               <div className="grid gap-4 sm:grid-cols-3">
                 {([
-                  { label: "Ignore shorter than", value: drafts.minDuration, set: "minDuration", commit: commitMinDuration, min: 1, max: 10, step: 1, unit: "sec" },
-                  { label: "Stop listening after", value: drafts.maxDuration, set: "maxDuration", commit: commitMaxDuration, min: 5, max: 60, step: 1, unit: "sec" },
-                  { label: "Push-to-talk threshold", value: drafts.pttActivationDelayMs, set: "pttActivationDelayMs", commit: commitPttActivationDelay, min: 0, max: 2000, step: 50, unit: "ms" },
+                  { label: "Ignore shorter than", value: drafts.minDuration, set: "minDuration", commit: () => commitDuration("minDuration"), min: 1, max: 10, step: 1, unit: "sec" },
+                  { label: "Stop listening after", value: drafts.maxDuration, set: "maxDuration", commit: () => commitDuration("maxDuration"), min: 5, max: 60, step: 1, unit: "sec" },
+                  { label: "Push-to-talk threshold", value: drafts.pttActivationDelayMs, set: "pttActivationDelayMs", commit: () => commitDuration("pttActivationDelayMs"), min: 0, max: 2000, step: 50, unit: "ms" },
                 ] as const).map((field) => (
                   <label key={field.label}>
                     <span className="mb-2 block text-xs font-medium text-[var(--color-text-muted)]">{field.label}</span>
@@ -525,12 +298,12 @@ export function VoiceControlPanel({
                         max={field.max}
                         step={field.step}
                         disabled={!localSettings.enabled}
-                        onChange={(event) => setDrafts((current) => ({ ...current, [field.set]: event.target.value }))}
+                        onChange={(event) => setDraft(field.set, event.target.value)}
                         onBlur={field.commit}
                         onKeyDown={(event) => {
                           if (event.key === "Enter") event.currentTarget.blur();
                           if (event.key === "Escape") {
-                            setDrafts((current) => ({ ...current, [field.set]: String(localSettings[field.set]) }));
+                            resetDraft(field.set);
                             event.currentTarget.blur();
                           }
                         }}
@@ -587,7 +360,7 @@ export function VoiceControlPanel({
               </div>
             ) : (
               filteredCommands.map((cmd) => {
-                const isEnabled = !(localSettings.disabledActions || []).includes(cmd.id);
+                const isEnabled = isActionEnabled(cmd.id);
                 return (
                   <div
                     key={cmd.id}
