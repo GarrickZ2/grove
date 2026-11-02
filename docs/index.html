@@ -1,492 +1,655 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Grove — Where humans and AI agents build together</title>
-<meta name="description" content="A workspace for you and your AI development team. Run every agent in parallel — through chat, sketches, or voice — and ship with confidence.">
-
-<meta property="og:title" content="Grove — Where humans and AI agents build together">
-<meta property="og:description" content="AI development, for everyone — not just coders.">
-<meta property="og:image" content="images/graph.png">
-<meta property="og:type" content="website">
-
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Grove — Where humans and AI agents build together">
-<meta name="twitter:description" content="AI development, for everyone — not just coders.">
-<meta name="twitter:image" content="images/graph.png">
-
-<link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="icon" type="image/png" href="favicon.png">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Grove — the Context Harness</title>
+<meta name="description" content="Agents write the code. You steer the context. Grove is a Context Harness for every coding agent: capture, organize, inject and negotiate context.">
+<meta name="theme-color" content="#f6f5f1">
+<script>/* theme before first paint: Light (default) · Dark · System */(function(){var m="light";try{m=localStorage.getItem("grove-theme")||"light"}catch(e){}if(m!=="dark"&&m!=="system")m="light";var d=m==="system"?(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):m;if(/[?&]sky=v1/.test(location.search))d="dark";var r=document.documentElement;r.setAttribute("data-theme",d);r.setAttribute("data-theme-mode",m)})();</script>
+<link rel="icon" href="brand-icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-
-<link rel="stylesheet" href="css/grove.css">
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js" defer></script>
-<script src="js/grove.js" defer></script>
+<meta property="og:title" content="Grove — the Context Harness">
+<meta property="og:description" content="Agents write the code. You steer the context.">
+<meta property="og:image" content="https://garrickz2.github.io/grove/images/readme-hero-light.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="site.css?v=24">
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="i-at" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.6"/><path d="M10.6 8v1.1a1.9 1.9 0 0 0 3.8 0V8a6.4 6.4 0 1 0-2.5 5.1"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 16 16"><path d="M10.5 2.8 13.2 5.5 6 12.7l-3.2.5.5-3.2z"/></symbol>
+    <symbol id="i-up" viewBox="0 0 16 16"><path d="M8 13V3.5M4 7.2 8 3.2l4 4"/></symbol>
+    <symbol id="i-file" viewBox="0 0 16 16"><path d="M9 1.8H4.6a1 1 0 0 0-1 1v10.4a1 1 0 0 0 1 1h6.8a1 1 0 0 0 1-1V5.2z"/><path d="M9 1.8v3.4h3.4"/></symbol>
+    <symbol id="i-image" viewBox="0 0 16 16"><rect x="2" y="2.6" width="12" height="10.8" rx="1.6"/><circle cx="5.8" cy="6.2" r="1.2"/><path d="m2.4 11.6 3.4-3 2.6 2.2 2-1.6 3.4 2.8"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.8 4.2a1 1 0 0 1 1-1h3.3l1.5 1.6h5.6a1 1 0 0 1 1 1v6.9a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-mem" viewBox="0 0 16 16"><path d="M8 1.6 9.5 6.5 14.4 8 9.5 9.5 8 14.4 6.5 9.5 1.6 8 6.5 6.5z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="m3.2 8.4 3 3 6.6-6.8"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.2" y="5.2" width="8.6" height="8.6" rx="1.6"/><path d="M10.8 5.2V3.4a1.2 1.2 0 0 0-1.2-1.2H3.4a1.2 1.2 0 0 0-1.2 1.2v6.2a1.2 1.2 0 0 0 1.2 1.2h1.8"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4"/></symbol>
+    <symbol id="i-down" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7.2" cy="7.2" r="4.4"/><path d="m10.4 10.4 3.2 3.2"/></symbol>
+    <symbol id="i-tool" viewBox="0 0 16 16"><path d="M9.8 2.4a3.4 3.4 0 0 0-3.6 4.7L2.4 10.9a1.4 1.4 0 0 0 2 2l3.8-3.8a3.4 3.4 0 0 0 4.7-3.6l-2 2-1.9-.4-.4-1.9z"/></symbol>
+    <symbol id="i-merge" viewBox="0 0 16 16"><circle cx="4.5" cy="3.6" r="1.6"/><circle cx="4.5" cy="12.4" r="1.6"/><circle cx="11.5" cy="8.6" r="1.6"/><path d="M4.5 5.2v5.6M4.5 5.6c0 2.4 2.4 3 5.4 3"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 16 16"><rect x="5.8" y="1.8" width="4.4" height="8" rx="2.2"/><path d="M3.4 7.6a4.6 4.6 0 0 0 9.2 0M8 12.2v2"/></symbol>
+    <symbol id="i-github" viewBox="0 0 16 16"><path fill="currentColor" stroke="none" d="M8 .3a7.7 7.7 0 0 0-2.4 15c.4 0 .5-.2.5-.4v-1.4c-2.1.5-2.6-1-2.6-1-.4-.9-.9-1.1-.9-1.1-.7-.5 0-.5 0-.5.8.1 1.2.8 1.2.8.7 1.2 1.8.8 2.3.6 0-.5.3-.8.5-1-1.7-.2-3.5-.9-3.5-3.8 0-.8.3-1.5.8-2-.1-.2-.3-1 .1-2.1 0 0 .6-.2 2.1.8a7.3 7.3 0 0 1 3.9 0c1.5-1 2.1-.8 2.1-.8.4 1.1.2 1.9.1 2.1.5.5.8 1.2.8 2 0 3-1.8 3.6-3.5 3.8.3.2.5.7.5 1.4v2.1c0 .2.1.5.5.4A7.7 7.7 0 0 0 8 .3"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 16 16"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1.8"/><path d="m4.6 6.2 2 1.8-2 1.8M8.4 10h3"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 16 16"><path d="M2.4 4a1.6 1.6 0 0 1 1.6-1.6h8a1.6 1.6 0 0 1 1.6 1.6v5.4a1.6 1.6 0 0 1-1.6 1.6H6.6L3.6 13.4V11a1.6 1.6 0 0 1-1.2-1.6z"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.8 13 3.6v4.2c0 3-2.2 5.2-5 6.4-2.8-1.2-5-3.4-5-6.4V3.6z"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 16 16"><path d="M8 2.2c.4 2.9 1.6 4.4 4.6 4.8-3 .4-4.2 1.9-4.6 4.8-.4-2.9-1.6-4.4-4.6-4.8 3-.4 4.2-1.9 4.6-4.8zM12.8 10.6c.2 1.2.7 1.8 1.8 2-1.1.2-1.6.8-1.8 2-.2-1.2-.7-1.8-1.8-2 1.1-.2 1.6-.8 1.8-2z"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c1.8 1.7 2.6 3.7 2.6 6S9.8 12.3 8 14c-1.8-1.7-2.6-3.7-2.6-6S6.2 3.7 8 2z"/></symbol>
+  </defs>
+</svg>
 
-<nav class="nav">
-  <div class="nav-inner">
-    <a class="nav-logo" href="index.html">
-      <img src="brand-icon.svg" alt="" class="nav-icon" width="28" height="28">
-      <img src="brand-wordmark.svg" alt="Grove" class="nav-wordmark" height="20">
-      <span class="nav-crumb">▸ main</span>
-    </a>
-    <div class="nav-links">
-      <a href="index.html" data-page="index">home</a>
-      <a href="agents.html" data-page="agents">agents</a>
-      <a href="studio.html" data-page="studio">studio</a>
-      <a href="anywhere.html" data-page="anywhere">anywhere</a>
-      <a href="workflow.html" data-page="workflow">workflow</a>
-      <a href="extend.html" data-page="extend">extend</a>
+<a class="skip" href="#main">Skip to content</a>
+<canvas id="deep-sky" aria-hidden="true"></canvas>
+
+<header class="nav" id="nav">
+  <a class="brand" href="#hero" aria-label="Grove home"><img src="brand-icon.svg" alt="" width="22" height="22"><span>Grove</span></a>
+  <nav class="nav-links" aria-label="Sections">
+    <a href="#model">Harness</a><a href="#results">Results</a><a href="#buddy">Buddy</a><a href="#workspace">Workspace</a><a href="#plugins">Plugins</a>
+  </nav>
+  <div class="nav-cta">
+    <div class="theme-seg" role="group" aria-label="Colour theme">
+      <button type="button" data-theme-set="light" aria-pressed="false" aria-label="Light theme" title="Light"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.7"/><path d="M8 1.7v1.5M8 12.8v1.5M1.7 8h1.5M12.8 8h1.5M3.55 3.55l1.06 1.06M11.39 11.39l1.06 1.06M3.55 12.45l1.06-1.06M11.39 4.61l1.06-1.06"/></svg></button>
+      <button type="button" data-theme-set="dark" aria-pressed="false" aria-label="Dark theme" title="Dark"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.3 9.7A5.6 5.6 0 0 1 6.3 2.7a5.6 5.6 0 1 0 7 7z"/></svg></button>
+      <button type="button" data-theme-set="system" aria-pressed="false" aria-label="Follow system theme" title="System"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.9" y="2.6" width="12.2" height="8.4" rx="1.5"/><path d="M5.6 13.6h4.8M8 11v2.6"/></svg></button>
     </div>
-    <div class="nav-right">
-      <a class="btn ghost" href="https://github.com/GarrickZ2/grove" target="_blank" rel="noopener">GitHub&nbsp;↗</a>
-      <a class="btn" href="#install">$ install</a>
+    <a class="nav-gh" href="https://github.com/GarrickZ2/grove" aria-label="Grove on GitHub"><svg class="ic"><use href="#i-github"/></svg><span>GitHub</span></a>
+    <a class="btn-ink sm" href="#install">Install</a>
+  </div>
+</header>
+
+<main id="main">
+<!-- Product mocks: each surface lives in one container marked data-surface="…";
+     a real screenshot (<img>) can replace that container's contents later. -->
+<!-- ===================================================== HERO -->
+<section class="hero" id="hero" aria-labelledby="hero-h">
+  <canvas id="hero-sky" aria-hidden="true"></canvas>
+  <div class="hero-inner">
+    <p class="eyebrow" data-x><span class="pulse-dot" aria-hidden="true"></span>Grove · a Context Harness for coding agents</p>
+    <h1 class="display" id="hero-h" data-x>Agents write the code.<br><em>You steer the context.</em></h1>
+    <p class="lede" data-x>The sky behind this page is a project’s memory. Ask for something, and watch the right memories come down to meet your prompt.</p>
+
+    <form class="oc-shell" id="composer" autocomplete="off" data-x>
+      <div class="oc-status">
+        <span class="oc-ctx-label"><svg class="ic"><use href="#i-mem"/></svg>Context</span>
+        <div class="oc-chips" id="chips" aria-live="polite" aria-label="Context attached to this prompt"></div>
+        <span class="oc-ctx-empty" id="ctx-empty">Memories you mention land here</span>
+      </div>
+      <div class="oc-body">
+        <label class="sr-only" for="prompt">Prompt for the agent</label>
+        <textarea id="prompt" rows="1" placeholder="Ask an agent to…" enterkeyhint="send" spellcheck="false"></textarea>
+      </div>
+      <div class="oc-bar">
+        <div class="oc-tools">
+          <button type="button" class="oc-tool" aria-label="Attach a file" tabindex="-1"><svg class="ic"><use href="#i-plus"/></svg></button>
+          <button type="button" class="oc-tool" aria-label="Mention a file" tabindex="-1"><svg class="ic"><use href="#i-at"/></svg></button>
+          <button type="button" class="oc-tool" aria-label="Attach a sketch" tabindex="-1"><svg class="ic"><use href="#i-pen"/></svg></button>
+          <span class="oc-hint" aria-hidden="true">Enter to send</span>
+        </div>
+        <div class="oc-who">
+          <button type="button" class="oc-agent" id="agent-pick" aria-label="Agent: Claude Code. Click to switch agent"><span class="mono-dot" aria-hidden="true"></span><span id="agent-name">Claude Code</span><svg class="ic sm"><use href="#i-down"/></svg></button>
+          <button type="submit" class="oc-orb" id="send" aria-label="Send to agent" data-icon="arrow">
+            <span class="oc-orb-ic is-arrow"><svg class="ic"><use href="#i-up"/></svg></span>
+            <span class="oc-orb-ic is-spin"><svg class="ic" viewBox="0 0 16 16"><path d="M8 2.2a5.8 5.8 0 1 1-5.6 4.3" fill="none"/></svg></span>
+          </button>
+        </div>
+      </div>
+    </form>
+
+    <div class="suggest" id="suggest" data-x>
+      <span class="suggest-l">Try</span>
+      <button type="button" data-q="Add refresh-token rotation to login">Add refresh-token rotation to login</button>
+      <button type="button" data-q="Make the checkout page match the brand guide">Make checkout match the brand guide</button>
+      <button type="button" data-q="Fix the flaky payment webhook test">Fix the flaky payment webhook test</button>
+      <button type="button" data-q="Write release notes in our brand voice">Release notes in our brand voice</button>
+    </div>
+
+    <div class="run" id="run" hidden data-x>
+      <div class="run-card" role="status" aria-live="polite">
+        <div class="run-head">
+          <span class="av is-work" aria-hidden="true"><span class="ring"></span><span class="mono" id="run-mono">CC</span></span>
+          <div class="run-who"><b id="run-agent">Claude Code</b><span id="run-state">picked it up</span></div>
+          <span class="live" aria-hidden="true"></span>
+        </div>
+        <ol class="run-steps" id="run-steps"></ol>
+        <p class="run-foot">A demo: nothing is actually running. <button type="button" id="run-reset">Try another prompt</button></p>
+      </div>
     </div>
   </div>
-</nav>
+  <a class="scroll-cue" href="#model"><span>The four moves</span><svg class="ic"><use href="#i-down"/></svg></a>
+</section>
 
-<div class="container">
+<!-- ===================================================== MODEL -->
+<section class="model" id="model" aria-labelledby="model-h">
+  <div class="wrap">
+    <p class="kicker">The premise</p>
+    <h2 class="display-2" id="model-h">You no longer write the final artifact.<br><em>You manage what the agents know.</em></h2>
+    <p class="section-lede">ACP standardized how software talks to AI. Grove is the layer above it: it replaces the client with context, so the triad becomes <b>human ⇄ context ⇄ agent</b>. Every feature is one move on that context.</p>
+    <div class="triad" aria-hidden="true">
+      <div class="triad-node"><span class="tn-ic">You</span><small>Human</small></div>
+      <div class="triad-link"><i></i><i></i></div>
+      <div class="triad-node is-ctx"><span class="tn-ic"><svg class="ic"><use href="#i-mem"/></svg></span><small>Context</small></div>
+      <div class="triad-link"><i></i><i></i></div>
+      <div class="triad-node"><span class="tn-ic">AI</span><small>Agent</small></div>
+    </div>
+    <ol class="moves">
+      <li><a href="#capture"><span class="mv-n">01</span><b>Capture</b><span>Outside context comes in, brought by you or fetched by the agent.</span></a></li>
+      <li><a href="#organize"><span class="mv-n">02</span><b>Organize</b><span>Notes are curated into memory that lasts and gets reused.</span></a></li>
+      <li><a href="#inject"><span class="mv-n">03</span><b>Inject</b><span>Context reaches the agent. You push it, or the agent pulls it.</span></a></li>
+      <li><a href="#negotiate"><span class="mv-n">04</span><b>Negotiate</b><span>Review comments, surveys and permission requests settle the result.</span></a></li>
+    </ol>
+  </div>
+</section>
 
-  <!-- HERO -->
-  <section class="hero-grid">
-    <div data-animate>
-      <div class="eyebrow">v0.14.0 · released 2026.10</div>
-      <h1>
-        Where <span class="italic-soft">humans</span><br>
-        and <span class="br-moss">AI agents</span><br>
-        build together.
-      </h1>
-      <p class="lede">
-        A workspace for you and your AI development team. Run every coding agent
-        in parallel — through chat, sketches, or voice — and ship with confidence.
-        <strong style="color:var(--ink); font-weight:500;">AI development, for everyone — not just coders.</strong>
-      </p>
-      <div class="page-hero-cta">
-        <a class="btn btn-lg" href="#install">$ install grove →</a>
-        <a class="btn ghost btn-lg" href="agents.html">Read the story</a>
+<!-- ===================================================== ACT 1 · CAPTURE -->
+<section class="act" id="capture" data-act="capture" aria-labelledby="capture-h" data-step="0">
+  <div class="act-stage">
+    <div class="act-copy">
+      <p class="act-num"><span>01</span>Capture</p>
+      <h2 class="display-2" id="capture-h">Bring the outside in.</h2>
+      <p class="act-body">Drop a brief, a brand guide or a reference into Studio and it becomes context. Shared Assets are hard-linked into every dependent task, so each agent reads the same file. Agents capture too: a web search, a Figma frame, any MCP fetch.</p>
+      <ol class="act-steps">
+        <li><button type="button" data-go="0">Something useful lives outside the project</button></li>
+        <li><button type="button" data-go="1">Drag it into Studio</button></li>
+        <li><button type="button" data-go="2">It’s shared with every task</button></li>
+        <li><button type="button" data-go="3">The agent fetches the rest</button></li>
+      </ol>
+      <p class="act-poke"><svg class="ic"><use href="#i-sparkle"/></svg>Drag the PDF in yourself, or drop a real file on the window.</p>
+    </div>
+    <div class="act-demo cap-demo" id="cap-demo">
+      <div class="win studio" id="studio-win" data-surface="studio-shared-assets">
+        <div class="win-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><span class="win-title">Studio · atlas-brand</span><span class="win-end"></span></div>
+        <div class="studio-body">
+          <nav class="studio-side" aria-label="Studio folders (demo)">
+            <p class="side-h">Folders</p>
+            <span class="side-i"><svg class="ic"><use href="#i-folder"/></svg>input</span>
+            <span class="side-i"><svg class="ic"><use href="#i-folder"/></svg>output</span>
+            <span class="side-i"><svg class="ic"><use href="#i-folder"/></svg>resource</span>
+            <span class="side-i"><svg class="ic"><use href="#i-pen"/></svg>sketch</span>
+            <p class="side-h">Project</p>
+            <span class="side-i is-on"><svg class="ic"><use href="#i-copy"/></svg>Shared Assets</span>
+            <span class="side-i"><svg class="ic"><use href="#i-mem"/></svg>Project Memory</span>
+            <span class="side-i"><svg class="ic"><use href="#i-file"/></svg>Instructions</span>
+          </nav>
+          <div class="studio-main">
+            <div class="sm-head"><div><b>Shared Assets</b><span>Every dependent task sees these files</span></div><span class="sm-count" id="cap-count">2 files</span></div>
+            <ul class="files" id="cap-files">
+              <li class="file"><span class="f-ic"><svg class="ic"><use href="#i-file"/></svg></span><span class="f-name"><b>brief.md</b><small>input/</small></span><span class="f-meta">2 KB · you</span></li>
+              <li class="file"><span class="f-ic is-img"><svg class="ic"><use href="#i-pen"/></svg></span><span class="f-name"><b>checkout-layout</b><small>sketch/</small></span><span class="f-meta">Excalidraw</span></li>
+              <li class="file is-pdf"><span class="f-ic is-pdf"><svg class="ic"><use href="#i-file"/></svg></span><span class="f-name"><b>brand-guide-v3.pdf</b><small>input/</small></span><span class="f-meta">4.2 MB · you</span></li>
+              <li class="file is-fig"><span class="f-ic is-agent"><svg class="ic"><use href="#i-globe"/></svg></span><span class="f-name"><b>checkout-frame.png</b><small>resource/</small></span><span class="f-meta f-agent">fetched by agent · Figma MCP</span></li>
+            </ul>
+            <div class="linked" id="cap-linked">
+              <span class="linked-l">Hard-linked into</span>
+              <span class="tchip">checkout-redesign</span><span class="tchip">pricing-page</span><span class="tchip">onboarding</span>
+            </div>
+          </div>
+        </div>
+        <div class="dropzone" aria-hidden="true"><span><svg class="ic"><use href="#i-plus"/></svg>Drop to add to input/</span></div>
       </div>
-      <div class="hero-meta">
-        <span><span class="bullet">◆</span> macOS · Linux · Windows</span>
-        <span><span class="bullet">◆</span> MIT</span>
-        <span><span class="bullet">◆</span> Every major coding agent</span>
+      <button type="button" class="float-card fc-pdf" id="fc-pdf" aria-label="Add brand-guide-v3.pdf to Studio">
+        <span class="fc-ic is-pdf"><svg class="ic"><use href="#i-file"/></svg></span><span><b>brand-guide-v3.pdf</b><small>4.2 MB · Desktop</small></span>
+      </button>
+      <div class="float-card fc-link" aria-hidden="true">
+        <span class="fc-ic is-agent"><svg class="ic"><use href="#i-globe"/></svg></span><span><b>Checkout · frame 12</b><small>figma.com</small></span>
+      </div>
+      <span class="cursor" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M4 2.5v13.2l3.4-3.2 2.3 5 2.2-1-2.3-4.9h4.6z"/></svg></span>
+      <span class="ctx-star" aria-hidden="true"><i></i><em>now context</em></span>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================== ACT 2 · ORGANIZE -->
+<section class="act" id="organize" data-act="organize" aria-labelledby="organize-h" data-step="0">
+  <div class="act-stage">
+    <div class="act-copy">
+      <p class="act-num"><span>02</span>Organize</p>
+      <h2 class="display-2" id="organize-h">Notes condense into memory.</h2>
+      <p class="act-body">Agents leave short notes as they work: decisions, corrections, lessons, each tied to the task and chat it came from. On a schedule, or early after enough notes, an organizer agent merges them into durable memories, titled, tagged, scored and linked. New sessions search Memory before they start. The sky on this page is that mind map.</p>
+      <ol class="act-steps">
+        <li><button type="button" data-go="0">Agents leave notes as they work</button></li>
+        <li><button type="button" data-go="1">An organization run reviews them</button></li>
+        <li><button type="button" data-go="2">They condense into memories</button></li>
+        <li><button type="button" data-go="3">Memory links up, ready for reuse</button></li>
+      </ol>
+      <p class="act-poke"><svg class="ic"><use href="#i-sparkle"/></svg>Hover a new star to read the memory. <button type="button" class="link-btn" id="org-replay">Replay the run</button></p>
+    </div>
+    <div class="act-demo org-demo" id="org-demo">
+      <canvas id="org-sky" aria-hidden="true"></canvas>
+      <div class="logs" id="org-logs" aria-hidden="true"></div>
+      <div class="entities" id="org-ents"></div>
+      <div class="ent-card" id="ent-card" hidden></div>
+      <div class="win run-win" id="run-win">
+        <div class="rw-head"><span class="rw-ic"><svg class="ic"><use href="#i-mem"/></svg></span><b>Organization Run</b><span class="rw-state" id="rw-state">Waiting for logs</span></div>
+        <div class="rw-bar"><i id="rw-fill"></i></div>
+        <p class="rw-sum" id="rw-sum"><span id="rw-logs">0</span> pending logs</p>
       </div>
     </div>
+  </div>
+</section>
 
-    <div data-animate>
-      <figure class="asset-shot">
-        <img src="images/graph.png" alt="Agent Graph — DAG view of agents in a task with edges, duties, and pending messages" loading="eager" />
-        <figcaption>
-          <span class="cap-num">FIG. 01</span>
-          <span class="cap-text">Agent Graph — your AI team, drawn as a graph. Spawn, connect, send.</span>
-        </figcaption>
+<!-- ===================================================== ACT 3 · INJECT -->
+<section class="act" id="inject" data-act="inject" aria-labelledby="inject-h" data-step="0">
+  <div class="act-stage">
+    <div class="act-copy">
+      <p class="act-num"><span>03</span>Inject</p>
+      <h2 class="display-2" id="inject-h">Push what you know. <em>Let agents pull the rest.</em></h2>
+      <p class="act-body">Every session starts with Agent context: workspace instructions, Memory, MCP servers and skills, shown with their share of the budget. On top, you push files, sketches and memories into the prompt, and the agent pulls the rest through Grove’s MCP tools. The Memory pill shows exactly what was read this turn.</p>
+      <div class="seg" role="group" aria-label="Highlight push or pull">
+        <button type="button" data-lane="both" aria-pressed="true">Both</button>
+        <button type="button" data-lane="push" aria-pressed="false">Push · you</button>
+        <button type="button" data-lane="pull" aria-pressed="false">Pull · agent</button>
+      </div>
+      <ol class="act-steps">
+        <li><button type="button" data-go="0">Every session starts with Agent context</button></li>
+        <li><button type="button" data-go="1">You push a file, a sketch, a memory</button></li>
+        <li><button type="button" data-go="2">The agent pulls what it’s missing</button></li>
+        <li><button type="button" data-go="3">It works with everything in view</button></li>
+      </ol>
+    </div>
+    <div class="act-demo inj-demo" id="inj-demo">
+      <div class="win chat-win" data-surface="task-chat">
+        <div class="win-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><span class="win-title">checkout-redesign</span><span class="win-end"><span class="pill-ctx"><svg class="ic"><use href="#i-mem"/></svg>Agent context · 4</span><span class="pill-agent"><span class="mono-dot" data-agent-icon="Claude Code"></span>Claude Code</span></span></div>
+        <div class="chat-body">
+          <div class="ctx-card">
+            <div class="cx-head"><b>Agent context</b><span>what every task starts with</span></div>
+            <div class="cx-bar" aria-hidden="true"><i class="s-ins"></i><i class="s-mem"></i><i class="s-mcp"></i><i class="s-skl"></i></div>
+            <ul class="cx-rows">
+              <li><span class="cx-dot s-ins"></span><b>Instructions</b><em>Workspace Instructions for atlas-web</em></li>
+              <li><span class="cx-dot s-mem"></span><b>Memory</b><em>New sessions search Memory before they start</em></li>
+              <li><span class="cx-dot s-mcp"></span><b>MCP</b><em>Grove’s tools, plus the servers you added</em></li>
+              <li><span class="cx-dot s-skl"></span><b>Skills</b><em>Installed for this agent</em></li>
+            </ul>
+          </div>
+          <div class="msg msg-user push">
+            <div class="msg-chips"><span class="cchip c-file"><svg class="ic"><use href="#i-at"/></svg>Summary.tsx</span><span class="cchip c-sketch"><svg class="ic"><use href="#i-pen"/></svg>checkout-layout</span><span class="cchip c-mem"><svg class="ic"><use href="#i-mem"/></svg>Prices are stored in integer cents</span></div>
+            <p>Rebuild the order summary to match the sketch.</p>
+          </div>
+          <div class="msg msg-agent">
+            <div class="m-head"><span class="av sm is-work"><span class="ring"></span><span class="mono" style="--m:#c96442" data-agent-icon="Claude Code">CC</span></span><b>Claude Code</b></div>
+            <div class="pull-list">
+              <div class="pull pill-mem"><svg class="ic"><use href="#i-mem"/></svg><b>Memory</b><span>read 2</span><em>Tax is computed server-side · Brand voice: plain, warm</em></div>
+              <div class="pull"><svg class="ic"><use href="#i-tool"/></svg><code>grove_sketch_read</code><em>checkout-layout</em></div>
+              <div class="pull"><svg class="ic"><use href="#i-tool"/></svg><code>grove_read_notes</code><em>task notes</em></div>
+              <div class="pull"><svg class="ic"><use href="#i-search"/></svg><b>Web search</b><em>Stripe Payment Element options</em></div>
+            </div>
+            <div class="m-done">
+              <p>Rebuilt the summary from the sketch. Totals stay in integer cents; tax now comes from the server.</p>
+              <span class="diffstat"><svg class="ic"><use href="#i-file"/></svg>Summary.tsx <b class="add">+42</b> <b class="del">−17</b></span>
+            </div>
+          </div>
+        </div>
+        <div class="mini-composer push">
+          <div class="mc-chips">
+            <span class="cchip c-file"><svg class="ic"><use href="#i-at"/></svg>Summary.tsx</span><span class="cchip c-sketch"><svg class="ic"><use href="#i-pen"/></svg>checkout-layout</span><span class="cchip c-mem"><svg class="ic"><use href="#i-mem"/></svg>Prices in cents</span>
+          </div>
+          <div class="mc-row"><span class="mc-text"><span class="mc-typed">Rebuild the order summary to match the sketch.</span><span class="mc-empty">Reply…</span></span><span class="oc-orb sm" aria-hidden="true"><svg class="ic"><use href="#i-up"/></svg></span></div>
+        </div>
+      </div>
+      <div class="lane lane-push" aria-hidden="true"><span>Push</span><i></i></div>
+      <div class="lane lane-pull" aria-hidden="true"><i></i><span>Pull</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================== ACT 4 · NEGOTIATE -->
+<section class="act" id="negotiate" data-act="negotiate" aria-labelledby="negotiate-h" data-step="0">
+  <div class="act-stage">
+    <div class="act-copy">
+      <p class="act-num"><span>04</span>Negotiate</p>
+      <h2 class="display-2" id="negotiate-h">Settle the work in context.</h2>
+      <p class="act-body">Agents ask before they act, with permission requests and surveys you can answer in the chat or inline from the Dashboard’s Needs you list. You answer the work with line-level review comments, then send them all to the agent: one diff addresses every comment, and you approve the diff. Commit, rebase, merge and archive follow in one step.</p>
+      <ol class="act-steps">
+        <li><button type="button" data-go="0">The agent asks before it acts</button></li>
+        <li><button type="button" data-go="1">You comment on the diff</button></li>
+        <li><button type="button" data-go="2">Send them all to the agent</button></li>
+        <li><button type="button" data-go="3">Commit → rebase → merge → archive</button></li>
+      </ol>
+    </div>
+    <div class="act-demo neg-demo" id="neg-demo">
+      <div class="win review-win" data-surface="code-review">
+        <div class="win-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><span class="win-title">Review · checkout-redesign</span><span class="win-end"><span class="pill-q" id="neg-count">2 open</span></span></div>
+        <div class="diff">
+          <div class="diff-file"><svg class="ic"><use href="#i-file"/></svg>src/checkout/Summary.tsx<span class="diffstat"><b class="add">+42</b> <b class="del">−17</b></span></div>
+          <div class="dl ctx"><span class="ln">18</span><code>  const total = subtotal + taxCents;</code></div>
+          <div class="dl add"><span class="ln">19</span><code class="v1">  &lt;Row label="Tax" value={fmt(taxCents)} /&gt;</code><code class="v2">  &lt;Row label="Estimated tax" value={fmt(taxCents)} /&gt;</code></div>
+          <div class="thread t1"><span class="t-av">You</span><p>Label should say “Estimated tax”, it’s calculated at payment.</p><span class="t-res"><svg class="ic"><use href="#i-check"/></svg>Resolved by agent</span></div>
+          <div class="dl add"><span class="ln">20</span><code>  &lt;Row strong label="Total" value={fmt(total)} /&gt;</code></div>
+          <div class="dl add"><span class="ln">21</span><code class="v1">  &lt;Button&gt;Pay now!&lt;/Button&gt;</code><code class="v2">  &lt;Button&gt;Pay {fmt(total)}&lt;/Button&gt;</code></div>
+          <div class="thread t2"><span class="t-av">You</span><p>Brand voice: no exclamation marks. Show the amount instead.</p><span class="t-res"><svg class="ic"><use href="#i-check"/></svg>Resolved by agent</span></div>
+        </div>
+        <div class="neg-dock">
+          <div class="ask" id="neg-ask">
+            <span class="ask-ic"><svg class="ic"><use href="#i-shield"/></svg></span>
+            <div class="ask-text"><b>Codex wants to run a command</b><code>pnpm test checkout</code><small class="ask-where">Also waiting in Dashboard · Needs you</small></div>
+            <div class="ask-act"><button type="button" class="b-ghost" data-poke="1">Deny</button><button type="button" class="b-ink" data-poke="1">Allow once</button></div>
+            <span class="ask-done"><svg class="ic"><use href="#i-check"/></svg>Allowed · 14 tests passed</span>
+          </div>
+          <div class="fixbar">
+            <span class="fb-sel"><b>2</b> comments selected</span>
+            <button type="button" class="b-ink" data-poke="2"><svg class="ic"><use href="#i-sparkle"/></svg>Send to agent</button>
+            <span class="fb-run"><span class="spin" aria-hidden="true"></span>Agent is addressing both…</span>
+          </div>
+          <div class="pipeline" aria-label="Ship pipeline">
+            <span class="pp"><svg class="ic"><use href="#i-check"/></svg>Commit</span><i></i>
+            <span class="pp"><svg class="ic"><use href="#i-check"/></svg>Rebase</span><i></i>
+            <span class="pp"><svg class="ic"><use href="#i-merge"/></svg>Merge</span><i></i>
+            <span class="pp"><svg class="ic"><use href="#i-check"/></svg>Archive</span>
+            <button type="button" class="b-ink pp-go" data-poke="3">Merge</button>
+            <span class="pp-done">Merged into main</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================== RESULTS -->
+<section class="results" id="results" aria-labelledby="results-h">
+  <div class="wrap">
+    <p class="kicker">Results</p>
+    <h2 class="display-2" id="results-h">Feed the harness well.<br><em>The rest follows.</em></h2>
+    <p class="section-lede">Ten agents in parallel is a topology. Shipping fast is a result. Each task gets its own git worktree and terminal session, so agents don’t collide, and when they need each other, they delegate.</p>
+  </div>
+
+  <div class="wrap wide">
+    <div class="win graph-win" id="graph-win" data-surface="agent-graph">
+      <div class="win-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><span class="win-title">Agent Graph · checkout-redesign</span>
+        <span class="win-end legend" aria-hidden="true"><span><i class="lg lg-work"></i>Working</span><span><i class="lg lg-ask"></i>Needs you</span><span><i class="lg lg-idle"></i>Not running</span></span></div>
+      <div class="g-stage" id="g-stage">
+        <svg class="g-edges" id="g-edges" aria-hidden="true"></svg>
+        <div id="g-labels" aria-hidden="true"></div>
+        <div id="g-nodes" role="group" aria-label="Agents in this graph"></div>
+        <div class="g-bar" id="g-bar" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+    <div class="graph-notes">
+      <div><b>Agents that delegate to agents.</b><span>A planner spawns a coder; the coder spawns a reviewer. Replies route back as typed <code>&lt;grove-meta&gt;</code> messages, not strings glued through prompts.</span></div>
+      <div><b>Rules at the database layer.</b><span>Cycles are caught at spawn, every message is scoped to its task and logged, and only one message is in flight per edge.</span></div>
+      <div><b>Drivable by any agent.</b><span>The graph is exposed as MCP tools (spawn, send, reply, contacts), so an orchestrator can run it through code.</span></div>
+    </div>
+  </div>
+
+  <!-- ============ BUDDY ============ -->
+  <div class="wrap block buddy" id="buddy" aria-labelledby="buddy-h">
+    <div class="buddy-copy">
+      <p class="kicker">Buddy</p>
+      <h3 class="display-2" id="buddy-h">A teammate that <em>stays on.</em></h3>
+      <p class="sub-lede">A Buddy is a long-lived assistant with a name, a role and its own Memory, in one continuous conversation. It does small things itself and hands session-sized work to task agents, then follows it back to you. It is the harness, running while you’re away.</p>
+      <ul class="b-feats">
+        <li><b>Delegates, then follows up</b><span>Sends work to an existing task, a new task, or a subagent of its own, and tracks each one until it’s done or needs you.</span></li>
+        <li><b>Runs routines</b><span>Scheduled runs it can set up for itself, like a daily release check.</span></li>
+        <li><b>Remembers</b><span>Its own Memory, organized in the background like a project’s.</span></li>
+        <li><b>Answers on IM</b><span>Bind a Buddy to Feishu, Lark or WeChat and talk to it from there.</span></li>
+        <li><b>Keeps the thread</b><span>Switch the agent underneath; the earlier conversation stays readable and is handed over.</span></li>
+      </ul>
+      <div class="b-templates" aria-label="Buddy templates">
+        <span><i class="bav is-idle" style="--c:#f59e0b;--r:58% 42% 52% 48% / 48% 56% 44% 52%;--ph:.1"><i class="bav-e"><i></i><i></i></i></i>Release Captain</span>
+        <span><i class="bav is-idle" style="--c:#8b5cf6;--r:32%;--ph:.4"><i class="bav-e"><i></i><i></i></i></i>Code Scout</span>
+        <span><i class="bav is-idle" style="--c:#14b8a6;--r:50%;--ph:.7"><i class="bav-e"><i></i><i></i></i></i>Morning Brief</span>
+        <span><i class="bav is-idle" style="--c:#6366f1;--r:50% 50% 50% 14%;--ph:.25"><i class="bav-e"><i></i><i></i></i></i>Inbox</span>
+      </div>
+    </div>
+    <div class="win buddy-win" id="buddy-win" data-surface="buddy">
+      <aside class="bw-side" aria-label="Buddies (demo)">
+        <div class="bw-side-h"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span></div>
+        <p class="bw-group">Buddies</p>
+        <div class="bw-row is-on"><i class="bav is-idle" id="bw-cap-av" style="--c:#f59e0b;--r:58% 42% 52% 48% / 48% 56% 44% 52%;--ph:.1"><i class="bav-e"><i></i><i></i></i></i><span><b>Release Captain</b><small id="bw-cap-prev">Keep releases on track</small></span></div>
+        <div class="bw-row"><i class="bav is-idle" style="--c:#14b8a6;--r:50%;--ph:.7"><i class="bav-e"><i></i><i></i></i></i><span><b>Morning Brief</b><small>Daily morning brief · 08:30</small></span></div>
+        <div class="bw-row"><i class="bav is-idle" style="--c:#8b5cf6;--r:32%;--ph:.4"><i class="bav-e"><i></i><i></i></i></i><span><b>Code Scout</b><small>Ready for your next question</small></span></div>
+        <div class="bw-row"><i class="bav is-idle" style="--c:#6366f1;--r:50% 50% 50% 14%;--ph:.25"><i class="bav-e"><i></i><i></i></i></i><span><b>Inbox</b><small>Paired with Lark</small></span></div>
+      </aside>
+      <div class="bw-main">
+        <div class="bw-head">
+          <i class="bav is-idle sm" id="bw-head-av" style="--c:#f59e0b;--r:58% 42% 52% 48% / 48% 56% 44% 52%"><i class="bav-e"><i></i><i></i></i></i>
+          <div><b>Release Captain</b><small id="bw-status">Keep releases on track</small></div>
+          <div class="bw-tabs" aria-hidden="true"><span class="is-on">Delegations<i id="bw-badge" hidden>1</i></span><span>Routines</span><span>Memory</span></div>
+        </div>
+        <div class="bw-convo" id="bw-convo" role="log" aria-live="polite" aria-label="Buddy conversation (demo)"></div>
+        <div class="bw-comp"><span>Message Release Captain…</span><span class="oc-orb sm" aria-hidden="true"><svg class="ic"><use href="#i-up"/></svg></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ WORKSPACE ============ -->
+  <div class="wrap block" id="workspace" aria-labelledby="ws-h">
+    <p class="kicker">Orbit</p>
+    <h3 class="display-2" id="ws-h">One quiet workspace <em>for all of it.</em></h3>
+    <p class="sub-lede">Orbit is Grove’s interface. The New page starts every task with the composer you used above; the Dashboard shows what needs you; every part of the harness has a page of its own. These are the real pages.</p>
+    <div class="shots" id="shots">
+      <div class="shot-tabs" role="tablist" aria-label="Orbit pages">
+        <button role="tab" id="st-dashboard" aria-controls="shot-stage" aria-selected="true" tabindex="0" data-shot="dashboard">Dashboard</button>
+        <button role="tab" id="st-review" aria-controls="shot-stage" aria-selected="false" tabindex="-1" data-shot="review">Review</button>
+        <button role="tab" id="st-memory" aria-controls="shot-stage" aria-selected="false" tabindex="-1" data-shot="memory">Memory</button>
+        <button role="tab" id="st-memory-sky" aria-controls="shot-stage" aria-selected="false" tabindex="-1" data-shot="memory-sky">Night sky</button>
+        <button role="tab" id="st-studio" aria-controls="shot-stage" aria-selected="false" tabindex="-1" data-shot="studio">Studio</button>
+        <button role="tab" id="st-extensions" aria-controls="shot-stage" aria-selected="false" tabindex="-1" data-shot="extensions">Extensions</button>
+      </div>
+      <figure class="win shot-win">
+        <div class="win-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><span class="win-title">Grove · atlas-web</span><span class="win-end"></span></div>
+        <div class="shot-stage" id="shot-stage" role="tabpanel" aria-labelledby="st-dashboard">
+          <div class="shot is-on" data-shot="dashboard" data-surface="dashboard" data-cap="What needs you, what’s in flight, and what every task starts with: instructions, Memory, MCP servers and skills."><img class="is-light" src="shots/dashboard-light.jpg" alt="Grove Dashboard page, from a demo project" width="1440" height="900" decoding="async"><img class="is-dark" src="shots/dashboard-dark.jpg" alt="Grove Dashboard page, from a demo project" width="1440" height="900" decoding="async"></div>
+          <div class="shot" data-shot="review" data-surface="review" data-cap="Each task’s diff, file by file, with threaded comments you can resolve or send to the agent."><img class="is-light" src="shots/review-light.jpg" alt="Grove Review page, from a demo project" width="1440" height="900" decoding="async" loading="lazy"><img class="is-dark" src="shots/review-dark.jpg" alt="Grove Review page, from a demo project" width="1440" height="900" decoding="async" loading="lazy"></div>
+          <div class="shot" data-shot="memory" data-surface="memory" data-cap="What agents have learned in this project, searchable by topic and kind, with the notes still waiting to be organized."><img class="is-light" src="shots/memory-light.jpg" alt="Grove Memory page, from a demo project" width="1440" height="900" decoding="async" loading="lazy"><img class="is-dark" src="shots/memory-dark.jpg" alt="Grove Memory page, from a demo project" width="1440" height="900" decoding="async" loading="lazy"></div>
+          <div class="shot" data-shot="memory-sky" data-surface="memory-sky" data-cap="The same memories, expanded into a sky you can turn, zoom and pin."><img src="shots/memory-sky.jpg" alt="Grove Night sky page, from a demo project" width="1440" height="900" decoding="async" loading="lazy"></div>
+          <div class="shot" data-shot="studio" data-surface="studio" data-cap="Shared files and instructions for the work that isn’t code. Agents read both."><img class="is-light" src="shots/studio-light.jpg" alt="Grove Studio page, from a demo project" width="1440" height="900" decoding="async" loading="lazy"><img class="is-dark" src="shots/studio-dark.jpg" alt="Grove Studio page, from a demo project" width="1440" height="900" decoding="async" loading="lazy"></div>
+          <div class="shot" data-shot="extensions" data-surface="extensions" data-cap="Skills, MCP servers and plugins, installed per agent, project or globally."><img class="is-light" src="shots/extensions-light.jpg" alt="Grove Extensions page, from a demo project" width="1440" height="900" decoding="async" loading="lazy"><img class="is-dark" src="shots/extensions-dark.jpg" alt="Grove Extensions page, from a demo project" width="1440" height="900" decoding="async" loading="lazy"></div>
+        </div>
       </figure>
-    </div>
-  </section>
-
-  <!-- TRUST MARQUEE -->
-  <div class="marquee" data-animate>
-    <div class="marquee-track">
-      <span><img src="agent-icon/claude-color.svg" alt="" width="16" height="16"> Claude Code</span>
-      <span><img src="agent-icon/openai.svg" alt="" width="16" height="16"> Codex</span>
-      <span><img src="agent-icon/gemini-color.svg" alt="" width="16" height="16"> Gemini CLI</span>
-      <span><img src="agent-icon/githubcopilot.svg" alt="" width="16" height="16"> GitHub Copilot</span>
-      <span><img src="agent-icon/cursor.svg" alt="" width="16" height="16"> Cursor Agent</span>
-      <span><img src="agent-icon/junie-color.svg" alt="" width="16" height="16"> Junie</span>
-      <span><img src="agent-icon/trae-color.svg" alt="" width="16" height="16"> Trae CLI</span>
-      <span><img src="agent-icon/kimi-color.svg" alt="" width="16" height="16"> Kimi</span>
-      <span><img src="agent-icon/qwen-color.svg" alt="" width="16" height="16"> Qwen</span>
-      <span><img src="agent-icon/opencode.svg" alt="" width="16" height="16"> OpenCode</span>
-      <span><img src="agent-icon/hermes.svg" alt="" width="16" height="16"> Hermes</span>
-      <span><img src="agent-icon/kiro.svg" alt="" width="16" height="16"> Kiro</span>
-      <span><img src="agent-icon/openclaw-color.svg" alt="" width="16" height="16"> OpenClaw</span>
-      <span><img src="agent-icon/claude-color.svg" alt="" width="16" height="16"> Claude Code</span>
-      <span><img src="agent-icon/openai.svg" alt="" width="16" height="16"> Codex</span>
-      <span><img src="agent-icon/gemini-color.svg" alt="" width="16" height="16"> Gemini CLI</span>
-      <span><img src="agent-icon/githubcopilot.svg" alt="" width="16" height="16"> GitHub Copilot</span>
-      <span><img src="agent-icon/cursor.svg" alt="" width="16" height="16"> Cursor Agent</span>
-      <span><img src="agent-icon/junie-color.svg" alt="" width="16" height="16"> Junie</span>
-      <span><img src="agent-icon/trae-color.svg" alt="" width="16" height="16"> Trae CLI</span>
-      <span><img src="agent-icon/kimi-color.svg" alt="" width="16" height="16"> Kimi</span>
-      <span><img src="agent-icon/qwen-color.svg" alt="" width="16" height="16"> Qwen</span>
-      <span><img src="agent-icon/opencode.svg" alt="" width="16" height="16"> OpenCode</span>
-      <span><img src="agent-icon/hermes.svg" alt="" width="16" height="16"> Hermes</span>
-      <span><img src="agent-icon/kiro.svg" alt="" width="16" height="16"> Kiro</span>
-      <span><img src="agent-icon/openclaw-color.svg" alt="" width="16" height="16"> OpenClaw</span>
+      <p class="shot-cap" id="shot-cap" aria-live="polite">What needs you, what’s in flight, and what every task starts with: instructions, Memory, MCP servers and skills.</p>
+      <p class="shot-note">Real screenshots from a demo project, no agent sessions running.</p>
     </div>
   </div>
 
-  <!-- § 01 · PERSONAS -->
-  <section>
-    <div class="section-label">
-      <span class="num">§ 01</span>
-      <span class="title">THE GROVE</span>
-    </div>
-    <div class="section-head" data-animate>
-      <h2>Three ways in.<br>One <span class="br-moss">workspace</span>.</h2>
-      <p class="lede">
-        Grove meets three kinds of people where they are. You don't need to be
-        a developer to contribute. You don't need to leave the terminal to stay
-        in flow. The workspace grows around you.
-      </p>
-    </div>
-    <div class="cards c-3" data-animate>
-      <div class="persona">
-        <div class="p-mark">△</div>
-        <div class="p-role">Power developer</div>
-        <h3>Runs the fleet, keyboard first.</h3>
-        <p>
-          Lives in the Grove Web IDE — FlexLayout panels, ⌘K palette, Blitz
-          across every project, Shell mode for quick shell-outs. Drops into
-          the TUI when the job calls for it.
-        </p>
-        <div class="p-example">"I spun up six agents and merged four before lunch."</div>
-      </div>
-      <div class="persona">
-        <div class="p-mark">◇</div>
-        <div class="p-role">Visual thinker</div>
-        <h3>Draws the idea. Ships the idea.</h3>
-        <p>
-          Sketches wireframes on Excalidraw, lets the agent read them over
-          MCP, reviews the output inline. IDE Layout means everything is
-          where a designer-developer expects it to be.
-        </p>
-        <div class="p-example">"I drew the flow on Monday. It shipped Tuesday."</div>
-      </div>
-      <div class="persona">
-        <div class="p-mark">○</div>
-        <div class="p-role">Non-technical collaborator</div>
-        <h3>Contributes without writing code.</h3>
-        <p>
-          Opens Studio to upload assets, edit project memory, and review
-          artifacts. Drives the AI team by voice from a phone. Never touches
-          git. Still ships.
-        </p>
-        <div class="p-example">"I can finally contribute to our codebase from my couch."</div>
-      </div>
-    </div>
-  </section>
+  <div class="wrap block">
+    <h3 class="display-3">Every coding agent you use.</h3>
+    <p class="sub-lede">Ten built in, three more ACP-ready, and anything that speaks ACP over stdio or HTTP plugs in with one entry. Define Custom Agents as personas: a base agent, system prompt and effort level, reusable across tasks.</p>
+    <ul class="agents" aria-label="Supported agents">
+      <li>Claude Code</li><li>Codex</li><li>Gemini CLI</li><li>GitHub Copilot</li><li>Cursor Agent</li><li>Junie</li><li>Trae CLI</li><li>Kimi</li><li>Qwen</li><li>OpenCode</li>
+      <li class="is-acp">Hermes<small>ACP-ready</small></li><li class="is-acp">Kiro<small>ACP-ready</small></li><li class="is-acp">OpenClaw<small>ACP-ready</small></li>
+      <li class="is-byo"><svg class="ic"><use href="#i-plus"/></svg>Your own: ACP over stdio or HTTP</li>
+    </ul>
+  </div>
 
-  <!-- § 02 · AGENTS PEEK -->
-  <section>
-    <div class="section-label">
-      <span class="num">§ 02</span>
-      <span class="title">AGENTS</span>
+  <div class="wrap block anywhere" id="anywhere">
+    <div class="any-copy">
+      <h3 class="display-3">One harness, five surfaces.</h3>
+      <p class="sub-lede">One binary. The same tasks, agents and worktrees in your browser, a native window, the terminal and your phone, plus a walkie-talkie. Every frame here is the real thing, from a demo project.</p>
+      <div class="any-tabs" role="tablist" aria-label="Surfaces">
+        <button role="tab" id="t-web" aria-controls="any-frame" aria-selected="true" data-mode="web"><b>Web</b><code>grove web</code></button>
+        <button role="tab" id="t-gui" aria-controls="any-frame" aria-selected="false" data-mode="gui"><b>GUI</b><code>grove gui</code></button>
+        <button role="tab" id="t-tui" aria-controls="any-frame" aria-selected="false" data-mode="tui"><b>TUI</b><code>grove tui</code></button>
+        <button role="tab" id="t-phone" aria-controls="any-frame" aria-selected="false" data-mode="phone"><b>Mobile</b><code>grove mobile</code></button>
+        <button role="tab" id="t-voice" aria-controls="any-frame" aria-selected="false" data-mode="voice"><b>Radio</b><code>hold to talk</code></button>
+      </div>
+      <p class="any-desc" id="any-desc" aria-live="polite"></p>
     </div>
-    <div class="feature">
-      <div class="feat-copy" data-animate>
-        <div class="eyebrow">Orchestrate</div>
-        <h3>Every agent, <span class="italic-soft">in parallel</span>.</h3>
-        <p class="feat-lede">
-          Claude, Codex, Gemini, Copilot, Cursor, Kimi, Qwen — 10 built-in
-          agents, plus anything you plug in via ACP or a custom URL. Each
-          task gets its own Git worktree, its own session, and its own spec.
-          Nothing collides.
-        </p>
-        <ul>
-          <li>Worktree isolation — each agent on its own branch</li>
-          <li>Multi-chat per task with full history replay</li>
-          <li>Orchestrator agents can dispatch worker agents via MCP</li>
-          <li>Take Control, Observation Mode — multiple clients, one source of truth</li>
+    <div class="any-stage">
+      <div class="any-frame" id="any-frame" data-mode="web" role="tabpanel" aria-labelledby="t-web">
+        <!-- web -->
+        <div class="scr scr-web" data-surface="web-ide">
+          <div class="br-bar"><span class="lights"><i></i><i></i><i></i></span><span class="br-url"><svg class="ic"><use href="#i-globe"/></svg>localhost:3001</span></div>
+          <div class="scr-img"><img class="is-light" src="shots/web-light.jpg" alt="Grove in the browser with the command palette open, from a demo project" loading="lazy" decoding="async"><img class="is-dark" src="shots/web-dark.jpg" alt="Grove in the browser with the command palette open, from a demo project" loading="lazy" decoding="async"></div>
+        </div>
+        <!-- gui -->
+        <div class="scr scr-gui" data-surface="desktop-gui">
+          <div class="gui-bar"><span class="lights"><i></i><i></i><i></i></span><b>Grove</b></div>
+          <div class="scr-img"><img class="is-light" src="shots/gui-light.jpg" alt="The Grove desktop app on its New page, from a demo project" loading="lazy" decoding="async"><img class="is-dark" src="shots/gui-dark.jpg" alt="The Grove desktop app on its New page, from a demo project" loading="lazy" decoding="async"></div>
+        </div>
+        <!-- tui -->
+        <div class="scr scr-tui" data-surface="tui">
+          <pre class="tui-real is-light" aria-label="Grove TUI, from a demo project"><span style="color:#c8c8c8;background:#fafafa;">┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                           </span><span style="color:#008044;background:#fafafa;"> ██████╗ ██████╗  ██████╗ ██╗   ██╗███████╗</span><span style="background:#fafafa;">                                          </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                           </span><span style="color:#008044;background:#fafafa;">██╔════╝ ██╔══██╗██╔═══██╗██║   ██║██╔════╝</span><span style="background:#fafafa;">                                          </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                           </span><span style="color:#008044;background:#fafafa;">██║  ███╗██████╔╝██║   ██║██║   ██║█████╗  </span><span style="background:#fafafa;">                                          </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                           </span><span style="color:#008044;background:#fafafa;">██║   ██║██╔══██╗██║   ██║╚██╗ ██╔╝██╔══╝  </span><span style="background:#fafafa;">                                          </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                           </span><span style="color:#008044;background:#fafafa;">╚██████╔╝██║  ██║╚██████╔╝ ╚████╔╝ ███████╗</span><span style="background:#fafafa;">                                          </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                           </span><span style="color:#008044;background:#fafafa;"> ╚═════╝ ╚═╝  ╚═╝ ╚═════╝   ╚═══╝  ╚══════╝</span><span style="background:#fafafa;">                                          </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                                                                                                                </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="color:#1e1e1e;background:#fafafa;"> ~/code/atlas-web                                                                                                               </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="color:#787878;background:#fafafa;">  Branch: </span><span style="color:#008044;background:#fafafa;font-weight:700;">main</span><span style="background:#fafafa;">                                                  </span><span style="color:#787878;background:#fafafa;">no remote tracking</span><span style="background:#fafafa;">                                              </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">  </span><span style="color:#009650;background:#fafafa;">+0</span><span style="background:#fafafa;"> </span><span style="color:#c83232;background:#fafafa;">-0</span><span style="color:#787878;background:#fafafa;"> lines changed</span><span style="background:#fafafa;">                                           </span><span style="color:#787878;background:#fafafa;">Last commit: </span><span style="color:#1e1e1e;background:#fafafa;">2 hours ago</span><span style="background:#fafafa;">                                        </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">   </span><span style="color:#ffffff;background:#008044;font-weight:700;">  Active Tasks  </span><span style="background:#fafafa;">  </span><span style="color:#787878;background:#fafafa;">  Archived Tasks  </span><span style="background:#fafafa;">                                                                                         </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="color:#787878;background:#fafafa;">           TASK        STATUS   TARGET      ↓    UPDATED       </span><span style="color:#c8c8c8;background:#fafafa;">│┌</span><span style="color:#787878;background:#fafafa;font-weight:700;"> ○ checkout-redesign </span><span style="color:#c8c8c8;background:#fafafa;">──────────────────────────────────────────┐</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                                               </span><span style="color:#c8c8c8;background:#fafafa;">││</span><span style="background:#fafafa;"> </span><span style="color:#787878;background:#fafafa;"> 1:Stats    2:Git    3:Notes   </span><span style="color:#008044;background:#fafafa;font-weight:700;">[4:Review]</span><span style="background:#fafafa;">          </span><span style="color:#787878;background:#fafafa;">j/k scroll </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="color:#008044;background:#fafafa;">  </span><span style="color:#1e1e1e;background:#fafafa;"> </span><span style="color:#8c8c8c;background:#fafafa;">○ </span><span style="color:#1e1e1e;background:#fafafa;">      </span><span style="color:#dc5050;background:#fafafa;">◈ </span><span style="color:#1e1e1e;background:#fafafa;">atlas-web </span><span style="color:#8c8c8c;background:#fafafa;">Idle    </span><span style="color:#1e1e1e;background:#fafafa;"> main        —    </span><span style="color:#787878;background:#fafafa;">1 hour ago    </span><span style="color:#c8c8c8;background:#fafafa;">││───────────────────────────────────────────────────────────────│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="color:#008044;background:#fafafa;">  </span><span style="color:#1e1e1e;background:#fafafa;"> </span><span style="color:#8c8c8c;background:#fafafa;">○ </span><span style="color:#1e1e1e;background:#fafafa;">      refresh-tok </span><span style="color:#8c8c8c;background:#fafafa;">Idle    </span><span style="color:#1e1e1e;background:#fafafa;"> main        1    </span><span style="color:#787878;background:#fafafa;">1 hour ago    </span><span style="color:#c8c8c8;background:#fafafa;">││</span><span style="color:#008044;background:#fafafa;font-weight:700;"> Review Comments</span><span style="color:#787878;background:#fafafa;">  (3 open, 1 resolved, 0 outdated)</span><span style="background:#fafafa;">             </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="color:#008044;background:#fafafa;">  </span><span style="color:#1e1e1e;background:#fafafa;"> </span><span style="color:#8c8c8c;background:#fafafa;">○ </span><span style="color:#1e1e1e;background:#fafafa;">      onboarding- </span><span style="color:#8c8c8c;background:#fafafa;">Idle    </span><span style="color:#1e1e1e;background:#fafafa;"> main        0    </span><span style="color:#787878;background:#fafafa;">1 hour ago    </span><span style="color:#c8c8c8;background:#fafafa;">││</span><span style="background:#fafafa;">                                                               </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="color:#008044;background:#fafafa;">  </span><span style="color:#1e1e1e;background:#fafafa;"> </span><span style="color:#8c8c8c;background:#fafafa;">○ </span><span style="color:#1e1e1e;background:#fafafa;">      pricing-pag </span><span style="color:#8c8c8c;background:#fafafa;">Idle    </span><span style="color:#1e1e1e;background:#fafafa;"> main        1    </span><span style="color:#787878;background:#fafafa;">1 hour ago    </span><span style="color:#c8c8c8;background:#fafafa;">││</span><span style="color:#008044;background:#fafafa;font-weight:700;"> [#1] </span><span style="color:#008044;background:#fafafa;">💬 OrderSummary.tsx L29</span><span style="background:#fafafa;">                                  </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="color:#008044;background:#e6e6e6;font-weight:700;">❯ </span><span style="color:#1e1e1e;background:#e6e6e6;font-weight:700;"> </span><span style="color:#8c8c8c;background:#e6e6e6;font-weight:700;">○ </span><span style="color:#1e1e1e;background:#e6e6e6;font-weight:700;">      checkout-re </span><span style="color:#8c8c8c;background:#e6e6e6;font-weight:700;">Idle    </span><span style="color:#1e1e1e;background:#e6e6e6;font-weight:700;"> main        2    </span><span style="color:#787878;background:#e6e6e6;font-weight:700;">1 hour ago    </span><span style="color:#c8c8c8;background:#fafafa;">││ │ </span><span style="color:#1e1e1e;background:#fafafa;font-weight:700;">Mira: </span><span style="background:#fafafa;">                                                      </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                                               </span><span style="color:#c8c8c8;background:#fafafa;">││ │ </span><span style="color:#1e1e1e;background:#fafafa;">`7500` is the free-shipping threshold duplicated from</span><span style="background:#fafafa;">       </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                                               </span><span style="color:#c8c8c8;background:#fafafa;">││ │ </span><span style="color:#1e1e1e;background:#fafafa;">`shipping()` in cart.ts. Export a</span><span style="background:#fafafa;">                           </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                                               </span><span style="color:#c8c8c8;background:#fafafa;">││ │ </span><span style="color:#1e1e1e;background:#fafafa;">`FREE_SHIPPING_THRESHOLD: Cents` constant and use it in</span><span style="background:#fafafa;">     </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                                               </span><span style="color:#c8c8c8;background:#fafafa;">││ │ </span><span style="color:#1e1e1e;background:#fafafa;">both places so they can never drift.</span><span style="background:#fafafa;">                        </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                                               </span><span style="color:#c8c8c8;background:#fafafa;">││ └─ Theo: </span><span style="color:#800080;background:#fafafa;">Agreed — `shipping()` should read the same</span><span style="background:#fafafa;">           </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">                                                               </span><span style="color:#c8c8c8;background:#fafafa;">│└───────────────────────────────────────────────────────────────┘</span>
+<span style="color:#c8c8c8;background:#fafafa;">┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐</span>
+<span style="color:#c8c8c8;background:#fafafa;">│</span><span style="background:#fafafa;">  </span><span style="color:#008044;background:#fafafa;font-weight:700;">n</span><span style="color:#787878;background:#fafafa;"> new</span><span style="background:#fafafa;">   </span><span style="color:#008044;background:#fafafa;font-weight:700;">Space</span><span style="color:#787878;background:#fafafa;"> actions</span><span style="background:#fafafa;">   </span><span style="color:#008044;background:#fafafa;font-weight:700;">/</span><span style="color:#787878;background:#fafafa;"> search</span><span style="background:#fafafa;">   </span><span style="color:#008044;background:#fafafa;font-weight:700;">Tab</span><span style="color:#787878;background:#fafafa;"> panel</span><span style="background:#fafafa;">   </span><span style="color:#008044;background:#fafafa;font-weight:700;">c</span><span style="color:#787878;background:#fafafa;"> config</span><span style="background:#fafafa;">   </span><span style="color:#008044;background:#fafafa;font-weight:700;">t</span><span style="color:#787878;background:#fafafa;"> theme</span><span style="background:#fafafa;">   </span><span style="color:#008044;background:#fafafa;font-weight:700;">q</span><span style="color:#787878;background:#fafafa;"> quit</span><span style="background:#fafafa;">                                                    </span><span style="color:#c8c8c8;background:#fafafa;">│</span>
+<span style="color:#c8c8c8;background:#fafafa;">└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</span></pre>
+          <pre class="tui-real is-dark" aria-label="Grove TUI, from a demo project"><span style="color:#444444;background:#181818;">┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                           </span><span style="color:#00ff88;background:#181818;"> ██████╗ ██████╗  ██████╗ ██╗   ██╗███████╗</span><span style="background:#181818;">                                          </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                           </span><span style="color:#00ff88;background:#181818;">██╔════╝ ██╔══██╗██╔═══██╗██║   ██║██╔════╝</span><span style="background:#181818;">                                          </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                           </span><span style="color:#00ff88;background:#181818;">██║  ███╗██████╔╝██║   ██║██║   ██║█████╗  </span><span style="background:#181818;">                                          </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                           </span><span style="color:#00ff88;background:#181818;">██║   ██║██╔══██╗██║   ██║╚██╗ ██╔╝██╔══╝  </span><span style="background:#181818;">                                          </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                           </span><span style="color:#00ff88;background:#181818;">╚██████╔╝██║  ██║╚██████╔╝ ╚████╔╝ ███████╗</span><span style="background:#181818;">                                          </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                           </span><span style="color:#00ff88;background:#181818;"> ╚═════╝ ╚═╝  ╚═╝ ╚═════╝   ╚═══╝  ╚══════╝</span><span style="background:#181818;">                                          </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                                                                                                                </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="color:#ffffff;background:#181818;"> ~/code/atlas-web                                                                                                               </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="color:#808080;background:#181818;">  Branch: </span><span style="color:#00ff88;background:#181818;font-weight:700;">main</span><span style="background:#181818;">                                                  </span><span style="color:#808080;background:#181818;">no remote tracking</span><span style="background:#181818;">                                              </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">  </span><span style="color:#00ff88;background:#181818;">+0</span><span style="background:#181818;"> </span><span style="color:#ff5555;background:#181818;">-0</span><span style="color:#808080;background:#181818;"> lines changed</span><span style="background:#181818;">                                           </span><span style="color:#808080;background:#181818;">Last commit: </span><span style="color:#ffffff;background:#181818;">2 hours ago</span><span style="background:#181818;">                                        </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">   </span><span style="color:#000000;background:#00ff88;font-weight:700;">  Active Tasks  </span><span style="background:#181818;">  </span><span style="color:#808080;background:#181818;">  Archived Tasks  </span><span style="background:#181818;">                                                                                         </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</span>
+<span style="color:#444444;background:#181818;">│</span><span style="color:#808080;background:#181818;">           TASK        STATUS   TARGET      ↓    UPDATED       </span><span style="color:#444444;background:#181818;">│┌</span><span style="color:#808080;background:#181818;font-weight:700;"> ○ checkout-redesign </span><span style="color:#444444;background:#181818;">──────────────────────────────────────────┐</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                                               </span><span style="color:#444444;background:#181818;">││</span><span style="background:#181818;"> </span><span style="color:#808080;background:#181818;"> 1:Stats    2:Git    3:Notes   </span><span style="color:#00ff88;background:#181818;font-weight:700;">[4:Review]</span><span style="background:#181818;">          </span><span style="color:#808080;background:#181818;">j/k scroll </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="color:#00ff88;background:#181818;">  </span><span style="color:#ffffff;background:#181818;"> </span><span style="color:#808080;background:#181818;">○ </span><span style="color:#ffffff;background:#181818;">      </span><span style="color:#eb8282;background:#181818;">◈ </span><span style="color:#ffffff;background:#181818;">atlas-web </span><span style="color:#808080;background:#181818;">Idle    </span><span style="color:#ffffff;background:#181818;"> main        —    </span><span style="color:#808080;background:#181818;">1 hour ago    </span><span style="color:#444444;background:#181818;">││───────────────────────────────────────────────────────────────│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="color:#00ff88;background:#181818;">  </span><span style="color:#ffffff;background:#181818;"> </span><span style="color:#808080;background:#181818;">○ </span><span style="color:#ffffff;background:#181818;">      refresh-tok </span><span style="color:#808080;background:#181818;">Idle    </span><span style="color:#ffffff;background:#181818;"> main        1    </span><span style="color:#808080;background:#181818;">1 hour ago    </span><span style="color:#444444;background:#181818;">││</span><span style="color:#00ff88;background:#181818;font-weight:700;"> Review Comments</span><span style="color:#808080;background:#181818;">  (3 open, 1 resolved, 0 outdated)</span><span style="background:#181818;">             </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="color:#00ff88;background:#181818;">  </span><span style="color:#ffffff;background:#181818;"> </span><span style="color:#808080;background:#181818;">○ </span><span style="color:#ffffff;background:#181818;">      onboarding- </span><span style="color:#808080;background:#181818;">Idle    </span><span style="color:#ffffff;background:#181818;"> main        0    </span><span style="color:#808080;background:#181818;">1 hour ago    </span><span style="color:#444444;background:#181818;">││</span><span style="background:#181818;">                                                               </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="color:#00ff88;background:#181818;">  </span><span style="color:#ffffff;background:#181818;"> </span><span style="color:#808080;background:#181818;">○ </span><span style="color:#ffffff;background:#181818;">      pricing-pag </span><span style="color:#808080;background:#181818;">Idle    </span><span style="color:#ffffff;background:#181818;"> main        1    </span><span style="color:#808080;background:#181818;">1 hour ago    </span><span style="color:#444444;background:#181818;">││</span><span style="color:#00ff88;background:#181818;font-weight:700;"> [#1] </span><span style="color:#00ff88;background:#181818;">💬 OrderSummary.tsx L29</span><span style="background:#181818;">                                  </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="color:#00ff88;background:#303030;font-weight:700;">❯ </span><span style="color:#ffffff;background:#303030;font-weight:700;"> </span><span style="color:#808080;background:#303030;font-weight:700;">○ </span><span style="color:#ffffff;background:#303030;font-weight:700;">      checkout-re </span><span style="color:#808080;background:#303030;font-weight:700;">Idle    </span><span style="color:#ffffff;background:#303030;font-weight:700;"> main        2    </span><span style="color:#808080;background:#303030;font-weight:700;">1 hour ago    </span><span style="color:#444444;background:#181818;">││ │ </span><span style="color:#ffffff;background:#181818;font-weight:700;">Mira: </span><span style="background:#181818;">                                                      </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                                               </span><span style="color:#444444;background:#181818;">││ │ </span><span style="color:#ffffff;background:#181818;">`7500` is the free-shipping threshold duplicated from</span><span style="background:#181818;">       </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                                               </span><span style="color:#444444;background:#181818;">││ │ </span><span style="color:#ffffff;background:#181818;">`shipping()` in cart.ts. Export a</span><span style="background:#181818;">                           </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                                               </span><span style="color:#444444;background:#181818;">││ │ </span><span style="color:#ffffff;background:#181818;">`FREE_SHIPPING_THRESHOLD: Cents` constant and use it in</span><span style="background:#181818;">     </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                                               </span><span style="color:#444444;background:#181818;">││ │ </span><span style="background:#181818;">both places so they can never drift.</span><span style="background:#181818;">                        </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                                               </span><span style="color:#444444;background:#181818;">││ └─ Theo: </span><span style="color:#800080;background:#181818;">Agreed — `shipping()` should read the same</span><span style="background:#181818;">           </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">                                                               </span><span style="color:#444444;background:#181818;">│└───────────────────────────────────────────────────────────────┘</span>
+<span style="color:#444444;background:#181818;">┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐</span>
+<span style="color:#444444;background:#181818;">│</span><span style="background:#181818;">  </span><span style="color:#00ff88;background:#181818;font-weight:700;">n</span><span style="color:#808080;background:#181818;"> new</span><span style="background:#181818;">   </span><span style="color:#00ff88;background:#181818;font-weight:700;">Space</span><span style="color:#808080;background:#181818;"> actions</span><span style="background:#181818;">   </span><span style="color:#00ff88;background:#181818;font-weight:700;">/</span><span style="color:#808080;background:#181818;"> search</span><span style="background:#181818;">   </span><span style="color:#00ff88;background:#181818;font-weight:700;">Tab</span><span style="color:#808080;background:#181818;"> panel</span><span style="background:#181818;">   </span><span style="color:#00ff88;background:#181818;font-weight:700;">c</span><span style="color:#808080;background:#181818;"> config</span><span style="background:#181818;">   </span><span style="color:#00ff88;background:#181818;font-weight:700;">t</span><span style="color:#808080;background:#181818;"> theme</span><span style="background:#181818;">   </span><span style="color:#00ff88;background:#181818;font-weight:700;">q</span><span style="color:#808080;background:#181818;"> quit</span><span style="background:#181818;">                                                    </span><span style="color:#444444;background:#181818;">│</span>
+<span style="color:#444444;background:#181818;">└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</span></pre>
+        </div>
+        <!-- phone -->
+        <div class="scr scr-phone" data-surface="mobile">
+          <div class="ph-top"><span>9:41</span><span class="ph-isl"></span><span>LAN</span></div>
+          <div class="scr-img"><img class="is-light" src="shots/mobile-light.jpg" alt="Grove on a phone, showing the Dashboard of a demo project" loading="lazy" decoding="async"><img class="is-dark" src="shots/mobile-dark.jpg" alt="Grove on a phone, showing the Dashboard of a demo project" loading="lazy" decoding="async"></div>
+        </div>
+        <!-- voice -->
+        <div class="scr scr-voice" data-surface="radio">
+          <div class="ph-top"><span>9:41</span><span class="ph-isl"></span><span>Radio</span></div>
+          <div class="scr-img"><img src="shots/radio-light.jpg" alt="Grove Radio on a phone: nine channels bound to the demo project's tasks" loading="lazy" decoding="async"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================== PLUGINS -->
+<section class="plugins" id="plugins" aria-labelledby="plugins-h">
+  <div class="wrap pl-grid">
+    <div>
+      <p class="kicker">Plugins</p>
+      <h2 class="display-2" id="plugins-h">Build your own <em>context pipes.</em></h2>
+      <p class="section-lede">The OS layer stays stable; the policy layer is open. A plugin is a folder with a <code>plugin.json</code>, built against a typed SDK, and it can bring new ways to capture, organize and inject context.</p>
+      <ul class="pl-list">
+        <li><b>Panel &amp; sidebar page</b><span>Your UI in an isolated iframe, inside the workspace or as a page of its own.</span></li>
+        <li><b>MCP server</b><span>Tools for the agent, with the same <code>grove</code> API.</span></li>
+        <li><b>Skills</b><span>Each folder with a <code>SKILL.md</code> becomes a Grove skill.</span></li>
+        <li><b>Backend</b><span>A node process that subscribes to Grove events, runs workflows, adds prompt middleware or connects a new IM.</span></li>
+      </ul>
+      <a class="btn-ink" href="https://github.com/GarrickZ2/grove/blob/master/docs/plugin-development.md">Read the plugin guide<svg class="ic"><use href="#i-chev"/></svg></a>
+    </div>
+    <div class="term pl-code">
+      <div class="term-bar"><span class="lights"><i></i><i></i><i></i></span><span>my-plugin/plugin.json</span></div>
+<pre><span class="c">{</span>
+  <span class="k">"name"</span>: <span class="s">"my-plugin"</span>,
+  <span class="k">"version"</span>: <span class="s">"0.1.0"</span>,
+  <span class="k">"permissions"</span>: [<span class="s">"storage:read"</span>, <span class="s">"storage:write"</span>, <span class="s">"project:read"</span>],
+  <span class="k">"contributes"</span>: {
+    <span class="k">"panel"</span>:   { <span class="k">"title"</span>: <span class="s">"My Plugin"</span>, <span class="k">"entry"</span>: <span class="s">"dist/index.html"</span> },
+    <span class="k">"sidebar"</span>: { <span class="k">"title"</span>: <span class="s">"My Plugin"</span>, <span class="k">"entry"</span>: <span class="s">"dist/index.html"</span> },
+    <span class="k">"mcp"</span>:     { <span class="k">"command"</span>: <span class="s">"node"</span>, <span class="k">"args"</span>: [<span class="s">"dist/server.js"</span>] },
+    <span class="k">"backend"</span>: { <span class="k">"command"</span>: <span class="s">"node"</span>, <span class="k">"args"</span>: [<span class="s">"dist/backend.js"</span>] }
+  }
+<span class="c">}</span></pre>
+      <div class="pl-steps"><span><code>npm run dev</code>watch + rebuild</span><span><code>npm run publish</code>verify + package a zip</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================== INSTALL -->
+<section class="install" id="install" aria-labelledby="install-h">
+  <div class="wrap">
+    <p class="kicker">Install</p>
+    <h2 class="display-2" id="install-h">Let your agent install it.</h2>
+    <p class="section-lede">A single binary with the Web IDE embedded. Paste this into Claude Code, Codex, Cursor or any agent; it handles the Homebrew tap, the shell installer, PATH wiring and platform quirks.</p>
+    <div class="win prompt-win">
+      <div class="pw-head"><span class="pw-ic"><svg class="ic"><use href="#i-chat"/></svg></span><b>Prompt for your agent</b><button type="button" class="copy" data-copy="#agent-prompt"><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button></div>
+      <p class="pw-text" id="agent-prompt">Install and configure Grove by following the instructions here: https://raw.githubusercontent.com/GarrickZ2/grove/master/docs/install.md</p>
+    </div>
+
+    <div class="cmds">
+      <p class="cmds-l">Or type it yourself</p>
+      <div class="cmd-tabs" role="tablist" aria-label="Install method">
+        <button role="tab" aria-selected="true" aria-controls="cmd-panel" data-cmd="brew">Homebrew</button>
+        <button role="tab" aria-selected="false" aria-controls="cmd-panel" data-cmd="sh">Shell</button>
+        <button role="tab" aria-selected="false" aria-controls="cmd-panel" data-cmd="ps">Windows</button>
+        <button role="tab" aria-selected="false" aria-controls="cmd-panel" data-cmd="cargo">Cargo</button>
+      </div>
+      <div class="term" id="cmd-panel" role="tabpanel">
+        <div class="term-bar"><span class="lights"><i></i><i></i><i></i></span><span id="cmd-note">macOS</span><button type="button" class="copy" data-copy="#cmd-text"><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button></div>
+        <pre id="cmd-text"></pre>
+      </div>
+      <div class="then">
+        <p class="cmds-l">Then, inside any directory</p>
+        <ul class="then-list">
+          <li><code>grove</code><span>resumes your last surface</span></li>
+          <li><code>grove web</code><span>browser IDE on localhost:3001</span></li>
+          <li><code>grove gui</code><span>native desktop window</span></li>
+          <li><code>grove tui</code><span>terminal UI</span></li>
         </ul>
-        <div style="margin-top:24px;"><a class="btn ghost" href="agents.html">Read more →</a></div>
-      </div>
-      <div class="feat-visual" data-animate>
-        <figure class="asset-shot">
-          <video src="images/agent-parallel.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Blitz view — multiple AI agents working in parallel across tasks"></video>
-          <figcaption>
-            <span class="cap-num">FIG. 02</span>
-            <span class="cap-text">Blitz — ten agents working in different projects, all in one view.</span>
-          </figcaption>
-        </figure>
+        <p class="req">Requires Git 2.20+ and tmux 3.0+ or Zellij (not needed on Windows). macOS 12+, Linux, Windows 10/11. MIT licensed.</p>
       </div>
     </div>
+  </div>
+</section>
+</main>
 
-    <!-- AGENTS · sub-block: Agent Graph -->
-    <div class="feature reverse" id="graph">
-      <div class="feat-visual" data-animate>
-        <figure class="asset-shot">
-          <img src="images/graph.png" alt="Agent Graph — DAG view of agents in a task with edges, duties, and pending messages" loading="lazy" />
-          <figcaption>
-            <span class="cap-num">FIG. 02b</span>
-            <span class="cap-text">Agent Graph — your AI team, drawn as a graph. Spawn, connect, send.</span>
-          </figcaption>
-        </figure>
-      </div>
-      <div class="feat-copy" data-animate>
-        <div class="eyebrow">Coordinate</div>
-        <h3>Agents that <span class="br-moss">talk to each other</span>.</h3>
-        <p class="feat-lede">
-          A planner spawns a coder. The coder spawns a reviewer. The reviewer
-          replies. Grove's <strong>Agent Graph</strong> makes that workflow a
-          first-class object: a typed DAG of agents exchanging structured
-          messages, scoped per task. No bash glue, no string-concat
-          orchestration, no leaky cross-task context.
-        </p>
-        <ul>
-          <li>Visual DAG editor — drag to connect, edit duties, send messages from a hover card</li>
-          <li>6 MCP tools — <code>spawn</code> · <code>send</code> · <code>reply</code> · <code>contacts</code> · <code>capability</code> · <code>get_spawn_candidates</code></li>
-          <li>Custom Agents (personas) — base agent + your model, mode, effort, system prompt; reusable across tasks</li>
-          <li>Single-in-flight per edge, cycle detection, per-task isolation enforced at the DB layer</li>
-          <li><code>&lt;grove-meta&gt;</code> envelopes — every cross-agent prompt is a structured payload, not glued strings</li>
-        </ul>
-        <div style="margin-top:24px;"><a class="btn ghost" href="agents.html#graph">Read more →</a></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- § 03 · STUDIO PEEK -->
-  <section>
-    <div class="section-label">
-      <span class="num">§ 03</span>
-      <span class="title">STUDIO</span>
-    </div>
-    <div class="feature reverse">
-      <div class="feat-visual" data-animate>
-        <figure class="asset-shot">
-          <img src="images/memory-graph.png" alt="Grove Project Memory graph with searchable durable knowledge and structured Tags" loading="lazy" />
-          <figcaption>
-            <span class="cap-num">FIG. 03</span>
-            <span class="cap-text">Studio — where the non-coder meets the AI team.</span>
-          </figcaption>
-        </figure>
-      </div>
-      <div class="feat-copy" data-animate>
-        <div class="eyebrow">Collaborate</div>
-        <h3>For <span class="br-moss">everyone</span> on the team.</h3>
-        <p class="feat-lede">
-          Studio is the room where non-coders join the AI workflow. Upload
-          assets. Inspect project memory. Review artifacts. Draw on Sketch canvases
-          the agents can read. No terminal. No git. Still part of the team.
-        </p>
-        <ul>
-          <li>Shared Assets file manager with live artifact preview</li>
-          <li>Project Memory with Logs, durable Entities, Relations, and Organization Runs</li>
-          <li>Excalidraw sketches the agents can read via MCP</li>
-          <li>Inline D2 + Mermaid rendering, image lightbox, markdown preview</li>
-        </ul>
-        <div style="margin-top:24px;"><a class="btn ghost" href="studio.html">Read more →</a></div>
-      </div>
-    </div>
-
-    <!-- STUDIO · sub-block: A real Studio task -->
-    <div class="feature">
-      <div class="feat-copy" data-animate>
-        <div class="eyebrow">In practice</div>
-        <h3>What a Studio task <span class="italic-soft">actually looks like</span>.</h3>
-        <p class="feat-lede">
-          A non-coder shaping <strong>NoteKeeper</strong> — a notes app for a small
-          team — alongside Claude. The brief lives in chat. The artifact panel
-          renders the live HTML the agent is writing. Files-being-edited and
-          file-not-yet-read warnings sit inline so reviewers can spot
-          hallucinated edits before they ship.
-        </p>
-        <ul>
-          <li>Artifact preview — HTML / D2 / Mermaid / images render as the agent writes them</li>
-          <li>Plan + Editing Files cards — see exactly what the agent is touching, in order</li>
-          <li>Reply-in-language hint — the brief drives the response language</li>
-          <li>Same chat, same task, same surface for every persona on the team</li>
-        </ul>
-        <div style="margin-top:24px;"><a class="btn ghost" href="studio.html">Read more →</a></div>
-      </div>
-      <div class="feat-visual" data-animate>
-        <figure class="asset-shot">
-          <img src="images/home-hero-studio.png" alt="Studio task — a non-coder shaping the NoteKeeper notes app alongside Claude, with the artifact panel rendering live HTML" loading="lazy" />
-          <figcaption>
-            <span class="cap-num">FIG. 03b</span>
-            <span class="cap-text">A Studio task in flight — brief on the right, live artifact in the middle, files panel on the left.</span>
-          </figcaption>
-        </figure>
-      </div>
-    </div>
-  </section>
-
-  <!-- § 04 · ANYWHERE PEEK -->
-  <section>
-    <div class="section-label">
-      <span class="num">§ 04</span>
-      <span class="title">ANYWHERE</span>
-    </div>
-    <div class="feature">
-      <div class="feat-copy" data-animate>
-        <div class="eyebrow">Everywhere</div>
-        <h3>TUI. Web. GUI. Mobile. <span class="italic-soft">Voice.</span></h3>
-        <p class="feat-lede">
-          One binary, four surfaces. The same workspace lives in your terminal,
-          your browser, your native window, and your phone. Drive it by
-          keyboard, mouse, touch, or by pressing a button and talking.
-        </p>
-        <ul>
-          <li>IDE Layout — a familiar workspace that non-terminal users can open cold</li>
-          <li>FlexLayout — drag panels into the layout that fits your flow</li>
-          <li>Radio — hold-to-talk voice control, phone to Chat or Terminal</li>
-          <li>Mobile HMAC + QR code — remote access that doesn't leak secrets</li>
-        </ul>
-        <div style="margin-top:24px;"><a class="btn ghost" href="anywhere.html">Read more →</a></div>
-      </div>
-      <div class="feat-visual" data-animate>
-        <figure class="asset-shot" style="max-width:360px; margin:0 auto;">
-          <img src="images/radio-mobile.jpg" alt="Grove Radio on iPhone — nine-slot channel grid, auth-refactor transcribing on channel 02" loading="lazy" />
-          <figcaption>
-            <span class="cap-num">FIG. 04</span>
-            <span class="cap-text">On a phone, in your pocket — yes, still the same Grove.</span>
-          </figcaption>
-        </figure>
-      </div>
-    </div>
-  </section>
-
-  <!-- § 05 · WORKFLOW PEEK -->
-  <section>
-    <div class="section-label">
-      <span class="num">§ 05</span>
-      <span class="title">WORKFLOW</span>
-    </div>
-    <div class="feature reverse">
-      <div class="feat-visual" data-animate>
-        <figure class="asset-shot">
-          <img src="images/code-review.png" alt="Code Review — auth-refactor task with multi-agent comments threaded inline" loading="lazy" />
-          <figcaption>
-            <span class="cap-num">FIG. 05</span>
-            <span class="cap-text">Review together — every merge is a decision, not an accident.</span>
-          </figcaption>
-        </figure>
-      </div>
-      <div class="feat-copy" data-animate>
-        <div class="eyebrow">Ship</div>
-        <h3>Spec to ship, <span class="br-moss">with rigor</span>.</h3>
-        <p class="feat-lede">
-          Write a spec. Let the agent do the work. Review line by line. Merge
-          in one step — rebase, merge, archive, cleanup, all handled. Then
-          measure what actually shipped with real AI-work statistics.
-        </p>
-        <ul>
-          <li>Spec-first: Task Notes + GROVE.md injected into the agent context</li>
-          <li>Inline review — threads, @-mentions, AI fixer, bulk resolve</li>
-          <li>One-step merge — cross-branch safe, squash-detection built in</li>
-          <li>Statistics — AI Work Breakdown, Review Intelligence, Agent Leaderboard</li>
-        </ul>
-        <div style="margin-top:24px;"><a class="btn ghost" href="workflow.html">Read more →</a></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- § 06 · EXTEND PEEK -->
-  <section>
-    <div class="section-label">
-      <span class="num">§ 06</span>
-      <span class="title">EXTEND</span>
-    </div>
-    <div class="feature">
-      <div class="feat-copy" data-animate>
-        <div class="eyebrow">Grow</div>
-        <h3>Skills. MCP. <span class="italic-soft">Yours.</span></h3>
-        <p class="feat-lede">
-          A marketplace of skills you install in one click — every agent
-          gets smarter at once. A built-in MCP server that exposes Grove
-          to orchestrator agents. Custom agents you plug in by command or URL.
-        </p>
-        <ul>
-          <li>Skills marketplace — browse, install, scope to project or global</li>
-          <li>Grove-as-MCP-server — let orchestrator agents manage tasks and reviews</li>
-          <li>Custom agents — any local command, any remote URL</li>
-          <li>Hooks — native system notifications when agents finish or need you</li>
-        </ul>
-        <div style="margin-top:24px;"><a class="btn ghost" href="extend.html">Read more →</a></div>
-      </div>
-      <div class="feat-visual" data-animate>
-        <figure class="asset-shot">
-          <img src="images/skill-marketplace.png" alt="Skills marketplace — Explore tab with installable skills and per-skill detail panel" loading="lazy" />
-          <figcaption>
-            <span class="cap-num">FIG. 06</span>
-            <span class="cap-text">One library. Every agent, a little smarter.</span>
-          </figcaption>
-        </figure>
-      </div>
-    </div>
-  </section>
-
-  <!-- INSTALL -->
-  <section id="install">
-    <div class="section-label">
-      <span class="num">§ 07</span>
-      <span class="title">INSTALL</span>
-    </div>
-    <div class="section-head" data-animate>
-      <h2>One binary.<br>Four surfaces.</h2>
-      <p class="lede">
-        Grove is a single binary with the Web IDE embedded. No runtime
-        deps beyond Git and a terminal multiplexer on Unix.
-      </p>
-    </div>
-    <div class="cards c-3" data-animate>
-      <div class="card">
-        <span class="card-label">macOS / Linux / WSL</span>
-        <h3>Shell</h3>
-        <pre><code>curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh</code></pre>
-      </div>
-      <div class="card">
-        <span class="card-label">macOS</span>
-        <h3>Homebrew</h3>
-        <pre><code>brew tap GarrickZ2/grove
-brew install grove</code></pre>
-      </div>
-      <div class="card">
-        <span class="card-label">Windows</span>
-        <h3>PowerShell</h3>
-        <pre><code>irm https://raw.githubusercontent.com/GarrickZ2/grove/master/install.ps1 | iex</code></pre>
-      </div>
-      <div class="card">
-        <span class="card-label">Any platform</span>
-        <h3>Cargo</h3>
-        <pre><code>cargo install grove-rs
-# with desktop GUI:
-cargo install grove-rs --features gui</code></pre>
-      </div>
-      <div class="card">
-        <span class="card-label">Prebuilt binary</span>
-        <h3>Download a release</h3>
-        <p>macOS <code>.dmg</code>, Windows <code>.exe</code>, Linux <code>.tar.gz</code> / <code>.AppImage</code>. <a href="https://github.com/GarrickZ2/grove/releases/latest" style="color:var(--moss-bright);">Latest release ↗</a></p>
-      </div>
-      <div class="card">
-        <span class="card-label">Run</span>
-        <h3>Start grove</h3>
-        <pre><code>cd your-project
-grove</code></pre>
-      </div>
-    </div>
-  </section>
-
-  <!-- MANIFESTO CLOSER -->
-  <section class="manifesto" data-animate>
-    <h2>Grove grows one <span class="br-moss">branch</span> at a time.</h2>
-    <p class="m-caption">
-      Built in Rust. Shipped with care. MIT licensed.
-      Works with every coding agent we know of, and the one you're about to build.
-    </p>
-    <div class="page-hero-cta">
-      <a class="btn btn-lg" href="#install">$ install grove →</a>
-      <a class="btn ghost btn-lg" href="https://github.com/GarrickZ2/grove" target="_blank" rel="noopener">GitHub ↗</a>
-    </div>
-  </section>
-
-</div>
-
-<footer class="footer">
-  <div class="container">
-    <div class="footer-inner">
-      <div class="footer-copy">Grove · MIT License · Built with Claude Code</div>
-      <div class="footer-links">
-        <a href="https://github.com/GarrickZ2/grove">github ↗</a>
-        <a href="https://github.com/GarrickZ2/grove/blob/master/CHANGELOG.md">changelog ↗</a>
-        <a href="https://github.com/GarrickZ2/grove/blob/master/docs/capabilities.md">capabilities ↗</a>
-      </div>
-    </div>
+<footer class="foot">
+  <div class="wrap foot-in">
+    <a class="brand" href="#hero"><img src="brand-icon.svg" alt="" width="22" height="22"><span>Grove</span></a>
+    <p class="foot-line">The Context Harness. Agents write the code; you steer the context. <span class="foot-ver">v0.14.0</span></p>
+    <nav class="foot-links" aria-label="Footer">
+      <a href="https://github.com/GarrickZ2/grove">GitHub</a>
+      <a href="https://github.com/GarrickZ2/grove/blob/master/docs/capabilities.md">Docs</a>
+      <a href="https://github.com/GarrickZ2/grove/blob/master/docs/plugin-development.md">Plugin guide</a>
+      <a href="https://github.com/GarrickZ2/grove/blob/master/docs/install.md">Install guide</a>
+      <a href="https://github.com/GarrickZ2/grove/releases/latest">Releases</a>
+    </nav>
   </div>
 </footer>
 
+<script src="theme.js?v=24"></script>
+<script src="sky-engine.js?v=24"></script>
+<script src="sky.js?v=24"></script>
+<script src="main.js?v=24"></script>
 </body>
 </html>
