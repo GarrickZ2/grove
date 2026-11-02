@@ -50,6 +50,21 @@ describe("MarkdownRenderer file resources", () => {
     );
   });
 
+  it("strips an authored allow-same-origin from a worktree iframe", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<MarkdownRenderer
+        content={'<iframe src="evil.html" sandbox="allow-scripts allow-same-origin"></iframe>'}
+        location={{ projectId: "project", root: { kind: "task", taskId: "task" }, path: "notes.md" }}
+      />);
+    });
+    const iframe = container.querySelector("iframe");
+    await act(async () => root.unmount());
+
+    expect(iframe?.getAttribute("sandbox")).toBe("allow-scripts");
+  });
+
   it("renders an error instead of the Grove page for an empty iframe src", () => {
     const html = renderToStaticMarkup(
       <MarkdownRenderer content={'<iframe src=""></iframe>'} />,

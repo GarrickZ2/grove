@@ -7,12 +7,6 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 
-// Default sandbox applied to `<iframe>` elements rendered from markdown when
-// the author didn't specify one. Mirrors PREVIEW_IFRAME_SANDBOX in
-// previewRenderers.tsx so markdown-embedded HTML and standalone HTML files
-// behave the same way: scripts + popups allowed, but no same-origin access.
-const IFRAME_DEFAULT_SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox";
-
 // Sanitize schema used by rehype-sanitize when rendering markdown. Extends the
 // default schema (which already strips unknown tags, event handlers, and
 // dangerous protocols on `href`) with the `<iframe>` tag and the `style`
@@ -53,6 +47,7 @@ import { highlightLines, normalizeLanguage } from "../Review/syntaxHighlight";
 import { createSlugger } from "./headingSlug";
 import { useTheme } from "../../context/ThemeContext";
 import { isAbsoluteFileReference, resolveFileReference, type FileLocation } from "./fileLocation";
+import { markdownIframeSandbox } from "./iframeSandbox";
 import { normalizeStrongEmphasis } from "./markdownPreprocess";
 import { MarkdownCommentHost, type MarkdownCommentConfig } from "../Review/PreviewCommentHost";
 import { selectedMarkdownForRange } from "./markdownClipboard";
@@ -969,6 +964,9 @@ function MarkdownFileLink({ href, children }: { href: string; children: React.Re
         // Open synchronously so popup blockers allow the tab; sign immediately
         // before navigation so the one-use HMAC nonce has not expired.
         const tab = window.open('about:blank', '_blank');
+        // Equivalent of noopener: the opened file must not be able to reach
+        // back into the Grove page that opened it.
+        if (tab) tab.opener = null;
         void appendHmacToUrl(href).then((signed) => {
           if (tab) tab.location.href = signed;
           else window.location.href = signed;
@@ -1429,10 +1427,10 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, render
         },
         iframe: ({ src, sandbox, referrerPolicy, ...props }) => {
           // rehype-sanitize has already stripped non-allowlisted attributes and
-          // rejected non-http(s) src schemes. We only need to apply safe
-          // defaults for sandbox / referrer policy when the author omitted
-          // them, and resolve file-relative src values when a location is
-          // available.
+          // rejected non-http(s) src schemes. The authored sandbox is only
+          // honoured where it cannot grant Grove's origin (see
+          // markdownIframeSandbox); file-relative src values resolve through
+          // the location when one is available.
           const rawSrc = src?.trim() ?? "";
           const resolvedSrc = location ? resourceSrcResolver(rawSrc) : rawSrc;
           const unresolvedRelativeSrc =
@@ -1452,7 +1450,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, render
             <EmbeddedHtmlIframe
               src={resolvedSrc}
               fitLocalHtml={Boolean(location && !isAbsoluteFileReference(rawSrc) && /\.html?(?:[?#]|$)/i.test(rawSrc))}
-              sandbox={sandbox ?? IFRAME_DEFAULT_SANDBOX}
+              sandbox={markdownIframeSandbox(resolvedSrc, sandbox)}
               referrerPolicy={referrerPolicy ?? "no-referrer"}
               {...props}
             />
