@@ -1374,7 +1374,7 @@ pub async fn scaffold_plugin(
         None,
     )
     .map_err(|e| ApiError::internal(format!("failed to register plugin: {}", e)))?;
-    sync_plugin_skills(&plugin.id, &plugin.name, &plugin.local_path);
+    crate::plugins::approval::sync_skills(&plugin);
     crate::plugins::backend::registered(&plugin).await;
 
     Ok(Json(json!({
@@ -1448,6 +1448,8 @@ pub async fn list_plugins() -> Result<Json<serde_json::Value>, (StatusCode, Json
             }
             v["permissions"] = json!(read_permissions_at(&p.local_path));
             v["contributes"] = read_contributes_at(&p.local_path);
+            v["status"] = json!(crate::plugins::approval::status(p));
+            v["review"] = crate::plugins::approval::review(&p.local_path);
             // Folder still on disk? A user may delete the source folder without
             // uninstalling — surface it as "missing" so the row can be cleaned up.
             v["exists"] = json!(std::path::Path::new(&p.local_path).is_dir());
@@ -1471,6 +1473,57 @@ pub async fn list_plugins() -> Result<Json<serde_json::Value>, (StatusCode, Json
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ApprovePluginRequest {
+    /// `review.digest` the user was shown; approval fails if the manifest has
+    /// changed since, so nobody approves something they did not see.
+    pub digest: String,
+}
+
+/// POST /api/v1/plugins/{id}/approve — let a reviewed plugin take effect.
+pub async fn approve_plugin(
+    Path(id): Path<String>,
+    Json(req): Json<ApprovePluginRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let plugin = crate::storage::plugins::get(&id)
+        .map_err(|e| ApiError::internal(format!("registry error: {}", e)))?
+        .ok_or_else(|| ApiError::not_found(format!("plugin not found: {}", id)))?;
+    let current = crate::plugins::approval::security_digest(&plugin.local_path)
+        .ok_or_else(|| ApiError::bad_request("plugin.json is missing or invalid"))?;
+    if current != req.digest {
+        return Err(ApiError::with_status(
+            StatusCode::CONFLICT,
+            "the plugin changed since it was reviewed; review it again",
+        ));
+    }
+    crate::storage::plugins::set_approved_digest(&id, Some(&current))
+        .map_err(|e| ApiError::internal(format!("failed to approve: {}", e)))?;
+    let plugin = crate::storage::plugins::Plugin {
+        approved_digest: Some(current),
+        ..plugin
+    };
+    crate::plugins::approval::sync_skills(&plugin);
+    crate::plugins::backend::registered(&plugin).await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// POST /api/v1/plugins/{id}/revoke — stop a plugin without uninstalling it.
+pub async fn revoke_plugin(
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let plugin = crate::storage::plugins::get(&id)
+        .map_err(|e| ApiError::internal(format!("registry error: {}", e)))?
+        .ok_or_else(|| ApiError::not_found(format!("plugin not found: {}", id)))?;
+    crate::storage::plugins::set_approved_digest(&id, None)
+        .map_err(|e| ApiError::internal(format!("failed to revoke: {}", e)))?;
+    crate::plugins::backend::shutdown_plugin(&id).await;
+    crate::plugins::approval::sync_skills(&crate::storage::plugins::Plugin {
+        approved_digest: None,
+        ..plugin
+    });
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RegisterPluginRequest {
     /// Absolute path to an existing plugin folder (must contain plugin.json).
     pub path: String,
@@ -1489,6 +1542,7 @@ pub async fn register_plugin(
         .map_err(|e| ApiError::bad_request(format!("invalid plugin.json: {}", e)))?;
     validate_connect_provider_manifest(&manifest)?;
     validate_prompt_middleware_manifest(&manifest)?;
+    validate_process_manifest(&manifest, &dir)?;
     let name = manifest
         .get("name")
         .and_then(|v| v.as_str())
@@ -1511,7 +1565,7 @@ pub async fn register_plugin(
         None,
     )
     .map_err(|e| ApiError::internal(format!("failed to register: {}", e)))?;
-    sync_plugin_skills(&plugin.id, &plugin.name, &plugin.local_path);
+    crate::plugins::approval::sync_skills(&plugin);
     crate::plugins::backend::registered(&plugin).await;
     Ok(Json(json!({ "ok": true, "plugin": plugin })))
 }
@@ -1547,7 +1601,9 @@ pub async fn delete_plugin(
     // Unmount the plugin's skill source — by its readable name and the legacy
     // id-based name (older installs), so uninstall is clean either way.
     if let Some(p) = &plugin {
-        let _ = crate::operations::skills::remove_local_source(&plugin_skill_source_name(&p.name));
+        let _ = crate::operations::skills::remove_local_source(
+            &crate::plugins::approval::skill_source_name(&p.name),
+        );
     }
     let _ = crate::operations::skills::remove_local_source(&format!("plugin:{}", id));
     let removed = crate::storage::plugins::delete(&id)
@@ -1642,7 +1698,7 @@ fn serve_plugin_asset_file(
     let bytes = std::fs::read(&full_canon)
         .map_err(|_| ApiError::not_found(format!("asset not found: {}", asset)))?;
     let content_type = mime_guess::from_path(&full_canon).first_or_octet_stream();
-    let is_html = content_type.as_ref() == "text/html";
+    let is_active = crate::api::handlers::files::is_active_content(&content_type);
 
     let mut response = (
         [
@@ -1661,9 +1717,10 @@ fn serve_plugin_asset_file(
         bytes,
     )
         .into_response();
-    if is_html {
+    if is_active {
         // Preserve the opaque-origin sandbox even if somebody opens the asset
         // URL directly rather than through PluginFrame's iframe attribute.
+        // SVG and XML documents can run script too, so they get the same CSP.
         response.headers_mut().insert(
             header::CONTENT_SECURITY_POLICY,
             "sandbox allow-scripts; frame-ancestors 'self'"
@@ -1790,51 +1847,6 @@ fn plugins_dir() -> std::path::PathBuf {
     crate::storage::grove_dir().join("plugins")
 }
 
-/// A readable, stable skill-source name for a plugin: `plugin:<name>` with the
-/// name sanitized to safe chars. The `plugin:` prefix marks it plugin-owned
-/// (the UI forbids manual deletion); the suffix is the plugin's display name so
-/// the Skills view shows e.g. `plugin:my-plugin` rather than `plugin:pl-<uuid>`.
-fn plugin_skill_source_name(name: &str) -> String {
-    let mut slug = String::new();
-    let mut prev_dash = false;
-    for c in name.trim().chars() {
-        if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-            slug.push(c);
-            prev_dash = false;
-        } else if !prev_dash {
-            slug.push('-');
-            prev_dash = true;
-        }
-    }
-    let slug = slug.trim_matches('-');
-    if slug.is_empty() {
-        "plugin:unnamed".to_string()
-    } else {
-        format!("plugin:{}", slug)
-    }
-}
-
-/// Mount/unmount a plugin's `skills/` folder as a Grove skill source named
-/// `plugin:<name>`. Best-effort — a skills failure must not block plugin ops.
-/// Also removes the legacy `plugin:<id>` source so older installs migrate to
-/// the readable name on the next sync.
-fn sync_plugin_skills(plugin_id: &str, plugin_name: &str, local_path: &str) {
-    let source_name = plugin_skill_source_name(plugin_name);
-    let legacy = format!("plugin:{}", plugin_id);
-    if legacy != source_name {
-        let _ = crate::operations::skills::remove_local_source(&legacy);
-    }
-    let skills_dir = std::path::Path::new(local_path).join("skills");
-    if skills_dir.is_dir() {
-        let _ = crate::operations::skills::add_local_source(
-            &source_name,
-            &skills_dir.display().to_string(),
-        );
-    } else {
-        let _ = crate::operations::skills::remove_local_source(&source_name);
-    }
-}
-
 /// Read (name, version) from a plugin folder's plugin.json.
 fn read_manifest(dir: &std::path::Path) -> Result<(String, String), (StatusCode, Json<ApiError>)> {
     let s = std::fs::read_to_string(dir.join("plugin.json"))
@@ -1843,6 +1855,7 @@ fn read_manifest(dir: &std::path::Path) -> Result<(String, String), (StatusCode,
         .map_err(|e| ApiError::bad_request(format!("invalid plugin.json: {}", e)))?;
     validate_connect_provider_manifest(&v)?;
     validate_prompt_middleware_manifest(&v)?;
+    validate_process_manifest(&v, dir)?;
     let name = v
         .get("name")
         .and_then(|x| x.as_str())
@@ -1858,6 +1871,48 @@ fn read_manifest(dir: &std::path::Path) -> Result<(String, String), (StatusCode,
         .unwrap_or("0.0.0")
         .to_string();
     Ok((name, version))
+}
+
+/// Reject process declarations whose permissions Grove cannot enforce: a
+/// non-node command without `exec`, or env vars that would lift the sandbox.
+/// Launch re-checks both, so plugins installed earlier are covered too.
+fn validate_process_manifest(
+    manifest: &serde_json::Value,
+    dir: &std::path::Path,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let perms: std::collections::HashSet<String> = manifest
+        .get("permissions")
+        .and_then(|p| p.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    for key in ["backend", "mcp"] {
+        let Some(decl) = manifest.get("contributes").and_then(|c| c.get(key)) else {
+            continue;
+        };
+        if let Some(command) = decl.get("command").and_then(|c| c.as_str()) {
+            if !crate::plugins::runtime::is_sandboxable_node(command, dir)
+                && !perms.contains("exec")
+            {
+                return Err(ApiError::bad_request(format!(
+                    "contributes.{key}.command \"{command}\" is not node, so its permissions \
+                     cannot be enforced; declare the \"exec\" permission to run it"
+                )));
+            }
+        }
+        if let Some(name) = decl.get("env").and_then(|e| e.as_object()).and_then(|env| {
+            env.keys()
+                .find(|k| crate::plugins::runtime::is_reserved_env(k))
+        }) {
+            return Err(ApiError::bad_request(format!(
+                "contributes.{key}.env may not set {name}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_prompt_middleware_manifest(
@@ -1911,6 +1966,33 @@ fn validate_prompt_middleware_manifest(
 #[cfg(test)]
 mod prompt_middleware_manifest_tests {
     use super::*;
+
+    #[test]
+    fn process_manifest_requires_exec_for_unsandboxable_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let validate =
+            |manifest: &serde_json::Value| validate_process_manifest(manifest, dir.path());
+        let manifest = |perms: &[&str], command: &str| json!({"permissions": perms, "contributes": {"backend": {"command": command}}});
+        assert!(validate(&manifest(&["storage:read"], "node")).is_ok());
+        assert!(validate(&manifest(&["storage:read"], "sh")).is_err());
+        assert!(validate(&manifest(&["exec"], "python3")).is_ok());
+        let mcp = json!({"contributes": {"mcp": {"command": "/usr/bin/env", "args": ["node"]}}});
+        assert!(validate(&mcp).is_err());
+        std::fs::write(dir.path().join("node"), "#!/bin/sh").unwrap();
+        assert!(validate(&manifest(&["storage:read"], "node")).is_err());
+    }
+
+    #[test]
+    fn process_manifest_rejects_sandbox_lifting_env() {
+        let manifest = json!({"contributes": {"mcp": {
+            "command": "node",
+            "env": {"NODE_OPTIONS": "--allow-fs-read=*"}
+        }}});
+        let dir = tempfile::tempdir().unwrap();
+        assert!(validate_process_manifest(&manifest, dir.path()).is_err());
+        let fine = json!({"contributes": {"backend": {"command": "node", "env": {"NODE_ENV": "production"}}}});
+        assert!(validate_process_manifest(&fine, dir.path()).is_ok());
+    }
 
     #[test]
     fn requires_backend_and_permission() {
@@ -2199,7 +2281,7 @@ pub(crate) async fn install_plugin_from_source(
         subpath,
     )
     .map_err(|e| ApiError::internal(format!("failed to register: {}", e)))?;
-    sync_plugin_skills(&plugin.id, &plugin.name, &plugin.local_path);
+    crate::plugins::approval::sync_skills(&plugin);
     crate::plugins::backend::registered(&plugin).await;
     Ok(plugin)
 }
@@ -2294,7 +2376,7 @@ pub async fn install_zip(
         None,
     )
     .map_err(|e| ApiError::internal(format!("failed to register: {}", e)))?;
-    sync_plugin_skills(&plugin.id, &plugin.name, &plugin.local_path);
+    crate::plugins::approval::sync_skills(&plugin);
     crate::plugins::backend::registered(&plugin).await;
     Ok(Json(json!({ "ok": true, "plugin": plugin })))
 }
@@ -2351,7 +2433,7 @@ pub async fn install_git(
         req.subpath.as_deref(),
     )
     .map_err(|e| ApiError::internal(format!("failed to register: {}", e)))?;
-    sync_plugin_skills(&plugin.id, &plugin.name, &plugin.local_path);
+    crate::plugins::approval::sync_skills(&plugin);
     crate::plugins::backend::registered(&plugin).await;
     Ok(Json(json!({ "ok": true, "plugin": plugin })))
 }
@@ -2413,6 +2495,12 @@ fn plugin_permissions(id: &str) -> Result<Vec<String>, (StatusCode, Json<ApiErro
     let plugin = crate::storage::plugins::get(id)
         .map_err(|e| ApiError::internal(format!("registry error: {}", e)))?
         .ok_or_else(|| ApiError::not_found(format!("plugin not found: {}", id)))?;
+    if !crate::plugins::approval::is_active(&plugin) {
+        return Err(ApiError::forbidden(format!(
+            "plugin \"{}\" is awaiting approval",
+            plugin.name
+        )));
+    }
     Ok(read_permissions_at(&plugin.local_path))
 }
 
@@ -2649,9 +2737,10 @@ pub async fn subscribe_events(
     let task = q.task_id.unwrap_or_else(|| "global".to_string());
     // A plugin only joins the task-scoped radio/ACP firehose if it declared
     // `chat:read`; otherwise it still gets its own backend/MCP `emit` events.
-    let radio = plugin_permissions(&id)
-        .map(|perms| perms.iter().any(|p| p == "chat:read"))
-        .unwrap_or(false);
+    let radio = match plugin_permissions(&id) {
+        Ok(perms) => perms.iter().any(|p| p == "chat:read"),
+        Err(error) => return error.into_response(),
+    };
     let rx = crate::plugins::events::subscribe(&id, &task, radio);
     let stream =
         tokio_stream::wrappers::UnboundedReceiverStream::new(rx).map(Ok::<String, std::io::Error>);

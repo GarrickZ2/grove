@@ -15,7 +15,7 @@ import { PluginIcon } from "./components/Plugins/PluginIcon";
 import { OrbitPluginPage } from "./components/Plugins/OrbitPluginPage";
 import { findPluginPage, pluginPageEntries, pluginPageTitle } from "./components/Plugins/pluginPages";
 import { performPluginNavigation, PLUGIN_NAVIGATE_EVENT, type PluginNavigateDetail } from "./components/Plugins/pluginNavigation";
-import { listPlugins, PLUGINS_CHANGED_EVENT, type Plugin } from "./api/plugins";
+import { listActivePlugins, PLUGINS_CHANGED_EVENT, type Plugin } from "./api/plugins";
 import { MobileHeader } from "./components/Layout/MobileHeader";
 import { MobileDrawer } from "./components/Layout/MobileDrawer";
 import { NotificationPopover } from "./components/Layout/NotificationPopover";
@@ -320,7 +320,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      listPlugins()
+      listActivePlugins()
         .then((ps) => {
           if (cancelled) return;
           const nextSidebarPlugins = ps.filter((p) => p.contributes?.sidebar);

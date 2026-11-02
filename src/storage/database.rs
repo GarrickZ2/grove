@@ -588,7 +588,8 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             git_url       TEXT,
             subpath       TEXT,
             created_at    TEXT NOT NULL,
-            updated_at    TEXT NOT NULL
+            updated_at    TEXT NOT NULL,
+            approved_digest TEXT
         );
 
         -- Unified extension catalog discovered from Skill sources. Skills keep
@@ -943,6 +944,14 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     // chat_id is nullable: pre-migration rows have no chat context, and the
     // notification UI falls back to navigating to the task only when NULL.
     let _ = conn.execute_batch("ALTER TABLE hook_notifications ADD COLUMN chat_id TEXT;");
+    // Plugins installed before approval existed keep working: approve what
+    // their manifests ask for today. Only runs when the column is new.
+    if conn
+        .execute_batch("ALTER TABLE plugins ADD COLUMN approved_digest TEXT;")
+        .is_ok()
+    {
+        approve_existing_plugins(conn);
+    }
     let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN cost_amount REAL;");
     let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN cost_currency TEXT;");
     let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN automation_run_id TEXT;");
@@ -1348,6 +1357,26 @@ fn migrate_automation_agent_config(conn: &Connection) -> Result<()> {
 /// `ALTER TABLE ... ADD COLUMN` swallowing the "duplicate column name" error
 /// SQLite returns when the column already exists. Lets us evolve a previously
 /// installed schema without managing a per-column migration version.
+/// Approve every registered plugin for what its manifest asks today. Used once,
+/// when plugin approval is introduced, so existing installs keep working.
+fn approve_existing_plugins(conn: &Connection) {
+    let rows: Vec<(String, String)> = match conn.prepare("SELECT id, local_path FROM plugins") {
+        Ok(mut stmt) => stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default(),
+        Err(_) => return,
+    };
+    for (id, local_path) in rows {
+        if let Some(digest) = crate::plugins::approval::security_digest(&local_path) {
+            let _ = conn.execute(
+                "UPDATE plugins SET approved_digest = ?1 WHERE id = ?2",
+                rusqlite::params![digest, id],
+            );
+        }
+    }
+}
+
 fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
     let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, decl);
     match conn.execute(&sql, []) {

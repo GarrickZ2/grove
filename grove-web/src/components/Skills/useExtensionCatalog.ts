@@ -79,8 +79,11 @@ export function useExtensionCatalog({ sources, refreshToken }: { sources: SkillS
   const installPlugin = useCallback(async (item: ExtensionArtifact) => {
     const key = `${item.repo_key}/${item.repo_path}`;
     setBusyKey(key);
-    try { await installCatalogPlugin(item.repo_key, item.repo_path); await reload(); }
-    finally { setBusyKey(null); }
+    try {
+      const result = await installCatalogPlugin(item.repo_key, item.repo_path);
+      await reload();
+      return result.plugin?.id ?? null;
+    } finally { setBusyKey(null); }
   }, [reload]);
 
   return { items, plugins, agentOptions, loading, error, reload, records, sourcesByName, matchesView, installPlugin, busyKey };

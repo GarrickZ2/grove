@@ -61,6 +61,53 @@ pub fn node_supports_permissions(command: &str) -> bool {
     node_major_version(command).is_some_and(|v| v >= MIN_NODE_MAJOR)
 }
 
+/// True if `command` is a node runtime from outside the plugin's own folder.
+/// A plugin may ship a file named `node`; that is the plugin's code, not the
+/// runtime, and must not be mistaken for something the sandbox can contain.
+pub fn is_sandboxable_node(command: &str, plugin_dir: &Path) -> bool {
+    if !is_node_command(command) {
+        return false;
+    }
+    let path = Path::new(command);
+    if !path.is_absolute() {
+        return !plugin_dir.join(path).exists();
+    }
+    match (path.canonicalize(), plugin_dir.canonicalize()) {
+        (Ok(path), Ok(dir)) => !path.starts_with(dir),
+        (Err(_), _) => true,
+        (Ok(_), Err(_)) => !path.starts_with(plugin_dir),
+    }
+}
+
+/// Why a plugin process may not launch with these permissions, if it may not.
+///
+/// Only node processes can be sandboxed. Any other executable (a shell,
+/// python, `env node`, a bundled binary) runs with the user's full rights, so
+/// it is allowed only for plugins that already declare the full-trust `exec`.
+pub fn launch_refusal(command: &str, plugin_dir: &Path, perms: &HashSet<String>) -> Option<String> {
+    if is_sandboxable_node(command, plugin_dir) {
+        return (!node_supports_permissions(command)).then(|| {
+            format!("node >= {MIN_NODE_MAJOR} is required for enforced permissions (check `node --version`)")
+        });
+    }
+    (!perms.contains("exec")).then(|| {
+        format!(
+            "'{command}' is not node, so its permissions cannot be enforced; \
+             the plugin must declare the \"exec\" permission to run it"
+        )
+    })
+}
+
+/// Environment variables a manifest may not set for a plugin process. They
+/// decide which executable runs or how the runtime loads code, so they can
+/// lift the Node Permission Model (`NODE_OPTIONS=--allow-fs-read=*` does).
+pub fn is_reserved_env(key: &str) -> bool {
+    let key = key.to_ascii_uppercase();
+    matches!(key.as_str(), "NODE_OPTIONS" | "NODE_PATH" | "PATH")
+        || key.starts_with("DYLD_")
+        || key.starts_with("LD_")
+}
+
 /// Grant a directory path for an fs flag: both the dir entry itself and its
 /// contents (node's trailing-`*` is a recursive prefix match).
 fn grant(kind: &str, dir: &str, out: &mut Vec<String>) {
@@ -158,6 +205,54 @@ mod tests {
         assert!(f.iter().any(|x| x.contains("--allow-fs-write=/data")));
         assert!(f.iter().any(|x| x.contains("--allow-fs-read=/work")));
         assert!(!f.iter().any(|x| x.contains("--allow-fs-write=/work")));
+    }
+
+    #[test]
+    fn non_node_commands_need_exec() {
+        let dir = tempfile::tempdir().unwrap();
+        for command in [
+            "sh",
+            "/bin/bash",
+            "python3",
+            "env",
+            "/opt/deno",
+            "./dist/server",
+        ] {
+            assert!(launch_refusal(command, dir.path(), &perms(&["storage:read"])).is_some());
+            assert!(launch_refusal(command, dir.path(), &perms(&["exec"])).is_none());
+        }
+    }
+
+    #[test]
+    fn a_bundled_file_named_node_is_not_the_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("bin")).unwrap();
+        std::fs::write(dir.path().join("node"), "#!/bin/sh").unwrap();
+        std::fs::write(dir.path().join("bin/node"), "#!/bin/sh").unwrap();
+        let bundled = dir.path().join("node").display().to_string();
+        for command in ["node", "bin/node", bundled.as_str()] {
+            assert!(!is_sandboxable_node(command, dir.path()), "{command}");
+        }
+        let other = tempfile::tempdir().unwrap();
+        assert!(is_sandboxable_node("node", other.path()));
+        assert!(is_sandboxable_node("/usr/local/bin/node", other.path()));
+    }
+
+    #[test]
+    fn reserved_env_covers_loader_and_lookup_variables() {
+        for key in [
+            "NODE_OPTIONS",
+            "node_options",
+            "NODE_PATH",
+            "PATH",
+            "DYLD_INSERT_LIBRARIES",
+            "LD_PRELOAD",
+        ] {
+            assert!(is_reserved_env(key), "{key}");
+        }
+        for key in ["NODE_ENV", "API_BASE", "DEBUG", "PATHNAME"] {
+            assert!(!is_reserved_env(key), "{key}");
+        }
     }
 
     #[test]

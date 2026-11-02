@@ -120,8 +120,8 @@ export async function installMcp(input: {
   return apiClient.post("/api/v1/extensions/mcp/install", input);
 }
 
-export async function installCatalogPlugin(repo_key: string, repo_path: string): Promise<{ ok: boolean }> {
-  const result = await apiClient.post<{ repo_key: string; repo_path: string }, { ok: boolean }>("/api/v1/extensions/plugin/install", { repo_key, repo_path });
+export async function installCatalogPlugin(repo_key: string, repo_path: string): Promise<{ ok: boolean; plugin?: { id: string } }> {
+  const result = await apiClient.post<{ repo_key: string; repo_path: string }, { ok: boolean; plugin?: { id: string } }>("/api/v1/extensions/plugin/install", { repo_key, repo_path });
   notifyPluginsChanged();
   return result;
 }

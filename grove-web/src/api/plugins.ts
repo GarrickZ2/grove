@@ -42,6 +42,27 @@ export async function scaffoldPlugin(
   );
 }
 
+/** Whether a plugin takes effect. `pending`: never approved; `changed`: its
+ *  manifest now asks for more than the user approved. Only `active` plugins
+ *  run processes, reach agents, or show their UI. */
+export type PluginStatus = 'active' | 'pending' | 'changed';
+
+/** What approving a plugin grants, grouped by risk (see plugins::approval). */
+export interface PluginReview {
+  /** Pass back to `approvePlugin` so the user approves exactly what they saw. */
+  digest: string;
+  permissions: string[];
+  /** Can run arbitrary commands on this machine (`exec` or an unsandboxed process). */
+  full_trust: boolean;
+  /** Runs a process, which can always reach the network. */
+  network: boolean;
+  processes: { kind: 'backend' | 'mcp'; command: string; args: string[]; sandboxed: boolean }[];
+  agent: { skills: boolean; mcp: boolean; prompt_middleware: boolean; chat_write: boolean };
+  /** Data permissions among project/chat/storage read & write. */
+  data: string[];
+  connect_provider: boolean;
+}
+
 /** A registered plugin. `source` decides where the files live + delete behavior. */
 export interface Plugin {
   id: string;
@@ -54,6 +75,10 @@ export interface Plugin {
   subpath?: string;
   created_at: string;
   updated_at: string;
+  /** Absent from servers that predate plugin approval, where every plugin runs. */
+  status?: PluginStatus;
+  /** Null when the manifest cannot be read. */
+  review?: PluginReview | null;
   /** Present when the plugin contributes an MCP server. `available` is whether
    *  its `command` resolves on PATH. */
   runtime?: { command: string; available: boolean };
@@ -96,6 +121,27 @@ export interface Plugin {
 export async function listPlugins(): Promise<Plugin[]> {
   const r = await apiClient.get<{ plugins: Plugin[] }>('/api/v1/plugins');
   return r.plugins;
+}
+
+export function isPluginActive(plugin: Plugin): boolean {
+  return (plugin.status ?? 'active') === 'active';
+}
+
+/** Plugins whose UI may be shown: anything awaiting review stays hidden. */
+export async function listActivePlugins(): Promise<Plugin[]> {
+  return (await listPlugins()).filter(isPluginActive);
+}
+
+/** Let a reviewed plugin take effect. Fails (409) if it changed since `review`. */
+export async function approvePlugin(id: string, digest: string): Promise<void> {
+  await apiClient.post<{ digest: string }, { ok: boolean }>(`/api/v1/plugins/${id}/approve`, { digest });
+  notifyPluginsChanged();
+}
+
+/** Stop a plugin without uninstalling it. */
+export async function revokePlugin(id: string): Promise<void> {
+  await apiClient.post<undefined, { ok: boolean }>(`/api/v1/plugins/${id}/revoke`);
+  notifyPluginsChanged();
 }
 
 /**

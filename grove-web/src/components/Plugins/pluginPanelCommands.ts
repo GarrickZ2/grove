@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { commandRegistry } from "../../keyboard";
-import { listPlugins, PLUGINS_CHANGED_EVENT } from "../../api/plugins";
+import { listActivePlugins, PLUGINS_CHANGED_EVENT } from "../../api/plugins";
 
 /** Fired (with the current task context) when a plugin's keybinding is pressed;
  *  the active layout opens that plugin's panel. */
@@ -40,7 +40,7 @@ export function usePluginPanelCommands(projectId: string, taskId: string): void 
       disposers = [];
       let plugins;
       try {
-        plugins = await listPlugins();
+        plugins = await listActivePlugins();
       } catch {
         return;
       }

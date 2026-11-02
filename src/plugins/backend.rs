@@ -110,6 +110,17 @@ pub async fn invoke(
         .map(|m| Duration::from_millis(m.clamp(1_000, 600_000)))
         .unwrap_or(INVOKE_TIMEOUT);
     Lazy::force(&REAPER);
+    // A backend started before its manifest changed must not keep serving.
+    if !crate::storage::plugins::get(plugin_id)?
+        .as_ref()
+        .is_some_and(super::approval::is_active)
+    {
+        shutdown_plugin(plugin_id).await;
+        return Err(GroveError::config(format!(
+            "plugin {} is awaiting approval",
+            plugin_id
+        )));
+    }
     let scope_key = task
         .map(|(_, t)| t.to_string())
         .unwrap_or_else(|| "global".to_string());
@@ -201,6 +212,9 @@ fn plugin_has_permission(plugin_id: &str, permission: &str) -> bool {
 /// Start existing plugin backends so they can subscribe to Grove events even
 /// when no panel is open. This is ordinary plugin lifecycle, not crash recovery.
 async fn start_registered_backend(plugin: &crate::storage::plugins::Plugin) {
+    if !super::approval::is_active(plugin) {
+        return;
+    }
     let consumes_host_events =
         plugin_has_permission(&plugin.id, "chat:read") || manifest_has(plugin, "connectProviders");
     if manifest_has(plugin, "backend") && consumes_host_events {
@@ -218,7 +232,7 @@ pub async fn registered(plugin: &crate::storage::plugins::Plugin) {
 }
 
 pub async fn start_global_backends() {
-    for plugin in crate::storage::plugins::list().unwrap_or_default() {
+    for plugin in super::approval::active_plugins().unwrap_or_default() {
         start_registered_backend(&plugin).await;
     }
 }
@@ -328,6 +342,12 @@ async fn spawn(
 ) -> Result<Arc<Backend>> {
     let plugin = crate::storage::plugins::get(plugin_id)?
         .ok_or_else(|| GroveError::not_found(format!("plugin not found: {}", plugin_id)))?;
+    if !super::approval::is_active(&plugin) {
+        return Err(GroveError::config(format!(
+            "plugin '{}' is awaiting approval",
+            plugin.name
+        )));
+    }
 
     let manifest_path = std::path::Path::new(&plugin.local_path).join("plugin.json");
     let manifest: Value = std::fs::read_to_string(&manifest_path)
@@ -385,14 +405,13 @@ async fn spawn(
 
     // Node runtime gating + permission flags (same policy as the MCP server).
     let mut args: Vec<String> = Vec::new();
-    if super::runtime::is_node_command(&command) {
-        if !super::runtime::node_supports_permissions(&command) {
-            return Err(GroveError::config(format!(
-                "plugin '{}' backend needs node >= {} (check `node --version`)",
-                plugin.name,
-                super::runtime::MIN_NODE_MAJOR
-            )));
-        }
+    if let Some(reason) = super::runtime::launch_refusal(&command, plugin_dir, &perms) {
+        return Err(GroveError::config(format!(
+            "plugin '{}' backend cannot start: {}",
+            plugin.name, reason
+        )));
+    }
+    if super::runtime::is_sandboxable_node(&command, plugin_dir) {
         args = super::runtime::node_permission_flags(
             &perms,
             &plugin.local_path,
@@ -417,6 +436,13 @@ async fn spawn(
     // Manifest-declared extra env.
     if let Some(env) = decl.get("env").and_then(|v| v.as_object()) {
         for (k, v) in env {
+            if super::runtime::is_reserved_env(k) {
+                eprintln!(
+                    "[plugin] '{}' backend: ignoring reserved env var {}",
+                    plugin.name, k
+                );
+                continue;
+            }
             if let Some(s) = v.as_str() {
                 cmd.env(k, s);
             }

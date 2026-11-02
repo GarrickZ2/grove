@@ -286,6 +286,14 @@ pub fn create_api_router() -> Router {
         )
         .route("/plugins/{id}", delete(handlers::plugins::delete_plugin))
         .route(
+            "/plugins/{id}/approve",
+            post(handlers::plugins::approve_plugin),
+        )
+        .route(
+            "/plugins/{id}/revoke",
+            post(handlers::plugins::revoke_plugin),
+        )
+        .route(
             "/plugins/{id}/reveal",
             post(handlers::plugins::reveal_plugin_folder),
         )
@@ -1970,6 +1978,8 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
     // Relay the aggregated Radio stream into plugin panels and backends holding
     // `chat:read`. Backends can consume it without a panel being open.
     crate::plugins::radio_bridge::spawn();
+    // Skills reach every agent, so only approved plugins may keep theirs.
+    crate::plugins::approval::sync_all_skills();
 
     // Render OS notifications for the human at this machine (TUI/web/local
     // GUI). No-op under `grove mobile`, where the render flag is off before

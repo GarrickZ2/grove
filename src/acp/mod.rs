@@ -1653,7 +1653,7 @@ pub fn preview_working_instructions(project_key: &str) -> WorkingInstructionPrev
 /// resolution happens at session start, so a server whose command is
 /// missing on disk is still listed here.
 pub fn planned_plugin_mcp_server_names() -> Vec<String> {
-    crate::storage::plugins::list()
+    crate::plugins::approval::active_plugins()
         .unwrap_or_default()
         .into_iter()
         .filter(|plugin| {
@@ -2279,7 +2279,7 @@ fn resolve_plugin_mcp_command(
 /// host.getInfo. Best-effort: a missing / malformed manifest is skipped, never
 /// fails the session.
 fn load_plugin_mcp_servers(base_env: &HashMap<String, String>) -> Vec<acp::McpServer> {
-    let plugins = match crate::storage::plugins::list() {
+    let plugins = match crate::plugins::approval::active_plugins() {
         Ok(p) => p,
         Err(_) => return Vec::new(),
     };
@@ -2348,21 +2348,17 @@ fn load_plugin_mcp_servers(base_env: &HashMap<String, String>) -> Vec<acp::McpSe
             .unwrap_or_default();
         let storage_root = crate::storage::plugin_data::data_dir(&plugin.id);
         let _ = std::fs::create_dir_all(&storage_root);
-        if crate::plugins::runtime::is_node_command(&command) {
-            if !crate::plugins::runtime::node_supports_permissions(&command) {
-                report_plugin_mcp_issue_once(
-                    format!("{}:node-permissions:{command}", plugin.id),
-                    || {
-                        format!(
-                            "grove: skipping MCP server for plugin '{}': node >= {} is required \
-                             for enforced permissions (check `node --version`)",
-                            plugin.name,
-                            crate::plugins::runtime::MIN_NODE_MAJOR
-                        )
-                    },
-                );
-                continue;
-            }
+        if let Some(reason) = crate::plugins::runtime::launch_refusal(&command, plugin_dir, &perms)
+        {
+            report_plugin_mcp_issue_once(format!("{}:launch-refused:{command}", plugin.id), || {
+                format!(
+                    "grove: skipping MCP server for plugin '{}': {}",
+                    plugin.name, reason
+                )
+            });
+            continue;
+        }
+        if crate::plugins::runtime::is_sandboxable_node(&command, plugin_dir) {
             let mut flags = crate::plugins::runtime::node_permission_flags(
                 &perms,
                 &plugin.local_path,
@@ -2377,6 +2373,7 @@ fn load_plugin_mcp_servers(base_env: &HashMap<String, String>) -> Vec<acp::McpSe
             .and_then(|v| v.as_object())
             .map(|o| {
                 o.iter()
+                    .filter(|(k, _)| !crate::plugins::runtime::is_reserved_env(k))
                     .filter_map(|(k, v)| {
                         v.as_str()
                             .map(|s| acp::EnvVariable::new(k.clone(), s.to_string()))

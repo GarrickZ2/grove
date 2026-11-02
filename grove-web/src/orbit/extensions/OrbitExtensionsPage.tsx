@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Blocks, FolderGit2, PackagePlus, Plus, Server } from "lucide-react";
 import type { ExtensionArtifact } from "../../api/extensions";
-import type { Plugin } from "../../api/plugins";
+import { listPlugins, type Plugin } from "../../api/plugins";
 import { useProject } from "../../context";
 import { useCommand } from "../../keyboard";
 import { useExtensionsData } from "../../components/Skills/useExtensionsData";
@@ -59,6 +59,10 @@ export function OrbitExtensionsPage() {
   useCommand("skills.source.add", () => setSourceDialog("git"), []);
 
   const { reload, installPlugin } = catalog;
+  const openPluginReview = useCallback(async (id: string) => {
+    const plugin = (await listPlugins().catch(() => [])).find((p) => p.id === id);
+    if (plugin) setManagedPlugin(plugin);
+  }, []);
   const { refreshSources, refreshAfterInstall, refreshAgents, bumpCatalog } = data;
   const silentReload = useCallback(() => { void reload({ silent: true }); }, [reload]);
   const sourcesChanged = useCallback(async () => { await refreshSources(); bumpCatalog(); }, [refreshSources, bumpCatalog]);
@@ -75,10 +79,10 @@ export function OrbitExtensionsPage() {
     onSkillsChanged: refreshAfterInstall,
     onOpenMcpSetup: setMcpSetup,
     onManagePlugin: setManagedPlugin,
-    onInstallPlugin: (item) => { void installPlugin(item); },
+    onInstallPlugin: (item) => { void installPlugin(item).then((id) => { if (id) void openPluginReview(id); }); },
     installingKey: catalog.busyKey,
     revision: detailRevision,
-  }), [detailRevision, buddies, catalog.agentOptions, catalog.busyKey, catalog.sourcesByName, data.enabledAgents, data.installed, installPlugin, now, projectPath, refreshAfterInstall, silentReload]);
+  }), [detailRevision, buddies, catalog.agentOptions, catalog.busyKey, catalog.sourcesByName, data.enabledAgents, data.installed, installPlugin, now, openPluginReview, projectPath, refreshAfterInstall, silentReload]);
 
   const enabledCount = data.enabledAgents.length;
 
@@ -90,7 +94,7 @@ export function OrbitExtensionsPage() {
         <>
           {/* Legacy dialogs, reused as they are. */}
           <AddSourceDialog isOpen={sourceDialog !== null} editingSource={null} initialSourceType={sourceDialog ?? "git"} onClose={() => setSourceDialog(null)} onSaved={async () => { setSourceDialog(null); await sourcesChanged(); }} />
-          {showAddPlugin && <AddPluginDialog onClose={() => { setShowAddPlugin(false); bumpCatalog(); }} />}
+          {showAddPlugin && <AddPluginDialog onClose={() => { setShowAddPlugin(false); bumpCatalog(); }} onReview={(id) => { setShowAddPlugin(false); bumpCatalog(); void openPluginReview(id); }} />}
           {showAddMcp && <AddMcpDialog projectPath={projectPath} onClose={() => { setShowAddMcp(false); void sourcesChanged(); }} onCreated={async () => { setShowAddMcp(false); await sourcesChanged(); }} />}
           {mcpSetup && <McpManagementDrawer artifact={mcpSetup} agents={catalog.agentOptions} projectPath={projectPath} onClose={() => { setMcpSetup(null); setDetailRevision((value) => value + 1); silentReload(); }} onSaved={silentReload} />}
           {managedPlugin && <PluginDetailDialog plugin={managedPlugin} onClose={() => { setManagedPlugin(null); setDetailRevision((value) => value + 1); silentReload(); }} onDeleted={async () => { setManagedPlugin(null); await refreshAfterInstall(); silentReload(); }} />}

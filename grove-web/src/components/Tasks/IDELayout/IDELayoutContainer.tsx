@@ -53,7 +53,7 @@ import { useConfig, useProject } from "../../../context";
 import { useIsMobile } from "../../../hooks";
 import { useLinkedReviewProjectsState } from "../../../hooks/useLinkedReviewProjects";
 import { apiClient } from "../../../api/client";
-import { listPlugins, type Plugin } from "../../../api/plugins";
+import { listActivePlugins, type Plugin } from "../../../api/plugins";
 import {
   OPEN_PLUGIN_PANEL_EVENT,
   PLUGINS_CHANGED_EVENT,
@@ -542,7 +542,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     useEffect(() => {
       let cancelled = false;
       const load = () => {
-        listPlugins()
+        listActivePlugins()
           .then((ps) => { if (!cancelled) setPanelPlugins(ps.filter((p) => p.contributes?.panel)); })
           .catch(() => { if (!cancelled) setPanelPlugins([]); });
       };
