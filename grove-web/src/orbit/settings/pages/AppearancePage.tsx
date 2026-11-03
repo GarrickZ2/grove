@@ -1,4 +1,4 @@
-import { useEffect, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Check, Download, Loader2, Plus, Share2, Trash2 } from "lucide-react";
 import { useTheme } from "../../../context";
 import type { Theme } from "../../../context/ThemeContext";
@@ -24,11 +24,31 @@ interface ThemeGridProps {
   onDelete: (theme: Theme) => void;
 }
 
+/** How long the pointer rests on a card before it previews, so sweeping across the grid doesn't flash themes. */
+const PREVIEW_DWELL_MS = 350;
+
 function ThemeGrid({ themes, selectedId, onSelect, onPreview, onExport, onDelete }: ThemeGridProps) {
+  const dwell = useRef<number | null>(null);
+  const cancelDwell = () => {
+    if (dwell.current !== null) window.clearTimeout(dwell.current);
+    dwell.current = null;
+  };
+  const previewAfterDwell = (theme: Theme) => {
+    cancelDwell();
+    dwell.current = window.setTimeout(() => {
+      dwell.current = null;
+      onPreview(theme);
+    }, PREVIEW_DWELL_MS);
+  };
+  useEffect(() => cancelDwell, []);
+
   return (
     <div
       className="ost-themes"
-      onMouseLeave={() => onPreview(null)}
+      onMouseLeave={() => {
+        cancelDwell();
+        onPreview(null);
+      }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) onPreview(null);
       }}
@@ -43,9 +63,11 @@ function ThemeGrid({ themes, selectedId, onSelect, onPreview, onExport, onDelete
               className="ost-theme-pick"
               aria-pressed={selected}
               aria-label={`${theme.name} theme`}
-              onMouseEnter={() => onPreview(theme)}
+              onMouseEnter={() => previewAfterDwell(theme)}
+              onMouseLeave={cancelDwell}
               onFocus={() => onPreview(theme)}
               onClick={() => {
+                cancelDwell();
                 onPreview(null);
                 onSelect(theme.id);
               }}
