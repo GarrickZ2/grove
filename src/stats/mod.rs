@@ -4,11 +4,12 @@
 //! Two scopes:
 //!   * Global: across all projects
 //!   * Project: a single project
+//!   * Task: a single task (top entries are its sessions)
 //!
 //! Each request returns the current period plus a "previous" period of equal
 //! length (used by the frontend to render Δ deltas on KPIs).
 
-use rusqlite::params;
+use rusqlite::{params, params_from_iter};
 use serde::Serialize;
 
 use crate::storage::database;
@@ -94,8 +95,9 @@ pub struct ModelItem {
     pub cost: f64,
 }
 
-/// Top entity in the period — projects (Global scope) or tasks (Project scope).
-/// `id` is project_key or task_id; `name` is human label.
+/// Top entity in the period — projects (Global scope), tasks (Project scope)
+/// or sessions (Task scope). `id` is project_key, task_id or chat_id; `name`
+/// is human label.
 #[derive(Debug, Serialize, Clone)]
 pub struct TopItem {
     pub id: String,
@@ -155,6 +157,11 @@ pub enum Scope {
     Global,
     /// Restrict to one project_key.
     Project(String),
+    /// Restrict to one task of a project.
+    Task {
+        project_key: String,
+        task_id: String,
+    },
 }
 
 // ── Public entry point ──────────────────────────────────────────────────
@@ -188,14 +195,25 @@ fn scope_clause(scope: &Scope) -> &'static str {
     match scope {
         Scope::Global => "1=1",
         Scope::Project(_) => "project_key = ?3",
+        Scope::Task { .. } => "project_key = ?3 AND task_id = ?4",
     }
 }
 
-fn project_param(scope: &Scope) -> Option<&str> {
+/// Bindings for `?1..`: the period, then whatever `scope_clause` names.
+fn scope_args(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<rusqlite::types::Value> {
+    let mut args = vec![from_ts.into(), to_ts.into()];
     match scope {
-        Scope::Global => None,
-        Scope::Project(k) => Some(k.as_str()),
+        Scope::Global => {}
+        Scope::Project(key) => args.push(key.clone().into()),
+        Scope::Task {
+            project_key,
+            task_id,
+        } => {
+            args.push(project_key.clone().into());
+            args.push(task_id.clone().into());
+        }
     }
+    args
 }
 
 // ── KPI ─────────────────────────────────────────────────────────────────
@@ -219,8 +237,10 @@ fn kpi_only(scope: &Scope, from_ts: i64, to_ts: i64) -> KpiData {
              FROM chat_token_usage
              WHERE end_ts BETWEEN ?1 AND ?2 AND {where_scope}",
         );
-        if let Some(p) = project_param(scope) {
-            conn.query_row(&sql, params![from_ts, to_ts, p], |r| {
+        conn.query_row(
+            &sql,
+            params_from_iter(scope_args(scope, from_ts, to_ts)),
+            |r| {
                 Ok((
                     r.get(0)?,
                     r.get(1)?,
@@ -230,22 +250,9 @@ fn kpi_only(scope: &Scope, from_ts: i64, to_ts: i64) -> KpiData {
                     r.get(5)?,
                     r.get(6)?,
                 ))
-            })
-            .unwrap_or((0, 0, 0, 0, 0, 0, 0.0))
-        } else {
-            conn.query_row(&sql, params![from_ts, to_ts], |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                    r.get(6)?,
-                ))
-            })
-            .unwrap_or((0, 0, 0, 0, 0, 0, 0.0))
-        }
+            },
+        )
+        .unwrap_or((0, 0, 0, 0, 0, 0, 0.0))
     };
 
     let (turns, tin, tout, tcached, ttotal, tcompute, tcost) = row;
@@ -286,16 +293,12 @@ fn query_durations(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<i64> {
         Ok(s) => s,
         Err(_) => return out,
     };
-    let collected: Vec<i64> = if let Some(p) = project_param(scope) {
-        match stmt.query_map(params![from_ts, to_ts, p], |r| r.get::<_, i64>(0)) {
-            Ok(it) => it.flatten().collect(),
-            Err(_) => return out,
-        }
-    } else {
-        match stmt.query_map(params![from_ts, to_ts], |r| r.get::<_, i64>(0)) {
-            Ok(it) => it.flatten().collect(),
-            Err(_) => return out,
-        }
+    let collected: Vec<i64> = match stmt
+        .query_map(params_from_iter(scope_args(scope, from_ts, to_ts)), |r| {
+            r.get::<_, i64>(0)
+        }) {
+        Ok(it) => it.flatten().collect(),
+        Err(_) => return out,
     };
     let mut had_negative = false;
     for v in collected {
@@ -372,17 +375,14 @@ fn query_timeseries(
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
-        if let Some(p) = project_param(scope) {
-            match stmt.query_map(params![from_ts, to_ts, p], map_timeseries_row) {
-                Ok(it) => it.flatten().collect(),
-                Err(_) => return Vec::new(),
-            }
-        } else {
-            match stmt.query_map(params![from_ts, to_ts], map_timeseries_row) {
-                Ok(it) => it.flatten().collect(),
-                Err(_) => return Vec::new(),
-            }
-        }
+        let rows: Vec<TimeseriesBucket> = match stmt.query_map(
+            params_from_iter(scope_args(scope, from_ts, to_ts)),
+            map_timeseries_row,
+        ) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => return Vec::new(),
+        };
+        rows
     };
 
     // Per-agent split inside each bucket: one extra query rather than a complex
@@ -446,8 +446,8 @@ fn query_timeseries_per_agent(
         Ok(s) => s,
         Err(_) => return out,
     };
-    let collected: Vec<(String, String, i64, i64, f64)> = if let Some(p) = project_param(scope) {
-        match stmt.query_map(params![from_ts, to_ts, p], |r| {
+    let collected: Vec<(String, String, i64, i64, f64)> =
+        match stmt.query_map(params_from_iter(scope_args(scope, from_ts, to_ts)), |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
@@ -458,21 +458,7 @@ fn query_timeseries_per_agent(
         }) {
             Ok(it) => it.flatten().collect(),
             Err(_) => return out,
-        }
-    } else {
-        match stmt.query_map(params![from_ts, to_ts], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, i64>(3)?,
-                r.get::<_, f64>(4)?,
-            ))
-        }) {
-            Ok(it) => it.flatten().collect(),
-            Err(_) => return out,
-        }
-    };
+        };
     for (key, agent, turns, tokens, cost) in collected {
         out.entry(key).or_default().push(AgentBucket {
             agent,
@@ -500,8 +486,8 @@ fn query_agent_share(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<AgentShareI
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    let collected: Vec<(String, i64, i64, f64)> = if let Some(p) = project_param(scope) {
-        match stmt.query_map(params![from_ts, to_ts, p], |r| {
+    let collected: Vec<(String, i64, i64, f64)> =
+        match stmt.query_map(params_from_iter(scope_args(scope, from_ts, to_ts)), |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, i64>(1)?,
@@ -511,20 +497,7 @@ fn query_agent_share(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<AgentShareI
         }) {
             Ok(it) => it.flatten().collect(),
             Err(_) => return Vec::new(),
-        }
-    } else {
-        match stmt.query_map(params![from_ts, to_ts], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, f64>(3)?,
-            ))
-        }) {
-            Ok(it) => it.flatten().collect(),
-            Err(_) => return Vec::new(),
-        }
-    };
+        };
     let total_turns: i64 = collected.iter().map(|x| x.1).sum();
     collected
         .into_iter()
@@ -567,17 +540,14 @@ fn query_models(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<ModelItem> {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    if let Some(p) = project_param(scope) {
-        match stmt.query_map(params![from_ts, to_ts, p], map_model_row) {
-            Ok(it) => it.flatten().collect(),
-            Err(_) => Vec::new(),
-        }
-    } else {
-        match stmt.query_map(params![from_ts, to_ts], map_model_row) {
-            Ok(it) => it.flatten().collect(),
-            Err(_) => Vec::new(),
-        }
-    }
+    let rows: Vec<ModelItem> = match stmt.query_map(
+        params_from_iter(scope_args(scope, from_ts, to_ts)),
+        map_model_row,
+    ) {
+        Ok(it) => it.flatten().collect(),
+        Err(_) => Vec::new(),
+    };
+    rows
 }
 
 fn map_model_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ModelItem> {
@@ -599,6 +569,10 @@ fn query_top(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<TopItem> {
     match scope {
         Scope::Global => query_top_projects(from_ts, to_ts),
         Scope::Project(key) => query_top_tasks(key, from_ts, to_ts),
+        Scope::Task {
+            project_key,
+            task_id,
+        } => query_top_sessions(project_key, task_id, from_ts, to_ts),
     }
 }
 
@@ -729,6 +703,97 @@ fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> 
         .collect()
 }
 
+/// chat_id, agent, turns, total, input, cached, output, cost
+type SessionAgentRow = (String, String, i64, i64, i64, i64, i64, f64);
+
+fn query_top_sessions(project_key: &str, task_id: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> {
+    // One row per (session, agent): a Buddy session can change agents.
+    // Drop the DB guard before loading titles — see `query_top_projects`.
+    let raw: Vec<SessionAgentRow> = {
+        let conn = database::connection();
+        let sql = "SELECT chat_id, agent, COUNT(*),
+                          COALESCE(SUM(total_tokens), 0),
+                          COALESCE(SUM(input_tokens), 0),
+                          COALESCE(SUM(cached_read_tokens), 0),
+                          COALESCE(SUM(output_tokens), 0),
+                          COALESCE(SUM(cost_amount), 0.0)
+                   FROM chat_token_usage
+                   WHERE end_ts BETWEEN ?1 AND ?2 AND project_key = ?3 AND task_id = ?4
+                     AND automation_run_id IS NULL
+                   GROUP BY chat_id, agent";
+        let mut stmt = match conn.prepare(sql) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt.query_map(params![from_ts, to_ts, project_key, task_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, f64>(7)?,
+            ))
+        });
+        match rows {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => return Vec::new(),
+        }
+    };
+
+    let titles: std::collections::HashMap<String, String> =
+        crate::storage::tasks::load_chat_sessions(project_key, task_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|chat| (chat.id, chat.title))
+            .collect();
+
+    let mut items: Vec<TopItem> = Vec::new();
+    for (chat_id, agent, turns, tokens, input, cached, output, cost) in raw {
+        let item = match items.iter_mut().find(|item| item.id == chat_id) {
+            Some(item) => item,
+            None => {
+                let name = titles
+                    .get(&chat_id)
+                    .cloned()
+                    .unwrap_or_else(|| "Archived session".to_string());
+                items.push(TopItem {
+                    id: chat_id,
+                    name,
+                    turns: 0,
+                    tokens: 0,
+                    input_tokens: 0,
+                    cached_tokens: 0,
+                    output_tokens: 0,
+                    agent_split: Vec::new(),
+                    cost: 0.0,
+                });
+                items.last_mut().expect("just pushed")
+            }
+        };
+        item.turns += turns as u64;
+        item.tokens += tokens as u64;
+        item.input_tokens += input as u64;
+        item.cached_tokens += cached as u64;
+        item.output_tokens += output as u64;
+        item.cost += cost;
+        item.agent_split.push(AgentBucket {
+            agent,
+            tokens: tokens as u64,
+            turns: turns as u64,
+            cost,
+        });
+    }
+    for item in &mut items {
+        item.agent_split
+            .sort_by_key(|a| std::cmp::Reverse(a.tokens));
+    }
+    items.sort_by_key(|a| std::cmp::Reverse(a.tokens));
+    items
+}
+
 fn query_agent_split_for_project(key: &str, from_ts: i64, to_ts: i64) -> Vec<AgentBucket> {
     let conn = database::connection();
     let sql =
@@ -805,17 +870,14 @@ fn query_heatmap(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<HeatmapCell> {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    if let Some(p) = project_param(scope) {
-        match stmt.query_map(params![from_ts, to_ts, p], map_heatmap_row) {
-            Ok(it) => it.flatten().collect(),
-            Err(_) => Vec::new(),
-        }
-    } else {
-        match stmt.query_map(params![from_ts, to_ts], map_heatmap_row) {
-            Ok(it) => it.flatten().collect(),
-            Err(_) => Vec::new(),
-        }
-    }
+    let rows: Vec<HeatmapCell> = match stmt.query_map(
+        params_from_iter(scope_args(scope, from_ts, to_ts)),
+        map_heatmap_row,
+    ) {
+        Ok(it) => it.flatten().collect(),
+        Err(_) => Vec::new(),
+    };
+    rows
 }
 
 fn map_heatmap_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<HeatmapCell> {
@@ -824,4 +886,62 @@ fn map_heatmap_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<HeatmapCell> {
         hour: r.get::<_, i64>(1)? as u8,
         turns: r.get::<_, i64>(2)? as u64,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::token_usage::{self, TokenUsageRecord};
+
+    fn turn(task: &str, chat: &str, agent: &str, tokens: u64, end_ts: i64) {
+        token_usage::insert(&TokenUsageRecord {
+            project_key: "proj",
+            task_id: Some(task),
+            chat_id: Some(chat),
+            automation_run_id: None,
+            agent,
+            model: Some("m1"),
+            input_tokens: tokens,
+            cached_read_tokens: None,
+            output_tokens: 0,
+            total_tokens: tokens,
+            start_ts: end_ts - 10,
+            end_ts,
+            cost_amount: Some(0.5),
+            cost_currency: Some("USD"),
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn task_scope_counts_only_that_task_and_ranks_its_sessions() {
+        let _lock = database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        turn("t1", "chat-a", "claude", 100, 1_000);
+        turn("t1", "chat-a", "codex", 50, 1_100);
+        turn("t1", "chat-b", "claude", 400, 1_200);
+        turn("t2", "chat-c", "claude", 9_000, 1_300);
+
+        let scope = Scope::Task {
+            project_key: "proj".into(),
+            task_id: "t1".into(),
+        };
+        let period = aggregate(&scope, 0, 2_000, Bucket::Daily).current;
+        assert_eq!(period.kpi.turns, 3);
+        assert_eq!(period.kpi.tokens_total, 550);
+        assert_eq!(period.models.len(), 2); // m1 under claude and under codex
+        let sessions: Vec<_> = period
+            .top
+            .iter()
+            .map(|item| (item.id.as_str(), item.tokens, item.agent_split.len()))
+            .collect();
+        assert_eq!(sessions, vec![("chat-b", 400, 1), ("chat-a", 150, 2)]);
+
+        let project = aggregate(&Scope::Project("proj".into()), 0, 2_000, Bucket::Daily);
+        assert_eq!(project.current.kpi.tokens_total, 9_550);
+
+        crate::storage::set_grove_dir_override(None);
+    }
 }

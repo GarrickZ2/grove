@@ -184,6 +184,7 @@ fn read_passkey_interactive(public_bind: bool) -> (String, bool) {
         return (auth::generate_secret_key(), true);
     }
 
+    crate::api::mobile_banner::note_redirected_output();
     let prompt = "Enter passkey (empty to auto-generate): ";
     let input = match rpassword::prompt_password(prompt) {
         Ok(s) => s,

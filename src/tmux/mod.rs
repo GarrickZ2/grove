@@ -83,17 +83,6 @@ pub struct SessionEnv {
 }
 
 impl SessionEnv {
-    /// 将环境变量添加到 Command (通用方法)
-    pub fn apply_to_command(&self, cmd: &mut Command) {
-        cmd.env("GROVE_TASK_ID", &self.task_id);
-        cmd.env("GROVE_TASK_NAME", &self.task_name);
-        cmd.env("GROVE_BRANCH", &self.branch);
-        cmd.env("GROVE_TARGET", &self.target);
-        cmd.env("GROVE_WORKTREE", &self.worktree);
-        cmd.env("GROVE_PROJECT_NAME", &self.project_name);
-        cmd.env("GROVE_PROJECT", &self.project_path);
-    }
-
     /// 生成 shell export 前缀，用于在 zellij KDL layout 中注入环境变量
     ///
     /// 返回格式: `export GROVE_TASK_ID='val' GROVE_BRANCH='val' ...; `
@@ -163,22 +152,6 @@ pub fn create_session(name: &str, working_dir: &str, env: Option<&SessionEnv>) -
                 stderr.trim()
             )))
         }
-    }
-}
-
-/// attach 到 session (阻塞)
-/// 执行: tmux attach-session -t {name}
-/// 注意: 这个函数应该在 TUI 退出后调用
-pub fn attach_session(name: &str) -> Result<()> {
-    let status = Command::new("tmux")
-        .args(["attach-session", "-t", name])
-        .status()
-        .map_err(|e| GroveError::session(format!("Session attach failed: {}", e)))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(GroveError::session("Session attach failed"))
     }
 }
 

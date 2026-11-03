@@ -1,0 +1,3 @@
+
+/* The composer is contentEditable (for @-mention chips), so its placeholder is drawn here. */
+.orbit-new__input[data-empty]::before { content: attr(data-placeholder); display: block; height: 0; color: var(--color-text-muted); pointer-events: none; }

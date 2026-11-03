@@ -1,6 +1,7 @@
 //! Plugin runtime support — launching plugin node processes with manifest-
 //! derived runtime permissions. See [`runtime`].
 
+pub mod approval;
 pub mod backend;
 pub mod connect_provider;
 pub mod events;

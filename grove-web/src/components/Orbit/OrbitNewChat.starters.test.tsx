@@ -24,6 +24,9 @@ vi.mock("../Tasks/TaskView/useACPAvailability", () => ({
   useACPAvailability: () => ({ baseAgents: [], customAgents: [], customAgentPersonas: [], acpAvailabilityLoaded: true }),
 }));
 vi.mock("../Tasks/TaskView/ChatConfigMenus", () => ({ DropdownSelect: () => null, SessionSettingsMenu: () => null }));
+vi.mock("../Tasks/TaskView/composer/useMentionSources", () => ({
+  useMentionSources: () => ({ items: [], browserTabs: [], browserTabsAvailable: false, studio: false, refresh: vi.fn(), loadBrowserTabs: vi.fn() }),
+}));
 vi.mock("../Tasks/TaskView/useInitialChatLoad", () => ({ buildDefaultSessionTitle: () => "New Chat" }));
 
 describe("Orbit New starter prompts", () => {
@@ -54,8 +57,8 @@ describe("Orbit New starter prompts", () => {
     await act(async () => root.render(<OrbitNewChat onNavigate={vi.fn()} />));
     expect(starters().length).toBe(3);
     act(() => starters()[1].click());
-    expect(host.querySelector("textarea")!.value).toBe("Find and fix a failing test");
-    expect(localStorage.getItem("grove-orbit-new-draft")).toBe("Find and fix a failing test");
+    expect(host.querySelector('[role="textbox"]')!.textContent).toBe("Find and fix a failing test");
+    expect(localStorage.getItem("grove-orbit-new-draft-html")).toBe("Find and fix a failing test");
     expect(createChat).not.toHaveBeenCalled();
     expect(starters().length).toBe(3);
     expect(host.querySelector(".orbit-new__starters")!.classList.contains("is-quiet")).toBe(true);

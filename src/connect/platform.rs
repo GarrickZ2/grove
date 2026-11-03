@@ -86,8 +86,6 @@ pub fn list() -> Vec<PlatformDefinition> {
             config_fields: feishu_config_fields(),
             capabilities: FEISHU_CAPABILITIES,
         },
-        unavailable("telegram", "Telegram"),
-        unavailable("slack", "Slack"),
         unavailable("discord", "Discord"),
     ]
 }

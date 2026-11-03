@@ -101,11 +101,6 @@ pub struct InstalledAgent {
     pub installations: Vec<Installation>,
     /// Which entry in `installations` to use when launching. Must correspond to
     /// some `installations[i].method`; helpers validate this on read.
-    ///
-    /// This single field carries BOTH "where the binary comes from" AND
-    /// "how to launch it" — picking `External` for an agent whose registry
-    /// entry has `terminal_launch` set implies PTY launch. There is no
-    /// separate launch-mode toggle.
     pub selected_install_method: InstallMethod,
     /// User-supplied argv appended after the channel's base args.
     #[serde(default)]
@@ -354,8 +349,8 @@ pub fn delete(id: &str) -> Result<bool> {
 }
 
 /// Add (or upgrade) a single installation channel on an agent. If the agent
-/// row doesn't exist yet, creates it with this channel as the selected one
-/// and default launch mode. If an installation with the same method already
+/// row doesn't exist yet, creates it with this channel as the selected one.
+/// If an installation with the same method already
 /// exists, replaces it (re-install / upgrade case).
 pub fn add_installation(id: &str, install: Installation) -> Result<InstalledAgent> {
     let now = Utc::now();
@@ -402,6 +397,31 @@ pub fn remove_installation(id: &str, method: InstallMethod) -> Result<Option<Ins
     agent.updated_at = Utc::now();
     upsert(&agent)?;
     Ok(Some(agent))
+}
+
+/// Grove used to run the bare `claude` CLI in a terminal ("terminal launch
+/// mode"), recorded as an External channel on `claude-acp` — either the
+/// detected `claude` binary or, for users migrated from v2.5 terminal mode,
+/// a placeholder with no path. `claude` is not an ACP agent, so that channel
+/// can never launch; drop it and fall back to the agent's other channels.
+/// Idempotent; runs at every server start.
+pub fn drop_terminal_launch_channels() -> Result<()> {
+    let Some(agent) = get("claude-acp")? else {
+        return Ok(());
+    };
+    let stale = agent.installations.iter().any(|install| {
+        install.method == InstallMethod::External
+            && install.install_path.as_deref().is_none_or(|path| {
+                std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    == Some("claude")
+            })
+    });
+    if stale {
+        remove_installation("claude-acp", InstallMethod::External)?;
+    }
+    Ok(())
 }
 
 /// Patch user-controlled fields. Creates a minimal External row if the agent
@@ -572,8 +592,6 @@ pub fn spawn_for(
             //   binary.<platform>.cmd matches → binary.args
             //   npx.package basename matches → npx.args
             //   uvx.package basename matches → uvx.args
-            //   terminal_launch.cmd matches → handled by agent_pty,
-            //     spawn returns [] (spawn_for isn't on the PTY path).
             // No match → empty args. We never pull args from an
             // unrelated distribution channel; a `gemini` binary picked up
             // because it happened to share a name with the npx package
@@ -935,7 +953,6 @@ fn warn_selection_drift_once(id: &str, selected: InstallMethod, fallback: Instal
 ///      still install via npx through the Marketplace.
 ///   3. `distribution.uvx.package` basename — same idea for
 ///      `uv tool install <pkg>` / pipx.
-///   4. `terminal_launch.cmd` — grove-only PTY launch binary (claude).
 pub fn probe_registry_agent(
     reg: &crate::storage::agent_registry::RegistryAgent,
 ) -> Option<(String, Option<String>)> {
@@ -955,10 +972,6 @@ pub fn probe_registry_agent(
     }
     if let Some(uvx) = reg.distribution.uvx.as_ref() {
         push(package_to_binary_name(&uvx.package));
-    }
-    // grove-only: PTY launch binary (e.g. claude-acp probes for `claude`).
-    if let Some(t) = reg.terminal_launch.as_ref() {
-        push(t.cmd.clone());
     }
     // NOTE: deliberately no `reg.id` fallback — see doc comment above. We
     // only auto-register when a binary name is declared by SOME
@@ -1006,7 +1019,7 @@ fn package_to_binary_name(package: &str) -> String {
 ///
 /// This keeps detection and spawn symmetric: probe_registry_agent enumerates
 /// candidates from each channel (binary.cmd, npx package basename, uvx
-/// package basename, terminal_launch.cmd) and stops at the first PATH hit;
+/// package basename) and stops at the first PATH hit;
 /// we re-do the same match here against the stored install_path to recover
 /// which channel produced the hit, and pull args from that channel.
 ///
@@ -1040,10 +1053,6 @@ fn external_args_for(
             return uvx.args.clone();
         }
     }
-    // terminal_launch.cmd hits don't go through spawn_for — agent_pty
-    // handles them. Reachable only if the user's selected_install_method
-    // is External on a terminal-capable agent and they bypassed the PTY
-    // route somehow. Return empty rather than guess.
     Vec::new()
 }
 
@@ -1142,8 +1151,7 @@ pub fn onboarding_completed() -> Result<bool> {
 /// Behaviour:
 ///   - Runs only when the persistent onboarding marker is absent.
 ///   - Adds the Npx channel ONE-BY-ONE only when missing.
-///   - Moves Claude from the historical External selection to Npx while
-///     retaining External data for old terminal chats.
+///   - Moves Claude from the historical External selection to Npx.
 ///   - Rejects a partial registry before writing any channels.
 pub fn reconcile_onboarding_agents(
     registry_doc: &crate::storage::agent_registry::RegistryDocument,
@@ -1191,9 +1199,9 @@ pub fn reconcile_onboarding_agents(
                 .any(|i| i.method == InstallMethod::Npx)
         });
         if has_npx {
-            // Claude Terminal remains implemented for historical chats, but
-            // it is no longer a selectable product mode. Converge upgraded
-            // users onto the existing Npx channel without deleting External.
+            // Converge upgraded users from the old terminal-mode External
+            // selection onto Npx; `drop_terminal_launch_channels` removes the
+            // External channel itself.
             if id == "claude-acp"
                 && existing
                     .as_ref()
@@ -1360,6 +1368,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn terminal_launch_channels_are_dropped() {
+        let _l = crate::storage::database::test_lock().lock().await;
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let external = |path: Option<&str>| Installation {
+            method: InstallMethod::External,
+            version: String::new(),
+            install_path: path.map(str::to_owned),
+            status: InstallStatus::Installed,
+            failure_reason: None,
+            installed_at: Utc::now(),
+        };
+
+        // `claude` selected next to Npx → Npx takes over.
+        upsert(&fresh_npx("claude-acp")).unwrap();
+        add_installation("claude-acp", external(Some("/usr/local/bin/claude"))).unwrap();
+        let mut agent = get("claude-acp").unwrap().unwrap();
+        agent.selected_install_method = InstallMethod::External;
+        upsert(&agent).unwrap();
+        drop_terminal_launch_channels().unwrap();
+        let got = get("claude-acp").unwrap().unwrap();
+        assert_eq!(got.installations.len(), 1);
+        assert_eq!(got.selected_install_method, InstallMethod::Npx);
+
+        // An External channel on the real ACP binary stays.
+        add_installation("claude-acp", external(Some("/opt/bin/claude-agent-acp"))).unwrap();
+        drop_terminal_launch_channels().unwrap();
+        assert_eq!(get("claude-acp").unwrap().unwrap().installations.len(), 2);
+
+        // Only the v2.5 terminal placeholder → the row goes.
+        delete("claude-acp").unwrap();
+        add_installation("claude-acp", external(None)).unwrap();
+        drop_terminal_launch_channels().unwrap();
+        assert!(get("claude-acp").unwrap().is_none());
+
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    #[tokio::test]
     async fn add_remove_installation_keeps_selection_coherent() {
         let _l = crate::storage::database::test_lock().lock().await;
         let temp = tempfile::tempdir().unwrap();
@@ -1437,7 +1484,6 @@ mod tests {
                         }),
                         ..Default::default()
                     },
-                    terminal_launch: None,
                 })
                 .collect(),
         }
@@ -1688,7 +1734,6 @@ mod tests {
                 }),
                 ..Default::default()
             },
-            terminal_launch: None,
         });
 
         let path_a = tempfile::tempdir().unwrap();

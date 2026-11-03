@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatSessionResponse } from "../../api";
 import { mergeRecentSessions } from "./useRecentSessions";
 
-const chat = (id: string, created: string) => ({ id, title: id, agent: "claude", created_at: created, history_path: "", launch_mode: "acp" }) as ChatSessionResponse;
+const chat = (id: string, created: string) => ({ id, title: id, agent: "claude", created_at: created, history_path: "" }) as ChatSessionResponse;
 
 describe("mergeRecentSessions", () => {
   it("merges every task's sessions newest first, skipping unknown tasks and capping the list", () => {

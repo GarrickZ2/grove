@@ -45,11 +45,6 @@ pub struct MarketplaceAgent {
     /// Channels the user can install via. Derived from the registry's
     /// `distribution` map; ordered as `npx`, `binary`, `uvx` when present.
     pub available_install_methods: Vec<InstallMethod>,
-    /// True when this agent's registry entry has a `terminal_launch`
-    /// config — i.e. picking the External channel will spawn the agent
-    /// via PTY using grove's terminal contract. Currently true only for
-    /// claude-acp (via `inject_grove_supplements`).
-    pub supports_terminal_launch: bool,
     /// One of: `grove-installed` | `auto-detected` | `installing` |
     /// `install-failed` | `not-installed`.
     pub install_state: &'static str,
@@ -148,30 +143,6 @@ pub async fn list_installed_agents() -> Result<Json<InstalledAgentsResponse>, Ma
             .then_with(|| left.id.cmp(&right.id))
     });
     Ok(Json(InstalledAgentsResponse { agents }))
-}
-
-fn terminal_channel_exposed(reg: &RegistryAgent) -> bool {
-    // Claude Terminal remains available to the backend for historical chats,
-    // but is no longer a selectable product surface. Future terminal-capable
-    // agents can still opt into the existing UI contract.
-    reg.terminal_launch.is_some() && reg.id != "claude-acp"
-}
-
-fn installed_view_for(reg: &RegistryAgent, agent: &InstalledAgent) -> InstalledAgentView {
-    let mut view = InstalledAgentView::from(agent);
-    if reg.terminal_launch.is_some() && !terminal_channel_exposed(reg) {
-        view.installations
-            .retain(|install| install.method != InstallMethod::External);
-        if view.selected_install_method == InstallMethod::External
-            && view
-                .installations
-                .iter()
-                .any(|install| install.method == InstallMethod::Npx)
-        {
-            view.selected_install_method = InstallMethod::Npx;
-        }
-    }
-    view
 }
 
 /// Concrete executable grove would invoke. Only populated when there's a
@@ -309,12 +280,7 @@ fn build_marketplace_agent(
 ) -> MarketplaceAgent {
     let install_state = compute_install_state(installed);
     let available_install_methods = available_methods_for(reg);
-    let expose_terminal = terminal_channel_exposed(reg);
-    let binary = if reg.terminal_launch.is_some() && !expose_terminal {
-        None
-    } else {
-        resolve_binary_view(reg, installed)
-    };
+    let binary = resolve_binary_view(reg, installed);
     MarketplaceAgent {
         id: reg.id.clone(),
         name: reg.name.clone(),
@@ -330,9 +296,8 @@ fn build_marketplace_agent(
         license: reg.license.clone(),
         icon_url: reg.icon.clone(),
         available_install_methods,
-        supports_terminal_launch: expose_terminal,
         install_state,
-        installed: installed.map(|agent| installed_view_for(reg, agent)),
+        installed: installed.map(InstalledAgentView::from),
         binary,
     }
 }
@@ -371,7 +336,6 @@ fn build_marketplace_agent_orphan(agent: &InstalledAgent) -> MarketplaceAgent {
             .iter()
             .map(|i| i.method)
             .collect::<Vec<_>>(),
-        supports_terminal_launch: false,
         install_state,
         installed: Some(InstalledAgentView::from(agent)),
         binary,
@@ -825,34 +789,6 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    fn claude_registry_agent() -> RegistryAgent {
-        RegistryAgent {
-            id: "claude-acp".into(),
-            name: "Claude".into(),
-            version: "1.0.0".into(),
-            description: String::new(),
-            repository: None,
-            website: None,
-            authors: vec![],
-            license: None,
-            icon: None,
-            distribution: crate::storage::agent_registry::Distribution {
-                npx: Some(NpxDistribution {
-                    package: "@example/claude-acp@1.0.0".into(),
-                    args: vec![],
-                    env: HashMap::new(),
-                }),
-                ..Default::default()
-            },
-            terminal_launch: Some(crate::storage::agent_registry::TerminalLaunch {
-                cmd: "claude".into(),
-                session_id_arg: "--session-id".into(),
-                resume_arg: "--resume".into(),
-                mcp_config_arg: "--mcp-config".into(),
-            }),
-        }
-    }
-
     fn npx_install(version: &str) -> Installation {
         Installation {
             method: InstallMethod::Npx,
@@ -904,24 +840,5 @@ mod tests {
 
         // No row → not-installed.
         assert_eq!(compute_install_state(None), "not-installed");
-    }
-
-    #[test]
-    fn claude_terminal_channel_is_hidden_from_marketplace_view() {
-        let agent = agent_with(
-            vec![
-                npx_install("1.0.0"),
-                external_install("/usr/local/bin/claude"),
-            ],
-            InstallMethod::Npx,
-        );
-        let view = build_marketplace_agent(&claude_registry_agent(), Some(&agent));
-
-        assert!(!view.supports_terminal_launch);
-        assert!(view.binary.is_none());
-        let installed = view.installed.unwrap();
-        assert_eq!(installed.selected_install_method, InstallMethod::Npx);
-        assert_eq!(installed.installations.len(), 1);
-        assert_eq!(installed.installations[0].method, InstallMethod::Npx);
     }
 }

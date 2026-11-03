@@ -12,7 +12,7 @@ use std::path::Path;
 
 use crate::git;
 use crate::session::{self, SessionType};
-use crate::storage::tasks::{self, Task, TaskStatus, LOCAL_TASK_ID};
+use crate::storage::tasks::{self, Task, LOCAL_TASK_ID};
 use crate::storage::workspace::{self, project_hash};
 
 use super::{FileChanges, Worktree, WorktreeStatus};
@@ -210,9 +210,7 @@ fn archived_task_to_worktree(task: Task) -> Worktree {
         branch: task.branch,
         target: task.target,
         status: WorktreeStatus::Archived,
-        commits_behind: None,
         file_changes: FileChanges::default(),
-        archived: true,
         path: task.worktree_path,
         multiplexer: mux_str.to_string(),
         created_at: task.created_at,
@@ -279,9 +277,7 @@ fn task_to_worktree(
             branch: task.branch.clone(),
             target: task.target.clone(),
             status,
-            commits_behind: None,
             file_changes: FileChanges::default(),
-            archived: false,
             path: path.clone(),
             multiplexer: mux_str.to_string(),
             created_at: task.created_at,
@@ -299,11 +295,11 @@ fn task_to_worktree(
         .map(|commit| git::branch_head_equals(project_path, &task.branch, commit))
         .unwrap_or(false);
 
-    // 确定状态和 commits_behind(一次性计算,避免重复 git 调用)
-    let (status, commits_behind) = if !exists {
-        (WorktreeStatus::Broken, None)
+    // 确定状态(一次性计算,避免重复 git 调用)
+    let status = if !exists {
+        WorktreeStatus::Broken
     } else if is_merging_this_task || git::has_conflicts(path) {
-        (WorktreeStatus::Conflict, None)
+        WorktreeStatus::Conflict
     } else {
         let commits_behind = git::commits_behind(path, &task.branch, &task.target).ok();
         let commits_behind_count = commits_behind.unwrap_or(0);
@@ -314,7 +310,7 @@ fn task_to_worktree(
                 || git::is_diff_empty(project_path, &task.branch, &task.target).unwrap_or(false));
 
         if is_merged {
-            (WorktreeStatus::Merged, commits_behind)
+            WorktreeStatus::Merged
         } else {
             // 检查 session 是否运行
             let session_status = if matches!(resolved_session_type, SessionType::Acp) {
@@ -342,7 +338,7 @@ fn task_to_worktree(
                     WorktreeStatus::Idle
                 }
             };
-            (session_status, commits_behind)
+            session_status
         }
     };
 
@@ -358,9 +354,7 @@ fn task_to_worktree(
         branch: task.branch.clone(),
         target: task.target.clone(),
         status,
-        commits_behind,
         file_changes: FileChanges::default(),
-        archived: task.status == TaskStatus::Archived,
         path: path.clone(),
         multiplexer: mux_str.to_string(),
         created_at: task.created_at,

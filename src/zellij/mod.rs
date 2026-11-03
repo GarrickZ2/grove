@@ -37,52 +37,6 @@ pub fn create_session(_name: &str, _working_dir: &str, _env: Option<&SessionEnv>
     Ok(())
 }
 
-/// attach 到 session（阻塞）
-///
-/// - session 活跃 → `zellij attach <name>`
-/// - 否则 → `delete-session` 清理残留 + `zellij -s <name> [-n layout]`
-pub fn attach_session(
-    name: &str,
-    working_dir: Option<&str>,
-    env: Option<&SessionEnv>,
-    layout_path: Option<&str>,
-) -> Result<()> {
-    let exists = session_exists(name);
-    let mut cmd = zellij_cmd();
-
-    if exists {
-        cmd.arg("attach").arg(name);
-    } else {
-        // 用 delete-session 清理残留的 EXITED session（kill-session 清不掉）
-        let _ = zellij_cmd().args(["delete-session", name]).output();
-
-        cmd.arg("-s").arg(name);
-        if let Some(lp) = layout_path {
-            // 必须用 -n (--new-session-with-layout)，不能用 -l
-            // -l + -s 会尝试连接已有 session 添加 tab，而非创建新 session
-            cmd.arg("-n").arg(lp);
-        }
-    }
-
-    if let Some(wd) = working_dir {
-        cmd.current_dir(wd);
-    }
-
-    if let Some(env) = env {
-        env.apply_to_command(&mut cmd);
-    }
-
-    let status = cmd
-        .status()
-        .map_err(|e| GroveError::session(format!("Zellij failed: {}", e)))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(GroveError::session("Zellij session failed"))
-    }
-}
-
 /// 检查 session 是否活跃（排除 EXITED）
 pub fn session_exists(name: &str) -> bool {
     let output = match zellij_cmd().args(["list-sessions"]).output() {

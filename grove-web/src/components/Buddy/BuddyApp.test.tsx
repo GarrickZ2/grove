@@ -12,7 +12,7 @@ import * as api from "../../api/buddies";
 import { createBuddyRoutine } from "../../api/buddyResources";
 vi.mock("../../api/buddyResources", () => ({ createBuddyRoutine: vi.fn() }));
 
-vi.mock("../../api/buddies", () => ({ listBuddies: vi.fn(), getBuddy: vi.fn(), createBuddy: vi.fn(), archiveBuddy: vi.fn(), reorderBuddies: vi.fn() }));
+vi.mock("../../api/buddies", () => ({ listBuddies: vi.fn(), getBuddy: vi.fn(), createBuddy: vi.fn(), archiveBuddy: vi.fn(), deleteBuddy: vi.fn(), pinBuddy: vi.fn(), reorderBuddies: vi.fn() }));
 vi.mock("./BuddyConversation", () => ({ BuddyConversation: ({ buddy }: { buddy: { name: string } }) => <div>Say hi to {buddy.name}</div> }));
 vi.mock("./BuddySidePanel/BuddySidePanel", () => ({ BuddySidePanel: ({ onClose }: { onClose: () => void }) => <aside aria-label="Buddy panel"><button aria-label="Close panel" onClick={onClose}>Close</button></aside> }));
 vi.mock("../../context", () => ({ useConfig: () => ({ config: { acp: { agent_command: "claude-code" } } }) }));
@@ -33,12 +33,17 @@ describe("Buddy shell and creation", () => {
     vi.mocked(api.getBuddy).mockImplementation(async (id) => mock.get(id));
     vi.mocked(api.createBuddy).mockImplementation(async (input) => mock.create(input));
     vi.mocked(api.archiveBuddy).mockImplementation(async (id) => mock.archive(id));
+    vi.mocked(api.deleteBuddy).mockImplementation(async (id) => mock.archive(id));
+    vi.mocked(api.pinBuddy).mockImplementation(async (id, pinned) => mock.pin(id, pinned));
     vi.mocked(api.reorderBuddies).mockImplementation(async (ids) => mock.reorder(ids));
     vi.mocked(listInstalledAgentConfigs).mockImplementation(async () => buddyAgentFixtures());
     host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
     await act(async () => root.render(<BuddyApp />));
   });
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+  /** The right-click menu renders in a portal on document.body. */
+  const menuItem = (label: string) => [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === label)!;
+  const openMenu = (element: Element) => act(() => element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 40 })));
   const button = (label: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent === label || node.getAttribute("aria-label") === label)!;
   const input = (element: HTMLInputElement, value: string) => act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(element, value); element.dispatchEvent(new Event("input", { bubbles: true })); });
 
@@ -81,23 +86,51 @@ describe("Buddy shell and creation", () => {
     } finally { platform.mockRestore(); }
   });
 
-  it("requires confirmation to archive and explains retained data", async () => {
-    act(() => host.querySelector(".buddy-list-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
-    act(() => button("Archive Buddy").click());
-    expect(api.archiveBuddy).not.toHaveBeenCalled();
-    expect(host.textContent).toContain("Routines and IM connections will not stop automatically");
-    await act(async () => button("Archive Buddy").click());
-    expect(api.archiveBuddy).toHaveBeenCalledWith("mock-chief");
+  it("deletes from the right-click menu only after confirming, stopping Routines", async () => {
+    openMenu(host.querySelector(".buddy-list-item")!);
+    act(() => menuItem("Delete…").click());
+    expect(api.deleteBuddy).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("its Routines stop");
+    await act(async () => button("Delete").click());
+    expect(api.deleteBuddy).toHaveBeenCalledWith("mock-chief");
     expect(host.querySelectorAll(".buddy-list-item")).toHaveLength(2);
   });
 
-  it("reorders using the full list even when filtering", async () => {
-    const rows = host.querySelectorAll(".buddy-list-item");
-    const event = new Event("dragstart", { bubbles: true });
-    Object.defineProperty(event, "dataTransfer", { value: { setData: vi.fn() } });
-    act(() => rows[2].dispatchEvent(event));
-    await act(async () => rows[0].dispatchEvent(new Event("drop", { bubbles: true, cancelable: true })));
+  it("pins a Buddy into the round tiles above the list and unpins it", async () => {
+    const release = [...host.querySelectorAll(".buddy-list-item")].find((node) => node.textContent?.includes("Release Captain"))!;
+    openMenu(release);
+    await act(async () => menuItem("Pin to top").click());
+    expect(api.pinBuddy).toHaveBeenCalledWith("mock-release", true);
+    expect(host.querySelector('[aria-label="Pinned Buddies"] .buddy-pin')?.textContent).toContain("Release Captain");
+    expect([...host.querySelectorAll(".buddy-list-item")].some((node) => node.textContent?.includes("Release Captain"))).toBe(false);
+    openMenu(host.querySelector(".buddy-pin")!);
+    await act(async () => menuItem("Unpin").click());
+    expect(host.querySelector(".buddy-pin")).toBeNull();
+  });
+
+  it("marks another Buddy unread and read again from the menu", async () => {
+    const inbox = () => [...host.querySelectorAll(".buddy-list-item")].find((node) => node.textContent?.includes("Inbox"))!;
+    openMenu(inbox());
+    act(() => menuItem("Mark as unread").click());
+    expect(inbox().classList.contains("is-unread")).toBe(true);
+    openMenu(inbox());
+    act(() => menuItem("Mark as read").click());
+    expect(inbox().classList.contains("is-unread")).toBe(false);
+    // The open conversation is always read, so it offers no unread toggle.
+    openMenu(host.querySelector(".buddy-list-item.is-selected")!);
+    expect(menuItem("Mark as unread")).toBeUndefined();
+  });
+
+  it("reorders by dragging with the mouse and saves the whole order", async () => {
+    const rows = [...host.querySelectorAll<HTMLElement>(".buddy-list-item")];
+    rows.forEach((row, index) => { row.getBoundingClientRect = () => new DOMRect(0, index * 50, 200, 50); });
+    const pointer = (type: string, target: EventTarget, y: number) => act(() => { target.dispatchEvent(Object.assign(new MouseEvent(type, { bubbles: true, clientX: 10, clientY: y, button: 0 }), { pointerId: 1, pointerType: "mouse" })); });
+    pointer("pointerdown", rows[2], 125);
+    pointer("pointermove", window, 60);
+    pointer("pointermove", window, 20);
+    await act(async () => { window.dispatchEvent(Object.assign(new MouseEvent("pointerup", { clientX: 10, clientY: 20 }), { pointerId: 1, pointerType: "mouse" })); });
     expect(api.reorderBuddies).toHaveBeenCalledWith(["mock-inbox", "mock-chief", "mock-release"]);
+    expect([...host.querySelectorAll(".buddy-list-item")].map((node) => node.textContent?.includes("Inbox"))[0]).toBe(true);
   });
   const atWidth = async (width: number) => {
     act(() => root.unmount()); vi.stubGlobal("innerWidth", width); root = createRoot(host);
@@ -176,11 +209,11 @@ describe("Buddy shell and creation", () => {
     expect(host.querySelectorAll(".buddy-template")).toHaveLength(4);
   });
 
-  it("changes from a sidebar to a switcher when archiving down to one Buddy", async () => {
+  it("changes from a sidebar to a switcher when deleting down to one Buddy", async () => {
     for (let i = 0; i < 2; i++) {
-      act(() => host.querySelector(".buddy-list-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
-      act(() => button("Archive Buddy").click());
-      await act(async () => button("Archive Buddy").click());
+      openMenu(host.querySelector(".buddy-list-item")!);
+      act(() => menuItem("Delete…").click());
+      await act(async () => button("Delete").click());
     }
     expect(host.querySelector(".buddy-sidebar")).toBeNull();
     expect(host.querySelector(".buddy-switcher")).not.toBeNull();

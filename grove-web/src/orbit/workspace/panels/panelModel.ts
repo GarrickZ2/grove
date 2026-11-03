@@ -1,4 +1,5 @@
-import type { ReviewCommentEntry, TaskStatsResponse } from "../../../api";
+import type { ReviewCommentEntry } from "../../../api";
+import type { TimeseriesBucket } from "../../../api/statistics";
 import { formatDay } from "../../ui/format";
 
 /** "src/api/tasks.ts" → { dir: "src/api/", name: "tasks.ts" }. */
@@ -7,36 +8,38 @@ export function splitPath(path: string): { dir: string; name: string } {
   return cut < 0 ? { dir: "", name: path } : { dir: path.slice(0, cut + 1), name: path.slice(cut + 1) };
 }
 
-export interface ActivityDay {
+export interface UsageDay {
+  /** Local midnight. */
+  start: Date;
   /** "Today", "Yesterday" or "Oct 26". */
   label: string;
-  /** Edits per local hour, 0–23. */
-  hours: number[];
-  total: number;
-  peak: number;
+  tokens: number;
+  turns: number;
 }
 
 const localDayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 
 /**
- * The most recent local day with edits, bucketed by hour. Null when the task
- * has no recorded activity.
+ * Hourly usage buckets folded into the last `days` local days, oldest first,
+ * zero-filled. Null when nothing was used in that window.
  */
-export function latestActivityDay(hourly: TaskStatsResponse["hourly_activity"], now: number = Date.now()): ActivityDay | null {
-  const active = hourly
-    .map((entry) => ({ at: new Date(entry.hour), total: entry.total }))
-    .filter((entry) => entry.total > 0 && !Number.isNaN(entry.at.getTime()));
-  if (active.length === 0) return null;
-  const latest = active.reduce((a, b) => (b.at.getTime() > a.at.getTime() ? b : a)).at;
-  const key = localDayKey(latest);
-  const hours = Array<number>(24).fill(0);
-  for (const entry of active) {
-    if (localDayKey(entry.at) === key) hours[entry.at.getHours()] += entry.total;
-  }
+export function usageDays(buckets: TimeseriesBucket[], days: number, now: number = Date.now()): UsageDay[] | null {
   const today = new Date(now);
-  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
-  const label = key === localDayKey(today) ? "Today" : key === localDayKey(yesterday) ? "Yesterday" : formatDay(latest, { now });
-  return { label, hours, total: hours.reduce((a, b) => a + b, 0), peak: Math.max(...hours) };
+  const out: UsageDay[] = [];
+  for (let back = days - 1; back >= 0; back--) {
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - back);
+    const label = back === 0 ? "Today" : back === 1 ? "Yesterday" : formatDay(start, { now });
+    out.push({ start, label, tokens: 0, turns: 0 });
+  }
+  const byKey = new Map(out.map((day) => [localDayKey(day.start), day]));
+  for (const bucket of buckets) {
+    const day = byKey.get(localDayKey(new Date(bucket.bucket_start * 1000)));
+    if (!day) continue;
+    // Total tokens, as the KPIs and sessions count them.
+    day.tokens += bucket.per_agent.reduce((sum, agent) => sum + agent.tokens, 0);
+    day.turns += bucket.turns;
+  }
+  return out.some((day) => day.turns > 0) ? out : null;
 }
 
 /** Where a review comment points: "tasks.ts:L12–18", "tasks.ts", or "Whole change". */

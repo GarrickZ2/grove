@@ -239,12 +239,20 @@ pub fn provision_local_report_token() -> std::io::Result<()> {
     let grove_dir = crate::storage::grove_dir();
     std::fs::create_dir_all(&grove_dir)?;
     let path = grove_dir.join("local_report_token");
-    std::fs::write(&path, &token)?;
+    // Recreate rather than overwrite, so the token is never readable through
+    // an older file's looser permissions, not even briefly.
+    match std::fs::remove_file(&path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
+    std::io::Write::write_all(&mut options.open(&path)?, token.as_bytes())?;
     set_local_report_token(token);
     Ok(())
 }
@@ -266,7 +274,10 @@ pub async fn report_hook(headers: HeaderMap, Json(req): Json<HookReportRequest>)
             .and_then(|v| v.to_str().ok());
         // Fail-closed: unset token (provisioning failed) rejects everything.
         match expected {
-            Some(expected) if presented == Some(expected.as_str()) => {}
+            Some(expected)
+                if presented.is_some_and(|presented| {
+                    crate::api::auth::constant_time_eq(presented.as_bytes(), expected.as_bytes())
+                }) => {}
             _ => return StatusCode::UNAUTHORIZED,
         }
     }

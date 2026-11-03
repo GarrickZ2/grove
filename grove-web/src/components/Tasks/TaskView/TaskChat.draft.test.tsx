@@ -24,7 +24,7 @@ vi.mock("../../../api", () => ({
   listChats: vi.fn(),
   listArchivedChats: vi.fn(async () => []),
   getChatHistory: vi.fn(async () => ({ events: [], total: 0, session: null })),
-  getConfig: vi.fn(async () => ({ layout: { agent_command: "" } })),
+  getConfig: vi.fn(async () => ({ layout: {} })),
   getTaskFiles: vi.fn(async () => ({ files: [] })),
   listSpeakingProfiles: vi.fn(async () => []),
   getMentionCandidates: vi.fn(async () => ({ outgoing: [], pending_replies: [] })),
@@ -88,7 +88,7 @@ vi.mock("./BottomOriginTurnList", async (importOriginal) => {
 
 const chatA: ChatSessionResponse = {
   id: "A", title: "Session A", agent: "test", created_at: "2026-10-30T00:00:00Z",
-  history_path: "", launch_mode: "acp",
+  history_path: "",
 };
 const chatB = { ...chatA, id: "B", title: "Session B" };
 const win = window as unknown as { __grove_pending_chat?: { projectId: string; taskId: string; chatId: string } };

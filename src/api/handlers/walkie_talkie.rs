@@ -953,15 +953,67 @@ fn find_slot_in(
 pub struct StartRadioBody {
     #[serde(default)]
     pub page: Option<String>,
+    /// Origin the requesting browser reached Grove at. Under `grove mobile`
+    /// the QR points there, because only the browser knows the public
+    /// address (e.g. a Cloudflare Tunnel hostname).
+    #[serde(default)]
+    pub origin: Option<String>,
+}
+
+fn qr_svg(url: &str) -> Option<String> {
+    qrcode::QrCode::new(url).ok().map(|code| {
+        code.render::<qrcode::render::svg::Color>()
+            .min_dimensions(200, 200)
+            .quiet_zone(true)
+            .build()
+    })
+}
+
+/// Validate a browser-supplied origin: `http(s)://host[:port]`, nothing else.
+fn parse_origin(origin: &str) -> Option<(String, String)> {
+    let url = reqwest::Url::parse(origin).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+    {
+        return None;
+    }
+    let host = url.host_str()?.to_string();
+    Some((url.origin().ascii_serialization(), host))
+}
+
+/// `grove mobile`: phones reach the walkie-talkie through the main server and
+/// its device sign-in, so no extra listener or bearer token is created.
+fn start_radio_on_main_server(page: &str, origin: Option<&str>) -> serde_json::Value {
+    if page == "tray" {
+        return serde_json::json!({
+            "error": "tray_unavailable_remote",
+            "message": "The phone task panel is unavailable while Grove Mobile is serving. Open Grove on your phone instead.",
+        });
+    }
+    let Some((origin, host)) = origin.and_then(parse_origin) else {
+        return serde_json::json!({
+            "error": "invalid_origin",
+            "message": "Could not determine the address to share with your phone.",
+        });
+    };
+    let url = format!("{}/#page=radio", origin);
+    serde_json::json!({
+        "url": url,
+        "host": host,
+        "qr_svg": qr_svg(&url),
+        "same_origin": true,
+    })
 }
 
 /// POST /radio/start — Start the independent Radio server, return connection info + QR code
 pub async fn start_radio(
     body: Option<axum::Json<StartRadioBody>>,
 ) -> axum::response::Json<serde_json::Value> {
-    let page = body
-        .and_then(|axum::Json(b)| b.page)
-        .unwrap_or_else(|| "radio".to_string());
+    let body = body.map(|axum::Json(b)| b).unwrap_or_default();
+    let page = body.page.unwrap_or_else(|| "radio".to_string());
     // Audio transcription is only needed by the walkie-talkie surface. The tray
     // task panel is read + permission-resolve only, so skip the gate for it.
     if page != "tray" {
@@ -986,6 +1038,10 @@ pub async fn start_radio(
         }
     }
 
+    if crate::api::radio_server::is_disabled() {
+        return axum::response::Json(start_radio_on_main_server(&page, body.origin.as_deref()));
+    }
+
     match crate::api::radio_server::start().await {
         Ok(info) => {
             let lan_ip = crate::api::get_lan_ip();
@@ -1002,25 +1058,12 @@ pub async fn start_radio(
                 format!("https://{}:{}/#token={}", host, info.port, info.token)
             };
 
-            // Generate QR code as SVG
-            let qr_svg = match qrcode::QrCode::new(&url) {
-                Ok(code) => {
-                    let svg = code
-                        .render::<qrcode::render::svg::Color>()
-                        .min_dimensions(200, 200)
-                        .quiet_zone(true)
-                        .build();
-                    Some(svg)
-                }
-                Err(_) => None,
-            };
-
             axum::response::Json(serde_json::json!({
                 "url": url,
                 "port": info.port,
                 "token": info.token,
                 "host": host,
-                "qr_svg": qr_svg,
+                "qr_svg": qr_svg(&url),
             }))
         }
         Err(e) => axum::response::Json(serde_json::json!({
@@ -1310,6 +1353,35 @@ async fn handle_radio_events_ws(socket: WebSocket) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_server_radio_points_at_the_browser_origin() {
+        let info = start_radio_on_main_server("radio", Some("https://grove.example.com"));
+        assert_eq!(info["url"], "https://grove.example.com/#page=radio");
+        assert_eq!(info["host"], "grove.example.com");
+        assert!(info.get("token").is_none() && info.get("port").is_none());
+        assert!(info["qr_svg"].is_string());
+    }
+
+    #[test]
+    fn main_server_radio_rejects_tray_and_malformed_origins() {
+        assert_eq!(
+            start_radio_on_main_server("tray", Some("https://grove.example.com"))["error"],
+            "tray_unavailable_remote"
+        );
+        for origin in [
+            None,
+            Some("javascript:alert(1)"),
+            Some("https://grove.example.com/path"),
+            Some("https://user@grove.example.com"),
+            Some("https://grove.example.com/#x"),
+        ] {
+            assert_eq!(
+                start_radio_on_main_server("radio", origin)["error"],
+                "invalid_origin"
+            );
+        }
+    }
 
     #[test]
     fn test_client_message_deserialization() {

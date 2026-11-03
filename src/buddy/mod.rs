@@ -8,6 +8,8 @@ use chrono::Utc;
 use once_cell::sync::Lazy;
 use rusqlite::Connection;
 use serde::Deserialize;
+pub mod attachments;
+pub mod chat;
 pub mod configuration;
 pub mod delegations;
 mod instruction;
@@ -154,6 +156,7 @@ fn create_on(conn: &Connection, id: &str, input: CreateInput) -> Result<db::Budd
         sort_position: None,
         created_at: now.clone(),
         updated_at: now,
+        pinned_at: None,
     };
     db::insert(conn, &buddy)?;
     new_segment_on(conn, &buddy, &persona.base_agent, 1)?;
@@ -175,7 +178,6 @@ fn new_segment_on(conn: &Connection, buddy: &db::Buddy, agent: &str, seq: i64) -
             acp_session_id: None,
             created_at: now,
             duty: None,
-            launch_mode: "acp".into(),
         },
     )?;
     db::insert_segment(
@@ -438,6 +440,9 @@ pub(crate) struct SessionEntry {
     pub text: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,
+    /// Images and files sent with the message or produced by the Agent.
+    #[serde(skip)]
+    pub media: Vec<crate::acp::ContentBlockData>,
 }
 
 /// Grove's `<grove-meta>` envelope (instructions, Buddy routing) is not part
@@ -476,24 +481,30 @@ pub(crate) fn session_entries(
     let mut v2 = crate::acp::v2_messages::Messages::default();
     let mut v2_indices = HashMap::new();
     let mut tools: HashMap<String, (usize, String)> = HashMap::new();
+    let mut assistant_media = Vec::new();
     let push = |entries: &mut Vec<SessionEntry>, role, text: String, files: Vec<String>| {
         entries.push(SessionEntry {
             index: entries.len(),
             role,
             text,
             files,
+            media: Vec::new(),
         });
         entries.len() - 1
     };
-    let flush = |entries: &mut Vec<SessionEntry>, assistant: &mut String| {
-        if !assistant.trim().is_empty() {
+    let flush = |entries: &mut Vec<SessionEntry>,
+                 assistant: &mut String,
+                 media: &mut Vec<crate::acp::ContentBlockData>| {
+        if !assistant.trim().is_empty() || !media.is_empty() {
             let text = std::mem::take(assistant);
-            push(entries, "assistant", text, Vec::new());
+            let at = push(entries, "assistant", text, Vec::new());
+            entries[at].media = std::mem::take(media);
         }
         assistant.clear();
     };
     let mut tool = |entries: &mut Vec<SessionEntry>,
                     assistant: &mut String,
+                    media: &mut Vec<crate::acp::ContentBlockData>,
                     id: &str,
                     title: Option<&str>,
                     status: Option<&str>,
@@ -504,7 +515,7 @@ pub(crate) fn session_entries(
         let at = match tools.get(id) {
             Some((at, _)) => *at,
             None => {
-                flush(entries, assistant);
+                flush(entries, assistant, media);
                 let at = push(entries, "tool", String::new(), Vec::new());
                 tools.insert(id.to_owned(), (at, String::new()));
                 at
@@ -533,11 +544,18 @@ pub(crate) fn session_entries(
     };
     for update in crate::storage::chat_history::load_history(project, task, chat) {
         match update {
-            AcpUpdate::UserMessage { text, .. } => {
-                flush(&mut entries, &mut assistant);
+            AcpUpdate::UserMessage {
+                text, attachments, ..
+            } => {
+                flush(&mut entries, &mut assistant, &mut assistant_media);
                 let text = strip_meta(&text);
-                if !text.is_empty() {
-                    push(&mut entries, "user", text, Vec::new());
+                let media: Vec<_> = attachments
+                    .into_iter()
+                    .filter(|block| !matches!(block, crate::acp::ContentBlockData::Text { .. }))
+                    .collect();
+                if !text.is_empty() || !media.is_empty() {
+                    let at = push(&mut entries, "user", text, Vec::new());
+                    entries[at].media = media;
                 }
             }
             AcpUpdate::V2MessageUpdate { update } => {
@@ -567,6 +585,11 @@ pub(crate) fn session_entries(
                         .entry((message.kind, message.id.clone()))
                         .or_insert_with(|| push(&mut entries, role, String::new(), Vec::new()));
                     entries[index].text = text;
+                    entries[index].media = message
+                        .content
+                        .iter()
+                        .filter_map(attachments::from_v2_block)
+                        .collect();
                 }
             }
             AcpUpdate::V2ToolUpdate { update } => {
@@ -585,6 +608,7 @@ pub(crate) fn session_entries(
                     tool(
                         &mut entries,
                         &mut assistant,
+                        &mut assistant_media,
                         id,
                         value.get("title").and_then(|v| v.as_str()),
                         value.get("status").and_then(|v| v.as_str()),
@@ -600,6 +624,7 @@ pub(crate) fn session_entries(
             } => tool(
                 &mut entries,
                 &mut assistant,
+                &mut assistant_media,
                 &id,
                 Some(&title),
                 None,
@@ -613,6 +638,7 @@ pub(crate) fn session_entries(
             } => tool(
                 &mut entries,
                 &mut assistant,
+                &mut assistant_media,
                 &id,
                 None,
                 Some(&status),
@@ -627,6 +653,7 @@ pub(crate) fn session_entries(
             } => tool(
                 &mut entries,
                 &mut assistant,
+                &mut assistant_media,
                 &id,
                 Some(&title),
                 Some(&status),
@@ -641,18 +668,23 @@ pub(crate) fn session_entries(
             } => tool(
                 &mut entries,
                 &mut assistant,
+                &mut assistant_media,
                 &id,
                 title.as_deref(),
                 status.as_deref(),
                 &paths(&locations.unwrap_or_default()),
             ),
             AcpUpdate::MessageChunk { text, .. } => assistant.push_str(&text),
-            AcpUpdate::Complete { .. } => flush(&mut entries, &mut assistant),
+            AcpUpdate::MessageContentChunk { content, .. } => match content {
+                crate::acp::ContentBlockData::Text { text } => assistant.push_str(&text),
+                media => assistant_media.push(media),
+            },
+            AcpUpdate::Complete { .. } => flush(&mut entries, &mut assistant, &mut assistant_media),
             _ => {}
         }
     }
-    flush(&mut entries, &mut assistant);
-    entries.retain(|entry| !entry.text.is_empty());
+    flush(&mut entries, &mut assistant, &mut assistant_media);
+    entries.retain(|entry| !entry.text.is_empty() || !entry.media.is_empty());
     for (index, entry) in entries.iter_mut().enumerate() {
         entry.index = index;
     }

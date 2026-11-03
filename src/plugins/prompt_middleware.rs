@@ -37,7 +37,7 @@ pub async fn run(
     sender: Option<&str>,
 ) -> Result<String> {
     let mut text = text;
-    for plugin in crate::storage::plugins::list()? {
+    for plugin in super::approval::active_plugins()? {
         let manifest: Value = match std::fs::read_to_string(
             std::path::Path::new(&plugin.local_path).join("plugin.json"),
         )

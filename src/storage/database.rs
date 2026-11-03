@@ -527,7 +527,8 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             active_session_id TEXT,
             sort_position INTEGER,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            pinned_at TEXT
         );
         CREATE TABLE IF NOT EXISTS buddy_segments (
             session_id TEXT PRIMARY KEY REFERENCES session(session_id) ON DELETE CASCADE,
@@ -588,7 +589,8 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             git_url       TEXT,
             subpath       TEXT,
             created_at    TEXT NOT NULL,
-            updated_at    TEXT NOT NULL
+            updated_at    TEXT NOT NULL,
+            approved_digest TEXT
         );
 
         -- Unified extension catalog discovered from Skill sources. Skills keep
@@ -637,9 +639,7 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         -- The single source of truth for what agents grove can launch.
         -- One row per agent. Multiple install channels (npx + binary + …) live
         -- in the `installations` JSON column; `selected_install_method` picks
-        -- which channel is active AND implicitly which launch mode (PTY vs
-        -- stdio ACP) — registry-side `terminal_launch` config decides PTY
-        -- when External is selected.
+        -- which channel is active.
         -- See `src/storage/installed_agents.rs` for the canonical shape.
         CREATE TABLE IF NOT EXISTS installed_agents (
             id                        TEXT PRIMARY KEY,
@@ -827,7 +827,7 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             task_template    TEXT,                 -- JSON {name,target,notes}
             session_mode     TEXT NOT NULL,        -- 'new' | 'existing'
             chat_id          TEXT,
-            session_template TEXT,                 -- JSON {agent,launch_mode,title,custom_agent_id}
+            session_template TEXT,                 -- JSON {agent,title,custom_agent_id}
             prompt           TEXT NOT NULL,
             schedule_cron    TEXT NOT NULL,
             event_triggers_json TEXT NOT NULL DEFAULT '[]',
@@ -943,10 +943,19 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     // chat_id is nullable: pre-migration rows have no chat context, and the
     // notification UI falls back to navigating to the task only when NULL.
     let _ = conn.execute_batch("ALTER TABLE hook_notifications ADD COLUMN chat_id TEXT;");
+    // Plugins installed before approval existed keep working: approve what
+    // their manifests ask for today. Only runs when the column is new.
+    if conn
+        .execute_batch("ALTER TABLE plugins ADD COLUMN approved_digest TEXT;")
+        .is_ok()
+    {
+        approve_existing_plugins(conn);
+    }
     let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN cost_amount REAL;");
     let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN cost_currency TEXT;");
     let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN automation_run_id TEXT;");
     let _ = conn.execute_batch("ALTER TABLE session ADD COLUMN archived_at TEXT;");
+    let _ = conn.execute_batch("ALTER TABLE buddies ADD COLUMN pinned_at TEXT;");
     if conn
         .execute_batch("ALTER TABLE session ADD COLUMN updated_at TEXT;")
         .is_ok()
@@ -1275,10 +1284,9 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS auth_device_browser ON auth_devices(scope, browser_id);",
     )?;
 
-    // Chat session launch mode: "acp" (default, JSON-RPC over stdio) or
-    // "terminal" (spawn agent CLI under a PTY, no protocol). Old chats stay
-    // on ACP; the value is snapshotted at chat-create time and never changes
-    // for the life of that chat session.
+    // Legacy chat launch mode ("acp" / "terminal"). Terminal launch mode is
+    // gone and nothing reads this column any more; it stays so older Grove
+    // versions sharing this database keep working.
     add_column_if_missing(
         conn,
         "session",
@@ -1348,6 +1356,26 @@ fn migrate_automation_agent_config(conn: &Connection) -> Result<()> {
 /// `ALTER TABLE ... ADD COLUMN` swallowing the "duplicate column name" error
 /// SQLite returns when the column already exists. Lets us evolve a previously
 /// installed schema without managing a per-column migration version.
+/// Approve every registered plugin for what its manifest asks today. Used once,
+/// when plugin approval is introduced, so existing installs keep working.
+fn approve_existing_plugins(conn: &Connection) {
+    let rows: Vec<(String, String)> = match conn.prepare("SELECT id, local_path FROM plugins") {
+        Ok(mut stmt) => stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default(),
+        Err(_) => return,
+    };
+    for (id, local_path) in rows {
+        if let Some(digest) = crate::plugins::approval::security_digest(&local_path) {
+            let _ = conn.execute(
+                "UPDATE plugins SET approved_digest = ?1 WHERE id = ?2",
+                rusqlite::params![digest, id],
+            );
+        }
+    }
+}
+
 fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
     let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, decl);
     match conn.execute(&sql, []) {
@@ -2239,8 +2267,7 @@ pub fn migrate_installed_agents_id_remap() -> (u32, u32, u32) {
 }
 
 /// Migrate review comments from per-task `review.json` files to SQLite (v2.2 → v2.3).
-/// Canonicalize the two agent_command fields in `config.toml`
-/// (`acp.agent_command`, `layout.agent_command`). Runs alongside the
+/// Canonicalize `acp.agent_command` in `config.toml`. Runs alongside the
 /// SQLite id remap so all on-disk references — table rows, JSON columns,
 /// AND the TOML config — end up canonical. After this, no runtime code
 /// needs an alias lookup.
@@ -2254,13 +2281,6 @@ pub fn migrate_config_agent_command_ids() {
         let canon = crate::storage::installed_agents::canonicalize_agent_id(name);
         if canon != name {
             config.acp.agent_command = Some(canon);
-            changed = true;
-        }
-    }
-    if let Some(name) = config.layout.agent_command.as_deref() {
-        let canon = crate::storage::installed_agents::canonicalize_agent_id(name);
-        if canon != name {
-            config.layout.agent_command = Some(canon);
             changed = true;
         }
     }
@@ -2730,7 +2750,7 @@ pub fn migrate_installed_agents_to_v26() -> Result<()> {
         failure_reason,
         args_override,
         env_override,
-        launch_mode,
+        _launch_mode,
         hidden,
         installed_at,
         updated_at,
@@ -2746,42 +2766,10 @@ pub fn migrate_installed_agents_to_v26() -> Result<()> {
             "installed_at": installed_at,
         });
 
-        // v2.6 launch_mode merge: legacy `launch_mode = "terminal"` becomes
-        // `selected_install_method = "external"`. If the user actually
-        // ran terminal mode, also seed a placeholder External installation
-        // (install_path = null) so the post-migration row is internally
-        // consistent: `selected_install_method` always points at an
-        // entry in `installations`. The boot-time `auto_scan_path_binaries`
-        // then fills in `install_path` once the binary is detected on
-        // PATH. Without this skeleton, `selected_installation()` silently
-        // falls back to the legacy install record and spawn paths would
-        // disagree about what's "active" until the first successful scan.
-        let (selected_method, mut installations) = if launch_mode == "terminal" {
-            // Skeleton is marked `installing` (not `installed`) so:
-            //   - `has_installed_channel()` doesn't count this row as a
-            //     valid candidate for default-agent picks until the
-            //     boot-time `auto_scan_path_binaries` upgrades it.
-            //   - The Marketplace radio (which disables on `status !==
-            //     "installed"`) is grayed out, preventing the user from
-            //     activating an unresolved channel.
-            // First successful auto-scan calls `add_installation` which
-            // REPLACES the External row with the resolved path + status
-            // = Installed.
-            let external_skeleton = serde_json::json!({
-                "method": "external",
-                "version": "",
-                "install_path": serde_json::Value::Null,
-                "status": "installing",
-                "failure_reason": serde_json::Value::Null,
-                "installed_at": installed_at,
-            });
-            (
-                "external".to_string(),
-                vec![legacy_installation, external_skeleton],
-            )
-        } else {
-            (install_method.clone(), vec![legacy_installation])
-        };
+        // The legacy `launch_mode` is ignored: terminal launch mode is gone
+        // and every agent launches over ACP.
+        let selected_method = install_method.clone();
+        let mut installations = vec![legacy_installation];
 
         // Auto-add an Npx channel for `claude-acp` and `codex-acp` if the
         // user had a row for the legacy id at all. Reason: pre-refactor

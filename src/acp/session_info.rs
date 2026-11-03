@@ -79,7 +79,6 @@ mod tests {
                 acp_session_id: Some("root".into()),
                 created_at: Utc::now(),
                 duty: None,
-                launch_mode: "acp".into(),
             },
         )
         .unwrap();

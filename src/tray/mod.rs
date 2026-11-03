@@ -6,6 +6,8 @@
 //! "Open" actions just bring the main Grove window to the foreground —
 //! no deep-linking, no cross-window navigation events.
 
+pub mod buddy_mini;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 

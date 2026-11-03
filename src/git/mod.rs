@@ -3,7 +3,6 @@ use std::process::{Command, Stdio};
 
 use crate::error::{GroveError, Result};
 
-pub mod cache;
 pub mod status;
 
 pub use status::{ahead_behind, worktree_status};
@@ -85,23 +84,6 @@ pub(crate) fn git_cmd_allow_exit1(path: &str, args: &[&str]) -> Result<String> {
 /// 执行 git 命令，仅检查是否成功 (用于 bool 检查)
 fn git_cmd_check(path: &str, args: &[&str]) -> bool {
     git_cmd(path, args).is_ok()
-}
-
-/// 解析 git diff --numstat 输出为 (additions, deletions, files_changed)
-fn parse_numstat(output: &str) -> (u32, u32, u32) {
-    output
-        .lines()
-        .filter(|l| !l.is_empty())
-        .fold((0, 0, 0), |(add, del, count), line| {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 2 {
-                let a = parts[0].parse::<u32>().unwrap_or(0);
-                let d = parts[1].parse::<u32>().unwrap_or(0);
-                (add + a, del + d, count + 1)
-            } else {
-                (add, del, count)
-            }
-        })
 }
 
 /// Get `git config user.name` from the given repo path.
@@ -907,90 +889,6 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> Result<()>
     Err(GroveError::git("Path traversal detected"))
 }
 
-/// 获取相对于 origin 的 commits ahead 数量
-/// 执行: git rev-list --count origin/{branch}..HEAD
-pub fn commits_ahead_of_origin(repo_path: &str) -> Result<Option<u32>> {
-    let branch = current_branch(repo_path)?;
-    let origin_ref = format!("origin/{}", branch);
-
-    // 检查 origin/{branch} 是否存在
-    if !git_cmd_check(repo_path, &["rev-parse", "--verify", &origin_ref]) {
-        return Ok(None);
-    }
-
-    let range = format!("{}..HEAD", origin_ref);
-    git_cmd(repo_path, &["rev-list", "--count", &range])
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .map_or(Ok(None), |n| Ok(Some(n)))
-}
-
-/// 获取最近提交的相对时间
-/// 执行: git log -1 --format=%cr
-pub fn last_commit_time(repo_path: &str) -> Result<String> {
-    git_cmd(repo_path, &["log", "-1", "--format=%cr"]).or_else(|_| Ok("unknown".to_string()))
-}
-
-/// 获取相对于 origin 的文件变更统计
-/// 执行: git diff --numstat origin/{branch}
-pub fn changes_from_origin(repo_path: &str) -> Result<(u32, u32)> {
-    let branch = current_branch(repo_path)?;
-    let origin_ref = format!("origin/{}", branch);
-
-    // 检查 origin/{branch} 是否存在
-    if !git_cmd_check(repo_path, &["rev-parse", "--verify", &origin_ref]) {
-        return Ok((0, 0));
-    }
-
-    git_cmd(repo_path, &["diff", "--numstat", &origin_ref])
-        .map(|output| {
-            let (add, del, _) = parse_numstat(&output);
-            (add, del)
-        })
-        .or(Ok((0, 0)))
-}
-
-/// 切换分支
-/// 执行: git checkout {branch}
-pub fn checkout_branch(worktree_path: &str, branch: &str) -> Result<()> {
-    git_cmd_unit(worktree_path, &["checkout", branch])
-}
-
-/// 添加所有文件并提交
-/// 执行: git add -A && git commit -m {message}
-/// Commit log entry
-#[derive(Debug, Clone)]
-pub struct LogEntry {
-    pub time_ago: String,
-    pub message: String,
-}
-
-/// 获取最近的 commit 日志
-/// 执行: git log --format="%cr\t%s" -n {count} {target}..HEAD
-pub fn recent_log(worktree_path: &str, target: &str, count: usize) -> Result<Vec<LogEntry>> {
-    let range = format!("{}..HEAD", target);
-    let n = format!("-{}", count);
-    let output = git_cmd(worktree_path, &["log", "--format=%cr\t%s", &n, &range])?;
-    Ok(output
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|line| {
-            let parts: Vec<&str> = line.splitn(2, '\t').collect();
-            if parts.len() == 2 {
-                LogEntry {
-                    time_ago: parts[0].to_string(),
-                    message: parts[1].to_string(),
-                }
-            } else {
-                LogEntry {
-                    time_ago: String::new(),
-                    message: line.to_string(),
-                }
-            }
-        })
-        .collect())
-}
-
 /// 变更文件条目
 #[derive(Debug, Clone)]
 pub struct DiffStatEntry {
@@ -1122,19 +1020,6 @@ pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>
     }
 
     Ok(entries)
-}
-
-/// 获取未提交文件数量
-/// 执行: git status --porcelain
-pub fn uncommitted_count(path: &str) -> Result<usize> {
-    git_cmd(path, &["status", "--porcelain"])
-        .map(|output| output.lines().filter(|l| !l.trim().is_empty()).count())
-}
-
-/// 获取 stash 数量
-pub fn stash_count(path: &str) -> Result<usize> {
-    git_cmd(path, &["stash", "list"])
-        .map(|output| output.lines().filter(|l| !l.trim().is_empty()).count())
 }
 
 pub fn add_and_commit(worktree_path: &str, message: &str) -> Result<()> {

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/schema.json",
+  "identifier": "buddy-mini",
+  "description": "Mini Buddy floating window — its own window controls and shared remote authorization.",
+  "windows": ["buddy-mini"],
+  "local": true,
+  "remote": {
+    "urls": ["http://localhost:*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "allow-get-remote-auth",
+    "allow-buddy-mini-open",
+    "allow-buddy-mini-set-expanded",
+    "allow-buddy-mini-set-collapsed-size",
+    "allow-buddy-mini-close",
+    "allow-buddy-mini-open-in-main"
+  ]
+}

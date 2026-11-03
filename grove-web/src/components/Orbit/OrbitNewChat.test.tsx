@@ -20,12 +20,15 @@ vi.mock("../Tasks/TaskView/useACPAvailability", () => ({
   useACPAvailability: () => ({ baseAgents: [], customAgents: [], customAgentPersonas: [], acpAvailabilityLoaded: true }),
 }));
 vi.mock("../Tasks/TaskView/ChatConfigMenus", () => ({ DropdownSelect: () => null, SessionSettingsMenu: () => null }));
+vi.mock("../Tasks/TaskView/composer/useMentionSources", () => ({
+  useMentionSources: () => ({ items: [], browserTabs: [], browserTabsAvailable: false, studio: false, refresh: vi.fn(), loadBrowserTabs: vi.fn() }),
+}));
 vi.mock("../Tasks/TaskView/useInitialChatLoad", () => ({ buildDefaultSessionTitle: () => "New Chat" }));
 
 describe("Orbit New composer Enter handling", () => {
   let host: HTMLDivElement;
   let root: Root;
-  let input: HTMLTextAreaElement;
+  let input: HTMLElement;
 
   beforeEach(async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -37,7 +40,7 @@ describe("Orbit New composer Enter handling", () => {
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => root.render(<OrbitNewChat onNavigate={vi.fn()} />));
-    input = host.querySelector("textarea")!;
+    input = host.querySelector<HTMLElement>('[role="textbox"]')!;
     expect(host.querySelector<HTMLButtonElement>('button[title="Send (Enter)"]')!.disabled).toBe(false);
   });
 
@@ -60,14 +63,14 @@ describe("Orbit New composer Enter handling", () => {
     const event = enter({ isComposing: true });
     expect(createChat).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
-    expect(input.value).toBe("你好");
+    expect(input.textContent).toBe("你好");
   });
 
   it("does not send the WebKit IME confirmation Enter with keyCode 229 and isComposing false", () => {
     const event = enter({ keyCode: 229, isComposing: false });
     expect(createChat).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
-    expect(input.value).toBe("你好");
+    expect(input.textContent).toBe("你好");
     expect(localStorage.getItem("grove-orbit-new-draft")).toBe("你好");
 
     // The next deliberate Enter still sends the composed message.

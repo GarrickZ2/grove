@@ -194,24 +194,6 @@ pub fn create_session(
     }
 }
 
-/// Attach 到 session（阻塞）
-/// tmux: tmux attach-session -t <name>
-/// zellij: zellij attach <name> --create（带可选 layout / working_dir / env）
-/// acp: no-op（ACP 没有终端 attach 概念）
-pub fn attach_session(
-    mux: &SessionType,
-    name: &str,
-    working_dir: Option<&str>,
-    env: Option<&SessionEnv>,
-    layout_path: Option<&str>,
-) -> Result<()> {
-    match mux {
-        SessionType::Tmux => tmux::attach_session(name),
-        SessionType::Zellij => zellij::attach_session(name, working_dir, env, layout_path),
-        SessionType::Acp => Ok(()), // ACP 通过 chat 界面交互，不需要 attach
-    }
-}
-
 /// 检查 session 是否存在
 pub fn session_exists(mux: &SessionType, name: &str) -> bool {
     match mux {

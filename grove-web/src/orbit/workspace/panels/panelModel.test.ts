@@ -1,31 +1,38 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewCommentEntry } from "../../../api";
-import { commentLocation, filterComments, latestActivityDay, plural, splitPath } from "./panelModel";
+import { commentLocation, filterComments, plural, splitPath, usageDays } from "./panelModel";
+import type { TimeseriesBucket } from "../../../api/statistics";
 
-const hour = (y: number, m: number, d: number, h: number) => new Date(y, m, d, h).toISOString();
+const bucket = (at: Date, tokens: number, turns = 1): TimeseriesBucket => ({
+  bucket_start: Math.floor(at.getTime() / 1000),
+  turns,
+  tokens_in: tokens,
+  tokens_cached: 0,
+  tokens_out: 0,
+  per_agent: [{ agent: "claude", tokens, turns, cost: 0 }],
+  cost_total: 0,
+});
 
-describe("latestActivityDay", () => {
+describe("usageDays", () => {
   const now = new Date(2026, 9, 26, 18).getTime();
 
-  it("buckets the most recent active local day by hour", () => {
-    const day = latestActivityDay([
-      { hour: hour(2026, 9, 26, 9), buckets: [], total: 4 },
-      { hour: hour(2026, 9, 26, 14), buckets: [], total: 10 },
-      { hour: hour(2026, 9, 25, 22), buckets: [], total: 7 },
-    ], now);
-    expect(day?.label).toBe("Today");
-    expect(day?.hours[9]).toBe(4);
-    expect(day?.hours[14]).toBe(10);
-    expect(day?.hours[22]).toBe(0);
-    expect(day?.total).toBe(14);
-    expect(day?.peak).toBe(10);
+  it("folds hourly buckets into local days, oldest first, zero-filled", () => {
+    const days = usageDays([
+      bucket(new Date(2026, 9, 26, 9), 400),
+      bucket(new Date(2026, 9, 26, 14), 100, 2),
+      bucket(new Date(2026, 9, 25, 23), 50),
+      bucket(new Date(2026, 9, 1, 10), 9_999),
+    ], 3, now);
+    expect(days?.map((day) => [day.label, day.tokens, day.turns])).toEqual([
+      ["Oct 24", 0, 0],
+      ["Yesterday", 50, 1],
+      ["Today", 500, 3],
+    ]);
   });
 
-  it("names yesterday and older days, and ignores empty hours", () => {
-    expect(latestActivityDay([{ hour: hour(2026, 9, 25, 22), buckets: [], total: 2 }, { hour: hour(2026, 9, 26, 8), buckets: [], total: 0 }], now)?.label).toBe("Yesterday");
-    expect(latestActivityDay([{ hour: hour(2026, 9, 20, 10), buckets: [], total: 2 }], now)?.label).toBe("Oct 20");
-    expect(latestActivityDay([{ hour: hour(2026, 9, 26, 8), buckets: [], total: 0 }], now)).toBeNull();
-    expect(latestActivityDay([], now)).toBeNull();
+  it("is null when nothing was used in the window", () => {
+    expect(usageDays([], 14, now)).toBeNull();
+    expect(usageDays([bucket(new Date(2026, 8, 1), 10)], 14, now)).toBeNull();
   });
 });
 

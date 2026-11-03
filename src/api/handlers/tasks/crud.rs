@@ -476,20 +476,19 @@ pub async fn recover_task(
         )
     })?;
 
-    let _result = crate::operations::tasks::recover_task(&project.path, &project_key, &task_id)
-        .map_err(|e| {
-            let status = match &e {
-                crate::error::GroveError::NotFound(_) => StatusCode::NOT_FOUND,
-                crate::error::GroveError::Git(_) => StatusCode::CONFLICT,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            (
-                status,
-                Json(ApiError {
-                    error: e.to_string(),
-                }),
-            )
-        })?;
+    crate::operations::tasks::recover_task(&project.path, &project_key, &task_id).map_err(|e| {
+        let status = match &e {
+            crate::error::GroveError::NotFound(_) => StatusCode::NOT_FOUND,
+            crate::error::GroveError::Git(_) => StatusCode::CONFLICT,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(ApiError {
+                error: e.to_string(),
+            }),
+        )
+    })?;
 
     let project_path = project.path.clone();
     let tid = task_id.clone();

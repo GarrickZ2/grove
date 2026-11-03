@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { LayoutGroup, motion } from "framer-motion";
 import { Copy, RefreshCw } from "lucide-react";
-import { AgentPicker } from "../../../components/ui";
 import { LayoutEditor, type LayoutNode, type PaneType } from "../../../components/Config/LayoutEditor";
 import {
   dependencyInfo,
@@ -83,9 +82,6 @@ export function TerminalPage({ settings }: SettingsPageProps) {
     terminalMultiplexer,
     setTerminalMultiplexer,
     hasMultiplexer,
-    agentCommand,
-    setAgentCommand,
-    terminalAgentOptions,
     selectedLayout,
     setSelectedLayout,
     customLayouts,
@@ -186,20 +182,6 @@ export function TerminalPage({ settings }: SettingsPageProps) {
             );
           })
           : null}
-        {multiplexer && terminalAgentOptions.length > 0 ? (
-          <Row title="Terminal coding agent">
-            <div className="ost-picker">
-              <AgentPicker
-                value={agentCommand}
-                onChange={setAgentCommand}
-                options={terminalAgentOptions}
-                allowCustom={true}
-                placeholder="Select agent..."
-                triggerSize="compact"
-              />
-            </div>
-          </Row>
-        ) : null}
       </Group>
 
       {multiplexer ? (

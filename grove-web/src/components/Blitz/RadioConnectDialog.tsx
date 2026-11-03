@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Radio, X, Copy, Check, Loader2, Smartphone } from "lucide-react";
 import { DialogShell } from "../ui/DialogShell";
-import { apiClient } from "../../api/client";
+import { apiClient, getApiBaseUrl } from "../../api/client";
 import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
 import { Button as OrbitButton } from "../../orbit/ui/Button";
 import { DialogBody, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
@@ -19,8 +19,9 @@ interface RadioConnectDialogProps {
 
 interface RadioStartResult {
   url: string;
-  port: number;
-  token: string;
+  /** Absent under `grove mobile`, where the phone uses Grove's own address. */
+  port?: number;
+  token?: string;
   host: string;
   qr_svg: string | null;
   error?: string;
@@ -28,6 +29,24 @@ interface RadioStartResult {
 }
 
 type ConnectState = "starting" | "ready" | "error";
+
+// Under `grove mobile` the server cannot know its public address (for example
+// a Cloudflare Tunnel hostname), so the browser supplies the origin it used.
+function startRadio(page: RadioPage) {
+  return apiClient.post<{ page: RadioPage; origin: string }, RadioStartResult>(
+    "/api/v1/radio/start",
+    { page, origin: new URL(getApiBaseUrl() || window.location.origin, window.location.origin).origin },
+  );
+}
+
+// The settings shortcut keys off the code; other failures show their message.
+function startError(info: RadioStartResult) {
+  return info.error === "transcribe_not_configured" ? info.error : info.message ?? info.error ?? null;
+}
+
+function radioAddress(info: RadioStartResult) {
+  return info.port === undefined ? info.host : `${info.host}:${info.port}`;
+}
 
 export function RadioConnectDialog({ open, onClose, onGoToSettings, page = "radio" }: RadioConnectDialogProps) {
   // Render inner content only when open — unmount resets all state naturally
@@ -63,12 +82,11 @@ function RadioConnectDialogContent({
   // Start Radio server on mount
   useEffect(() => {
     let cancelled = false;
-    apiClient
-      .post<{ page: RadioPage }, RadioStartResult>("/api/v1/radio/start", { page })
+    startRadio(page)
       .then((info) => {
         if (cancelled) return;
         if (info.error) {
-          setError(info.error);
+          setError(startError(info));
           setConnectState("error");
         } else {
           setRadioInfo(info);
@@ -112,11 +130,10 @@ function RadioConnectDialogContent({
   const retry = () => {
     setConnectState("starting");
     setError(null);
-    apiClient
-      .post<{ page: RadioPage }, RadioStartResult>("/api/v1/radio/start", { page })
+    startRadio(page)
       .then((info) => {
         if (info.error) {
-          setError(info.error);
+          setError(startError(info));
           setConnectState("error");
         } else {
           setRadioInfo(info);
@@ -167,7 +184,7 @@ function RadioConnectDialogContent({
               <p>Scan with your phone to connect</p>
               <div className="oui-dlg-flow oui-dlg-host">
                 <span className="oui-dot is-ok has-ring" aria-hidden="true" />
-                <span className="oui-mono oui-truncate">{radioInfo.host}:{radioInfo.port}</span>
+                <span className="oui-mono oui-truncate">{radioAddress(radioInfo)}</span>
                 <OrbitButton variant="ghost" iconOnly size="sm" onClick={() => void handleCopy()} title="Copy URL" aria-label="Copy URL">
                   {copied ? <Check /> : <Copy />}
                 </OrbitButton>
@@ -274,7 +291,7 @@ function RadioConnectDialogContent({
             <div className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
               <span className="w-2 h-2 rounded-full bg-[var(--color-success)] flex-shrink-0" />
               <span className="text-xs font-mono text-[var(--color-text-muted)] flex-1 truncate">
-                {radioInfo.host}:{radioInfo.port}
+                {radioAddress(radioInfo)}
               </span>
               <button
                 onClick={handleCopy}

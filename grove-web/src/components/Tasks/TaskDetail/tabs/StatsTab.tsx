@@ -1,14 +1,13 @@
 import { motion } from "framer-motion";
-import { ArrowRight, Calendar, GitCommit, FileCode, Clock, Activity, Loader2, GitBranch, Info, Link2, X } from "lucide-react";
+import { ArrowRight, Calendar, Coins, GitCommit, FileCode, Clock, Loader2, GitBranch, Info, Link2, Sparkles, X } from "lucide-react";
 import type { Task } from "../../../../data/types";
 import { useProject, useTheme } from "../../../../context";
-import { compactPath } from "../../../../utils/pathUtils";
 import { getProjectStyle } from "../../../../utils/projectStyle";
 import { ProjectTypeBadge } from "../../../ui/ProjectTypeBadge";
 import { useOrbitInterface } from "../../../../orbit/ui/interfaceContext";
 import { OrbitInfoPanel } from "../../../../orbit/workspace/panels/OrbitInfoPanel";
+import { formatCost, formatDuration, formatTokens } from "../../../Stats/formatters";
 import { LinkedProjectPicker } from "./LinkedProjectPicker";
-import { calculateActiveTime } from "./taskStatsModel";
 import { openLinkedProject, useTaskLinkedProjects, useTaskStats } from "./useTaskStats";
 
 interface StatsTabProps {
@@ -59,41 +58,6 @@ function StatCard({ icon: Icon, label, value, subValue, delay = 0 }: StatCardPro
   );
 }
 
-// Get heatmap color based on edit intensity (matches TUI color scheme)
-function getHeatmapColor(count: number, maxCount: number): string {
-  if (count === 0) return "rgba(128, 128, 128, 0.2)"; // muted
-  const ratio = count / maxCount;
-  if (ratio <= 0.25) return "rgb(80, 160, 180)";   // cool teal
-  if (ratio <= 0.50) return "rgb(100, 200, 100)";  // medium green
-  if (ratio <= 0.80) return "rgb(255, 180, 50)";   // warm orange
-  return "rgb(255, 100, 100)";                      // hot red
-}
-
-// Get activity block color (matches TUI design)
-function getActivityBlockColor(count: number): string {
-  if (count === 0) return "var(--color-bg-tertiary)";    // muted/empty
-  if (count === 1) return "rgb(100, 180, 100)";          // light green
-  if (count <= 3) return "rgb(50, 205, 50)";             // lime green
-  if (count <= 6) return "rgb(0, 230, 118)";             // bright green
-  return "rgb(255, 200, 0)";                              // gold/yellow
-}
-
-// Format relative time
-function formatRelativeTime(isoString: string): string {
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${diffDays}d ago`;
-}
-
-
 export function StatsTab(props: StatsTabProps) {
   const orbit = useOrbitInterface();
   if (props.variant === "orbit" || orbit) return <OrbitInfoPanel projectId={props.projectId} task={props.task} />;
@@ -103,18 +67,14 @@ export function StatsTab(props: StatsTabProps) {
 function WorkbenchStatsTab({ projectId, task }: StatsTabProps) {
   const { theme } = useTheme();
   const { projects } = useProject();
-  const { stats, diffData, commitsData, isLoading, error } = useTaskStats(projectId, task.id);
+  const { diffData, commitsData, usage } = useTaskStats(projectId, task.id);
+  const kpi = usage?.kpi;
   const { linkedProjects, linkCandidates, linksLoading, linksSaving, linksError, link, unlink } = useTaskLinkedProjects(projectId, task.id);
 
   const additions = diffData?.total_additions ?? 0;
   const deletions = diffData?.total_deletions ?? 0;
   const filesChanged = diffData?.files.length ?? 0;
   const commits = commitsData?.commits ?? [];
-
-  const maxEditCount = stats?.file_edits.length
-    ? Math.max(...stats.file_edits.map((f) => f.edit_count))
-    : 1;
-
 
   return (
     <div className="h-full min-h-0 overflow-y-auto space-y-4 pr-1">
@@ -270,247 +230,21 @@ function WorkbenchStatsTab({ projectId, task }: StatsTabProps) {
           subValue={`${additions} additions, ${deletions} deletions`}
           delay={0.15}
         />
+        <StatCard
+          icon={Sparkles}
+          label="Tokens"
+          value={kpi ? formatTokens(kpi.tokens_total) : "—"}
+          subValue={kpi && kpi.turns > 0 ? `${kpi.turns} turns, ${formatDuration(kpi.agent_compute_secs)} agent time` : "No agent turns yet"}
+          delay={0.2}
+        />
+        <StatCard
+          icon={Coins}
+          label="Cost"
+          value={kpi && kpi.cost_total > 0 ? formatCost(kpi.cost_total) : "—"}
+          subValue={kpi && kpi.turns > 0 ? `${formatTokens(kpi.tokens_in)} in, ${formatTokens(kpi.tokens_out)} out` : undefined}
+          delay={0.25}
+        />
       </div>
-
-      {/* Duration */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-        className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
-      >
-        <h3 className="text-sm font-medium text-[var(--color-text)] mb-3 select-none">Task Duration</h3>
-        <div className="flex items-center gap-4">
-          <div className="flex-1">
-            <div className="text-2xl font-semibold text-[var(--color-text)]">
-              {stats?.hourly_activity ? calculateActiveTime(stats.hourly_activity) : isLoading ? "—" : "—"}
-            </div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-1 select-none">
-              Active time
-            </div>
-          </div>
-          <div className="h-12 w-px bg-[var(--color-border)]" />
-          <div className="flex-1">
-            <div className="text-2xl font-semibold text-[var(--color-text)]">
-              {additions + deletions}
-            </div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-1 select-none">
-              Total lines changed
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* File Edits Heatmap (from API) */}
-      {isLoading ? (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
-        >
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-6 h-6 text-[var(--color-text-muted)] animate-spin" />
-          </div>
-        </motion.div>
-      ) : error ? (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
-        >
-          <p className="text-sm text-[var(--color-text-muted)] text-center py-4">{error}</p>
-        </motion.div>
-      ) : stats && stats.file_edits.length > 0 ? (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
-        >
-          <div className="flex items-center gap-2 mb-3 select-none">
-            <Activity className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <h3 className="text-sm font-medium text-[var(--color-text)]">File Edits</h3>
-            <span className="text-xs text-[var(--color-text-muted)]">
-              ({stats.total_edits} total, {stats.files_touched} files)
-            </span>
-          </div>
-
-          {/* Last activity */}
-          {stats.last_activity && (
-            <div className="text-xs text-[var(--color-text-muted)] mb-3">
-              Last activity: {formatRelativeTime(stats.last_activity)}
-            </div>
-          )}
-
-          {/* File edits heatmap */}
-          <div className="space-y-1.5">
-            {stats.file_edits.map((file, index) => (
-              <motion.div
-                key={file.path}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.3 + index * 0.03 }}
-                className="flex items-center gap-2"
-              >
-                {/* Filename on left */}
-                <span
-                  className="text-xs text-[var(--color-text-muted)] font-mono truncate w-[180px] flex-shrink-0"
-                  title={file.path}
-                >
-                  {compactPath(file.path, 24)}
-                </span>
-                {/* Edit count bar in middle */}
-                <div className="flex-1 h-5 bg-[var(--color-bg-tertiary)] rounded-sm overflow-hidden min-w-0">
-                  <div
-                    className="h-full rounded-sm transition-all"
-                    style={{
-                      width: `${(file.edit_count / maxEditCount) * 100}%`,
-                      minWidth: "4px",
-                      backgroundColor: getHeatmapColor(file.edit_count, maxEditCount),
-                    }}
-                  />
-                </div>
-                {/* Count on right */}
-                <span className="text-xs text-[var(--color-text-muted)] tabular-nums w-6 text-right flex-shrink-0">
-                  {file.edit_count}
-                </span>
-              </motion.div>
-            ))}
-          </div>
-
-          {/* Color legend */}
-          <div className="flex items-center gap-3 mt-4 pt-3 border-t border-[var(--color-border)]">
-            <span className="text-xs text-[var(--color-text-muted)]">Intensity:</span>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "rgb(80, 160, 180)" }} />
-              <span className="text-[10px] text-[var(--color-text-muted)]">Low</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "rgb(100, 200, 100)" }} />
-              <span className="text-[10px] text-[var(--color-text-muted)]">Med</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "rgb(255, 180, 50)" }} />
-              <span className="text-[10px] text-[var(--color-text-muted)]">High</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "rgb(255, 100, 100)" }} />
-              <span className="text-[10px] text-[var(--color-text-muted)]">Hot</span>
-            </div>
-          </div>
-        </motion.div>
-      ) : stats ? (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
-        >
-          <div className="flex items-center gap-2 mb-3 select-none">
-            <Activity className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <h3 className="text-sm font-medium text-[var(--color-text)]">File Edits</h3>
-          </div>
-          <p className="text-sm text-[var(--color-text-muted)] text-center py-4">
-            No file edit activity recorded
-          </p>
-        </motion.div>
-      ) : null}
-
-      {/* Activity Timeline - Minute-level heatmap (from API) */}
-      {stats && stats.hourly_activity.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35 }}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
-        >
-          <div className="flex items-center gap-2 mb-3 select-none">
-            <Clock className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <h3 className="text-sm font-medium text-[var(--color-text)]">Activity Timeline</h3>
-            <span className="text-xs text-[var(--color-text-muted)]">
-              (each block = 1 minute)
-            </span>
-          </div>
-          <div className="space-y-1.5">
-            {stats.hourly_activity.slice(0, 8).map((hourEntry) => {
-              const hourDate = new Date(hourEntry.hour);
-              const now = new Date();
-              const isToday = hourDate.toDateString() === now.toDateString();
-              const isYesterday = hourDate.toDateString() === new Date(now.getTime() - 86400000).toDateString();
-
-              // Format time explicitly without locale issues
-              const hourStr = hourDate.getHours().toString().padStart(2, "0");
-              const dateLabel = isToday
-                ? `${hourStr}:00`
-                : isYesterday
-                  ? `Yest ${hourStr}:00`
-                  : `${(hourDate.getMonth() + 1)}/${hourDate.getDate()} ${hourStr}:00`;
-
-              // Ensure buckets is an array of 60 values
-              const buckets = Array.isArray(hourEntry.buckets) && hourEntry.buckets.length === 60
-                ? hourEntry.buckets
-                : Array(60).fill(0);
-
-              return (
-                <div key={hourEntry.hour} className="flex items-center gap-2">
-                  <span
-                    className="text-xs text-[var(--color-text-muted)] w-20 font-mono flex-shrink-0"
-                    title={hourDate.toISOString()}
-                  >
-                    {dateLabel}
-                  </span>
-                  {/* 60 minute blocks */}
-                  <div className="flex gap-[2px] flex-1">
-                    {buckets.map((count, minute) => (
-                      <div
-                        key={minute}
-                        className="flex-1"
-                        style={{
-                          minWidth: "4px",
-                          height: "20px",
-                          borderRadius: "2px",
-                          backgroundColor: getActivityBlockColor(count),
-                        }}
-                        title={`${hourStr}:${minute.toString().padStart(2, "0")} - ${count} edit${count !== 1 ? "s" : ""}`}
-                      />
-                    ))}
-                  </div>
-                  <span className="text-xs text-[var(--color-text-muted)] tabular-nums w-6 text-right flex-shrink-0">
-                    {hourEntry.total}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Color legend */}
-          <div className="flex items-center gap-3 mt-3 pt-3 border-t border-[var(--color-border)]">
-            <span className="text-xs text-[var(--color-text-muted)]">Activity:</span>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-4 rounded-sm bg-[var(--color-bg-tertiary)]" />
-              <span className="text-[10px] text-[var(--color-text-muted)]">0</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-4 rounded-sm" style={{ backgroundColor: "rgb(100, 180, 100)" }} />
-              <span className="text-[10px] text-[var(--color-text-muted)]">1</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-4 rounded-sm" style={{ backgroundColor: "rgb(50, 205, 50)" }} />
-              <span className="text-[10px] text-[var(--color-text-muted)]">2-3</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-4 rounded-sm" style={{ backgroundColor: "rgb(0, 230, 118)" }} />
-              <span className="text-[10px] text-[var(--color-text-muted)]">4-6</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-4 rounded-sm" style={{ backgroundColor: "rgb(255, 200, 0)" }} />
-              <span className="text-[10px] text-[var(--color-text-muted)]">7+</span>
-            </div>
-          </div>
-        </motion.div>
-      )}
 
       {/* Commit Timeline */}
       {commits.length > 0 && (

@@ -53,22 +53,6 @@ export interface Project {
   archived: boolean;
 }
 
-export type ActivityType = 'create' | 'merge' | 'sync' | 'archive' | 'recover';
-
-export interface ActivityItem {
-  id: string;
-  type: ActivityType;
-  taskName: string;
-  projectName: string;
-  timestamp: Date;
-}
-
-export interface FileEdit {
-  path: string;
-  editCount: number;
-  lastEdited: Date;
-}
-
 // Branch information
 export interface Branch {
   name: string;
@@ -97,13 +81,6 @@ export interface CommitFileChange {
   status: 'added' | 'modified' | 'deleted' | 'renamed';
 }
 
-export interface Stats {
-  totalTasks: number;
-  archivedTasks: number;
-  recentActivity: ActivityItem[];
-  fileEdits: FileEdit[];
-  weeklyActivity: number[];
-}
 
 
 // Task filter type

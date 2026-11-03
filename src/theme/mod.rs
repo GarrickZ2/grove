@@ -142,29 +142,57 @@ pub struct ThemeColors {
     pub border: Color,
     /// 状态 - Live
     pub status_live: Color,
-    /// 状态 - Idle
-    pub status_idle: Color,
-    /// 状态 - Merged
-    pub status_merged: Color,
-    /// 状态 - Conflict
-    pub status_conflict: Color,
-    /// 状态 - Error
-    pub status_error: Color,
-    /// Tab 选中前景色
-    pub tab_active_fg: Color,
-    /// Tab 选中背景色
-    pub tab_active_bg: Color,
     /// 信息色 (蓝色) - 用于 notice 通知
     pub info: Color,
     /// 警告色 (黄色) - 用于 warn 通知
     pub warning: Color,
     /// 错误色 (红色) - 用于 critical 通知
     pub error: Color,
-    /// 卡片背景色调色板（8 色，用于 examples 等扩展场景）
-    #[allow(dead_code)]
-    pub card_backgrounds: [Color; 8],
-    /// 项目卡片渐变方块调色板（10 色，相邻两色做渐变）
+    /// Card color blocks (adjacent pairs make a gradient).
     pub accent_palette: [Color; 10],
+}
+
+/// Save `theme` the way the GUI reads it: `mode` plus the light / dark slot
+/// (`Auto` only sets the mode), keeping the other slot and custom themes.
+pub fn save_theme(theme: Theme) {
+    use crate::storage::config::{load_config, save_config};
+    let mut config = load_config();
+    config.theme.name = theme.label().to_string();
+    match (theme, theme.web_id()) {
+        (Theme::Auto, _) | (_, None) => config.theme.mode = "auto".to_string(),
+        (t, Some(id)) if t.is_light() => {
+            config.theme.mode = "light".to_string();
+            config.theme.light_theme = id.to_string();
+        }
+        (_, Some(id)) => {
+            config.theme.mode = "dark".to_string();
+            config.theme.dark_theme = id.to_string();
+        }
+    }
+    let _ = save_config(&config);
+}
+
+/// 解析配置里的主题：优先按 mode + 对应 slot(Web 端写的就是
+/// mode/light_theme/dark_theme,完全不写 name);auto 时用终端 dark/light
+/// 偏好选 slot,与 Web 行为对齐;都缺失时退回 legacy name 字段。
+pub fn configured_theme(config: &crate::storage::config::ThemeConfig, system_dark: bool) -> Theme {
+    match config.mode.as_str() {
+        "light" if !config.light_theme.is_empty() => Theme::from_name(&config.light_theme),
+        "dark" if !config.dark_theme.is_empty() => Theme::from_name(&config.dark_theme),
+        "auto" => {
+            let slot = if system_dark {
+                &config.dark_theme
+            } else {
+                &config.light_theme
+            };
+            if slot.is_empty() {
+                Theme::Auto
+            } else {
+                Theme::from_name(slot)
+            }
+        }
+        _ => Theme::from_name(&config.name),
+    }
 }
 
 /// 获取指定主题的颜色方案

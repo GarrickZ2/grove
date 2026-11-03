@@ -13,7 +13,7 @@ vi.mock("../Dialogs", () => ({ ConfirmDialog: ({ onConfirm }: { onConfirm: () =>
 
 const now = new Date().toISOString();
 const task = { id: "old-task", name: "Old task", updated_at: now };
-const session = (id: string, title: string) => ({ id, title, agent: "claude", created_at: now, history_path: "", launch_mode: "acp" });
+const session = (id: string, title: string) => ({ id, title, agent: "claude", created_at: now, history_path: "" });
 
 describe("Archived dialog", () => {
   let container: HTMLDivElement;

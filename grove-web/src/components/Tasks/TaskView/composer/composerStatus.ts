@@ -159,12 +159,26 @@ export function resolveOrbAction(state: {
 }
 
 /** Usage ring: context fill when known, else quota used. Amber near the limit. */
-export function usageRingModel(contextPercent: number | null, quotaRemaining: number | null): { percent: number; warn: boolean; source: "context" | "quota" } | null {
-  if (contextPercent !== null) return { percent: contextPercent, warn: contextPercent >= 70 || (quotaRemaining !== null && quotaRemaining < 20), source: "context" };
-  if (quotaRemaining !== null) {
-    const used = Math.max(0, Math.min(100, 100 - quotaRemaining));
-    return { percent: used, warn: quotaRemaining < 20, source: "quota" };
-  }
+export type UsageTone = "ok" | "warn" | "critical";
+
+/** Same thresholds as `contextHealthColor` / `quotaHealthColor`, so the ring matches its popover. */
+function contextTone(percentUsed: number): UsageTone {
+  return percentUsed >= 70 ? "critical" : percentUsed >= 50 ? "warn" : "ok";
+}
+
+function quotaTone(percentRemaining: number): UsageTone {
+  return percentRemaining < 20 ? "critical" : percentRemaining < 50 ? "warn" : "ok";
+}
+
+const TONE_RANK: Record<UsageTone, number> = { ok: 0, warn: 1, critical: 2 };
+
+/** The ring shows context use when known, else quota use; its tone is the worse of the two. */
+export function usageRingModel(contextPercent: number | null, quotaRemaining: number | null): { percent: number; tone: UsageTone; source: "context" | "quota" } | null {
+  const tones = [contextPercent !== null ? contextTone(contextPercent) : null, quotaRemaining !== null ? quotaTone(quotaRemaining) : null]
+    .filter((tone): tone is UsageTone => tone !== null);
+  const tone = tones.reduce<UsageTone>((worst, next) => (TONE_RANK[next] > TONE_RANK[worst] ? next : worst), "ok");
+  if (contextPercent !== null) return { percent: contextPercent, tone, source: "context" };
+  if (quotaRemaining !== null) return { percent: Math.max(0, Math.min(100, 100 - quotaRemaining)), tone, source: "quota" };
   return null;
 }
 

@@ -22,9 +22,6 @@ pub struct ChatSession {
     /// Agent 名称 ("claude", "codex", etc.)
     pub agent: String,
     /// ACP session ID（用于 load_session 恢复对话历史）。
-    /// Terminal 模式下复用此字段存 Grove 生成的 UUID（传给
-    /// `claude --session-id <uuid>` / `--resume <uuid>`），语义靠
-    /// `launch_mode` 区分。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acp_session_id: Option<String>,
     /// 创建时间
@@ -32,14 +29,6 @@ pub struct ChatSession {
     /// 职能描述（Agent Graph 引入）。一旦设定，AI 不可改；仅用户可改。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duty: Option<String>,
-    /// 启动模式："acp" (默认,走 JSON-RPC) 或 "terminal" (PTY 跑 agent CLI)。
-    /// 创建时由全局 config.agent_launch_modes 快照决定,之后不可改。
-    #[serde(default = "default_launch_mode")]
-    pub launch_mode: String,
-}
-
-fn default_launch_mode() -> String {
-    "acp".to_string()
 }
 
 /// 任务状态
@@ -732,7 +721,6 @@ fn row_to_chat_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatSession>
         acp_session_id: row.get(3)?,
         created_at,
         duty: row.get(5)?,
-        launch_mode: row.get(6)?,
     })
 }
 
@@ -740,7 +728,7 @@ fn row_to_chat_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatSession>
 pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSession>> {
     let conn = crate::storage::database::connection();
     let mut stmt = conn.prepare(
-        "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty, launch_mode
+        "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty
          FROM session
          WHERE project = ?1 AND task_id = ?2 AND archived_at IS NULL
          ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC",
@@ -793,7 +781,7 @@ pub fn list_project_sessions(project: &str) -> Result<Vec<(String, String, Strin
 pub fn load_archived_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSession>> {
     let conn = crate::storage::database::connection();
     let mut stmt = conn.prepare(
-        "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty, launch_mode
+        "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty
          FROM session
          WHERE project = ?1 AND task_id = ?2 AND archived_at IS NOT NULL
          ORDER BY archived_at DESC",
@@ -908,8 +896,8 @@ pub(crate) fn add_chat_session_on(
     }
     conn.execute(
         "INSERT INTO session
-         (session_id, project, task_id, title, agent, acp_session_id, duty, created_at, updated_at, launch_mode)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)
+         (session_id, project, task_id, title, agent, acp_session_id, duty, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
          ON CONFLICT(session_id) DO UPDATE SET
             title = excluded.title,
             agent = excluded.agent,
@@ -926,7 +914,6 @@ pub(crate) fn add_chat_session_on(
             chat.acp_session_id,
             chat.duty,
             chat.created_at.to_rfc3339(),
-            chat.launch_mode,
         ],
     )?;
     Ok(())
@@ -1082,7 +1069,7 @@ pub fn get_chat_session(
     let conn = crate::storage::database::connection();
     let chat = conn
         .query_row(
-            "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty, launch_mode
+            "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty
              FROM session
              WHERE project = ?1 AND task_id = ?2 AND session_id = ?3 AND archived_at IS NULL",
             params![project, task_id, chat_id],
@@ -1102,7 +1089,7 @@ pub fn get_chat_session_including_archived(
     let conn = crate::storage::database::connection();
     let chat = conn
         .query_row(
-            "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty, launch_mode
+            "SELECT session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty
              FROM session
              WHERE project = ?1 AND task_id = ?2 AND session_id = ?3",
             params![project, task_id, chat_id],
@@ -1132,7 +1119,7 @@ fn find_chat_session_filtered(
     let conn = crate::storage::database::connection();
     let row = conn
         .query_row(
-            "SELECT project, task_id, session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty, launch_mode
+            "SELECT project, task_id, session_id, title, COALESCE((SELECT bs.agent FROM buddy_segments bs WHERE bs.session_id = session.session_id AND bs.ended_at IS NOT NULL), agent), acp_session_id, created_at, duty
              FROM session
              WHERE session_id = ?1 AND (?2 OR archived_at IS NULL)",
             params![chat_id, include_archived],
@@ -1153,7 +1140,6 @@ fn find_chat_session_filtered(
                         acp_session_id: row.get(5)?,
                         created_at,
                         duty: row.get(7)?,
-                        launch_mode: row.get(8)?,
                     },
                 ))
             },
@@ -1243,13 +1229,6 @@ pub fn generate_branch_name(task_name: &str) -> String {
     format!("{}-{}", base, hash)
 }
 
-/// 生成分支名预览（用于 UI 显示）
-/// 显示 `<hash>` 占位符而非实际哈希值
-pub fn preview_branch_name(task_name: &str) -> String {
-    let base = generate_branch_name_base(task_name, 3);
-    format!("{}-<hash>", base)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1317,19 +1296,6 @@ mod tests {
     }
 
     #[test]
-    fn test_preview_branch_name() {
-        assert_eq!(
-            preview_branch_name("feature/add oauth login support for github"),
-            "feature/add-oauth-login-<hash>"
-        );
-        assert_eq!(preview_branch_name("fix/bug"), "fix/bug-<hash>");
-        assert_eq!(
-            preview_branch_name("Add new feature for testing"),
-            "grove/add-new-feature-<hash>"
-        );
-    }
-
-    #[test]
     fn test_generate_time_hash() {
         let hash1 = generate_time_hash();
         assert_eq!(hash1.len(), 6);
@@ -1371,7 +1337,6 @@ mod tests {
                 acp_session_id: None,
                 created_at: now,
                 duty: None,
-                launch_mode: "acp".to_string(),
             },
         )
         .unwrap();
@@ -1406,7 +1371,6 @@ mod tests {
                 acp_session_id: None,
                 created_at: Utc::now(),
                 duty: None,
-                launch_mode: "acp".to_string(),
             },
         )
         .unwrap();
@@ -1441,7 +1405,6 @@ mod tests {
             acp_session_id: None,
             created_at: Utc::now(),
             duty: None,
-            launch_mode: "acp".to_string(),
         };
         add_chat_session(&project, task_id, make_chat("active")).unwrap();
         add_chat_session(&project, task_id, make_chat("archive-me")).unwrap();
@@ -1499,7 +1462,6 @@ mod tests {
             acp_session_id: None,
             created_at,
             duty: None,
-            launch_mode: "acp".to_string(),
         };
         add_chat_session(
             &project,
@@ -1554,7 +1516,6 @@ created_at = "2025-01-01T00:00:00Z"
                 .unwrap()
                 .to_utc(),
             duty: None,
-            launch_mode: "acp".to_string(),
         };
         let toml_str = toml::to_string(&session).unwrap();
         assert!(
@@ -1575,7 +1536,6 @@ created_at = "2025-01-01T00:00:00Z"
                 .unwrap()
                 .to_utc(),
             duty: Some("code review".to_string()),
-            launch_mode: "acp".to_string(),
         };
         let toml_str = toml::to_string(&session).unwrap();
         let restored: ChatSession = toml::from_str(&toml_str).unwrap();

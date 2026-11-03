@@ -247,7 +247,6 @@ mod tests {
                         acp_session_id: None,
                         created_at: Utc::now(),
                         duty: None,
-                        launch_mode: "acp".into(),
                     },
                 )
                 .unwrap();

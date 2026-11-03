@@ -3,14 +3,13 @@
 use chrono::{DateTime, Utc};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
 use std::fs;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::path::PathBuf;
 use std::process::Command;
 
 use crate::error::Result;
-use crate::storage::{database, tasks, workspace::project_hash};
+use crate::storage::{database, tasks};
 
 /// 通知级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -34,13 +33,6 @@ pub struct HookEntry {
     pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_id: Option<String>,
-}
-
-/// Hooks 文件结构
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct HooksFile {
-    #[serde(default)]
-    pub tasks: HashMap<String, HookEntry>,
 }
 
 #[derive(Debug, Clone)]
@@ -125,52 +117,6 @@ pub struct HookFact {
     pub permission: Option<crate::radio::PermissionInfo>,
 }
 
-/// 加载项目的 hook 通知
-pub fn load_hooks(project_key: &str) -> HooksFile {
-    let conn = database::connection();
-    let mut stmt = match conn.prepare(
-        "SELECT task_id, level, timestamp, message, chat_id
-         FROM hook_notifications
-         WHERE project_key = ?1",
-    ) {
-        Ok(stmt) => stmt,
-        Err(_) => return HooksFile::default(),
-    };
-
-    let rows = match stmt.query_map(params![project_key], |row| {
-        let task_id: String = row.get(0)?;
-        let level: String = row.get(1)?;
-        let timestamp: String = row.get(2)?;
-        let message: Option<String> = row.get(3)?;
-        let chat_id: Option<String> = row.get(4)?;
-        Ok((task_id, level, timestamp, message, chat_id))
-    }) {
-        Ok(rows) => rows,
-        Err(_) => return HooksFile::default(),
-    };
-
-    let mut hooks = HooksFile::default();
-    for row in rows.flatten() {
-        let (task_id, level, timestamp, message, chat_id) = row;
-        let Some(level) = level_from_str(&level) else {
-            continue;
-        };
-        let timestamp = DateTime::parse_from_rfc3339(&timestamp)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now());
-        hooks.tasks.insert(
-            task_id,
-            HookEntry {
-                level,
-                timestamp,
-                message,
-                chat_id,
-            },
-        );
-    }
-    hooks
-}
-
 /// 加载所有项目的 hook 通知，按时间倒序返回。
 pub fn load_all_hooks() -> Vec<HookNotificationRecord> {
     let conn = database::connection();
@@ -216,32 +162,6 @@ pub fn load_all_hooks() -> Vec<HookNotificationRecord> {
             },
         )
         .collect()
-}
-
-/// 保存项目的 hook 通知
-pub fn save_hooks(project_key: &str, hooks: &HooksFile) -> Result<()> {
-    let conn = database::connection();
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "DELETE FROM hook_notifications WHERE project_key = ?1",
-        params![project_key],
-    )?;
-    for (task_id, entry) in &hooks.tasks {
-        tx.execute(
-            "INSERT INTO hook_notifications (project_key, task_id, level, timestamp, message, chat_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                project_key,
-                task_id,
-                level_to_str(entry.level),
-                entry.timestamp.to_rfc3339(),
-                entry.message,
-                entry.chat_id,
-            ],
-        )?;
-    }
-    tx.commit()?;
-    Ok(())
 }
 
 /// 删除指定 task 的 hook 通知
@@ -338,47 +258,6 @@ pub fn update_hook(project_key: &str, task_id: &str, fact: HookFact) -> Result<(
         task_name,
     });
     Ok(())
-}
-
-/// 加载 hooks 并自动清理不存在的 task
-/// project_path: 项目的完整路径
-pub fn load_hooks_with_cleanup(project_path: &str) -> HooksFile {
-    let project_key = project_hash(project_path);
-    let mut hooks = load_hooks(&project_key);
-
-    if hooks.tasks.is_empty() {
-        return hooks;
-    }
-
-    // 获取项目的 task 列表
-    let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
-    let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
-
-    // 收集所有存在的 task id
-    let existing_ids: HashSet<String> = active_tasks
-        .iter()
-        .map(|t| t.id.clone())
-        .chain(archived_tasks.iter().map(|t| t.id.clone()))
-        .collect();
-
-    // 找出需要清理的 task id
-    let to_remove: Vec<String> = hooks
-        .tasks
-        .keys()
-        .filter(|id| !existing_ids.contains(*id))
-        .cloned()
-        .collect();
-
-    // 如果有需要清理的，执行清理并保存
-    if !to_remove.is_empty() {
-        for id in &to_remove {
-            hooks.tasks.remove(id);
-        }
-        // 静默保存，忽略错误
-        let _ = save_hooks(&project_key, &hooks);
-    }
-
-    hooks
 }
 
 // === Notification utilities (shared by CLI hooks and ACP) ===
@@ -927,6 +806,135 @@ pub fn ensure_grove_app() -> PathBuf {
     }
 
     notify_bin
+}
+
+// Whole-project read/write of hook notifications, for tests.
+#[cfg(test)]
+use crate::storage::workspace::project_hash;
+#[cfg(test)]
+use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+/// Hooks 文件结构
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HooksFile {
+    #[serde(default)]
+    pub tasks: HashMap<String, HookEntry>,
+}
+
+#[cfg(test)]
+/// 加载项目的 hook 通知
+pub fn load_hooks(project_key: &str) -> HooksFile {
+    let conn = database::connection();
+    let mut stmt = match conn.prepare(
+        "SELECT task_id, level, timestamp, message, chat_id
+         FROM hook_notifications
+         WHERE project_key = ?1",
+    ) {
+        Ok(stmt) => stmt,
+        Err(_) => return HooksFile::default(),
+    };
+
+    let rows = match stmt.query_map(params![project_key], |row| {
+        let task_id: String = row.get(0)?;
+        let level: String = row.get(1)?;
+        let timestamp: String = row.get(2)?;
+        let message: Option<String> = row.get(3)?;
+        let chat_id: Option<String> = row.get(4)?;
+        Ok((task_id, level, timestamp, message, chat_id))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return HooksFile::default(),
+    };
+
+    let mut hooks = HooksFile::default();
+    for row in rows.flatten() {
+        let (task_id, level, timestamp, message, chat_id) = row;
+        let Some(level) = level_from_str(&level) else {
+            continue;
+        };
+        let timestamp = DateTime::parse_from_rfc3339(&timestamp)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        hooks.tasks.insert(
+            task_id,
+            HookEntry {
+                level,
+                timestamp,
+                message,
+                chat_id,
+            },
+        );
+    }
+    hooks
+}
+
+#[cfg(test)]
+/// 保存项目的 hook 通知
+pub fn save_hooks(project_key: &str, hooks: &HooksFile) -> Result<()> {
+    let conn = database::connection();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM hook_notifications WHERE project_key = ?1",
+        params![project_key],
+    )?;
+    for (task_id, entry) in &hooks.tasks {
+        tx.execute(
+            "INSERT INTO hook_notifications (project_key, task_id, level, timestamp, message, chat_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                project_key,
+                task_id,
+                level_to_str(entry.level),
+                entry.timestamp.to_rfc3339(),
+                entry.message,
+                entry.chat_id,
+            ],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+#[cfg(test)]
+/// 加载 hooks 并自动清理不存在的 task
+/// project_path: 项目的完整路径
+pub fn load_hooks_with_cleanup(project_path: &str) -> HooksFile {
+    let project_key = project_hash(project_path);
+    let mut hooks = load_hooks(&project_key);
+
+    if hooks.tasks.is_empty() {
+        return hooks;
+    }
+
+    // 获取项目的 task 列表
+    let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
+    let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
+
+    // 收集所有存在的 task id
+    let existing_ids: HashSet<String> = active_tasks
+        .iter()
+        .map(|t| t.id.clone())
+        .chain(archived_tasks.iter().map(|t| t.id.clone()))
+        .collect();
+
+    // 找出需要清理的 task id
+    let to_remove: Vec<String> = hooks
+        .tasks
+        .keys()
+        .filter(|id| !existing_ids.contains(*id))
+        .cloned()
+        .collect();
+
+    // 如果有需要清理的，执行清理并保存
+    if !to_remove.is_empty() {
+        for id in &to_remove {
+            hooks.tasks.remove(id);
+        }
+        // 静默保存，忽略错误
+        let _ = save_hooks(&project_key, &hooks);
+    }
+
+    hooks
 }
 
 #[cfg(test)]

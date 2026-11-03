@@ -7,79 +7,17 @@
  * with HTTP-backed actions instead.
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TrayPopover, type TrayPlatform } from "./TrayPopover";
 import { RadioConnectDialog } from "../Blitz/RadioConnectDialog";
-import { apiClient, AUTH_EXPIRED_EVENT, clearTabAuthorization, setDeviceSession, setSecretKey } from "../../api/client";
-import { AuthRequestError, getAuthSession } from "../../api/auth";
-import type { RemoteAuthorization } from "../../utils/tauriShell";
+import { apiClient } from "../../api/client";
+import { useShellAuth } from "../../hooks/useShellAuth";
 
 export function DesktopTrayPopover() {
   const [syncOpen, setSyncOpen] = useState(false);
-  const [authReady, setAuthReady] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    let generation = 0;
-    let unlisten: (() => void) | undefined;
-
-    const prepareAuth = async () => {
-      const current = ++generation;
-      try {
-        const info = await apiClient.get<{ required?: boolean }>("/api/v1/auth/info");
-        if (!info.required) {
-          if (!cancelled && current === generation) setAuthReady(true);
-          return;
-        }
-        const authorization = await invoke<RemoteAuthorization | null>("get_remote_auth");
-        if (cancelled || current !== generation) return;
-        clearTabAuthorization();
-        setAuthReady(false);
-        if (!authorization) {
-          return;
-        }
-        if (authorization.deviceId) {
-          setDeviceSession(authorization.deviceId, authorization.signingKey);
-          // A stale shell credential cannot keep a revoked tray mounted.
-          await getAuthSession();
-        } else {
-          setSecretKey(authorization.signingKey);
-        }
-        if (!cancelled && current === generation) setAuthReady(true);
-      } catch (error) {
-        if (cancelled || current !== generation) return;
-        const revoked = error instanceof AuthRequestError && error.status === 401 && error.code === 'AUTH_REVOKED';
-        if (revoked) clearTabAuthorization();
-        setAuthReady(false);
-        if (!revoked) {
-          console.error("[tray] auth bootstrap failed", error);
-        }
-      }
-    };
-
-    const expired = () => {
-      setAuthReady(false);
-      clearTabAuthorization();
-    };
-    window.addEventListener(AUTH_EXPIRED_EVENT, expired);
-    const online = () => { void prepareAuth(); };
-    window.addEventListener('online', online);
-    void listen("grove-remote-auth-changed", () => { void prepareAuth(); }).then(stop => {
-      if (cancelled) stop();
-      else { unlisten = stop; void prepareAuth(); }
-    }).catch(() => { if (!cancelled) void prepareAuth(); });
-    return () => {
-      cancelled = true;
-      generation++;
-      unlisten?.();
-      window.removeEventListener(AUTH_EXPIRED_EVENT, expired);
-      window.removeEventListener('online', online);
-    };
-  }, []);
-
+  const { authReady, remoteServer } = useShellAuth();
   if (!authReady) return null;
 
   const platform: TrayPlatform = {
@@ -112,7 +50,7 @@ export function DesktopTrayPopover() {
       invoke("tray_open_settings").catch((e) =>
         console.error("[tray] open_settings failed", e),
       ),
-    syncToPhone: () => setSyncOpen(true),
+    syncToPhone: remoteServer ? undefined : () => setSyncOpen(true),
     sendPrompt: async (item, text) => {
       const res = await apiClient.post<unknown, { status?: string; error?: string }>(
         "/api/v1/tray/send-prompt",

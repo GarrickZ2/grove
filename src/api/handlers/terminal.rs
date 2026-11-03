@@ -212,7 +212,7 @@ async fn handle_shell_terminal(
     cmd.cwd(&cwd);
     apply_terminal_env_defaults(&mut cmd);
 
-    handle_pty_terminal(socket, cmd, cols, rows, None).await;
+    handle_pty_terminal(socket, cmd, cols, rows).await;
 }
 
 /// Parameters for multiplexer terminal connection
@@ -244,7 +244,7 @@ async fn handle_mux_terminal(socket: WebSocket, params: MuxTerminalParams) {
             cmd.arg("-t");
             cmd.arg(&session_name);
             apply_terminal_env_defaults(&mut cmd);
-            handle_pty_terminal(socket, cmd, cols, rows, None).await;
+            handle_pty_terminal(socket, cmd, cols, rows).await;
         }
         SessionType::Zellij => {
             let mut cmd = CommandBuilder::new("zellij");
@@ -273,7 +273,7 @@ async fn handle_mux_terminal(socket: WebSocket, params: MuxTerminalParams) {
                 cmd.arg(&session_name);
             }
 
-            handle_pty_terminal(socket, cmd, cols, rows, None).await;
+            handle_pty_terminal(socket, cmd, cols, rows).await;
         }
         SessionType::Acp => {
             eprintln!("Warning: ACP task reached terminal handler — this should not happen");
@@ -342,9 +342,8 @@ pub(crate) async fn handle_pty_terminal(
     cmd: CommandBuilder,
     cols: u16,
     rows: u16,
-    activity_session: Option<(String, String, String)>,
 ) {
-    let _ = bridge_pty_terminal(socket, cmd, cols, rows, activity_session, false).await;
+    let _ = bridge_pty_terminal(socket, cmd, cols, rows, false).await;
 }
 
 /// Authentication needs the actual child exit status; socket closure is failure.
@@ -354,7 +353,6 @@ pub(crate) async fn bridge_pty_terminal(
     cmd: CommandBuilder,
     cols: u16,
     rows: u16,
-    activity_session: Option<(String, String, String)>,
     capture_exit: bool,
 ) -> Result<(), String> {
     // Revocation can cancel this future before the usual cleanup path runs.
@@ -473,23 +471,6 @@ pub(crate) async fn bridge_pty_terminal(
                         pixel_height: 0,
                     });
                     continue;
-                }
-            }
-
-            // A terminal-mode Session has no structured ACP UserMessage or
-            // Complete event. Treat submitting a line as its activity edge;
-            // ordinary task terminals pass no session identity here.
-            if data.iter().any(|byte| matches!(byte, b'\r' | b'\n')) {
-                if let Some((project_id, task_id, chat_id)) = &activity_session {
-                    if crate::storage::tasks::touch_chat_session(project_id, task_id, chat_id)
-                        .unwrap_or(false)
-                    {
-                        use crate::radio::{publish as broadcast_radio_event, RadioEvent};
-                        broadcast_radio_event(RadioEvent::ChatListChanged {
-                            project_id: project_id.clone(),
-                            task_id: task_id.clone(),
-                        });
-                    }
                 }
             }
 

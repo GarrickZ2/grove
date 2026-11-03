@@ -367,6 +367,7 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
             </button>
             <div className="orbit-section-actions">
               <button type="button" className="orbit-section-add orbit-section-archive" title="Archived sessions" aria-label="Archived sessions" disabled={!projectId} onClick={() => setArchivedScope("sessions")}><Archive size={15} strokeWidth={1.7} /></button>
+              {!drawer && <button type="button" className="orbit-section-add orbit-section-archive" title="New session" aria-label="New session" disabled={!ready} onClick={() => { if (!sessionsExpanded) updateExpansion({ ...expansion, sessions: true }); newChat("_local"); }}><SquarePen size={15} strokeWidth={1.7} /></button>}
             </div>
           </div>
           {sessionsExpanded && renderSessions("_local")}

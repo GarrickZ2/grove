@@ -127,7 +127,25 @@
 .orv-version-pop .diff-version-footer { padding: 6px 9px 2px; border-top-color: var(--o-border); color: var(--o-muted); }
 
 /* Linked-project switcher, when the task links Projects */
-.orv-head .review-project-trigger { border-color: var(--o-border); border-radius: var(--o-radius-sm); background: var(--o-bg); box-shadow: var(--o-shadow-1); }
+.orv-head .review-project-switcher { flex: 0 1 180px; }
+/* Same field as the version selectors beside it: 28px, hairline border. */
+.orv-head .review-project-trigger {
+  height: 28px;
+  gap: 6px;
+  padding: 0 8px 0 5px;
+  border: 1px solid var(--o-border);
+  border-radius: var(--o-radius-sm);
+  background: var(--o-bg);
+  box-shadow: var(--o-shadow-1);
+  font-size: 12.5px;
+  font-weight: 400;
+  transition: border-color var(--o-dur-fast), box-shadow var(--o-dur-fast);
+}
+.orv-head .review-project-trigger:hover { border-color: var(--o-border-strong); background: var(--o-bg); }
+.orv-head .review-project-trigger[aria-expanded="true"] { border-color: var(--o-border-strong); background: var(--o-bg); box-shadow: var(--o-ring-selected); }
+.orv-head .review-project-glyph { width: 18px; height: 18px; border-radius: 4px; }
+.orv-head .review-project-glyph svg { width: 11px; height: 11px; }
+.orv-head .review-project-chevron { width: 13px; height: 13px; }
 .orv-project-pop { position: fixed; z-index: 1000; }
 .orv-project-pop .review-project-menu { position: static; width: 240px; max-width: calc(100vw - 16px); }
 .orv-project-pop .review-project-menu { border-color: var(--o-border); border-radius: var(--o-radius-md); background: var(--o-bg); box-shadow: var(--o-shadow-2); }

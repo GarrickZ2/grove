@@ -94,6 +94,13 @@ textarea,
 .grove-app-shell {
   height: var(--grove-app-height, 100dvh);
 }
+/* `clip`, not `hidden`: a hidden-overflow box can still be scrolled by focus
+   or scrollIntoView, which on a phone slides the header out of view with no
+   way to scroll it back. */
+.grove-app-shell,
+.orbit-phone-stage {
+  overflow: clip;
+}
 @media (display-mode: standalone) {
   html,
   body,

@@ -104,7 +104,6 @@ export function useDashboardState() {
   // yet, so we don't flash the "no AI agents installed" tip before the
   // marketplace fetch lands.
   const [installedAgentCount, setInstalledAgentCount] = useState<number | null>(null);
-  const [terminalAgentConfigured, setTerminalAgentConfigured] = useState(true);
   const [chatAgentConfigured, setChatAgentConfigured] = useState(true);
   // null = unknown until getConfig() resolves — avoids briefly rendering
   // mac-only buttons (Open IDE / Terminal) on Windows/Linux during initial load.
@@ -207,7 +206,6 @@ export function useDashboardState() {
         setInstalledAgentCount(count);
       }
       if (cfgRes.status === "fulfilled") {
-        setTerminalAgentConfigured(!!cfgRes.value.layout?.agent_command);
         setChatAgentConfigured(!!cfgRes.value.acp?.agent_command);
         setServerPlatform(cfgRes.value.platform);
       }
@@ -494,7 +492,6 @@ export function useDashboardState() {
     messageCount,
     showMessage,
     installedAgentCount,
-    terminalAgentConfigured,
     chatAgentConfigured,
     serverPlatform,
     isInitializingGit,

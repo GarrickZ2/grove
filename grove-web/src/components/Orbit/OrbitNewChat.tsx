@@ -28,6 +28,8 @@ import { shortAgo } from "../../orbit/ui/format";
 import { useNow } from "../../orbit/ui/useNow";
 import { OrbitComposer, OrbitSendOrb } from "../Tasks/TaskView/composer/OrbitComposer";
 import { OrbitSetupChip, type SetupField, type SetupToggle } from "../Tasks/TaskView/composer/OrbitSetupChip";
+import { MentionEditable, type MentionEditableHandle } from "../Tasks/TaskView/composer/MentionEditable";
+import { useMentionSources } from "../Tasks/TaskView/composer/useMentionSources";
 import "./orbit-new-chat.css";
 
 const LAST_AGENT_KEY = "grove-orbit-new-agent";
@@ -64,17 +66,34 @@ function writeLastAgent(agentId: string): void {
 }
 
 // The unsent message survives reloads and leaving the page; cleared once sent.
+// Kept as composer markup so @-mention chips survive too; older drafts were plain text.
 const DRAFT_KEY = "grove-orbit-new-draft";
+const DRAFT_HTML_KEY = "grove-orbit-new-draft-html";
 
-function readDraft(): string {
-  try { return localStorage.getItem(DRAFT_KEY) ?? ""; } catch { return ""; }
+function readDraftHtml(): string {
+  try {
+    const html = localStorage.getItem(DRAFT_HTML_KEY);
+    if (html) return html;
+    const text = localStorage.getItem(DRAFT_KEY);
+    if (!text) return "";
+    const holder = document.createElement("div");
+    holder.textContent = text;
+    return holder.innerHTML;
+  } catch { return ""; }
 }
 
-function writeDraft(value: string): void {
+function writeDraftHtml(value: string): void {
   try {
-    if (value) localStorage.setItem(DRAFT_KEY, value);
-    else localStorage.removeItem(DRAFT_KEY);
+    localStorage.removeItem(DRAFT_KEY);
+    if (value) localStorage.setItem(DRAFT_HTML_KEY, value);
+    else localStorage.removeItem(DRAFT_HTML_KEY);
   } catch { /* per-viewer convenience only */ }
+}
+
+function draftText(html: string): string {
+  const holder = document.createElement("div");
+  holder.innerHTML = html;
+  return holder.textContent ?? "";
 }
 
 function dropdownValues(option: SessionConfigOption | undefined): ChatDropdownOption[] {
@@ -142,7 +161,9 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   const [agents, setAgents] = useState<InstalledAgentConfig[]>([]);
   const [selection, setSelection] = useState<AgentConfigSelection>({ source: "default" });
   const [taskId, setTaskId] = useState(initialTaskId);
-  const [text, setText] = useState(readDraft);
+  const [initialDraftHtml] = useState(readDraftHtml);
+  // The prompt as it will be sent: @-mention chips already serialized.
+  const [text, setText] = useState(() => draftText(initialDraftHtml));
   // Starters only until the first message is sent from here.
   const [startersDone, setStartersDone] = useState(() => hasSeen(STARTERS_DONE_KEY));
   const [sending, setSending] = useState(false);
@@ -171,7 +192,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   const [inputFocused, setInputFocused] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<MentionEditableHandle>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -190,12 +211,9 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   }, []);
 
   useEffect(() => {
-    const input = inputRef.current;
     // On a phone, focusing would throw the keyboard up before the user asks for it.
-    if (!input || phone) return;
-    input.focus();
-    // A restored draft continues where it left off.
-    input.setSelectionRange(input.value.length, input.value.length);
+    // A restored draft continues where it left off (focus puts the caret at the end).
+    if (!phone) inputRef.current?.focus();
   }, [phone]);
 
   const agentId = selection.agent_id ?? "";
@@ -293,6 +311,15 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   const recent = recentState && recentState.projectId === recentProjectId ? recentState.sessions : [];
   // A Task picked for one project is meaningless after switching to another.
   const effectiveTaskId = taskId === "_local" || tasks.some((task) => task.id === taskId) ? taskId : "_local";
+  const spawnAgents = useMemo(() => pickerOptions.map((option) => ({ value: option.value, label: option.label })), [pickerOptions]);
+  const spawnPersonas = useMemo(() => customAgentPersonas.map((item) => ({ id: item.id, name: item.name, base_agent: item.base_agent, duty: item.duty })), [customAgentPersonas]);
+  const mentionSources = useMentionSources({
+    projectId: projectReady ? selectedProject?.id : undefined,
+    taskId: effectiveTaskId,
+    studio: selectedProject?.projectType === "studio",
+    spawnAgents,
+    spawnPersonas,
+  });
   const canSend = (!!text.trim() || attachments.length > 0) && !!agentId && projectReady && !sending;
 
   const send = async () => {
@@ -311,7 +338,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
       ]);
       setOrbitFirstMessage(chat.id, { text: text.trim(), config: promptConfigFromSelection(selection), chat, attachments });
       writeLastAgent(agentId);
-      writeDraft("");
+      writeDraftHtml("");
       markSeen(STARTERS_DONE_KEY);
       setStartersDone(true);
       leaveComposerGhost(composerRef.current);
@@ -373,32 +400,20 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
       event.target.value = "";
     }} />
   );
+  // Same @ picker as the Session composer; the chips serialize into the first prompt.
   const composerInput = (
-    <textarea
+    <MentionEditable
       ref={inputRef}
-      value={text}
-      rows={2}
-      placeholder="Ask anything…"
+      sources={mentionSources}
+      initialHtml={initialDraftHtml}
+      placeholder="Ask anything… use @ for mentions"
       onFocus={() => setInputFocused(true)}
       onBlur={() => setInputFocused(false)}
-      onChange={(event) => { setText(event.target.value); writeDraft(event.target.value); }}
-      onPaste={(event) => {
-        // Copied files and screenshots become attachments; text pastes normally.
-        const files = Array.from(event.clipboardData.files);
-        if (files.length === 0) return;
-        event.preventDefault();
-        addFiles(files);
-      }}
-      onKeyDown={(event) => {
-        // WebKit can clear isComposing before the candidate-confirming
-        // Enter; keyCode 229 still identifies that IME event.
-        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-        if (event.key === "Enter" && !event.shiftKey) {
-          event.preventDefault();
-          void send();
-        }
-      }}
-      className="orbit-new__input block min-h-[56px] max-h-32 w-full resize-none bg-transparent px-4 py-2 text-sm leading-6 text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-muted)]"
+      onChange={({ text: prompt, html }) => { setText(prompt); writeDraftHtml(html); }}
+      onSubmit={() => void send()}
+      // Copied files and screenshots become attachments; text pastes as plain text.
+      onPasteFiles={addFiles}
+      className="orbit-new__input block min-h-[56px] max-h-32 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-4 py-2 text-sm leading-6 text-[var(--color-text)] outline-none"
     />
   );
 
@@ -481,10 +496,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
                   className="orbit-new__starter"
                   style={{ animationDelay: `${120 + index * 60}ms` }}
                   onClick={() => {
-                    setText(label);
-                    writeDraft(label);
-                    const input = inputRef.current;
-                    if (input) requestAnimationFrame(() => { input.focus(); input.setSelectionRange(label.length, label.length); });
+                    inputRef.current?.setText(label);
                   }}
                 >
                   <Icon size={13} strokeWidth={1.8} aria-hidden="true" />{label}

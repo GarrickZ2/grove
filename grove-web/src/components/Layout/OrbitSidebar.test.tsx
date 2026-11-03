@@ -27,7 +27,7 @@ vi.mock("./OrbitNotificationPopover", () => ({ OrbitNotificationPopover: () => n
 vi.mock("../ui/DialogShell", () => ({ DialogShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock("../Dialogs", () => ({ ConfirmDialog: ({ onConfirm }: { onConfirm: () => void }) => <button onClick={onConfirm}>Confirm deletion</button> }));
 
-const chat = (id: string, title: string) => ({ id, title, agent: "agent", created_at: "", history_path: "", launch_mode: "acp" });
+const chat = (id: string, title: string) => ({ id, title, agent: "agent", created_at: "", history_path: "" });
 
 describe("Orbit sidebar", () => {
   const navigate = vi.fn();

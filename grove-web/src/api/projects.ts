@@ -66,7 +66,6 @@ export interface ProjectStatsResponse {
   idle_tasks: number;
   merged_tasks: number;
   archived_tasks: number;
-  weekly_activity: number[];
 }
 
 interface BranchInfo {

@@ -7,7 +7,7 @@ import { listMarketplace } from "../../api/marketplace";
 import { getExtensionStatusDetails } from "../../api/extension";
 
 const configContext = {
-  config: { layout: { agent_command: "" } },
+  config: { layout: {} },
   updateAvailability: vi.fn(),
   refresh: vi.fn(),
 };
@@ -62,7 +62,7 @@ vi.mock("../../api/marketplace", () => ({ listMarketplace: vi.fn() }));
 vi.mock("../../api/extension", () => ({ getExtensionStatusDetails: vi.fn() }));
 
 const serverConfig = {
-  layout: { default: "agent-shell", agent_command: "" },
+  layout: { default: "agent-shell" },
   web: { ide: "", terminal: "", terminal_mode: "multiplexer", workspace_layout: "ide", show_hide_window_shortcut: "" },
   terminal_multiplexer: "tmux",
   auto_link: { patterns: ["node_modules"] },

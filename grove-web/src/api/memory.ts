@@ -172,9 +172,10 @@ export function deleteMemoryLogs(projectId: string, ids: string[]) {
   );
 }
 
-export function listMemoryRelations(projectId: string, entityId?: string, limit = 40) {
+export function listMemoryRelations(projectId: string, entityId?: string, limit = 40, cursor?: string) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (entityId) params.set("entity_id", entityId);
+  if (cursor) params.set("cursor", cursor);
   return apiClient.get<Page<MemoryRelation>>(
     `/api/v1/projects/${projectId}/memory/relations?${params.toString()}`,
   );

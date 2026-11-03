@@ -24,6 +24,10 @@ pub struct Plugin {
     pub git_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subpath: Option<String>,
+    /// Security digest the user approved (see `plugins::approval`). None until
+    /// the plugin has been reviewed; never sent to clients as-is.
+    #[serde(skip)]
+    pub approved_digest: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -31,7 +35,7 @@ pub struct Plugin {
 pub const PLUGIN_ID_PREFIX: &str = "pl-";
 
 const SELECT_COLS: &str =
-    "id, name, version, source, local_path, git_url, subpath, created_at, updated_at";
+    "id, name, version, source, local_path, git_url, subpath, created_at, updated_at, approved_digest";
 
 fn parse_dt(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s)
@@ -50,6 +54,7 @@ fn row_to_plugin(row: &rusqlite::Row<'_>) -> rusqlite::Result<Plugin> {
         local_path: row.get(4)?,
         git_url: row.get(5)?,
         subpath: row.get(6)?,
+        approved_digest: row.get(9)?,
         created_at: parse_dt(&created_at_s),
         updated_at: parse_dt(&updated_at_s),
     })
@@ -107,15 +112,17 @@ pub fn upsert(
     let now_s = now.to_rfc3339();
 
     // Idempotent on local_path: refresh in place if already registered there.
-    let existing: Option<(String, String)> = conn
+    let existing: Option<(String, String, Option<String>)> = conn
         .query_row(
-            "SELECT id, created_at FROM plugins WHERE local_path = ?1",
+            "SELECT id, created_at, approved_digest FROM plugins WHERE local_path = ?1",
             params![local_path],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
 
-    if let Some((eid, created_s)) = existing {
+    // Re-registration keeps the approval; it lapses by itself if the manifest
+    // now asks for something the user did not review.
+    if let Some((eid, created_s, approved_digest)) = existing {
         conn.execute(
             "UPDATE plugins SET name=?1, version=?2, source=?3, git_url=?4, subpath=?5, updated_at=?6 WHERE id=?7",
             params![name, version, source, git_url, subpath, now_s, eid],
@@ -128,6 +135,7 @@ pub fn upsert(
             local_path: local_path.to_string(),
             git_url: git_url.map(String::from),
             subpath: subpath.map(String::from),
+            approved_digest,
             created_at: parse_dt(&created_s),
             updated_at: now,
         });
@@ -146,9 +154,20 @@ pub fn upsert(
         local_path: local_path.to_string(),
         git_url: git_url.map(String::from),
         subpath: subpath.map(String::from),
+        approved_digest: None,
         created_at: now,
         updated_at: now,
     })
+}
+
+/// Record (or clear) the security digest the user approved for a plugin.
+pub fn set_approved_digest(id: &str, digest: Option<&str>) -> Result<bool> {
+    let conn = crate::storage::database::connection();
+    let n = conn.execute(
+        "UPDATE plugins SET approved_digest = ?1 WHERE id = ?2",
+        params![digest, id],
+    )?;
+    Ok(n > 0)
 }
 
 /// 删除 registry 记录。返回是否删掉了一行。**不**碰磁盘文件 —— 调用方（handler）

@@ -398,7 +398,7 @@ done
                         ws.on_upgrade(move |socket| async move {
                             let (attempt, cmd) = slot.lock().unwrap().take().unwrap();
                             let result = crate::api::handlers::terminal::bridge_pty_terminal(
-                                socket, cmd, 80, 24, None, true,
+                                socket, cmd, 80, 24, true,
                             )
                             .await;
                             attempt.finish(result);

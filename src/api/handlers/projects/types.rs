@@ -127,8 +127,6 @@ pub struct ProjectStatsResponse {
     pub idle_tasks: u32,
     pub merged_tasks: u32,
     pub archived_tasks: u32,
-    /// Weekly activity (last 7 days, index 0 = today)
-    pub weekly_activity: Vec<u32>,
 }
 
 /// Branch info response

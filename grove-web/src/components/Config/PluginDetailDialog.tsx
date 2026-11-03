@@ -14,7 +14,8 @@ import {
   X,
 } from "lucide-react";
 import { Button, DrawerShell } from "../ui";
-import { deletePlugin, updatePluginSdk, type Plugin } from "../../api/plugins";
+import { approvePlugin, deletePlugin, revokePlugin, updatePluginSdk, type Plugin, type PluginStatus } from "../../api/plugins";
+import { PluginReviewSection } from "./PluginReview";
 import { ExtensionIdentityIcon } from "../Skills/ExtensionIdentityIcon";
 import { ConfirmDialog } from "../Dialogs";
 
@@ -42,6 +43,33 @@ export function PluginDetailDialog({ plugin, onClose, onDeleted }: { plugin: Plu
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteState, setDeleteState] = useState<"idle" | "running" | "error">("idle");
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [status, setStatus] = useState<PluginStatus>(plugin.status ?? "active");
+  const [approvalState, setApprovalState] = useState<"idle" | "running">("idle");
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+
+  const setEnabled = async (enabled: boolean) => {
+    setApprovalState("running");
+    setApprovalError(null);
+    try {
+      if (enabled) {
+        if (!plugin.review) throw new Error("The plugin manifest could not be read.");
+        await approvePlugin(plugin.id, plugin.review.digest);
+        setStatus("active");
+      } else {
+        await revokePlugin(plugin.id);
+        setStatus("pending");
+      }
+    } catch (cause) {
+      const { status: code, message } = (cause ?? {}) as { status?: number; message?: string };
+      setApprovalError(
+        code === 409
+          ? "The plugin changed while you were reviewing it. Close and reopen it to review again."
+          : message || "Could not update the plugin",
+      );
+    } finally {
+      setApprovalState("idle");
+    }
+  };
 
   const updateSdk = async () => {
     setSdkState("running");
@@ -131,6 +159,12 @@ export function PluginDetailDialog({ plugin, onClose, onDeleted }: { plugin: Plu
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          {plugin.status !== undefined && (
+            <section className="mb-6">
+              <h3 className="text-sm font-semibold text-[var(--color-text)]">What enabling allows</h3>
+              <PluginReviewSection review={plugin.review} status={status} />
+            </section>
+          )}
           <section>
             <h3 className="text-sm font-semibold text-[var(--color-text)]">Overview</h3>
             <div className="mt-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40">
@@ -187,13 +221,22 @@ export function PluginDetailDialog({ plugin, onClose, onDeleted }: { plugin: Plu
           )}
         </div>
         <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]/55 px-6 py-4">
-          <div className="min-w-0 text-xs text-[var(--color-text-muted)]">
-            {deleteError || (plugin.source === "dev" ? "The development folder will remain on disk." : "Uninstall removes Grove's managed plugin files and data.")}
+          <div className={`min-w-0 text-xs ${approvalError ? "text-[var(--color-error)]" : "text-[var(--color-text-muted)]"}`} role={approvalError ? "alert" : undefined}>
+            {approvalError || deleteError || (plugin.source === "dev" ? "The development folder will remain on disk." : "Uninstall removes Grove's managed plugin files and data.")}
           </div>
-          <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={deleteState === "running"}>
-            <Trash2 className="mr-1.5 h-4 w-4" />
-            {plugin.source === "dev" ? "Remove" : "Uninstall"}
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={deleteState === "running"}>
+              <Trash2 className="mr-1.5 h-4 w-4" />
+              {plugin.source === "dev" ? "Remove" : "Uninstall"}
+            </Button>
+            {plugin.status !== undefined && (status === "active" ? (
+              <Button variant="secondary" onClick={() => void setEnabled(false)} disabled={approvalState === "running"}>Disable</Button>
+            ) : (
+              <Button variant="primary" onClick={() => void setEnabled(true)} disabled={approvalState === "running" || !plugin.review}>
+                {approvalState === "running" ? "Enabling…" : "Enable"}
+              </Button>
+            ))}
+          </div>
         </footer>
       </div>
       <ConfirmDialog

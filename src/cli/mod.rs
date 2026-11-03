@@ -1,10 +1,12 @@
 //! CLI 模块
 
 pub mod acp;
+pub mod chat;
 pub mod diff;
 pub mod fp;
 pub mod hooks;
 pub mod ios;
+pub mod launcher;
 pub mod mcp;
 pub mod mcp_bridge;
 pub mod migrate;
@@ -12,6 +14,8 @@ pub mod web;
 
 #[cfg(feature = "gui")]
 pub mod gui;
+#[cfg(feature = "gui")]
+pub mod gui_launch;
 
 use clap::{Parser, Subcommand};
 
@@ -28,8 +32,13 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Launch the terminal UI (same as running 'grove' with no arguments)
-    Tui,
+    /// Open Grove in this terminal: projects, tasks and sessions with the chat
+    Tui {
+        /// Connect to a Grove on another machine (e.g. http://devbox.lan:3001),
+        /// signing in with its passkey
+        #[arg(long, value_name = "URL")]
+        remote: Option<String>,
+    },
     /// Check for a new Grove release now and install it without prompting
     Upgrade,
     /// Download Grove apps for your devices
@@ -93,6 +102,16 @@ pub enum Commands {
         #[arg(long, value_name = "URL")]
         remote_url: Option<String>,
     },
+    /// Talk to agents from the terminal: sessions, targets, agents, streaming
+    Cli(chat::CliArgs),
+    /// Run the Grove server headless (no browser). `grove cli` starts this in
+    /// the background when no server is running.
+    #[command(hide = true)]
+    Serve {
+        /// Port to listen on
+        #[arg(short, long, default_value_t = web::DEFAULT_PORT)]
+        port: u16,
+    },
     /// Start an interactive ACP chat session with an AI agent
     Acp {
         /// Agent name (e.g., "claude")
@@ -101,7 +120,9 @@ pub enum Commands {
         #[arg(long, default_value = ".")]
         cwd: String,
     },
-    /// Start the mobile-friendly web server (LAN-accessible with HMAC-SHA256 auth)
+    /// Let your phone and other machines connect to this Grove (LAN, passkey-protected).
+    /// Formerly `grove mobile`.
+    #[command(name = "remote", alias = "mobile")]
     Mobile {
         /// Port to listen on
         #[arg(short, long, default_value_t = web::DEFAULT_PORT)]
@@ -152,7 +173,8 @@ impl Commands {
     pub fn needs_local_storage(&self) -> bool {
         matches!(
             self,
-            Self::Tui
+            Self::Tui { remote: None }
+                | Self::Serve { .. }
                 | Self::Mobile { .. }
                 | Self::Web {
                     remote_url: None,
@@ -168,7 +190,7 @@ impl Commands {
     /// 将启动模式命令转换为 `LastLaunch`（非启动模式命令返回 None）
     pub fn to_last_launch(&self) -> Option<LastLaunch> {
         match self {
-            Commands::Tui => Some(LastLaunch::Tui),
+            Commands::Tui { remote: None } => Some(LastLaunch::Tui),
             Commands::Web {
                 port,
                 no_open,
@@ -215,7 +237,7 @@ impl LastLaunch {
     /// 将 `LastLaunch` 转换回 `Commands` 以便统一调度
     pub fn to_command(&self) -> Commands {
         match self {
-            LastLaunch::Tui => Commands::Tui,
+            LastLaunch::Tui => Commands::Tui { remote: None },
             LastLaunch::Web {
                 port,
                 no_open,

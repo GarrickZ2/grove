@@ -21,11 +21,19 @@ export function afterHistory(history: BuddyEvent[], buffered: BuddyEvent[]): Bud
 
 type SessionIdentity = Pick<Buddy, "project_hash" | "local_task_id" | "active_session_id">;
 
+/** What the agent accepts inside a prompt (ACP promptCapabilities). Text and resource links always work. */
+export interface PromptCapabilities { image: boolean; audio: boolean }
+function promptCapabilities(value: unknown): PromptCapabilities | null {
+  if (!value || typeof value !== "object") return null;
+  const caps = value as { image?: unknown; audio?: unknown };
+  return { image: caps.image === true, audio: caps.audio === true };
+}
+
 /** Attach to the same session protocol as TaskChat. Never create another session.
  *  `compact` is only for the Buddy's own Segment; observed subagent sessions keep their queue mode.
  *  With `recentTurns`, only the latest turns load; `history` gets the index they start at, so the
  *  rest (and earlier Segments) can be paged in on demand. */
-export function connectBuddySession(buddy: SessionIdentity, callbacks: { history: (events: BuddyEvent[], busy: boolean, start: number) => void; event: (event: BuddyEvent) => void; ready: (ready: boolean) => void; error: (message: string) => void }, { compact = true, recentTurns }: { compact?: boolean; recentTurns?: number } = {}) {
+export function connectBuddySession(buddy: SessionIdentity, callbacks: { history: (events: BuddyEvent[], busy: boolean, start: number) => void; event: (event: BuddyEvent) => void; ready: (ready: boolean) => void; error: (message: string) => void; capabilities?: (caps: PromptCapabilities) => void }, { compact = true, recentTurns }: { compact?: boolean; recentTurns?: number } = {}) {
   let stopped = false, socket: WebSocket | null = null, owned = false, releaseWatch: (() => void) | undefined;
   const queueMode = () => { if (compact) socket?.send(JSON.stringify({ type: "set_queue_mode", mode: "compact" })); };
   let hydrated = false;
@@ -33,7 +41,11 @@ export function connectBuddySession(buddy: SessionIdentity, callbacks: { history
   const received = (raw: MessageEvent) => {
     let event: BuddyEvent;
     try { event = JSON.parse(raw.data) as BuddyEvent; } catch { return; }
-    if (event.type === "session_ready") { queueMode(); callbacks.ready(true); }
+    if (event.type === "session_ready") {
+      queueMode(); callbacks.ready(true);
+      const caps = promptCapabilities(event.prompt_capabilities);
+      if (caps) callbacks.capabilities?.(caps);
+    }
     if (event.type === "session_ended") callbacks.ready(false);
     if (!hydrated) buffered.push(event); else callbacks.event(event);
   };
@@ -51,6 +63,9 @@ export function connectBuddySession(buddy: SessionIdentity, callbacks: { history
       socket.addEventListener("message", received); socket.addEventListener("close", closed);
       const history = await withConnectionDeadline(() => getChatHistory(buddy.project_hash, buddy.local_task_id, buddy.active_session_id, 0, recentTurns ? { recentTurns } : {}), 20000, "Could not load conversation history.");
       if (stopped) return;
+      // A shared socket already sent session_ready; the stored session snapshot fills in.
+      const snapshot = promptCapabilities(history.session?.prompt_capabilities);
+      if (snapshot && !buffered.some(event => event.type === "session_ready")) callbacks.capabilities?.(snapshot);
       callbacks.history(history.events as BuddyEvent[], history.runtime?.busy ?? false, history.start ?? 0);
       if (owned) callbacks.event({ type: "buddy_reconcile" });
       for (const event of afterHistory(history.events as BuddyEvent[], buffered)) callbacks.event(event);

@@ -24,7 +24,7 @@ import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { useConfig, useProject } from '../../../context';
 import { useIsMobile } from '../../../hooks';
 import { apiClient } from '../../../api/client';
-import { listPlugins, type Plugin } from '../../../api/plugins';
+import { listActivePlugins, type Plugin } from '../../../api/plugins';
 import { useLinkedReviewProjectsState } from '../../../hooks/useLinkedReviewProjects';
 import { useOpenReviewRequests, type OpenReviewRequest } from '../../../orbit/workspace/openReview';
 import {
@@ -378,7 +378,7 @@ export const FlexLayoutContainer = forwardRef<
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      listPlugins()
+      listActivePlugins()
         .then((ps) => { if (!cancelled) setPlugins(ps); })
         .catch(() => { if (!cancelled) setPlugins([]); });
     };

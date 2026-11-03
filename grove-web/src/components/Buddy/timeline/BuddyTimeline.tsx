@@ -1,7 +1,10 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, Clock, File, MessageCircle } from "lucide-react";
-import type { Buddy } from "../../../api/buddies";
+import { Check, Clock, File, MessageCircle, Send } from "lucide-react";
+import { BuddyAvatar } from "../BuddyAvatar";
+import { mentionRuns, readMentions } from "../buddyMentions";
+import type { Buddy, BuddySummary } from "../../../api/buddies";
 import { MarkdownRenderer } from "../../ui/MarkdownRenderer";
+import { ImageLightbox } from "../../ui/ImageLightbox";
 import { ApprovalCard } from "./ApprovalCard";
 import { ActivityLine } from "./ActivityLine";
 import { QuestionCard } from "./QuestionCard";
@@ -33,6 +36,13 @@ function AssistantBubbles({ content }: { content: string }) {
     : <div key={index} className="buddy-bubble"><MarkdownRenderer content={bubble.content} /></div>)}</div>;
 }
 
+/** An inline image (sent or produced) that opens full size; without its data it is a file chip. */
+function TimelineImage({ data, mimeType, name, onOpen }: { data?: string; mimeType: string; name: string; onOpen: (url: string) => void }) {
+  if (!data) return <span className="buddy-file"><File size={14} />{name}</span>;
+  const url = `data:${mimeType};base64,${data}`;
+  return <button type="button" className="buddy-image" aria-label={`Open ${name}`} onClick={() => onOpen(url)}><img src={url} alt={name} loading="lazy" /></button>;
+}
+
 /** The user's bubble; under Orbit a just-sent one pops in (see sentPop). */
 function UserBubble({ clientMessageId, children }: { clientMessageId?: string; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -40,7 +50,7 @@ function UserBubble({ clientMessageId, children }: { clientMessageId?: string; c
   return <div ref={ref} className="buddy-user-message">{children}</div>;
 }
 
-export function BuddyTimeline({ buddy, state, connected, loading = false, onRespond, onAnswer, onSkip, onOpenQuestion, arriving = false, hasEarlier = false, loadingEarlier = false, onLoadEarlier }: { arriving?: boolean; hasEarlier?: boolean; loadingEarlier?: boolean; onLoadEarlier?: () => void; buddy: Buddy; state: BuddyTimelineState; connected: boolean; loading?: boolean; onRespond: (id: string, option: string) => void; onAnswer: (question: Question, answers: SurveyAnswers, markdown: string) => Promise<void>; onSkip: (question: Question) => void; onOpenQuestion: (question: Question) => void }) {
+export function BuddyTimeline({ buddy, state, connected, loading = false, onRespond, onAnswer, onSkip, onOpenQuestion, arriving = false, hasEarlier = false, loadingEarlier = false, onLoadEarlier, others = [] }: { arriving?: boolean; others?: BuddySummary[]; hasEarlier?: boolean; loadingEarlier?: boolean; onLoadEarlier?: () => void; buddy: Buddy; state: BuddyTimelineState; connected: boolean; loading?: boolean; onRespond: (id: string, option: string) => void; onAnswer: (question: Question, answers: SurveyAnswers, markdown: string) => Promise<void>; onSkip: (question: Question) => void; onOpenQuestion: (question: Question) => void }) {
   const orbit = useOrbitInterface();
   const scroll = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -83,6 +93,7 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
   // Relative times refresh when a message is hovered, as in TaskChat.
   const [now, setNow] = useState(() => Date.now());
   const touch = () => setNow(Date.now());
+  const [lightbox, setLightbox] = useState<string | null>(null);
   return <div className="buddy-timeline" aria-label="Conversation" data-sent-pop-pane={orbit || undefined} ref={scroll} onScroll={event => { const node = event.currentTarget; following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; if (node.scrollTop < 160) loadEarlier(); }}><div className="buddy-timeline-content">
     {hasEarlier && <p className="buddy-earlier" role="status">{loadingEarlier ? "Loading earlier messages…" : <button type="button" onClick={loadEarlier}>Load earlier messages</button>}</p>}
     {state.rows.length === 0 && <BuddyHello buddy={buddy} arriving={arriving && !loading} loading={loading} />}
@@ -92,6 +103,7 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
       return time != null && content ? <Fragment key={row.id}><p className="buddy-time-separator">{separatorLabel(time)}</p>{content}</Fragment> : content;
     })}
     {waiting.map(item => <DelegationRequestCards key={`requests-${item.id}`} delegation={item} />)}
+    <ImageLightbox imageUrl={lightbox} onClose={() => setLightbox(null)} />
   </div></div>;
 
   function renderRow(row: BuddyRow) {
@@ -99,10 +111,18 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
       if (row.kind === "delegation") return <DelegationCard key={row.id} row={row} delegation={resolved.get(row.id)} onOpen={delegations.show} />;
       if (row.kind === "approval") return <ApprovalCard key={`approval-${row.id}`} approval={row} connected={connected} onRespond={onRespond} />;
       if (row.kind === "question") return <QuestionCard key={`question-${row.id}`} question={row} connected={connected} onSubmit={(answers, markdown) => onAnswer(row, answers, markdown)} onSkip={() => onSkip(row)} onOpen={() => onOpenQuestion(row)} />;
-      if (row.kind === "event") return row.notice ? <TimelineNotice key={row.id} lead={row.notice.lead} icon={<Clock size={13} aria-hidden="true" />} name={row.notice.name} /> : <p className="buddy-event" key={row.id}>{row.text}</p>;
+      if (row.kind === "event") {
+        if (!row.notice) return <p className="buddy-event" key={row.id}>{row.text}</p>;
+        const chat = row.id.startsWith("buddy-chat-");
+        // A message to another Buddy shows who it went to by their avatar.
+        const to = chat ? others.find(item => item.id === row.notice!.buddyId) ?? others.find(item => item.name === row.notice!.name || item.id === row.notice!.name) : undefined;
+        const icon = to ? <BuddyAvatar id={to.id} avatar={to.avatar} size={14} /> : chat ? <Send size={13} aria-hidden="true" /> : <Clock size={13} aria-hidden="true" />;
+        return <TimelineNotice key={row.id} lead={row.notice.lead} icon={icon} name={to?.name ?? row.notice.name} detail={row.notice.detail} tone={row.notice.tone} />;
+      }
       const message = state.messages[row.index];
       if (message.type === "user" && message.sender && message.sender !== "connect") {
         const event = promptEvent(message.sender, message.content);
+        if (event?.kind === "chat") return <TimelineNotice key={row.id} lead={event.reply ? "Reply from" : "Message from"} icon={<BuddyAvatar id={event.buddyId} avatar={event.avatar} size={14} />} name={event.name} detail={event.text} />;
         if (event?.kind === "routine") {
           const name = routines.find(routine => routine.prompt.trim() === message.content.trim())?.name;
           return <TimelineNotice key={row.id} lead="Routine ran" icon={<Clock size={13} aria-hidden="true" />} name={name} />;
@@ -116,11 +136,19 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
         // Session bootstrap stays in the transcript, but is not user-visible text.
         const segments = parseGroveMetaSegments(message.content);
         const visible = segments.filter(segment => !(segment.kind === "meta" && segment.envelope.v === 1 && segment.envelope.type === "grove_session_init"));
-        const content = visible.length === segments.length ? message.content : visible.map(segment => segment.kind === "text" ? segment.content : segment.raw).join("").replace(/^\n+/, "");
+        const shown = visible.length === segments.length ? message.content : visible.map(segment => segment.kind === "text" ? segment.content : segment.raw).join("").replace(/^\n+/, "");
+        // @-mentioned Buddies travel in an envelope; show their names as chips instead.
+        const { text: content, buddies: mentioned } = readMentions(shown);
         if (!content.trim() && !message.attachments?.length) return null;
-        return <div key={row.id} className="buddy-user-turn group/message" onPointerEnter={touch}><UserBubble clientMessageId={message.clientMessageId}>{message.sender === "connect" && <MessageCircle size={13} aria-label="IM Connect" />}{content.trim() && <p>{content}</p>}{message.attachments?.map((file, index) => <span className="buddy-file" key={index}><File size={14} />{file.name || file.label || "Attachment"}</span>)}</UserBubble><MessageActions text={content} timestamp={message.sentAt} now={now} alignRight /></div>;
+        return <div key={row.id} className="buddy-user-turn group/message" onPointerEnter={touch}>{message.sender === "connect" && <span className="buddy-user-via"><MessageCircle size={11} aria-hidden="true" />via IM</span>}<UserBubble clientMessageId={message.clientMessageId}>{content.trim() && <p>{mentionRuns(content, mentioned).map((run, index) => "buddy" in run
+          ? <span key={index} className="buddy-mention-chip" title={run.buddy.role || undefined}><BuddyAvatar id={run.buddy.id} avatar={run.buddy.avatar} size={14} />{run.buddy.name}</span>
+          : run.text)}</p>}{message.attachments?.map((file, index) => file.type === "image"
+          ? <TimelineImage key={index} data={file.data} mimeType={file.mimeType} name={file.name || file.label || "Image"} onOpen={setLightbox} />
+          : <span className="buddy-file" key={index}><File size={14} />{file.name || file.label || file.uri?.split("/").pop() || "Attachment"}</span>)}</UserBubble><MessageActions text={content} timestamp={message.sentAt} now={now} alignRight /></div>;
       }
-      if (message.type === "assistant") return <div key={row.id} className="buddy-assistant-message group/message" onPointerEnter={touch}><AssistantBubbles content={message.content} />{message.blocks?.filter(block => block.type !== "text").map((block, index) => <span className="buddy-file" key={index}><File size={14} />{block.type === "resource_link" ? block.name : block.type === "resource" ? block.uri : block.label || block.type}</span>)}{message.complete && message.endTs != null && <MessageActions text={message.content} timestamp={message.endTs * 1000} startTs={message.startTs} endTs={message.endTs} now={now} />}</div>;
+      if (message.type === "assistant") return <div key={row.id} className="buddy-assistant-message group/message" onPointerEnter={touch}><AssistantBubbles content={message.content} />{message.blocks?.filter(block => block.type !== "text").map((block, index) => block.type === "image"
+        ? <TimelineImage key={index} data={block.data} mimeType={block.mime_type} name={block.label || "Image"} onOpen={setLightbox} />
+        : <span className="buddy-file" key={index}><File size={14} />{block.type === "resource_link" ? block.name : block.type === "resource" ? block.uri : block.label || block.type}</span>)}{message.complete && message.endTs != null && <MessageActions text={message.content} timestamp={message.endTs * 1000} startTs={message.startTs} endTs={message.endTs} now={now} />}</div>;
       return null;
   }
 }

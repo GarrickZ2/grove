@@ -1,0 +1,83 @@
+/* The mini Buddy window. The window is transparent with no native shadow;
+   the page draws everything inside a 20px margin, and every shadow must
+   stay inside it (the window edge would cut it into a visible rectangle): expanded, a panel in the
+   theme's own background with a hairline edge and a soft shadow (like a
+   Messages window); collapsed, only the avatar. */
+html.buddy-mini-page,html.buddy-mini-page body,html.buddy-mini-page #root{height:100%;margin:0;background:transparent!important;overflow:hidden}
+
+.buddy-app.buddy-mini{position:fixed;inset:20px;display:flex;flex-direction:column;height:auto;width:auto;padding:0;border-radius:14px;overflow:hidden;background:var(--color-bg);color:var(--color-text);
+  box-shadow:0 0 0 .5px rgb(0 0 0/.14),0 1px 3px rgb(0 0 0/.06),0 6px 16px -4px rgb(0 0 0/.16);
+  transform-origin:calc(100% - 30px) calc(100% - 30px);animation:buddy-mini-grow .26s cubic-bezier(.2,.9,.25,1.04) both}
+:root[data-theme="dark"] .buddy-app.buddy-mini{box-shadow:0 0 0 .5px rgb(255 255 255/.14),0 1px 3px rgb(0 0 0/.3),0 6px 16px -4px rgb(0 0 0/.5)}
+.buddy-app.buddy-mini.is-closing{animation:buddy-mini-shrink .16s cubic-bezier(.4,0,1,1) both;pointer-events:none}
+/* Grows out of the bubble's corner: from a small rounded square to the panel. */
+@keyframes buddy-mini-grow{from{opacity:0;transform:scale(.16);border-radius:40px}to{opacity:1;transform:none;border-radius:14px}}
+@keyframes buddy-mini-shrink{from{opacity:1;transform:none}to{opacity:0;transform:scale(.16);border-radius:40px}}
+@media (prefers-reduced-motion:reduce){.buddy-app.buddy-mini,.buddy-app.buddy-mini.is-closing{animation-duration:1ms}}
+
+.buddy-mini-header{display:flex;align-items:center;gap:2px;height:46px;flex-shrink:0;padding:0 8px 0 10px;border-bottom:.5px solid var(--buddy-border)}
+.buddy-mini-header .buddy-icon-button{width:28px;height:28px;border-radius:7px;color:var(--color-text-muted)}
+.buddy-mini-header .buddy-icon-button:hover{color:var(--color-text);background:var(--buddy-selected)}
+.buddy-mini-spacer{flex:1;align-self:stretch}
+.buddy-mini-who{display:flex;align-items:center;gap:8px;min-width:0;padding:4px 6px;border-radius:8px;font-size:13.5px;font-weight:600}
+.buddy-mini-who span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.buddy-mini-who:not(:disabled):hover{background:var(--buddy-selected)}
+.buddy-mini-switch{position:absolute;top:44px;left:8px;z-index:30;width:240px;max-height:300px;overflow:auto;margin:0;padding:4px;list-style:none;border:1px solid var(--buddy-border);border-radius:12px;background:var(--color-bg);box-shadow:0 10px 30px rgb(0 0 0/.18)}
+.buddy-mini-switch button{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border-radius:8px;text-align:left;font-size:13px}
+.buddy-mini-switch button:hover,.buddy-mini-switch [aria-selected=true] button{background:var(--buddy-selected)}
+.buddy-mini-switch small{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-text-muted)}
+.buddy-mini-error{margin:8px 12px 0;font-size:12.5px;color:var(--color-error)}
+
+/* The conversation, sized for a small window. */
+.buddy-mini .buddy-conversation{flex:1;min-height:0}
+.buddy-mini .buddy-timeline{padding:14px 14px 6px}
+.buddy-mini .buddy-timeline-content{gap:10px}
+
+/* Composer: one pill row like Messages, attach outside on the left, send inside on the right. */
+.buddy-mini .buddy-composer-wrap{width:auto;margin:6px 10px 10px}
+.buddy-mini .buddy-composer.is-orbit{flex-direction:row;align-items:flex-end;gap:6px;padding:0;border:0;border-radius:0;background:none;box-shadow:none}
+.buddy-mini .buddy-composer.is-orbit:focus-within,.buddy-mini .buddy-composer.is-orbit.is-running{background:none;box-shadow:none}
+.buddy-mini .buddy-composer.is-orbit>.buddy-oc-orbit{display:none}
+.buddy-mini .buddy-composer.is-orbit .buddy-composer-toolbar{display:contents}
+.buddy-mini .buddy-oc-tools{order:-1;flex:none}
+.buddy-mini .buddy-oc-hint{display:none}
+.buddy-mini .buddy-oc-tool{width:32px;height:32px}
+.buddy-mini .buddy-oc-tool svg{width:17px;height:17px}
+.buddy-mini .buddy-composer.is-orbit textarea{flex:1;min-height:32px;max-height:120px;padding:6px 40px 6px 13px;font-size:13.5px;line-height:20px;border-radius:17px;border:.5px solid color-mix(in oklab,var(--color-text) 22%,transparent);background:var(--color-bg);transition:border-color .15s}
+.buddy-mini .buddy-composer.is-orbit textarea:focus{border-color:color-mix(in oklab,var(--color-text) 38%,transparent)}
+.buddy-mini .buddy-oc-orb{position:absolute;z-index:2;right:4px;bottom:4px;width:24px;height:24px;margin:0}
+.buddy-mini .buddy-oc-orb svg{width:14px;height:14px}
+.buddy-mini .buddy-oc-orb:disabled{opacity:0;transform:scale(.6);pointer-events:none}
+
+/* Collapsed: just the avatar at the bottom-right, with its shadow in the margin. */
+.buddy-mini-bubble{position:fixed;right:20px;bottom:20px;width:60px;height:60px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:none;cursor:pointer;touch-action:none;outline:none;animation:buddy-mini-pop .2s cubic-bezier(.2,.9,.25,1.2) both}
+.buddy-mini-bubble>:first-child{filter:drop-shadow(0 3px 7px rgb(0 0 0/.26))}
+.buddy-mini-bubble:active>:first-child{transform:scale(.95)}
+.buddy-mini-bubble:focus-visible{outline:2px solid var(--color-highlight);outline-offset:2px}
+@keyframes buddy-mini-pop{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
+/* Status and unread as small dots, no ring around the avatar. */
+.buddy-mini-state{position:absolute;right:3px;bottom:3px;width:13px;height:13px;border-radius:50%;box-shadow:0 0 0 2px rgb(255 255 255/.95)}
+.buddy-mini-state.is-working{background:var(--color-success)}
+.buddy-mini-state.is-waiting{background:var(--color-warning)}
+.buddy-mini-unread{position:absolute;top:2px;right:2px;width:12px;height:12px;border-radius:50%;background:var(--color-info);box-shadow:0 0 0 2px rgb(255 255 255/.95)}
+
+/* Speech bubble beside the collapsed avatar (the window grows to make room;
+   the avatar keeps its corner). Sits above-left of the avatar with a trail
+   of two dots toward it, like a thought. */
+.buddy-mini-say{position:fixed;right:74px;bottom:78px;display:block;max-width:236px;padding:8px 12px;border:0;border-radius:16px;background:var(--color-bg);color:var(--color-text);text-align:left;cursor:pointer;
+  box-shadow:0 0 0 .5px rgb(0 0 0/.12),0 1px 2px rgb(0 0 0/.06),0 5px 14px -4px rgb(0 0 0/.18);transform-origin:100% 100%;animation:buddy-mini-say .32s cubic-bezier(.2,.9,.25,1.25) .06s both}
+:root[data-theme="dark"] .buddy-mini-say{background:color-mix(in oklab,var(--color-text) 14%,var(--color-bg));box-shadow:0 0 0 .5px rgb(255 255 255/.12),0 5px 14px -4px rgb(0 0 0/.5)}
+.buddy-mini-say::before,.buddy-mini-say::after{content:"";position:absolute;border-radius:50%;background:inherit;box-shadow:0 0 0 .5px rgb(0 0 0/.1)}
+.buddy-mini-say::before{right:-4px;bottom:-7px;width:10px;height:10px}
+.buddy-mini-say::after{right:-11px;bottom:-15px;width:5px;height:5px}
+.buddy-mini-say-text{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-size:13px;line-height:1.4;overflow-wrap:anywhere}
+.buddy-mini-say.is-waiting{color:var(--buddy-waiting-text,var(--color-warning));font-weight:500}
+.buddy-mini-say:hover{filter:brightness(.98)}
+@keyframes buddy-mini-say{from{opacity:0;transform:scale(.4) translate(8px,8px)}to{opacity:1;transform:none}}
+/* Typing: three dots taking turns, like a chat app. */
+.buddy-mini-say.is-typing{padding:9px 11px}
+.buddy-mini-dots{display:flex;gap:4px}
+.buddy-mini-dots i{width:7px;height:7px;border-radius:50%;background:var(--color-text-muted);animation:buddy-mini-dot 1.2s ease-in-out infinite}
+.buddy-mini-dots i:nth-child(2){animation-delay:.15s}.buddy-mini-dots i:nth-child(3){animation-delay:.3s}
+@keyframes buddy-mini-dot{0%,60%,100%{opacity:.35;transform:none}30%{opacity:1;transform:translateY(-3px)}}
+@media (prefers-reduced-motion:reduce){.buddy-mini-say,.buddy-mini-dots i{animation:none}}

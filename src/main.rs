@@ -3,24 +3,14 @@ mod agent_config;
 mod agent_graph;
 mod agent_usage;
 mod api;
-#[cfg(not(windows))]
-mod app;
 mod app_icons;
-#[cfg(not(windows))]
-mod async_ops_state;
 mod automation;
 mod buddy;
 mod check;
 mod cli;
-#[cfg(not(windows))]
-mod config_state;
 mod connect;
-#[cfg(not(windows))]
-mod dialogs;
 mod diff;
 mod error;
-#[cfg(not(windows))]
-mod event;
 mod fs_link;
 mod git;
 mod grove;
@@ -29,8 +19,6 @@ mod mcp_client;
 mod memory;
 mod model;
 mod notification_renderer;
-#[cfg(not(windows))]
-mod notification_state;
 mod operations;
 mod plugins;
 pub(crate) mod radio;
@@ -39,37 +27,19 @@ mod speech;
 mod stats;
 mod storage;
 mod symbols;
-#[cfg(not(windows))]
 mod theme;
 mod tmux;
 #[cfg(feature = "gui")]
 mod tray;
-#[cfg(not(windows))]
-mod ui;
-#[cfg(not(windows))]
-mod ui_state;
 mod update;
 mod watcher;
 mod zellij;
 
-use std::io::{self, Write};
-use std::panic;
-use std::time::Instant;
+use std::io;
 
 use clap::Parser;
-#[cfg(not(windows))]
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
-#[cfg(not(windows))]
-use crossterm::execute;
-#[cfg(not(windows))]
-use ratatui::DefaultTerminal;
 
-#[cfg(not(windows))]
-use app::{App, AppMode};
 use cli::{Cli, Commands};
-
-/// Auto-refresh interval in seconds
-const AUTO_REFRESH_INTERVAL_SECS: u64 = 5;
 
 /// Check storage version and auto-migrate if needed
 fn ensure_storage_version() {
@@ -197,8 +167,8 @@ fn ensure_storage_version() {
         }
     }
 
-    // v2.6: canonicalize agent ids in config.toml (acp.agent_command,
-    // layout.agent_command). Idempotent — once everything is canonical
+    // v2.6: canonicalize the agent id in config.toml (acp.agent_command).
+    // Idempotent — once everything is canonical
     // it's a silent no-op.
     if version != Some(CURRENT_STORAGE_VERSION) {
         storage::database::migrate_config_agent_command_ids();
@@ -235,46 +205,6 @@ fn ensure_storage_version() {
     }
 }
 
-/// 启动 TUI 界面
-#[cfg(not(windows))]
-fn run_tui() -> io::Result<()> {
-    // 环境检查
-    let result = check::check_tui_environment();
-    if !result.ok {
-        eprintln!("Grove requires the following dependencies:\n");
-        for err in &result.errors {
-            eprintln!("  ✗ {}", err);
-        }
-        eprintln!("\nPlease install the missing dependencies and try again.");
-        std::process::exit(1);
-    }
-
-    // 初始化终端
-    let mut terminal = ratatui::init();
-    execute!(io::stdout(), EnableMouseCapture)?;
-
-    // 创建应用
-    let mut app = App::new();
-
-    // Render OS notifications for the human at this machine (attention-fact
-    // subscriber). The TUI has no ambient tokio runtime — the spawn handles
-    // that internally.
-    crate::notification_renderer::spawn();
-
-    // 运行主循环
-    let result = run(&mut terminal, &mut app);
-
-    // 恢复终端
-    execute!(io::stdout(), DisableMouseCapture)?;
-    ratatui::restore();
-
-    // 清除终端 tab 标题（恢复默认）
-    print!("\x1b]0;\x07");
-    let _ = io::stdout().flush();
-
-    result
-}
-
 fn main() -> io::Result<()> {
     // Enable backtraces by default so panics show call stacks
     if std::env::var("RUST_BACKTRACE").is_err() {
@@ -286,16 +216,6 @@ fn main() -> io::Result<()> {
 
     #[cfg(feature = "perf-monitor")]
     api::perf_tracing::install();
-
-    // Set up panic hook to restore terminal state on panic (TUI only)
-    #[cfg(not(windows))]
-    let original_hook = panic::take_hook();
-    #[cfg(not(windows))]
-    panic::set_hook(Box::new(move |panic_info| {
-        let _ = execute!(io::stdout(), DisableMouseCapture);
-        ratatui::restore();
-        original_hook(panic_info);
-    }));
 
     // 解析命令行参数
     let cli = Cli::parse();
@@ -355,16 +275,25 @@ fn main() -> io::Result<()> {
                 };
             }
 
-            // 非 AppBundle：重放上次启动模式，默认 TUI
-            match config.last_launch {
-                Some(ref ll) => {
-                    let label = ll.display_label();
-                    if !matches!(ll, storage::config::LastLaunch::Tui) {
-                        eprintln!("grove → grove {}", label);
-                    }
-                    (ll.to_command(), true)
+            // 非 AppBundle：终端里给一个启动面板（Recent / Web / App / CLI /
+            // Server）；被脚本调用时重放上次启动模式，默认 TUI
+            use std::io::IsTerminal;
+            if io::stdin().is_terminal() && io::stdout().is_terminal() {
+                match cli::launcher::choose(config.last_launch.as_ref()) {
+                    Some(choice) => choice,
+                    None => return Ok(()),
                 }
-                None => (Commands::Tui, true),
+            } else {
+                match config.last_launch {
+                    Some(ref ll) => {
+                        let label = ll.display_label();
+                        if !matches!(ll, storage::config::LastLaunch::Tui) {
+                            eprintln!("grove → grove {}", label);
+                        }
+                        (ll.to_command(), true)
+                    }
+                    None => (Commands::Tui { remote: None }, true),
+                }
             }
         }
     };
@@ -397,7 +326,8 @@ fn main() -> io::Result<()> {
             }
         }
 
-        if update_info.has_update() {
+        // A background `grove serve` has no one to answer the prompt.
+        if update_info.has_update() && !matches!(command, Commands::Serve { .. }) {
             update::prompt_and_execute_update(&update_info);
         }
 
@@ -409,14 +339,10 @@ fn main() -> io::Result<()> {
 
     // 统一调度
     match command {
-        Commands::Tui => {
-            #[cfg(windows)]
-            {
-                eprintln!("grove tui is not supported on Windows. Please use WSL2 or run `grove web` instead.");
-                std::process::exit(1);
-            }
-            #[cfg(not(windows))]
-            run_tui()?;
+        Commands::Tui { remote } => {
+            tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime")
+                .block_on(cli::chat::run_app(remote));
         }
         Commands::Upgrade => {
             if let Err(error) = update::upgrade() {
@@ -518,6 +444,16 @@ fn main() -> io::Result<()> {
                 std::process::exit(1);
             }
         }
+        Commands::Cli(args) => {
+            tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime")
+                .block_on(cli::chat::execute(args));
+        }
+        Commands::Serve { port } => {
+            tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime")
+                .block_on(cli::web::execute(port, true, false, None));
+        }
         Commands::Acp { agent, cwd } => {
             tokio::runtime::Runtime::new()
                 .expect("Failed to create tokio runtime")
@@ -586,113 +522,6 @@ fn main() -> io::Result<()> {
                     std::process::exit(1);
                 }
             }
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
-    let mut last_refresh = Instant::now();
-
-    loop {
-        // 检查是否有待 attach 的 session
-        if let Some(att) = app.async_ops.pending_attach.take() {
-            // 暂停 TUI
-            execute!(io::stdout(), DisableMouseCapture)?;
-            ratatui::restore();
-
-            // attach 到 session（阻塞，直到用户 detach）
-            let _ = session::attach_session(
-                &att.session_type,
-                &att.session,
-                Some(&att.working_dir),
-                Some(&att.env),
-                att.layout_path.as_deref(),
-            );
-
-            // 清除 tmux detach 消息（只清除一行，仅 tmux 需要）
-            if matches!(att.session_type, session::SessionType::Tmux) {
-                print!("\x1b[1A\x1b[2K\r");
-                let _ = io::stdout().flush();
-            }
-
-            // 恢复 TUI
-            *terminal = ratatui::init();
-            execute!(io::stdout(), EnableMouseCapture)?;
-
-            // 刷新数据（用户可能在 session 中做了改动）
-            app.refresh();
-            // 刷新后再清除 hook 通知，避免 refresh 覆盖清除结果
-            app.clear_task_hook_by_session(&att.session);
-            last_refresh = Instant::now();
-        }
-
-        // 检查是否有待打开的外部编辑器（Monitor 模式）
-        if let Some(file_path) = app.monitor.pending_notes_edit.take() {
-            // 暂停 TUI
-            execute!(io::stdout(), DisableMouseCapture)?;
-            ratatui::restore();
-
-            // 打开外部编辑器
-            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-            let _ = std::process::Command::new(&editor).arg(&file_path).status();
-
-            // 恢复 TUI
-            *terminal = ratatui::init();
-            execute!(io::stdout(), EnableMouseCapture)?;
-
-            // 重新加载 notes 内容
-            app.monitor.refresh_panel_data();
-        }
-
-        // 检查是否有待打开的外部编辑器（Project 模式）
-        if let Some(file_path) = app.project.pending_notes_edit.take() {
-            // 暂停 TUI
-            execute!(io::stdout(), DisableMouseCapture)?;
-            ratatui::restore();
-
-            // 打开外部编辑器
-            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-            let _ = std::process::Command::new(&editor).arg(&file_path).status();
-
-            // 恢复 TUI
-            *terminal = ratatui::init();
-            execute!(io::stdout(), EnableMouseCapture)?;
-
-            // 重新加载 notes 内容
-            app.project.refresh_panel_data();
-        }
-
-        // 定时自动刷新（每 5 秒）
-        if last_refresh.elapsed().as_secs() >= AUTO_REFRESH_INTERVAL_SECS {
-            app.refresh();
-            // 同时刷新面板数据
-            if app.mode == AppMode::Project && app.project.preview_visible {
-                app.project.refresh_panel_data();
-            }
-            // Monitor 模式自动刷新
-            if app.mode == AppMode::Monitor {
-                app.monitor.refresh_panel_data();
-            }
-            last_refresh = Instant::now();
-        }
-
-        // 检查后台操作结果
-        app.poll_bg_result();
-
-        // 渲染界面
-        app.ui.click_areas.reset();
-        terminal.draw(|frame| match app.mode {
-            AppMode::Workspace => ui::workspace::render(frame, app),
-            AppMode::Project => ui::project::render(frame, app),
-            AppMode::Monitor => ui::monitor::render(frame, app),
-        })?;
-
-        // 处理事件
-        if !event::handle_events(app)? {
-            break;
         }
     }
 

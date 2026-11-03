@@ -71,7 +71,7 @@ export const OrbitUsageRing = memo(function OrbitUsageRing({ contextUsage, quota
     <span ref={rootRef} className="oc-ring-root" onMouseEnter={sheet ? undefined : enter} onMouseLeave={sheet ? undefined : leave}>
       <button
         type="button"
-        className={`oc-ring${model.warn ? " is-warn" : ""}${open ? " is-open" : ""}`}
+        className={`oc-ring${model.tone === "ok" ? "" : ` is-${model.tone}`}${open ? " is-open" : ""}`}
         aria-label={`Usage: ${parts}`}
         aria-expanded={open}
         aria-haspopup="dialog"
@@ -88,7 +88,7 @@ export const OrbitUsageRing = memo(function OrbitUsageRing({ contextUsage, quota
           <circle
             className="oc-ring-fill"
             cx="10" cy="10" r={RADIUS}
-            stroke={model.warn ? undefined : `url(#${gradientId})`}
+            stroke={model.tone === "ok" ? `url(#${gradientId})` : undefined}
             strokeDasharray={CIRCUMFERENCE}
             strokeDashoffset={CIRCUMFERENCE * (1 - model.percent / 100)}
           />

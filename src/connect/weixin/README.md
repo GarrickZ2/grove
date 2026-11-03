@@ -43,9 +43,10 @@ target, and ownership.
 ## Boundaries and recovery
 
 This directory owns iLink HTTP, QR flow/code submission, connection workers,
-private-message filtering, reply context, checkpoints, text presentation, and
-secondary-command drafts. Grove's message core, session delivery, and command
-semantics remain shared. Feishu retains native cards. Platform lifecycle hooks
+private-message filtering, reply context, and checkpoints. Text presentation
+and secondary-command drafts live in the shared `connect/text_ui.rs` and
+`connect/text_driver.rs`, which Telegram and Slack also use. Grove's message
+core, session delivery, and command semantics remain shared. Feishu retains native cards. Platform lifecycle hooks
 and registration HTTP endpoints dispatch generically to the owning adapter.
 
 The matching frontend adapter lives in

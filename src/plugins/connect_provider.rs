@@ -95,7 +95,7 @@ fn providers_from_plugin(plugin: &crate::storage::plugins::Plugin) -> Vec<Instal
 }
 
 pub fn installed() -> Vec<InstalledProvider> {
-    crate::storage::plugins::list()
+    super::approval::active_plugins()
         .unwrap_or_default()
         .iter()
         .flat_map(providers_from_plugin)
@@ -451,6 +451,8 @@ pub async fn begin_registration(
             .get("error")
             .and_then(Value::as_str)
             .map(str::to_owned),
+
+        code: None,
     };
     REGISTRATIONS.lock().unwrap().insert(
         id,

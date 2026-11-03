@@ -10,10 +10,16 @@ mod feishu_card;
 mod feishu_connection;
 mod feishu_transport;
 mod grove;
+mod markdown;
 pub mod platform;
 mod progress;
 pub mod registration;
 mod service;
+mod slack;
+mod telegram;
+mod text_driver;
+mod text_ui;
+mod turn_text;
 mod weixin;
 
 pub use service::{

@@ -1653,7 +1653,7 @@ pub fn preview_working_instructions(project_key: &str) -> WorkingInstructionPrev
 /// resolution happens at session start, so a server whose command is
 /// missing on disk is still listed here.
 pub fn planned_plugin_mcp_server_names() -> Vec<String> {
-    crate::storage::plugins::list()
+    crate::plugins::approval::active_plugins()
         .unwrap_or_default()
         .into_iter()
         .filter(|plugin| {
@@ -2279,7 +2279,7 @@ fn resolve_plugin_mcp_command(
 /// host.getInfo. Best-effort: a missing / malformed manifest is skipped, never
 /// fails the session.
 fn load_plugin_mcp_servers(base_env: &HashMap<String, String>) -> Vec<acp::McpServer> {
-    let plugins = match crate::storage::plugins::list() {
+    let plugins = match crate::plugins::approval::active_plugins() {
         Ok(p) => p,
         Err(_) => return Vec::new(),
     };
@@ -2348,21 +2348,17 @@ fn load_plugin_mcp_servers(base_env: &HashMap<String, String>) -> Vec<acp::McpSe
             .unwrap_or_default();
         let storage_root = crate::storage::plugin_data::data_dir(&plugin.id);
         let _ = std::fs::create_dir_all(&storage_root);
-        if crate::plugins::runtime::is_node_command(&command) {
-            if !crate::plugins::runtime::node_supports_permissions(&command) {
-                report_plugin_mcp_issue_once(
-                    format!("{}:node-permissions:{command}", plugin.id),
-                    || {
-                        format!(
-                            "grove: skipping MCP server for plugin '{}': node >= {} is required \
-                             for enforced permissions (check `node --version`)",
-                            plugin.name,
-                            crate::plugins::runtime::MIN_NODE_MAJOR
-                        )
-                    },
-                );
-                continue;
-            }
+        if let Some(reason) = crate::plugins::runtime::launch_refusal(&command, plugin_dir, &perms)
+        {
+            report_plugin_mcp_issue_once(format!("{}:launch-refused:{command}", plugin.id), || {
+                format!(
+                    "grove: skipping MCP server for plugin '{}': {}",
+                    plugin.name, reason
+                )
+            });
+            continue;
+        }
+        if crate::plugins::runtime::is_sandboxable_node(&command, plugin_dir) {
             let mut flags = crate::plugins::runtime::node_permission_flags(
                 &perms,
                 &plugin.local_path,
@@ -2377,6 +2373,7 @@ fn load_plugin_mcp_servers(base_env: &HashMap<String, String>) -> Vec<acp::McpSe
             .and_then(|v| v.as_object())
             .map(|o| {
                 o.iter()
+                    .filter(|(k, _)| !crate::plugins::runtime::is_reserved_env(k))
                     .filter_map(|(k, v)| {
                         v.as_str()
                             .map(|s| acp::EnvVariable::new(k.clone(), s.to_string()))
@@ -11672,40 +11669,9 @@ pub fn pick_first_available_acp_agent() -> Option<String> {
         .map(|a| a.id)
 }
 
-/// Pick the first terminal-capable agent that's currently installed.
-///
-/// Terminal-capability is registry-data-driven: any agent whose
-/// `terminal_launch` field is set (via `inject_grove_supplements`) qualifies.
-/// Today that's just `claude-acp`, but the function doesn't know or care.
-///
-/// Ordering: registry document insertion order — upstream CDN order
-/// followed by `inject_trae_and_traex_entries` / `inject_grove_supplements`
-/// patches. Stable for the same registry document. TODO: once a second
-/// terminal-capable agent ships, switch to a deterministic
-/// alphabetic-by-id (or supplements-priority) order to avoid silent
-/// default flips when CDN order changes.
-pub fn pick_first_available_terminal_agent() -> Option<String> {
-    let registry = crate::storage::agent_registry::get();
-    for reg in &registry.agents {
-        if reg.terminal_launch.is_none() {
-            continue;
-        }
-        if let Some(installed) = crate::storage::installed_agents::get(&reg.id)
-            .ok()
-            .flatten()
-        {
-            if !installed.hidden && installed.has_installed_channel() {
-                return Some(installed.id);
-            }
-        }
-    }
-    None
-}
-
-/// Ensure `config.toml` has sensible `acp.agent_command` /
-/// `layout.agent_command` defaults given the currently-installed agents.
-/// Runs once at server startup. Silent no-op if the configured agents
-/// are already valid (resolve_agent returns Some for them).
+/// Ensure `config.toml` has a sensible `acp.agent_command` default given
+/// the currently-installed agents. Runs once at server startup. Silent no-op
+/// if the configured agent is already valid (resolve_agent returns Some).
 pub fn init_agent_defaults() {
     let mut config = crate::storage::config::load_config();
     let mut changed = false;
@@ -11719,32 +11685,6 @@ pub fn init_agent_defaults() {
     if !acp_valid {
         if let Some(picked) = pick_first_available_acp_agent() {
             config.acp.agent_command = Some(picked);
-            changed = true;
-        }
-    }
-
-    // Terminal-mode validity: the configured id must match a registry
-    // entry that declares `terminal_launch`, AND have an installed,
-    // non-hidden row. Data-driven via the registry — no agent-specific
-    // code here.
-    let terminal_valid = match &config.layout.agent_command {
-        Some(name) if !name.is_empty() => {
-            let registry_supports = crate::storage::agent_registry::get()
-                .agents
-                .iter()
-                .any(|a| a.id == *name && a.terminal_launch.is_some());
-            registry_supports
-                && crate::storage::installed_agents::get(name)
-                    .ok()
-                    .flatten()
-                    .map(|a| !a.hidden && a.has_installed_channel())
-                    .unwrap_or(false)
-        }
-        _ => false,
-    };
-    if !terminal_valid {
-        if let Some(picked) = pick_first_available_terminal_agent() {
-            config.layout.agent_command = Some(picked);
             changed = true;
         }
     }
@@ -12092,7 +12032,6 @@ mod tests {
                 acp_session_id: None,
                 created_at: Utc::now(),
                 duty: None,
-                launch_mode: "acp".into(),
             },
         )
         .unwrap();

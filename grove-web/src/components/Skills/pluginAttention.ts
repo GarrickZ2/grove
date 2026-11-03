@@ -7,6 +7,8 @@ export function pluginAttentionReasons(plugin?: Plugin): string[] {
   if (plugin.exists === false) return ["Plugin folder missing"];
 
   const reasons: string[] = [];
+  if (plugin.status === "pending") reasons.push("Review to enable");
+  if (plugin.status === "changed") reasons.push("Permissions changed; review to re-enable");
   if (plugin.built === false) reasons.push("Build required");
   if (plugin.runtime?.available === false) reasons.push(`${plugin.runtime.command} unavailable`);
   if (plugin.sdk_status === "outdated") reasons.push("SDK outdated");

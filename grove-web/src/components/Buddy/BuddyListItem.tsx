@@ -1,3 +1,4 @@
+import type { HTMLAttributes, Ref } from "react";
 import type { BuddySummary } from "../../api/buddies";
 import { BuddyAvatar } from "./BuddyAvatar";
 
@@ -11,14 +12,14 @@ function activityLabel(value: string | null) {
   return date.toDateString() === today.toDateString() ? "Yesterday" : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function BuddyListItem({ buddy, selected, unread = false, onSelect, onMenu, onDrag, onDrop, avatarSize = 30 }: {
-  buddy: BuddySummary; selected: boolean; unread?: boolean; onSelect: () => void; onMenu: () => void;
-  onDrag: () => void; onDrop: () => void; avatarSize?: number;
+export function BuddyListItem({ buddy, selected, unread = false, onSelect, onMenu, sortable, avatarSize = 30 }: {
+  buddy: BuddySummary; selected: boolean; unread?: boolean; onSelect: () => void; onMenu: (at: { x: number; y: number }) => void;
+  sortable?: HTMLAttributes<HTMLElement> & { ref: Ref<HTMLElement> }; avatarSize?: number;
 }) {
-  return <button type="button" className={`orbit-row buddy-list-item is-${buddy.status}${buddy.waiting_delegations > 0 ? " has-waiting" : ""}${selected ? " is-selected" : ""}${unread ? " is-unread" : ""}`} aria-pressed={selected} onClick={onSelect}
-    onContextMenu={(event) => { event.preventDefault(); onMenu(); }}
-    onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) { event.preventDefault(); onMenu(); } }}
-    draggable onDragStart={(event) => { event.dataTransfer.setData("text/plain", buddy.id); onDrag(); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }}>
+  const { ref, ...handlers } = sortable ?? { ref: undefined };
+  return <button type="button" ref={ref as Ref<HTMLButtonElement> | undefined} {...handlers} className={`orbit-row buddy-list-item is-${buddy.status}${buddy.waiting_delegations > 0 ? " has-waiting" : ""}${selected ? " is-selected" : ""}${unread ? " is-unread" : ""}`} aria-pressed={selected} onClick={onSelect}
+    onContextMenu={(event) => { event.preventDefault(); onMenu({ x: event.clientX, y: event.clientY }); }}
+    onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); onMenu({ x: rect.left + 24, y: rect.bottom }); } }}>
     <span className="buddy-list-avatar"><BuddyAvatar id={buddy.id} avatar={buddy.avatar} size={avatarSize} state={buddy.status} />{buddy.status !== "idle" && <span className={`buddy-status-dot is-${buddy.status}`} aria-label={buddy.status} />}</span>
     <span className="buddy-list-copy"><span className="buddy-list-title"><span>{buddy.name}</span><time dateTime={buddy.last_activity_at ?? undefined}>{activityLabel(buddy.last_activity_at)}</time>{unread && <span className="buddy-unread-dot" aria-label="Unread" />}</span>
       <span className="buddy-list-preview">{buddy.status === "waiting" ? "Needs your approval" : buddy.waiting_delegations > 0 ? "A subagent needs you" : buddy.last_message_preview || buddy.description}</span>

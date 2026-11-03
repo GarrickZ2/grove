@@ -36,7 +36,6 @@ export interface ThemeConfig {
 
 export interface LayoutConfig {
   default: string;
-  agent_command?: string;
   /** JSON string of custom layouts array */
   custom_layouts?: string;
   /** Selected custom layout ID (when default="custom") */

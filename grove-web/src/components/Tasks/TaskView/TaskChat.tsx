@@ -117,7 +117,6 @@ import { DropdownSelect, SessionSettingsMenu, type ChatDropdownOption } from "./
 import {
   buildMentionItems,
   buildStudioMentionItems,
-  filterMentionItems,
   buildAgentMentionItems,
 } from "../../../utils/fileMention";
 import {
@@ -139,11 +138,10 @@ import {
 } from "./formPillTypes";
 import {
   agentIconComponent,
-  agentIconUrl,
   resolveAgentIcon,
   usePersonaRegistry,
 } from "../../../utils/agentIcon";
-import type { MentionItem, FilteredMentionItem } from "../../../utils/fileMention";
+import type { MentionItem } from "../../../utils/fileMention";
 import { getMentionCandidates, listSpeakingProfiles } from "../../../api";
 import type { SpeakingProfile } from "../../AI/types";
 import {
@@ -247,8 +245,6 @@ import {
 import { listSketches, type SketchMeta } from "../../../api/sketches";
 import { resolveMemoryEntities, type MemoryEntityMetadata } from "../../../api/memory";
 import { writeLastActiveTab } from "../../../utils/lastActiveTab";
-import { XTerminal } from "../TaskDetail/XTerminal";
-import { sendInputToTerminal } from "../TaskDetail/terminalCache";
 import { perfMark } from "../../../perf/marks";
 import { useReportDebugId } from "../../../perf/debugIdsStore";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
@@ -296,8 +292,8 @@ import {
 import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
 import type { ChatSessionResponse, CustomAgentServer, ImportableSession } from "../../../api";
 import { useProjectMentions } from "./useProjectMentions";
-import { mentionStatus, projectMentionItems } from "./projectMentions";
 import { createFileChip } from "./fileMentionChip";
+import { createMentionChip, filterComposerMentions, getPromptFromEditable, mentionCategorySelectors, mentionStartIndex, parseMentionQuery } from "./composerMentions";
 import { dragCarriesGroveFiles, endGroveFileDrag, groveDragCount, groveDropPaths } from "../../../utils/groveFileDrag";
 import { nextMentionIndex } from "../../../utils/fileMention";
 import { openExternalUrl } from "../../../utils/openExternal";
@@ -1104,21 +1100,6 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-/** Convert a `file://` URI (returned by uploadChatAttachment) to an absolute
- *  local path. Used by terminal launch mode to pipe attachment paths into
- *  the agent's stdin as `@<path>` references. Returns null for non-file URIs. */
-function fileUrlToPath(uri: string | undefined): string | null {
-  if (!uri || !uri.startsWith("file://")) return null;
-  try {
-    let pathname = decodeURIComponent(new URL(uri).pathname);
-    // Windows: file:///C:/foo → pathname is `/C:/foo` → strip leading slash.
-    if (/^\/[a-zA-Z]:/.test(pathname)) pathname = pathname.slice(1);
-    return pathname;
-  } catch {
-    return null;
-  }
-}
-
 // ─── Render grouping types ───────────────────────────────────────────────────
 
 function renderItemKey(item: RenderItem): string {
@@ -1774,285 +1755,6 @@ function createCommandChip(name: string): HTMLSpanElement {
   chip.appendChild(closeBtn);
 
   return chip;
-}
-
-/** Create a dynamic browser tab mention pill DOM element.
- *
- * `tabId` is the Chrome tab id (when known); stored on the chip so that
- * `getPromptFromEditable` can serialize it into a `<grove-meta>` envelope —
- * giving downstream agents enough info to drive the tab via the
- * `grove_browser_*` MCP tools.
- */
-function createBrowserTabChip(url: string, title: string, tabId?: number): HTMLSpanElement {
-  const chip = document.createElement("span");
-  chip.contentEditable = "false";
-  chip.dataset.mentionKind = "browsertabs";
-  chip.dataset.tabUrl = url;
-  chip.dataset.tabTitle = title;
-  if (typeof tabId === "number" && Number.isFinite(tabId)) {
-    chip.dataset.tabId = String(tabId);
-  }
-  chip.title = `${title} (${url})`;
-
-  chip.style.cssText =
-    "display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:9999px;" +
-    "background:color-mix(in srgb,var(--color-bg-secondary) 80%,var(--color-bg));" +
-    "border:1px solid color-mix(in srgb,var(--color-border) 65%,transparent);" +
-    "font-size:12px;font-weight:500;color:var(--color-accent);" +
-    "margin:0 2px;user-select:none;vertical-align:baseline;line-height:1.5;";
-
-  let faviconUrl = "";
-  try {
-    const domain = new URL(url).hostname;
-    faviconUrl = `https://www.google.com/s2/favicons?sz=32&domain=${domain}`;
-  } catch {
-    // Bad URL — leave favicon empty; the chip stays readable without an icon.
-  }
-
-  if (faviconUrl) {
-    const img = document.createElement("img");
-    img.src = faviconUrl;
-    img.alt = "";
-    img.width = 13;
-    img.height = 13;
-    img.style.cssText =
-      "display:inline-block;vertical-align:middle;flex-shrink:0;border-radius:2px;";
-    img.onerror = () => {
-      img.style.display = "none";
-    };
-    chip.appendChild(img);
-  }
-
-  const label = document.createElement("span");
-  // Long titles (e.g. an Open Graph description scraped from <meta>) blow
-  // up the chat input box and the chip itself. Truncate visually while
-  // keeping the full title in dataset.tabTitle for serialization.
-  const MAX_CHIP_TITLE = 40;
-  label.textContent =
-    title.length > MAX_CHIP_TITLE ? `${title.slice(0, MAX_CHIP_TITLE).trimEnd()}…` : title;
-  label.style.cssText = "max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
-  chip.appendChild(label);
-
-  const closeBtn = document.createElement("span");
-  closeBtn.dataset.chipClose = "true";
-  closeBtn.textContent = "\u00d7";
-  closeBtn.style.cssText =
-    "margin-left:2px;cursor:pointer;opacity:0.6;font-size:13px;line-height:1;color:var(--color-accent);";
-  chip.appendChild(closeBtn);
-
-  return chip;
-}
-
-/**
- * Create an agent-graph @-mention pill. Three kinds, all rendered as a single
- * non-editable inline atom. Metadata is stored on dataset attrs and consumed
- * by `getPromptFromEditable` at send time to expand into the spec §6 template
- * string.
- */
-function createAgentMentionChip(item: MentionItem): HTMLSpanElement {
-  const chip = document.createElement("span");
-  chip.contentEditable = "false";
-  chip.dataset.mentionKind = item.kind ?? "file";
-  // Per-kind metadata; absent fields are simply not serialized.
-  if (item.sessionId) chip.dataset.sessionId = item.sessionId;
-  if (item.msgId) chip.dataset.msgId = item.msgId;
-  if (item.duty != null) chip.dataset.duty = item.duty;
-  if (item.agentName) chip.dataset.agentName = item.agentName;
-  if (item.displayName) chip.dataset.displayName = item.displayName;
-  if (item.historyPath) chip.dataset.historyPath = item.historyPath;
-
-  // Neutral surface — readable in any theme. Type is conveyed by the brand
-  // icon + the optional ↩ glyph for reply, not by tinted color.
-  chip.style.cssText =
-    "display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:4px;" +
-    "background:var(--color-bg-tertiary);" +
-    "border:1px solid var(--color-border);" +
-    "font-size:12px;font-weight:500;color:var(--color-text);" +
-    "margin:0 2px;user-select:none;vertical-align:baseline;line-height:1.5;";
-  if (item.kind === "agent_send" && item.duty) {
-    chip.title = `${item.displayName ?? ""} — ${item.duty}`;
-  }
-  if (item.kind === "agent_reply" && item.msgId) {
-    chip.title = `Reply to ${item.displayName ?? ""} (msg ${item.msgId})`;
-  }
-  if (item.kind === "chat_history" && item.historyPath) {
-    chip.title = `Share history of "${item.displayName ?? ""}" — ${item.historyPath}`;
-  }
-
-  // Layout: <verb> <agent_icon> <name>
-  //   - mention_spawn        → "Spawn  <icon> <agent>"
-  //   - mention_send         → "Send To <icon> <session>"
-  //   - mention_reply        → "Reply To <icon> <session>"
-  //   - mention_chat_history → "Share History <icon> <chat>"
-  const name = item.displayName ?? item.agentName ?? "";
-  const action =
-    item.kind === "agent_spawn"
-      ? "Spawn"
-      : item.kind === "agent_send"
-        ? "Send To"
-        : item.kind === "chat_history"
-          ? "Share History"
-          : "Reply To";
-  const verb = document.createElement("span");
-  verb.textContent = action;
-  verb.style.cssText = "opacity:0.7;font-weight:500;";
-  chip.appendChild(verb);
-
-  const iconUrl = agentIconUrl(item.agentName);
-  if (iconUrl) {
-    const img = document.createElement("img");
-    img.src = iconUrl;
-    img.alt = "";
-    img.style.cssText =
-      "width:12px;height:12px;flex-shrink:0;display:inline-block;vertical-align:-2px;";
-    chip.appendChild(img);
-  }
-
-  const label = document.createElement("span");
-  label.textContent = name;
-  chip.appendChild(label);
-
-  const closeBtn = document.createElement("span");
-  closeBtn.dataset.chipClose = "true";
-  closeBtn.textContent = "×";
-  closeBtn.style.cssText =
-    "margin-left:2px;cursor:pointer;opacity:0.6;font-size:13px;line-height:1;";
-  chip.appendChild(closeBtn);
-
-  return chip;
-}
-
-/**
- * Expand an agent-graph @-mention chip into a `<grove-meta>` envelope. The
- * envelope's `system-prompt` field carries the spec §6 instruction text the AI
- * reads; the `data` field carries the rendering metadata the receiving chat's
- * frontend uses to draw a pill. Grove never calls the underlying
- * `grove_agent_*` tools itself — the AI decides whether to act on the hint.
- */
-function expandAgentMentionChip(node: HTMLElement): string {
-  const kind = node.dataset.mentionKind;
-  if (kind === "agent_spawn") {
-    const agent = node.dataset.agentName ?? node.dataset.displayName ?? "";
-    return buildGroveMetaTag(
-      "mention_spawn",
-      { agent },
-      `@[agent=${agent} · use grove_agent_graph_spawn to create a Session, then grove_agent_graph_send to dispatch]`,
-    );
-  }
-  if (kind === "agent_send") {
-    const id = node.dataset.sessionId ?? "";
-    const name = node.dataset.displayName ?? "";
-    const duty = node.dataset.duty ?? "";
-    const agent = node.dataset.agentName ?? "";
-    const data: Record<string, unknown> = { sid: id, name };
-    if (duty) data.duty = duty;
-    if (agent) data.agent = agent;
-    return buildGroveMetaTag(
-      "mention_send",
-      data,
-      `@[session id=${id}, name=${name}, duty="${duty}" · use grove_agent_graph_send(to="${id}") to dispatch]`,
-    );
-  }
-  if (kind === "agent_reply") {
-    const id = node.dataset.sessionId ?? "";
-    const name = node.dataset.displayName ?? "";
-    const msg = node.dataset.msgId ?? "";
-    const agent = node.dataset.agentName ?? "";
-    const data: Record<string, unknown> = { sid: id, name, msg_id: msg };
-    if (agent) data.agent = agent;
-    return buildGroveMetaTag(
-      "mention_reply",
-      data,
-      `@[session id=${id}, name=${name}, pending_msg=${msg} · use grove_agent_graph_reply(msg_id="${msg}") to respond]`,
-    );
-  }
-  if (kind === "chat_history") {
-    const cid = node.dataset.sessionId ?? "";
-    const name = node.dataset.displayName ?? "";
-    const file = node.dataset.historyPath ?? "";
-    const agent = node.dataset.agentName ?? "";
-    const data: Record<string, unknown> = { chat_id: cid, name, file };
-    if (agent) data.agent = agent;
-    return buildGroveMetaTag(
-      "mention_chat_history",
-      data,
-      `@[chat_history name="${name}" file="${file}" · this is another chat's history.jsonl in the same task; read the file to see the conversation]`,
-    );
-  }
-  return "";
-}
-
-/** Extract prompt text from a contentEditable element, converting chips to /command */
-function getPromptFromEditable(el: HTMLElement): string {
-  const parts: string[] = [];
-  const walk = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      parts.push(node.textContent || "");
-    } else if (node instanceof HTMLElement) {
-      if (node.dataset.mentionKind === "browsertabs") {
-        const url = node.dataset.tabUrl || "";
-        const title = node.dataset.tabTitle || "";
-        const tabIdRaw = node.dataset.tabId;
-        const tabId = tabIdRaw ? Number(tabIdRaw) : undefined;
-        if (url) {
-          // Standard <grove-meta v=1> envelope:
-          // - `type` dispatches to a frontend renderer (browser_tab → pill chip)
-          // - `data` carries the machine-readable payload
-          // - `system-prompt` is the human-readable fallback used by the agent
-          //   AND by the UI when the renderer is missing / errors
-          const data: { url: string; title: string; tab_id?: number } = {
-            url,
-            title,
-          };
-          if (typeof tabId === "number" && Number.isFinite(tabId)) {
-            data.tab_id = tabId;
-          }
-          const tabIdHint =
-            typeof tabId === "number" && Number.isFinite(tabId)
-              ? ` Use this tab_id (${tabId}) with the grove_browser_* MCP tools to drive the tab.`
-              : "";
-          const envelope = {
-            v: 1,
-            type: "browser_tab",
-            data,
-            "system-prompt": `Browser tab reference: ${title || url} (${url}).${tabIdHint}`,
-          };
-          // Encode `<` / `>` as unicode escapes so a title containing
-          // `</grove-meta>` doesn't accidentally close the envelope tag
-          // (the receiver's non-greedy regex matches the first
-          // `</grove-meta>` and would feed truncated JSON to JSON.parse).
-          const safeJson = JSON.stringify(envelope)
-            .replace(/</g, "\\u003c")
-            .replace(/>/g, "\\u003e");
-          parts.push(`<grove-meta>${safeJson}</grove-meta>`);
-        }
-      } else if (node.dataset.mentionKind && node.dataset.mentionKind !== "file") {
-        parts.push(expandAgentMentionChip(node));
-      } else if (node.dataset.command) {
-        parts.push(`/${node.dataset.command}`);
-      } else if (node.dataset.ref) {
-        parts.push(`[${node.dataset.ref}]`);
-      } else if (node.dataset.file) {
-        // Studio-categorized chips carry a friendly label separate from the
-        // raw path — serialize as "Name(path)" so both the reader and the
-        // agent see what the chip means. Fall back to the bare path for
-        // ordinary file mentions.
-        const file = node.dataset.file;
-        const lbl = node.dataset.label;
-        parts.push(lbl && lbl !== file ? `${lbl}(${file})` : file);
-      } else if (node.tagName === "BR") {
-        parts.push("\n");
-      } else if (node.tagName === "DIV" || node.tagName === "P") {
-        if (parts.length > 0 && parts[parts.length - 1] !== "\n")
-          parts.push("\n");
-        node.childNodes.forEach(walk);
-      } else {
-        node.childNodes.forEach(walk);
-      }
-    }
-  };
-  el.childNodes.forEach(walk);
-  return parts.join("").trim();
 }
 
 function attachmentFromContent(a: ServerEvent): Attachment {
@@ -3254,23 +2956,10 @@ export function TaskChat({
   const { projects: allProjects, contents: projectContents, projectsLoading, projectsError } =
     useProjectMentions(showFileMenu && activeCategory === "project", fileFilter);
 
-  const CATEGORY_SELECTORS = useMemo<MentionItem[]>(() => {
-    const base: MentionItem[] = [
-      { path: "conversation", displayName: "Conversation", category: "category_selector", kind: "chat_history", isDir: false },
-      { path: "file", displayName: "Files", category: "category_selector", kind: "file", isDir: true },
-      { path: "agent", displayName: "Agents", category: "category_selector", kind: "agent_spawn", isDir: false },
-      { path: "project", displayName: "Projects", category: "category_selector", kind: "file", isDir: true },
-    ];
-    if (isStudioProject) {
-      base.push(
-        { path: "sketch", displayName: "Sketches", category: "category_selector", kind: "file", isDir: true }
-      );
-    }
-    if (isExtensionConnected) {
-      base.push({ path: "browsertabs", displayName: "Browser Tabs", category: "category_selector", kind: "browsertabs", isDir: false });
-    }
-    return base;
-  }, [isExtensionConnected, isStudioProject]);
+  const CATEGORY_SELECTORS = useMemo(
+    () => mentionCategorySelectors({ studio: isStudioProject, browserTabs: isExtensionConnected }),
+    [isExtensionConnected, isStudioProject],
+  );
 
   const [promptCaps, setPromptCaps] = useState<PromptCaps>({
     image: false,
@@ -3565,14 +3254,11 @@ export function TaskChat({
     return () => window.removeEventListener("grove:speaking-profile-deleted", handleDeleted);
   }, [activeChatId, agentVoiceState.speakingProfileId, projectId, sendAgentVoiceState, taskId]);
   const isReadOnlyHistory = finished || isViewingArchived;
-  // Terminal-mode chat: agent CLI runs under a PTY (no ACP). Messages area
-  // becomes xterm.js; chatbox input writes to PTY stdin instead of session/prompt.
-  const isTerminalLaunchMode = activeChat?.launch_mode === "terminal";
   const connectionStatus = isRemoteSession ? "read_only" : activeChatId ? chatConnectionStatuses[activeChatId] ?? "disconnected" : "disconnected";
   const connectionPending = connectionStatus === "connecting" || connectionStatus === "reconnecting";
   const connectionLabel = connectionPending && activeChatId && connectionStages[activeChatId]
     ? `${chatConnectionLabels[connectionStatus]} · ${connectionStages[activeChatId]}`
-    : connectionStatus === "connected" && activeChatId && !isTerminalLaunchMode && !isTerminalMode && chatProtocolVersions[activeChatId]
+    : connectionStatus === "connected" && activeChatId && !isTerminalMode && chatProtocolVersions[activeChatId]
       ? `${chatConnectionLabels[connectionStatus]} · v${chatProtocolVersions[activeChatId]}`
       : chatConnectionLabels[connectionStatus];
   const connectionDotClass = isViewingArchived || connectionStatus === "disconnected" || connectionStatus === "read_only"
@@ -3582,11 +3268,6 @@ export function TaskChat({
       : connectionStatus === "failed"
         ? "bg-[var(--color-error)]"
         : "bg-[var(--color-warning)]";
-  const agentPtyWsUrl = useMemo(() => {
-    if (!isTerminalLaunchMode || !activeChatId) return null;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${window.location.host}/api/v1/projects/${projectId}/tasks/${taskId}/chats/${activeChatId}/agent-pty`;
-  }, [isTerminalLaunchMode, activeChatId, projectId, taskId]);
   // Quota for built-in AI coding agents (Claude Code / Codex / Gemini).
   // Unsupported agents return null, which hides the quota badge entirely.
   const {
@@ -3862,7 +3543,7 @@ export function TaskChat({
   const orbitSetup = useMemo(() => {
     const fields: SetupField[] = [];
     const toggles: SetupToggle[] = [];
-    if (!orbitShell || isTerminalLaunchMode) return { fields, toggles };
+    if (!orbitShell) return { fields, toggles };
     if (modelOptions.length > 0) {
       fields.push({ id: "model", kind: "model", label: matchedSessionConfig.model?.name ?? "Model", options: modelOptions, value: selectedModel, loading: !!matchedSessionConfig.model && pendingConfigIds.has(matchedSessionConfig.model.id), onSelect: selectOrbitModel });
     }
@@ -3884,7 +3565,7 @@ export function TaskChat({
       }
     }
     return { fields, toggles };
-  }, [orbitShell, isTerminalLaunchMode, modelOptions, modeOptions, thoughtLevelOptions, thoughtLevelConfigId, matchedSessionConfig, selectedModel, permissionLevel, thoughtLevel, pendingConfigIds, additionalSessionConfigOptions, selectOrbitModel, selectOrbitMode, selectOrbitThinking, requestConfigOptionChange]);
+  }, [orbitShell, modelOptions, modeOptions, thoughtLevelOptions, thoughtLevelConfigId, matchedSessionConfig, selectedModel, permissionLevel, thoughtLevel, pendingConfigIds, additionalSessionConfigOptions, selectOrbitModel, selectOrbitMode, selectOrbitThinking, requestConfigOptionChange]);
 
   // When a permission message appears, force the permission panel open and
   // close any rival panels. When it goes away, close the panel. Done via
@@ -4025,94 +3706,18 @@ export function TaskChat({
   );
 
   const deferredFileFilter = useDeferredValue(fileFilter);
-  const filteredFiles = useMemo(() => {
-    // 1. Separate combined items into categories
-    const conversationItems = combinedMentionItems.filter(item => 
-      item.kind === "chat_history"
-    );
-
-    const agentItems = combinedMentionItems.filter(item => 
-      item.kind === "agent_spawn" || 
-      item.kind === "agent_send" || 
-      item.kind === "agent_reply"
-    );
-
-    const fileItems = combinedMentionItems.filter(item => 
-      !conversationItems.includes(item) && 
-      !agentItems.includes(item)
-    );
-
-    // 2. Filter based on activeCategory
-    if (activeCategory === "conversation") {
-      return filterMentionItems(conversationItems, deferredFileFilter, 20);
-    }
-    if (activeCategory === "agent") {
-      return filterMentionItems(agentItems, deferredFileFilter, 20);
-    }
-    if (activeCategory === "file") {
-      return filterMentionItems(fileItems, deferredFileFilter, 20);
-    }
-    if (activeCategory === "browsertabs") {
-      return filterMentionItems(browserTabs, deferredFileFilter, 20);
-    }
-    if (activeCategory === "sketch") {
-      const sketchItems = fileItems.filter(item => item.category === "Sketch");
-      return filterMentionItems(sketchItems, deferredFileFilter, 20);
-    }
-
-    if (activeCategory === "project") {
-      // Use the current input here so Enter immediately after choosing a project
-      // cannot act on the previous, deferred project list.
-      const slashIdx = fileFilter.indexOf("/");
-      if (slashIdx >= 0) {
-        const projectName = fileFilter.slice(0, slashIdx).toLowerCase();
-        const project = allProjects.find(p => p.name.toLowerCase() === projectName);
-        if (project) return projectMentionItems(project, projectContents[project.id], fileFilter.slice(slashIdx + 1));
-      }
-
-      // If no project selected yet or no slash typed, list matching projects!
-      const projectItems: MentionItem[] = allProjects.map(p => ({
-        path: p.name, // path holds project name for Category trigger
-        isDir: p.project_type === "studio",
-        displayName: p.name,
-        category: p.project_type === "studio" ? "Studio Project" : "Coding Project",
-        kind: p.project_type === "studio" ? "agent_spawn" : "file",
-        sessionId: p.id,
-      }));
-      
-      const items = filterMentionItems(projectItems, fileFilter, 20);
-      if (projectsLoading) items.push(mentionStatus("loading-projects", "Refreshing projects…"));
-      else if (projectsError) items.push(mentionStatus("error-projects", "Could not refresh projects. Reopen Projects to retry.", "Error"));
-      return items;
-    }
-
-    // 3. Aggregated Search (activeCategory is null)
-    if (!deferredFileFilter) {
-      // Empty query: Show Category Selectors at the top!
-      const selectors = CATEGORY_SELECTORS.map(s => ({
-        ...s,
-        score: 0,
-        indices: [],
-      }));
-      
-      // Also append top 2-3 items from conversation, agent for quick access
-      const quickConvs = conversationItems.slice(0, 3).map(i => ({ ...i, score: 0, indices: [] }));
-      const quickAgents = agentItems.slice(0, 3).map(i => ({ ...i, score: 0, indices: [] }));
-      
-      return [...selectors, ...quickConvs, ...quickAgents] as FilteredMentionItem[];
-    }
-
-    // Non-empty query: search across all categories (with limited files to avoid noise)
-    const matchedSelectors = filterMentionItems(CATEGORY_SELECTORS, deferredFileFilter, 4);
-    const matchedConvs = filterMentionItems(conversationItems, deferredFileFilter, 20);
-    const matchedAgents = filterMentionItems(agentItems, deferredFileFilter, 20);
-    const matchedFiles = filterMentionItems(fileItems, deferredFileFilter, 20); // Limit files to 20 in aggregated search!
-
-    // Combine them, sort by score descending
-    const combined = [...matchedConvs, ...matchedAgents, ...matchedFiles];
-    const sortedCombined = combined.sort((a, b) => b.score - a.score);
-    return [...matchedSelectors, ...sortedCombined];
-  }, [
+  const filteredFiles = useMemo(() => filterComposerMentions({
+    items: combinedMentionItems,
+    browserTabs,
+    selectors: CATEGORY_SELECTORS,
+    activeCategory,
+    filter: fileFilter,
+    deferredFilter: deferredFileFilter,
+    projects: allProjects,
+    projectContents,
+    projectsLoading,
+    projectsError,
+  }), [
     combinedMentionItems,
     deferredFileFilter,
     activeCategory,
@@ -4223,7 +3828,7 @@ export function TaskChat({
     getConfig()
       .then((cfg) => {
         if (!cancelled) {
-          resolve(cfg.layout.agent_command || "", cfg.acp?.custom_agents);
+          resolve(cfg.acp?.agent_command || "", cfg.acp?.custom_agents);
         }
       })
       .catch(() => {
@@ -5348,19 +4953,10 @@ export function TaskChat({
       backgroundConnections.track(chatId, Date.now());
       if (wsMapRef.current.has(chatId)) return; // Already connected
       if (connectingRef.current.has(chatId)) return; // Connection already in-flight
-      // Terminal-mode chats have no ACP WebSocket — they speak PTY only.
-      // Bailing here keeps wsRef.current null for those chats; handleSend
-      // already branches on isTerminalLaunchMode before touching wsRef.
+      // Wait for the chats list so the chat is known; the caller retries
+      // once it loads via the [activeChatId, chats] effect below.
       const chat = chatsRef.current.find((c) => c.id === chatId);
       if (!chat) {
-        // Chats list hasn't loaded yet — we'd be guessing whether this chat
-        // is ACP or terminal mode. Bail; caller retries after the chats
-        // fetch completes via the [activeChatId, chats] effect below.
-        connectingRef.current.delete(chatId);
-        return;
-      }
-      if (chat.launch_mode === "terminal") {
-        setChatConnectionStatus(chatId, (current) => current === "disconnected" ? "connecting" : current);
         connectingRef.current.delete(chatId);
         return;
       }
@@ -6337,11 +5933,10 @@ export function TaskChat({
         }
       }
     })();
-    // Note: activeChat?.launch_mode is in deps so that when chats finish
-    // loading after this effect's first run (when launch_mode was still
-    // undefined → connectChatWs bailed), the effect re-fires with the
-    // resolved mode and routes the chat correctly (ACP WS vs PTY-only).
-  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs, updateLocalInputPlacements, historyPreferences, savePendingInputState]);
+    // Note: activeChat?.id is in deps so that when chats finish loading
+    // after this effect's first run (connectChatWs bailed on an unknown
+    // chat), the effect re-fires and connects.
+  }, [activeChatId, activeChat?.id, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs, updateLocalInputPlacements, historyPreferences, savePendingInputState]);
 
   // Cleanup all WebSockets on unmount, plus any pending reconnect timers —
   // otherwise an in-flight backoff timer fires after unmount and creates a
@@ -8236,101 +7831,12 @@ export function TaskChat({
     // Guard activeChatId before consuming any UI state — if we return after
     // clearing the editable, the user's typed message is silently lost.
     if (!activeChatId) return;
-    if ((isTerminalLaunchMode || isTerminalMode) && !isConnected) return;
+    if (isTerminalMode && !isConnected) return;
     const draftHtml = el.innerHTML;
     const composerStillCurrent = () =>
       getActiveChatId() === activeChatId && editableRef.current === el &&
       el.innerHTML === draftHtml && attachmentsRef.current === attachments;
     const prompt = getPromptFromEditable(el);
-
-    // Terminal launch mode: chatbox forwards the typed text + any attachment
-    // file paths to the agent's PTY stdin. Attachments (images, files) are
-    // uploaded to the chat's on-disk attachments dir first, then each one is
-    // injected as `@<absolute-path>` so claude reads them via its Read tool.
-    if (isTerminalLaunchMode) {
-      if ((!prompt && attachments.length === 0) || !agentPtyWsUrl) return;
-
-      // Upload anything that doesn't have a server URI yet. Image/audio
-      // attachments arrive as base64 in `att.data`; resource attachments
-      // arrive as a pending File ref and need to be base64-encoded first.
-      let resolved = attachments;
-      const needUpload = attachments.filter(
-        (a) => !a.uri && (a.data || a.pendingFile),
-      );
-      if (needUpload.length > 0) {
-        try {
-          const uploads = await Promise.all(
-            needUpload.map(async (att) => {
-              const data = att.pendingFile
-                ? await fileToBase64(att.pendingFile)
-                : att.data;
-              return uploadChatAttachment(projectId, taskId, activeChatId, {
-                name: att.pendingFile?.name ?? att.name,
-                mime_type: att.mimeType || undefined,
-                data,
-              });
-            }),
-          );
-          const map = new Map(needUpload.map((a, i) => [a, uploads[i]]));
-          resolved = attachments.map((a) => {
-            const r = map.get(a);
-            return r
-              ? {
-                  ...a,
-                  uri: r.uri,
-                  name: r.name,
-                  mimeType: r.mime_type ?? a.mimeType,
-                  size: r.size,
-                  pendingFile: undefined,
-                }
-              : a;
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          setMessages((prev) => [
-            ...prev,
-            { type: "system", content: `Failed to upload attachment: ${msg}` },
-          ]);
-          return;
-        }
-      }
-
-      if (!composerStillCurrent()) return;
-
-      const paths = resolved
-        .map((a) => a.uri)
-        .map((u) => fileUrlToPath(u))
-        .filter((p): p is string => !!p);
-      // Natural-language attachment hint instead of `@path` — claude's
-      // picker autocomplete for `@` doesn't fire inside bracketed paste,
-      // but it scans prompt text for paths and calls Read on its own.
-      const filesNote =
-        paths.length > 0 ? `Files attached: ${paths.join(", ")}\n\n` : "";
-      const finalPrompt = filesNote + (prompt || "");
-      if (!finalPrompt) return;
-
-      // Wrap in bracketed paste (\x1b[200~ ... \x1b[201~) so claude treats
-      // the body as one paste — any embedded newlines stay as newlines, and
-      // the trailing \r AFTER the paste-end marker is the one that submits.
-      // A bare \r without wrapping gets eaten as a newline once claude's
-      // own paste-detection kicks in on the burst of bytes.
-      const prefix = `url:${agentPtyWsUrl}`;
-      const wrapped = `\x1b[200~${finalPrompt}\x1b[201~\r`;
-      const ok = sendInputToTerminal(prefix, wrapped);
-      if (!ok) return; // PTY not connected yet — keep the draft, user retries
-      promoteChatForLocalActivity(activeChatId);
-      el.innerHTML = "";
-      clearChatDraft(activeChatId);
-      setHasContent(false);
-      setAttachments((prev) => {
-        prev.forEach((att) => {
-          if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
-        });
-        return [];
-      });
-      finishComposerAfterSend(el);
-      return;
-    }
 
     if (!prompt && attachments.length === 0) return;
     const ws = wsRef.current;
@@ -8411,7 +7917,7 @@ export function TaskChat({
     requestBottom("auto");
     promoteChatForLocalActivity(activeChatId);
     void dispatchPendingInput(activeChatId, input.id);
-  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, finishComposerAfterSend, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, getActiveChatId, onUserMessageSent, dispatchPendingInput, pendingInputMode, openInputQueue, orbitComposer]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, requestBottom, buildPromptConfig, promoteChatForLocalActivity, agentVoiceState.enabled, finishComposerAfterSend, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, getActiveChatId, onUserMessageSent, dispatchPendingInput, pendingInputMode, openInputQueue, orbitComposer]);
 
   const handleSend = useCallback(async () => {
     if (!activeChatId || sendingAttemptRef.current.has(activeChatId)) return;
@@ -9324,23 +8830,8 @@ export function TaskChat({
     const offset = range.startOffset;
     // Scan backwards from cursor to find "@" or "/" (@ takes priority over /)
     let slashIdx = -1;
-    let atIdx = -1;
-
-    // Find last @ before cursor
-    const lastAt = text.lastIndexOf("@", offset - 1);
-    if (lastAt >= 0 && (lastAt === 0 || /\s/.test(text[lastAt - 1]))) {
-      const segment = text.slice(lastAt, offset);
-      const hasCategory = segment.startsWith("@project:") ||
-                          segment.startsWith("@file:") ||
-                          segment.startsWith("@agent:") ||
-                          segment.startsWith("@conversation:") ||
-                          segment.startsWith("@browsertabs:") ||
-                          (isStudioProject && segment.startsWith("@sketch:"));
-      const hasNoSpaces = !/\s/.test(segment);
-      if (hasCategory || hasNoSpaces) {
-        atIdx = lastAt;
-      }
-    }
+    const mention = parseMentionQuery(text, offset, isStudioProject);
+    const atIdx = mention?.atIdx ?? -1;
 
     // Find last / before cursor
     const lastSlash = text.lastIndexOf("/", offset - 1);
@@ -9354,21 +8845,8 @@ export function TaskChat({
       refreshTaskFilesIfNeeded();
       refreshAgentMentionCandidates();
       
-      const mentionText = text.slice(atIdx + 1, offset);
-      let cat: string | null = null;
-      let filter = mentionText;
-      
-      const colonIdx = mentionText.indexOf(":");
-      if (colonIdx >= 0) {
-        const possibleCat = mentionText.slice(0, colonIdx).toLowerCase();
-        const allowedCats = isStudioProject
-          ? ["conversation", "file", "agent", "project", "browsertabs", "sketch"]
-          : ["conversation", "file", "agent", "project", "browsertabs"];
-        if (allowedCats.includes(possibleCat)) {
-          cat = possibleCat;
-          filter = mentionText.slice(colonIdx + 1);
-        }
-      }
+      const cat = mention?.category ?? null;
+      const filter = mention?.filter ?? "";
 
       setActiveCategory(cat);
       setFileFilter(filter);
@@ -9464,21 +8942,7 @@ export function TaskChat({
       const text = node.textContent || "";
       const offset = range.startOffset;
       // Find the "@" start
-      let atIdx = -1;
-      const lastAt = text.lastIndexOf("@", offset - 1);
-      if (lastAt >= 0 && (lastAt === 0 || /\s/.test(text[lastAt - 1]))) {
-        const segment = text.slice(lastAt, offset);
-        const hasCategory = segment.startsWith("@project:") ||
-                            segment.startsWith("@file:") ||
-                            segment.startsWith("@agent:") ||
-                            segment.startsWith("@conversation:") ||
-                            segment.startsWith("@browsertabs:") ||
-                            (isStudioProject && segment.startsWith("@sketch:"));
-        const hasNoSpaces = !/\s/.test(segment);
-        if (hasCategory || hasNoSpaces) {
-          atIdx = lastAt;
-        }
-      }
+      const atIdx = mentionStartIndex(text, offset, isStudioProject);
       if (atIdx < 0) return;
       const before = text.slice(0, atIdx);
       const after = text.slice(offset);
@@ -9524,24 +8988,7 @@ export function TaskChat({
       const matched = filteredFiles.find(
         (f) => f.path === filePath && (f.category ?? "") === (category ?? ""),
       );
-      const chip =
-        matched && matched.kind === "browsertabs"
-          ? createBrowserTabChip(
-              filePath,
-              displayLabel || filePath,
-              matched.sessionId ? Number(matched.sessionId) : undefined,
-            )
-          : matched && matched.kind && matched.kind !== "file"
-          ? createAgentMentionChip(matched)
-          : createFileChip(
-              filePath,
-              isDir,
-              displayLabel || (matched?.displayName ?? ""),
-              category,
-              matched?.favIconUrl,
-              matched?.category === "Project Root" ? matched.sessionId : undefined,
-              theme.accentPalette,
-            );
+      const chip = createMentionChip(matched, filePath, isDir, displayLabel, category, theme.accentPalette);
 
       const frag = document.createDocumentFragment();
       if (before) frag.appendChild(document.createTextNode(before));
@@ -9574,21 +9021,7 @@ export function TaskChat({
       const offset = range.startOffset;
 
       // Find the "@" start
-      let atIdx = -1;
-      const lastAt = text.lastIndexOf("@", offset - 1);
-      if (lastAt >= 0 && (lastAt === 0 || /\s/.test(text[lastAt - 1]))) {
-        const segment = text.slice(lastAt, offset);
-        const hasCategory = segment.startsWith("@project:") ||
-                            segment.startsWith("@file:") ||
-                            segment.startsWith("@agent:") ||
-                            segment.startsWith("@conversation:") ||
-                            segment.startsWith("@browsertabs:") ||
-                            (isStudioProject && segment.startsWith("@sketch:"));
-        const hasNoSpaces = !/\s/.test(segment);
-        if (hasCategory || hasNoSpaces) {
-          atIdx = lastAt;
-        }
-      }
+      const atIdx = mentionStartIndex(text, offset, isStudioProject);
       if (atIdx < 0) return;
       const before = text.slice(0, atIdx);
       const after = text.slice(offset);
@@ -11698,7 +11131,7 @@ export function TaskChat({
           <Paperclip />
         </button>
       )}
-      {!isTerminalLaunchMode && !isViewingArchived && agentVoiceControl}
+      {!isViewingArchived && agentVoiceControl}
       {!isPhoneLayout && <button
         type="button"
         className="oc-tool"
@@ -11729,7 +11162,7 @@ export function TaskChat({
   const orbitOrbDisabled = orbitOrbAction === "save"
     ? !hasContent || !isConnected || isSavingPendingEdit || pendingEditImporting || pendingEditGone || !!activePermissionMessage
     : orbitOrbAction === "send"
-      ? !isConnected && (isTerminalLaunchMode || isTerminalMode)
+      ? !isConnected && isTerminalMode
       : orbitOrbAction === "stop" || orbitOrbAction === "sendNow" ? isCancelling : false;
   const orbitOrbBusy = orbitOrbAction === "save" ? isSavingPendingEdit : (orbitOrbAction === "stop" || orbitOrbAction === "sendNow") && isCancelling;
 
@@ -11742,8 +11175,8 @@ export function TaskChat({
           surface="orbit" chatId={activeChat.id} forkCapable={forkCapable} importCapable={importCapable}
           importSessions={importSessions} importLoading={importLoading} importNextCursor={importNextCursor}
           authMethods={authMethods} logoutCapable={logoutCapable}
-          refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
-          reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+          refreshDisabled={isRefreshing || isReconnecting}
+          reconnectDisabled={isRefreshing || isReconnecting}
           actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
           deleteDisabled={false} archiveDisabled={isBusy}
           onFork={handleForkChat} onOpenImport={() => { if (importSessions.length === 0) void loadImportSessions(); }}
@@ -12036,8 +11469,8 @@ export function TaskChat({
                   importNextCursor={importNextCursor}
                   authMethods={authMethods}
                   logoutCapable={logoutCapable}
-                  refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
-                  reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+                  refreshDisabled={isRefreshing || isReconnecting}
+                  reconnectDisabled={isRefreshing || isReconnecting}
                   actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
                   deleteDisabled={chats.length <= 1}
                   archiveDisabled={chats.length <= 1 || isBusy}
@@ -12204,8 +11637,8 @@ export function TaskChat({
                       importNextCursor={importNextCursor}
                       authMethods={authMethods}
                       logoutCapable={logoutCapable}
-                      refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
-                      reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+                      refreshDisabled={isRefreshing || isReconnecting}
+                      reconnectDisabled={isRefreshing || isReconnecting}
                       actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
                       deleteDisabled={chats.length <= 1}
                       archiveDisabled={chats.length <= 1 || isBusy}
@@ -12403,13 +11836,13 @@ export function TaskChat({
           onWheelCapture={handleChatWheelCapture}
           onPointerDownCapture={handleChatPointerDownCapture}
         >
-          {activeChatId && !isReadOnlyHistory && !isTerminalLaunchMode && connectionErrors[activeChatId] && (
+          {activeChatId && !isReadOnlyHistory && connectionErrors[activeChatId] && (
             <div role="alert" className="absolute inset-x-3 top-2 z-20 flex items-start gap-3 rounded-lg border border-[var(--color-error)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-error)]">
               <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{connectionErrors[activeChatId]}</span>
               <button type="button" className="shrink-0 underline disabled:opacity-50" disabled={isReconnecting} onClick={handleReconnect}>Reconnect</button>
             </div>
           )}
-          {activeChatId && !isReadOnlyHistory && !isTerminalLaunchMode && (mcpWarnings[activeChatId]?.length ?? 0) > 0 && (
+          {activeChatId && !isReadOnlyHistory && (mcpWarnings[activeChatId]?.length ?? 0) > 0 && (
             <div role="alert" className="absolute inset-x-3 top-2 z-20 rounded-lg border border-amber-500 bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text)] shadow-sm">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
@@ -12434,42 +11867,10 @@ export function TaskChat({
             onNavigate={navigateToConversationTurn}
           />
           )}
-          {/* Terminal launch mode: agent CLI runs in xterm.js (PTY).
-              Chatbox input still writes lines to PTY stdin via handleSend. */}
-          {!isReadOnlyHistory && isTerminalLaunchMode && agentPtyWsUrl ? (
-            // Constrain xterm's height so the floating chatbox doesn't cover
-            // the agent's bottom prompt. inputAreaHeight is the live-measured
-            // chatbox height (ResizeObserver on inputAreaRef); +16 matches
-            // the Virtuoso Footer spacer used in ACP mode.
-            <div
-              className="absolute inset-x-0 top-0"
-              style={{ bottom: inputAreaHeight + 16 }}
-            >
-              <XTerminal
-                wsUrl={agentPtyWsUrl}
-                instanceId={`agent-pty:${activeChatId ?? ""}`}
-                // Drive the chat header's connection pill from the PTY WS
-                // status — there's no ACP WS in this mode so the original
-                // ACP-driven `isConnected` would be stuck on "Connecting…".
-                onConnected={() => {
-                  setIsConnected(true);
-                  if (activeChatId) setChatConnectionStatus(activeChatId, "connected");
-                }}
-                onDisconnected={() => {
-                  setIsConnected(false);
-                  if (activeChatId) setChatConnectionStatus(activeChatId, (current) => current === "connected" ? "disconnected" : "failed");
-                }}
-                onConnectionError={() => {
-                  setIsConnected(false);
-                  if (activeChatId) setChatConnectionStatus(activeChatId, "failed");
-                }}
-              />
-            </div>
-          ) : (
-          /* Long histories use complete conversation turns laid out from the
+          {/* Long histories use complete conversation turns laid out from the
               newest tail. Dynamic heights above the reader cannot perturb
               the newest messages, and older history is admitted ten turns
-              at a time. */
+              at a time. */}
           <ChatListErrorBoundary
             resetKey={activeChatId}
             projectId={projectId}
@@ -12533,7 +11934,6 @@ export function TaskChat({
             </div>
           )}
           </ChatListErrorBoundary>
-          )}
 
           {/* Input / finished state */}
           {isReadOnlyHistory ? (
@@ -12898,7 +12298,7 @@ export function TaskChat({
                         />
                       )}
                     </div>
-                    {!isTerminalLaunchMode && !isViewingArchived && (
+                    {!isViewingArchived && (
                       agentVoiceControl
                     )}
                     {isTerminalMode && (
@@ -13185,7 +12585,7 @@ export function TaskChat({
                     </span>
                   </div>
                   <div className="chatbox-footer-right flex items-center gap-2 shrink-0 select-none">
-                    {!isTerminalLaunchMode && !composerNarrow && modelOptions.length > 0 && (
+                    {!composerNarrow && modelOptions.length > 0 && (
                       <DropdownSelect
                         ref={modelMenuRef}
                         label={matchedSessionConfig.model?.name ?? "Model"}
@@ -13213,7 +12613,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {!isTerminalLaunchMode && !composerHideMode && modeOptions.length > 0 && (
+                    {!composerHideMode && modeOptions.length > 0 && (
                       <DropdownSelect
                         ref={permMenuRef}
                         label={matchedSessionConfig.mode?.name ?? "Mode"}
@@ -13242,7 +12642,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {!isTerminalLaunchMode && !composerHideThinking && thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
+                    {!composerHideThinking && thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
                       <DropdownSelect
                         ref={thoughtLevelMenuRef}
                         label={matchedSessionConfig.thinking?.name ?? "Thinking"}
@@ -13270,7 +12670,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {!isTerminalLaunchMode && settingsSessionConfigOptions.length > 0 && (
+                    {settingsSessionConfigOptions.length > 0 && (
                       <span className="chatbox-session-settings">
                       <SessionSettingsMenu
                         ref={sessionSettingsRef}
@@ -13319,7 +12719,7 @@ export function TaskChat({
                           size="sm"
                           className="h-9 w-9 !p-0 rounded-xl shadow-sm"
                           onClick={handleSendButtonClick}
-                          disabled={!isConnected && (isTerminalLaunchMode || isTerminalMode)}
+                          disabled={!isConnected && isTerminalMode}
                         >
                           <Send className="w-3.5 h-3.5" />
                         </Button>

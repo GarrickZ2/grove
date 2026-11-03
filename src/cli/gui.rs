@@ -47,6 +47,11 @@ pub static TAURI_APP: once_cell::sync::OnceCell<tauri::AppHandle> =
     once_cell::sync::OnceCell::new();
 static GUI_PORT: once_cell::sync::OnceCell<u16> = once_cell::sync::OnceCell::new();
 
+/// The local server port secondary windows load their pages from.
+pub(crate) fn gui_port() -> Option<u16> {
+    GUI_PORT.get().copied()
+}
+
 /// Whether this GUI window attached to a REMOTE backend (`--remote-url`).
 /// Surfaces the "who renders notifications" decision to the frontend engine:
 /// a remote backend's OS notifications pop on the server machine where the
@@ -650,6 +655,12 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             crate::tray::tray_set_pinned,
             crate::tray::tray_is_pinned,
             crate::tray::tray_update_theme_icons,
+            crate::tray::buddy_mini::buddy_mini_open,
+            crate::tray::buddy_mini::buddy_mini_set_expanded,
+            crate::tray::buddy_mini::buddy_mini_set_collapsed_size,
+            crate::tray::buddy_mini::buddy_mini_close,
+            crate::tray::buddy_mini::buddy_mini_open_in_main,
+            super::gui_launch::launch_reveal,
         ])
         .setup(move |app| {
             let _ = TAURI_APP.set(app.handle().clone());
@@ -675,6 +686,9 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             .inner_size(1440.0, 900.0)
             .min_inner_size(380.0, 600.0)
             .center()
+            // Hidden while the launch window plays; `launch_reveal` fades it in.
+            // Remote GUIs skip the launch: their backend may predate launch.html.
+            .visible(is_remote)
             .disable_drag_drop_handler();
 
             // macOS: overlay title bar so traffic lights float over content
@@ -695,8 +709,11 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
                 .hidden_title(true)
                 .traffic_light_position(tauri::LogicalPosition::new(21.0, 29.0));
 
-            #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             let main_window = builder.build()?;
+
+            if !is_remote && !super::gui_launch::open(app.handle(), &target_url) {
+                main_window.show()?;
+            }
 
             #[cfg(target_os = "windows")]
             if let Err(error) = set_windows_taskbar_icon(&main_window) {

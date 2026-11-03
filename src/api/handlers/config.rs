@@ -95,7 +95,6 @@ pub struct ThemeConfigDto {
 #[derive(Debug, Serialize)]
 pub struct LayoutConfigDto {
     pub default: String,
-    pub agent_command: Option<String>,
     /// JSON string of custom layouts array
     pub custom_layouts: Option<String>,
     /// Selected custom layout ID (when default="custom")
@@ -156,7 +155,6 @@ impl From<&Config> for ConfigResponse {
             },
             layout: LayoutConfigDto {
                 default: config.layout.default.clone(),
-                agent_command: config.layout.agent_command.clone(),
                 custom_layouts: config.layout.custom.as_ref().map(|c| c.tree.clone()),
                 selected_custom_id: config.layout.selected_custom_id.clone(),
             },
@@ -307,7 +305,6 @@ pub struct ThemeConfigPatch {
 #[derive(Debug, Deserialize)]
 pub struct LayoutConfigPatch {
     pub default: Option<String>,
-    pub agent_command: Option<String>,
     /// JSON string of custom layouts array
     pub custom_layouts: Option<String>,
     /// Selected custom layout ID (when default="custom")
@@ -405,9 +402,6 @@ pub async fn patch_config(
     if let Some(layout_patch) = patch.layout {
         if let Some(default) = layout_patch.default {
             config.layout.default = default;
-        }
-        if layout_patch.agent_command.is_some() {
-            config.layout.agent_command = layout_patch.agent_command;
         }
         if let Some(custom_layouts) = layout_patch.custom_layouts {
             if custom_layouts.is_empty() {

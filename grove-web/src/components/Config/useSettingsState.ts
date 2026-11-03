@@ -30,7 +30,6 @@ import { isIosClient } from "../../utils/platform";
 let lastAgentSnapshot: {
   baseAgents: BaseAgent[];
   customAgents: CustomAgentServer[];
-  terminalLaunchableIds: Set<string>;
 } | undefined;
 
 // Default custom layouts - create once and reuse
@@ -66,7 +65,6 @@ export function useSettingsState() {
   const lastSavedPrefsRef = useRef<string | null>(null);
 
   // Local state for Development Tools
-  const [agentCommand, setAgentCommand] = useState((currentGlobalConfig?.layout.agent_command ?? ""));
   const [ideCommand, setIdeCommand] = useState("");
   const [terminalCommand, setTerminalCommand] = useState("");
   const [applications, setApplications] = useState<AppInfo[]>([]);
@@ -198,8 +196,6 @@ export function useSettingsState() {
   // as a dependency. Kept outside try/catch so optional chaining and ternaries
   // don't bail out the React Compiler.
   const applyLoadedConfig = useCallback((cfg: Awaited<ReturnType<typeof getConfig>>) => {
-    const agentCmd = cfg.layout.agent_command || (currentGlobalConfig?.layout.agent_command ?? "");
-    setAgentCommand(agentCmd);
     setIdeCommand(cfg.web.ide || "");
     setTerminalCommand(cfg.web.terminal || "");
     setSelectedLayout(cfg.layout.default);
@@ -309,7 +305,7 @@ export function useSettingsState() {
     }
 
     setIsLoaded(true);
-  }, [currentGlobalConfig?.layout.agent_command]);
+  }, []);
 
   // Load config from API
   const loadConfig = useCallback(async () => {
@@ -379,12 +375,6 @@ export function useSettingsState() {
     setIsChecking(false);
   }, []);
 
-  // Terminal-capable installed agent ids (canonical form). Populated from
-  // marketplace data; replaces the old PATH-probe via `checkCommands`.
-  const [terminalLaunchableIds, setTerminalLaunchableIds] = useState<Set<string>>(
-    () => lastAgentSnapshot?.terminalLaunchableIds ?? new Set(),
-  );
-
   const loadBaseAgents = useCallback(async () => {
     try {
       const [resp, cfg] = await Promise.all([listMarketplace(), getConfig()]);
@@ -407,15 +397,9 @@ export function useSettingsState() {
           available: true,
         })),
         customAgents: cfg.acp?.custom_agents ?? [],
-        terminalLaunchableIds: new Set(
-          launchable
-            .filter((a) => a.supports_terminal_launch)
-            .map((a) => a.id),
-        ),
       };
       lastAgentSnapshot = snapshot;
       setBaseAgents(snapshot.baseAgents);
-      setTerminalLaunchableIds(snapshot.terminalLaunchableIds);
       // Trigger downstream `hasAvailability` gating that watches a non-empty
       // commandAvailability map. Marker entry stands in for the old probe map.
       setCommandAvailability({ __marketplace_loaded__: true });
@@ -433,7 +417,6 @@ export function useSettingsState() {
   const saveConfig = useCallback(async () => {
     if (!isLoaded) return; // Don't save during initial load
 
-    const layoutAgentCommand = agentCommand ? agentCommand : undefined;
     const layoutExtras = customLayoutsLoaded
       ? {
           custom_layouts: JSON.stringify(customLayouts),
@@ -446,8 +429,6 @@ export function useSettingsState() {
     const patch = {
       layout: {
         default: selectedLayout,
-        // 仅当 Terminal 启用时保存 agent_command
-        agent_command: layoutAgentCommand,
         // Only save custom layouts if they were loaded/created in Web format
         // This prevents overwriting TUI's custom layout format
         ...layoutExtras,
@@ -509,7 +490,7 @@ export function useSettingsState() {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, trayDoneRetentionMode, trayDoneRetentionUnit, trayDoneRetentionValue, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, trayDoneRetentionMode, trayDoneRetentionUnit, trayDoneRetentionValue, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, refreshGlobalConfig]);
 
   // These preferences belong to this browser, never to the shared Grove server.
   useEffect(() => {
@@ -537,7 +518,7 @@ export function useSettingsState() {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, isLoaded, saveConfig]);
+  }, [selectedLayout, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, isLoaded, saveConfig]);
 
   useEffect(() => {
     if (!isRecordingWindowShortcut) return;
@@ -663,8 +644,6 @@ export function useSettingsState() {
       }
     }
   }
-  // Filter and mark agent options based on mode + command availability
-  const hasAvailability = Object.keys(commandAvailability).length > 0;
   const baseAgentStatusById = useMemo(() => {
     const map = new Map<string, BaseAgent>();
     for (const agent of baseAgents) {
@@ -672,19 +651,6 @@ export function useSettingsState() {
     }
     return map;
   }, [baseAgents]);
-
-  // Terminal Agent options — derived from marketplace data. An agent is
-  // enabled iff the marketplace reports it installed (grove-installed or
-  // auto-detected) AND `supports_terminal_launch === true` (i.e. its
-  // registry entry declares a `terminal_launch` config).
-  const terminalAgentOptions = useMemo(() => {
-    if (!hasAvailability) return [];
-    return agentOptions.filter(
-      (agent) =>
-        terminalLaunchableIds.has(agent.id) ||
-        terminalLaunchableIds.has(agent.value),
-    );
-  }, [terminalLaunchableIds, hasAvailability]);
 
   // Chat Agent 选项：ACP base agent availability comes from backend.
   const chatAgentOptions = useMemo(() => {
@@ -722,19 +688,8 @@ export function useSettingsState() {
   // Auto-correct agent selection: pick first available, or clear if none available
   useEffect(() => {
     if (!isLoaded) return;
-    const hasTerminalAvailability = Object.keys(commandAvailability).length > 0;
-
     // Compute corrections synchronously, but apply them after a microtask so
     // the setStates aren't synchronous within the effect body.
-    let nextAgentCommand: string | undefined;
-    if (hasTerminalAvailability && agentCommand) {
-      const currentOption = terminalAgentOptions.find(a => a.id === agentCommand);
-      if (currentOption?.disabled) {
-        const firstAvailable = terminalAgentOptions.find(a => !a.disabled);
-        nextAgentCommand = firstAvailable?.id ?? "";
-      }
-    }
-
     let nextAcpAgent: string | undefined;
     if (baseAgents.length > 0 && acpAgent) {
       const currentBaseAgent = baseAgentStatusById.get(acpAgent);
@@ -744,13 +699,10 @@ export function useSettingsState() {
       }
     }
 
-    if (nextAgentCommand !== undefined || nextAcpAgent !== undefined) {
-      void Promise.resolve().then(() => {
-        if (nextAgentCommand !== undefined) setAgentCommand(nextAgentCommand);
-        if (nextAcpAgent !== undefined) setAcpAgent(nextAcpAgent);
-      });
+    if (nextAcpAgent !== undefined) {
+      void Promise.resolve().then(() => setAcpAgent(nextAcpAgent));
     }
-  }, [isLoaded, commandAvailability, agentCommand, acpAgent, terminalAgentOptions, chatAgentOptions, baseAgentStatusById, baseAgents.length]);
+  }, [isLoaded, acpAgent, chatAgentOptions, baseAgentStatusById, baseAgents.length]);
 
   const suggestedChatRenderWindowTrigger = useCallback((limit: number) => {
     return Math.max(limit + 1, Math.ceil(limit * 1.5));
@@ -842,8 +794,6 @@ export function useSettingsState() {
     // Agents
     acpAgent,
     setAcpAgent,
-    agentCommand,
-    setAgentCommand,
     customAgents,
     saveCustomAgentServers,
     customAgentPersonas,
@@ -852,7 +802,6 @@ export function useSettingsState() {
     baseAgentsLoading,
     loadBaseAgents,
     chatAgentOptions,
-    terminalAgentOptions,
     isChatAvailable,
     // Chat history + render window (browser-local)
     chatHistoryRecentTurns,

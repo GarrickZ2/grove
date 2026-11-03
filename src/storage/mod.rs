@@ -87,6 +87,22 @@ pub fn ensure_task_data_dir(project: &str, task_id: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// 删除旧版文件监听留下的编辑记录: projects/*/tasks/*/activity.jsonl
+/// (编辑统计已下线，这些文件不再被读取)
+pub fn remove_edit_history_files() {
+    let Ok(projects) = std::fs::read_dir(grove_dir().join("projects")) else {
+        return;
+    };
+    for project in projects.flatten() {
+        let Ok(tasks) = std::fs::read_dir(project.path().join("tasks")) else {
+            continue;
+        };
+        for task in tasks.flatten() {
+            let _ = std::fs::remove_file(task.path().join("activity.jsonl"));
+        }
+    }
+}
+
 /// 删除 task 数据目录: rm -rf tasks/{task_id}/
 pub fn delete_task_data(project: &str, task_id: &str) -> Result<()> {
     let path = grove_dir()

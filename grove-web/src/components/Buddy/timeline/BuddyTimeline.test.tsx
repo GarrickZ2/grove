@@ -37,7 +37,35 @@ it("does not render an empty bootstrap bubble, but retains attachments and the I
   expect(host.querySelector(".buddy-user-message")).toBeNull();
   render(fromEvents([{ type: "user_message", text: init, sender: "connect", attachments: [{ type: "resource", name: "notes.txt", uri: "file:///notes.txt" }] }]));
   expect(host.querySelector(".buddy-user-message")?.textContent).toBe("notes.txt");
-  expect(host.querySelector('[aria-label="IM Connect"]')).not.toBeNull();
+  expect(host.querySelector(".buddy-user-via")?.textContent).toBe("via IM");
+});
+
+it("shows sent images inline and opens them full size", () => {
+  render(fromEvents([{ type: "user_message", text: "this bug", attachments: [{ type: "image", name: "shot.png", mime_type: "image/png", data: "aW1n" }, { type: "image", name: "old.png", mime_type: "image/png" }] }]));
+  const image = host.querySelector<HTMLImageElement>(".buddy-image img");
+  expect(image?.src).toBe("data:image/png;base64,aW1n");
+  // History trimmed of media data falls back to the file chip.
+  expect(host.querySelector(".buddy-file")?.textContent).toBe("old.png");
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="Open shot.png"]')!.click());
+  expect(document.body.querySelectorAll('img[src="data:image/png;base64,aW1n"]').length).toBeGreaterThan(1);
+});
+
+it("shows a message from another Buddy as a header whose hover holds the original text", () => {
+  const envelope = buildGroveMetaTag("buddy_message", { chat: true, buddy_id: "bob", name: "Bob", avatar: null, hop: 1, reply_to: "m1" }, "Bob replied");
+  render(fromEvents([{ type: "user_message", text: `${envelope}\nThe branch is cut.\nShip it.`, sender: "buddy:bob" }]));
+  expect(host.querySelector(".buddy-user-message")).toBeNull();
+  const notice = host.querySelector(".buddy-notice.has-detail")!;
+  expect(notice.textContent).toContain("Reply from");
+  expect(notice.textContent).toContain("Bob");
+  expect(notice.querySelector('[role="tooltip"]')?.textContent).toBe("The branch is cut.\nShip it.");
+});
+
+it("shows @-mentioned Buddies as chips and hides the envelope", () => {
+  const envelope = buildGroveMetaTag("buddy_mentions", { buddies: [{ id: "bob", name: "Bob", avatar: null, role: "Reviewer" }] }, "The user mentioned another Buddy");
+  render(fromEvents([{ type: "user_message", text: `${envelope}\nAsk @Bob to review` }]));
+  const bubble = host.querySelector(".buddy-user-message")!;
+  expect(bubble.textContent).toBe("Ask Bob to review");
+  expect(bubble.querySelector(".buddy-mention-chip")?.getAttribute("title")).toBe("Reviewer");
 });
 
 it("preserves literal malformed tags and other metadata instead of deleting user content", () => {

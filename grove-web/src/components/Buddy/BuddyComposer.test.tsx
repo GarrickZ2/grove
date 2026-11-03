@@ -150,6 +150,47 @@ describe("Buddy composer and header", () => {
     expect(host.textContent).toContain("Rejected"); expect(host.textContent).toContain("notes.txt");
     expect(host.querySelector("textarea")!.value).toBe("Review this");
   });
+  it("attaches pasted screenshots with a thumbnail instead of inserting text", () => {
+    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:shot"), revokeObjectURL: vi.fn() }); // jsdom has no blob URLs
+    act(() => root.render(<BuddyComposer buddy={buddy} onSent={vi.fn()} />));
+    const shot = new File(["png"], "shot.png", { type: "image/png" });
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", { value: { files: [], items: [{ kind: "file", getAsFile: () => shot }] } });
+    act(() => { host.querySelector("textarea")!.dispatchEvent(paste); });
+    expect(paste.defaultPrevented).toBe(true);
+    expect(host.querySelector<HTMLImageElement>(".buddy-attachment-thumb")?.src).toBe("blob:shot");
+    expect(host.querySelector('[aria-label="Remove shot.png"]')).not.toBeNull();
+    expect(host.querySelector("textarea")!.value).toBe("");
+  });
+  it("turns a long text paste into a .txt attachment and leaves short ones to the textarea", () => {
+    act(() => root.render(<BuddyComposer buddy={buddy} onSent={vi.fn()} />));
+    const pasteText = (text: string) => {
+      const paste = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(paste, "clipboardData", { value: { files: [], items: [], getData: () => text } });
+      act(() => { host.querySelector("textarea")!.dispatchEvent(paste); });
+      return paste;
+    };
+    expect(pasteText("short").defaultPrevented).toBe(false);
+    expect(host.querySelector(".buddy-attachments")).toBeNull();
+    expect(pasteText("x".repeat(10 * 1024 + 1)).defaultPrevented).toBe(true);
+    expect(host.querySelector(".buddy-attachment-name")?.textContent).toMatch(/^pasted-text-\d+\.txt$/);
+  });
+  it("@ opens a picker of other Buddies; choosing one inserts the name and the prompt says who they are", async () => {
+    const others = createBuddiesMock().list().filter((item) => item.id !== buddy.id);
+    act(() => root.render(<BuddyComposer buddy={buddy} onSent={vi.fn()} mentionable={others} />));
+    const textarea = host.querySelector("textarea")!;
+    draft("ask @rel");
+    act(() => { textarea.setSelectionRange(8, 8); textarea.dispatchEvent(new Event("select", { bubbles: true })); });
+    expect([...host.querySelectorAll('[role="option"]')].map((node) => node.textContent)).toEqual(["Release CaptainKeep release work on track"]);
+    act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    expect(textarea.value).toBe("ask @Release Captain ");
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+    expect(transport.send).not.toHaveBeenCalled();
+    draft("ask @Release Captain about the branch");
+    await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    const [prompt] = transport.send.mock.calls[0];
+    expect(prompt).toMatch(/^<grove-meta>.*"buddy_mentions".*<\/grove-meta>\nask @Release Captain about the branch$/s);
+  });
   it("restores a draft when remounted", () => {
     act(() => root.render(<BuddyComposer buddy={buddy} onSent={vi.fn()} />)); draft("Keep me");
     act(() => root.unmount()); root = createRoot(host);

@@ -4,6 +4,24 @@ import { memoryCategoryColor } from "./MemoryGraphPalette";
 import { errorMessage } from "./memoryFormat";
 import { tagCategories } from "./memoryModel";
 import { memorySource, type MemorySource } from "./memorySource";
+import type { Page } from "../../api/memory";
+
+/** The backend serves at most 100 per page; the star map is built for a few hundred memories. */
+const PAGE_SIZE = 100;
+export const MAX_GRAPH_MEMORIES = 600;
+export const MAX_GRAPH_LINKS = 2000;
+
+/** Follow cursors until `max` items are loaded or the list ends. */
+export async function collectPages<T>(fetchPage: (cursor?: string) => Promise<Page<T>>, max: number): Promise<{ items: T[]; hasMore: boolean }> {
+  const items: T[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await fetchPage(cursor);
+    items.push(...page.items);
+    cursor = page.next_cursor;
+  } while (cursor && items.length < max);
+  return { items: items.slice(0, max), hasMore: Boolean(cursor) || items.length > max };
+}
 
 /** Durable memories: search, tag category filter, relations, the open document, and deletion. */
 export function useMemoryEntities({ projectId, refreshTick, onChanged, source = memorySource }: { projectId: string; refreshTick: number; onChanged: () => void; source?: MemorySource }) {
@@ -29,12 +47,12 @@ export function useMemoryEntities({ projectId, refreshTick, onChanged, source = 
     setError(null);
     try {
       const [entityPage, relationPage] = await Promise.all([
-        source.listMemoryEntities(projectId, submitted, undefined, 100),
-        source.listMemoryRelations(projectId, undefined, 100),
+        collectPages((cursor) => source.listMemoryEntities(projectId, submitted, cursor, PAGE_SIZE), MAX_GRAPH_MEMORIES),
+        collectPages((cursor) => source.listMemoryRelations(projectId, undefined, PAGE_SIZE, cursor), MAX_GRAPH_LINKS),
       ]);
       setItems(entityPage.items);
       setAllRelations(relationPage.items);
-      setHasMore(Boolean(entityPage.next_cursor || relationPage.next_cursor));
+      setHasMore(entityPage.hasMore || relationPage.hasMore);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setLoading(false); }
   }, [projectId, submitted, source]);

@@ -38,21 +38,30 @@
 .owp-add{color:color-mix(in oklab,var(--o-success) 85%,var(--o-text))}
 .owp-del{color:var(--o-error)}
 
-/* Activity: 24 hourly bars for the latest active day */
-.owp-hours{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:2px;align-items:end;height:48px;padding:12px 12px 6px}
-.owp-hours i{display:block;min-height:3px;border-radius:2px 2px 1px 1px;background:color-mix(in oklab,var(--o-accent) 78%,var(--o-bg));transform-origin:bottom;animation:oui-grow 600ms var(--o-ease-reflow) both}
-.owp-hours i.is-zero{background:var(--o-track);opacity:.55}
-.owp-hours-axis{display:flex;justify-content:space-between;padding:0 12px 10px;font-size:11px;color:var(--o-muted)}
+/* Usage: tokens per day for the last two weeks */
+.owp-days{display:grid;grid-template-columns:repeat(14,minmax(0,1fr));gap:3px;align-items:end;height:56px;padding:12px 12px 6px}
+.owp-days i{display:block;min-height:3px;border-radius:2px 2px 1px 1px;background:color-mix(in oklab,var(--o-accent) 78%,var(--o-bg));transform-origin:bottom;animation:oui-grow 600ms var(--o-ease-reflow) both}
+.owp-days i.is-zero{background:var(--o-track);opacity:.55}
+.owp-days-axis{display:flex;justify-content:space-between;padding:0 12px 10px;font-size:11px;color:var(--o-muted)}
+.owp-split{display:flex;flex-wrap:wrap;gap:4px 14px;padding:9px 12px;border-top:1px solid var(--o-border);font-size:11.5px;color:var(--o-muted)}
+.owp-split b{font-weight:600;color:var(--o-text);font-variant-numeric:tabular-nums}
 
-/* File rows (most edited, changed files) */
-.owp-frow{display:grid;grid-template-columns:minmax(0,1fr) minmax(40px,24%) auto;gap:10px;align-items:center;min-height:34px;padding:0 12px;font-size:12px}
+/* Bar rows (sessions, models) */
+.owp-frow{display:grid;grid-template-columns:minmax(0,1fr) minmax(40px,24%) auto;gap:10px;align-items:center;width:100%;min-height:36px;padding:0 12px;border:0;background:none;font:inherit;font-size:12.5px;color:var(--o-text);text-align:left}
 .owp-frow+.owp-frow{border-top:1px solid var(--o-border)}
-.owp-path{display:flex;min-width:0;font-family:var(--o-font-mono);font-size:11.5px;white-space:nowrap}
-.owp-path span{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--o-muted);flex-shrink:1000}
-.owp-path b{font-weight:500;color:var(--o-text);overflow:hidden;text-overflow:ellipsis}
+button.owp-frow{cursor:pointer;transition:background-color var(--o-dur-fast)}
+button.owp-frow:hover{background:var(--o-hover)}
+button.owp-frow:focus-visible{outline:2px solid var(--o-accent);outline-offset:-2px}
+.owp-fname{display:flex;align-items:center;gap:8px;min-width:0}
+.owp-fname>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .owp-bar{height:5px;border-radius:3px;background:var(--o-track);overflow:hidden}
 .owp-bar i{display:block;height:100%;border-radius:3px;background:var(--o-accent);transform-origin:left;animation:oui-growx 700ms var(--o-ease-reflow) both}
 .owp-count{min-width:18px;text-align:right;font-size:11.5px;color:var(--o-muted);font-variant-numeric:tabular-nums}
+
+/* File paths (changed files) */
+.owp-path{display:flex;min-width:0;font-family:var(--o-font-mono);font-size:11.5px;white-space:nowrap}
+.owp-path span{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--o-muted);flex-shrink:1000}
+.owp-path b{font-weight:500;color:var(--o-text);overflow:hidden;text-overflow:ellipsis}
 
 /* Linked projects */
 .owp-lrow{display:flex;align-items:center;gap:10px;min-height:38px;padding:0 6px 0 12px;font-size:12.5px}

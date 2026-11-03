@@ -48,31 +48,6 @@ pub struct RegistryAgent {
     pub icon: Option<String>,
     #[serde(default)]
     pub distribution: Distribution,
-    /// grove-only: when present, the agent's local binary is launched via
-    /// PTY using this argv contract instead of stdio ACP. Absent on every
-    /// real registry entry; set on the synthetic `claude-acp` entry by
-    /// `inject_grove_supplements`. Drives:
-    ///   - Auto-scan probes `cmd` as an additional PATH candidate.
-    ///   - Chat creation flips `chat.launch_mode = "terminal"` when the
-    ///     selected channel is External AND this field is present.
-    ///   - `agent_pty.rs` reads the argv contract here.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_launch: Option<TerminalLaunch>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalLaunch {
-    /// Bare binary name (e.g. `"claude"`). Probed by auto-scan; resolved
-    /// path becomes `installations[External].install_path`.
-    pub cmd: String,
-    /// Argv flag introducing a fresh session UUID. (`--session-id` for claude.)
-    pub session_id_arg: String,
-    /// Argv flag resuming an existing session UUID. (`--resume` for claude.)
-    pub resume_arg: String,
-    /// Argv flag pointing at the MCP config file grove writes per chat.
-    /// (`--mcp-config` for claude.) The file format itself is fixed
-    /// (`mcpServers` JSON); only the flag name is configurable here.
-    pub mcp_config_arg: String,
 }
 
 /// Tagged distribution methods. Each key may or may not be present; an entry
@@ -330,11 +305,6 @@ pub fn inject_trae_and_traex_after_refresh(doc: &mut RegistryDocument) {
 /// data-driven off whatever this writes.
 ///
 /// Currently patches:
-///   - `claude-acp`: adds a `terminal_launch` config describing how to
-///     drive the bare `claude` CLI via PTY (session-id + resume + mcp
-///     config argv). Auto-scan picks up `claude` on PATH as an External
-///     channel; chat creation routes External + this field to terminal
-///     launch mode; `agent_pty.rs` reads the argv contract from here.
 ///   - npm packages whose published bin name differs from the package
 ///     basename heuristic — synthesizes a binary distribution entry so
 ///     `auto_scan_path_binaries` finds the real bin on PATH and
@@ -342,15 +312,6 @@ pub fn inject_trae_and_traex_after_refresh(doc: &mut RegistryDocument) {
 ///
 /// Adding a future agent here = one entry, zero code changes elsewhere.
 fn inject_grove_supplements(doc: &mut RegistryDocument) {
-    if let Some(claude) = doc.agents.iter_mut().find(|a| a.id == "claude-acp") {
-        claude.terminal_launch = Some(TerminalLaunch {
-            cmd: "claude".to_string(),
-            session_id_arg: "--session-id".to_string(),
-            resume_arg: "--resume".to_string(),
-            mcp_config_arg: "--mcp-config".to_string(),
-        });
-    }
-
     // External bin-name overrides for npm packages whose published bin
     // name doesn't match the package basename (the heuristic in
     // `installed_agents::probe_registry_agent`):
@@ -534,7 +495,6 @@ fn inject_one_synthetic(doc: &mut RegistryDocument, a: SyntheticAgent, platform:
             binary,
             local: None,
         },
-        terminal_launch: None,
     });
 }
 

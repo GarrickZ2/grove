@@ -22,6 +22,10 @@ export interface BuddySummary {
   running_delegations: number;
   /** Delegations whose subagent is waiting on a permission, form, or answer. */
   waiting_delegations: number;
+  /** Pinned to the top of the list. */
+  pinned: boolean;
+  /** What the Buddy is for, in the user's words; empty when unset. */
+  role: string;
 }
 
 export interface BuddySegment {
@@ -81,15 +85,16 @@ export interface BuddyDelegation {
 const BASE = "/api/v1/buddies";
 const buddyPath = (id: string) => `${BASE}/${encodeURIComponent(id)}`;
 
-type BuddyWire = Omit<Buddy, "local_task_id" | "running_delegations" | "waiting_delegations" | "role"> & {
+type BuddyWire = Omit<Buddy, "local_task_id" | "running_delegations" | "waiting_delegations" | "role" | "pinned"> & {
   role: string | null;
+  pinned?: boolean;
   local_task_id?: string;
   running_delegations?: number;
   waiting_delegations?: number;
 };
 
 function summary(wire: BuddyWire): BuddySummary {
-  return { ...wire, running_delegations: wire.running_delegations ?? 0, waiting_delegations: wire.waiting_delegations ?? 0 };
+  return { ...wire, running_delegations: wire.running_delegations ?? 0, waiting_delegations: wire.waiting_delegations ?? 0, pinned: wire.pinned ?? false, role: wire.role ?? "" };
 }
 function detail(wire: BuddyWire): Buddy {
   return { ...wire, ...summary(wire), role: wire.role ?? "", system_prompt: wire.system_prompt ?? "", agent_config: wire.agent_config ?? { source: "default", agent_id: wire.agent },
@@ -125,6 +130,17 @@ export async function switchBuddyAgent(id: string, input: SwitchBuddyAgentInput)
 export async function archiveBuddy(id: string): Promise<void> {
   if (BUDDIES_MOCK_ENABLED) return buddiesMock.archive(id);
   await apiClient.delete(buddyPath(id));
+}
+
+/** Remove a Buddy from the list: it is archived (data kept) and its Routines stop. */
+export async function deleteBuddy(id: string): Promise<void> {
+  if (BUDDIES_MOCK_ENABLED) return buddiesMock.archive(id);
+  await apiClient.delete(`${buddyPath(id)}?pause_routines=true`);
+}
+
+export async function pinBuddy(id: string, pinned: boolean): Promise<BuddySummary> {
+  if (BUDDIES_MOCK_ENABLED) return buddiesMock.pin(id, pinned);
+  return summary(await apiClient.put<{ pinned: boolean }, BuddyWire>(`${buddyPath(id)}/pin`, { pinned }));
 }
 
 export async function reorderBuddies(buddyIds: string[]): Promise<void> {

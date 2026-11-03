@@ -245,7 +245,6 @@ mod tests {
                 .unwrap()
                 .to_utc(),
             duty: duty.map(str::to_string),
-            launch_mode: "acp".to_string(),
         }
     }
 

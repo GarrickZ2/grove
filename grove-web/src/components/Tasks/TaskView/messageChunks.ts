@@ -1,7 +1,16 @@
 import type { ChatMessage, ServerEvent } from "./TaskChat";
 import { appendStructuredContentBlock, appendTextContentBlock, type AgentContentBlock } from "./agentContentBlocks";
 
-/** IDs belong to one session and one message type. Call this on the root or
+/** First index of the current turn. Some agents (TraeX) restart their ID
+ * counter mid-session, so an agent message ID is only unique within a turn. */
+export function currentTurnStart(messages: ChatMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].type === "user") return i + 1;
+  }
+  return 0;
+}
+
+/** IDs belong to one turn and one message type. Call this on the root or
  * child transcript separately; a late chunk updates its original row in place. */
 export function reduceMessageChunk(messages: ChatMessage[], event: ServerEvent): ChatMessage[] {
   const type = event.type === "thought_chunk" ? "thinking" : "assistant";
@@ -13,7 +22,9 @@ export function reduceMessageChunk(messages: ChatMessage[], event: ServerEvent):
   let previous = messages;
   let index = -1;
   if (messageId !== undefined) {
-    index = messages.findIndex((message) => message.type === type && message.messageId === messageId);
+    const start = currentTurnStart(messages);
+    const offset = messages.slice(start).findIndex((message) => message.type === type && message.messageId === messageId);
+    index = offset < 0 ? -1 : start + offset;
   } else {
     // Legacy agents identify messages only through transcript boundaries. Keep
     // accepting their trailing text after completion without reopening a row.

@@ -39,7 +39,7 @@ pub async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| async move {
         let mut shutdown = attempt.shutdown();
         let result = tokio::select! {
-            result = bridge_pty_terminal(socket, cmd, query.cols.unwrap_or(80).clamp(20, 500), query.rows.unwrap_or(24).clamp(5, 200), None, true) => result,
+            result = bridge_pty_terminal(socket, cmd, query.cols.unwrap_or(80).clamp(20, 500), query.rows.unwrap_or(24).clamp(5, 200), true) => result,
             _ = shutdown.wait_for(|shutdown| *shutdown) => Err("Agent session closed during sign-in".into()),
         };
         attempt.finish(result);

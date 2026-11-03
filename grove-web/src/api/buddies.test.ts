@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "./client";
 
-vi.mock("./client", () => ({ apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() } }));
+vi.mock("./client", () => ({ apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() } }));
 
 beforeEach(() => {
   vi.resetModules();
@@ -31,7 +31,7 @@ describe("Buddy API mock switch", () => {
     const api = await import("./buddies");
     const id = "buddy/with space";
     const path = "/api/v1/buddies/buddy%2Fwith%20space";
-    const detail = { id, name: "Docs", agent: "codex", running_delegations: 0, waiting_delegations: 0, local_task_id: "_local", role: "", system_prompt: "", agent_config: { source: "default", agent_id: "codex" } };
+    const detail = { id, name: "Docs", agent: "codex", running_delegations: 0, waiting_delegations: 0, pinned: false, local_task_id: "_local", role: "", system_prompt: "", agent_config: { source: "default", agent_id: "codex" } };
     vi.mocked(apiClient.get).mockResolvedValueOnce([detail]).mockResolvedValueOnce(detail).mockResolvedValueOnce([]);
     vi.mocked(apiClient.post).mockResolvedValue(detail);
     vi.mocked(apiClient.patch).mockResolvedValue(detail);
@@ -55,6 +55,12 @@ describe("Buddy API mock switch", () => {
     expect(apiClient.post).toHaveBeenLastCalledWith(`${path}/delegations/delegation%2Fid/cancel`);
     await api.archiveBuddy(id);
     expect(apiClient.delete).toHaveBeenCalledWith(path);
+    // The list's Delete also stops the Buddy's Routines.
+    await api.deleteBuddy(id);
+    expect(apiClient.delete).toHaveBeenLastCalledWith(`${path}?pause_routines=true`);
+    vi.mocked(apiClient.put).mockResolvedValue({ ...detail, pinned: true });
+    expect((await api.pinBuddy(id, true)).pinned).toBe(true);
+    expect(apiClient.put).toHaveBeenLastCalledWith(`${path}/pin`, { pinned: true });
   });
 
   it("preserves backend errors instead of silently falling back to mock", async () => {

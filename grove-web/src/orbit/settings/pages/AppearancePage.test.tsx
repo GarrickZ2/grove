@@ -57,11 +57,35 @@ describe("Orbit AppearancePage", () => {
   const hover = (element: Element, type: "mouseover" | "mouseout") =>
     act(() => { element.dispatchEvent(new MouseEvent(type, { bubbles: true, relatedTarget: type === "mouseout" ? document.body : null })); });
 
-  it("previews a hovered theme and reverts when the pointer leaves the grid", () => {
-    hover(card("Paper"), "mouseover");
-    expect(onPreviewTheme).toHaveBeenLastCalledWith(expect.objectContaining({ id: "paper" }));
-    hover(card("Paper").closest(".ost-themes")!, "mouseout");
-    expect(onPreviewTheme).toHaveBeenLastCalledWith(null);
+  it("previews a theme the pointer rests on and reverts when it leaves the grid", () => {
+    vi.useFakeTimers();
+    try {
+      hover(card("Paper"), "mouseover");
+      expect(onPreviewTheme).not.toHaveBeenCalled();
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(onPreviewTheme).toHaveBeenLastCalledWith(expect.objectContaining({ id: "paper" }));
+      hover(card("Paper").closest(".ost-themes")!, "mouseout");
+      expect(onPreviewTheme).toHaveBeenLastCalledWith(null);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not preview cards the pointer only sweeps across", () => {
+    vi.useFakeTimers();
+    try {
+      hover(card("Light"), "mouseover");
+      act(() => { vi.advanceTimersByTime(100); });
+      hover(card("Light"), "mouseout");
+      hover(card("Paper"), "mouseover");
+      act(() => { vi.advanceTimersByTime(100); });
+      hover(card("Paper").closest(".ost-themes")!, "mouseout");
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(onPreviewTheme).not.toHaveBeenCalledWith(expect.objectContaining({ id: "light" }));
+      expect(onPreviewTheme).not.toHaveBeenCalledWith(expect.objectContaining({ id: "paper" }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("selecting a card saves it to its family and drops the preview", () => {

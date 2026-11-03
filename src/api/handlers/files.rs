@@ -18,6 +18,20 @@ use crate::storage::{tasks, workspace};
 
 pub(crate) type ApiErr = (StatusCode, Json<ApiError>);
 
+/// Sandbox for documents served from Grove's origin. Without
+/// `allow-same-origin` the browser gives them an opaque origin, so a script in
+/// a worktree file cannot read Grove's storage or call its API.
+const ACTIVE_CONTENT_CSP: &str = "sandbox allow-scripts allow-popups";
+
+/// Types a browser renders as a scriptable document when navigated to. Images,
+/// media, and PDFs are excluded: Chrome refuses to render PDFs in a sandbox.
+pub(crate) fn is_active_content(mime: &mime_guess::Mime) -> bool {
+    matches!(
+        mime.essence_str(),
+        "text/html" | "application/xhtml+xml" | "image/svg+xml" | "text/xml" | "application/xml"
+    ) || mime.suffix() == Some(mime_guess::mime::XML)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RawFileQuery {
     pub path: String,
@@ -295,6 +309,12 @@ pub(crate) async fn serve(
         .header("x-content-type-options", "nosniff")
         .body(body)
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if is_active_content(&mime) {
+        response.headers_mut().insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(ACTIVE_CONTENT_CSP),
+        );
+    }
     if let Some(content_range) = content_range {
         response.headers_mut().insert(
             header::CONTENT_RANGE,
@@ -376,6 +396,20 @@ mod tests {
 
         let error = resolve_file(&task, &[], "../private.txt").unwrap_err();
         assert_eq!(error.0, StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn sandboxes_only_scriptable_documents() {
+        let active =
+            |name: &str| is_active_content(&mime_guess::from_path(name).first_or_octet_stream());
+        for name in ["a.html", "a.htm", "a.xhtml", "a.svg", "a.xml", "a.rss"] {
+            assert!(active(name), "{name} should be sandboxed");
+        }
+        for name in [
+            "a.pdf", "a.png", "a.mp4", "a.txt", "a.md", "a.json", "a.bin",
+        ] {
+            assert!(!active(name), "{name} should not be sandboxed");
+        }
     }
 
     #[test]

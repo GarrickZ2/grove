@@ -2,6 +2,7 @@ import { BuddyOverlay } from "./components/Buddy/BuddyOverlay";
 import { BUDDY_NAVIGATE_EVENT } from "./components/Buddy/buddyNavigation";
 import { useBuddyOpen } from "./hooks/useBuddyOpen";
 import { BuddyLaunchContext } from "./components/Buddy/buddyLaunchContext";
+import { isTauriShell as inTauriShell } from "./utils/tauriShell";
 import { IosLiveActivity } from "./ios/IosLiveActivity";
 import { isIosClient } from "./utils/platform";
 import { useState, useContext, useEffect, useCallback, useRef } from "react";
@@ -15,7 +16,7 @@ import { PluginIcon } from "./components/Plugins/PluginIcon";
 import { OrbitPluginPage } from "./components/Plugins/OrbitPluginPage";
 import { findPluginPage, pluginPageEntries, pluginPageTitle } from "./components/Plugins/pluginPages";
 import { performPluginNavigation, PLUGIN_NAVIGATE_EVENT, type PluginNavigateDetail } from "./components/Plugins/pluginNavigation";
-import { listPlugins, PLUGINS_CHANGED_EVENT, type Plugin } from "./api/plugins";
+import { listActivePlugins, PLUGINS_CHANGED_EVENT, type Plugin } from "./api/plugins";
 import { MobileHeader } from "./components/Layout/MobileHeader";
 import { MobileDrawer } from "./components/Layout/MobileDrawer";
 import { NotificationPopover } from "./components/Layout/NotificationPopover";
@@ -320,7 +321,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      listPlugins()
+      listActivePlugins()
         .then((ps) => {
           if (cancelled) return;
           const nextSidebarPlugins = ps.filter((p) => p.contributes?.sidebar);
@@ -499,6 +500,9 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       if (!editing && keyboardHeight <= 50) {
         stableAppHeight = window.innerHeight;
         root.style.setProperty("--grove-app-height", `${stableAppHeight}px`);
+        // iOS scrolls the page to keep a focused field above the keyboard and
+        // doesn't always scroll it back, leaving the header off-screen.
+        if (window.scrollY !== 0) window.scrollTo(0, 0);
       }
     };
     vv.addEventListener("resize", recompute);
@@ -659,32 +663,13 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
             !(a.installed?.hidden ?? false),
         );
         const launchableIds = new Set(launchable.map((a) => a.id));
-        const terminalIds = new Set(
-          launchable
-            .filter((a) => a.supports_terminal_launch)
-            .map((a) => a.id),
-        );
 
         // Post-v2.6 migration, config.toml's agent_command values are
         // already canonical, so a direct set lookup is enough.
         const matches = (saved: string, set: Set<string>): boolean => set.has(saved);
 
         let needsUpdate = false;
-        const updates: { layout?: { agent_command?: string }, acp?: { agent_command?: string } } = {};
-
-        // Terminal agent fallback: only kicks in if user's chosen one isn't
-        // installed terminal-capable any more.
-        if (cfg.layout?.agent_command) {
-          if (!matches(cfg.layout.agent_command, terminalIds)) {
-            const firstAvailable = launchable.find((a) =>
-              a.supports_terminal_launch,
-            );
-            if (firstAvailable) {
-              updates.layout = { agent_command: firstAvailable.id };
-              needsUpdate = true;
-            }
-          }
-        }
+        const updates: { acp?: { agent_command?: string } } = {};
 
         // Chat / ACP agent fallback: anything launchable is acp-capable.
         if (cfg.acp?.agent_command) {
@@ -850,6 +835,16 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   useEffect(() => {
     buddiesRef.current = buddies;
   }, [buddies]);
+  // The mini Buddy's "Open in Grove": show that Buddy here.
+  useEffect(() => {
+    if (!inTauriShell) return;
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void listen<string>("buddy-mini:open-in-main", (event) => buddiesRef.current.open(event.payload))
+      .then((unlisten) => { if (cancelled) unlisten(); else stop = unlisten; })
+      .catch(() => {});
+    return () => { cancelled = true; stop?.(); };
+  }, []);
   useEffect(() => {
     selectProjectRef.current = selectProject;
   }, [selectProject]);

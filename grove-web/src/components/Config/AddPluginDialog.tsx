@@ -30,7 +30,9 @@ const MODE_META: Record<Mode, { label: string; icon: typeof Terminal }> = {
  *   - dev:   register an existing folder in place (referenced, hot-reload)
  *   - create: scaffold a new plugin and register it as development source
  */
-export function AddPluginDialog({ onClose }: { onClose: () => void }) {
+/** `onReview` opens the review for a just-installed plugin: plugins only take
+ *  effect once the user has approved what they can do. */
+export function AddPluginDialog({ onClose, onReview }: { onClose: () => void; onReview?: (pluginId: string) => void }) {
   const { browseFolder, folderPicker } = useBrowseFolder("Select Plugin Folder");
   const [mode, setMode] = useState<Mode>("local");
   const [gitUrl, setGitUrl] = useState("");
@@ -44,12 +46,14 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
     warning?: string | null;
     path?: string;
     next?: string;
+    pluginId?: string;
   } | null>(null);
+  const reviewNote = "It won't run until you review what it can do and enable it.";
   const zipInputRef = useRef<HTMLInputElement>(null);
   const orbit = useOrbitInterface();
 
   const pickFolderThen = async (
-    install: (path: string) => Promise<{ plugin: { name: string }; warning?: string | null }>,
+    install: (path: string) => Promise<{ plugin: { id: string; name: string }; warning?: string | null }>,
   ) => {
     setBusy(true);
     setError(null);
@@ -60,7 +64,7 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
         return; // cancelled
       }
       const res = await install(path);
-      setDone({ name: res.plugin.name, warning: res.warning });
+      setDone({ name: res.plugin.name, warning: res.warning, pluginId: res.plugin.id });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -100,7 +104,7 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       const res = await installZipPlugin(file);
-      setDone({ name: res.plugin.name, warning: res.warning });
+      setDone({ name: res.plugin.name, warning: res.warning, pluginId: res.plugin.id });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -138,7 +142,7 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       const res = await installGitPlugin(url, finalSubpath || undefined);
-      setDone({ name: res.plugin.name, warning: res.warning });
+      setDone({ name: res.plugin.name, warning: res.warning, pluginId: res.plugin.id });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -156,7 +160,7 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
                 <DialogBody className="oui-dlg-done">
                   <span className="oui-dlg-done-ic"><CheckCircle2 aria-hidden="true" /></span>
                   <h2>Plugin added</h2>
-                  <p>“{done.name}” was installed successfully.</p>
+                  <p>“{done.name}” was installed. {reviewNote}</p>
                   {(done.path || done.next) && (
                     <div className="oui-dlg-facts">
                       {done.path && (
@@ -176,7 +180,12 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
                   {done.warning && <p className="oui-dlg-callout is-warn">{done.warning}</p>}
                 </DialogBody>
                 <DialogFoot>
-                  <OrbitButton variant="primary" onClick={onClose}>Done</OrbitButton>
+                  {done.pluginId && onReview ? (
+                    <>
+                      <OrbitButton variant="ghost" onClick={onClose}>Later</OrbitButton>
+                      <OrbitButton variant="primary" onClick={() => onReview(done.pluginId!)}>Review &amp; enable</OrbitButton>
+                    </>
+                  ) : <OrbitButton variant="primary" onClick={onClose}>Done</OrbitButton>}
                 </DialogFoot>
               </>
             ) : (
@@ -345,7 +354,7 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
                 Plugin added
               </h3>
               <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                “{done.name}” was installed successfully.
+                “{done.name}” was installed. {reviewNote}
               </p>
             </div>
 
@@ -379,10 +388,17 @@ export function AddPluginDialog({ onClose }: { onClose: () => void }) {
                 {done.warning}
               </div>
             )}
-            <div className="flex justify-end">
-              <Button variant="primary" size="sm" onClick={onClose}>
-                Done
-              </Button>
+            <div className="flex justify-end gap-2">
+              {done.pluginId && onReview ? (
+                <>
+                  <Button variant="secondary" size="sm" onClick={onClose}>Later</Button>
+                  <Button variant="primary" size="sm" onClick={() => onReview(done.pluginId!)}>Review &amp; enable</Button>
+                </>
+              ) : (
+                <Button variant="primary" size="sm" onClick={onClose}>
+                  Done
+                </Button>
+              )}
             </div>
           </div>
         ) : (

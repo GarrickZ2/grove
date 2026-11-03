@@ -2,7 +2,6 @@
 
 pub mod acp;
 pub mod agent_graph_mcp;
-pub mod agent_pty;
 pub mod agent_usage;
 pub mod ai;
 pub mod ai_stream;
@@ -33,7 +32,6 @@ pub mod render;
 pub mod resource_monitor;
 pub mod skills;
 pub mod statistics;
-pub mod stats;
 pub mod studio_common;
 pub mod symbols;
 pub mod taskgroups;
