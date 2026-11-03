@@ -9,7 +9,7 @@ export interface Question { kind: "question"; id: string; definition?: AskFormDe
 export interface Activity { kind: "activity"; id: string; started: number; ended?: number; steps: { id: string; title: string }[] }
 /** A `send` that starts a new Session (formerly `delegate`). The delegation record (status, result) comes from the delegation list, not the stream. */
 export interface DelegationRow { kind: "delegation"; id: string; title: string; delegationId?: string; failed?: boolean }
-export type BuddyRow = { kind: "message"; id: string; index: number } | Approval | Question | Activity | DelegationRow | { kind: "event"; id: string; text: string; notice?: { lead: string; name?: string } };
+export type BuddyRow = { kind: "message"; id: string; index: number } | Approval | Question | Activity | DelegationRow | { kind: "event"; id: string; text: string; notice?: { lead: string; name?: string; detail?: string; tone?: "neutral" | "error" } };
 export interface BuddyTimelineState { messages: ChatMessage[]; rows: BuddyRow[]; busy: boolean; activity: string | null; started: number; hidden: string[]; pending: Record<string, { text: string; attachments: unknown[] }>; dispatched: string[]; routineCalls?: Record<string, { verb: string; name: string }>;
   /** Work happened since the last assistant text, so the next text starts a new message (the answer may follow). */
   workSinceText?: boolean }
@@ -28,6 +28,11 @@ function newSessionTitle(update: Record<string, unknown>): string | undefined {
   if (fresh && typeof fresh === "object") return string((fresh as Record<string, unknown>).title) || "Delegated work";
   if (Array.isArray(update.input)) for (const item of update.input) if (item && typeof item === "object" && (item as Record<string, unknown>).label === "new") return "Delegated work";
   return undefined;
+}
+/** `message_buddy` returns `{message_id, to: {id, name}}`, possibly escaped inside text content. */
+function messagedBuddyName(update: Record<string, unknown>): string | undefined {
+  const output = [update.content, update.output, update.rawOutput, update.raw_output].filter(value => value != null).map(value => typeof value === "string" ? value : JSON.stringify(value)).join("\n");
+  return /\\*"to\\*"\s*:\s*\{[^}]*?\\*"name\\*"\s*:\s*\\*"([^"\\]+)/.exec(output)?.[1];
 }
 /** The tool result is the created Delegation JSON, whose first `id` is the delegation id. It may be escaped inside text content. */
 function delegationIdFromOutput(update: Record<string, unknown>): string | undefined {
@@ -120,6 +125,18 @@ export function reduceBuddyEvent(state: BuddyTimelineState, event: BuddyEvent, n
       if (existing || started || /(?:^|__|buddy_)delegate$/.test(name)) {
         const row: DelegationRow = { kind: "delegation", id: rowId, title: toolInput(update, "title") || (started !== "Delegated work" ? started : undefined) || existing?.title || "Delegated work", delegationId: delegationIdFromOutput(update) ?? existing?.delegationId, failed: update.status === "failed" || !!existing?.failed };
         next = { ...next, rows: existing ? next.rows.map(item => item === existing ? row : item) : [...next.rows, row] };
+      }
+      // A message to another Buddy shows as its own line: who it went to, the text on hover.
+      const chatId = `buddy-chat-${toolId}`, chatRow = next.rows.find(row => row.id === chatId);
+      if (chatRow || /(?:^|__)message_buddy$/.test(name)) {
+        const previous = chatRow?.kind === "event" ? chatRow.notice : undefined;
+        const failed = update.status === "failed";
+        const reply = !!toolInput(update, "reply_to") || previous?.lead.startsWith("Replied") || previous?.lead === "Couldn't reply to";
+        const lead = failed ? (reply ? "Couldn't reply to" : "Couldn't message") : reply ? "Replied to" : "Sent to";
+        const to = messagedBuddyName(update) || toolInput(update, "buddy") || previous?.name || "a Buddy";
+        const detail = toolInput(update, "text") || previous?.detail;
+        const row: BuddyRow = { kind: "event", id: chatId, text: `${lead} ${to}`, notice: { lead, name: to, detail, tone: failed ? "error" : "neutral" } };
+        next = { ...next, rows: chatRow ? next.rows.map(item => item === chatRow ? row : item) : [...next.rows, row] };
       }
       // Current names are verb_routine; buddy_routine_verb is kept for older histories.
       const match = /(?:^|__)(create|update|delete)_routine$|buddy_routine_(create|update|delete)$/.exec(name);

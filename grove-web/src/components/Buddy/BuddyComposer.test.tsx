@@ -150,6 +150,31 @@ describe("Buddy composer and header", () => {
     expect(host.textContent).toContain("Rejected"); expect(host.textContent).toContain("notes.txt");
     expect(host.querySelector("textarea")!.value).toBe("Review this");
   });
+  it("attaches pasted screenshots with a thumbnail instead of inserting text", () => {
+    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:shot"), revokeObjectURL: vi.fn() }); // jsdom has no blob URLs
+    act(() => root.render(<BuddyComposer buddy={buddy} onSent={vi.fn()} />));
+    const shot = new File(["png"], "shot.png", { type: "image/png" });
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", { value: { files: [], items: [{ kind: "file", getAsFile: () => shot }] } });
+    act(() => { host.querySelector("textarea")!.dispatchEvent(paste); });
+    expect(paste.defaultPrevented).toBe(true);
+    expect(host.querySelector<HTMLImageElement>(".buddy-attachment-thumb")?.src).toBe("blob:shot");
+    expect(host.querySelector('[aria-label="Remove shot.png"]')).not.toBeNull();
+    expect(host.querySelector("textarea")!.value).toBe("");
+  });
+  it("turns a long text paste into a .txt attachment and leaves short ones to the textarea", () => {
+    act(() => root.render(<BuddyComposer buddy={buddy} onSent={vi.fn()} />));
+    const pasteText = (text: string) => {
+      const paste = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(paste, "clipboardData", { value: { files: [], items: [], getData: () => text } });
+      act(() => { host.querySelector("textarea")!.dispatchEvent(paste); });
+      return paste;
+    };
+    expect(pasteText("short").defaultPrevented).toBe(false);
+    expect(host.querySelector(".buddy-attachments")).toBeNull();
+    expect(pasteText("x".repeat(10 * 1024 + 1)).defaultPrevented).toBe(true);
+    expect(host.querySelector(".buddy-attachment-name")?.textContent).toMatch(/^pasted-text-\d+\.txt$/);
+  });
   it("restores a draft when remounted", () => {
     act(() => root.render(<BuddyComposer buddy={buddy} onSent={vi.fn()} />)); draft("Keep me");
     act(() => root.unmount()); root = createRoot(host);

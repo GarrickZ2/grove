@@ -37,10 +37,13 @@ pub enum Target {
     #[serde(rename = "self")]
     ThisBuddy,
     Task {
+        /// Project id from list_projects, or its exact name.
         project: String,
+        /// Task id from list_tasks, or its exact name.
         task: String,
     },
     NewTask {
+        /// Project id from list_projects, or its exact name.
         project: String,
         name: String,
         notes: Option<String>,
@@ -51,6 +54,10 @@ pub struct DelegateInput {
     pub title: String,
     pub brief: String,
     pub target: Target,
+    /// Files sent along with the brief.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub files: Vec<super::attachments::Outgoing>,
 }
 
 pub async fn delegate(
@@ -67,8 +74,8 @@ pub async fn delegate(
     let (project, task) = match input.target {
         Target::ThisBuddy => (buddy.project_hash.clone(), tasks::LOCAL_TASK_ID.into()),
         Target::Task { project, task } => {
-            tasks::get_task(&project, &task)?
-                .ok_or_else(|| GroveError::not_found("Task not found"))?;
+            let project = super::tools::resolve_project(&project)?;
+            let task = super::tools::resolve_task(&project, &task)?;
             (project, task)
         }
         Target::NewTask {
@@ -76,7 +83,8 @@ pub async fn delegate(
             name,
             notes,
         } => {
-            let task = super::tools::create_task(buddy, &project, name, notes)?;
+            let project = super::tools::resolve_project(&project)?;
+            let task = super::tools::create_task(buddy, &project, name, notes, &[])?;
             (project, task.id)
         }
     };
@@ -119,7 +127,15 @@ pub async fn delegate(
         db::insert_delegation(&tx, &delegation)?;
         tx.commit()?;
     }
-    if let Err(error) = send_round(buddy, &delegation, &delegation.brief, Some(&persona)).await {
+    if let Err(error) = send_round(
+        buddy,
+        &delegation,
+        &delegation.brief,
+        &input.files,
+        Some(&persona),
+    )
+    .await
+    {
         change(
             &delegation,
             Status::Running,
@@ -173,6 +189,7 @@ pub async fn follow(
     from_session: &str,
     session: &str,
     text: &str,
+    files: &[super::attachments::Outgoing],
 ) -> Result<(Delegation, String)> {
     if text.trim().is_empty() {
         return Err(GroveError::invalid_data("text is required"));
@@ -205,7 +222,7 @@ pub async fn follow(
             delegation
         }
     };
-    let message_id = send_round(buddy, &delegation, text, None).await?;
+    let message_id = send_round(buddy, &delegation, text, files, None).await?;
     Ok((get(&buddy.id, &delegation.id)?, message_id))
 }
 
@@ -213,6 +230,7 @@ pub async fn send_round(
     buddy: &Buddy,
     delegation: &Delegation,
     text: &str,
+    files: &[super::attachments::Outgoing],
     persona: Option<&custom_agent::CustomAgent>,
 ) -> Result<String> {
     let _gate = super::lock(&format!("delegation:{}", delegation.id)).await;
@@ -232,6 +250,12 @@ pub async fn send_round(
         .await
         .map_err(GroveError::storage)?;
     let mut message = super::tools::prompt(buddy, text, json!({"delegation_id":previous.id}));
+    message.attachments = super::tools::session_attachments(
+        &previous.target_project,
+        &previous.target_task,
+        &previous.target_session,
+        files,
+    )?;
     if let Some(persona) = persona {
         message.config = Some(inherited_config(persona, &handle));
     }
@@ -820,7 +844,7 @@ mod tests {
         let (target, _target_guard) = target(&d);
         let (owner, _owner_guard) = owner(&buddy);
         let mut sub = crate::radio::subscribe();
-        let id = send_round(&buddy, &d, "do work", None).await.unwrap();
+        let id = send_round(&buddy, &d, "do work", &[], None).await.unwrap();
         target.emit(started(&id));
         target.emit(chunk("finished"));
         target.emit(completed(&id, "end_turn"));
@@ -848,7 +872,7 @@ mod tests {
         let (buddy, d) = seeded("permission");
         let (target, _target_guard) = target(&d);
         let mut sub = crate::radio::subscribe();
-        let id = send_round(&buddy, &d, "push", None).await.unwrap();
+        let id = send_round(&buddy, &d, "push", &[], None).await.unwrap();
         target.emit(started(&id));
         target.emit_with_origin(
             AcpUpdate::PermissionRequest {
@@ -893,7 +917,7 @@ mod tests {
         let (buddy, d) = seeded("form");
         let (target, _target_guard) = target(&d);
         let mut sub = crate::radio::subscribe();
-        let id = send_round(&buddy, &d, "plan", None).await.unwrap();
+        let id = send_round(&buddy, &d, "plan", &[], None).await.unwrap();
         target.emit(started(&id));
         target.emit_with_origin(
             AcpUpdate::AskForm {
@@ -934,8 +958,8 @@ mod tests {
             .is_busy
             .store(true, std::sync::atomic::Ordering::Release);
         let mut sub = crate::radio::subscribe();
-        let first = send_round(&buddy, &d, "first", None).await.unwrap();
-        let second = send_round(&buddy, &d, "second", None).await.unwrap();
+        let first = send_round(&buddy, &d, "first", &[], None).await.unwrap();
+        let second = send_round(&buddy, &d, "second", &[], None).await.unwrap();
         target.emit(started(&first));
         target.emit(chunk("first result"));
         target.emit(completed(&first, "end_turn"));
@@ -960,7 +984,7 @@ mod tests {
         let mut sub = crate::radio::subscribe();
         let id = {
             let (_first, _guard) = target(&d);
-            send_round(&buddy, &d, "work", None).await.unwrap()
+            send_round(&buddy, &d, "work", &[], None).await.unwrap()
         };
         // A fresh handle for the same Session still reports through Radio.
         let (target, _target_guard) = target(&d);
@@ -999,7 +1023,7 @@ mod tests {
         let (target, _target_guard) = target(&d);
         let (owner, _owner_guard) = owner(&buddy);
         let mut sub = crate::radio::subscribe();
-        let id = send_round(&buddy, &d, "work", None).await.unwrap();
+        let id = send_round(&buddy, &d, "work", &[], None).await.unwrap();
         target.emit(started(&id));
         target.emit_with_origin(
             AcpUpdate::AskForm {
@@ -1032,13 +1056,13 @@ mod tests {
         let (_target, _, _guard) =
             acp::new_handle_for_test(key, "other-project", "task", "plain-chat");
         let from = buddy.active_session_id.clone().unwrap();
-        let (first, _) = follow(&buddy, &from, "plain-chat", "status?")
+        let (first, _) = follow(&buddy, &from, "plain-chat", "status?", &[])
             .await
             .unwrap();
-        let (again, _) = follow(&buddy, &from, "plain-chat", "and now?")
+        let (again, _) = follow(&buddy, &from, "plain-chat", "and now?", &[])
             .await
             .unwrap();
         assert_eq!(first.id, again.id);
-        assert!(follow(&buddy, &from, &from, "hi me").await.is_err());
+        assert!(follow(&buddy, &from, &from, "hi me", &[]).await.is_err());
     }
 }

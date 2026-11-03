@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Buddy } from "../api/buddies";
 import { BUDDIES_MOCK_ENABLED, buddiesMock } from "../api/buddies.mock";
-import { connectBuddySession, onBuddyAgentRestarted } from "../api/buddySessionConnection";
+import { connectBuddySession, onBuddyAgentRestarted, type PromptCapabilities } from "../api/buddySessionConnection";
 import { getChatHistory } from "../api/tasks";
 import { getChatSocket } from "../api/chatSockets";
 import { emptyBuddyTimeline, reduceBuddyEvent, type BuddyEvent, type BuddyTimelineState } from "../components/Buddy/timeline/buddyTimelineState";
@@ -27,6 +27,8 @@ export function useBuddySession(buddy: Buddy) {
   const [loading, setLoading] = useState(!BUDDIES_MOCK_ENABLED);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  /** Unknown until the session reports it; the composer then sends media the agent can't read as files. */
+  const [promptCaps, setPromptCaps] = useState<PromptCapabilities | null>(null);
   const { id, project_hash, local_task_id, active_session_id } = buddy;
   // Profile/status refreshes must not reconnect a live socket. Track only the
   // Segment identities/order and closure timestamps needed to restore history.
@@ -53,7 +55,7 @@ export function useBuddySession(buddy: Buddy) {
         setHasEarlier(cursors.current.length > 0);
         dispatch({ type: "history", events, busy }); setLoading(false);
       },
-      event: event => dispatch({ type: "event", event }), ready: setConnected, error: message => { setError(message); setLoading(false); },
+      event: event => dispatch({ type: "event", event }), ready: setConnected, capabilities: setPromptCaps, error: message => { setError(message); setLoading(false); },
     }, { recentTurns: BUDDY_HISTORY_PAGE_TURNS });
   }, [project_hash, local_task_id, active_session_id, segmentKey, revision, refreshMock]);
   const loadEarlier = useCallback(async () => {
@@ -84,7 +86,7 @@ export function useBuddySession(buddy: Buddy) {
     if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("Wait for the session to reconnect.");
     socket.send(JSON.stringify(event));
   };
-  return { state, connected, loading, error, refreshMock, hasEarlier, loadingEarlier, loadEarlier, dispatch: (event: BuddyEvent) => dispatch({ type: "event", event }), sendEvent,
+  return { state, connected, loading, error, promptCaps, refreshMock, hasEarlier, loadingEarlier, loadEarlier, dispatch: (event: BuddyEvent) => dispatch({ type: "event", event }), sendEvent,
     reconnect,
     stop: () => { if (BUDDIES_MOCK_ENABLED) { buddiesMock.stop(id); refreshMock(); } else sendEvent({ type: "cancel" }); },
   };

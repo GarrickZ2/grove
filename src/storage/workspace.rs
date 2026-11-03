@@ -156,6 +156,18 @@ pub fn load_archived_projects() -> Result<Vec<RegisteredProject>> {
 }
 
 fn load_projects_filtered(archived: Option<bool>, buddy: bool) -> Result<Vec<RegisteredProject>> {
+    Ok(query_projects(archived, buddy)?
+        .into_iter()
+        .map(|(_, project)| project)
+        .collect())
+}
+
+/// Every ordinary (non-Buddy) Project with its persisted id, archived included.
+pub fn load_projects_with_ids() -> Result<Vec<(String, RegisteredProject)>> {
+    query_projects(None, false)
+}
+
+fn query_projects(archived: Option<bool>, buddy: bool) -> Result<Vec<(String, RegisteredProject)>> {
     let conn = crate::storage::database::try_connection()?;
     let mut stmt = conn.prepare(
         "SELECT hash, name, path, is_git_repo, added_at, project_type, archived
@@ -164,6 +176,7 @@ fn load_projects_filtered(archived: Option<bool>, buddy: bool) -> Result<Vec<Reg
     )?;
     let projects = stmt
         .query_map(rusqlite::params![archived, buddy], |row| {
+            let hash: String = row.get(0)?;
             let name: String = row.get(1)?;
             let path: String = row.get(2)?;
             let is_git: bool = row.get(3)?;
@@ -173,14 +186,17 @@ fn load_projects_filtered(archived: Option<bool>, buddy: bool) -> Result<Vec<Reg
             let added_at = DateTime::parse_from_rfc3339(&added_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
-            Ok(RegisteredProject {
-                name,
-                path,
-                added_at,
-                is_git_repo: is_git,
-                project_type: project_type_str.parse().unwrap_or_default(),
-                archived,
-            })
+            Ok((
+                hash,
+                RegisteredProject {
+                    name,
+                    path,
+                    added_at,
+                    is_git_repo: is_git,
+                    project_type: project_type_str.parse().unwrap_or_default(),
+                    archived,
+                },
+            ))
         })?
         .filter_map(|r| r.ok())
         .collect();

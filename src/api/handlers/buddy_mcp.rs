@@ -52,6 +52,11 @@ pub(crate) fn caller(parts: &Parts) -> Result<(crate::storage::buddies::Buddy, S
         .ok_or_else(|| McpError::invalid_request("Buddy not found", None))?;
     Ok((buddy, session))
 }
+/// A reference the Buddy got wrong; the message says what would work.
+fn invalid(error: impl std::fmt::Display) -> McpError {
+    McpError::invalid_params(error.to_string(), None)
+}
+
 fn internal(error: impl std::fmt::Display) -> McpError {
     McpError::internal_error(error.to_string(), None)
 }
@@ -211,18 +216,58 @@ fn success(value: impl serde::Serialize) -> Result<CallToolResult, McpError> {
 }
 #[derive(Deserialize, JsonSchema)]
 struct ProjectInput {
+    /// Project id from list_projects, or its exact name.
     project: String,
 }
 #[derive(Deserialize, JsonSchema)]
 struct TaskInput {
+    /// Project id from list_projects, or its exact name.
     project: String,
+    /// Task id from list_tasks, or its exact name.
     task: String,
 }
 #[derive(Deserialize, JsonSchema)]
 struct CreateTaskInput {
+    /// Project id from list_projects, or its exact name.
     project: String,
     name: String,
     notes: Option<String>,
+    #[serde(flatten)]
+    files: FilesInput,
+}
+/// Files to hand on with a message or a new Task.
+#[derive(Deserialize, JsonSchema, Default)]
+struct FilesInput {
+    /// Absolute paths (or file:// URIs) of files to attach, e.g. paths listed by read_session.
+    #[serde(default)]
+    attachments: Vec<String>,
+    /// Attach the images and files from the user's most recent message to you that had any.
+    #[serde(default)]
+    forward_user_attachments: bool,
+}
+impl FilesInput {
+    fn resolve(
+        &self,
+        buddy: &crate::storage::buddies::Buddy,
+        session: &str,
+    ) -> Result<Vec<crate::buddy::attachments::Outgoing>, McpError> {
+        let mut files = Vec::new();
+        if self.forward_user_attachments {
+            files.extend(
+                crate::buddy::attachments::latest_from_user(
+                    &buddy.project_hash,
+                    crate::storage::tasks::LOCAL_TASK_ID,
+                    session,
+                )
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+            );
+        }
+        files.extend(
+            crate::buddy::attachments::from_paths(&self.attachments)
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
+        );
+        Ok(files)
+    }
 }
 #[derive(Deserialize, JsonSchema)]
 struct SendInput {
@@ -237,6 +282,8 @@ struct SendInput {
     /// Report the outcome back to you (default true). false just delivers.
     #[serde(default = "follow_default")]
     follow: bool,
+    #[serde(flatten)]
+    files: FilesInput,
 }
 fn follow_default() -> bool {
     true
@@ -246,6 +293,17 @@ fn follow_default() -> bool {
 struct NewSessionInput {
     title: String,
     target: crate::buddy::delegations::Target,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct MessageBuddyInput {
+    /// The Buddy's id from list_buddies, or its exact name.
+    buddy: String,
+    /// What to say.
+    text: String,
+    /// When answering a Buddy's message, its message id.
+    #[serde(default)]
+    reply_to: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -334,7 +392,7 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "send",
-        description = "Send work or a message to a Session and, by default, get its outcome back. Pass session to message an existing Session (any Task or Project), or new to start one: target self for light research in your Local Task, task for an existing Task, new_task to create one; code changes belong in a Task of the target Project. Results, failures and requests waiting for approval or input come back to you as messages; do not poll."
+        description = "Send work or a message to a Session and, by default, get its outcome back. Pass session to message an existing Session (any Task or Project), or new to start one: target self for light research in your Local Task, task for an existing Task, new_task to create one; code changes belong in a Task of the target Project. Results, failures and requests waiting for approval or input come back to you as messages; do not poll. Files the user sent you are not passed on by themselves: set forward_user_attachments to hand on their latest attachments, or list paths in attachments."
     )]
     async fn send(
         &self,
@@ -342,16 +400,22 @@ impl BuddyMcpService {
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
         let (buddy, session) = caller(&parts)?;
+        let files = input.files.resolve(&buddy, &session)?;
         let result = match (input.session, input.new) {
             (Some(target), None) if input.follow => {
-                let (followup, message_id) =
-                    crate::buddy::delegations::follow(&buddy, &session, &target, &input.text)
-                        .await
-                        .map_err(internal)?;
+                let (followup, message_id) = crate::buddy::delegations::follow(
+                    &buddy,
+                    &session,
+                    &target,
+                    &input.text,
+                    &files,
+                )
+                .await
+                .map_err(internal)?;
                 serde_json::json!({"message_id":message_id,"followup":followup})
             }
             (Some(target), None) => {
-                let message_id = crate::buddy::tools::send(&buddy, &target, &input.text)
+                let message_id = crate::buddy::tools::send(&buddy, &target, &input.text, &files)
                     .await
                     .map_err(internal)?;
                 serde_json::json!({"message_id":message_id})
@@ -364,6 +428,7 @@ impl BuddyMcpService {
                         title: new.title,
                         brief: input.text,
                         target: new.target,
+                        files,
                     },
                 )
                 .await
@@ -378,6 +443,39 @@ impl BuddyMcpService {
             }
         };
         success(result)
+    }
+    #[tool(
+        name = "list_buddies",
+        description = "List the user's other Buddies: id, name, role and whether each is idle, running or waiting."
+    )]
+    async fn list_buddies(
+        &self,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        let (buddy, _) = caller(&parts)?;
+        success(crate::buddy::chat::list(&buddy).map_err(internal)?)
+    }
+    #[tool(
+        name = "message_buddy",
+        description = "Send a message to another of the user's Buddies. It arrives in their conversation, waiting until they are free; they answer with message_buddy and reply_to only if a reply is useful. Use it to ask or tell another Buddy something in their area; hand real work to Sessions with send. Don't reply just to acknowledge, and after a few messages back and forth without the user, stop and tell the user instead."
+    )]
+    async fn message_buddy(
+        &self,
+        Parameters(input): Parameters<MessageBuddyInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        let (buddy, session) = caller(&parts)?;
+        success(
+            crate::buddy::chat::send(
+                &buddy,
+                &session,
+                &input.buddy,
+                &input.text,
+                input.reply_to.as_deref(),
+            )
+            .await
+            .map_err(invalid)?,
+        )
     }
     #[tool(
         name = "list_followups",
@@ -442,17 +540,18 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "list_projects",
-        description = "List all registered ordinary Projects, including archived Projects. Buddy Projects are hidden."
+        description = "List all registered ordinary Projects, including archived Projects, each with the id other tools take. Buddy Projects are hidden."
     )]
     async fn list_projects(&self) -> Result<CallToolResult, McpError> {
-        success(crate::storage::workspace::load_projects().map_err(internal)?)
+        success(crate::buddy::tools::list_projects().map_err(internal)?)
     }
     #[tool(name = "list_tasks", description = "List active Tasks in a Project.")]
     async fn list_tasks(
         &self,
         Parameters(input): Parameters<ProjectInput>,
     ) -> Result<CallToolResult, McpError> {
-        success(crate::storage::tasks::load_tasks(&input.project).map_err(internal)?)
+        let project = crate::buddy::tools::resolve_project(&input.project).map_err(invalid)?;
+        success(crate::storage::tasks::load_tasks(&project).map_err(internal)?)
     }
     #[tool(
         name = "list_sessions",
@@ -462,17 +561,26 @@ impl BuddyMcpService {
         &self,
         Parameters(input): Parameters<TaskInput>,
     ) -> Result<CallToolResult, McpError> {
-        success(crate::buddy::tools::list_sessions(&input.project, &input.task).map_err(internal)?)
+        let project = crate::buddy::tools::resolve_project(&input.project).map_err(invalid)?;
+        let task = crate::buddy::tools::resolve_task(&project, &input.task).map_err(invalid)?;
+        success(crate::buddy::tools::list_sessions(&project, &task).map_err(internal)?)
     }
     #[tool(
         name = "read_session",
-        description = "Read a Session as numbered entries (user and assistant messages; Grove envelopes removed), newest page first. Page with before/after using the returned cursors. include_tools adds one line per tool call and the files touched. history_path is the raw event log for grep when you need detail."
+        description = "Read a Session as numbered entries (user and assistant messages; Grove envelopes removed), newest page first. Page with before/after using the returned cursors. include_tools adds one line per tool call and the files touched. Entries list their images and files with paths you can pass to send or create_task as attachments; the page's newest images are shown to you. history_path is the raw event log for grep when you need detail."
     )]
     async fn read_session(
         &self,
         Parameters(input): Parameters<crate::buddy::tools::ReadSessionInput>,
     ) -> Result<CallToolResult, McpError> {
-        success(crate::buddy::tools::read_session(input).map_err(internal)?)
+        let page = crate::buddy::tools::read_session(input).map_err(internal)?;
+        let mut result = success(page.value)?;
+        result.content.extend(
+            page.images
+                .into_iter()
+                .map(|(data, mime_type)| Content::image(data, mime_type)),
+        );
+        Ok(result)
     }
     #[tool(
         name = "search_sessions",
@@ -486,17 +594,24 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "create_task",
-        description = "Create a Task in a Repo or Studio Project, optionally with notes. Code changes must run in a Task of the target Project."
+        description = "Create a Task in a Repo or Studio Project, optionally with notes and attachments (listed in the notes by path). Code changes must run in a Task of the target Project."
     )]
     async fn create_task(
         &self,
         Parameters(input): Parameters<CreateTaskInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let (buddy, _) = caller(&parts)?;
+        let (buddy, session) = caller(&parts)?;
+        let files = input.files.resolve(&buddy, &session)?;
         success(
-            crate::buddy::tools::create_task(&buddy, &input.project, input.name, input.notes)
-                .map_err(internal)?,
+            crate::buddy::tools::create_task(
+                &buddy,
+                &input.project,
+                input.name,
+                input.notes,
+                &files,
+            )
+            .map_err(internal)?,
         )
     }
 }

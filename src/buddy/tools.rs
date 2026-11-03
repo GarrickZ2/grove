@@ -3,6 +3,88 @@ use crate::error::{GroveError, Result};
 use crate::storage::{buddies::Buddy, tasks, workspace};
 use serde_json::{json, Value};
 
+/// Projects as the Buddy sees them: each with the `id` other tools take.
+pub fn list_projects() -> Result<Value> {
+    Ok(json!(workspace::load_projects_with_ids()?
+        .into_iter()
+        .map(|(id, project)| json!({
+            "id": id,
+            "name": project.name,
+            "path": project.path,
+            "project_type": project.project_type,
+            "archived": project.archived,
+        }))
+        .collect::<Vec<_>>()))
+}
+
+fn candidates<'a>(items: impl Iterator<Item = (&'a str, &'a str)>) -> String {
+    let listed: Vec<String> = items
+        .take(20)
+        .map(|(name, id)| format!("{name} ({id})"))
+        .collect();
+    if listed.is_empty() {
+        "none".into()
+    } else {
+        listed.join(", ")
+    }
+}
+
+/// A Project reference from the Buddy: its id, or an unambiguous name or path.
+/// Unknown or ambiguous references are errors, never an empty result.
+pub fn resolve_project(reference: &str) -> Result<String> {
+    let reference = reference.trim();
+    if workspace::load_project_by_hash(reference)?.is_some() {
+        return Ok(reference.to_owned());
+    }
+    let projects = workspace::load_projects_with_ids()?;
+    let expanded = workspace::expand_tilde(reference);
+    let matches: Vec<&(String, workspace::RegisteredProject)> = projects
+        .iter()
+        .filter(|(_, p)| {
+            p.name.eq_ignore_ascii_case(reference) || p.path == reference || p.path == expanded
+        })
+        .collect();
+    match matches.as_slice() {
+        [(id, _)] => Ok(id.clone()),
+        [] => Err(GroveError::not_found(format!(
+            "No Project matches \"{reference}\". Pass an id from list_projects. Projects: {}",
+            candidates(
+                projects
+                    .iter()
+                    .map(|(id, p)| (p.name.as_str(), id.as_str()))
+            )
+        ))),
+        _ => Err(GroveError::invalid_data(format!(
+            "\"{reference}\" matches several Projects; pass one id: {}",
+            candidates(matches.iter().map(|(id, p)| (p.name.as_str(), id.as_str())))
+        ))),
+    }
+}
+
+/// A Task reference within a Project: its id, or an unambiguous active Task name.
+pub fn resolve_task(project: &str, reference: &str) -> Result<String> {
+    let reference = reference.trim();
+    if tasks::get_task(project, reference)?.is_some() {
+        return Ok(reference.to_owned());
+    }
+    let active = tasks::load_tasks(project)?;
+    let matches: Vec<&tasks::Task> = active
+        .iter()
+        .filter(|task| task.name.eq_ignore_ascii_case(reference))
+        .collect();
+    match matches.as_slice() {
+        [task] => Ok(task.id.clone()),
+        [] => Err(GroveError::not_found(format!(
+            "No Task matches \"{reference}\" in this Project. Pass an id from list_tasks. Tasks: {}",
+            candidates(active.iter().map(|t| (t.name.as_str(), t.id.as_str())))
+        ))),
+        _ => Err(GroveError::invalid_data(format!(
+            "\"{reference}\" matches several Tasks; pass one id: {}",
+            candidates(matches.iter().map(|t| (t.name.as_str(), t.id.as_str())))
+        ))),
+    }
+}
+
 pub fn session_status(project: &str, task: &str, chat: &str) -> &'static str {
     let Some(handle) = crate::acp::get_session_handle(&format!("{project}:{task}:{chat}")) else {
         return "idle";
@@ -46,12 +128,26 @@ pub struct ReadSessionInput {
     /// Add one-line tool summaries and the files they touched.
     #[serde(default)]
     pub include_tools: bool,
+    /// Show the page's images to you (default true, at most 4, newest first).
+    /// Every attachment is still listed with its path either way.
+    #[serde(default)]
+    pub include_images: Option<bool>,
+}
+
+/// Images `read_session` returns per page, and their total base64 size.
+const PAGE_IMAGES: usize = 4;
+const PAGE_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+
+/// A page of a Session: the JSON listing plus images to show (base64, MIME type).
+pub struct SessionPage {
+    pub value: Value,
+    pub images: Vec<(String, String)>,
 }
 
 const HISTORY_FORMAT: &str = "history.jsonl holds one JSON event per line, tagged by \"type\" (user_message, message_chunk, tool_call, tool_call_update, permission_request, complete, ...). Search it with grep for a type or text rather than reading it whole.";
 
 /// Read a Session as numbered entries, a page at a time.
-pub fn read_session(input: ReadSessionInput) -> Result<Value> {
+pub fn read_session(input: ReadSessionInput) -> Result<SessionPage> {
     // TODO(buddy-history-authorization): MVP permits reading every Session,
     // including private conversations. Add policy only after product agreement.
     let limit = input.limit.unwrap_or(20);
@@ -80,19 +176,51 @@ pub fn read_session(input: ReadSessionInput) -> Result<Value> {
     let mut files: Vec<&String> = page.iter().flat_map(|entry| &entry.files).collect();
     files.sort();
     files.dedup();
+    // Each entry lists its attachments with a path (forwardable with `send`);
+    // the newest images are also returned to be seen.
+    let mut images = Vec::new();
+    let mut image_bytes = 0;
+    let mut listed: Vec<Value> = Vec::with_capacity(page.len());
+    for entry in page.iter().rev() {
+        let media: Vec<_> = entry
+            .media
+            .iter()
+            .filter_map(|block| {
+                super::attachments::materialize(&project, &task, &input.session, block)
+            })
+            .collect();
+        if input.include_images.unwrap_or(true) {
+            for item in &media {
+                if let Some(data) = &item.image {
+                    if images.len() < PAGE_IMAGES && image_bytes + data.len() <= PAGE_IMAGE_BYTES {
+                        image_bytes += data.len();
+                        images.push((data.clone(), item.mime_type.clone()));
+                    }
+                }
+            }
+        }
+        let mut value = json!(entry);
+        if !media.is_empty() {
+            value["attachments"] = json!(media);
+        }
+        listed.push(value);
+    }
+    listed.reverse();
+    images.reverse();
     let path = crate::storage::chat_history::history_file_path(&project, &task, &input.session);
-    Ok(json!({
+    let value = json!({
         "project": project,
         "task": task,
         "session": chat,
         "total": total,
-        "entries": page,
+        "entries": listed,
         "files": files,
         "before": (start > 0).then_some(start),
         "after": (end < total).then(|| end.saturating_sub(1)),
         "history_path": path,
         "history_format": HISTORY_FORMAT,
-    }))
+    });
+    Ok(SessionPage { value, images })
 }
 
 #[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
@@ -102,7 +230,7 @@ pub struct SearchSessionsInput {
     /// Search one Session.
     #[serde(default)]
     pub session: Option<String>,
-    /// Or every Session of a Project.
+    /// Or every Session of a Project (id from list_projects, or its exact name).
     #[serde(default)]
     pub project: Option<String>,
     /// Maximum matches (default 20, at most 100).
@@ -142,10 +270,13 @@ pub fn search_sessions(input: SearchSessionsInput) -> Result<Value> {
                 .ok_or_else(|| GroveError::not_found("Session not found"))?;
             vec![(project, task, chat.id, chat.title)]
         }
-        (None, Some(project)) => tasks::list_project_sessions(project)?
-            .into_iter()
-            .map(|(task, chat, title)| (project.clone(), task, chat, title))
-            .collect(),
+        (None, Some(project)) => {
+            let project = resolve_project(project)?;
+            tasks::list_project_sessions(&project)?
+                .into_iter()
+                .map(|(task, chat, title)| (project.clone(), task, chat, title))
+                .collect()
+        }
         _ => {
             return Err(GroveError::invalid_data(
                 "Pass exactly one of session or project",
@@ -184,7 +315,9 @@ pub fn create_task(
     project_id: &str,
     name: String,
     notes: Option<String>,
+    files: &[super::attachments::Outgoing],
 ) -> Result<tasks::Task> {
+    let project_id = &resolve_project(project_id)?;
     let project = workspace::load_project_by_hash(project_id)?
         .ok_or_else(|| GroveError::not_found("Project not found"))?;
     let cfg = crate::storage::config::load_config();
@@ -213,6 +346,18 @@ pub fn create_task(
         }
     };
     crate::storage::taskgroups::ensure_task_assignment(project_id, &result.task.id, false)?;
+    // A Task has no Session yet, so its files are listed in the notes the Agent reads.
+    let paths = super::attachments::store_for_task(project_id, &result.task.id, files)?;
+    let listing = paths
+        .iter()
+        .map(|path| format!("- {}", path.display()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let notes = match (notes, listing.is_empty()) {
+        (notes, true) => notes,
+        (Some(notes), false) => Some(format!("{notes}\n\nAttachments:\n{listing}")),
+        (None, false) => Some(format!("Attachments:\n{listing}")),
+    };
     if let Some(notes) = notes {
         crate::storage::notes::save_notes(project_id, &result.task.id, &notes)?;
     }
@@ -222,11 +367,27 @@ pub fn create_task(
 /// A message from this Buddy, in the standard v1 `<grove-meta>` envelope so
 /// every chat surface can badge it instead of showing raw metadata.
 pub fn prompt(buddy: &Buddy, text: &str, extra: Value) -> crate::acp::QueuedMessage {
-    let name = crate::storage::custom_agent::get(&buddy.custom_agent_id)
+    prompt_with_note(buddy, text, extra, None)
+}
+
+/// The Buddy's display name, from its persona.
+pub fn buddy_name(buddy: &Buddy) -> String {
+    crate::storage::custom_agent::get(&buddy.custom_agent_id)
         .ok()
         .flatten()
         .map(|persona| persona.name)
-        .unwrap_or_else(|| "Buddy".into());
+        .unwrap_or_else(|| "Buddy".into())
+}
+
+/// `prompt`, with `note` replacing the envelope's default `system-prompt`
+/// (what the receiving Agent reads about the message).
+pub fn prompt_with_note(
+    buddy: &Buddy,
+    text: &str,
+    extra: Value,
+    note: Option<String>,
+) -> crate::acp::QueuedMessage {
+    let name = buddy_name(buddy);
     let mut data = json!({"buddy_id":buddy.id,"name":name,"avatar":buddy.avatar});
     if let (Some(target), Some(extra)) = (data.as_object_mut(), extra.as_object()) {
         target.extend(extra.clone());
@@ -235,7 +396,7 @@ pub fn prompt(buddy: &Buddy, text: &str, extra: Value) -> crate::acp::QueuedMess
         "v": 1,
         "type": "buddy_message",
         "data": data,
-        "system-prompt": format!("Sent by {name}, the user's Buddy."),
+        "system-prompt": note.unwrap_or_else(|| format!("Sent by {name}, the user's Buddy.")),
     });
     crate::acp::QueuedMessage::new(
         format!("<grove-meta>{envelope}</grove-meta>\n{text}"),
@@ -351,7 +512,28 @@ pub fn ensure_not_own_segment(buddy: &Buddy, session: &str) -> Result<()> {
 }
 
 /// Deliver without following the outcome.
-pub async fn send(buddy: &Buddy, session: &str, text: &str) -> Result<String> {
+/// Copy files into a ready Session as prompt blocks; images go inline only
+/// when its Agent reads them.
+pub fn session_attachments(
+    project: &str,
+    task: &str,
+    session: &str,
+    files: &[super::attachments::Outgoing],
+) -> Result<Vec<crate::acp::ContentBlockData>> {
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let images = crate::acp::read_session_metadata(project, task, session)
+        .is_some_and(|meta| meta.prompt_capabilities.image);
+    super::attachments::deliver(project, task, session, files, images)
+}
+
+pub async fn send(
+    buddy: &Buddy,
+    session: &str,
+    text: &str,
+    files: &[super::attachments::Outgoing],
+) -> Result<String> {
     if text.trim().is_empty() {
         return Err(GroveError::invalid_data("text is required"));
     }
@@ -362,7 +544,15 @@ pub async fn send(buddy: &Buddy, session: &str, text: &str) -> Result<String> {
         crate::agent_graph::tools::ensure_target_handle(&project, &task, session)
             .await
             .map_err(|e| GroveError::storage(e.to_string()))?;
-    let message = prompt(buddy, text, json!({}));
+    if !files.is_empty() {
+        // Its capabilities decide how images go.
+        handle
+            .wait_until_ready(crate::agent_graph::tools::ACP_SESSION_READY_TIMEOUT)
+            .await
+            .map_err(GroveError::storage)?;
+    }
+    let mut message = prompt(buddy, text, json!({}));
+    message.attachments = session_attachments(&project, &task, session, files)?;
     let id = message.id.clone();
     crate::agent_graph::tools::deliver_prompt(&handle, message)
         .await
@@ -428,7 +618,7 @@ mod tests {
             "other-task",
             "target-chat",
         );
-        let id = send(&buddy, "target-chat", "hello").await.unwrap();
+        let id = send(&buddy, "target-chat", "hello", &[]).await.unwrap();
         let update = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
                 if let crate::acp::AcpUpdate::UserMessage {
@@ -451,7 +641,7 @@ mod tests {
         handle
             .is_busy
             .store(true, std::sync::atomic::Ordering::Release);
-        let queued = send(&buddy, "target-chat", "next").await.unwrap();
+        let queued = send(&buddy, "target-chat", "next", &[]).await.unwrap();
         let queue = handle.get_queue();
         assert_eq!(queue.len(), 1);
         assert_eq!(queue[0].id, queued);
@@ -485,7 +675,9 @@ mod tests {
                 before,
                 after,
                 include_tools: false,
+                include_images: None,
             })
+            .map(|page| page.value)
         };
         let result = read(Some(1), None, None).unwrap();
         assert_eq!(result["total"], 1);
@@ -499,9 +691,9 @@ mod tests {
     fn sessions_page_with_tool_summaries_and_search_without_envelopes() {
         let _lock = database::test_lock().blocking_lock();
         let _store = Store::new();
-        seed_session(&database::connection(), "paged-project", "task", "paged");
-        let path =
-            crate::storage::chat_history::history_file_path("paged-project", "task", "paged");
+        let project = workspace::project_hash(&workspace::create_studio_project("Paged").unwrap());
+        seed_session(&database::connection(), &project, "task", "paged");
+        let path = crate::storage::chat_history::history_file_path(&project, "task", "paged");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let events = [
             json!({"type":"user_message","text":"<grove-meta>{\"kind\":\"buddy_message\"}</grove-meta>\nFix the login bug"}),
@@ -528,8 +720,10 @@ mod tests {
                 before,
                 after: None,
                 include_tools,
+                include_images: None,
             })
             .unwrap()
+            .value
         };
         let plain = read(false, None, None);
         assert_eq!(plain["total"], 2);
@@ -544,7 +738,7 @@ mod tests {
         let found = search_sessions(SearchSessionsInput {
             query: "TOKEN".into(),
             session: None,
-            project: Some("paged-project".into()),
+            project: Some("Paged".into()),
             limit: None,
         })
         .unwrap();
@@ -573,5 +767,123 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn read_session_lists_media_with_paths_and_shows_images() {
+        let _lock = database::test_lock().blocking_lock();
+        let _store = Store::new();
+        seed_session(&database::connection(), "media-project", "task", "media");
+        let image = |data: &str| crate::acp::ContentBlockData::Image {
+            data: data.into(),
+            mime_type: "image/png".into(),
+            uri: None,
+            label: None,
+        };
+        for event in [
+            crate::acp::AcpUpdate::UserMessage {
+                message_id: None,
+                text: String::new(),
+                client_message_id: None,
+                attachments: vec![image("aW1n")],
+                sender: None,
+                terminal: false,
+            },
+            crate::acp::AcpUpdate::MessageContentChunk {
+                message_id: None,
+                content: image("b3V0"),
+            },
+        ] {
+            crate::storage::chat_history::append_event("media-project", "task", "media", &event);
+        }
+        let read = || {
+            read_session(ReadSessionInput {
+                session: "media".into(),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        let page = read();
+        // An attachment-only message and an image-only reply are both entries.
+        assert_eq!(page.value["total"], 2);
+        assert_eq!(page.value["entries"][1]["role"], "assistant");
+        let path = page.value["entries"][0]["attachments"][0]["path"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(std::fs::read(&path).unwrap(), b"img");
+        assert_eq!(
+            page.images,
+            vec![
+                ("aW1n".to_owned(), "image/png".to_owned()),
+                ("b3V0".to_owned(), "image/png".to_owned())
+            ]
+        );
+        // Reading again reuses the stored file.
+        assert_eq!(
+            read().value["entries"][0]["attachments"][0]["path"],
+            path.as_str()
+        );
+        let hidden = read_session(ReadSessionInput {
+            session: "media".into(),
+            include_images: Some(false),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(hidden.images.is_empty());
+    }
+
+    #[test]
+    fn projects_and_tasks_resolve_by_id_name_or_path_and_reject_unknowns() {
+        let _lock = database::test_lock().blocking_lock();
+        let _store = Store::new();
+        let workspace_id =
+            workspace::project_hash(&workspace::create_studio_project("Workspace").unwrap());
+        workspace::create_studio_project("Other").unwrap();
+        let listed = list_projects().unwrap();
+        assert!(listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == workspace_id.as_str() && p["name"] == "Workspace"));
+        for reference in [
+            workspace_id.as_str(),
+            "Workspace",
+            "workspace",
+            "studio://Workspace",
+        ] {
+            assert_eq!(
+                resolve_project(reference).unwrap(),
+                workspace_id,
+                "{reference}"
+            );
+        }
+        let missing = resolve_project("Workflow Refactor")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing.contains(&format!("Workspace ({workspace_id})")),
+            "{missing}"
+        );
+
+        let buddy = seed_buddy(&database::connection(), "resolver");
+        let task = create_task(&buddy, "Workspace", "Brand refresh".into(), None, &[]).unwrap();
+        assert_eq!(resolve_task(&workspace_id, &task.id).unwrap(), task.id);
+        assert_eq!(
+            resolve_task(&workspace_id, "brand refresh").unwrap(),
+            task.id
+        );
+        assert!(resolve_task(&workspace_id, "nope")
+            .unwrap_err()
+            .to_string()
+            .contains("Brand refresh"));
+        // Searching an unknown Project is an error, not zero matches.
+        assert!(search_sessions(SearchSessionsInput {
+            query: "x".into(),
+            session: None,
+            project: Some("Workflow Refactor".into()),
+            limit: None,
+        })
+        .is_err());
     }
 }

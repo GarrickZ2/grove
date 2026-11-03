@@ -78,3 +78,15 @@ it("takes turn timing and send times from backend stamps, not the replay clock",
   expect(state.messages[0]).toMatchObject({ sentAt: 1_793_505_584_895 });
   expect(state.messages[1]).toMatchObject({ startTs: 1_793_505_584, endTs: 1_793_505_656 });
 });
+it("shows a message to another Buddy as a notice with its text, named from the tool result", () => {
+  const state = run([
+    { type: "tool_call", id: "m", title: "mcp__grove_buddy__message_buddy", input: [{ label: "buddy", value: "bob" }, { label: "text", value: "Is the release branch cut?" }] },
+    { type: "tool_call_update", id: "m", status: "completed", content: JSON.stringify({ message_id: "x", to: { id: "bob", name: "Bob" } }) },
+    { type: "tool_call", id: "r", title: "mcp__grove_buddy__message_buddy", rawInput: { buddy: "Bob", text: "Thanks, go ahead", reply_to: "y" }, status: "failed" },
+  ]);
+  const notices = state.rows.filter(row => row.kind === "event");
+  expect(notices).toMatchObject([
+    { id: "buddy-chat-m", notice: { lead: "Sent to", name: "Bob", detail: "Is the release branch cut?", tone: "neutral" } },
+    { id: "buddy-chat-r", notice: { lead: "Couldn't reply to", name: "Bob", tone: "error" } },
+  ]);
+});
