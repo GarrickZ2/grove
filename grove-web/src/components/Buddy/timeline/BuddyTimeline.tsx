@@ -20,7 +20,7 @@ import { resolveDelegationRows } from "../delegations/delegationFormat";
 import { DelegationRequestCards } from "../delegations/DelegationRequestCards";
 import type { SurveyAnswers } from "../../Tasks/TaskView/formPillTypes";
 import { parseGroveMetaSegments } from "../../../utils/groveMeta";
-import { chatBubbles } from "./messageBubbles";
+import { chatBubbles, withoutApprovalNotes } from "./messageBubbles";
 import { separatorLabel, timeSeparators } from "./timeSeparators";
 import { DELEGATION_NOTICE, promptEvent } from "./promptEvents";
 import { TimelineNotice } from "./TimelineNotice";
@@ -146,9 +146,14 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
           ? <TimelineImage key={index} data={file.data} mimeType={file.mimeType} name={file.name || file.label || "Image"} onOpen={setLightbox} />
           : <span className="buddy-file" key={index}><File size={14} />{file.name || file.label || file.uri?.split("/").pop() || "Attachment"}</span>)}</UserBubble><MessageActions text={content} timestamp={message.sentAt} now={now} alignRight /></div>;
       }
-      if (message.type === "assistant") return <div key={row.id} className="buddy-assistant-message group/message" onPointerEnter={touch}><AssistantBubbles content={message.content} />{message.blocks?.filter(block => block.type !== "text").map((block, index) => block.type === "image"
+      if (message.type === "assistant") {
+        const reply = withoutApprovalNotes(message.content);
+        const media = message.blocks?.filter(block => block.type !== "text");
+        if (!reply.trim() && !media?.length) return null;
+        return <div key={row.id} className="buddy-assistant-message group/message" onPointerEnter={touch}><AssistantBubbles content={reply} />{media?.map((block, index) => block.type === "image"
         ? <TimelineImage key={index} data={block.data} mimeType={block.mime_type} name={block.label || "Image"} onOpen={setLightbox} />
-        : <span className="buddy-file" key={index}><File size={14} />{block.type === "resource_link" ? block.name : block.type === "resource" ? block.uri : block.label || block.type}</span>)}{message.complete && message.endTs != null && <MessageActions text={message.content} timestamp={message.endTs * 1000} startTs={message.startTs} endTs={message.endTs} now={now} />}</div>;
+        : <span className="buddy-file" key={index}><File size={14} />{block.type === "resource_link" ? block.name : block.type === "resource" ? block.uri : block.label || block.type}</span>)}{message.complete && message.endTs != null && <MessageActions text={reply} timestamp={message.endTs * 1000} startTs={message.startTs} endTs={message.endTs} now={now} />}</div>;
+      }
       return null;
   }
 }

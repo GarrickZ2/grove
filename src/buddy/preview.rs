@@ -11,6 +11,14 @@ pub struct Preview {
     pub last_activity_at: String,
 }
 static CACHE: Lazy<Mutex<HashMap<String, Preview>>> = Lazy::new(Mutex::default);
+/// Agents can narrate each automatic approval decision as plain reply text;
+/// the timeline hides these too.
+static APPROVAL_NOTE: Lazy<regex::Regex> = Lazy::new(|| {
+    regex::Regex::new(
+        r"(?i)Automatic approval review[ \t]+\w+[ \t]*(?:\([^)\n]*\)[ \t]*:?|:)[^.!?\n]*[.!?]?[ \t]*\n*",
+    )
+    .unwrap()
+});
 
 pub(crate) fn invalidate(session: &str) {
     CACHE.lock().unwrap().remove(session);
@@ -59,7 +67,12 @@ pub fn get(buddy: &Buddy) -> Preview {
                 };
                 text.replace_range(start..start + end + "</grove-meta>".len(), "");
             }
-            text.trim().chars().take(200).collect::<String>()
+            APPROVAL_NOTE
+                .replace_all(&text, "")
+                .trim()
+                .chars()
+                .take(200)
+                .collect::<String>()
         })
         .filter(|text| !text.is_empty());
     let preview = Preview {

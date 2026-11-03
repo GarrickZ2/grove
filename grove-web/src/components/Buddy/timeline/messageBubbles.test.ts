@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { chatBubbles, splitBubbles } from "./messageBubbles";
+import { chatBubbles, splitBubbles, withoutApprovalNotes } from "./messageBubbles";
 
 it("puts each paragraph of a short reply in its own bubble", () => {
   expect(chatBubbles("first thought\n\n\nsecond thought")).toEqual([
@@ -33,4 +33,17 @@ it("turns check-mark paragraphs into receipts", () => {
     { kind: "text", content: "You're clear until 2pm." },
   ]);
   expect(chatBubbles("Done:\n\n✓ Report → filed")?.[1]).toEqual({ kind: "receipt", items: [{ label: "Report", result: "filed" }] });
+});
+
+it("drops automatic approval notes in any wording and keeps the reply", () => {
+  const note = "Automatic approval review approved (risk: low, authorization: unknown): Auto-review returned a low-risk allow decision.";
+  expect(withoutApprovalNotes(note).trim()).toBe("");
+  expect(withoutApprovalNotes(`${note}${note}\n\nDone, tests pass.`)).toBe("Done, tests pass.");
+  for (const variant of [
+    "Automatic approval review denied (risk: high, authorization: low): Blocked by policy.",
+    "automatic approval review approved (risk: medium): Looks safe",
+    "Automatic approval review approved: no risk found.",
+  ]) expect(withoutApprovalNotes(variant).trim()).toBe("");
+  const mention = "Automatic approval review is on for this repo.";
+  expect(withoutApprovalNotes(mention)).toBe(mention);
 });

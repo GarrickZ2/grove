@@ -15,6 +15,15 @@ const STRUCTURED = /^\s*(?:```|~~~|#{1,6}\s|\||>\s)/;
 const MAX_BUBBLES = 4;
 const MAX_BUBBLE_CHARS = 140;
 
+// Agents can narrate each automatic approval decision as plain reply text, in
+// varying wording. The status must be followed by details or a colon, so a
+// sentence that merely mentions automatic approval review stays.
+const APPROVAL_NOTE = /Automatic approval review[ \t]+\w+[ \t]*(?:\([^)\n]*\)[ \t]*:?|:)[^.!?\n]*[.!?]?[ \t]*\n*/gi;
+
+export function withoutApprovalNotes(content: string): string {
+  return content.replace(APPROVAL_NOTE, "");
+}
+
 function paragraphs(content: string): string[] {
   const blocks: string[] = [];
   let current: string[] = [];
