@@ -63,7 +63,7 @@ function user(state: BuddyTimelineState, event: BuddyEvent, now = Date.now()): B
   if (sender && sender !== "connect") {
     if (id && state.hidden.includes(id)) return state;
     // Kept (not shown as text) so the timeline can mark where Grove prompted the Buddy.
-    return { ...withMessages(state, [...state.messages, { type: "user", content: string(event.text), sender, messageId: id || undefined, sentAt: now }]), hidden: id ? [...state.hidden, id] : state.hidden };
+    return { ...withMessages(state, [...state.messages, { type: "user", content: string(event.text), sender, messageId: id || undefined, clientMessageId: clientId || undefined, sentAt: now }]), hidden: id ? [...state.hidden, id] : state.hidden };
   }
   if (id && state.hidden.includes(id)) return state;
   if (clientId && state.messages.some(m => m.type === "user" && m.clientMessageId === clientId)) return state;

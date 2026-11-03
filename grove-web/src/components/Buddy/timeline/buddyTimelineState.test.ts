@@ -98,3 +98,14 @@ it("shows a message to another Buddy as a notice with its text, named from the t
     { id: "buddy-chat-r", notice: { lead: "Couldn't reply to", name: "Bob", tone: "error" } },
   ]);
 });
+
+it("keeps a Buddy's prompt as one message when the Agent echoes it back", () => {
+  const text = '<grove-meta>{"v":1,"type":"buddy_message","data":{"chat":true},"system-prompt":"From Dev"}</grove-meta>\nhello';
+  const state = run([
+    { type: "user_message", text, sender: "buddy:dev", client_message_id: "input-1" },
+    { type: "v2_message_bind", client_message_id: "input-1", message_id: "agent-1" },
+    { type: "v2_message_update", update: { sessionUpdate: "user_message", messageId: "agent-1", content: [{ type: "text", text }] } },
+  ]);
+  expect(state.messages).toHaveLength(1);
+  expect(state.messages[0]).toMatchObject({ type: "user", sender: "buddy:dev", content: text });
+});
