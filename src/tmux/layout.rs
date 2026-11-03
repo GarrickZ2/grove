@@ -48,15 +48,6 @@ pub enum LayoutNode {
 }
 
 impl LayoutNode {
-    /// 统计叶子节点数（不含 Placeholder）
-    pub fn pane_count(&self) -> usize {
-        match self {
-            LayoutNode::Pane { .. } => 1,
-            LayoutNode::Placeholder => 1, // placeholder 占一个位置
-            LayoutNode::Split { first, second, .. } => first.pane_count() + second.pane_count(),
-        }
-    }
-
     /// 所有叶子是否已分配（无 Placeholder）
     #[allow(dead_code)]
     pub fn is_complete(&self) -> bool {
@@ -64,52 +55,6 @@ impl LayoutNode {
             LayoutNode::Pane { .. } => true,
             LayoutNode::Placeholder => false,
             LayoutNode::Split { first, second, .. } => first.is_complete() && second.is_complete(),
-        }
-    }
-}
-
-/// 路径段：标识树中的位置
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PathSegment {
-    First,
-    Second,
-}
-
-/// 在树的指定路径位置设置节点
-pub fn set_node_at_path(root: &mut LayoutNode, path: &[PathSegment], node: LayoutNode) {
-    if path.is_empty() {
-        *root = node;
-        return;
-    }
-
-    if let LayoutNode::Split {
-        ref mut first,
-        ref mut second,
-        ..
-    } = root
-    {
-        match path[0] {
-            PathSegment::First => set_node_at_path(first, &path[1..], node),
-            PathSegment::Second => set_node_at_path(second, &path[1..], node),
-        }
-    }
-}
-
-/// 找到下一个未配置的叶子路径（DFS 前序）
-pub fn next_incomplete_path(root: &LayoutNode) -> Option<Vec<PathSegment>> {
-    match root {
-        LayoutNode::Placeholder => Some(vec![]),
-        LayoutNode::Pane { .. } => None,
-        LayoutNode::Split { first, second, .. } => {
-            if let Some(mut path) = next_incomplete_path(first) {
-                path.insert(0, PathSegment::First);
-                Some(path)
-            } else if let Some(mut path) = next_incomplete_path(second) {
-                path.insert(0, PathSegment::Second);
-                Some(path)
-            } else {
-                None
-            }
         }
     }
 }
@@ -140,41 +85,6 @@ pub enum TaskLayout {
 }
 
 impl TaskLayout {
-    /// 所有预设布局（不含 Custom）
-    pub fn all() -> &'static [TaskLayout] {
-        &[
-            TaskLayout::Single,
-            TaskLayout::Agent,
-            TaskLayout::AgentShell,
-            TaskLayout::AgentMonitor,
-            TaskLayout::GroveAgent,
-        ]
-    }
-
-    /// UI 显示名
-    pub fn label(&self) -> &'static str {
-        match self {
-            TaskLayout::Single => "Single",
-            TaskLayout::Agent => "Agent",
-            TaskLayout::AgentShell => "Agent + Shell",
-            TaskLayout::AgentMonitor => "Agent + Monitor",
-            TaskLayout::GroveAgent => "Grove + Agent",
-            TaskLayout::Custom => "Custom",
-        }
-    }
-
-    /// config 存储名
-    pub fn name(&self) -> &'static str {
-        match self {
-            TaskLayout::Single => "single",
-            TaskLayout::Agent => "agent",
-            TaskLayout::AgentShell => "agent-shell",
-            TaskLayout::AgentMonitor => "agent-monitor",
-            TaskLayout::GroveAgent => "grove-agent",
-            TaskLayout::Custom => "custom",
-        }
-    }
-
     /// 从 config 名称解析
     pub fn from_name(s: &str) -> Option<Self> {
         match s {
@@ -210,6 +120,11 @@ fn list_pane_ids(session: &str) -> Result<Vec<String>> {
         .map(|s| s.to_string())
         .collect())
 }
+
+/// Agent 窗格和 Grove 窗格运行的命令：Grove 终端应用。task 会话的
+/// `GROVE_PROJECT` / `GROVE_TASK_ID` 环境变量让它直接打开这个 task 的会话。
+/// 显式写 `tui`：裸 `grove` 会重放上次的启动模式（可能是 GUI）。
+pub const AGENT_PANE_COMMAND: &str = "grove tui";
 
 /// 在已创建的 tmux session 上应用布局
 ///
@@ -286,7 +201,7 @@ pub fn apply_layout(
             if !agent_command.is_empty() {
                 send_keys(&agent, agent_command)?;
             }
-            send_keys(&grove, "grove")?;
+            send_keys(&grove, AGENT_PANE_COMMAND)?;
             select_pane(&agent)?;
             Ok(())
         }
@@ -313,7 +228,7 @@ pub fn apply_layout(
                 .ok_or_else(|| GroveError::session("split failed: no second pane"))?
                 .clone();
 
-            send_keys(&grove, "grove")?;
+            send_keys(&grove, AGENT_PANE_COMMAND)?;
             if !agent_command.is_empty() {
                 send_keys(&agent, agent_command)?;
             }
@@ -382,7 +297,7 @@ fn apply_node(
                     }
                 }
                 PaneRole::Grove => {
-                    send_keys(target_pane, "grove")?;
+                    send_keys(target_pane, AGENT_PANE_COMMAND)?;
                 }
                 PaneRole::Shell => {
                     // shell 不需要发命令

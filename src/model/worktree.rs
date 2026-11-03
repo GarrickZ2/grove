@@ -21,33 +21,7 @@ pub enum WorktreeStatus {
     Archived,
 }
 
-impl WorktreeStatus {
-    /// 返回状态对应的图标
-    pub fn icon(&self) -> &'static str {
-        match self {
-            WorktreeStatus::Idle => "○",
-            WorktreeStatus::Live => "●",
-            WorktreeStatus::Merged => "✓",
-            WorktreeStatus::Conflict => "⚠",
-            WorktreeStatus::Broken => "✗",
-            WorktreeStatus::Error => "✗",
-            WorktreeStatus::Archived => "📦",
-        }
-    }
-
-    /// 返回状态文字标签
-    pub fn label(&self) -> &'static str {
-        match self {
-            WorktreeStatus::Idle => "Idle",
-            WorktreeStatus::Live => "Live",
-            WorktreeStatus::Merged => "Merged",
-            WorktreeStatus::Conflict => "Conflict",
-            WorktreeStatus::Broken => "Broken",
-            WorktreeStatus::Error => "Error",
-            WorktreeStatus::Archived => "Archived",
-        }
-    }
-}
+impl WorktreeStatus {}
 
 /// 文件变更统计（overview 阶段不再计算，按需通过 diff API 获取）
 #[derive(Debug, Clone, Default)]
@@ -82,13 +56,9 @@ pub struct Worktree {
     pub target: String,
     /// 当前状态
     pub status: WorktreeStatus,
-    /// 落后 target branch 的 commit 数（None 表示无需显示）
-    pub commits_behind: Option<u32>,
     /// 文件变更统计（overview 阶段不再计算）
     #[allow(dead_code)]
     pub file_changes: FileChanges,
-    /// 是否已归档
-    pub archived: bool,
     /// Worktree 路径
     pub path: String,
     /// 解析后的 multiplexer 类型 ("tmux" | "zellij" | "acp")
@@ -152,48 +122,6 @@ pub fn format_relative_time(dt: DateTime<Utc>) -> String {
             "1 year ago".to_string()
         } else {
             format!("{} years ago", years)
-        }
-    }
-}
-
-/// Project 层级的 Tab 类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ProjectTab {
-    #[default]
-    Active,
-    Archived,
-}
-
-impl ProjectTab {
-    /// 切换到下一个 Tab（循环）
-    pub fn next(&self) -> Self {
-        match self {
-            ProjectTab::Active => ProjectTab::Archived,
-            ProjectTab::Archived => ProjectTab::Active,
-        }
-    }
-
-    /// 切换到上一个 Tab（循环）
-    pub fn prev(&self) -> Self {
-        match self {
-            ProjectTab::Active => ProjectTab::Archived,
-            ProjectTab::Archived => ProjectTab::Active,
-        }
-    }
-
-    /// Tab 显示名称
-    pub fn label(&self) -> &'static str {
-        match self {
-            ProjectTab::Active => "Active Tasks",
-            ProjectTab::Archived => "Archived Tasks",
-        }
-    }
-
-    /// 转换为数组索引
-    pub fn index(&self) -> usize {
-        match self {
-            ProjectTab::Active => 0,
-            ProjectTab::Archived => 1,
         }
     }
 }

@@ -283,7 +283,6 @@ mod tests {
             acp_session_id: None,
             created_at: Utc::now(),
             duty: None,
-            launch_mode: "acp".to_string(),
         };
         crate::storage::tasks::add_chat_session("p", "t", chat.clone()).unwrap();
         chat.id

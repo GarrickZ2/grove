@@ -178,7 +178,6 @@ fn new_segment_on(conn: &Connection, buddy: &db::Buddy, agent: &str, seq: i64) -
             acp_session_id: None,
             created_at: now,
             duty: None,
-            launch_mode: "acp".into(),
         },
     )?;
     db::insert_segment(

@@ -49,7 +49,9 @@ gui = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-plugin-global-shortcut"
 perf-monitor = ["dep:tracing", "dep:tracing-subscriber"]
 
 [dependencies]
-ratatui = "0.29"
+# `scrolling-regions`: `insert_before` (grove cli scrollback) then draws wide
+# characters correctly instead of padding each with a space.
+ratatui = { version = "0.29", features = ["scrolling-regions"] }
 crossterm = "0.28"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
@@ -128,6 +130,7 @@ tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["registry"] }
 rusqlite = { version = "0.34", features = ["bundled"] }
 similar = "2.7.0"
+unicode-width = "0.2"
 getrandom = "0.2"
 qrcode = "0.14"
 

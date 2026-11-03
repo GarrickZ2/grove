@@ -99,60 +99,6 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-pub struct CheckResult {
-    pub ok: bool,
-    pub errors: Vec<String>,
-}
-
-fn missing_tui_multiplexer_error(tmux_ok: bool, zellij_ok: bool) -> Option<&'static str> {
-    (!tmux_ok && !zellij_ok)
-        .then_some("TUI mode requires tmux or zellij. Please install at least one.")
-}
-
-/// Check dependencies required specifically by the TUI.
-///
-/// Other Grove surfaces (Web, GUI, MCP, ACP) do not require a terminal
-/// multiplexer, so this check must only be called from the TUI entry point.
-pub fn check_tui_environment() -> CheckResult {
-    let mut errors = Vec::new();
-
-    // 检查 git
-    if !check_git() {
-        errors.push("git is not installed. Please install git first.".to_string());
-    }
-
-    // TUI sessions require at least one supported terminal multiplexer.
-    let tmux_ok = check_tmux_available();
-    let zellij_ok = check_zellij_available();
-
-    if let Some(error) = missing_tui_multiplexer_error(tmux_ok, zellij_ok) {
-        errors.push(error.to_string());
-    }
-
-    // 如果 tmux 可用但版本太旧，给出警告（非致命）
-    if tmux_ok {
-        if let TmuxCheck::VersionTooOld(ver) = check_tmux() {
-            errors.push(format!(
-                "tmux version {} is too old. Please upgrade to tmux 3.0+ for tmux support.",
-                ver
-            ));
-        }
-    }
-
-    CheckResult {
-        ok: errors.is_empty(),
-        errors,
-    }
-}
-
-fn check_git() -> bool {
-    Command::new("git")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// Check if fzf is installed (for grove fp command)
 pub fn check_fzf() -> bool {
     Command::new("fzf")
@@ -190,52 +136,4 @@ pub fn check_zellij_available() -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
-}
-
-enum TmuxCheck {
-    Ok,
-    NotInstalled,
-    VersionTooOld(String),
-}
-
-fn check_tmux() -> TmuxCheck {
-    let output = match Command::new("tmux").arg("-V").output() {
-        Ok(o) if o.status.success() => o,
-        _ => return TmuxCheck::NotInstalled,
-    };
-
-    let version_str = String::from_utf8_lossy(&output.stdout);
-    // "tmux 3.4" -> parse "3.4"
-    let version = version_str
-        .trim()
-        .strip_prefix("tmux ")
-        .unwrap_or("")
-        .split(|c: char| !c.is_ascii_digit() && c != '.')
-        .next()
-        .unwrap_or("");
-
-    let major: u32 = version
-        .split('.')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-
-    if major >= 3 {
-        TmuxCheck::Ok
-    } else {
-        TmuxCheck::VersionTooOld(version.to_string())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::missing_tui_multiplexer_error;
-
-    #[test]
-    fn tui_requires_at_least_one_multiplexer() {
-        assert!(missing_tui_multiplexer_error(false, false).is_some());
-        assert!(missing_tui_multiplexer_error(true, false).is_none());
-        assert!(missing_tui_multiplexer_error(false, true).is_none());
-        assert!(missing_tui_multiplexer_error(true, true).is_none());
-    }
 }

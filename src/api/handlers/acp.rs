@@ -25,7 +25,7 @@ use crate::storage::{chat_attachments, chat_history, config, tasks, workspace};
 /// Client-to-server messages
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum ClientMessage {
+pub(crate) enum ClientMessage {
     Prompt {
         text: String,
         #[serde(default)]
@@ -1906,9 +1906,6 @@ pub struct ChatSessionResponse {
     /// `Read History` @-mention can hand the path to the AI; the AI uses its
     /// own Read tool to inspect the file.
     pub history_path: String,
-    /// "acp" (default) or "terminal" — frontend routes WS / renders chat area
-    /// accordingly. Snapshotted at chat creation and immutable.
-    pub launch_mode: String,
     /// Pinned to the top of its task's session list. Only `list_chats` and
     /// `set_chat_pinned` fill this in; other responses report false.
     pub pinned: bool,
@@ -1982,7 +1979,6 @@ impl ChatSessionResponse {
             agent: chat.agent.clone(),
             created_at: chat.created_at.to_rfc3339(),
             history_path,
-            launch_mode: chat.launch_mode.clone(),
             pinned: false,
             updated_at: None,
         }
@@ -2236,42 +2232,6 @@ pub async fn create_chat(
                 .clone()
                 .unwrap_or_else(|| "claude-acp".to_string())
         }));
-    // Snapshot launch_mode from the agent's selected channel at chat-creation
-    // time. Subsequent edits do not retroactively change existing chats —
-    // that contract is what makes ACP/terminal switching safe.
-    //
-    // Derivation (post-v2.6 launch-mode merge):
-    //   selected_install_method == External
-    //     AND registry entry has `terminal_launch` set
-    //     → "terminal" (PTY launch, agent_pty.rs handles it)
-    //   else
-    //     → "acp" (stdio JSON-RPC)
-    //
-    // Unknown agent id (no row) → default to ACP.
-    let launch_mode = {
-        let installed = crate::storage::installed_agents::get(&agent).ok().flatten();
-        let is_terminal = installed
-            .as_ref()
-            .filter(|r| {
-                matches!(
-                    r.selected_install_method,
-                    crate::storage::installed_agents::InstallMethod::External
-                )
-            })
-            .and_then(|_| {
-                crate::storage::agent_registry::get()
-                    .agents
-                    .iter()
-                    .find(|a| a.id == agent)
-                    .and_then(|a| a.terminal_launch.clone())
-            })
-            .is_some();
-        if is_terminal {
-            "terminal".to_string()
-        } else {
-            "acp".to_string()
-        }
-    };
     let now = chrono::Utc::now();
     let title = body
         .title
@@ -2284,7 +2244,6 @@ pub async fn create_chat(
         acp_session_id: None,
         created_at: now,
         duty: None,
-        launch_mode,
     };
 
     tasks::add_chat_session(&project_key, &task_id, chat.clone())
@@ -2370,7 +2329,6 @@ pub async fn import_session(
         acp_session_id: Some(body.session_id),
         created_at: chrono::Utc::now(),
         duty: None,
-        launch_mode: "acp".into(),
     };
     tasks::add_chat_session(&project_key, &task_id, chat.clone())
         .map_err(|e| AcpError::Internal(e.to_string()))?;
@@ -2519,9 +2477,8 @@ pub async fn delete_chat(
         .join(&chat_id);
     let _ = std::fs::remove_dir_all(&chat_dir);
 
-    // Clean up the terminal-mode mcp-config tmp dir if present (only created
-    // for chats that were ever launched in terminal mode; ACP-only chats
-    // skip this directory entirely so the remove is a no-op).
+    // Remove the mcp-config dir older Grove versions wrote for terminal-mode
+    // chats, if one was left behind.
     let mcp_tmp = crate::storage::grove_dir()
         .join("agents-tmp")
         .join(&chat_id);
@@ -2587,7 +2544,6 @@ pub async fn fork_chat(
         acp_session_id: Some(new_acp_session_id),
         created_at: now,
         duty: src_chat.duty.clone(),
-        launch_mode: src_chat.launch_mode.clone(),
     };
     tasks::add_chat_session(&project_key, &task_id, new_chat.clone())
         .map_err(|e| AcpError::Internal(e.to_string()))?;
@@ -3391,14 +3347,9 @@ pub async fn reconnect_chat(
     crate::storage::buddies::ensure_session_writable(&chat_id)
         .map_err(|e| AcpError::BadRequest(e.to_string()))?;
     let (project_key, _, _) = resolve_project_key(&project_id)?;
-    let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
+    tasks::get_chat_session(&project_key, &task_id, &chat_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?
         .ok_or(AcpError::NotFound("Chat not found".to_string()))?;
-    if chat.launch_mode == "terminal" {
-        return Err(AcpError::Internal(
-            "Terminal sessions do not use ACP reconnect".to_string(),
-        ));
-    }
 
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
     match acp::discover_session(&project_key, &task_id, &chat_id, &session_key) {

@@ -121,7 +121,6 @@ pub async fn delegate(
                 acp_session_id: None,
                 created_at: now,
                 duty: None,
-                launch_mode: "acp".into(),
             },
         )?;
         db::insert_delegation(&tx, &delegation)?;

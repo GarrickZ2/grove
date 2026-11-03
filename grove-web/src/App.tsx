@@ -663,32 +663,13 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
             !(a.installed?.hidden ?? false),
         );
         const launchableIds = new Set(launchable.map((a) => a.id));
-        const terminalIds = new Set(
-          launchable
-            .filter((a) => a.supports_terminal_launch)
-            .map((a) => a.id),
-        );
 
         // Post-v2.6 migration, config.toml's agent_command values are
         // already canonical, so a direct set lookup is enough.
         const matches = (saved: string, set: Set<string>): boolean => set.has(saved);
 
         let needsUpdate = false;
-        const updates: { layout?: { agent_command?: string }, acp?: { agent_command?: string } } = {};
-
-        // Terminal agent fallback: only kicks in if user's chosen one isn't
-        // installed terminal-capable any more.
-        if (cfg.layout?.agent_command) {
-          if (!matches(cfg.layout.agent_command, terminalIds)) {
-            const firstAvailable = launchable.find((a) =>
-              a.supports_terminal_launch,
-            );
-            if (firstAvailable) {
-              updates.layout = { agent_command: firstAvailable.id };
-              needsUpdate = true;
-            }
-          }
-        }
+        const updates: { acp?: { agent_command?: string } } = {};
 
         // Chat / ACP agent fallback: anything launchable is acp-capable.
         if (cfg.acp?.agent_command) {

@@ -241,9 +241,9 @@ impl LastLaunch {
             }
             LastLaunch::Mobile { port, tls, .. } => {
                 if *tls {
-                    format!("mobile --tls (port {})", port)
+                    format!("remote --tls (port {})", port)
                 } else {
-                    format!("mobile (port {})", port)
+                    format!("remote (port {})", port)
                 }
             }
             LastLaunch::Gui {
@@ -622,9 +622,6 @@ pub struct LayoutConfig {
     /// 预设名: "single"/"agent"/"agent-shell"/"agent-monitor"/"custom"
     #[serde(default = "default_layout_name")]
     pub default: String,
-    /// agent 启动命令（如 "claude", "claude --yolo"）
-    #[serde(default)]
-    pub agent_command: Option<String>,
     /// 自定义布局配置
     #[serde(default)]
     pub custom: Option<CustomLayoutConfig>,
@@ -641,7 +638,6 @@ impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             default: default_layout_name(),
-            agent_command: None,
             custom: None,
             selected_custom_id: None,
         }

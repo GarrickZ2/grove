@@ -125,8 +125,6 @@ export function SettingsPage() {
     checkDependencies,
     acpAgent,
     setAcpAgent,
-    agentCommand,
-    setAgentCommand,
     customAgents,
     saveCustomAgentServers,
     customAgentPersonas,
@@ -135,7 +133,6 @@ export function SettingsPage() {
     baseAgentsLoading,
     loadBaseAgents,
     chatAgentOptions,
-    terminalAgentOptions,
     isChatAvailable,
     chatHistoryRecentTurns,
     setChatHistoryRecentTurns,
@@ -616,20 +613,6 @@ export function SettingsPage() {
                 </motion.div>
               </div>
             </div>
-
-            {/* Terminal Coding Agent (only for multiplexer mode) */}
-            {webTerminalMode === "multiplexer" && terminalAgentOptions.length > 0 && (
-              <div>
-                <div className="text-xs font-medium text-[var(--color-text-muted)] mb-2 uppercase tracking-wider select-none">Terminal Coding Agent</div>
-                <AgentPicker
-                  value={agentCommand}
-                  onChange={setAgentCommand}
-                  options={terminalAgentOptions}
-                  allowCustom={true}
-                  placeholder="Select agent..."
-                />
-              </div>
-            )}
           </div>
         </Section>
 

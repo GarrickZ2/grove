@@ -11669,40 +11669,9 @@ pub fn pick_first_available_acp_agent() -> Option<String> {
         .map(|a| a.id)
 }
 
-/// Pick the first terminal-capable agent that's currently installed.
-///
-/// Terminal-capability is registry-data-driven: any agent whose
-/// `terminal_launch` field is set (via `inject_grove_supplements`) qualifies.
-/// Today that's just `claude-acp`, but the function doesn't know or care.
-///
-/// Ordering: registry document insertion order — upstream CDN order
-/// followed by `inject_trae_and_traex_entries` / `inject_grove_supplements`
-/// patches. Stable for the same registry document. TODO: once a second
-/// terminal-capable agent ships, switch to a deterministic
-/// alphabetic-by-id (or supplements-priority) order to avoid silent
-/// default flips when CDN order changes.
-pub fn pick_first_available_terminal_agent() -> Option<String> {
-    let registry = crate::storage::agent_registry::get();
-    for reg in &registry.agents {
-        if reg.terminal_launch.is_none() {
-            continue;
-        }
-        if let Some(installed) = crate::storage::installed_agents::get(&reg.id)
-            .ok()
-            .flatten()
-        {
-            if !installed.hidden && installed.has_installed_channel() {
-                return Some(installed.id);
-            }
-        }
-    }
-    None
-}
-
-/// Ensure `config.toml` has sensible `acp.agent_command` /
-/// `layout.agent_command` defaults given the currently-installed agents.
-/// Runs once at server startup. Silent no-op if the configured agents
-/// are already valid (resolve_agent returns Some for them).
+/// Ensure `config.toml` has a sensible `acp.agent_command` default given
+/// the currently-installed agents. Runs once at server startup. Silent no-op
+/// if the configured agent is already valid (resolve_agent returns Some).
 pub fn init_agent_defaults() {
     let mut config = crate::storage::config::load_config();
     let mut changed = false;
@@ -11716,32 +11685,6 @@ pub fn init_agent_defaults() {
     if !acp_valid {
         if let Some(picked) = pick_first_available_acp_agent() {
             config.acp.agent_command = Some(picked);
-            changed = true;
-        }
-    }
-
-    // Terminal-mode validity: the configured id must match a registry
-    // entry that declares `terminal_launch`, AND have an installed,
-    // non-hidden row. Data-driven via the registry — no agent-specific
-    // code here.
-    let terminal_valid = match &config.layout.agent_command {
-        Some(name) if !name.is_empty() => {
-            let registry_supports = crate::storage::agent_registry::get()
-                .agents
-                .iter()
-                .any(|a| a.id == *name && a.terminal_launch.is_some());
-            registry_supports
-                && crate::storage::installed_agents::get(name)
-                    .ok()
-                    .flatten()
-                    .map(|a| !a.hidden && a.has_installed_channel())
-                    .unwrap_or(false)
-        }
-        _ => false,
-    };
-    if !terminal_valid {
-        if let Some(picked) = pick_first_available_terminal_agent() {
-            config.layout.agent_command = Some(picked);
             changed = true;
         }
     }
@@ -12089,7 +12032,6 @@ mod tests {
                 acp_session_id: None,
                 created_at: Utc::now(),
                 duty: None,
-                launch_mode: "acp".into(),
             },
         )
         .unwrap();

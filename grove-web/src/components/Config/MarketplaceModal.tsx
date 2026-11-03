@@ -10,7 +10,7 @@ import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
  *   - Explore: everything in the registry not yet installed
  *
  * Detail panel slides in on the right when a card is clicked, showing the
- * Per-Agent Config Sheet (launch_mode toggle, args/env override, install
+ * Per-Agent Config Sheet (install channel, args/env override, install
  * actions). Closing the detail returns to the grid.
  */
 
@@ -573,15 +573,8 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
               {installed.installations.map((inst) => {
                 const isActive = inst.method === installed.selected_install_method;
                 const isAuto = inst.method === "external";
-                // Surface what the launch ACTUALLY is, not the storage
-                // shorthand. External-channel agents that declare a terminal
-                // launch contract spawn under a PTY (e.g. claude); the rest
-                // spawn the PATH binary as a stdio ACP child.
-                const methodLabel = isAuto
-                  ? agent.supports_terminal_launch
-                    ? "Terminal"
-                    : "Local"
-                  : inst.method;
+                // External channels spawn the PATH binary as a stdio ACP child.
+                const methodLabel = isAuto ? "Local" : inst.method;
                 return (
                   <div
                     key={inst.method}

@@ -27,9 +27,9 @@ Everything else people call Grove — "the multi-agent IDE", "parallel agent man
 - **Agent Graph** — typed DAG of agents exchanging structured `<grove-meta>` messages. Planner spawns coder; coder spawns reviewer. Exposed as MCP tools so any agent can drive it.
 - **Studio** — first-class surface for non-coders (designers, PMs, brand). Excalidraw canvases agents can read, shared assets hard-linked across worktrees, Project Memory + Workspace Instructions editor.
 - **Code Review** — threaded resolvable comments, AI batch-fixer, commit → rebase → merge → archive in one step with squash-merge detection.
-- **Five surfaces from one binary**: TUI · Web · GUI · Mobile (LAN + HMAC) · Radio (voice walkie-talkie from phone).
+- **Five surfaces from one binary**: TUI · Web · GUI · Remote (LAN + HMAC, for phones) · Radio (voice walkie-talkie from phone).
 
-The Web IDE is the main event (FlexLayout, 10 panel types, IDE Layout mode, ⌘K palette). The TUI is the original keyboard-first surface — still here, still fast.
+The Web IDE is the main event (FlexLayout, 10 panel types, IDE Layout mode, ⌘K palette). The terminal app (`grove tui`) is a thin client of the same server: projects, tasks and sessions in a sidebar, and the chat beside it.
 
 **Positioning**: Grove serves three audiences on the same project — power devs (10 agents in parallel + Agent Graph), visual thinkers (Studio + sketch-driven workflow), non-technical collaborators (no terminal, no git, ship via Studio + Radio).
 
@@ -46,9 +46,8 @@ The Web IDE is the main event (FlexLayout, 10 panel types, IDE Layout mode, ⌘K
 ```
 src/
 ├── main.rs                # Entry point + binary mode dispatch
-├── app.rs                 # TUI app state + core logic
-├── event.rs               # TUI keyboard handling
 ├── cli/                   # Subcommands: gui, mcp, acp, web, hooks, migrate, ...
+│   └── chat/              # The terminal app (`grove tui` / `grove cli`): a server client
 ├── api/                   # axum HTTP/WS API (consumed by GUI + external)
 │   ├── mod.rs             # Router, embedded-asset serving
 │   ├── handlers/          # Per-feature route handlers
@@ -62,8 +61,7 @@ src/
 ├── model/                 # Data structures (Worktree, Task, Workspace)
 ├── theme/                 # 8 themes + dark/light detection
 ├── tray/                  # macOS tray icon
-├── update/                # Self-update
-└── ui/                    # TUI widgets
+└── update/                # Self-update
 
 grove-web/src/
 ├── main.tsx               # React entry
@@ -163,13 +161,9 @@ The Rust binary embeds `grove-web/dist`. In **debug builds** (`cargo run`) the e
 - `useTaskOperations` — commit / merge / archive / sync / rebase / reset / clean
 - `usePostMergeArchive` — post-merge archive workflow
 
-### Component Pattern (Rust UI)
+### Terminal colors
 
-```rust
-pub fn render(frame: &mut Frame, area: Rect, data: &Data, colors: &ThemeColors) { ... }
-```
-
-Always read colors from `ThemeColors`, never hardcode `Color::Yellow` etc. Each theme defines `accent_palette: [Color; 10]` for gradient blocks.
+The terminal app reads colors from the configured theme (`cli::chat::render::Palette`, built from `ThemeColors`), never hardcoded `Color::Yellow` etc.
 
 ## Perf Monitoring System
 
@@ -240,11 +234,12 @@ Reset the histogram before measuring an isolated operation; otherwise the cold-s
 
 ## CLI Subcommands
 
-- `grove` — Smart start: resumes your last mode
-- `grove tui` — Keyboard-first terminal UI
+- `grove` — Launcher panel: Recent / Web / App / CLI (each local or another machine) / Remote; replays the last mode when not run in a terminal
+- `grove tui` — Terminal app: sidebar (projects › tasks › sessions, Buddies) + chat, backed by the Grove server
+- `grove cli ls | new | send | log | agents` — Non-interactive session commands for scripts and agents (`--remote` to reach another machine)
 - `grove web` — Browser IDE on `http://localhost:3001`
 - `grove gui` — Native desktop window (requires `--features gui` build)
-- `grove mobile` — LAN access for phone / tablet (HMAC-signed requests); `--private` for localhost-only, `--passkey <key>` for custom secret
+- `grove remote` (formerly `grove mobile`) — Let phones and other machines connect (LAN, HMAC-signed requests); `--private` for localhost-only, `--passkey <key>` for custom secret
 - `grove mcp` — MCP server (stdio) for orchestrator agents
 - `grove acp` — Headless ACP bridge
 - `grove hooks <level>` — Send notification (`notice` / `warn` / `critical`)
@@ -305,9 +300,9 @@ Style::default().fg(colors.highlight)   // ✅
 Style::default().fg(Color::Yellow)      // ❌
 ```
 
-### Event Handling (TUI)
+### Terminal app (`src/cli/chat/`)
 
-`event.rs` dispatches by priority: popups (help, dialogs) → mode events (Workspace / Project).
+A client of the Grove server like the GUI: REST + the chat WebSocket, never local storage. Keep it to talking with agents and managing projects, tasks and sessions — GUI-only features (resources, automation, memory, git operations) stay in the GUI.
 
 ### Git / tmux
 

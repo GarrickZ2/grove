@@ -86,9 +86,6 @@ export interface MarketplaceAgent {
   icon_url: string | null;
   /** Install methods exposed by the registry distribution. */
   available_install_methods: InstallMethod[];
-  /** True if this agent's registry entry declares a terminal_launch
-   *  config — picking External will spawn it via PTY. */
-  supports_terminal_launch: boolean;
   install_state: InstallState;
   installed: InstalledAgentView | null;
   binary: BinaryView | null;

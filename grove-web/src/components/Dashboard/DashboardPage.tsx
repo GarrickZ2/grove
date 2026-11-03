@@ -44,7 +44,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const dashboard = useDashboardState();
   const {
     selectedProject, isRemote, currentStatus, hasLocalChanges, repoCommits, tokenStats,
-    isOperating, operationMessage, installedAgentCount, terminalAgentConfigured, chatAgentConfigured,
+    isOperating, operationMessage, installedAgentCount, chatAgentConfigured,
     serverPlatform, isInitializingGit, handleInitGit, setShowBranchDrawer,
     handleOpenIDE, handleOpenTerminal, handleCommit, handlePull, handlePush, handleFetch,
   } = dashboard;
@@ -123,16 +123,6 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         label: isInitializingGit ? "Initializing..." : "Initialize Git",
         onClick: handleInitGit,
       },
-      tone: "warning",
-    });
-  }
-  if (!terminalAgentConfigured) {
-    allTips.push({
-      id: "no-terminal-agent",
-      icon: TerminalSquare,
-      title: "Terminal agent not configured",
-      description: "Set up a terminal agent to launch AI sessions from worktrees.",
-      action: { label: "Settings", onClick: () => onNavigate("settings") },
       tone: "warning",
     });
   }

@@ -146,54 +146,6 @@ impl TaskEditHistory {
             self.events.drain(0..trim_count);
         }
     }
-
-    /// Get files sorted by edit count (descending)
-    pub fn files_by_count(&self) -> Vec<(&PathBuf, u32)> {
-        let mut files: Vec<_> = self.file_counts.iter().map(|(k, v)| (k, *v)).collect();
-        files.sort_by_key(|b| std::cmp::Reverse(b.1));
-        files
-    }
-
-    /// Get activity buckets for timeline visualization
-    /// Returns: Vec of (hour_start, buckets) where buckets is 60 x 1-minute slots
-    pub fn activity_timeline(&self) -> Vec<(DateTime<Utc>, [u32; 60])> {
-        use chrono::Timelike;
-
-        if self.events.is_empty() {
-            return vec![];
-        }
-
-        // Group events by hour
-        let mut hours: HashMap<DateTime<Utc>, [u32; 60]> = HashMap::new();
-
-        for event in &self.events {
-            let hour_start = event
-                .timestamp
-                .with_minute(0)
-                .and_then(|t| t.with_second(0))
-                .and_then(|t| t.with_nanosecond(0))
-                .unwrap_or(event.timestamp);
-
-            let bucket_idx = event.timestamp.minute() as usize;
-            let buckets = hours.entry(hour_start).or_insert([0; 60]);
-            if bucket_idx < 60 {
-                buckets[bucket_idx] += 1;
-            }
-        }
-
-        // Sort by time and filter out hours with no activity
-        let mut result: Vec<_> = hours
-            .into_iter()
-            .filter(|(_, buckets)| buckets.iter().any(|&b| b > 0))
-            .collect();
-        result.sort_by_key(|(hour, _)| *hour);
-        result
-    }
-
-    /// Total edit count
-    pub fn total_edits(&self) -> u32 {
-        self.file_counts.values().sum()
-    }
 }
 
 /// Per-task event subscriber. Called from the watcher thread for every
@@ -329,32 +281,6 @@ impl FileWatcher {
         }
     }
 
-    /// Load history only without starting file monitoring (for read-only mode)
-    pub fn load_history_only(&self, task_id: &str, _path: &Path) {
-        self.reload_history(task_id);
-    }
-
-    /// Reload history from disk (for refreshing read-only mode data)
-    pub fn reload_history(&self, task_id: &str) {
-        if let Ok(events) = load_edit_history(&self.project_key, task_id) {
-            let mut history = TaskEditHistory::new();
-            for event in events {
-                let file = event.file.clone();
-                history.last_activity = Some(event.timestamp);
-                history.file_last_edit.insert(file.clone(), event.timestamp);
-                history.events.push(event);
-                *history.file_counts.entry(file).or_insert(0) += 1;
-            }
-            if history.events.len() > MAX_MEMORY_EVENTS {
-                let trim_count = history.events.len() - MAX_MEMORY_EVENTS;
-                history.events.drain(0..trim_count);
-            }
-            if let Ok(mut histories) = self.histories.write() {
-                histories.insert(task_id.to_string(), history);
-            }
-        }
-    }
-
     /// Stop watching a task
     #[allow(dead_code)]
     pub fn unwatch(&self, task_id: &str) {
@@ -363,14 +289,6 @@ impl FileWatcher {
                 task_id: task_id.to_string(),
             });
         }
-    }
-
-    /// Get edit history for a task
-    pub fn get_history(&self, task_id: &str) -> Option<TaskEditHistory> {
-        self.histories
-            .read()
-            .ok()
-            .and_then(|h| h.get(task_id).cloned())
     }
 
     /// Flush pending events to disk

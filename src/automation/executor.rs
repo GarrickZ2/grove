@@ -548,7 +548,6 @@ async fn run_handler(automation: &Automation, trigger: consumer::TriggerContext)
         acp_session_id: None,
         created_at: Utc::now(),
         duty: None,
-        launch_mode: "acp".to_string(),
     };
     if let Err(error) = tasks::add_chat_session(&automation.project, &task_id, chat) {
         return fail_handler(
@@ -1148,34 +1147,6 @@ fn resolve_chat(a: &Automation, task_id: &str) -> Result<String, String> {
             // so subsequent reads stay consistent.
             let canonical_agent = installed_agents::canonicalize_agent_id(&template.agent);
 
-            // Derive launch_mode from selected channel + registry terminal_launch
-            // (same rule as `acp::create_chat`). External + terminal_launch
-            // present → "terminal"; everything else → "acp".
-            let launch_mode = {
-                let installed = installed_agents::get(&canonical_agent).ok().flatten();
-                let is_terminal = installed
-                    .as_ref()
-                    .filter(|r| {
-                        matches!(
-                            r.selected_install_method,
-                            installed_agents::InstallMethod::External
-                        )
-                    })
-                    .and_then(|_| {
-                        crate::storage::agent_registry::get()
-                            .agents
-                            .iter()
-                            .find(|a| a.id == canonical_agent)
-                            .and_then(|a| a.terminal_launch.clone())
-                    })
-                    .is_some();
-                if is_terminal {
-                    "terminal".to_string()
-                } else {
-                    "acp".to_string()
-                }
-            };
-
             let chat = tasks::ChatSession {
                 id: tasks::generate_chat_id(),
                 title,
@@ -1183,7 +1154,6 @@ fn resolve_chat(a: &Automation, task_id: &str) -> Result<String, String> {
                 acp_session_id: None,
                 created_at: now,
                 duty: None,
-                launch_mode,
             };
             tasks::add_chat_session(&a.project, task_id, chat.clone())
                 .map_err(|e| e.to_string())?;

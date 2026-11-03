@@ -779,7 +779,6 @@ pub fn create_session(connect: &Connect, agent_override: Option<&str>) -> Result
         acp_session_id: None,
         created_at: now,
         duty: None,
-        launch_mode: "acp".to_owned(),
     };
     crate::storage::tasks::add_chat_session(&connect.project_id, &connect.task_id, chat.clone())
         .map_err(|error| error.to_string())?;

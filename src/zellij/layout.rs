@@ -59,7 +59,12 @@ pub fn generate_kdl(
             } else {
                 cmd_pane("        ", "size=\"60%\" ", agent_command, env_prefix)
             };
-            let grove = cmd_pane("            ", "size=\"60%\" ", "grove", env_prefix);
+            let grove = cmd_pane(
+                "            ",
+                "size=\"60%\" ",
+                crate::tmux::layout::AGENT_PANE_COMMAND,
+                env_prefix,
+            );
             let shell = shell_pane("            ", "size=\"40%\" ", env_prefix);
             format!(
                 "layout {{\n    pane split_direction=\"vertical\" {{\n{}\n        pane size=\"40%\" split_direction=\"horizontal\" {{\n{}\n{}\n        }}\n    }}\n}}\n",
@@ -67,7 +72,12 @@ pub fn generate_kdl(
             )
         }
         TaskLayout::GroveAgent => {
-            let grove = cmd_pane("        ", "size=\"40%\" ", "grove", env_prefix);
+            let grove = cmd_pane(
+                "        ",
+                "size=\"40%\" ",
+                crate::tmux::layout::AGENT_PANE_COMMAND,
+                env_prefix,
+            );
             let agent = if agent_command.is_empty() {
                 shell_pane("        ", "size=\"60%\" ", env_prefix)
             } else {
@@ -213,7 +223,12 @@ fn pane_kdl(
                 cmd_pane(indent, attrs, agent_command, env_prefix)
             }
         }
-        PaneRole::Grove => cmd_pane(indent, attrs, "grove", env_prefix),
+        PaneRole::Grove => cmd_pane(
+            indent,
+            attrs,
+            crate::tmux::layout::AGENT_PANE_COMMAND,
+            env_prefix,
+        ),
         PaneRole::Shell => shell_pane(indent, attrs, env_prefix),
         PaneRole::FilePicker => cmd_pane(indent, attrs, "grove fp", env_prefix),
         PaneRole::Custom(cmd) => {

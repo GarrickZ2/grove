@@ -403,12 +403,6 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/ws",
             get(handlers::acp::chat_ws_handler),
         )
-        // Agent PTY WebSocket (terminal-mode chat: spawn agent CLI under PTY,
-        // no ACP). Frontend chooses this endpoint when chat.launch_mode == "terminal".
-        .route(
-            "/projects/{id}/tasks/{taskId}/chats/{chatId}/agent-pty",
-            get(handlers::agent_pty::agent_pty_handler),
-        )
         .route(
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/auth-terminal/{methodId}",
             get(handlers::auth_terminal::ws_handler),
@@ -1545,10 +1539,6 @@ pub fn create_proxy_router(remote: String) -> Router {
             any(ws_proxy_handler),
         )
         .route(
-            "/api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/agent-pty",
-            any(ws_proxy_handler),
-        )
-        .route(
             "/api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/auth-terminal/{methodId}",
             any(ws_proxy_handler),
         )
@@ -2006,6 +1996,9 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
 
     // Defaults are derived only after both managed and PATH channels have
     // converged, so first-run config cannot observe an empty database.
+    if let Err(e) = crate::storage::installed_agents::drop_terminal_launch_channels() {
+        eprintln!("[warning] Failed to drop terminal launch channels: {}", e);
+    }
     crate::acp::init_agent_defaults();
 
     // Keep the registry fresh for long-running servers. Startup already has a

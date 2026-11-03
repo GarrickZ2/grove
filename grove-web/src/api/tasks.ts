@@ -530,8 +530,6 @@ export interface ChatSessionResponse {
   created_at: string;
   /** Absolute path to this chat's history.jsonl on disk. */
   history_path: string;
-  /** "acp" (default) or "terminal". Snapshotted at chat creation, immutable. */
-  launch_mode: string;
   /** Pinned to the top of its task's session list. */
   pinned?: boolean;
   /** Last activity (RFC 3339); only the chat list returns it, on newer servers. */

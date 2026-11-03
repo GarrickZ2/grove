@@ -245,8 +245,6 @@ import {
 import { listSketches, type SketchMeta } from "../../../api/sketches";
 import { resolveMemoryEntities, type MemoryEntityMetadata } from "../../../api/memory";
 import { writeLastActiveTab } from "../../../utils/lastActiveTab";
-import { XTerminal } from "../TaskDetail/XTerminal";
-import { sendInputToTerminal } from "../TaskDetail/terminalCache";
 import { perfMark } from "../../../perf/marks";
 import { useReportDebugId } from "../../../perf/debugIdsStore";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
@@ -1100,21 +1098,6 @@ function fileToBase64(file: File): Promise<string> {
       reject(reader.error ?? new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
-}
-
-/** Convert a `file://` URI (returned by uploadChatAttachment) to an absolute
- *  local path. Used by terminal launch mode to pipe attachment paths into
- *  the agent's stdin as `@<path>` references. Returns null for non-file URIs. */
-function fileUrlToPath(uri: string | undefined): string | null {
-  if (!uri || !uri.startsWith("file://")) return null;
-  try {
-    let pathname = decodeURIComponent(new URL(uri).pathname);
-    // Windows: file:///C:/foo → pathname is `/C:/foo` → strip leading slash.
-    if (/^\/[a-zA-Z]:/.test(pathname)) pathname = pathname.slice(1);
-    return pathname;
-  } catch {
-    return null;
-  }
 }
 
 // ─── Render grouping types ───────────────────────────────────────────────────
@@ -3271,14 +3254,11 @@ export function TaskChat({
     return () => window.removeEventListener("grove:speaking-profile-deleted", handleDeleted);
   }, [activeChatId, agentVoiceState.speakingProfileId, projectId, sendAgentVoiceState, taskId]);
   const isReadOnlyHistory = finished || isViewingArchived;
-  // Terminal-mode chat: agent CLI runs under a PTY (no ACP). Messages area
-  // becomes xterm.js; chatbox input writes to PTY stdin instead of session/prompt.
-  const isTerminalLaunchMode = activeChat?.launch_mode === "terminal";
   const connectionStatus = isRemoteSession ? "read_only" : activeChatId ? chatConnectionStatuses[activeChatId] ?? "disconnected" : "disconnected";
   const connectionPending = connectionStatus === "connecting" || connectionStatus === "reconnecting";
   const connectionLabel = connectionPending && activeChatId && connectionStages[activeChatId]
     ? `${chatConnectionLabels[connectionStatus]} · ${connectionStages[activeChatId]}`
-    : connectionStatus === "connected" && activeChatId && !isTerminalLaunchMode && !isTerminalMode && chatProtocolVersions[activeChatId]
+    : connectionStatus === "connected" && activeChatId && !isTerminalMode && chatProtocolVersions[activeChatId]
       ? `${chatConnectionLabels[connectionStatus]} · v${chatProtocolVersions[activeChatId]}`
       : chatConnectionLabels[connectionStatus];
   const connectionDotClass = isViewingArchived || connectionStatus === "disconnected" || connectionStatus === "read_only"
@@ -3288,11 +3268,6 @@ export function TaskChat({
       : connectionStatus === "failed"
         ? "bg-[var(--color-error)]"
         : "bg-[var(--color-warning)]";
-  const agentPtyWsUrl = useMemo(() => {
-    if (!isTerminalLaunchMode || !activeChatId) return null;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${window.location.host}/api/v1/projects/${projectId}/tasks/${taskId}/chats/${activeChatId}/agent-pty`;
-  }, [isTerminalLaunchMode, activeChatId, projectId, taskId]);
   // Quota for built-in AI coding agents (Claude Code / Codex / Gemini).
   // Unsupported agents return null, which hides the quota badge entirely.
   const {
@@ -3568,7 +3543,7 @@ export function TaskChat({
   const orbitSetup = useMemo(() => {
     const fields: SetupField[] = [];
     const toggles: SetupToggle[] = [];
-    if (!orbitShell || isTerminalLaunchMode) return { fields, toggles };
+    if (!orbitShell) return { fields, toggles };
     if (modelOptions.length > 0) {
       fields.push({ id: "model", kind: "model", label: matchedSessionConfig.model?.name ?? "Model", options: modelOptions, value: selectedModel, loading: !!matchedSessionConfig.model && pendingConfigIds.has(matchedSessionConfig.model.id), onSelect: selectOrbitModel });
     }
@@ -3590,7 +3565,7 @@ export function TaskChat({
       }
     }
     return { fields, toggles };
-  }, [orbitShell, isTerminalLaunchMode, modelOptions, modeOptions, thoughtLevelOptions, thoughtLevelConfigId, matchedSessionConfig, selectedModel, permissionLevel, thoughtLevel, pendingConfigIds, additionalSessionConfigOptions, selectOrbitModel, selectOrbitMode, selectOrbitThinking, requestConfigOptionChange]);
+  }, [orbitShell, modelOptions, modeOptions, thoughtLevelOptions, thoughtLevelConfigId, matchedSessionConfig, selectedModel, permissionLevel, thoughtLevel, pendingConfigIds, additionalSessionConfigOptions, selectOrbitModel, selectOrbitMode, selectOrbitThinking, requestConfigOptionChange]);
 
   // When a permission message appears, force the permission panel open and
   // close any rival panels. When it goes away, close the panel. Done via
@@ -3853,7 +3828,7 @@ export function TaskChat({
     getConfig()
       .then((cfg) => {
         if (!cancelled) {
-          resolve(cfg.layout.agent_command || "", cfg.acp?.custom_agents);
+          resolve(cfg.acp?.agent_command || "", cfg.acp?.custom_agents);
         }
       })
       .catch(() => {
@@ -4978,19 +4953,10 @@ export function TaskChat({
       backgroundConnections.track(chatId, Date.now());
       if (wsMapRef.current.has(chatId)) return; // Already connected
       if (connectingRef.current.has(chatId)) return; // Connection already in-flight
-      // Terminal-mode chats have no ACP WebSocket — they speak PTY only.
-      // Bailing here keeps wsRef.current null for those chats; handleSend
-      // already branches on isTerminalLaunchMode before touching wsRef.
+      // Wait for the chats list so the chat is known; the caller retries
+      // once it loads via the [activeChatId, chats] effect below.
       const chat = chatsRef.current.find((c) => c.id === chatId);
       if (!chat) {
-        // Chats list hasn't loaded yet — we'd be guessing whether this chat
-        // is ACP or terminal mode. Bail; caller retries after the chats
-        // fetch completes via the [activeChatId, chats] effect below.
-        connectingRef.current.delete(chatId);
-        return;
-      }
-      if (chat.launch_mode === "terminal") {
-        setChatConnectionStatus(chatId, (current) => current === "disconnected" ? "connecting" : current);
         connectingRef.current.delete(chatId);
         return;
       }
@@ -5967,11 +5933,10 @@ export function TaskChat({
         }
       }
     })();
-    // Note: activeChat?.launch_mode is in deps so that when chats finish
-    // loading after this effect's first run (when launch_mode was still
-    // undefined → connectChatWs bailed), the effect re-fires with the
-    // resolved mode and routes the chat correctly (ACP WS vs PTY-only).
-  }, [activeChatId, activeChat?.launch_mode, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs, updateLocalInputPlacements, historyPreferences, savePendingInputState]);
+    // Note: activeChat?.id is in deps so that when chats finish loading
+    // after this effect's first run (connectChatWs bailed on an unknown
+    // chat), the effect re-fires and connects.
+  }, [activeChatId, activeChat?.id, connectChatWs, historySyncVersion, isReadOnlyHistory, projectId, taskId, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId, applyConfigOptionsSnapshot, updatePendingInputs, updateLocalInputPlacements, historyPreferences, savePendingInputState]);
 
   // Cleanup all WebSockets on unmount, plus any pending reconnect timers —
   // otherwise an in-flight backoff timer fires after unmount and creates a
@@ -7866,101 +7831,12 @@ export function TaskChat({
     // Guard activeChatId before consuming any UI state — if we return after
     // clearing the editable, the user's typed message is silently lost.
     if (!activeChatId) return;
-    if ((isTerminalLaunchMode || isTerminalMode) && !isConnected) return;
+    if (isTerminalMode && !isConnected) return;
     const draftHtml = el.innerHTML;
     const composerStillCurrent = () =>
       getActiveChatId() === activeChatId && editableRef.current === el &&
       el.innerHTML === draftHtml && attachmentsRef.current === attachments;
     const prompt = getPromptFromEditable(el);
-
-    // Terminal launch mode: chatbox forwards the typed text + any attachment
-    // file paths to the agent's PTY stdin. Attachments (images, files) are
-    // uploaded to the chat's on-disk attachments dir first, then each one is
-    // injected as `@<absolute-path>` so claude reads them via its Read tool.
-    if (isTerminalLaunchMode) {
-      if ((!prompt && attachments.length === 0) || !agentPtyWsUrl) return;
-
-      // Upload anything that doesn't have a server URI yet. Image/audio
-      // attachments arrive as base64 in `att.data`; resource attachments
-      // arrive as a pending File ref and need to be base64-encoded first.
-      let resolved = attachments;
-      const needUpload = attachments.filter(
-        (a) => !a.uri && (a.data || a.pendingFile),
-      );
-      if (needUpload.length > 0) {
-        try {
-          const uploads = await Promise.all(
-            needUpload.map(async (att) => {
-              const data = att.pendingFile
-                ? await fileToBase64(att.pendingFile)
-                : att.data;
-              return uploadChatAttachment(projectId, taskId, activeChatId, {
-                name: att.pendingFile?.name ?? att.name,
-                mime_type: att.mimeType || undefined,
-                data,
-              });
-            }),
-          );
-          const map = new Map(needUpload.map((a, i) => [a, uploads[i]]));
-          resolved = attachments.map((a) => {
-            const r = map.get(a);
-            return r
-              ? {
-                  ...a,
-                  uri: r.uri,
-                  name: r.name,
-                  mimeType: r.mime_type ?? a.mimeType,
-                  size: r.size,
-                  pendingFile: undefined,
-                }
-              : a;
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          setMessages((prev) => [
-            ...prev,
-            { type: "system", content: `Failed to upload attachment: ${msg}` },
-          ]);
-          return;
-        }
-      }
-
-      if (!composerStillCurrent()) return;
-
-      const paths = resolved
-        .map((a) => a.uri)
-        .map((u) => fileUrlToPath(u))
-        .filter((p): p is string => !!p);
-      // Natural-language attachment hint instead of `@path` — claude's
-      // picker autocomplete for `@` doesn't fire inside bracketed paste,
-      // but it scans prompt text for paths and calls Read on its own.
-      const filesNote =
-        paths.length > 0 ? `Files attached: ${paths.join(", ")}\n\n` : "";
-      const finalPrompt = filesNote + (prompt || "");
-      if (!finalPrompt) return;
-
-      // Wrap in bracketed paste (\x1b[200~ ... \x1b[201~) so claude treats
-      // the body as one paste — any embedded newlines stay as newlines, and
-      // the trailing \r AFTER the paste-end marker is the one that submits.
-      // A bare \r without wrapping gets eaten as a newline once claude's
-      // own paste-detection kicks in on the burst of bytes.
-      const prefix = `url:${agentPtyWsUrl}`;
-      const wrapped = `\x1b[200~${finalPrompt}\x1b[201~\r`;
-      const ok = sendInputToTerminal(prefix, wrapped);
-      if (!ok) return; // PTY not connected yet — keep the draft, user retries
-      promoteChatForLocalActivity(activeChatId);
-      el.innerHTML = "";
-      clearChatDraft(activeChatId);
-      setHasContent(false);
-      setAttachments((prev) => {
-        prev.forEach((att) => {
-          if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
-        });
-        return [];
-      });
-      finishComposerAfterSend(el);
-      return;
-    }
 
     if (!prompt && attachments.length === 0) return;
     const ws = wsRef.current;
@@ -8041,7 +7917,7 @@ export function TaskChat({
     requestBottom("auto");
     promoteChatForLocalActivity(activeChatId);
     void dispatchPendingInput(activeChatId, input.id);
-  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, projectId, taskId, requestBottom, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl, promoteChatForLocalActivity, agentVoiceState.enabled, finishComposerAfterSend, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, getActiveChatId, onUserMessageSent, dispatchPendingInput, pendingInputMode, openInputQueue, orbitComposer]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, isConnected, requestBottom, buildPromptConfig, promoteChatForLocalActivity, agentVoiceState.enabled, finishComposerAfterSend, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, getActiveChatId, onUserMessageSent, dispatchPendingInput, pendingInputMode, openInputQueue, orbitComposer]);
 
   const handleSend = useCallback(async () => {
     if (!activeChatId || sendingAttemptRef.current.has(activeChatId)) return;
@@ -11255,7 +11131,7 @@ export function TaskChat({
           <Paperclip />
         </button>
       )}
-      {!isTerminalLaunchMode && !isViewingArchived && agentVoiceControl}
+      {!isViewingArchived && agentVoiceControl}
       {!isPhoneLayout && <button
         type="button"
         className="oc-tool"
@@ -11286,7 +11162,7 @@ export function TaskChat({
   const orbitOrbDisabled = orbitOrbAction === "save"
     ? !hasContent || !isConnected || isSavingPendingEdit || pendingEditImporting || pendingEditGone || !!activePermissionMessage
     : orbitOrbAction === "send"
-      ? !isConnected && (isTerminalLaunchMode || isTerminalMode)
+      ? !isConnected && isTerminalMode
       : orbitOrbAction === "stop" || orbitOrbAction === "sendNow" ? isCancelling : false;
   const orbitOrbBusy = orbitOrbAction === "save" ? isSavingPendingEdit : (orbitOrbAction === "stop" || orbitOrbAction === "sendNow") && isCancelling;
 
@@ -11299,8 +11175,8 @@ export function TaskChat({
           surface="orbit" chatId={activeChat.id} forkCapable={forkCapable} importCapable={importCapable}
           importSessions={importSessions} importLoading={importLoading} importNextCursor={importNextCursor}
           authMethods={authMethods} logoutCapable={logoutCapable}
-          refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
-          reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+          refreshDisabled={isRefreshing || isReconnecting}
+          reconnectDisabled={isRefreshing || isReconnecting}
           actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
           deleteDisabled={false} archiveDisabled={isBusy}
           onFork={handleForkChat} onOpenImport={() => { if (importSessions.length === 0) void loadImportSessions(); }}
@@ -11593,8 +11469,8 @@ export function TaskChat({
                   importNextCursor={importNextCursor}
                   authMethods={authMethods}
                   logoutCapable={logoutCapable}
-                  refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
-                  reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+                  refreshDisabled={isRefreshing || isReconnecting}
+                  reconnectDisabled={isRefreshing || isReconnecting}
                   actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
                   deleteDisabled={chats.length <= 1}
                   archiveDisabled={chats.length <= 1 || isBusy}
@@ -11761,8 +11637,8 @@ export function TaskChat({
                       importNextCursor={importNextCursor}
                       authMethods={authMethods}
                       logoutCapable={logoutCapable}
-                      refreshDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
-                      reconnectDisabled={isRefreshing || isReconnecting || activeChat.launch_mode === "terminal"}
+                      refreshDisabled={isRefreshing || isReconnecting}
+                      reconnectDisabled={isRefreshing || isReconnecting}
                       actionsDisabled={!isConnected || isBusy || !!activeAuthMessage}
                       deleteDisabled={chats.length <= 1}
                       archiveDisabled={chats.length <= 1 || isBusy}
@@ -11960,13 +11836,13 @@ export function TaskChat({
           onWheelCapture={handleChatWheelCapture}
           onPointerDownCapture={handleChatPointerDownCapture}
         >
-          {activeChatId && !isReadOnlyHistory && !isTerminalLaunchMode && connectionErrors[activeChatId] && (
+          {activeChatId && !isReadOnlyHistory && connectionErrors[activeChatId] && (
             <div role="alert" className="absolute inset-x-3 top-2 z-20 flex items-start gap-3 rounded-lg border border-[var(--color-error)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-error)]">
               <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{connectionErrors[activeChatId]}</span>
               <button type="button" className="shrink-0 underline disabled:opacity-50" disabled={isReconnecting} onClick={handleReconnect}>Reconnect</button>
             </div>
           )}
-          {activeChatId && !isReadOnlyHistory && !isTerminalLaunchMode && (mcpWarnings[activeChatId]?.length ?? 0) > 0 && (
+          {activeChatId && !isReadOnlyHistory && (mcpWarnings[activeChatId]?.length ?? 0) > 0 && (
             <div role="alert" className="absolute inset-x-3 top-2 z-20 rounded-lg border border-amber-500 bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text)] shadow-sm">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
@@ -11991,42 +11867,10 @@ export function TaskChat({
             onNavigate={navigateToConversationTurn}
           />
           )}
-          {/* Terminal launch mode: agent CLI runs in xterm.js (PTY).
-              Chatbox input still writes lines to PTY stdin via handleSend. */}
-          {!isReadOnlyHistory && isTerminalLaunchMode && agentPtyWsUrl ? (
-            // Constrain xterm's height so the floating chatbox doesn't cover
-            // the agent's bottom prompt. inputAreaHeight is the live-measured
-            // chatbox height (ResizeObserver on inputAreaRef); +16 matches
-            // the Virtuoso Footer spacer used in ACP mode.
-            <div
-              className="absolute inset-x-0 top-0"
-              style={{ bottom: inputAreaHeight + 16 }}
-            >
-              <XTerminal
-                wsUrl={agentPtyWsUrl}
-                instanceId={`agent-pty:${activeChatId ?? ""}`}
-                // Drive the chat header's connection pill from the PTY WS
-                // status — there's no ACP WS in this mode so the original
-                // ACP-driven `isConnected` would be stuck on "Connecting…".
-                onConnected={() => {
-                  setIsConnected(true);
-                  if (activeChatId) setChatConnectionStatus(activeChatId, "connected");
-                }}
-                onDisconnected={() => {
-                  setIsConnected(false);
-                  if (activeChatId) setChatConnectionStatus(activeChatId, (current) => current === "connected" ? "disconnected" : "failed");
-                }}
-                onConnectionError={() => {
-                  setIsConnected(false);
-                  if (activeChatId) setChatConnectionStatus(activeChatId, "failed");
-                }}
-              />
-            </div>
-          ) : (
-          /* Long histories use complete conversation turns laid out from the
+          {/* Long histories use complete conversation turns laid out from the
               newest tail. Dynamic heights above the reader cannot perturb
               the newest messages, and older history is admitted ten turns
-              at a time. */
+              at a time. */}
           <ChatListErrorBoundary
             resetKey={activeChatId}
             projectId={projectId}
@@ -12090,7 +11934,6 @@ export function TaskChat({
             </div>
           )}
           </ChatListErrorBoundary>
-          )}
 
           {/* Input / finished state */}
           {isReadOnlyHistory ? (
@@ -12455,7 +12298,7 @@ export function TaskChat({
                         />
                       )}
                     </div>
-                    {!isTerminalLaunchMode && !isViewingArchived && (
+                    {!isViewingArchived && (
                       agentVoiceControl
                     )}
                     {isTerminalMode && (
@@ -12742,7 +12585,7 @@ export function TaskChat({
                     </span>
                   </div>
                   <div className="chatbox-footer-right flex items-center gap-2 shrink-0 select-none">
-                    {!isTerminalLaunchMode && !composerNarrow && modelOptions.length > 0 && (
+                    {!composerNarrow && modelOptions.length > 0 && (
                       <DropdownSelect
                         ref={modelMenuRef}
                         label={matchedSessionConfig.model?.name ?? "Model"}
@@ -12770,7 +12613,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {!isTerminalLaunchMode && !composerHideMode && modeOptions.length > 0 && (
+                    {!composerHideMode && modeOptions.length > 0 && (
                       <DropdownSelect
                         ref={permMenuRef}
                         label={matchedSessionConfig.mode?.name ?? "Mode"}
@@ -12799,7 +12642,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {!isTerminalLaunchMode && !composerHideThinking && thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
+                    {!composerHideThinking && thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
                       <DropdownSelect
                         ref={thoughtLevelMenuRef}
                         label={matchedSessionConfig.thinking?.name ?? "Thinking"}
@@ -12827,7 +12670,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {!isTerminalLaunchMode && settingsSessionConfigOptions.length > 0 && (
+                    {settingsSessionConfigOptions.length > 0 && (
                       <span className="chatbox-session-settings">
                       <SessionSettingsMenu
                         ref={sessionSettingsRef}
@@ -12876,7 +12719,7 @@ export function TaskChat({
                           size="sm"
                           className="h-9 w-9 !p-0 rounded-xl shadow-sm"
                           onClick={handleSendButtonClick}
-                          disabled={!isConnected && (isTerminalLaunchMode || isTerminalMode)}
+                          disabled={!isConnected && isTerminalMode}
                         >
                           <Send className="w-3.5 h-3.5" />
                         </Button>

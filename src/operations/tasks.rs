@@ -98,7 +98,7 @@ pub fn create_task_session(
 
     // 6. Apply layout
     let layout = TaskLayout::from_name(&cfg.layout.default).unwrap_or(TaskLayout::Single);
-    let agent_cmd = cfg.layout.agent_command.clone().unwrap_or_default();
+    let agent_cmd = tmux::layout::AGENT_PANE_COMMAND;
     let custom_layout = if layout == TaskLayout::Custom {
         cfg.layout.custom.as_ref().and_then(|c| {
             parse_custom_layout_tree(&c.tree, cfg.layout.selected_custom_id.as_deref())
@@ -116,7 +116,7 @@ pub fn create_task_session(
                     &session_name,
                     &task.worktree_path,
                     &layout,
-                    &agent_cmd,
+                    agent_cmd,
                     custom_layout.as_ref(),
                 ) {
                     eprintln!("Warning: Failed to apply layout: {}", e);
@@ -126,7 +126,7 @@ pub fn create_task_session(
         SessionType::Zellij => {
             let kdl = crate::zellij::layout::generate_kdl(
                 &layout,
-                &agent_cmd,
+                agent_cmd,
                 custom_layout.as_ref(),
                 &session_env.shell_export_prefix(),
             );
@@ -175,8 +175,6 @@ pub enum MergeMethod {
 
 /// Result of merge operation
 pub struct MergeResult {
-    pub task_id: String,
-    pub task_name: String,
     pub target_branch: String,
     /// Warning message (e.g., failed to checkout back to original branch)
     pub warning: Option<String>,
@@ -300,8 +298,6 @@ pub fn merge_task(
     tasks::touch_task(project_key, task_id)?;
 
     Ok(MergeResult {
-        task_id: task.id.clone(),
-        task_name: task.name.clone(),
         target_branch: task.target.clone(),
         warning,
     })
@@ -841,11 +837,6 @@ pub fn ensure_studio_local_task(
     Ok(task)
 }
 
-/// Result of recover_task operation
-pub struct RecoverTaskResult {
-    pub task: tasks::Task,
-}
-
 /// Recover an archived task (recreate worktree, move back to active)
 ///
 /// # Steps
@@ -877,11 +868,7 @@ pub struct RecoverTaskResult {
 ///     Err(e) => eprintln!("Failed: {}", e),
 /// }
 /// ```
-pub fn recover_task(
-    repo_path: &str,
-    project_key: &str,
-    task_id: &str,
-) -> Result<RecoverTaskResult> {
+pub fn recover_task(repo_path: &str, project_key: &str, task_id: &str) -> Result<()> {
     // 1. Get archived task info
     let task = tasks::get_archived_task(project_key, task_id)?
         .ok_or_else(|| GroveError::not_found("Archived task not found"))?;
@@ -908,18 +895,7 @@ pub fn recover_task(
     // 4. Move task from archived.toml back to tasks.toml
     tasks::recover_task(project_key, task_id)?;
 
-    // 5. Return recovered task
-    let recovered_task = tasks::get_task(project_key, task_id)?
-        .ok_or_else(|| GroveError::not_found("Failed to find recovered task"))?;
-
-    Ok(RecoverTaskResult {
-        task: recovered_task,
-    })
-}
-
-/// Result of reset_task operation
-pub struct ResetTaskResult {
-    pub task: tasks::Task,
+    Ok(())
 }
 
 /// Reset a task (delete everything, recreate from target)
@@ -962,7 +938,7 @@ pub fn reset_task(
     task_id: &str,
     task_multiplexer: &str,
     task_session_name: &str,
-) -> Result<ResetTaskResult> {
+) -> Result<()> {
     // Local Task 不支持 reset
     if task_id == tasks::LOCAL_TASK_ID {
         return Err(GroveError::invalid_data("Cannot reset local task"));
@@ -1001,11 +977,7 @@ pub fn reset_task(
     // 7. Update task timestamp
     tasks::touch_task(project_key, task_id)?;
 
-    // 8. Return task
-    let updated_task = tasks::get_task(project_key, task_id)?
-        .ok_or_else(|| GroveError::not_found("Task not found after reset"))?;
-
-    Ok(ResetTaskResult { task: updated_task })
+    Ok(())
 }
 
 #[cfg(test)]
