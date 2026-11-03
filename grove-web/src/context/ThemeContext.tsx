@@ -483,6 +483,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--color-warning", colors.warning);
     root.style.setProperty("--color-error", colors.error);
     root.style.setProperty("--color-info", colors.info);
+    // Lets stylesheets tell light themes from dark ones (`:root[data-theme="dark"]`).
+    root.dataset.theme = theme.isLight ? "light" : "dark";
 
   }, [theme]);
 
