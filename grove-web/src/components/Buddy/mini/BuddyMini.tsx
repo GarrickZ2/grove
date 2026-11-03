@@ -68,7 +68,7 @@ function MiniWindow() {
       const [detail, all] = await Promise.all([getBuddy(id), listBuddies()]);
       // A turn that finished while collapsed pops its reply out of the bubble.
       const before = last.current;
-      if (phaseNow.current === "collapsed" && before?.id === detail.id && before.status !== "idle" && detail.status === "idle" && detail.last_message_preview) setReply(detail.last_message_preview);
+      if (phaseNow.current === "collapsed" && before?.id === detail.id && before.status !== "idle" && detail.status === "idle" && !detail.last_turn_quiet && detail.last_message_preview) setReply(detail.last_message_preview);
       last.current = detail;
       setBuddy(detail); setOthers(all); setError(null);
     } catch (reason) { setError(errorMessage(reason)); }

@@ -428,6 +428,7 @@ pub async fn execute(agent: String, cwd: String) {
                     | AcpUpdate::PromptFailed { .. }
                     | AcpUpdate::UserMessage { .. }
                     | AcpUpdate::UserMessageTime { .. }
+                    | AcpUpdate::QuietTurn { .. }
                     | AcpUpdate::TurnInterrupted { .. }
                     | AcpUpdate::ModeChanged { .. }
                     | AcpUpdate::ModelChanged { .. }

@@ -16,6 +16,8 @@ export interface BuddySummary {
   agent: string;
   status: BuddyStatus;
   last_message_preview: string;
+  /** The latest turn was kept from the user. */
+  last_turn_quiet?: boolean;
   /** ISO 8601; null before the first message. */
   last_activity_at: string | null;
   active_session_id: string;

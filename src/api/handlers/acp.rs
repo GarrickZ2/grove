@@ -215,6 +215,9 @@ enum ServerMessage {
         sent_at: i64,
         client_message_id: Option<String>,
     },
+    QuietTurn {
+        reason: String,
+    },
     TurnInterrupted {
         start_ts: i64,
         end_ts: i64,
@@ -668,6 +671,7 @@ impl From<AcpUpdate> for ServerMessage {
                 sent_at,
                 client_message_id,
             },
+            AcpUpdate::QuietTurn { reason } => ServerMessage::QuietTurn { reason },
             AcpUpdate::TurnInterrupted {
                 start_ts,
                 end_ts,
@@ -3390,6 +3394,22 @@ pub async fn reconnect_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quiet_turn_reaches_the_timeline_under_its_wire_name() {
+        let update: AcpUpdate = serde_json::from_str(
+            &serde_json::to_string(&AcpUpdate::QuietTurn {
+                reason: "nothing new".into(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let window = history_window(std::slice::from_ref(&update), 0, None);
+        assert_eq!(window.len(), 1);
+        let wire = serde_json::to_value(ServerMessage::from(window[0].clone())).unwrap();
+        assert_eq!(wire["type"], "quiet_turn");
+        assert_eq!(wire["reason"], "nothing new");
+    }
 
     #[test]
     fn chat_project_resolution_does_not_depend_on_buddy_discovery() {

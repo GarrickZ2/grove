@@ -44,7 +44,7 @@ fn view(buddy: db::Buddy, details: bool) -> Result<Value, GroveError> {
     let (running, waiting) = db::count_open_delegations(&database::connection(), &buddy.id)?;
     let mut value = json!({"id":buddy.id,"project_hash":buddy.project_hash,"name":persona.name,"avatar":buddy.avatar,"description":buddy.description,
         "agent":persona.base_agent,"active_session_id":buddy.active_session_id,"sort_position":buddy.sort_position,"pinned":buddy.pinned_at.is_some(),
-        "status":preview.status,"last_message_preview":preview.last_message_preview,"last_activity_at":preview.last_activity_at,
+        "status":preview.status,"last_message_preview":preview.last_message_preview,"last_activity_at":preview.last_activity_at,"last_turn_quiet":preview.last_turn_quiet,
         "running_delegations":running,"waiting_delegations":waiting,"role":persona.duty});
     if details {
         let object = value.as_object_mut().unwrap();

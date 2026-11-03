@@ -9,7 +9,7 @@ export interface Question { kind: "question"; id: string; definition?: AskFormDe
 export interface Activity { kind: "activity"; id: string; started: number; ended?: number; steps: { id: string; title: string }[] }
 /** A `send` that starts a new Session (formerly `delegate`). The delegation record (status, result) comes from the delegation list, not the stream. */
 export interface DelegationRow { kind: "delegation"; id: string; title: string; delegationId?: string; failed?: boolean }
-export type BuddyRow = { kind: "message"; id: string; index: number } | Approval | Question | Activity | DelegationRow | { kind: "event"; id: string; text: string; notice?: { lead: string; name?: string; detail?: string; tone?: "neutral" | "error";
+export type BuddyRow = { kind: "message"; id: string; index: number } | { kind: "quiet"; id: string; reason: string } | Approval | Question | Activity | DelegationRow | { kind: "event"; id: string; text: string; notice?: { lead: string; name?: string; detail?: string; tone?: "neutral" | "error";
   /** For a message to another Buddy: who it went to (the name may be all the agent gave). */
   buddyId?: string } };
 export interface BuddyTimelineState { messages: ChatMessage[]; rows: BuddyRow[]; busy: boolean; activity: string | null; started: number; hidden: string[]; pending: Record<string, { text: string; attachments: unknown[] }>; dispatched: string[]; routineCalls?: Record<string, { verb: string; name: string }>;
@@ -123,6 +123,7 @@ export function reduceBuddyEvent(state: BuddyTimelineState, event: BuddyEvent, n
       return withMessages(state, reduceV2Message(state.messages, event as ServerEvent));
     }
     case "thought_chunk": return activity(state, "thinking", "Thinking…", now);
+    case "quiet_turn": return { ...state, rows: [...state.rows, { kind: "quiet", id: `quiet-${state.rows.length}`, reason: string(event.reason) }] };
     case "plan": case "plan_update": case "plan_document_update": return activity(state, "plan", "Planning next steps", now);
     case "tool_call": case "tool_call_update": case "v2_tool_update": {
       const update = event.type === "v2_tool_update" ? event.update as Record<string, unknown> : event;

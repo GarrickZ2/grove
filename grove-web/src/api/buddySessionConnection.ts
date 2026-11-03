@@ -7,7 +7,7 @@ import type { BuddyEvent } from "../components/Buddy/timeline/buddyTimelineState
 
 /** Remove only the overlapping persisted tail; readiness and pending snapshots still replay. */
 export function afterHistory(history: BuddyEvent[], buffered: BuddyEvent[]): BuddyEvent[] {
-  const persisted = new Set(["user_message", "message_chunk", "message_content_chunk", "thought_chunk", "tool_call", "tool_call_update", "v2_message_bind", "v2_message_update", "v2_tool_update", "plan", "plan_update", "complete", "turn_interrupted"]);
+  const persisted = new Set(["user_message", "message_chunk", "message_content_chunk", "thought_chunk", "tool_call", "tool_call_update", "v2_message_bind", "v2_message_update", "v2_tool_update", "plan", "plan_update", "complete", "turn_interrupted", "quiet_turn"]);
   const tail = history.filter(event => persisted.has(event.type)).map(event => JSON.stringify(event));
   const live = buffered.flatMap((event, index) => persisted.has(event.type) ? [{ signature: JSON.stringify(event), index }] : []);
   for (let count = Math.min(tail.length, live.length); count > 0; count--) {

@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { emptyBuddyTimeline, reduceBuddyEvent, type BuddyEvent } from "./buddyTimelineState";
+import { quietTurnText, visibleRows } from "./visibleRows";
 const run = (events: BuddyEvent[]) => events.reduce((state, event, i) => reduceBuddyEvent(state, event, 1000 + i * 1000), emptyBuddyTimeline());
 it("hides non-human prompts while retaining replies and IM prompts", () => {
   const state = run([{ type: "user_message", text: "routine", sender: "automation:a" }, { type: "message_chunk", text: "Daily summary" }, { type: "user_message", text: "Hello", sender: "connect" }]);
@@ -108,4 +109,23 @@ it("keeps a Buddy's prompt as one message when the Agent echoes it back", () => 
   ]);
   expect(state.messages).toHaveLength(1);
   expect(state.messages[0]).toMatchObject({ type: "user", sender: "buddy:dev", content: text });
+});
+
+it("folds a quiet turn to one line, keeping the prompt and its words", () => {
+  const state = run([
+    { type: "user_message", text: "routine", sender: "automation:a" },
+    { type: "message_chunk", text: "All clear" },
+    { type: "quiet_turn", reason: "Nothing new" },
+    { type: "complete" },
+  ]);
+  const rows = visibleRows(state);
+  expect(rows.map(row => row.kind)).toEqual(["message", "quiet"]);
+  expect(rows[1]).toMatchObject({ reason: "Nothing new" });
+  expect(quietTurnText(state, rows[1].id)).toBe("All clear");
+});
+
+it("keeps a pending approval visible in a quiet turn", () => {
+  const state = reduceBuddyEvent(emptyBuddyTimeline(), { type: "quiet_turn", reason: "Nothing new" });
+  const pending = { ...state, rows: [...state.rows, { kind: "approval", id: "a" } as never] };
+  expect(visibleRows(pending).map(row => row.id)).toEqual([state.rows[0].id, "a"]);
 });

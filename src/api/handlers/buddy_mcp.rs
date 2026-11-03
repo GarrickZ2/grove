@@ -294,6 +294,12 @@ fn follow_default() -> bool {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct StayQuietInput {
+    /// A few words on why this doesn't need the user, shown beside the quiet turn.
+    reason: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct NewSessionInput {
     title: String,
     target: crate::buddy::delegations::Target,
@@ -521,6 +527,19 @@ impl BuddyMcpService {
                 .await
                 .map_err(internal)?,
         )
+    }
+    #[tool(
+        name = "stay_quiet",
+        description = "Don't bother the user with this turn: nothing you say in it is shown to them, and they get no notification. Use it when a Routine, another Buddy or a finished Session woke you and the user has nothing to learn or decide. You keep working normally, so save anything worth remembering. Refused when the user sent the message, or when a Session failed or is waiting."
+    )]
+    async fn stay_quiet(
+        &self,
+        Parameters(input): Parameters<StayQuietInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        let (buddy, session) = caller(&parts)?;
+        crate::buddy::quiet::stay_quiet(&buddy, &session, &input.reason).map_err(invalid)?;
+        success(serde_json::json!({"quiet":true}))
     }
     #[tool(
         name = "manage_queue",

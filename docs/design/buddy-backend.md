@@ -182,6 +182,7 @@ Segment 用 Buddy 专属 `custom_agent`，权限沿用 Agent 自己的配置，�
 | `create_project` | 新建 Studio 项目；或新建 / 注册 / 克隆 Coding 项目（本地目录必须在用户 home 内） | `workspace::create_studio_project`、`operations::projects` |
 | `create_task` | 在目标 Project 建 Task，`created_by = buddy:<id>`，可写 notes | Repo 用 `operations::tasks::create_task`，Studio 用 `create_studio_task`，notes 用现有存储接口 |
 | `send` | 合并了原 `delegate` 与 `send_message`：`session` 发给已有 Session，`new` 新开 Session（self / task / new_task）；`follow` 默认 true，结果与等待请求经 Radio 跟进回传；`interrupt` 发送后停掉对方当前 turn，等同 Send Now；不能发给自己的 Segment | `buddy::delegations`（见 §5） |
+| `stay_quiet` | 标记当前 turn 不打扰用户：时间线折叠、不发完成通知、不算未读、不更新预览。用户消息、失败或等待中的 Session 触发的 turn 不能静默 | `AcpUpdate::QuietTurn` 落盘 |
 | `manage_queue` | 和用户在输入框的操作一致：`edit` / `remove` 排队消息，`send_now` 停掉当前 turn 让下一条执行 | `submit_queued_edit`、`dequeue_message_by_id`、`cancel` |
 | `list_followups` / `cancel_followup` | 列出 / 停止正在跟进的 Session | `buddy_delegations` 表 |
 | `respond` | 代答跟进中且处于 waiting 的请求：权限只能选一次性选项，表单可填写或拒绝 | `respond_permission_for`、`respond_turn_form` |

@@ -214,6 +214,8 @@ pub struct AcpSessionHandle {
     /// Session. External consumers receive it only through semantic Radio
     /// events; ACP implementation details remain private.
     active_turn_message_ids: Mutex<Vec<String>>,
+    /// The Buddy chose to keep the current turn from the user.
+    quiet_turn: std::sync::atomic::AtomicBool,
     /// Source ids of the most recent completed turns. This is used only for
     /// session-level lifecycle events such as SessionEnded. Request-like
     /// events use an ingress-time TurnOrigin instead of guessing from this
@@ -559,6 +561,10 @@ pub enum AcpUpdate {
     UserMessageTime {
         sent_at: i64,
         client_message_id: Option<String>,
+    },
+    /// A Buddy decided the current turn isn't worth the user's attention.
+    QuietTurn {
+        reason: String,
     },
     TurnInterrupted {
         start_ts: i64,
@@ -5234,6 +5240,7 @@ pub async fn get_or_start_session(
                     is_busy: std::sync::atomic::AtomicBool::new(false),
                     last_assistant_text: Mutex::new(String::new()),
                     active_turn_message_ids: Mutex::new(Vec::new()),
+                    quiet_turn: std::sync::atomic::AtomicBool::new(false),
                     recent_completed_turn_message_ids: Mutex::new(VecDeque::new()),
                     last_turn_reply: Mutex::new(String::new()),
                     pending_text_separator: std::sync::atomic::AtomicBool::new(false),
@@ -7853,7 +7860,8 @@ async fn drive_session(
                             .map(|buf| truncate_chars(&buf, 80))
                             .filter(|s| !s.is_empty())
                             .unwrap_or_else(|| "Agent finished responding".to_string());
-                        if config.chat_id.is_some() {
+                        let quiet = handle.quiet_turn.load(std::sync::atomic::Ordering::Relaxed);
+                        if config.chat_id.is_some() && !quiet {
                             notify_acp_event(
                                 &config.project_key,
                                 &config.task_id,
@@ -8665,6 +8673,8 @@ impl AcpSessionHandle {
         let (message_ids, event, terminal) = match update {
             AcpUpdate::PromptStarted { message_ids } => {
                 *self.active_turn_message_ids.lock().unwrap() = message_ids.clone();
+                self.quiet_turn
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
                 self.last_turn_reply.lock().unwrap().clear();
                 (message_ids.clone(), TurnEvent::Started, false)
             }
@@ -9159,6 +9169,13 @@ impl AcpSessionHandle {
 
     /// Record how the running turn ended. Call before emitting
     /// `Busy { false }` so the idle `ChatStatus` carries the outcome.
+    /// Keep the running turn from the user; the event marks it in history.
+    pub(crate) fn mark_quiet_turn(&self, reason: String) {
+        self.quiet_turn
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.emit(AcpUpdate::QuietTurn { reason });
+    }
+
     pub(crate) fn finish_turn(&self, end: crate::agent_graph::node_outcome::TurnEnd) {
         if let Ok(mut record) = self.turn_record.lock() {
             record.finish(end);
@@ -11175,6 +11192,7 @@ pub fn new_handle_for_test(
         is_busy: std::sync::atomic::AtomicBool::new(false),
         last_assistant_text: Mutex::new(String::new()),
         active_turn_message_ids: Mutex::new(Vec::new()),
+        quiet_turn: std::sync::atomic::AtomicBool::new(false),
         recent_completed_turn_message_ids: Mutex::new(VecDeque::new()),
         last_turn_reply: Mutex::new(String::new()),
         pending_text_separator: std::sync::atomic::AtomicBool::new(false),

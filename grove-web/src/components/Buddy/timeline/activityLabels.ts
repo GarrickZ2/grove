@@ -1,7 +1,7 @@
 const BUDDY_TOOLS: Record<string, string> = {
   list_projects: "Looking through projects", list_tasks: "Checking tasks", list_sessions: "Checking sessions", read_session: "Reading a conversation",
   send: "Handing off work", send_message: "Sending a message", create_task: "Creating a task", delegate: "Handing work to a subagent", list_delegations: "Checking delegations",
-  list_followups: "Checking on handed-off work", cancel_followup: "Stopping handed-off work", manage_queue: "Managing queued messages", respond: "Answering a request",
+  list_followups: "Checking on handed-off work", cancel_followup: "Stopping handed-off work", manage_queue: "Managing queued messages", stay_quiet: "Keeping this one quiet", respond: "Answering a request",
   create_project: "Creating a project", search_sessions: "Searching conversations",
   list_routines: "Checking routines", create_routine: "Setting up a routine", update_routine: "Updating a routine", delete_routine: "Removing a routine", run_routine: "Running a routine",
 };

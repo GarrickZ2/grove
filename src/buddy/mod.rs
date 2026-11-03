@@ -14,6 +14,7 @@ pub mod configuration;
 pub mod delegations;
 mod instruction;
 pub mod preview;
+pub mod quiet;
 pub mod routines;
 pub mod tools;
 
@@ -475,6 +476,14 @@ pub(crate) fn session_entries(
     chat: &str,
     include_tools: bool,
 ) -> Vec<SessionEntry> {
+    let history = crate::storage::chat_history::load_history(project, task, chat);
+    entries_of(history, include_tools)
+}
+
+pub(crate) fn entries_of(
+    history: Vec<crate::acp::AcpUpdate>,
+    include_tools: bool,
+) -> Vec<SessionEntry> {
     use crate::acp::AcpUpdate;
     let mut entries: Vec<SessionEntry> = Vec::new();
     let mut assistant = String::new();
@@ -542,7 +551,7 @@ pub(crate) fn session_entries(
     let paths = |locations: &[(String, Option<u32>)]| -> Vec<String> {
         locations.iter().map(|(path, _)| path.clone()).collect()
     };
-    for update in crate::storage::chat_history::load_history(project, task, chat) {
+    for update in history {
         match update {
             AcpUpdate::UserMessage {
                 text, attachments, ..

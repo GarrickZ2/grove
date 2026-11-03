@@ -10,7 +10,7 @@ import { ActivityLine } from "./ActivityLine";
 import { QuestionCard } from "./QuestionCard";
 import { DelegationCard } from "./DelegationCard";
 import { BuddyHello } from "./BuddyHello";
-import { visibleRows } from "./visibleRows";
+import { quietTurnText, visibleRows } from "./visibleRows";
 import { useSentPop } from "../../Tasks/TaskView/conversation/sentPop";
 import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
 import { MessageActions } from "../../Tasks/TaskView/MessageActionsBar";
@@ -48,6 +48,15 @@ function UserBubble({ clientMessageId, children }: { clientMessageId?: string; c
   const ref = useRef<HTMLDivElement | null>(null);
   useSentPop(ref, clientMessageId);
   return <div ref={ref} className="buddy-user-message">{children}</div>;
+}
+
+/** A turn the Buddy kept from the user: one muted line, its words a click away. */
+function QuietTurn({ reason, text }: { reason: string; text: string }) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <TimelineNotice lead="Stayed quiet" name={reason} onClick={text ? () => setOpen(!open) : undefined} label={`${open ? "Hide" : "Show"} what was left unsaid`} />
+    {open && <div className="buddy-assistant-message buddy-quiet-text"><AssistantBubbles content={text} /></div>}
+  </>;
 }
 
 export function BuddyTimeline({ buddy, state, connected, loading = false, onRespond, onAnswer, onSkip, onOpenQuestion, arriving = false, hasEarlier = false, loadingEarlier = false, onLoadEarlier, others = [] }: { arriving?: boolean; others?: BuddySummary[]; hasEarlier?: boolean; loadingEarlier?: boolean; onLoadEarlier?: () => void; buddy: Buddy; state: BuddyTimelineState; connected: boolean; loading?: boolean; onRespond: (id: string, option: string) => void; onAnswer: (question: Question, answers: SurveyAnswers, markdown: string) => Promise<void>; onSkip: (question: Question) => void; onOpenQuestion: (question: Question) => void }) {
@@ -107,6 +116,7 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
   </div></div>;
 
   function renderRow(row: BuddyRow) {
+      if (row.kind === "quiet") return <QuietTurn key={row.id} reason={row.reason} text={withoutApprovalNotes(quietTurnText(state, row.id))} />;
       if (row.kind === "activity") return <ActivityLine key={row.id} activity={row} buddy={buddy} />;
       if (row.kind === "delegation") return <DelegationCard key={row.id} row={row} delegation={resolved.get(row.id)} onOpen={delegations.show} />;
       if (row.kind === "approval") return <ApprovalCard key={`approval-${row.id}`} approval={row} connected={connected} onRespond={onRespond} />;
