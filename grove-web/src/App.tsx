@@ -499,6 +499,9 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       if (!editing && keyboardHeight <= 50) {
         stableAppHeight = window.innerHeight;
         root.style.setProperty("--grove-app-height", `${stableAppHeight}px`);
+        // iOS scrolls the page to keep a focused field above the keyboard and
+        // doesn't always scroll it back, leaving the header off-screen.
+        if (window.scrollY !== 0) window.scrollTo(0, 0);
       }
     };
     vv.addEventListener("resize", recompute);
