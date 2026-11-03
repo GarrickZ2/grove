@@ -21,11 +21,17 @@ function mark(seen: Seen, items: BuddySummary[], viewing: string): Seen {
   return next;
 }
 
-/** Local per-viewer unread state: a Buddy is unread when its activity is newer than the last time it was viewed. */
-export function useBuddyUnread(items: BuddySummary[], viewing: string): Set<string> {
+/** Marked unread by hand: stays unread until viewed or marked read. */
+const MARKED_UNREAD = "unread";
+
+/** Local per-viewer unread state: a Buddy is unread when its activity is newer than the last time it was viewed, or when marked unread. */
+export function useBuddyUnread(items: BuddySummary[], viewing: string) {
   const [seen, setSeen] = useState(readSeen);
   const next = mark(seen, items, viewing);
   if (next !== seen) setSeen(next);
   useEffect(() => { writeBuddyPreference("seen", JSON.stringify(seen)); }, [seen]);
-  return new Set(items.filter(item => item.id !== viewing && time(item.last_activity_at) > time(seen[item.id])).map(item => item.id));
+  const unread = new Set(items.filter(item => item.id !== viewing && (seen[item.id] === MARKED_UNREAD || time(item.last_activity_at) > time(seen[item.id]))).map(item => item.id));
+  const markRead = (id: string) => setSeen((current) => ({ ...current, [id]: items.find((item) => item.id === id)?.last_activity_at ?? new Date().toISOString() }));
+  const markUnread = (id: string) => setSeen((current) => ({ ...current, [id]: MARKED_UNREAD }));
+  return { unread, markRead, markUnread };
 }

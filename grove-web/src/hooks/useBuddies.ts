@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { archiveBuddy, createBuddy, getBuddy, listBuddies, reorderBuddies, type Buddy, type BuddySummary, type CreateBuddyInput } from "../api/buddies";
+import { archiveBuddy, createBuddy, deleteBuddy, getBuddy, listBuddies, pinBuddy, reorderBuddies, type Buddy, type BuddySummary, type CreateBuddyInput } from "../api/buddies";
 import { errorMessage } from "../utils/errorMessage";
 import { readBuddyPreference, writeBuddyPreference } from "../components/Buddy/buddyStorage";
 const BUDDIES_CHANGED = "grove-buddies-changed";
@@ -70,18 +70,36 @@ export function useBuddies() {
     window.dispatchEvent(new CustomEvent(BUDDIES_CHANGED, { detail: mounted }));
     return buddy;
   };
-  const archive = async (id: string) => {
-    await archiveBuddy(id);
+  const removed = (id: string) => {
     revision.current++;
     setItems((current) => current.filter((item) => item.id !== id));
     setSelectedId((current) => current === id ? items.find((item) => item.id !== id)?.id ?? "" : current);
     window.dispatchEvent(new CustomEvent(BUDDIES_CHANGED, { detail: mounted }));
   };
+  const archive = async (id: string) => {
+    await archiveBuddy(id);
+    removed(id);
+  };
+  /** The list's Delete: archived like `archive`, and its Routines stop. */
+  const remove = async (id: string) => {
+    await deleteBuddy(id);
+    removed(id);
+  };
+  // Order and pins apply at once (the drop already shows them) and roll back if saving fails.
   const reorder = async (ids: string[]) => {
-    await reorderBuddies(ids);
+    const previous = items;
     revision.current++;
-    setItems((current) => ids.flatMap((id) => current.filter((item) => item.id === id)));
+    setItems((current) => [...ids.flatMap((id) => current.filter((item) => item.id === id)), ...current.filter((item) => !ids.includes(item.id))]);
+    try { await reorderBuddies(ids); }
+    catch (reason) { revision.current++; setItems(previous); throw reason; }
     window.dispatchEvent(new CustomEvent(BUDDIES_CHANGED, { detail: mounted }));
   };
-  return { items, selectedId, select: setSelectedId, buddy: detail?.id === selectedId ? detail : null, loading, error, refresh, refreshItem, accept, create, archive, reorder };
+  const pin = async (id: string, pinned: boolean) => {
+    revision.current++;
+    setItems((current) => current.map((item) => item.id === id ? { ...item, pinned } : item));
+    try { await pinBuddy(id, pinned); }
+    catch (reason) { revision.current++; setItems((current) => current.map((item) => item.id === id ? { ...item, pinned: !pinned } : item)); throw reason; }
+    window.dispatchEvent(new CustomEvent(BUDDIES_CHANGED, { detail: mounted }));
+  };
+  return { items, selectedId, select: setSelectedId, buddy: detail?.id === selectedId ? detail : null, loading, error, refresh, refreshItem, accept, create, archive, remove, reorder, pin };
 }

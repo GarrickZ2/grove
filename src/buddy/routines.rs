@@ -55,6 +55,17 @@ pub fn list(buddy: &Buddy) -> Result<Vec<Automation>> {
         })
         .collect())
 }
+/// Turn off every scheduled prompt of this Buddy, Memory organization included.
+pub fn pause_all(buddy: &Buddy) -> Result<()> {
+    for mut automation in automations::list_by_project(&buddy.project_hash)? {
+        if automation.enabled {
+            automation.enabled = false;
+            automation.next_run_at = None;
+            automations::update(&automation)?;
+        }
+    }
+    Ok(())
+}
 pub fn get(buddy: &Buddy, id: &str) -> Result<Automation> {
     list(buddy)?
         .into_iter()

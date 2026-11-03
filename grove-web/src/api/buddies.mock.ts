@@ -26,6 +26,7 @@ function seedBuddies(): Buddy[] {
     { id: "mock-inbox", name: "Inbox", role: "Help review incoming requests", status: "waiting", agent: "claude-code", preview: "Please review the proposed reply." },
   ].map((seed): Buddy => ({
     id: seed.id,
+    pinned: false,
     name: seed.name,
     avatar: null,
     description: seed.role,
@@ -174,6 +175,7 @@ export function createBuddiesMock() {
           agent: buddy.agent, status: buddy.status, last_message_preview: buddy.last_message_preview,
           last_activity_at: buddy.last_activity_at, active_session_id: buddy.active_session_id,
           running_delegations: buddy.running_delegations, waiting_delegations: buddy.waiting_delegations,
+          pinned: buddy.pinned, role: buddy.role,
         };
       });
     },
@@ -189,7 +191,7 @@ export function createBuddiesMock() {
         description: input.description ?? "", role: input.role ?? "", system_prompt: input.system_prompt ?? "",
         agent_config: mergeConfig({ source: "default", agent_id: input.agent }, input.agent_config),
         status: "idle", last_message_preview: "", last_activity_at: null,
-        active_session_id: sessionId, running_delegations: 0, waiting_delegations: 0,
+        active_session_id: sessionId, running_delegations: 0, waiting_delegations: 0, pinned: false,
         project_hash: `${id}-project`, local_task_id: "_local",
         segments: [{ session_id: sessionId, seq: 1, agent: input.agent, started_at: now, ended_at: null }],
       };
@@ -222,6 +224,10 @@ export function createBuddiesMock() {
       buddy.agent_config = mergeConfig({ source: "default", agent_id: input.agent }, input.agent_config);
       buddy.segments.push({ session_id: buddy.active_session_id, seq, agent: input.agent, started_at: now, ended_at: null });
       return structuredClone(buddy);
+    },
+    pin(id: string, value: boolean): BuddySummary {
+      get(id).pinned = value;
+      return this.list().find((item) => item.id === id)!;
     },
     archive(id: string): void {
       get(id);

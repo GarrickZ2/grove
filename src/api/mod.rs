@@ -125,6 +125,7 @@ pub fn create_api_router() -> Router {
                 .delete(handlers::buddies::archive),
         )
         .route("/buddies/{id}/agent", post(handlers::buddies::switch_agent))
+        .route("/buddies/{id}/pin", put(handlers::buddies::pin))
         .route(
             "/buddies/{id}/delegations",
             get(handlers::buddies::delegations),

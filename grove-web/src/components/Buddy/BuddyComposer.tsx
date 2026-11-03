@@ -1,6 +1,8 @@
 import { useCallback, useLayoutEffect, useRef, useState, type ClipboardEvent } from "react";
 import { ArrowUp, File as FileIcon, Loader2, Paperclip, Plus, Square, X } from "lucide-react";
-import type { Buddy } from "../../api/buddies";
+import type { Buddy, BuddySummary } from "../../api/buddies";
+import { BuddyAvatar } from "./BuddyAvatar";
+import { mentionAtCaret, mentionCandidates, withMentions } from "./buddyMentions";
 import type { PromptCapabilities } from "../../api/buddySessionConnection";
 import { useBuddyComposer } from "../../hooks/useBuddyComposer";
 import { errorMessage } from "../../utils/errorMessage";
@@ -32,7 +34,9 @@ function ImageThumb({ file }: { file: File }) {
   return <img ref={attach} alt="" className="buddy-attachment-thumb" />;
 }
 
-export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps }: { buddy: Buddy; onSent: () => void; initialText?: string; promptCaps?: PromptCapabilities | null }) {
+export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, mentionable = [] }: { buddy: Buddy; onSent: () => void; initialText?: string; promptCaps?: PromptCapabilities | null;
+  /** Other Buddies the user can @-mention; the message then tells this Buddy who they are. */
+  mentionable?: BuddySummary[] }) {
   const draftKey = `draft-${buddy.id}-${buddy.active_session_id}`;
   const [text, setText] = useState(() => initialText || readBuddyPreference(draftKey));
   const [files, setFiles] = useState<File[]>([]);
@@ -68,12 +72,29 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps }: {
   const hasContent = !!text.trim() || files.length > 0;
   const showStop = buddy.status !== "idle" && !hasContent;
   const changeText = (value: string) => { setText(value); writeBuddyPreference(draftKey, value); };
+  // The @-mention picker: open while the caret follows "@query" and some Buddy matches.
+  const [mention, setMention] = useState<{ start: number; query: string; index: number } | null>(null);
+  const candidates = mention && mentionable.length ? mentionCandidates(mentionable, mention.query) : [];
+  const picking = candidates.length > 0;
+  const trackMention = (element: HTMLTextAreaElement) => {
+    const found = mentionAtCaret(element.value, element.selectionStart ?? element.value.length);
+    setMention((current) => found ? { ...found, index: current && current.start === found.start ? current.index : 0 } : null);
+  };
+  const pick = (target: BuddySummary) => {
+    const element = input.current;
+    if (!mention || !element) return;
+    const caret = element.selectionStart ?? text.length;
+    const next = `${text.slice(0, mention.start)}@${target.name} ${text.slice(caret)}`;
+    const at = mention.start + target.name.length + 2;
+    changeText(next); setMention(null);
+    requestAnimationFrame(() => { element.focus(); element.setSelectionRange(at, at); });
+  };
   const submit = async () => {
     if ((!text.trim() && !files.length) || sending || !connected) return;
     setError(null);
     // Orbit: the typed text leaves the box while the send goes out (visual only).
     const restore = orbit ? playTextareaSendOut(input.current) : () => {};
-    try { await send(text.trim(), files); changeText(""); setFiles([]); }
+    try { await send(withMentions(text.trim(), mentionable), files); changeText(""); setFiles([]); setMention(null); }
     catch (reason) { setError(errorMessage(reason)); }
     finally { restore(); }
   };
@@ -85,10 +106,23 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps }: {
   return <div className="buddy-composer-wrap">
     {files.length > 0 && <ul className="buddy-attachments">{files.map((file, index) => <li key={`${file.name}-${index}`} className={file.type.startsWith("image/") ? "is-image" : undefined}>{file.type.startsWith("image/") ? <ImageThumb file={file} /> : <FileIcon size={14} aria-hidden="true" />}<span className="buddy-attachment-name">{file.name}</span><button type="button" aria-label={`Remove ${file.name}`} disabled={sending} onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}><X size={14} /></button></li>)}</ul>}
     {error && <p role="alert">{error}</p>}
+    {picking && <ul className="buddy-mention-menu" role="listbox" aria-label="Mention a Buddy">{candidates.map((candidate, index) => {
+      const active = index === Math.min(mention!.index, candidates.length - 1);
+      return <li key={candidate.id} role="option" aria-selected={active} className={active ? "is-active" : undefined}
+        onMouseDown={(event) => { event.preventDefault(); pick(candidate); }} onMouseEnter={() => setMention((current) => current && { ...current, index })}>
+        <BuddyAvatar id={candidate.id} avatar={candidate.avatar} size={22} /><span className="buddy-mention-name">{candidate.name}</span>{candidate.role && <span className="buddy-mention-role">{candidate.role}</span>}
+      </li>;
+    })}</ul>}
     <form className={orbit ? `buddy-composer is-orbit${buddy.status === "working" ? " is-running" : ""}` : "buddy-composer"} aria-label={`Message ${buddy.name}`} onSubmit={(event) => { event.preventDefault(); void submit(); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!sending) addFiles(Array.from(event.dataTransfer.files)); }}>
       {orbit && buddy.status === "working" && <span className="buddy-oc-orbit" aria-hidden="true"><i /></span>}
       <input ref={fileInput} type="file" multiple hidden aria-label="Attach files" onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-      <textarea ref={input} rows={1} aria-label={`Message ${buddy.name}`} placeholder={`Message ${buddy.name}`} value={text} disabled={sending} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} onChange={(event) => changeText(event.target.value)} onPaste={paste} onKeyDown={(event) => {
+      <textarea ref={input} rows={1} aria-label={`Message ${buddy.name}`} placeholder={`Message ${buddy.name}`} value={text} disabled={sending} onFocus={() => setFocused(true)} onBlur={() => { setFocused(false); setMention(null); }} onChange={(event) => { changeText(event.target.value); trackMention(event.target); }} onSelect={(event) => trackMention(event.currentTarget)} onPaste={paste} onKeyDown={(event) => {
+        if (picking && !event.nativeEvent.isComposing) {
+          const index = Math.min(mention!.index, candidates.length - 1);
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const step = event.key === "ArrowDown" ? 1 : -1; setMention({ ...mention!, index: (index + step + candidates.length) % candidates.length }); return; }
+          if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); pick(candidates[index]); return; }
+          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMention(null); return; }
+        }
         if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void submit(); }
       }} />
       {orbit ? <div className="buddy-composer-toolbar">

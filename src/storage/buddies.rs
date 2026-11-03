@@ -21,6 +21,9 @@ pub struct Buddy {
     pub sort_position: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
+    /// When the Buddy was pinned to the top of the list; `None` when unpinned.
+    #[serde(default)]
+    pub pinned_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,7 +114,7 @@ pub(crate) fn ensure_session_writable(session_id: &str) -> Result<()> {
     ensure_session_writable_on(&*super::database::try_connection()?, session_id)
 }
 
-const BUDDY_COLUMNS: &str = "id, project_hash, custom_agent_id, avatar, description, active_session_id, sort_position, created_at, updated_at";
+const BUDDY_COLUMNS: &str = "id, project_hash, custom_agent_id, avatar, description, active_session_id, sort_position, created_at, updated_at, pinned_at";
 const SEGMENT_COLUMNS: &str = "session_id, buddy_id, seq, agent, started_at, ended_at";
 const DELEGATION_COLUMNS: &str = "id, buddy_id, from_session, target_project, target_task, target_session, title, brief, status, last_result, created_at, updated_at, completed_at, round_message_id";
 
@@ -126,6 +129,7 @@ fn buddy_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Buddy> {
         sort_position: row.get(6)?,
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
+        pinned_at: row.get(9)?,
     })
 }
 
@@ -207,7 +211,9 @@ pub fn insert(conn: &Connection, buddy: &Buddy) -> Result<()> {
         ));
     }
     conn.execute(
-        &format!("INSERT INTO buddies ({BUDDY_COLUMNS}) VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,?8)"),
+        &format!(
+            "INSERT INTO buddies ({BUDDY_COLUMNS}) VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,?8,NULL)"
+        ),
         params![
             buddy.id,
             buddy.project_hash,
@@ -272,6 +278,16 @@ pub fn archive(conn: &Connection, id: &str) -> Result<bool> {
         "UPDATE projects SET archived=1 WHERE project_type='buddy'
          AND hash=(SELECT project_hash FROM buddies WHERE id=?1)",
         [id],
+    )? > 0)
+}
+
+/// Pin a Buddy to the top of the list, or unpin it.
+pub fn set_pinned(conn: &Connection, id: &str, pinned: bool) -> Result<bool> {
+    let now = Utc::now().to_rfc3339();
+    Ok(conn.execute(
+        "UPDATE buddies SET pinned_at=CASE WHEN ?2 THEN COALESCE(pinned_at, ?3) ELSE NULL END,
+         updated_at=?3 WHERE id=?1",
+        params![id, pinned, now],
     )? > 0)
 }
 
@@ -552,6 +568,7 @@ pub(crate) mod test_support {
             sort_position: None,
             created_at: now.into(),
             updated_at: now.into(),
+            pinned_at: None,
         };
         insert(conn, &buddy).unwrap();
         let session_id = format!("{id}-segment-1");
@@ -599,6 +616,23 @@ mod tests {
     use super::test_support::*;
     use super::*;
     use crate::storage::database;
+
+    #[test]
+    fn pinning_keeps_the_first_pin_time_and_unpins() {
+        let _lock = database::test_lock().blocking_lock();
+        let _store = Store::new();
+        let conn = database::try_connection().unwrap();
+        seed_buddy(&conn, "a");
+        assert!(get(&conn, "a").unwrap().unwrap().pinned_at.is_none());
+        assert!(set_pinned(&conn, "a", true).unwrap());
+        let first = get(&conn, "a").unwrap().unwrap().pinned_at;
+        assert!(first.is_some());
+        set_pinned(&conn, "a", true).unwrap();
+        assert_eq!(get(&conn, "a").unwrap().unwrap().pinned_at, first);
+        set_pinned(&conn, "a", false).unwrap();
+        assert!(get(&conn, "a").unwrap().unwrap().pinned_at.is_none());
+        assert!(!set_pinned(&conn, "missing", true).unwrap());
+    }
 
     #[test]
     fn buddy_crud_order_and_atomic_reorder() {

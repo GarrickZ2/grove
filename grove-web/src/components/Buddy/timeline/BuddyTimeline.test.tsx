@@ -60,6 +60,14 @@ it("shows a message from another Buddy as a header whose hover holds the origina
   expect(notice.querySelector('[role="tooltip"]')?.textContent).toBe("The branch is cut.\nShip it.");
 });
 
+it("shows @-mentioned Buddies as chips and hides the envelope", () => {
+  const envelope = buildGroveMetaTag("buddy_mentions", { buddies: [{ id: "bob", name: "Bob", avatar: null, role: "Reviewer" }] }, "The user mentioned another Buddy");
+  render(fromEvents([{ type: "user_message", text: `${envelope}\nAsk @Bob to review` }]));
+  const bubble = host.querySelector(".buddy-user-message")!;
+  expect(bubble.textContent).toBe("Ask Bob to review");
+  expect(bubble.querySelector(".buddy-mention-chip")?.getAttribute("title")).toBe("Reviewer");
+});
+
 it("preserves literal malformed tags and other metadata instead of deleting user content", () => {
   const text = `Explain <grove-meta>{invalid}</grove-meta>\n${buildGroveMetaTag("example", {}, "Keep this example")}`;
   render(fromEvents([{ type: "user_message", text }]));

@@ -156,6 +156,7 @@ fn create_on(conn: &Connection, id: &str, input: CreateInput) -> Result<db::Budd
         sort_position: None,
         created_at: now.clone(),
         updated_at: now,
+        pinned_at: None,
     };
     db::insert(conn, &buddy)?;
     new_segment_on(conn, &buddy, &persona.base_agent, 1)?;

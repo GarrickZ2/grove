@@ -43,12 +43,12 @@ fn view(buddy: db::Buddy, details: bool) -> Result<Value, GroveError> {
     let preview = buddy::preview::get(&buddy);
     let (running, waiting) = db::count_open_delegations(&database::connection(), &buddy.id)?;
     let mut value = json!({"id":buddy.id,"project_hash":buddy.project_hash,"name":persona.name,"avatar":buddy.avatar,"description":buddy.description,
-        "agent":persona.base_agent,"active_session_id":buddy.active_session_id,"sort_position":buddy.sort_position,
+        "agent":persona.base_agent,"active_session_id":buddy.active_session_id,"sort_position":buddy.sort_position,"pinned":buddy.pinned_at.is_some(),
         "status":preview.status,"last_message_preview":preview.last_message_preview,"last_activity_at":preview.last_activity_at,
-        "running_delegations":running,"waiting_delegations":waiting});
+        "running_delegations":running,"waiting_delegations":waiting,"role":persona.duty});
     if details {
         let object = value.as_object_mut().unwrap();
-        object.extend(serde_json::from_value::<serde_json::Map<String,Value>>(json!({"role":persona.duty,"system_prompt":persona.system_prompt,
+        object.extend(serde_json::from_value::<serde_json::Map<String,Value>>(json!({"system_prompt":persona.system_prompt,
             "agent_config":persona.agent_config,"model":persona.model,"mode":persona.mode,"effort":persona.effort,
             "segments":db::list_segments(&database::connection(), &buddy.id)?,"created_at":buddy.created_at,"updated_at":buddy.updated_at}))?);
     }
@@ -105,10 +105,38 @@ pub async fn switch_agent(
         .map_err(error)?;
     Ok(Json(view(buddy, true).map_err(error)?))
 }
-pub async fn archive(Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    buddy::get(&id).map_err(error)?;
+#[derive(Default, Deserialize)]
+pub struct ArchiveQuery {
+    /// Also turn off the Buddy's Routines (the list's Delete); plain
+    /// archiving leaves them as they are.
+    #[serde(default)]
+    pub pause_routines: bool,
+}
+pub async fn archive(
+    Path(id): Path<String>,
+    Query(query): Query<ArchiveQuery>,
+) -> Result<StatusCode, ApiError> {
+    let buddy = buddy::get(&id).map_err(error)?;
+    if query.pause_routines {
+        buddy::routines::pause_all(&buddy).map_err(error)?;
+    }
     db::archive(&database::connection(), &id).map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+#[derive(Deserialize)]
+pub struct PinInput {
+    pub pinned: bool,
+}
+pub async fn pin(
+    Path(id): Path<String>,
+    Json(input): Json<PinInput>,
+) -> Result<Json<Value>, ApiError> {
+    if !db::set_pinned(&database::connection(), &id, input.pinned).map_err(error)? {
+        return Err(error(GroveError::not_found("Buddy not found")));
+    }
+    Ok(Json(
+        view(buddy::get(&id).map_err(error)?, false).map_err(error)?,
+    ))
 }
 pub async fn delegations(Path(id): Path<String>) -> Result<Json<Vec<db::Delegation>>, ApiError> {
     buddy::get(&id).map_err(error)?;
@@ -211,7 +239,9 @@ mod tests {
         assert_eq!(listed[0]["running_delegations"], 0);
         assert_eq!(listed[0]["waiting_delegations"], 0);
         assert_eq!(
-            archive(Path(id.clone())).await.unwrap(),
+            archive(Path(id.clone()), Query(ArchiveQuery::default()))
+                .await
+                .unwrap(),
             StatusCode::NO_CONTENT
         );
         assert_eq!(list(Query(ListQuery::default())).await.unwrap().0.len(), 1);

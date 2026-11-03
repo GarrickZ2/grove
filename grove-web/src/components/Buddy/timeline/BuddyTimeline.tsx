@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, Clock, File, MessageCircle, Send } from "lucide-react";
 import { BuddyAvatar } from "../BuddyAvatar";
+import { mentionRuns, readMentions } from "../buddyMentions";
 import type { Buddy } from "../../../api/buddies";
 import { MarkdownRenderer } from "../../ui/MarkdownRenderer";
 import { ImageLightbox } from "../../ui/ImageLightbox";
@@ -132,9 +133,13 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
         // Session bootstrap stays in the transcript, but is not user-visible text.
         const segments = parseGroveMetaSegments(message.content);
         const visible = segments.filter(segment => !(segment.kind === "meta" && segment.envelope.v === 1 && segment.envelope.type === "grove_session_init"));
-        const content = visible.length === segments.length ? message.content : visible.map(segment => segment.kind === "text" ? segment.content : segment.raw).join("").replace(/^\n+/, "");
+        const shown = visible.length === segments.length ? message.content : visible.map(segment => segment.kind === "text" ? segment.content : segment.raw).join("").replace(/^\n+/, "");
+        // @-mentioned Buddies travel in an envelope; show their names as chips instead.
+        const { text: content, buddies: mentioned } = readMentions(shown);
         if (!content.trim() && !message.attachments?.length) return null;
-        return <div key={row.id} className="buddy-user-turn group/message" onPointerEnter={touch}><UserBubble clientMessageId={message.clientMessageId}>{message.sender === "connect" && <MessageCircle size={13} aria-label="IM Connect" />}{content.trim() && <p>{content}</p>}{message.attachments?.map((file, index) => file.type === "image"
+        return <div key={row.id} className="buddy-user-turn group/message" onPointerEnter={touch}><UserBubble clientMessageId={message.clientMessageId}>{message.sender === "connect" && <MessageCircle size={13} aria-label="IM Connect" />}{content.trim() && <p>{mentionRuns(content, mentioned).map((run, index) => "buddy" in run
+          ? <span key={index} className="buddy-mention-chip" title={run.buddy.role || undefined}><BuddyAvatar id={run.buddy.id} avatar={run.buddy.avatar} size={14} />{run.buddy.name}</span>
+          : run.text)}</p>}{message.attachments?.map((file, index) => file.type === "image"
           ? <TimelineImage key={index} data={file.data} mimeType={file.mimeType} name={file.name || file.label || "Image"} onOpen={setLightbox} />
           : <span className="buddy-file" key={index}><File size={14} />{file.name || file.label || file.uri?.split("/").pop() || "Attachment"}</span>)}</UserBubble><MessageActions text={content} timestamp={message.sentAt} now={now} alignRight /></div>;
       }

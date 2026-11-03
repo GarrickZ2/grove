@@ -527,7 +527,8 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             active_session_id TEXT,
             sort_position INTEGER,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            pinned_at TEXT
         );
         CREATE TABLE IF NOT EXISTS buddy_segments (
             session_id TEXT PRIMARY KEY REFERENCES session(session_id) ON DELETE CASCADE,
@@ -956,6 +957,7 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN cost_currency TEXT;");
     let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN automation_run_id TEXT;");
     let _ = conn.execute_batch("ALTER TABLE session ADD COLUMN archived_at TEXT;");
+    let _ = conn.execute_batch("ALTER TABLE buddies ADD COLUMN pinned_at TEXT;");
     if conn
         .execute_batch("ALTER TABLE session ADD COLUMN updated_at TEXT;")
         .is_ok()
