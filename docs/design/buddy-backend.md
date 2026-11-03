@@ -177,11 +177,12 @@ Segment 用 Buddy 专属 `custom_agent`，权限沿用 Agent 自己的配置，�
 | `list_projects` | 所有已注册 Project（不含 Buddy） | `workspace::load_projects` |
 | `list_tasks` | 某 Project 下 active Task | `tasks::load_tasks` |
 | `list_sessions` | 某 Task 下 Session，含状态（idle / running / waiting） | `tasks::load_chat_sessions` + ACP handle 状态 |
-| `read_session` | 按编号条目分页读取（`limit` / `before` / `after`），剥掉 `<grove-meta>`；`include_tools` 附带工具一行摘要和涉及文件；同时返回 `history.jsonl` 路径与格式说明 | `buddy::session_entries` |
+| `read_session` | 按编号条目分页读取（`limit` / `before` / `after`），剥掉 `<grove-meta>`；`include_tools` 附带工具一行摘要和涉及文件；同时返回 `status`、`current_prompt`、`queue` 与 `history.jsonl` 路径及格式说明 | `buddy::session_entries` |
 | `search_sessions` | 在单个 Session 或整个 Project 的 Session 里按关键词找消息，返回条目编号与片段 | `buddy::session_entries` |
 | `create_project` | 新建 Studio 项目；或新建 / 注册 / 克隆 Coding 项目（本地目录必须在用户 home 内） | `workspace::create_studio_project`、`operations::projects` |
 | `create_task` | 在目标 Project 建 Task，`created_by = buddy:<id>`，可写 notes | Repo 用 `operations::tasks::create_task`，Studio 用 `create_studio_task`，notes 用现有存储接口 |
-| `send` | 合并了原 `delegate` 与 `send_message`：`session` 发给已有 Session，`new` 新开 Session（self / task / new_task）；`follow` 默认 true，结果与等待请求经 Radio 跟进回传；不能发给自己的 Segment | `buddy::delegations`（见 §5） |
+| `send` | 合并了原 `delegate` 与 `send_message`：`session` 发给已有 Session，`new` 新开 Session（self / task / new_task）；`follow` 默认 true，结果与等待请求经 Radio 跟进回传；`interrupt` 发送后停掉对方当前 turn，等同 Send Now；不能发给自己的 Segment | `buddy::delegations`（见 §5） |
+| `manage_queue` | 和用户在输入框的操作一致：`edit` / `remove` 排队消息，`send_now` 停掉当前 turn 让下一条执行 | `submit_queued_edit`、`dequeue_message_by_id`、`cancel` |
 | `list_followups` / `cancel_followup` | 列出 / 停止正在跟进的 Session | `buddy_delegations` 表 |
 | `respond` | 代答跟进中且处于 waiting 的请求：权限只能选一次性选项，表单可填写或拒绝 | `respond_permission_for`、`respond_turn_form` |
 | `create_routine / list / update / delete / run` | 管理本 Buddy 的 Automation，`task_mode=existing`、`session_mode=buddy_active` | `storage::automations` |

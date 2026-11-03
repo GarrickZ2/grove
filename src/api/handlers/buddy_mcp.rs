@@ -282,6 +282,10 @@ struct SendInput {
     /// Report the outcome back to you (default true). false just delivers.
     #[serde(default = "follow_default")]
     follow: bool,
+    /// Stop the target Session's current turn so it gets to your message now
+    /// instead of when that turn ends. The Session keeps its context.
+    #[serde(default)]
+    interrupt: bool,
     #[serde(flatten)]
     files: FilesInput,
 }
@@ -392,7 +396,7 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "send",
-        description = "Send work or a message to a Session and, by default, get its outcome back. Pass session to message an existing Session (any Task or Project), or new to start one: target self for light research in your Local Task, task for an existing Task, new_task to create one; code changes belong in a Task of the target Project. Results, failures and requests waiting for approval or input come back to you as messages; do not poll. Files the user sent you are not passed on by themselves: set forward_user_attachments to hand on their latest attachments, or list paths in attachments."
+        description = "Send work or a message to a Session and, by default, get its outcome back. Pass session to message an existing Session (any Task or Project), or new to start one: target self for light research in your Local Task, task for an existing Task, new_task to create one; code changes belong in a Task of the target Project. Results, failures and requests waiting for approval or input come back to you as messages; do not poll. A message to a busy Session waits until its current turn ends; set interrupt to stop that turn. Files the user sent you are not passed on by themselves: set forward_user_attachments to hand on their latest attachments, or list paths in attachments."
     )]
     async fn send(
         &self,
@@ -401,6 +405,10 @@ impl BuddyMcpService {
     ) -> Result<CallToolResult, McpError> {
         let (buddy, session) = caller(&parts)?;
         let files = input.files.resolve(&buddy, &session)?;
+        let running = match input.session.as_deref().filter(|_| input.interrupt) {
+            Some(target) => crate::buddy::tools::running_session(target).map_err(internal)?,
+            None => None,
+        };
         let result = match (input.session, input.new) {
             (Some(target), None) if input.follow => {
                 let (followup, message_id) = crate::buddy::delegations::follow(
@@ -442,6 +450,10 @@ impl BuddyMcpService {
                 ))
             }
         };
+        // After sending, so the follow-up already waits on the new message.
+        if let Some(handle) = running {
+            handle.cancel().await.map_err(internal)?;
+        }
         success(result)
     }
     #[tool(
@@ -496,7 +508,7 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "cancel_followup",
-        description = "Stop a follow-up: cancels the target Session's current turn and drops your queued messages there."
+        description = "Stop a follow-up: cancels the target Session's current turn and drops your queued messages there. You can message the Session again afterwards."
     )]
     async fn cancel_followup(
         &self,
@@ -506,6 +518,22 @@ impl BuddyMcpService {
         let (buddy, _) = caller(&parts)?;
         success(
             crate::buddy::delegations::cancel(&buddy.id, &input.id)
+                .await
+                .map_err(internal)?,
+        )
+    }
+    #[tool(
+        name = "manage_queue",
+        description = "Work on a Session's queue, as the user can in the composer: edit or remove a queued prompt by its id from read_session, or send_now to stop the current turn so the next queued prompt runs (with nothing queued, this just stops the turn). The result is the queue afterwards."
+    )]
+    async fn manage_queue(
+        &self,
+        Parameters(input): Parameters<crate::buddy::tools::ManageQueueInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        let (buddy, _) = caller(&parts)?;
+        success(
+            crate::buddy::tools::manage_queue(&buddy, input)
                 .await
                 .map_err(internal)?,
         )
@@ -567,7 +595,7 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "read_session",
-        description = "Read a Session as numbered entries (user and assistant messages; Grove envelopes removed), newest page first. Page with before/after using the returned cursors. include_tools adds one line per tool call and the files touched. Entries list their images and files with paths you can pass to send or create_task as attachments; the page's newest images are shown to you. history_path is the raw event log for grep when you need detail."
+        description = "Read a Session as numbered entries (user and assistant messages; Grove envelopes removed), newest page first. Page with before/after using the returned cursors. include_tools adds one line per tool call and the files touched. Entries list their images and files with paths you can pass to send or create_task as attachments; the page's newest images are shown to you. history_path is the raw event log for grep when you need detail. status says whether the Session is idle, running or waiting; current_prompt is what it is working on; queue lists the prompts waiting behind it, next to run first."
     )]
     async fn read_session(
         &self,

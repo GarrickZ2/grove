@@ -194,7 +194,9 @@ pub async fn follow(
         return Err(GroveError::invalid_data("text is required"));
     }
     super::tools::ensure_not_own_segment(buddy, session)?;
-    let existing = db::find_delegation_for_session(&database::connection(), &buddy.id, session)?;
+    // A cancelled follow-up stays closed; messaging that Session again opens a new one.
+    let existing = db::find_delegation_for_session(&database::connection(), &buddy.id, session)?
+        .filter(|delegation| delegation.status != Status::Cancelled);
     let delegation = match existing {
         Some(delegation) => delegation,
         None => {
@@ -1063,5 +1065,11 @@ mod tests {
             .unwrap();
         assert_eq!(first.id, again.id);
         assert!(follow(&buddy, &from, &from, "hi me", &[]).await.is_err());
+        // Cancelling closes that follow-up, not the Session.
+        cancel(&buddy.id, &first.id).await.unwrap();
+        let (fresh, _) = follow(&buddy, &from, "plain-chat", "try again", &[])
+            .await
+            .unwrap();
+        assert_ne!(fresh.id, first.id);
     }
 }

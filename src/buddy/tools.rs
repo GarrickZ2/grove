@@ -2,6 +2,7 @@
 use crate::error::{GroveError, Result};
 use crate::storage::{buddies::Buddy, tasks, workspace};
 use serde_json::{json, Value};
+use std::sync::Arc;
 
 /// Projects as the Buddy sees them: each with the `id` other tools take.
 pub fn list_projects() -> Result<Value> {
@@ -158,6 +159,13 @@ pub fn read_session(input: ReadSessionInput) -> Result<SessionPage> {
         .ok_or_else(|| GroveError::not_found("Session not found"))?;
     let entries = super::session_entries(&project, &task, &input.session, input.include_tools);
     let total = entries.len();
+    let status = session_status(&project, &task, &input.session);
+    let current_prompt = (status != "idle")
+        .then(|| entries.iter().rev().find(|entry| entry.role == "user"))
+        .flatten()
+        .map(|entry| entry.text.clone());
+    let queue = crate::acp::get_session_handle(&format!("{project}:{task}:{}", input.session))
+        .map(|handle| queue_view(&handle));
     let (start, end) = match (input.before, input.after) {
         (Some(_), Some(_)) => {
             return Err(GroveError::invalid_data("Pass before or after, not both"))
@@ -212,6 +220,9 @@ pub fn read_session(input: ReadSessionInput) -> Result<SessionPage> {
         "project": project,
         "task": task,
         "session": chat,
+        "status": status,
+        "current_prompt": current_prompt,
+        "queue": queue.unwrap_or_default(),
         "total": total,
         "entries": listed,
         "files": files,
@@ -528,6 +539,83 @@ pub fn session_attachments(
     super::attachments::deliver(project, task, session, files, images)
 }
 
+/// Queued prompts as the Buddy sees them, next to run first.
+fn queue_view(handle: &crate::acp::AcpSessionHandle) -> Vec<Value> {
+    handle
+        .get_queue()
+        .iter()
+        .map(|message| {
+            json!({
+                "id": message.id,
+                "sender": message.sender,
+                "text": super::strip_meta(&message.text),
+                "attachments": message.attachments.len(),
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum QueueAction {
+    /// Replace the text of a queued prompt.
+    Edit { id: String, text: String },
+    /// Take a prompt out of the queue.
+    Remove { id: String },
+    /// Stop the current turn so the next queued prompt runs now.
+    SendNow,
+}
+
+#[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ManageQueueInput {
+    pub session: String,
+    pub action: QueueAction,
+}
+
+/// What the user can do to a Session's queue in the composer.
+pub async fn manage_queue(buddy: &Buddy, input: ManageQueueInput) -> Result<Value> {
+    ensure_not_own_segment(buddy, &input.session)?;
+    let (project, task, _) = tasks::find_chat_session(&input.session)?
+        .ok_or_else(|| GroveError::not_found("Session not found"))?;
+    let handle = crate::acp::get_session_handle(&format!("{project}:{task}:{}", input.session))
+        .ok_or_else(|| GroveError::not_found("That Session is not running"))?;
+    let gone = || GroveError::not_found("That prompt is no longer queued");
+    match input.action {
+        QueueAction::Edit { id, text } => {
+            // The envelope says who sent it; only what was said changes.
+            let queue = handle.get_queue();
+            let queued = queue.iter().find(|m| m.id == id).ok_or_else(gone)?;
+            let body = super::strip_meta(&queued.text);
+            let envelope = queued.text.strip_suffix(body.as_str()).unwrap_or("");
+            let text = format!("{envelope}{text}");
+            let (found, messages) = handle.submit_queued_edit(&id, text, None).await?;
+            handle.emit(crate::acp::AcpUpdate::QueueUpdate { messages });
+            if !found {
+                return Err(gone());
+            }
+        }
+        QueueAction::Remove { id } => {
+            let (found, messages) = handle.dequeue_message_by_id(&id);
+            handle.emit(crate::acp::AcpUpdate::QueueUpdate { messages });
+            if !found {
+                return Err(gone());
+            }
+        }
+        QueueAction::SendNow => handle.cancel().await?,
+    }
+    Ok(json!({ "queue": queue_view(&handle) }))
+}
+
+/// The Session's live handle while a turn is running there.
+pub fn running_session(session: &str) -> Result<Option<Arc<crate::acp::AcpSessionHandle>>> {
+    let (project, task, _) = tasks::find_chat_session(session)?
+        .ok_or_else(|| GroveError::not_found("Session not found"))?;
+    Ok(
+        crate::acp::get_session_handle(&format!("{project}:{task}:{session}"))
+            .filter(|handle| handle.is_busy.load(std::sync::atomic::Ordering::Acquire)),
+    )
+}
+
 pub async fn send(
     buddy: &Buddy,
     session: &str,
@@ -638,14 +726,53 @@ mod tests {
         assert_eq!(update.2.as_deref(), Some(id.as_str()));
         assert!(update.0.contains("<grove-meta>"));
         assert!(update.0.ends_with("hello"));
+        assert!(running_session("target-chat").unwrap().is_none());
         handle
             .is_busy
             .store(true, std::sync::atomic::Ordering::Release);
+        assert!(running_session("target-chat").unwrap().is_some());
         let queued = send(&buddy, "target-chat", "next", &[]).await.unwrap();
         let queue = handle.get_queue();
         assert_eq!(queue.len(), 1);
         assert_eq!(queue[0].id, queued);
         assert_eq!(queue[0].sender.as_deref(), Some("buddy:sender"));
+
+        let page = read_session(ReadSessionInput {
+            session: "target-chat".into(),
+            ..Default::default()
+        })
+        .unwrap()
+        .value;
+        assert_eq!(page["status"], "running");
+        assert_eq!(page["queue"][0]["id"], queued.as_str());
+        assert_eq!(page["queue"][0]["text"], "next");
+
+        let manage = |action| {
+            manage_queue(
+                &buddy,
+                ManageQueueInput {
+                    session: "target-chat".into(),
+                    action,
+                },
+            )
+        };
+        let edited = manage(QueueAction::Edit {
+            id: queued.clone(),
+            text: "changed".into(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(edited["queue"][0]["text"], "changed");
+        let edited = handle.get_queue();
+        assert!(edited[0].text.starts_with("<grove-meta>"));
+        assert!(edited[0].text.ends_with("changed"));
+
+        let removed = manage(QueueAction::Remove { id: queued.clone() })
+            .await
+            .unwrap();
+        assert_eq!(removed["queue"], json!([]));
+        assert!(manage(QueueAction::Remove { id: queued }).await.is_err());
+        manage(QueueAction::SendNow).await.unwrap();
     }
 
     #[test]
