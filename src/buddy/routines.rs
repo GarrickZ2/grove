@@ -33,6 +33,32 @@ pub struct RoutineInput {
     pub ends_at: Option<i64>,
 }
 
+/// A partial edit: what is left out stays as it is.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct RoutinePatch {
+    pub name: Option<String>,
+    pub prompt: Option<String>,
+    pub schedule_cron: Option<String>,
+    pub enabled: Option<bool>,
+    pub event_triggers: Option<Vec<String>>,
+    /// Unix seconds; null clears it, turning a one-time Routine recurring.
+    #[serde(default, deserialize_with = "present")]
+    pub run_once_at: Option<Option<i64>>,
+    /// Unix seconds; null clears it.
+    #[serde(default, deserialize_with = "present")]
+    pub starts_at: Option<Option<i64>>,
+    /// Unix seconds; null clears it.
+    #[serde(default, deserialize_with = "present")]
+    pub ends_at: Option<Option<i64>>,
+}
+
+/// Tells an explicit null (clear it) from a field left out (keep it).
+fn present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<i64>>, D::Error> {
+    Option::deserialize(deserializer).map(Some)
+}
+
 impl RoutineInput {
     fn window(&self) -> ScheduleWindow {
         ScheduleWindow {
@@ -134,6 +160,20 @@ pub fn save(buddy: &Buddy, id: Option<&str>, input: RoutineInput) -> Result<Auto
     }
     Ok(routine)
 }
+pub fn update(buddy: &Buddy, id: &str, patch: RoutinePatch) -> Result<Automation> {
+    let current = get(buddy, id)?;
+    let input = RoutineInput {
+        name: patch.name.unwrap_or(current.name),
+        prompt: patch.prompt.unwrap_or(current.prompt),
+        schedule_cron: patch.schedule_cron.unwrap_or(current.schedule_cron),
+        enabled: patch.enabled.unwrap_or(current.enabled),
+        event_triggers: patch.event_triggers.unwrap_or(current.event_triggers),
+        run_once_at: patch.run_once_at.unwrap_or(current.window.run_once_at),
+        starts_at: patch.starts_at.unwrap_or(current.window.starts_at),
+        ends_at: patch.ends_at.unwrap_or(current.window.ends_at),
+    };
+    save(buddy, Some(id), input)
+}
 pub fn delete(buddy: &Buddy, id: &str) -> Result<()> {
     get(buddy, id)?;
     automations::delete(id)?;
@@ -159,6 +199,45 @@ mod tests {
             ends_at: None,
         }
     }
+    #[tokio::test]
+    async fn an_edit_changes_only_what_it_names() {
+        let _lock = database::test_lock().lock().await;
+        let _store = Store::new();
+        let buddy = seed_buddy(&database::connection(), "routine-patch");
+        let id = save(&buddy, None, input()).unwrap().id;
+        let off = update(
+            &buddy,
+            &id,
+            RoutinePatch {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!off.enabled);
+        assert!(off.next_run_at.is_none());
+        assert_eq!(off.prompt, "Check progress");
+        let renamed = update(
+            &buddy,
+            &id,
+            RoutinePatch {
+                name: Some("Weekly".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(renamed.name, "Weekly");
+        assert!(!renamed.enabled);
+        assert_eq!(renamed.schedule_cron, "0 9 * * *");
+    }
+    #[test]
+    fn a_null_clears_a_time_and_leaving_it_out_keeps_it() {
+        let patch: RoutinePatch =
+            serde_json::from_value(serde_json::json!({"run_once_at": null})).unwrap();
+        assert_eq!(patch.run_once_at, Some(None));
+        assert_eq!(patch.starts_at, None);
+    }
+
     #[tokio::test]
     async fn routine_survives_switch_and_uses_current_segment() {
         let _lock = database::test_lock().lock().await;

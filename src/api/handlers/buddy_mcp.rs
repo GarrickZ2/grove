@@ -329,7 +329,7 @@ struct RoutineId {
 struct RoutineUpdate {
     id: String,
     #[serde(flatten)]
-    input: crate::buddy::routines::RoutineInput,
+    patch: crate::buddy::routines::RoutinePatch,
 }
 
 #[tool_router]
@@ -359,7 +359,7 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "update_routine",
-        description = "Update a Routine owned by this Buddy. This replaces the whole Routine: always pass name, prompt and either schedule_cron or run_once_at; pass enabled, event_triggers, starts_at and ends_at deliberately to keep or change them."
+        description = "Update a Routine owned by this Buddy. Pass only what changes; everything else stays as it is. Set enabled to turn it on or off. Pass null for run_once_at, starts_at or ends_at to clear it."
     )]
     async fn routine_update(
         &self,
@@ -367,9 +367,7 @@ impl BuddyMcpService {
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
         let (buddy, _) = caller(&parts)?;
-        success(
-            crate::buddy::routines::save(&buddy, Some(&input.id), input.input).map_err(internal)?,
-        )
+        success(crate::buddy::routines::update(&buddy, &input.id, input.patch).map_err(internal)?)
     }
     #[tool(
         name = "delete_routine",
