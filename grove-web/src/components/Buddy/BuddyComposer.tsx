@@ -49,8 +49,15 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, men
   useLayoutEffect(() => {
     const element = input.current;
     if (!element) return;
-    element.style.height = "auto";
-    element.style.height = `${element.scrollHeight}px`;
+    // scrollHeight leaves out borders; add them back so a bordered field does not scroll by a pixel or two.
+    const fit = () => { element.style.height = "auto"; element.style.height = `${element.scrollHeight + element.offsetHeight - element.clientHeight}px`; };
+    fit();
+    // Re-measure when the width changes (a window still settling its size would otherwise leave it tall).
+    if (typeof ResizeObserver === "undefined") return;
+    let width = element.clientWidth;
+    const observer = new ResizeObserver(() => { if (element.clientWidth !== width) { width = element.clientWidth; fit(); } });
+    observer.observe(element);
+    return () => observer.disconnect();
   }, [text, orbit]);
   const { send, stop, sending, connected } = useBuddyComposer(buddy, onSent, promptCaps);
   const addFiles = (added: File[]) => { if (added.length) setFiles((current) => [...current, ...added]); };

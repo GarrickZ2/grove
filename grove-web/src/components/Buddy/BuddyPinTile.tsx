@@ -22,7 +22,7 @@ export function BuddyPinTile({ buddy, selected, unread, size, onSelect, onMenu, 
     onContextMenu={(event) => { event.preventDefault(); onMenu({ x: event.clientX, y: event.clientY }); }}
     onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); onMenu({ x: rect.left + rect.width / 2, y: rect.bottom }); } }}>
     <span className="buddy-pin-disc" style={{ width: size, height: size, ["--pin-color" as string]: color }}>
-      <BuddyAvatar id={buddy.id} avatar={buddy.avatar} size={Math.round(size * 0.62)} state={buddy.status} />
+      <BuddyAvatar id={buddy.id} avatar={buddy.avatar} size={size} state={buddy.status} />
       {buddy.status !== "idle" && <span className={`buddy-status-dot is-${buddy.status}`} aria-hidden="true" />}
     </span>
     <span className="buddy-pin-name">{unread && <span className="buddy-unread-dot" aria-hidden="true" />}<span>{buddy.name}</span></span>

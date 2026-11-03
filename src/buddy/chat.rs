@@ -149,7 +149,9 @@ pub async fn send(
     crate::agent_graph::tools::deliver_prompt(&handle, message)
         .await
         .map_err(|e| GroveError::storage(e.to_string()))?;
-    Ok(json!({"message_id": id, "to": {"id": target.id, "name": target_name}}))
+    // The text is echoed so the sender's timeline can show it even when the
+    // agent's tool-call events leave out the input.
+    Ok(json!({"message_id": id, "to": {"id": target.id, "name": target_name}, "text": text}))
 }
 
 #[cfg(test)]

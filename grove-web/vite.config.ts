@@ -49,6 +49,8 @@ export default defineConfig(({ mode }) => ({
         radio: resolve(__dirname, 'radio.html'),
         tray: resolve(__dirname, 'tray.html'),
         'phone-tray': resolve(__dirname, 'phone-tray.html'),
+        'buddy-mini': resolve(__dirname, 'buddy-mini.html'),
+        launch: resolve(__dirname, 'launch.html'),
       },
     },
   },

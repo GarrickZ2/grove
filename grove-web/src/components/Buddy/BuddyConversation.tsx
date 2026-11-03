@@ -18,7 +18,7 @@ export function BuddyConversation({ buddy, onChanged, arriving = false, others =
   const handlers = requestHandlers({ sendEvent: session.sendEvent, dispatch: session.dispatch, sendText: text => composer.send(text, []) });
   return <SentPopContext.Provider value={orbit ? sentPops : null}><div className="buddy-conversation">
     {session.error && <p role="alert">{session.error}<button type="button" className="buddy-button" onClick={session.reconnect}>Reconnect</button></p>}
-    <BuddyTimeline arriving={arriving} hasEarlier={session.hasEarlier} loadingEarlier={session.loadingEarlier} onLoadEarlier={() => { void session.loadEarlier(); }} buddy={current} state={session.state} connected={session.connected} loading={session.loading}
+    <BuddyTimeline others={others} arriving={arriving} hasEarlier={session.hasEarlier} loadingEarlier={session.loadingEarlier} onLoadEarlier={() => { void session.loadEarlier(); }} buddy={current} state={session.state} connected={session.connected} loading={session.loading}
       onRespond={handlers.respond} onAnswer={handlers.answer} onSkip={handlers.skip} onOpenQuestion={handlers.open} />
     <BuddyComposer buddy={current} onSent={sent} promptCaps={session.promptCaps} mentionable={others} />
   </div></SentPopContext.Provider>;

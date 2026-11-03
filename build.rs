@@ -93,6 +93,12 @@ fn build_tauri() {
                 "play_sound",
                 "notify_banner",
                 "is_remote_mode_command",
+                "buddy_mini_open",
+                "buddy_mini_set_expanded",
+                "buddy_mini_set_collapsed_size",
+                "buddy_mini_close",
+                "buddy_mini_open_in_main",
+                "launch_reveal",
             ]),
         ))
         .expect("failed to run tauri-build");

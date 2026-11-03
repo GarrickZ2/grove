@@ -52,7 +52,7 @@ export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, o
   };
 
   const row = (buddy: BuddySummary, sortable?: ReturnType<typeof list.itemProps>) => {
-    const item = <BuddyListItem buddy={buddy} selected={buddy.id === selectedId} unread={isUnread(buddy.id)} avatarSize={phone ? 44 : 30}
+    const item = <BuddyListItem buddy={buddy} selected={buddy.id === selectedId} unread={isUnread(buddy.id)} avatarSize={phone ? 44 : 36}
       onSelect={() => onSelect(buddy.id)} onMenu={(at) => openMenu(buddy.id, at)} sortable={sortable} />;
     if (!phone) return item;
     return <BuddySwipeRow unread={isUnread(buddy.id)} pinned={buddy.pinned} open={swipeOpen === buddy.id}
@@ -73,7 +73,7 @@ export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, o
             const buddy = byId.get(id)!, dragging = pins.draggingId === id;
             return <motion.div key={id} layout={dragging ? false : "position"} transition={layout} className={`buddy-pin-slot${dragging ? " is-dragging" : ""}`}
               style={dragging ? { x: pins.offset.x, y: pins.offset.y } : { x: 0, y: 0 }}>
-              <BuddyPinTile buddy={buddy} selected={id === selectedId} unread={isUnread(id)} size={phone ? 68 : 52}
+              <BuddyPinTile buddy={buddy} selected={id === selectedId} unread={isUnread(id)} size={phone ? 56 : 44}
                 onSelect={() => onSelect(id)} onMenu={(at) => openMenu(id, at)} sortable={pins.itemProps(id)} />
             </motion.div>;
           })}

@@ -2,6 +2,7 @@ import { BuddyOverlay } from "./components/Buddy/BuddyOverlay";
 import { BUDDY_NAVIGATE_EVENT } from "./components/Buddy/buddyNavigation";
 import { useBuddyOpen } from "./hooks/useBuddyOpen";
 import { BuddyLaunchContext } from "./components/Buddy/buddyLaunchContext";
+import { isTauriShell as inTauriShell } from "./utils/tauriShell";
 import { IosLiveActivity } from "./ios/IosLiveActivity";
 import { isIosClient } from "./utils/platform";
 import { useState, useContext, useEffect, useCallback, useRef } from "react";
@@ -853,6 +854,16 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   useEffect(() => {
     buddiesRef.current = buddies;
   }, [buddies]);
+  // The mini Buddy's "Open in Grove": show that Buddy here.
+  useEffect(() => {
+    if (!inTauriShell) return;
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void listen<string>("buddy-mini:open-in-main", (event) => buddiesRef.current.open(event.payload))
+      .then((unlisten) => { if (cancelled) unlisten(); else stop = unlisten; })
+      .catch(() => {});
+    return () => { cancelled = true; stop?.(); };
+  }, []);
   useEffect(() => {
     selectProjectRef.current = selectProject;
   }, [selectProject]);

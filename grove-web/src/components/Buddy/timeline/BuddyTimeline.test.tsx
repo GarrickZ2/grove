@@ -37,7 +37,7 @@ it("does not render an empty bootstrap bubble, but retains attachments and the I
   expect(host.querySelector(".buddy-user-message")).toBeNull();
   render(fromEvents([{ type: "user_message", text: init, sender: "connect", attachments: [{ type: "resource", name: "notes.txt", uri: "file:///notes.txt" }] }]));
   expect(host.querySelector(".buddy-user-message")?.textContent).toBe("notes.txt");
-  expect(host.querySelector('[aria-label="IM Connect"]')).not.toBeNull();
+  expect(host.querySelector(".buddy-user-via")?.textContent).toBe("via IM");
 });
 
 it("shows sent images inline and opens them full size", () => {

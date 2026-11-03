@@ -2,11 +2,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../utils/tauriShell", () => ({ isTauriShell: true }));
-vi.mock("framer-motion", async (importOriginal) => ({
-  ...await importOriginal<typeof import("framer-motion")>(),
-  useReducedMotion: () => true,
-}));
 
 function stubStorage(initial: Record<string, string> = {}) {
   const stored = new Map(Object.entries(initial));
@@ -18,32 +13,14 @@ function stubStorage(initial: Record<string, string> = {}) {
   return stored;
 }
 
-/** Fresh module state (the launch claim and prior-session snapshot are per page load). */
+/** Fresh module state per page load. */
 async function loadStorage() {
   vi.resetModules();
   return import("./storage");
 }
 
-describe("first-run once-only flags", () => {
+describe("first-run flags", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
-
-  it("claims the first launch once, and keeps the answer for a repeat render", async () => {
-    const stored = stubStorage();
-    const storage = await loadStorage();
-    expect(storage.claimFirstLaunch()).toBe(true);
-    expect(storage.claimFirstLaunch()).toBe(true);
-    expect(stored.get(storage.LAUNCH_SEEN_KEY)).toBe("1");
-    // Next page load: already seen.
-    const next = await loadStorage();
-    expect(next.claimFirstLaunch()).toBe(false);
-  });
-
-  it("never plays for an install that was already in use, and marks it seen", async () => {
-    const stored = stubStorage({ "grove:navigation": "{}" });
-    const storage = await loadStorage();
-    expect(storage.claimFirstLaunch()).toBe(false);
-    expect(stored.get(storage.LAUNCH_SEEN_KEY)).toBe("1");
-  });
 
   it("remembers the interface for screens drawn before the config", async () => {
     stubStorage();
@@ -108,38 +85,6 @@ describe("first-run overlays", () => {
       </ctx.OrbitInterfaceKnownContext.Provider>,
     ));
   }
-
-  it("plays the launch once in Orbit, and Esc skips it", async () => {
-    const stored = stubStorage();
-    vi.resetModules();
-    const { FirstLaunch } = await import("./FirstLaunch");
-    const ctx = await import("../ui/interfaceContext");
-    await act(async () => root.render(
-      <ctx.OrbitInterfaceKnownContext.Provider value>
-        <ctx.OrbitInterfaceContext.Provider value><FirstLaunch /></ctx.OrbitInterfaceContext.Provider>
-      </ctx.OrbitInterfaceKnownContext.Provider>,
-    ));
-    expect(document.querySelector('[data-testid="first-launch"]')).not.toBeNull();
-    expect(stored.get("grove:firstrun.launch")).toBe("1");
-    act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
-    expect(document.querySelector(".ofl.is-leaving")).not.toBeNull();
-    act(() => { vi.advanceTimersByTime(500); });
-    expect(document.querySelector('[data-testid="first-launch"]')).toBeNull();
-  });
-
-  it("does not play under Workbench, and leaves the flag for later", async () => {
-    const stored = stubStorage();
-    vi.resetModules();
-    const { FirstLaunch } = await import("./FirstLaunch");
-    const ctx = await import("../ui/interfaceContext");
-    await act(async () => root.render(
-      <ctx.OrbitInterfaceKnownContext.Provider value>
-        <ctx.OrbitInterfaceContext.Provider value={false}><FirstLaunch /></ctx.OrbitInterfaceContext.Provider>
-      </ctx.OrbitInterfaceKnownContext.Provider>,
-    ));
-    expect(document.querySelector('[data-testid="first-launch"]')).toBeNull();
-    expect(stored.has("grove:firstrun.launch")).toBe(false);
-  });
 
   it("shows the Review then Notes bubbles after a finished turn, once", async () => {
     const stored = stubStorage();

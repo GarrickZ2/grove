@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/schema.json",
+  "identifier": "launch",
+  "description": "Launch window — the floating start-up mark; it can only hand over to the main window.",
+  "windows": ["launch"],
+  "local": true,
+  "remote": {
+    "urls": ["http://localhost:*"]
+  },
+  "permissions": [
+    "core:default",
+    "allow-launch-reveal"
+  ]
+}

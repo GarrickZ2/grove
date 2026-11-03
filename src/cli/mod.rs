@@ -12,6 +12,8 @@ pub mod web;
 
 #[cfg(feature = "gui")]
 pub mod gui;
+#[cfg(feature = "gui")]
+pub mod gui_launch;
 
 use clap::{Parser, Subcommand};
 

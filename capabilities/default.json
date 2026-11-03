@@ -31,6 +31,7 @@
     "allow-play-sound",
     "allow-notify-banner",
     "allow-is-remote-mode-command",
-    "allow-tray-take-pending-navigate"
+    "allow-tray-take-pending-navigate",
+    "allow-buddy-mini-open"
   ]
 }

@@ -116,7 +116,7 @@ tokio-tungstenite = { version = "0.26", default-features = false, features = ["c
 lark-channel = { version = "0.6", features = ["websocket"] }
 
 # GUI (Tauri) - optional
-tauri = { version = "2", optional = true , features = ["devtools", "tray-icon", "image-png"] }
+tauri = { version = "2", optional = true , features = ["devtools", "tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-shell = { version = "2", optional = true }
 tauri-plugin-global-shortcut = { version = "2", optional = true }
 tauri-plugin-updater = { version = "2", optional = true }

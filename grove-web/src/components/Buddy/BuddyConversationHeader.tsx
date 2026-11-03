@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { ArrowLeft, PanelRight } from "lucide-react";
+import { ArrowLeft, PanelRight, PictureInPicture2 } from "lucide-react";
+import { invokeQuiet, isTauriShell } from "../../utils/tauriShell";
 import type { Buddy } from "../../api/buddies";
 import { BuddyAvatar } from "./BuddyAvatar";
 import { BuddyConnectButton } from "./BuddyConnectButton";
@@ -14,6 +15,8 @@ export function BuddyConversationHeader({ buddy, panelOpen, onPanel, onBack, pho
     {switcher ?? <><BuddyAvatar id={buddy.id} avatar={buddy.avatar} size={phone ? 30 : 26} state={buddy.status} />
     <div className="buddy-header-copy"><h2>{buddy.name}</h2><p className={`buddy-header-status is-${tone}`}>{status}</p></div></>}
     <BuddyConnectButton buddy={buddy} />
+    {/* Desktop app: keep talking in a small window that floats over other apps. */}
+    {isTauriShell && !phone && <button type="button" className="orbit-icon-button buddy-icon-button" aria-label="Open in mini window" title="Open in mini window" onClick={() => { void invokeQuiet("buddy_mini_open", { buddyId: buddy.id }); }}><PictureInPicture2 /></button>}
     <button type="button" className="orbit-icon-button buddy-icon-button" aria-label={panelOpen ? "Close Buddy panel" : "Open Buddy panel"} aria-expanded={panelOpen} onClick={onPanel}><PanelRight /></button>
   </header>;
 }

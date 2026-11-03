@@ -78,6 +78,14 @@ it("takes turn timing and send times from backend stamps, not the replay clock",
   expect(state.messages[0]).toMatchObject({ sentAt: 1_793_505_584_895 });
   expect(state.messages[1]).toMatchObject({ startTs: 1_793_505_584, endTs: 1_793_505_656 });
 });
+it("takes the recipient and text from the tool result when the call carries no input", () => {
+  // MCP text content wrapping the JSON result, as agents report it.
+  const state = run([
+    { type: "tool_call", id: "m", title: "mcp__grove_buddy__message_buddy" },
+    { type: "tool_call_update", id: "m", status: "completed", content: [{ type: "content", content: { type: "text", text: JSON.stringify({ message_id: "x", to: { id: "demo-1", name: "Demo" }, text: "Hello from Release Captain" }) } }] },
+  ]);
+  expect(state.rows.find(row => row.id === "buddy-chat-m")).toMatchObject({ notice: { lead: "Sent to", name: "Demo", buddyId: "demo-1", detail: "Hello from Release Captain" } });
+});
 it("shows a message to another Buddy as a notice with its text, named from the tool result", () => {
   const state = run([
     { type: "tool_call", id: "m", title: "mcp__grove_buddy__message_buddy", input: [{ label: "buddy", value: "bob" }, { label: "text", value: "Is the release branch cut?" }] },
@@ -86,7 +94,7 @@ it("shows a message to another Buddy as a notice with its text, named from the t
   ]);
   const notices = state.rows.filter(row => row.kind === "event");
   expect(notices).toMatchObject([
-    { id: "buddy-chat-m", notice: { lead: "Sent to", name: "Bob", detail: "Is the release branch cut?", tone: "neutral" } },
+    { id: "buddy-chat-m", notice: { lead: "Sent to", name: "Bob", buddyId: "bob", detail: "Is the release branch cut?", tone: "neutral" } },
     { id: "buddy-chat-r", notice: { lead: "Couldn't reply to", name: "Bob", tone: "error" } },
   ]);
 });
