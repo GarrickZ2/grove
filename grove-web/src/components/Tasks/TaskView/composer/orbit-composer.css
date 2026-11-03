@@ -90,7 +90,7 @@
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
-  animation: oc-orbit 6s linear infinite;
+  animation: oc-orbit 3.2s linear infinite;
 }
 @keyframes oc-orbit { to { --oc-ang: 360deg; } }
 .oc-shell > * { position: relative; z-index: 1; }
