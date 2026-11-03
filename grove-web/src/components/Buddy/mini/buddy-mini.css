@@ -10,6 +10,8 @@ html.buddy-mini-page,html.buddy-mini-page body,html.buddy-mini-page #root{height
   transform-origin:calc(100% - 30px) calc(100% - 30px);animation:buddy-mini-grow .26s cubic-bezier(.2,.9,.25,1.04) both}
 :root[data-theme="dark"] .buddy-app.buddy-mini{box-shadow:0 0 0 .5px rgb(255 255 255/.14),0 1px 3px rgb(0 0 0/.3),0 6px 16px -4px rgb(0 0 0/.5)}
 .buddy-app.buddy-mini.is-closing{animation:buddy-mini-shrink .16s cubic-bezier(.4,0,1,1) both;pointer-events:none}
+/* Collapsed, the panel stays laid out off-screen at its own size: the conversation keeps its connection and scroll. */
+.buddy-app.buddy-mini.is-collapsed{inset:auto;top:0;left:-10000px;visibility:hidden;animation:none}
 /* Grows out of the bubble's corner: from a small rounded square to the panel. */
 @keyframes buddy-mini-grow{from{opacity:0;transform:scale(.16);border-radius:40px}to{opacity:1;transform:none;border-radius:14px}}
 @keyframes buddy-mini-shrink{from{opacity:1;transform:none}to{opacity:0;transform:scale(.16);border-radius:40px}}

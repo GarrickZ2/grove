@@ -30,8 +30,9 @@ type Peek = { kind: "typing" } | { kind: "reply" | "waiting"; text: string };
  * The mini Buddy window (desktop app only): one Buddy at a time, floating
  * over other apps. Collapsed it is the avatar; a click grows a compact
  * conversation out of it, a drag moves the window. The arrow hands the
- * conversation back to Grove (and closes this window). While collapsed, live
- * status events keep the Buddy fresh, so a reply lights the bubble.
+ * conversation back to Grove (and closes this window). While collapsed, the
+ * conversation stays mounted off-screen, so it stays connected and reopens at
+ * once; live status events keep the Buddy fresh, so a reply lights the bubble.
  */
 export function BuddyMini() {
   const { authReady } = useShellAuth();
@@ -51,6 +52,9 @@ function MiniWindow() {
   const [error, setError] = useState<string | null>(null);
   /** Activity seen when collapsing; newer activity marks the bubble unread. */
   const [seenAt, setSeenAt] = useState<string | null>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  /** The panel's size, held off-screen so scrolling stays put while collapsed. */
+  const [heldSize, setHeldSize] = useState<{ width: number; height: number }>();
 
   /** The reply shown after a turn finishes while collapsed. */
   const [reply, setReply] = useState<string | null>(null);
@@ -86,7 +90,10 @@ function MiniWindow() {
   // Expand: grow the window first (the bubble keeps its corner), then the panel grows out of it.
   const expand = () => { void invoke("buddy_mini_set_expanded", { expanded: true }).catch(() => {}).finally(() => setPhase("expanded")); };
   // Collapse: the panel shrinks into the corner, then the window follows.
-  const collapse = () => { setSeenAt(buddy?.last_activity_at ?? null); setSwitching(false); setPhase("closing"); };
+  const collapse = () => {
+    if (panel.current) setHeldSize({ width: panel.current.offsetWidth, height: panel.current.offsetHeight });
+    setSeenAt(buddy?.last_activity_at ?? null); setSwitching(false); setPhase("closing");
+  };
   const collapsed = () => { setPhase("collapsed"); void invoke("buddy_mini_set_expanded", { expanded: false }).catch(() => {}); };
 
   const waiting = buddy?.status === "waiting" || (buddy?.waiting_delegations ?? 0) > 0;
@@ -94,9 +101,10 @@ function MiniWindow() {
     : waiting ? { kind: "waiting", text: buddy.status === "waiting" ? "Needs your approval" : "A subagent needs you" }
     : reply ? { kind: "reply", text: reply }
     : buddy.status === "working" ? { kind: "typing" } : null;
-  if (phase === "collapsed") return <Bubble buddy={buddy} peek={peek} unread={!!buddy?.last_activity_at && buddy.last_activity_at !== seenAt}
-    onOpen={() => { setReply(null); expand(); }} onDismissReply={dismissReply} />;
-  return <div className={`buddy-app buddy-mini${orbit ? " orbit-ui" : ""}${phase === "closing" ? " is-closing" : ""}`}
+  const isCollapsed = phase === "collapsed";
+  return <>{isCollapsed && <Bubble buddy={buddy} peek={peek} unread={!!buddy?.last_activity_at && buddy.last_activity_at !== seenAt}
+    onOpen={() => { setReply(null); expand(); }} onDismissReply={dismissReply} />}
+  <div ref={panel} className={`buddy-app buddy-mini${orbit ? " orbit-ui" : ""}${phase === "closing" ? " is-closing" : ""}${isCollapsed ? " is-collapsed" : ""}`} style={isCollapsed ? heldSize : undefined}
     onAnimationEnd={(event) => { if (event.target === event.currentTarget && phase === "closing") collapsed(); }}
     onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented && !switching) collapse(); }}>
     <header className="buddy-mini-header" data-tauri-drag-region>
@@ -112,8 +120,8 @@ function MiniWindow() {
       <button type="button" onClick={() => { setId(item.id); setSwitching(false); }}><BuddyAvatar id={item.id} avatar={item.avatar} size={20} state={item.status} /><span>{item.name}</span>{item.role && <small>{item.role}</small>}</button>
     </li>)}</ul>}
     {error && <p role="alert" className="buddy-mini-error">{error}</p>}
-    {buddy && <BuddyConversation key={`${buddy.id}-${buddy.active_session_id}`} buddy={buddy} onChanged={() => { void refresh(); }} others={others.filter((item) => item.id !== buddy.id)} />}
-  </div>;
+    {buddy && <BuddyConversation key={`${buddy.id}-${buddy.active_session_id}`} buddy={buddy} open={!isCollapsed} onChanged={() => { void refresh(); }} others={others.filter((item) => item.id !== buddy.id)} />}
+  </div></>;
 }
 
 /** The collapsed avatar: click to open, drag to move the window. Beside it, a speech bubble: typing dots while it works, its reply when done, or a request. */
