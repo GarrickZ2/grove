@@ -5,14 +5,11 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use chrono::Utc;
 use std::process::Command;
 
 use crate::git;
 use crate::git::git_cmd;
 use crate::model::loader;
-use crate::storage::{tasks, workspace};
-use crate::watcher;
 
 use super::types::*;
 use crate::api::handlers::common::find_project_by_id;
@@ -20,7 +17,6 @@ use crate::api::handlers::common::find_project_by_id;
 /// GET /api/v1/projects/{id}/stats
 pub async fn get_stats(Path(id): Path<String>) -> Result<Json<ProjectStatsResponse>, StatusCode> {
     let (project, _) = find_project_by_id(&id)?;
-    let project_key = workspace::project_hash(&project.path);
 
     if !std::path::Path::new(&project.path).exists() {
         return Ok(Json(ProjectStatsResponse {
@@ -29,7 +25,6 @@ pub async fn get_stats(Path(id): Path<String>) -> Result<Json<ProjectStatsRespon
             idle_tasks: 0,
             merged_tasks: 0,
             archived_tasks: 0,
-            weekly_activity: vec![0; 7],
         }));
     }
 
@@ -58,29 +53,12 @@ pub async fn get_stats(Path(id): Path<String>) -> Result<Json<ProjectStatsRespon
     let total_tasks = active.len() as u32;
     let archived_tasks = archived.len() as u32;
 
-    let now = Utc::now();
-    let mut weekly: [u32; 7] = [0; 7];
-    let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
-
-    for task in &active_tasks {
-        if let Ok(events) = watcher::load_edit_history(&project_key, &task.id) {
-            for event in events {
-                let duration = now.signed_duration_since(event.timestamp);
-                let days_ago = duration.num_days();
-                if (0..7).contains(&days_ago) {
-                    weekly[days_ago as usize] += 1;
-                }
-            }
-        }
-    }
-
     Ok(Json(ProjectStatsResponse {
         total_tasks,
         live_tasks,
         idle_tasks,
         merged_tasks,
         archived_tasks,
-        weekly_activity: weekly.to_vec(),
     }))
 }
 

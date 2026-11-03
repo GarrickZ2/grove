@@ -1,60 +1,67 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  getTaskStats,
   getDiff,
   getCommits,
   getLinkedProjects,
   updateLinkedProjects,
   listProjects,
-  type TaskStatsResponse,
   type DiffResponse,
   type CommitsResponse,
   type LinkedProjectItem,
   type ProjectListItem,
 } from "../../../../api";
+import { getTaskStatistics, type PeriodData, type TimeseriesBucket } from "../../../../api/statistics";
 import {
   LINKED_PROJECTS_CHANGED_EVENT,
   type LinkedProjectsChangedDetail,
 } from "../../../../hooks/useLinkedReviewProjects";
 
+/** Days of hourly usage fetched for the Usage chart. */
+export const USAGE_DAYS = 14;
+
 /**
- * Task Info data shared by the Workbench and Orbit renders: edit stats, the
- * branch diff and its commits. Diff and commits are best-effort (Studio tasks
- * have neither), so only a stats failure counts as an error.
+ * Task Info data shared by the Workbench and Orbit renders: the branch diff,
+ * its commits and the task's agent usage (all time, plus the last
+ * `USAGE_DAYS` days hourly for the chart). All best-effort: Studio tasks have
+ * no diff or commits, and a task nobody has chatted in has no usage.
  */
 export function useTaskStats(projectId: string, taskId: string) {
-  const [stats, setStats] = useState<TaskStatsResponse | null>(null);
   const [diffData, setDiffData] = useState<DiffResponse | null>(null);
   const [commitsData, setCommitsData] = useState<CommitsResponse | null>(null);
+  const [usage, setUsage] = useState<PeriodData | null>(null);
+  const [recentUsage, setRecentUsage] = useState<TimeseriesBucket[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
-
-    setError(null);
+    const now = Math.floor(Date.now() / 1000);
     Promise.all([
-      getTaskStats(projectId, taskId),
       getDiff(projectId, taskId).catch(() => null),
       getCommits(projectId, taskId).catch(() => null),
+      getTaskStatistics(projectId, taskId, { from: 0, to: now, bucket: "monthly" }).catch(() => null),
+      getTaskStatistics(projectId, taskId, { from: now - USAGE_DAYS * 86_400, to: now, bucket: "hourly" }).catch(() => null),
     ])
-      .then(([statsRes, diffRes, commitsRes]) => {
-        setStats(statsRes);
+      .then(([diffRes, commitsRes, allTime, recent]) => {
+        if (cancelled) return;
         setDiffData(diffRes);
         setCommitsData(commitsRes);
+        setUsage(allTime?.current ?? null);
+        setRecentUsage(recent?.current.timeseries ?? []);
       })
-      .catch((err) => {
-        console.error("Failed to load task stats:", err);
-        setError("Failed to load stats");
-      })
-      .finally(() => setIsLoading(false));
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [projectId, taskId, reloadKey]);
 
   const reload = useCallback(() => setReloadKey((key) => key + 1), []);
 
-  return { stats, diffData, commitsData, isLoading, error, reload };
+  return { diffData, commitsData, usage, recentUsage, isLoading, reload };
 }
 
 /** The task's Linked Projects (ACP additional directories) and the projects that can still be linked. */

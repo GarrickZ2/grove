@@ -1,4 +1,4 @@
-//! Statistics API handlers — Global + Project scope, backed by
+//! Statistics API handlers — Global, Project and Task scope, backed by
 //! `chat_token_usage`. See `crate::stats` for aggregation logic.
 
 use axum::{
@@ -63,4 +63,21 @@ pub async fn get_project_statistics(
         to,
         bucket,
     )))
+}
+
+/// GET /api/v1/statistics/project/{id}/task/{taskId}
+pub async fn get_task_statistics(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(query): Query<StatisticsQuery>,
+) -> Result<Json<StatisticsResponse>, StatusCode> {
+    workspace::load_project_by_hash(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let (from, to, bucket) = resolve_range(&query);
+    let scope = Scope::Task {
+        project_key: id,
+        task_id,
+    };
+    Ok(Json(stats::aggregate(&scope, from, to, bucket)))
 }

@@ -557,6 +557,10 @@ pub fn create_api_router() -> Router {
             get(handlers::statistics::get_project_statistics),
         )
         .route(
+            "/statistics/project/{id}/task/{taskId}",
+            get(handlers::statistics::get_task_statistics),
+        )
+        .route(
             "/projects/{id}/branches",
             get(handlers::projects::get_branches),
         )
@@ -805,11 +809,6 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/tasks/{taskId}/fs/open",
             post(handlers::tasks::open_file),
-        )
-        // Task Stats API
-        .route(
-            "/projects/{id}/tasks/{taskId}/stats",
-            get(handlers::stats::get_task_stats),
         )
         // Diff/Changes API
         .route(
@@ -1999,6 +1998,7 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
     if let Err(e) = crate::storage::installed_agents::drop_terminal_launch_channels() {
         eprintln!("[warning] Failed to drop terminal launch channels: {}", e);
     }
+    std::thread::spawn(crate::storage::remove_edit_history_files);
     crate::acp::init_agent_defaults();
 
     // Keep the registry fresh for long-running servers. Startup already has a

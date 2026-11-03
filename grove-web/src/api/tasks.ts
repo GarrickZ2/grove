@@ -127,27 +127,6 @@ export interface ReviewCommentsResponse {
   git_user_name?: string;
 }
 
-// Task stats types
-interface FileEditEntry {
-  path: string;
-  edit_count: number;
-  last_edited: string; // ISO 8601
-}
-
-interface ActivityEntry {
-  hour: string;      // ISO 8601 hour (e.g., "2024-01-15T14:00:00Z")
-  buckets: number[]; // 60 minute buckets (index 0 = minute 00, index 59 = minute 59)
-  total: number;     // Total edits in this hour
-}
-
-export interface TaskStatsResponse {
-  total_edits: number;
-  files_touched: number;
-  last_activity: string | null;
-  file_edits: FileEditEntry[];
-  hourly_activity: ActivityEntry[];
-}
-
 export interface LinkedProjectItem {
   id: string;
   name: string;
@@ -442,18 +421,6 @@ export async function getReviewComments(
 ): Promise<ReviewCommentsResponse> {
   return apiClient.get<ReviewCommentsResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/review`
-  );
-}
-
-/**
- * Get task statistics (file edits, activity)
- */
-export async function getTaskStats(
-  projectId: string,
-  taskId: string
-): Promise<TaskStatsResponse> {
-  return apiClient.get<TaskStatsResponse>(
-    `/api/v1/projects/${projectId}/tasks/${taskId}/stats`
   );
 }
 

@@ -120,3 +120,14 @@ export function getProjectStatistics(
     `/api/v1/statistics/project/${projectId}${buildQuery(args)}`,
   );
 }
+
+/** One task: `top` lists its sessions (id = chat id). */
+export function getTaskStatistics(
+  projectId: string,
+  taskId: string,
+  args: QueryArgs = {},
+): Promise<StatisticsResponse> {
+  return apiClient.get<StatisticsResponse>(
+    `/api/v1/statistics/project/${projectId}/task/${taskId}${buildQuery(args)}`,
+  );
+}

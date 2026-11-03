@@ -410,7 +410,17 @@ fn register_watcher_subscription(project_hash: &str, task_id: &str, worktree: &P
     let project_hash = project_hash.to_string();
     let task_id_owned = task_id.to_string();
     let worktree = worktree.to_path_buf();
-    watcher.subscribe(task_id, move |_event| {
+    watcher.subscribe(task_id, move |path| {
+        // Only files the indexer can parse matter; build output and
+        // everything else is ignored here.
+        let supported = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .and_then(Language::from_extension)
+            .is_some();
+        if !supported {
+            return;
+        }
         // All edits feed into the same coalescing slot — the worker
         // debounces them so an AI burst that touches 50 files results
         // in one reindex, not 50.

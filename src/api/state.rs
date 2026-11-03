@@ -26,16 +26,11 @@ pub fn init_file_watchers() {
     Lazy::force(&FILE_WATCHERS);
 }
 
-/// Shutdown all FileWatchers and flush pending events to disk.
-///
-/// Called on graceful shutdown (Ctrl+C).
+/// Stop all FileWatchers. Called on graceful shutdown (Ctrl+C).
 pub fn shutdown_file_watchers() {
     if let Ok(mut watchers) = FILE_WATCHERS.write() {
-        for (_, watcher) in watchers.drain() {
-            watcher.shutdown();
-        }
+        watchers.clear();
     }
-    eprintln!("FileWatcher: all watchers shut down");
 }
 
 /// Ensure file watching is active for the given task. Idempotent: repeated
@@ -44,19 +39,18 @@ pub fn shutdown_file_watchers() {
 /// Called when the frontend enters a task workspace page (via /activate),
 /// and also defensively when a terminal session is opened.
 ///
-/// Also kicks the symbol indexer's once-gated initial build for this
-/// task — the indexer subscribes to watcher events for incremental
-/// updates, so build and watch share a single trigger point.
+/// The watcher only feeds the symbol indexer, so nothing is watched while
+/// indexing is off. Also kicks the indexer's once-gated initial build for
+/// this task, so build and watch share a single trigger point.
 pub fn ensure_task_active(project_key: &str, task_id: &str, worktree_path: &str) {
+    if !crate::storage::config::load_config().indexing.enabled {
+        return;
+    }
     if let Ok(mut watchers) = FILE_WATCHERS.write() {
-        if let Some(watcher) = watchers.get_mut(project_key) {
-            watcher.watch(task_id, Path::new(worktree_path));
-        } else {
-            let mut watcher = FileWatcher::new(project_key);
-            watcher.start();
-            watcher.watch(task_id, Path::new(worktree_path));
-            watchers.insert(project_key.to_string(), watcher);
-        }
+        watchers
+            .entry(project_key.to_string())
+            .or_default()
+            .watch(task_id, Path::new(worktree_path));
     }
 
     crate::symbols::on_watch_started(project_key, task_id, Path::new(worktree_path));
