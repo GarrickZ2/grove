@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-11-03
+
+### Added
+
+- **Terminal app** — `grove tui` is now a thin client of the Grove server, with projects, tasks and sessions beside the chat; `grove cli` runs sessions from scripts and agents, locally or on another machine.
+- **Launch window** — Pick Web, App, CLI or Remote from one launcher, plus a mini Buddy window.
+- **Buddy messaging** — A messenger-style Buddy list with pins, gestures and @-mentions; Buddies can message each other and hand on files.
+- **Telegram and Slack** — Connect Buddies to Telegram and Slack with live turn progress.
+- **Per-task AI usage** — Task statistics show AI usage instead of file-edit counts.
+- **New session button** — Start a local session from the sidebar Sessions header.
+
+### Improved
+
+- **Memory graph** — Load up to 600 memories and their relations so the star map's clusters show.
+- **Theme preview** — Preview a theme only after the pointer rests on it.
+- **Usage ring** — Color the context ring by severity, matching its hover card.
+- **Plugin sandboxing** — Plugins run sandboxed and require approval.
+
+### Fixed
+
+- **Quota parsing** — Keep showing quota when Claude, Kimi or Synthetic omit a window.
+- **Mobile header** — Keep the header on screen after the keyboard closes.
+- **Remote security** — Harden `grove remote` behind reverse proxies and keep worktree HTML and SVG off Grove's origin.
+- **Composer** — Restore the orbit marquee speed.
+
 ## [0.14.0] - 2026-11-02
 
 ### Added
