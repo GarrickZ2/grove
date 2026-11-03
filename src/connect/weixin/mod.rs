@@ -1,23 +1,21 @@
 //! Built-in personal WeChat/iLink adapter. All WeChat presentation stays here.
 mod api;
-mod interaction;
 mod registration;
 mod state;
 
 use crate::{
     connect::{
-        adapter::{
-            AdapterRef, ConnectAdapter, ConnectionStatus, InboundAction, InboundMessage, Platform,
-        },
+        adapter::{ConnectAdapter, ConnectionStatus, Platform},
         commands::CardSpec,
         platform::{ConfigField, PlatformCapabilities, PlatformDefinition},
         registration::RegistrationView,
+        text_driver::{self, TextChannel},
+        text_ui::{Button, Ui},
     },
     storage::connects::Connect,
 };
 use api::{Api, BASE_URL};
 use async_trait::async_trait;
-use interaction::Response;
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use state::{Message, Store};
@@ -50,12 +48,6 @@ fn status(id: &str, state: &str, detail: Option<String>) {
 }
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap_or_default()
-}
-fn scope(connection: &Connect) -> String {
-    format!(
-        "{}\0{}\0{}",
-        connection.project_id, connection.task_id, connection.session_id
-    )
 }
 
 pub fn validate_config(domain: &str, config: &Value, existing: bool) -> Result<(), String> {
@@ -232,7 +224,7 @@ struct WeixinAdapter {
     api: Api,
     cancel: CancellationToken,
     store: Mutex<Store>,
-    ui: Mutex<interaction::Ui>,
+    ui: Mutex<Ui>,
     outgoing: tokio::sync::Mutex<()>,
 }
 
@@ -250,12 +242,6 @@ impl WeixinAdapter {
             }
             error.to_string()
         })
-    }
-
-    fn current(&self) -> Result<Connect, String> {
-        crate::storage::connects::get(&self.id)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "Connection no longer exists".into())
     }
 
     async fn send(&self, message_id: &str, body: &str) -> Result<(), String> {
@@ -283,148 +269,39 @@ impl WeixinAdapter {
     }
 
     async fn inbound(self: &Arc<Self>, message: Message) -> Result<(), String> {
-        let current = self.current()?;
-        if !current.enabled {
-            return Err("Connection disabled".into());
-        }
-        if !crate::storage::connects::bind_private_chat(&self.id, &message.peer, &message.peer)
-            .map_err(|e| e.to_string())?
-        {
-            return Ok(());
-        }
-        let inbound = |body: String| InboundMessage {
-            external_message_id: message.id.clone(),
-            conversation_id: message.peer.clone(),
-            sender_id: message.peer.clone(),
-            text: body,
-            attachments: vec![],
-        };
-        let adapter: AdapterRef = self.clone();
-        let target_scope = scope(&current);
-        if message.unsupported_media {
-            let _ = self
-                .ui
-                .lock()
-                .unwrap()
-                .command("", &message.id, &target_scope);
-            return self.send(&message.id, "This version supports text and voice transcriptions provided by WeChat. Please send images, files, or untranscribed voice messages as text.").await;
-        }
-        let parts: Vec<_> = message.text.split_whitespace().collect();
-        let command = parts
-            .first()
-            .copied()
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let kind = match command.as_str() {
-            "/new" | "/clear" => Some("new_session"),
-            "/target" => Some("target"),
-            "/config" => Some("config"),
-            _ => None,
-        };
-        if let Some(kind) = kind.filter(|_| parts.len() > 1) {
-            let available = self.ui.lock().unwrap().has_menu(kind, &target_scope);
-            if !available {
-                crate::connect::core::handle_message(
-                    &self.id,
-                    adapter.clone(),
-                    inbound(command.clone()),
-                )
-                .await;
-            }
-        }
-        if command == "/help" && parts.len() == 1 {
-            let _ = self
-                .ui
-                .lock()
-                .unwrap()
-                .command("", &message.id, &target_scope);
-            return self.send(&message.id, "/new [agent_id] — Create a session\n/target [project|task|session] [option] — Switch target\n/config [setting] [option] — Configure the session\n/status — Current status\n/cancel — Cancel the agent's current turn\n/skill <name> [prompt] — Run a skill\n/respond <request_id> <option> — Respond to a permission request\n/answer <request_id> <field_id> <answer> — Save a draft form answer\n/submit <request_id> — Submit a form\n/decline <request_id> — Decline a form\nOther messages are sent to the agent. Incomplete target selections do not take effect.").await;
-        }
-        let response = self
-            .ui
-            .lock()
-            .unwrap()
-            .command(&message.text, &message.id, &target_scope);
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => return self.send(&message.id, &error).await,
-        };
-        match response {
-            Response::Pass => {
-                crate::connect::core::handle_message(
-                    &self.id,
-                    adapter,
-                    inbound(message.text.clone()),
-                )
-                .await
-            }
-            Response::Text(text) => self.send(&message.id, &text).await?,
-            Response::RefreshTarget { fields, stage } => {
-                let result = crate::connect::core::handle_action(
-                    &self.id,
-                    adapter,
-                    InboundAction {
-                        conversation_id: message.peer.clone(),
-                        sender_id: message.peer.clone(),
-                        source_message_id: Some(message.id.clone()),
-                        name: Some("update_options_btn".into()),
-                        fields,
-                    },
-                )
-                .await?;
-                if let Some(card) = result.card {
-                    self.ui
-                        .lock()
-                        .unwrap()
-                        .render(&card, &message.id, &target_scope)?;
-                    let text = self.ui.lock().unwrap().next_target(&stage);
-                    self.send(&message.id, &text).await?;
-                }
-            }
-            Response::Action {
-                name,
-                fields,
-                source,
-            } => {
-                let result = crate::connect::core::handle_action(
-                    &self.id,
-                    adapter,
-                    InboundAction {
-                        conversation_id: message.peer.clone(),
-                        sender_id: message.peer.clone(),
-                        source_message_id: Some(source),
-                        name: Some(name.clone()),
-                        fields: fields.clone(),
-                    },
-                )
-                .await;
-                match result {
-                    Ok(result) => {
-                        if result.notice.as_ref().is_some_and(|(level, _)| {
-                            matches!(
-                                level,
-                                crate::connect::adapter::NoticeLevel::Success
-                                    | crate::connect::adapter::NoticeLevel::Info
-                            )
-                        }) {
-                            self.ui.lock().unwrap().action_completed(&name, &fields);
-                        }
-                        if let Some(card) = result.card {
-                            if !matches!(&card, CardSpec::Notice(_)) {
-                                if let Some((_, text)) = result.notice {
-                                    self.send(&message.id, &text).await?;
-                                }
-                            }
-                            self.reply_card(&message.id, &card).await?;
-                        } else if let Some((_, text)) = result.notice {
-                            self.send(&message.id, &text).await?;
-                        }
-                    }
-                    Err(error) => self.send(&message.id, &error).await?,
-                }
-            }
-        }
-        Ok(())
+        let unsupported = message.unsupported_media.then(|| {
+            "This version supports text and voice transcriptions provided by WeChat. Please send images, files, or untranscribed voice messages as text.".to_owned()
+        });
+        text_driver::dispatch(
+            self.clone(),
+            text_driver::Inbound {
+                id: message.id,
+                conversation: message.peer.clone(),
+                sender: message.peer,
+                text: message.text,
+                attachments: Vec::new(),
+                unsupported,
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl TextChannel for WeixinAdapter {
+    fn connection_id(&self) -> &str {
+        &self.id
+    }
+    fn ui(&self) -> &Mutex<Ui> {
+        &self.ui
+    }
+    async fn send(
+        &self,
+        message_id: &str,
+        text: &str,
+        _buttons: Vec<Button>,
+    ) -> Result<(), String> {
+        WeixinAdapter::send(self, message_id, text).await
     }
 }
 
@@ -483,12 +360,7 @@ impl ConnectAdapter for WeixinAdapter {
         self.send(message_id, text).await
     }
     async fn reply_card(&self, message_id: &str, spec: &CardSpec) -> Result<(), String> {
-        let text = self
-            .ui
-            .lock()
-            .unwrap()
-            .render(spec, message_id, &scope(&self.current()?))?;
-        self.send(message_id, &text).await
+        text_driver::reply_card(self, message_id, spec).await
     }
 }
 
@@ -510,7 +382,7 @@ async fn run(connection: Connect, cancel: CancellationToken) -> Result<(), Strin
         api: api.clone(),
         cancel: cancel.clone(),
         store: Mutex::new(store),
-        ui: Mutex::new(interaction::Ui::default()),
+        ui: Mutex::new(Ui::default()),
         outgoing: tokio::sync::Mutex::new(()),
     });
     let _ = api

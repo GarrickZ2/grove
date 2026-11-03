@@ -24,6 +24,10 @@ pub struct RegistrationView {
     pub expires_at: i64,
     pub domain: String,
     pub error: Option<String>,
+    /// Pairing code the user sends to the bot (Telegram, Slack) so the flow
+    /// learns which account owns the connection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -170,6 +174,7 @@ pub async fn begin(platform: &str, domain: &str) -> Result<RegistrationView, Str
         expires_at: now() + response.expires_in.max(60),
         domain: domain.into(),
         error: None,
+        code: None,
     };
     FLOWS.lock().unwrap().insert(
         id.clone(),
@@ -419,6 +424,7 @@ mod tests {
                     expires_at: now() + 60,
                     domain: "feishu".into(),
                     error: None,
+                    code: None,
                 },
                 app_id: Some("app".into()),
                 app_secret: Some("secret".into()),

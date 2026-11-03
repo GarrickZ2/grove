@@ -451,6 +451,8 @@ pub async fn begin_registration(
             .get("error")
             .and_then(Value::as_str)
             .map(str::to_owned),
+
+        code: None,
     };
     REGISTRATIONS.lock().unwrap().insert(
         id,

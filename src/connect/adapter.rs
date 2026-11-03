@@ -57,7 +57,12 @@ pub trait Platform: Send + Sync {
 struct FeishuPlatform;
 
 static FEISHU_PLATFORM: FeishuPlatform = FeishuPlatform;
-static BUILTIN_PLATFORMS: &[&dyn Platform] = &[&FEISHU_PLATFORM, &super::weixin::PLATFORM];
+static BUILTIN_PLATFORMS: &[&dyn Platform] = &[
+    &FEISHU_PLATFORM,
+    &super::weixin::PLATFORM,
+    &super::telegram::PLATFORM,
+    &super::slack::PLATFORM,
+];
 
 pub fn platform(id: &str) -> Option<&'static dyn Platform> {
     BUILTIN_PLATFORMS.iter().copied().find(|adapter| {

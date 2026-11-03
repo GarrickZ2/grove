@@ -62,6 +62,7 @@ pub async fn begin() -> Result<RegistrationView, String> {
         qr_svg,
         expires_at: chrono::Utc::now().timestamp() + 480,
         error: None,
+        code: None,
     };
     let cancel = CancellationToken::new();
     let wake = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -260,6 +261,7 @@ mod tests {
             qr_svg: String::new(),
             expires_at: chrono::Utc::now().timestamp() + 60,
             error: None,
+            code: None,
         };
         FLOWS.lock().unwrap().insert(
             id.clone(),

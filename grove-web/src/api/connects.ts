@@ -67,6 +67,8 @@ export interface ConnectRegistration {
   expires_at: number;
   domain: string;
   error?: string;
+  /** Pairing code the user sends to the bot (Telegram, Slack). */
+  code?: string;
 }
 
 export const listConnects = () => apiClient.get<ConnectItem[]>('/api/v1/connects');

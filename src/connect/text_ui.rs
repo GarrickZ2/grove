@@ -1,4 +1,7 @@
-//! WeChat-only text presentation and secondary commands. Feishu keeps cards.
+//! Text presentation and secondary commands for IM platforms without native
+//! cards (WeChat, Telegram, Slack). Feishu keeps cards. Platforms that support
+//! buttons can pick up `take_buttons()` after each rendered reply; every button
+//! replays an ordinary text command through `Ui::command`.
 use crate::connect::commands::CardSpec;
 use serde_json::Value;
 use std::{
@@ -33,12 +36,38 @@ struct Request {
     fields: HashMap<String, String>,
     created: Instant,
 }
+/// A suggested reply. Pressing it sends `command` exactly as if typed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Button {
+    pub label: String,
+    pub command: String,
+}
+
 #[derive(Default)]
 pub struct Ui {
     menu: Option<Menu>,
     requests: HashMap<String, Request>,
+    buttons: Vec<Button>,
 }
 const TTL: Duration = Duration::from_secs(15 * 60);
+const MAX_BUTTONS: usize = 24;
+
+fn button(label: &str, command: String) -> Button {
+    let label = label.trim();
+    let label = if label.chars().count() > 60 {
+        format!("{}…", label.chars().take(59).collect::<String>())
+    } else {
+        label.to_owned()
+    };
+    Button { label, command }
+}
+fn option_buttons(options: &[Value], label: &str, command: impl Fn(&str) -> String) -> Vec<Button> {
+    options
+        .iter()
+        .take(MAX_BUTTONS)
+        .map(|value| button(string(&value[label]), command(string(&value["id"]))))
+        .collect()
+}
 
 fn string(value: &Value) -> &str {
     value.as_str().unwrap_or_default()
@@ -84,6 +113,12 @@ fn options_text(options: &[Value], label: &str) -> String {
 }
 
 impl Ui {
+    /// Buttons for the most recently produced text. Platforms without buttons
+    /// never call this; the next render replaces them either way.
+    pub fn take_buttons(&mut self) -> Vec<Button> {
+        std::mem::take(&mut self.buttons)
+    }
+
     pub fn has_menu(&self, kind: &str, scope: &str) -> bool {
         self.menu.as_ref().is_some_and(|menu| {
             menu.scope == scope
@@ -93,6 +128,7 @@ impl Ui {
     }
 
     pub fn render(&mut self, spec: &CardSpec, source: &str, scope: &str) -> Result<String, String> {
+        self.buttons.clear();
         if let CardSpec::Notice(text) = spec {
             return Ok(text.clone());
         }
@@ -104,6 +140,8 @@ impl Ui {
                     "Choose an agent:\n{}\nSend /new <agent_id> to create a session.",
                     options_text(list(&data["agents"]), "name")
                 );
+                self.buttons =
+                    option_buttons(list(&data["agents"]), "name", |id| format!("/new {id}"));
                 self.menu = Some(Menu {
                     data,
                     scope: scope.into(),
@@ -128,6 +166,14 @@ impl Ui {
                         })
                 };
                 let text = format!("Current target:\nProject: {}\nTask: {}\nSession: {}\n\n/target project — Start from project selection\n/target task — Choose a task in the current project\n/target session — Choose a session in the current task\nChanges take effect only after completing the selection. Other messages or commands cancel draft selections.", current("project_id", "projects"), current("task_id", "tasks"), current("session_id", "sessions"));
+                self.buttons = [
+                    ("Project", "project"),
+                    ("Task", "task"),
+                    ("Session", "session"),
+                ]
+                .into_iter()
+                .map(|(label, stage)| button(label, format!("/target {stage}")))
+                .collect();
                 self.menu = Some(Menu {
                     data,
                     scope: scope.into(),
@@ -149,6 +195,14 @@ impl Ui {
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
+                self.buttons = list(&data["selectors"])
+                    .iter()
+                    .take(MAX_BUTTONS)
+                    .map(|selector| {
+                        let label = string(&selector["label"]);
+                        button(label, format!("/config {}", config_key(label)))
+                    })
+                    .collect();
                 self.menu = Some(Menu {
                     data,
                     scope: scope.into(),
@@ -164,6 +218,9 @@ impl Ui {
                     string(&data["description"]),
                     options_text(list(&data["options"]), "label")
                 );
+                self.buttons = option_buttons(list(&data["options"]), "label", |option| {
+                    format!("/respond {id} {option}")
+                });
                 self.store_request(id, data, source, scope);
                 Ok(text)
             }
@@ -181,6 +238,7 @@ impl Ui {
                         list(&data["fields"]),
                     )
                 };
+                let mut buttons = Vec::new();
                 let mut text = format!("{title}\nRequest ID: {id}\n");
                 if let Some(description) = data["definition"]["description"].as_str() {
                     text.push_str(&format!("{description}\n"));
@@ -195,6 +253,30 @@ impl Ui {
                         .or_else(|| field["label"].as_str())
                         .unwrap_or_default();
                     text.push_str(&format!("\n{field_id}: {label}\n"));
+                    let choices = list(&field["options"]);
+                    let multiple =
+                        matches!(string(&field["type"]), "multi_choice" | "multiple_choice")
+                            || string(&field["kind"]) == "string_array";
+                    if !multiple {
+                        for (index, opt) in choices.iter().enumerate() {
+                            let choice = opt["label"]
+                                .as_str()
+                                .or_else(|| opt.get(1).and_then(Value::as_str))
+                                .unwrap_or_default();
+                            buttons.push(button(
+                                &format!("{label}: {choice}"),
+                                format!("/answer {id} {field_id} {}", index + 1),
+                            ));
+                        }
+                        if choices.is_empty() && string(&field["kind"]) == "boolean" {
+                            for value in ["true", "false"] {
+                                buttons.push(button(
+                                    &format!("{label}: {value}"),
+                                    format!("/answer {id} {field_id} {value}"),
+                                ));
+                            }
+                        }
+                    }
                     if let Some(description) = field["description"].as_str() {
                         text.push_str(&format!("{description}\n"));
                     }
@@ -211,11 +293,15 @@ impl Ui {
                     text.push_str(&format!("/answer {id} {field_id} <answer>\n"));
                 }
                 text.push_str(&format!("\nSeparate multiple choices with commas. Use true/false for boolean answers.\n/submit {id} — Submit\n/decline {id} — Decline"));
+                buttons.truncate(MAX_BUTTONS - 2);
+                buttons.push(button("Submit", format!("/submit {id}")));
+                buttons.push(button("Decline", format!("/decline {id}")));
+                self.buttons = buttons;
                 self.store_request(id.into(), data, source, scope);
                 Ok(text)
             }
             "notice" => Ok(string(&data["text"]).to_owned()),
-            _ => Err("Unsupported WeChat interaction".into()),
+            _ => Err("Unsupported text interaction".into()),
         }
     }
 
@@ -244,6 +330,7 @@ impl Ui {
     }
 
     pub fn next_target(&mut self, stage: &str) -> String {
+        self.buttons.clear();
         let Some(menu) = &mut self.menu else {
             return "Send /target again.".into();
         };
@@ -257,17 +344,27 @@ impl Ui {
             return "Select the parent target first.".into();
         }
         let mut text = format!("Choose a {stage}:");
+        let mut buttons = Vec::new();
         if stage == "session" {
             text.push_str("\n0. New session (created on the first message)");
+            buttons.push(button("New session", format!("/target {stage} 0")));
         }
         for (index, value) in list(&menu.data[key]).iter().enumerate() {
             text.push_str(&format!("\n{}. {}", index + 1, string(&value["name"])));
+            if buttons.len() < MAX_BUTTONS {
+                buttons.push(button(
+                    string(&value["name"]),
+                    format!("/target {stage} {}", index + 1),
+                ));
+            }
         }
+        self.buttons = buttons;
         text.push_str(&format!("\nSend /target {stage} <option-number>."));
         text
     }
 
     pub fn command(&mut self, text: &str, source: &str, scope: &str) -> Result<Response, String> {
+        self.buttons.clear();
         let parts: Vec<_> = text.split_whitespace().collect();
         let command = parts
             .first()
@@ -398,6 +495,17 @@ impl Ui {
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
+                    let key = parts[1].to_owned();
+                    self.buttons = list(&selector["options"])
+                        .iter()
+                        .take(MAX_BUTTONS)
+                        .map(|opt| {
+                            button(
+                                string(&opt[1]),
+                                format!("/config {key} {}", string(&opt[0])),
+                            )
+                        })
+                        .collect();
                     menu.stage = Some(name);
                     return Ok(Response::Text(format!(
                         "{}:\n{text}\nSend /config {} <option-number-or-id>.",
@@ -525,6 +633,7 @@ impl Ui {
                     }
                 };
                 request.fields.insert(parts[2].into(), value);
+                self.buttons = vec![button("Submit", format!("/submit {id}"))];
                 return Ok(Response::Text(format!(
                     "Saved a draft answer for {}. Send /submit {id} to submit.",
                     parts[2]
@@ -724,6 +833,71 @@ mod tests {
         assert_eq!(fields["option_id"], "allow");
         ui.action_completed(&name, &fields);
         assert!(ui.command("/respond P7 1", "reply", "scope").is_err());
+    }
+
+    #[test]
+    fn buttons_replay_commands_that_the_text_ui_accepts() {
+        let mut ui = Ui::default();
+        ui.render(&target("p1", "t1"), "message", "scope").unwrap();
+        let stages = ui.take_buttons();
+        assert_eq!(stages[0].command, "/target project");
+        let Response::Text(_) = ui.command(&stages[0].command, "m", "scope").unwrap() else {
+            panic!()
+        };
+        let projects = ui.take_buttons();
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[1].label, "Second");
+        assert!(matches!(
+            ui.command(&projects[1].command, "m", "scope").unwrap(),
+            Response::RefreshTarget { .. }
+        ));
+        ui.render(
+            &CardSpec::Permission(PermissionCard {
+                request_id: "P1".into(),
+                description: "Run?".into(),
+                options: vec![PermissionCardOption {
+                    id: "allow".into(),
+                    label: "Allow".into(),
+                    kind: "allow_once".into(),
+                }],
+            }),
+            "card",
+            "scope",
+        )
+        .unwrap();
+        let allow = ui.take_buttons();
+        assert_eq!(allow[0].command, "/respond P1 allow");
+        assert!(matches!(
+            ui.command(&allow[0].command, "click", "scope").unwrap(),
+            Response::Action { .. }
+        ));
+        // Rendering a notice clears stale suggestions.
+        ui.render(&CardSpec::Notice("ok".into()), "m", "scope")
+            .unwrap();
+        assert!(ui.take_buttons().is_empty());
+        let definition = serde_json::from_value(serde_json::json!({
+            "title": "Survey", "questions": [
+                {"type": "single_choice", "id": "pick", "title": "Pick", "options": [{"id": "a", "label": "A"}]},
+                {"type": "multi_choice", "id": "many", "title": "Many", "options": [{"id": "b", "label": "B"}]}
+            ]
+        }))
+        .unwrap();
+        ui.render(
+            &CardSpec::AskForm(crate::connect::commands::AskFormCard {
+                form_id: "F1".into(),
+                definition,
+            }),
+            "card",
+            "scope",
+        )
+        .unwrap();
+        let commands: Vec<_> = ui.take_buttons().into_iter().map(|b| b.command).collect();
+        assert_eq!(commands, ["/answer F1 pick 1", "/submit F1", "/decline F1"]);
+        assert!(matches!(
+            ui.command("/answer F1 pick 1", "m", "scope").unwrap(),
+            Response::Text(_)
+        ));
+        assert_eq!(ui.take_buttons()[0].command, "/submit F1");
     }
 
     #[test]
