@@ -1,10 +1,10 @@
 //! Synthetic quota fetcher.
 //!
 //! Reads the token from OpenCode's auth.json under `synthetic`, calls
-//! `https://api.synthetic.new/v2/quotas`. The response has three required
+//! `https://api.synthetic.new/v2/quotas`. The response has up to three
 //! buckets: `subscription`, `search.hourly`, `freeToolCalls` — each carrying
 //! `{limit, requests, renewsAt}` where `requests` is the count consumed so
-//! far in the window. We expose all three as usage windows.
+//! far in the window. Each one present with a positive limit becomes a window.
 
 use super::super::{
     clamp_percent, iso_to_seconds_remaining, AgentUsage, ExtraInfo, UsageWindow,
@@ -49,34 +49,38 @@ pub(crate) fn fetch_with_token(token: &str) -> Result<AgentUsage, String> {
         .into_json()
         .map_err(|e| format!("parse usage response: {}", e))?;
 
-    let subscription = body.subscription.ok_or("missing subscription bucket")?;
-    let search_hourly = body
-        .search
-        .and_then(|s| s.hourly)
-        .ok_or("missing search.hourly bucket")?;
-    let free_tool_calls = body.free_tool_calls.ok_or("missing freeToolCalls bucket")?;
+    usage_from_response(body)
+}
 
+fn usage_from_response(body: SyntheticResponse) -> Result<AgentUsage, String> {
     let mut usage = AgentUsage::new("synthetic");
     usage.plan = Some("Synthetic".to_string());
 
     // Synthetic publishes three fixed-cadence buckets. Hard-code the windows
     // so the frontend can compute a safe-guard line.
-    push_bucket(&mut usage, "Subscription", &subscription, Some(30 * 86400));
-    push_bucket(&mut usage, "Search 1h", &search_hourly, Some(3600));
-    push_bucket(&mut usage, "Free tools", &free_tool_calls, Some(86400));
+    let search_hourly = body.search.and_then(|s| s.hourly);
+    for (label, bucket, total_window_seconds) in [
+        ("Subscription", body.subscription, 30 * 86400),
+        ("Search 1h", search_hourly, 3600),
+        ("Free tools", body.free_tool_calls, 86400),
+    ] {
+        if let Some(bucket) = bucket {
+            push_bucket(&mut usage, label, &bucket, Some(total_window_seconds));
+        }
+    }
 
     usage.finalize().ok_or_else(|| "no usage windows".into())
 }
 
 fn push_bucket(usage: &mut AgentUsage, label: &str, b: &Bucket, total_window_seconds: Option<i64>) {
-    let limit = b.limit.unwrap_or(0.0);
+    // An unknown or zero cap would read as "0% left" and drag the badge down.
+    let limit = match b.limit {
+        Some(limit) if limit > 0.0 => limit,
+        _ => return,
+    };
     let requests = b.requests.unwrap_or(0.0);
     let remaining = (limit - requests).max(0.0);
-    let pct = if limit > 0.0 {
-        clamp_percent(((remaining / limit) * 100.0) as f32)
-    } else {
-        0.0
-    };
+    let pct = clamp_percent(((remaining / limit) * 100.0) as f32);
     usage.windows.push(UsageWindow {
         label: label.to_string(),
         percentage_remaining: pct,
@@ -88,4 +92,32 @@ fn push_bucket(usage: &mut AgentUsage, label: &str, b: &Bucket, total_window_sec
         label: label.to_string(),
         value: format!("{}/{} used", requests as i64, limit as i64),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(json: &str) -> SyntheticResponse {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn missing_buckets_keep_the_others() {
+        let usage =
+            usage_from_response(parse(r#"{"subscription":{"limit":100,"requests":25}}"#)).unwrap();
+        let labels: Vec<_> = usage.windows.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(labels, ["Subscription"]);
+        assert_eq!(usage.percentage_remaining, 75.0);
+    }
+
+    #[test]
+    fn zero_limit_bucket_does_not_read_as_exhausted() {
+        let body = parse(
+            r#"{"subscription":{"limit":100,"requests":10},"freeToolCalls":{"limit":0,"requests":0}}"#,
+        );
+        let usage = usage_from_response(body).unwrap();
+        assert_eq!(usage.windows.len(), 1);
+        assert_eq!(usage.percentage_remaining, 90.0);
+    }
 }

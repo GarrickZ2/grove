@@ -96,9 +96,12 @@ describe("helpers", () => {
   });
 
   it("fills the usage ring from context, else quota used, warning near the limit", () => {
-    expect(usageRingModel(38, 80)).toEqual({ percent: 38, warn: false, source: "context" });
-    expect(usageRingModel(75, null)).toMatchObject({ warn: true });
-    expect(usageRingModel(null, 15)).toEqual({ percent: 85, warn: true, source: "quota" });
+    expect(usageRingModel(38, 80)).toEqual({ percent: 38, tone: "ok", source: "context" });
+    expect(usageRingModel(60, null)).toMatchObject({ tone: "warn" });
+    expect(usageRingModel(85, null)).toMatchObject({ tone: "critical" });
+    // The worse of context and quota wins.
+    expect(usageRingModel(38, 15)).toMatchObject({ percent: 38, tone: "critical" });
+    expect(usageRingModel(null, 15)).toEqual({ percent: 85, tone: "critical", source: "quota" });
     expect(usageRingModel(null, null)).toBeNull();
   });
 

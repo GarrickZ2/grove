@@ -389,7 +389,6 @@ fn classify_error(agent: &str, message: &str) -> UsageError {
     }
     if msg.contains("parse usage response")
         || msg.contains("parse quota response")
-        || msg.contains("missing five_hour")
         || msg.contains("used_percent missing")
         || msg.contains("no usage windows")
         || msg.contains("no quota buckets")

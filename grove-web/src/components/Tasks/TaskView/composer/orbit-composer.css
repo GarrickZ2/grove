@@ -219,6 +219,7 @@
 .oc-ring-track { fill: none; stroke: var(--oc-fill2); stroke-width: 2.6; }
 .oc-ring-fill { fill: none; stroke-width: 2.6; stroke-linecap: round; transition: stroke-dashoffset 500ms var(--oc-ease); }
 .oc-ring.is-warn .oc-ring-fill { stroke: var(--oc-amber); }
+.oc-ring.is-critical .oc-ring-fill { stroke: var(--oc-rose); }
 .oc-ring-stop-a { stop-color: var(--oc-green); }
 .oc-ring-stop-b { stop-color: var(--oc-cyan); }
 .oc-ring-pop { width: 340px; gap: 8px; }

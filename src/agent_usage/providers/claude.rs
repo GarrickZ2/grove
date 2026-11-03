@@ -62,14 +62,15 @@ pub(crate) fn fetch_with_credentials(creds: &Credentials) -> Result<AgentUsage, 
         .into_json()
         .map_err(|e| format!("parse usage response: {}", e))?;
 
-    let five_hour = body
-        .five_hour
-        .as_ref()
-        .ok_or("missing five_hour in usage response")?;
-    if five_hour.utilization.is_none() {
-        return Err("five_hour.utilization missing".into());
-    }
+    usage_from_response(body, creds)
+}
 
+/// Some accounts get no `five_hour` window (or a null utilization for it), so
+/// every window is optional; only a response with none at all is an error.
+fn usage_from_response(
+    body: OAuthUsageResponse,
+    creds: &Credentials,
+) -> Result<AgentUsage, String> {
     let plan = infer_plan(
         creds.rate_limit_tier.as_deref(),
         creds.subscription_type.as_deref(),
@@ -164,4 +165,45 @@ fn infer_plan(rate_limit_tier: Option<&str>, subscription_type: Option<&str>) ->
         }
     }
     "Claude".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn creds() -> Credentials {
+        Credentials {
+            access_token: String::new(),
+            rate_limit_tier: None,
+            subscription_type: Some("max".into()),
+        }
+    }
+
+    fn parse(json: &str) -> OAuthUsageResponse {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn missing_five_hour_window_keeps_the_others() {
+        let body = parse(r#"{"five_hour":null,"seven_day":{"utilization":30.0,"resets_at":null}}"#);
+        let usage = usage_from_response(body, &creds()).unwrap();
+        let labels: Vec<_> = usage.windows.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(labels, ["7d limit"]);
+        assert_eq!(usage.percentage_remaining, 70.0);
+    }
+
+    #[test]
+    fn five_hour_without_utilization_is_skipped() {
+        let body = parse(
+            r#"{"five_hour":{"utilization":null,"resets_at":null},"seven_day":{"utilization":10.0}}"#,
+        );
+        let usage = usage_from_response(body, &creds()).unwrap();
+        assert_eq!(usage.windows.len(), 1);
+        assert_eq!(usage.windows[0].label, "7d limit");
+    }
+
+    #[test]
+    fn no_windows_is_an_error() {
+        assert!(usage_from_response(parse("{}"), &creds()).is_err());
+    }
 }
