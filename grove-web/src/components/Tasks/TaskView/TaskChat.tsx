@@ -4,7 +4,7 @@ import { reduceV2Tool } from "./v2Tools";
 import { chatConnectionLabels, chatConnectionStatusAfterClose, MAX_CHAT_RECONNECT_ATTEMPTS, type ChatConnectionStatus } from "./chatConnectionStatus";
 import { watchChatConnection, withConnectionDeadline } from "./chatConnectionAttempt";
 import { resolveAuthenticationMessages } from "./authenticationState";
-import { compactConversationText } from "./conversationPreview";
+import { compactConversationText, readableConversationText } from "./conversationPreview";
 import { useComposerInteractionBoundary } from "./useComposerInteractionBoundary";
 import { BackgroundChatConnections, trackChatSocketSends, watchBackgroundChatConnections } from "./backgroundChatConnections";
 import { historyComposerPlans, planDocumentTitle, reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
@@ -293,7 +293,7 @@ import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
 import type { ChatSessionResponse, CustomAgentServer, ImportableSession } from "../../../api";
 import { useProjectMentions } from "./useProjectMentions";
 import { createFileChip } from "./fileMentionChip";
-import { createMentionChip, filterComposerMentions, getPromptFromEditable, mentionCategorySelectors, mentionStartIndex, parseMentionQuery } from "./composerMentions";
+import { createMentionChip, filterComposerMentions, getPromptFromEditable, mentionCategorySelectors, mentionStartIndex, parseMentionQuery, setPromptInEditable } from "./composerMentions";
 import { dragCarriesGroveFiles, endGroveFileDrag, groveDragCount, groveDropPaths } from "../../../utils/groveFileDrag";
 import { nextMentionIndex } from "../../../utils/fileMention";
 import { openExternalUrl } from "../../../utils/openExternal";
@@ -1303,7 +1303,7 @@ function extractRenderItemText(item: RenderItem, expandedSections: Set<string>):
       case "child_plan":
         return m.entries.map((entry) => entry.content).join("\n");
       case "user":
-        return [m.sender ?? "", m.content].filter(Boolean).join("\n");
+        return [m.sender ?? "", readableConversationText(m.content)].filter(Boolean).join("\n");
       case "thinking":
         return "";
       case "assistant":
@@ -7996,7 +7996,7 @@ export function TaskChat({
     pendingAttachmentsRef.current.delete(input.id);
     const draft = document.createElement("div");
     if (input.draftHtml !== undefined) draft.innerHTML = input.draftHtml;
-    else draft.textContent = input.text;
+    else setPromptInEditable(draft, input.text);
     if (getPromptFromEditable(el) && draft.hasChildNodes()) el.appendChild(document.createElement("br"));
     el.append(...Array.from(draft.childNodes));
     const nextAttachments = [...attachmentsRef.current, ...restored];
@@ -8176,7 +8176,7 @@ export function TaskChat({
     attachmentsRef.current = restored;
     setAttachments(restored);
     if (msg.input?.draftHtml && msg.input.text === msg.text) el.innerHTML = msg.input.draftHtml;
-    else el.textContent = msg.text;
+    else setPromptInEditable(el, msg.text);
     restored.forEach((attachment) => {
       const number = Number(attachment.label.match(/#(\d+)$/)?.[1] ?? 0);
       attachCountersRef.current[attachment.type] = Math.max(attachCountersRef.current[attachment.type], number);
@@ -10529,9 +10529,9 @@ export function TaskChat({
                                   />
                                   <span
                                     className={`flex-1 min-w-0 text-[var(--color-text)] ${isPhoneLayout ? "whitespace-pre-wrap break-words leading-5" : "truncate"}`}
-                                    title={msg.input?.error ?? msg.text}
+                                    title={msg.input?.error ?? compactConversationText(msg.text, Infinity)}
                                   >
-                                    {msg.text || (msg.attachments?.length === 1
+                                    {compactConversationText(msg.text) || (msg.attachments?.length === 1
                                       ? msg.attachments[0].name || msg.attachments[0].label || "Attachment"
                                       : msg.attachments?.every((attachment) => attachment.type === "image") && msg.attachments.length > 0
                                         ? `${msg.attachments.length} images`
@@ -11093,8 +11093,8 @@ export function TaskChat({
       rows={pendingQueueRows.map((msg, i) => ({
         key: pendingMessageKeys[i] ?? `idx-${i}`,
         failed: msg.input?.status === "failed",
-        title: msg.input?.error ?? msg.text,
-        text: msg.text || (msg.attachments?.length === 1
+        title: msg.input?.error ?? compactConversationText(msg.text, Infinity),
+        text: compactConversationText(msg.text) || (msg.attachments?.length === 1
           ? msg.attachments[0].name || msg.attachments[0].label || "Attachment"
           : msg.attachments?.every((attachment) => attachment.type === "image") && msg.attachments.length > 0
             ? `${msg.attachments.length} images`
@@ -13579,7 +13579,7 @@ const MessageItem = memo(function MessageItem({
                 <UserMessageBody content={message.content} />
               )}
             </div>
-            <MessageActions text={message.content} timestamp={message.sentAt} now={hoverTime} alignRight />
+            <MessageActions text={readableConversationText(message.content)} timestamp={message.sentAt} now={hoverTime} alignRight />
           </div>
         </div>
       );

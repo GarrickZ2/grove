@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, Clock, File, MessageCircle, Send } from "lucide-react";
 import { BuddyAvatar } from "../BuddyAvatar";
-import { mentionRuns, readMentions } from "../buddyMentions";
+import { BUDDY_MENTIONS, mentionRuns, readMentions } from "../buddyMentions";
+import { readableEnvelopeText } from "../../Tasks/TaskView/conversationPreview";
 import type { Buddy, BuddySummary } from "../../../api/buddies";
 import { MarkdownRenderer } from "../../ui/MarkdownRenderer";
 import { ImageLightbox } from "../../ui/ImageLightbox";
@@ -143,10 +144,8 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
         return <TimelineNotice key={row.id} lead={lead} icon={<Icon size={13} aria-hidden="true" />} name={title} tone={tone} onClick={() => delegations.show(event.delegationId)} label={`${lead}: ${title}. Show delegation`} />;
       }
       if (message.type === "user") {
-        // Session bootstrap stays in the transcript, but is not user-visible text.
-        const segments = parseGroveMetaSegments(message.content);
-        const visible = segments.filter(segment => !(segment.kind === "meta" && segment.envelope.v === 1 && segment.envelope.type === "grove_session_init"));
-        const shown = visible.length === segments.length ? message.content : visible.map(segment => segment.kind === "text" ? segment.content : segment.raw).join("").replace(/^\n+/, "");
+        // Envelopes stay in the transcript, but are not user-visible text.
+        const shown = parseGroveMetaSegments(message.content).map(segment => segment.kind === "text" ? segment.content : segment.envelope.type === BUDDY_MENTIONS ? segment.raw : readableEnvelopeText(segment.envelope)).join("").replace(/^\n+/, "");
         // @-mentioned Buddies travel in an envelope; show their names as chips instead.
         const { text: content, buddies: mentioned } = readMentions(shown);
         if (!content.trim() && !message.attachments?.length) return null;

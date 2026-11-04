@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildGroveMetaTag } from "../../../utils/groveMeta";
-import { compactConversationText } from "./conversationPreview";
+import { compactConversationText, readableConversationText } from "./conversationPreview";
 
 describe("conversation preview text", () => {
   it("removes a long session bootstrap before clipping the real prompt", () => {
@@ -12,6 +12,16 @@ describe("conversation preview text", () => {
   it("keeps readable envelope text and the surrounding user prompt", () => {
     const mention = buildGroveMetaTag("mention_send", { name: "Reviewer", sid: "private-session-id" }, "Send to Reviewer");
     expect(compactConversationText(`${mention}\n\nReview this change`)).toBe("Send to Reviewer Review this change");
+  });
+
+  it("drops a Buddy envelope, which the sender line already covers", () => {
+    const buddy = buildGroveMetaTag("buddy_message", { buddy_id: "b1", name: "Jack" }, "Sent by Jack, the user's Buddy.");
+    expect(compactConversationText(`${buddy}\nCheck the TCC review`)).toBe("Check the TCC review");
+  });
+
+  it("drops the mentions envelope and keeps line breaks for copying", () => {
+    const mentions = buildGroveMetaTag("buddy_mentions", { buddies: [] }, "The user mentioned another Buddy.");
+    expect(readableConversationText(`${mentions}\n@Jack look\n\nat this`)).toBe("@Jack look\n\nat this");
   });
 
   it("processes multiple envelopes and uses the fallback for unknown types and versions", () => {

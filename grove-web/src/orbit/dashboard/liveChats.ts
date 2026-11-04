@@ -1,3 +1,4 @@
+import { compactConversationText } from "../../components/Tasks/TaskView/conversationPreview";
 import type { NodeStatus, RadioEvent } from "../../api/walkieTalkie";
 import type { PermissionOption } from "../../utils/permissionOptions";
 
@@ -59,7 +60,7 @@ export function parseSnapshotChat(raw: unknown, now: number, previous?: LiveChat
     projectId, taskId, chatId, status,
     waitingForInput: row.waiting_for_input === true,
     permission: status === "permission_required" ? parsePermission(row.permission) : null,
-    prompt: status === "busy" ? str(row.prompt) : null,
+    prompt: status === "busy" ? compactConversationText(str(row.prompt) ?? "") || null : null,
     agent: str(row.agent) ?? previous?.agent ?? null,
     chatTitle: str(row.chat_title) ?? previous?.chatTitle ?? null,
     todoCompleted: num(row.todo_completed),

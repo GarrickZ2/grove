@@ -393,6 +393,7 @@ export const GROVE_META_RENDERERS: Record<string, Renderer> = {
   agent_inject_reply: (env) => renderAgentInjectBadge(env, "reply"),
   user_remind: (env) => renderUserRemindBadge(env),
   buddy_message: () => null,
+  buddy_mentions: () => null,
   preview_comment: (env) => renderPreviewCommentCard(env),
   browser_tab: (env) => renderBrowserTab(env),
   review_comment: (env) => renderReviewCommentCard(env),

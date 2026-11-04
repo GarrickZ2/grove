@@ -21,6 +21,12 @@ describe("liveChatsReducer", () => {
     expect(state[key].since).toBe(10);
   });
 
+  it("shows the readable prompt, not its envelope", () => {
+    const prompt = '<grove-meta>{"v":1,"type":"buddy_message","data":{"name":"Jack"},"system-prompt":"Sent by Jack."}</grove-meta>\nCheck the review';
+    const state = liveChatsReducer({}, { type: "status", now: 1, event: status({ prompt }) });
+    expect(state[key].prompt).toBe("Check the review");
+  });
+
   it("tracks status changes, keeps the entry time while the status holds, and forgets disconnected sessions", () => {
     let state: LiveChats = liveChatsReducer({}, { type: "status", now: 1, event: status({ prompt: "Fix the build", agent: "claude", todo_completed: 1, todo_total: 3 }) });
     expect(state[key]).toMatchObject({ status: "busy", prompt: "Fix the build", since: 1, todoTotal: 3 });

@@ -68,10 +68,11 @@ it("shows @-mentioned Buddies as chips and hides the envelope", () => {
   expect(bubble.querySelector(".buddy-mention-chip")?.getAttribute("title")).toBe("Reviewer");
 });
 
-it("preserves literal malformed tags and other metadata instead of deleting user content", () => {
-  const text = `Explain <grove-meta>{invalid}</grove-meta>\n${buildGroveMetaTag("example", {}, "Keep this example")}`;
+it("preserves literal malformed tags and shows other metadata by its fallback text", () => {
+  const literal = "Explain <grove-meta>{invalid}</grove-meta>";
+  const text = `${literal}\n${buildGroveMetaTag("example", {}, "Keep this example")}`;
   render(fromEvents([{ type: "user_message", text }]));
-  expect(host.querySelector(".buddy-user-message")?.textContent).toBe(text);
+  expect(host.querySelector(".buddy-user-message")?.textContent).toBe(`${literal}\nKeep this example`);
 });
 
 it("keeps non-human prompts hidden and does not filter assistant answers", () => {

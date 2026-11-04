@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MentionItem } from "../../../utils/fileMention";
-import { createMentionChip, filterComposerMentions, getPromptFromEditable, mentionCategorySelectors, parseMentionQuery } from "./composerMentions";
+import { buildGroveMetaTag } from "../../../utils/groveMeta";
+import { createMentionChip, filterComposerMentions, getPromptFromEditable, mentionCategorySelectors, parseMentionQuery, setPromptInEditable } from "./composerMentions";
 
 const file: MentionItem = { path: "src/main.rs", isDir: false };
 const history: MentionItem = { path: "chat:c1", isDir: false, kind: "chat_history", displayName: "Old chat", sessionId: "c1", historyPath: "/h/c1.jsonl", agentName: "codex" };
@@ -47,5 +48,14 @@ describe("composer @-mentions", () => {
     expect(prompt.startsWith("read src/main.rs and <grove-meta>")).toBe(true);
     expect(prompt).toContain("mention_chat_history");
     expect(prompt).toContain("/h/c1.jsonl");
+  });
+
+  it("shows envelopes as chips when a prompt is edited and keeps them on save", () => {
+    const tag = buildGroveMetaTag("buddy_message", { buddy_id: "b1", name: "Jack" }, "Sent by Jack, the user's Buddy.");
+    const prompt = `${tag}\nCheck this <grove-meta>{broken}</grove-meta>`;
+    const el = document.createElement("div");
+    setPromptInEditable(el, prompt);
+    expect(el.textContent).toBe("Jack\nCheck this <grove-meta>{broken}</grove-meta>");
+    expect(getPromptFromEditable(el)).toBe(prompt);
   });
 });

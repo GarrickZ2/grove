@@ -1,6 +1,6 @@
 import type { FilteredMentionItem, MentionItem } from "../../../utils/fileMention";
 import { filterMentionItems } from "../../../utils/fileMention";
-import { buildGroveMetaTag } from "../../../utils/groveMeta";
+import { buildGroveMetaTag, parseGroveMetaSegments, type GroveMetaEnvelope } from "../../../utils/groveMeta";
 import { agentIconUrl } from "../../../utils/agentIcon";
 import type { ProjectListItem } from "../../../api/projects";
 import type { ProjectMentionContent } from "./projectMentions";
@@ -374,6 +374,33 @@ function expandAgentMentionChip(node: HTMLElement): string {
   return "";
 }
 
+function envelopeLabel({ type, data }: GroveMetaEnvelope): string {
+  const label = [data.name, data.title, data.label, data.path, data.sender_name].find((value) => typeof value === "string" && value);
+  return typeof label === "string" ? label : type.replaceAll("_", " ");
+}
+
+/** A chip standing in for an envelope, which goes back into the prompt unchanged. */
+function createGroveMetaChip(envelope: GroveMetaEnvelope, raw: string): HTMLSpanElement {
+  const chip = document.createElement("span");
+  chip.contentEditable = "false";
+  chip.dataset.groveMeta = raw;
+  chip.textContent = envelopeLabel(envelope);
+  chip.title = envelope.systemPrompt;
+  chip.style.cssText =
+    "display:inline-flex;align-items:center;padding:1px 8px;border-radius:9999px;" +
+    "background:color-mix(in srgb,var(--color-bg-secondary) 80%,var(--color-bg));" +
+    "border:1px solid color-mix(in srgb,var(--color-border) 65%,transparent);" +
+    "font-size:12px;font-weight:500;color:var(--color-highlight);" +
+    "margin:0 2px;user-select:none;vertical-align:baseline;line-height:1.5;";
+  return chip;
+}
+
+/** Load a sent prompt back into the composer, showing its envelopes as chips. */
+export function setPromptInEditable(el: HTMLElement, prompt: string): void {
+  el.replaceChildren(...parseGroveMetaSegments(prompt).map((segment) =>
+    segment.kind === "text" ? segment.content : createGroveMetaChip(segment.envelope, segment.raw)));
+}
+
 /** Extract prompt text from a contentEditable element, converting chips to /command */
 export function getPromptFromEditable(el: HTMLElement): string {
   const parts: string[] = [];
@@ -381,7 +408,9 @@ export function getPromptFromEditable(el: HTMLElement): string {
     if (node.nodeType === Node.TEXT_NODE) {
       parts.push(node.textContent || "");
     } else if (node instanceof HTMLElement) {
-      if (node.dataset.mentionKind === "browsertabs") {
+      if (node.dataset.groveMeta) {
+        parts.push(node.dataset.groveMeta);
+      } else if (node.dataset.mentionKind === "browsertabs") {
         const url = node.dataset.tabUrl || "";
         const title = node.dataset.tabTitle || "";
         const tabIdRaw = node.dataset.tabId;

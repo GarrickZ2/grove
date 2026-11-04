@@ -1146,7 +1146,7 @@ impl Session {
                             .iter()
                             .map(|message| Queued {
                                 id: s(message, "id").unwrap_or_default(),
-                                text: s(message, "text").unwrap_or_default(),
+                                text: readable_user_text(&s(message, "text").unwrap_or_default()),
                             })
                             .collect()
                     })
@@ -1258,12 +1258,13 @@ fn readable_user_text(raw: &str) -> String {
         };
         out.push_str(&rest[..start]);
         let kind = s(&envelope, "type").unwrap_or_default();
-        if kind != "grove_session_init" {
+        // Mentioned Buddies are already named in the text.
+        if kind != "grove_session_init" && kind != "buddy_mentions" {
             let data = envelope.get("data").cloned().unwrap_or_default();
             let label = ["name", "title", "label", "path", "sender_name"]
                 .iter()
                 .find_map(|key| s(&data, key))
-                .unwrap_or(kind);
+                .unwrap_or_else(|| kind.replace('_', " "));
             out.push_str(&format!("⟨{label}⟩"));
         }
         rest = &after[end + CLOSE.len()..];
@@ -1410,6 +1411,11 @@ hello"#;
         assert_eq!(readable_user_text(init), "hello");
         let mention = r#"see <grove-meta>{"v":1,"type":"file","data":{"path":"a.rs"},"system-prompt":"x"}</grove-meta>"#;
         assert_eq!(readable_user_text(mention), "see ⟨a.rs⟩");
+        let mentions = r#"<grove-meta>{"v":1,"type":"buddy_mentions","data":{},"system-prompt":"x"}</grove-meta>
+@Jack hi"#;
+        assert_eq!(readable_user_text(mentions), "@Jack hi");
+        let review = r#"<grove-meta>{"v":1,"type":"review_comment","data":{},"system-prompt":"x"}</grove-meta>"#;
+        assert_eq!(readable_user_text(review), "⟨review comment⟩");
         assert_eq!(
             readable_user_text("<grove-meta>not json</grove-meta>"),
             "<grove-meta>not json</grove-meta>"
