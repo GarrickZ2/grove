@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import { X, FileCode, Eye, Columns2, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw, AlertCircle, ZoomIn, ZoomOut } from "lucide-react";
 import { Button, FullFilePreview, getPreviewType, ImageLightbox, isVirtualizedMarkdownPreview } from "../../ui";
@@ -63,6 +63,8 @@ interface TaskEditorProps {
   onToggleFullscreen?: () => void;
   /** Hide the editor header (for FlexLayout tabs) */
   hideHeader?: boolean;
+  /** Replaces the file tree's "Files" heading (the linked-project switcher). */
+  treeTitle?: ReactNode;
 }
 
 /** Map file extensions to Monaco language IDs */
@@ -467,7 +469,7 @@ const isReadOnlyPreview = (path: string) => {
   return t === 'image' || t === 'binary';
 };
 
-export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onToggleFullscreen, hideHeader = false }: TaskEditorProps) {
+export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onToggleFullscreen, hideHeader = false, treeTitle }: TaskEditorProps) {
   const { isMobile } = useIsMobile();
   const { theme } = useTheme();
   const [fileNodes, setFileNodes] = useState<FileTreeNode[]>([]);
@@ -1254,8 +1256,8 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               } : undefined}
             >
               {/* Collapse button inside sidebar header */}
-              <div className="flex items-center justify-between px-2 h-[38px] bg-[var(--color-bg)] border-b border-[var(--color-border)] select-none">
-                <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider pl-1">Files</span>
+              <div className="editor-tree-header flex items-center justify-between px-2 h-[38px] bg-[var(--color-bg)] border-b border-[var(--color-border)] select-none">
+                {treeTitle ?? <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider pl-1">Files</span>}
                 <div className="flex items-center gap-0.5">
                   <button
                     onClick={handleRefresh}

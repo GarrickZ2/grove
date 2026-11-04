@@ -76,3 +76,15 @@
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) var(--color-bg);
 }
+
+/* The linked-project switcher takes the place of the "Files" heading. */
+.editor-tree-header .review-project-switcher {
+  flex: 1 1 auto;
+  margin-right: 4px;
+}
+
+.editor-tree-header .review-project-trigger {
+  height: 28px;
+  background: transparent;
+  font-size: 12px;
+}

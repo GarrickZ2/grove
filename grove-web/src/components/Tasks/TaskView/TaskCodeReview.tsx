@@ -1,159 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   X,
   Code,
-  Check,
-  ChevronDown,
   Maximize2,
   Minimize2,
 } from "lucide-react";
 import { Button } from "../../ui";
 import { DiffReviewPage } from "../../Review";
 import type { FileNavRequest } from "../../Review";
-import { useProject, useTheme } from "../../../context";
+import { useProject } from "../../../context";
 import type { LinkedReviewProject } from "../../../hooks/useLinkedReviewProjects";
-import { getProjectStyle } from "../../../utils/projectStyle";
 import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
 import { useInPanelShell } from "../../../orbit/ui/panelSlots";
-
-/** One Code Review the panel can show: the task's own, or a linked Project's. */
-interface ReviewTarget {
-  projectId: string;
-  taskId: string;
-  name: string;
-  isGitRepo?: boolean;
-  linked: boolean;
-}
-
-function readSelection(key: string): string | null {
-  try {
-    return sessionStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function writeSelection(key: string, value: string) {
-  try {
-    sessionStorage.setItem(key, value);
-  } catch {
-    // Storage unavailable — selection just won't survive a reload.
-  }
-}
-
-function ProjectGlyph({ projectId }: { projectId: string }) {
-  const { theme } = useTheme();
-  const { color, Icon } = getProjectStyle(projectId, theme.accentPalette);
-  return (
-    <span className="review-project-glyph" style={{ backgroundColor: color.bg }}>
-      <Icon style={{ color: color.fg }} />
-    </span>
-  );
-}
-
-/** Project picker that takes the place of the Review heading, so switching
- *  Projects costs no extra row. Fixed width keeps the header from shifting
- *  as names change; it collapses to icon-only in narrow panels. */
-function ReviewProjectSwitcher({
-  targets,
-  active,
-  onSelect,
-}: {
-  targets: ReviewTarget[];
-  active: ReviewTarget;
-  onSelect: (projectId: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  // In Orbit the switcher sits in a header / tab strip that clips overflow,
-  // so the menu is portaled and fixed under the trigger.
-  const orbitUi = useOrbitInterface();
-  const inShell = useInPanelShell();
-  const portaled = orbitUi && inShell;
-  const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
-  const own = targets.filter((t) => !t.linked);
-  const linked = targets.filter((t) => t.linked);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Node;
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  const renderOption = (target: ReviewTarget) => {
-    const selected = target.projectId === active.projectId;
-    return (
-      <button
-        key={target.projectId}
-        type="button"
-        role="option"
-        aria-selected={selected}
-        className="review-project-option"
-        onClick={() => {
-          onSelect(target.projectId);
-          setOpen(false);
-        }}
-      >
-        <ProjectGlyph projectId={target.projectId} />
-        <span className="review-project-name">{target.name}</span>
-        <Check className={`review-project-check ${selected ? "" : "invisible"}`} />
-      </button>
-    );
-  };
-
-  const menu = (
-    <div role="listbox" aria-label="Project to review" className="review-project-menu">
-      {own.map(renderOption)}
-      {own.length > 0 && linked.length > 0 && (
-        <div className="review-project-section">Linked projects</div>
-      )}
-      {linked.map(renderOption)}
-    </div>
-  );
-
-  return (
-    <div ref={rootRef} className="review-project-switcher">
-      <button
-        type="button"
-        className="review-project-trigger"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={`Reviewing ${active.name}. Switch project`}
-        title={active.name}
-        onClick={(e) => {
-          if (portaled && !open) {
-            const r = e.currentTarget.getBoundingClientRect();
-            setAnchor({ top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 260)) });
-          }
-          setOpen((v) => !v);
-        }}
-      >
-        <ProjectGlyph projectId={active.projectId} />
-        <span className="review-project-name">{active.name}</span>
-        <ChevronDown className="review-project-chevron" />
-      </button>
-      {open && !portaled && menu}
-      {open && portaled && anchor && createPortal(
-        <div ref={menuRef} className="orbit-ui orv-project-pop" style={{ top: anchor.top, left: anchor.left }}>{menu}</div>,
-        document.body,
-      )}
-    </div>
-  );
-}
+import { ProjectSwitcher } from "./ProjectSwitcher";
+import { useProjectTarget, type ProjectTarget } from "./useProjectTarget";
 
 interface TaskCodeReviewProps {
   /** Project ID */
@@ -195,18 +56,12 @@ export function TaskCodeReview({
 }: TaskCodeReviewProps) {
   const { projects } = useProject();
   const ownName = projects.find((p) => p.id === projectId)?.name ?? "This task";
-  const targets = useMemo<ReviewTarget[]>(() => [
+  const targets = useMemo<ProjectTarget[]>(() => [
     ...(hasOwnReview ? [{ projectId, taskId, name: ownName, isGitRepo, linked: false }] : []),
     ...(linkedProjects ?? []).map((p) => ({ ...p, linked: true })),
   ], [hasOwnReview, projectId, taskId, ownName, isGitRepo, linkedProjects]);
 
-  const selectionKey = `grove:review-target:${projectId}:${taskId}`;
-  const [selectedId, setSelectedId] = useState<string | null>(() => readSelection(selectionKey));
-  const active = targets.find((t) => t.projectId === selectedId) ?? targets[0];
-  const selectTarget = (id: string) => {
-    setSelectedId(id);
-    writeSelection(selectionKey, id);
-  };
+  const { active, select } = useProjectTarget(`grove:review-target:${projectId}:${taskId}`, targets);
   const showSwitcher = (linkedProjects?.length ?? 0) > 0;
   // In an Orbit panel shell the shell header is the title (and owns close);
   // Review puts its controls in that header (see Review/OrbitReviewChrome).
@@ -263,7 +118,7 @@ export function TaskCodeReview({
             isGitRepo={active.isGitRepo}
             isChatBusy={isChatBusy}
             title={showSwitcher ? (
-              <ReviewProjectSwitcher targets={targets} active={active} onSelect={selectTarget} />
+              <ProjectSwitcher targets={targets} active={active} onSelect={select} verb="Reviewing" />
             ) : undefined}
           />
         ) : (

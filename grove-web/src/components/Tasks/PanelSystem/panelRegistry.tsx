@@ -23,7 +23,7 @@ import { PluginIcon } from "../../Plugins/PluginIcon";
 import { TaskChat } from "../TaskView/TaskChat";
 import { OptionalPerfProfiler } from "../../../perf/profilerShim";
 import { TaskCodeReview } from "../TaskView/TaskCodeReview";
-import { TaskEditor } from "../TaskView/TaskEditor";
+import { LinkedTaskEditor } from "../TaskView/LinkedTaskEditor";
 import { TaskGraph } from "../TaskView/TaskGraph";
 import { StatsTab, GitTab, NotesTab, CommentsTab, ArtifactsTab } from "../TaskInfoPanel/tabs";
 import type { ArtifactPreviewRequest } from "../TaskInfoPanel/tabs";
@@ -76,7 +76,7 @@ export interface PanelRenderCtx {
   renderTerminal?: () => ReactNode;
   /** Installed plugins (for resolving `plugin:<id>` keys). */
   plugins?: Plugin[];
-  /** Linked Projects whose Code Review the Review panel can switch to. */
+  /** Linked Projects the Review and Editor panels can switch to. */
   linkedReviewProjects?: LinkedReviewProject[];
 }
 
@@ -209,9 +209,10 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     available: always,
     orbit: { hue: PANEL_HUES.indigo, glyph: Code },
     render: (ctx) => (
-      <TaskEditor
+      <LinkedTaskEditor
         projectId={ctx.projectId}
         taskId={ctx.task.id}
+        linkedProjects={ctx.linkedReviewProjects}
         hideHeader
         fullscreen
         onClose={ctx.onClose}

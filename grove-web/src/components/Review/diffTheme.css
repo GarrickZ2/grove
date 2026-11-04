@@ -2981,6 +2981,18 @@ tr.diff-line-nav-highlight td {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
+/* Menu portaled out of a host that clips overflow. */
+.review-project-pop {
+  position: fixed;
+  z-index: 1000;
+}
+
+.review-project-pop .review-project-menu {
+  position: static;
+  width: 240px;
+  max-width: calc(100vw - 24px);
+}
+
 .review-project-section {
   margin: 4px 8px 2px;
   padding-top: 6px;
