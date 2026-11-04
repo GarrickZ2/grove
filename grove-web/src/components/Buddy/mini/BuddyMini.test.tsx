@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: tauri.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: async (name: string, handler: (event: { payload: string }) => void) => { tauri.handlers.set(name, handler); return () => tauri.handlers.delete(name); } }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ startDragging: tauri.startDragging }) }));
 vi.mock("../../../orbit/ui/OrbitInterfaceProvider", () => ({ OrbitInterfaceProvider: ({ children }: { children: unknown }) => children }));
-vi.mock("../../../context", () => ({ ConfigProvider: ({ children }: { children: unknown }) => children }));
+vi.mock("../../../context", () => ({ ConfigProvider: ({ children }: { children: unknown }) => children, useConfig: () => ({ config: { web: { buddy_motion: "standard" } } }) }));
 vi.mock("../../../hooks/useShellAuth", () => ({ useShellAuth: () => ({ authReady: true, remoteServer: false }) }));
 vi.mock("../../../hooks/useRadioEvents", () => ({ useRadioEvents: () => ({ radioClients: 0 }) }));
 vi.mock("../BuddyConversation", () => ({ BuddyConversation: ({ buddy, open }: { buddy: { name: string }; open: boolean }) => <div className="conversation" data-open={open}>Talking to {buddy.name}</div> }));
@@ -31,8 +31,25 @@ it("shows the Buddy from the URL, switches on show events, and hands off to the 
   expect(tauri.invoke).toHaveBeenCalledWith("buddy_mini_open_in_main", { buddyId: "mock-inbox" });
 });
 
+it("opens as the avatar with nothing unread, and stays one when switched", async () => {
+  act(() => root.render(<BuddyMini />));
+  await settle();
+  const bubble = () => host.querySelector(".buddy-mini-bubble");
+  expect(host.querySelector(".buddy-mini")!.classList.contains("is-collapsed")).toBe(true);
+  expect(host.querySelector(".conversation")!.getAttribute("data-open")).toBe("false");
+  expect(bubble()).not.toBeNull();
+  expect(bubble()!.classList.contains("is-unread")).toBe(false);
+  await act(async () => tauri.handlers.get("buddy-mini:show")!({ payload: "mock-inbox" }));
+  await settle();
+  expect(bubble()).not.toBeNull();
+  expect(bubble()!.classList.contains("is-unread")).toBe(false);
+});
+
 it("collapses to the avatar bubble; a click expands it and a drag moves the window", async () => {
   act(() => root.render(<BuddyMini />));
+  await settle();
+  const press = (type: string) => act(() => { host.querySelector(".buddy-mini-bubble")!.dispatchEvent(Object.assign(new MouseEvent(type, { bubbles: true, screenX: 10, screenY: 10, button: 0 }), { pointerId: 1 })); });
+  press("pointerdown"); press("pointerup");
   await settle();
   act(() => button("Collapse").click());
   // The panel shrinks into the corner first; the window follows when that ends.

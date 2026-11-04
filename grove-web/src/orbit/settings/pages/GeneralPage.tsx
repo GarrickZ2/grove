@@ -1,5 +1,6 @@
 import { AppPicker, ideAppOptions, terminalAppOptions } from "../../../components/ui";
 import { isIdeApp, isTerminalApp } from "../../../components/Config/settingsConstants";
+import { useBuddyMotionSetting } from "../../../components/Config/useBuddyMotionSetting";
 import { useInterfaceSetting } from "../../../components/Config/useInterfaceSetting";
 import { Group, KeyRecorder, Row, Segmented } from "../../ui";
 import type { SettingsPageProps } from "./types";
@@ -24,6 +25,7 @@ export function GeneralPage({ settings }: SettingsPageProps) {
     isTauriGui,
   } = settings;
   const { current: currentInterface, switchTo: switchInterface } = useInterfaceSetting();
+  const { motion, setMotion } = useBuddyMotionSetting();
 
   return (
     <>
@@ -79,6 +81,17 @@ export function GeneralPage({ settings }: SettingsPageProps) {
                 setShowHideWindowShortcut("");
                 setIsRecordingWindowShortcut(false);
               }}
+            />
+          </Row>
+          <Row title="Mini Buddy motion" description={motion === "lively" ? "Its eyes follow your cursor. Uses a little more power." : "Reacts when you hover over it, and doesn't follow your cursor."}>
+            <Segmented<"lively" | "standard">
+              ariaLabel="Mini Buddy motion"
+              value={motion}
+              options={[
+                { value: "lively", label: "Lively" },
+                { value: "standard", label: "Standard" },
+              ]}
+              onChange={setMotion}
             />
           </Row>
         </Group>

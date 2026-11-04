@@ -308,3 +308,21 @@ Archive：确认对话框说明数据保留，Routine 与 IM 不会自动停止�
 ## 14. 待确认
 
 1. 轻委派的 subagent session 只在 Delegations 页签与对话卡片中出现，不在任何列表里列出 session 本身。后端 `list_sessions` 暂不过滤。
+
+## 15. Mini Buddy 的动效
+
+打开 mini 窗口时是收起的头像，点击才展开对话。收起时头像按状态显示反应。工作中和等待审批保持原有动画，不睡也不跟随鼠标。
+
+| 情况 | 表现 |
+|---|---|
+| 鼠标移到头像上 | 轻轻弹一下，眼睛睁大 |
+| 鼠标在 300px 内（仅 Lively） | 眼睛看向鼠标，离开后回正 |
+| 空闲且 5 分钟没人靠近 | 闭眼、缓慢起伏、飘 z |
+| 鼠标靠近、hover 或有新消息 | 眨两下眼后弹一下，醒来 |
+
+设置项 `web.buddy_motion`：`lively`（默认）或 `standard`。
+
+- Standard 不读取全局鼠标位置，只有 hover 算靠近。
+- 页面收不到窗口外的鼠标事件，所以 Lively 由 Rust 的 `buddy_mini_track_cursor` 轮询：范围内 100ms 一次，范围外 500ms 一次，只在收起且空闲时运行。
+- 系统开启“减弱动态效果”时不轮询，也不播放动画，只保留静态表情。
+- 设置改动通过 `buddy-mini:motion` 事件通知已打开的 mini 窗口。

@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ startDragging: async () => {} }) }));
 vi.mock("../../../orbit/ui/OrbitInterfaceProvider", () => ({ OrbitInterfaceProvider: ({ children }: { children: unknown }) => children }));
 vi.mock("../../../hooks/useShellAuth", () => ({ useShellAuth: () => ({ authReady: true, remoteServer: false }) }));
-vi.mock("../../../context", () => ({ ConfigProvider: ({ children }: { children: unknown }) => children }));
+vi.mock("../../../context", () => ({ ConfigProvider: ({ children }: { children: unknown }) => children, useConfig: () => ({ config: { web: { buddy_motion: "standard" } } }) }));
 vi.mock("../../../hooks/useRadioEvents", () => ({ useRadioEvents: (handlers: { onConnected: () => void }) => { radio.onConnected = handlers.onConnected; return { radioClients: 0 }; } }));
 vi.mock("../BuddyConversation", () => ({ BuddyConversation: () => <div className="conversation" /> }));
 vi.mock("../../../api/buddies", () => ({ getBuddy: async () => api.current, listBuddies: async () => [api.current] }));

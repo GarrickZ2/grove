@@ -57,6 +57,27 @@ html.buddy-mini-page,html.buddy-mini-page body,html.buddy-mini-page #root{height
 .buddy-mini-bubble:active>:first-child{transform:scale(.95)}
 .buddy-mini-bubble:focus-visible{outline:2px solid var(--color-highlight);outline-offset:2px}
 @keyframes buddy-mini-pop{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
+/* On its own: reacting to a hover, watching a nearby cursor, sleeping, waking.
+   Status animations (working, waiting) are never overridden. */
+.buddy-mini-bubble .buddy-av__eyes{transition:transform .18s ease-out}
+.buddy-mini-bubble .buddy-av__eye{transition:width .16s ease-out,height .16s ease-out}
+.buddy-mini-bubble.is-following .buddy-av.is-idle .buddy-av__eyes{transform:translate(calc(.07em + var(--look-x,0)*.08em),calc(-.07em + var(--look-y,0)*.06em))}
+.buddy-mini-bubble:hover:not(.is-sleeping) .buddy-av.is-idle{animation:buddy-mini-hello .52s cubic-bezier(.3,1.6,.5,1)}
+.buddy-mini-bubble:hover:not(.is-sleeping) .buddy-av.is-idle .buddy-av__eye{width:.13em;height:.26em;animation:none}
+.buddy-mini-bubble.is-sleeping .buddy-av.is-idle{animation:buddy-mini-breathe 4.8s ease-in-out infinite}
+.buddy-mini-bubble.is-sleeping .buddy-av.is-idle .buddy-av__eyes{transform:translate(.07em,0)}
+.buddy-mini-bubble.is-sleeping .buddy-av.is-idle .buddy-av__eye{width:.15em;height:.035em;animation:none}
+.buddy-mini-bubble.is-waking .buddy-av.is-idle{animation:buddy-mini-hello .52s cubic-bezier(.3,1.6,.5,1) .34s}
+.buddy-mini-bubble.is-waking .buddy-av.is-idle .buddy-av__eye{animation:buddy-mini-blink-twice .7s ease-in-out}
+.buddy-mini-z{position:absolute;right:-4px;top:-10px;width:22px;height:24px;pointer-events:none;color:#fff;font-size:12px;font-weight:600;font-style:normal;line-height:1;filter:drop-shadow(0 1px 2px rgb(0 0 0/.55))}
+.buddy-mini-z i{position:absolute;left:0;bottom:0;font-style:normal;opacity:0;animation:buddy-mini-z 3.6s ease-out infinite}
+.buddy-mini-z i:last-child{animation-delay:1.8s;font-size:9px}
+@keyframes buddy-mini-hello{0%{transform:none}35%{transform:translateY(-.08em) scale(.96,1.05)}65%{transform:scale(1.05,.95)}100%{transform:none}}
+@keyframes buddy-mini-breathe{0%,100%{transform:none}50%{transform:scale(1.025,.975)}}
+@keyframes buddy-mini-blink-twice{0%,30%,60%,100%{transform:scaleY(1)}15%,45%{transform:scaleY(.12)}}
+@keyframes buddy-mini-z{0%{opacity:0;transform:none}20%{opacity:1}100%{opacity:0;transform:translate(13px,-15px)}}
+@media (prefers-reduced-motion:reduce){.buddy-mini-z i{animation:none;opacity:1}.buddy-mini-z i:last-child{transform:translate(9px,-9px)}.buddy-mini-bubble .buddy-av__eyes,.buddy-mini-bubble .buddy-av__eye{transition:none}}
+
 /* Status and unread as small dots, no ring around the avatar. */
 .buddy-mini-state{position:absolute;right:3px;bottom:3px;width:13px;height:13px;border-radius:50%;box-shadow:0 0 0 2px rgb(255 255 255/.95)}
 .buddy-mini-state.is-working{background:var(--color-success)}
@@ -73,6 +94,7 @@ html.buddy-mini-page,html.buddy-mini-page body,html.buddy-mini-page #root{height
 .buddy-mini-say::before{right:-4px;bottom:-7px;width:10px;height:10px}
 .buddy-mini-say::after{right:-11px;bottom:-15px;width:5px;height:5px}
 .buddy-mini-say-text{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-size:13px;line-height:1.4;overflow-wrap:anywhere}
+.buddy-mini-say-more{display:inline-block;margin-top:4px;padding:0 6px;border-radius:9px;font-size:12px;line-height:18px;font-weight:500;background:color-mix(in oklab,var(--color-text) 8%,transparent)}
 .buddy-mini-say.is-waiting{color:var(--buddy-waiting-text,var(--color-warning));font-weight:500}
 .buddy-mini-say:hover{filter:brightness(.98)}
 @keyframes buddy-mini-say{from{opacity:0;transform:scale(.4) translate(8px,8px)}to{opacity:1;transform:none}}

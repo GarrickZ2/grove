@@ -1,5 +1,6 @@
-import { Code, Info, Keyboard, LayoutGrid, Terminal, X } from "lucide-react";
+import { Code, Info, Keyboard, LayoutGrid, Sparkles, Terminal, X } from "lucide-react";
 import { AppPicker, ideAppOptions, terminalAppOptions } from "../ui";
+import { useBuddyMotionSetting } from "./useBuddyMotionSetting";
 import { useInterfaceSetting } from "./useInterfaceSetting";
 import { isIdeApp, isTerminalApp } from "./settingsConstants";
 import type { SettingsState } from "./useSettingsState";
@@ -7,6 +8,7 @@ import type { SettingsState } from "./useSettingsState";
 /** Default IDE / terminal apps, window shortcut, interface and workspace layout. */
 export function GeneralSettings({ settings }: { settings: SettingsState }) {
   const { current: currentInterface, switchTo: switchInterface } = useInterfaceSetting();
+  const { motion, setMotion } = useBuddyMotionSetting();
   const {
     serverPlatform,
     ideCommand,
@@ -124,6 +126,19 @@ export function GeneralSettings({ settings }: { settings: SettingsState }) {
       )}
 
       {windowShortcutControl}
+
+      {isTauriGui && <div>
+        <div className="flex items-center gap-2 mb-3 select-none">
+          <Sparkles className="w-4 h-4 text-[var(--color-info)]" />
+          <span className="text-sm font-medium text-[var(--color-text)]">Mini Buddy Motion</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {(["lively", "standard"] as const).map((value) => <button key={value} type="button" aria-pressed={motion === value} onClick={() => setMotion(value)} className={`p-3 rounded-lg border text-left transition-colors ${motion === value ? "border-[var(--color-highlight)] bg-[var(--color-bg-secondary)]" : "border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)]"}`}>
+            <div className="text-xs font-medium text-[var(--color-text)] mb-1">{value === "lively" ? "Lively" : "Standard"}</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">{value === "lively" ? "Eyes follow your cursor. Uses a little more power" : "Reacts when you hover over it"}</div>
+          </button>)}
+        </div>
+      </div>}
 
       {/* Interface selection is saved independently from other settings. */}
       <div>

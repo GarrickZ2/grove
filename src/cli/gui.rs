@@ -658,6 +658,7 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             crate::tray::buddy_mini::buddy_mini_open,
             crate::tray::buddy_mini::buddy_mini_set_expanded,
             crate::tray::buddy_mini::buddy_mini_set_collapsed_size,
+            crate::tray::buddy_mini::buddy_mini_track_cursor,
             crate::tray::buddy_mini::buddy_mini_close,
             crate::tray::buddy_mini::buddy_mini_open_in_main,
             super::gui_launch::launch_reveal,

@@ -8,6 +8,8 @@
 //! its edge and its shadow inside a margin, and animates growing out of the
 //! bubble. Resizing keeps the bottom-right corner (where the bubble sits).
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, LogicalPosition, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const LABEL: &str = "buddy-mini";
@@ -26,17 +28,93 @@ static LAST_EXPANDED: std::sync::Mutex<Option<(f64, f64)>> = std::sync::Mutex::n
 /// Gap from the screen edges (and the Dock) for the first placement, on top
 /// of the page's own margin.
 const MARGIN: f64 = 4.0;
+/// How far from the window's corner the collapsed avatar's center sits.
+const AVATAR_CENTER: f64 = 50.0;
+/// The avatar notices the cursor within this distance.
+const FOLLOW_RANGE: f64 = 300.0;
+/// Distance at which the eyes are looking as far as they go.
+const FULL_LOOK: f64 = 60.0;
+/// Polling is what costs power, so it only runs fast while the avatar is watching.
+const NEAR_POLL: Duration = Duration::from_millis(100);
+const FAR_POLL: Duration = Duration::from_millis(500);
+/// The running cursor poll; a new start or a stop retires the previous one.
+static CURSOR_POLL: AtomicU64 = AtomicU64::new(0);
 
-/// Open (or switch) the mini Buddy, expanded.
+/// Where the cursor is from the avatar, sent while it is in range and once
+/// when it leaves. `x` and `y` run from -1 to 1 (screen directions).
+#[derive(Clone, serde::Serialize, PartialEq)]
+struct CursorLook {
+    x: f64,
+    y: f64,
+    near: bool,
+}
+
+/// `dx` and `dy` are logical pixels from the avatar's center to the cursor.
+fn cursor_look(dx: f64, dy: f64) -> CursorLook {
+    let distance = dx.hypot(dy);
+    if distance > FOLLOW_RANGE {
+        return CursorLook {
+            x: 0.0,
+            y: 0.0,
+            near: false,
+        };
+    }
+    // Stay centered when the cursor is on the avatar itself.
+    let reach = (distance / FULL_LOOK).min(1.0) / distance.max(1.0);
+    CursorLook {
+        x: dx * reach,
+        y: dy * reach,
+        near: true,
+    }
+}
+
+fn read_cursor_look(app: &AppHandle, window: &tauri::WebviewWindow) -> Option<CursorLook> {
+    let cursor = app.cursor_position().ok()?;
+    let origin = window.outer_position().ok()?;
+    let size = window.inner_size().ok()?;
+    let scale = window.scale_factor().ok()?;
+    let center_x = origin.x as f64 + size.width as f64 - AVATAR_CENTER * scale;
+    let center_y = origin.y as f64 + size.height as f64 - AVATAR_CENTER * scale;
+    Some(cursor_look(
+        (cursor.x - center_x) / scale,
+        (cursor.y - center_y) / scale,
+    ))
+}
+
+/// Start or stop telling the collapsed avatar where the cursor is. A page gets
+/// no pointer events outside its own small window, so this reads the system's.
+#[tauri::command]
+pub fn buddy_mini_track_cursor(app: AppHandle, enabled: bool) {
+    let run = CURSOR_POLL.fetch_add(1, Ordering::SeqCst) + 1;
+    if !enabled {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let mut was_near = false;
+        while CURSOR_POLL.load(Ordering::SeqCst) == run {
+            let Some(window) = app.get_webview_window(LABEL) else {
+                return;
+            };
+            let look = read_cursor_look(&app, &window);
+            let near = look.as_ref().is_some_and(|look| look.near);
+            if let Some(look) = look.filter(|_| near || was_near) {
+                let _ = app.emit_to(LABEL, "buddy-mini:cursor", look);
+            }
+            was_near = near;
+            tokio::time::sleep(if near { NEAR_POLL } else { FAR_POLL }).await;
+        }
+    });
+}
+
+/// Open (or switch) the mini Buddy, collapsed to its avatar.
 #[tauri::command]
 pub fn buddy_mini_open(app: AppHandle, buddy_id: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(LABEL) {
         window
             .emit("buddy-mini:show", &buddy_id)
             .map_err(|e| e.to_string())?;
-        resize(&window, true);
+        resize(&window, false);
         let _ = window.show();
-        let _ = window.set_focus();
         return Ok(());
     }
     let port = crate::cli::gui::gui_port().ok_or("GUI port is not initialized")?;
@@ -48,9 +126,8 @@ pub fn buddy_mini_open(app: AppHandle, buddy_id: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     let mut builder = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::External(url))
         .title("Buddy")
-        .inner_size(EXPANDED.0, EXPANDED.1)
-        .resizable(true)
-        .min_inner_size(MIN_EXPANDED.0, MIN_EXPANDED.1)
+        .inner_size(COLLAPSED.0, COLLAPSED.1)
+        .resizable(false)
         .decorations(false)
         .shadow(false)
         .always_on_top(true)
@@ -65,7 +142,6 @@ pub fn buddy_mini_open(app: AppHandle, buddy_id: String) -> Result<(), String> {
     let window = builder.build().map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
     float_over_fullscreen(&window);
-    let _ = window.set_focus();
     Ok(())
 }
 
@@ -137,8 +213,8 @@ fn first_position(app: &AppHandle) -> Option<(f64, f64)> {
         .or_else(|| app.primary_monitor().ok().flatten())?;
     let scale = monitor.scale_factor();
     let area = monitor.work_area();
-    let x = area.position.x as f64 / scale + area.size.width as f64 / scale - EXPANDED.0 - MARGIN;
-    let y = area.position.y as f64 / scale + area.size.height as f64 / scale - EXPANDED.1 - MARGIN;
+    let x = area.position.x as f64 / scale + area.size.width as f64 / scale - COLLAPSED.0 - MARGIN;
+    let y = area.position.y as f64 / scale + area.size.height as f64 / scale - COLLAPSED.1 - MARGIN;
     Some((x, y))
 }
 
@@ -275,5 +351,25 @@ fn float_over_fullscreen(window: &tauri::WebviewWindow) {
     }
     unsafe {
         let _: () = msg_send![pointer as *mut AnyObject, setCollectionBehavior: BEHAVIOR];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_avatar_looks_toward_a_nearby_cursor_only() {
+        let far = cursor_look(FOLLOW_RANGE + 1.0, 0.0);
+        assert!(!far.near);
+        assert!(far.x == 0.0 && far.y == 0.0);
+        let right = cursor_look(120.0, 0.0);
+        assert!(right.near && (right.x - 1.0).abs() < 1e-9 && right.y == 0.0);
+        let above = cursor_look(0.0, -120.0);
+        assert!((above.y + 1.0).abs() < 1e-9);
+        let close = cursor_look(30.0, 0.0);
+        assert!((close.x - 0.5).abs() < 1e-9);
+        let on_top = cursor_look(0.0, 0.0);
+        assert!(on_top.near && on_top.x == 0.0 && on_top.y == 0.0);
     }
 }
