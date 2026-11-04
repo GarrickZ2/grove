@@ -39,10 +39,14 @@ it("opens as the avatar with nothing unread, and stays one when switched", async
   expect(host.querySelector(".conversation")!.getAttribute("data-open")).toBe("false");
   expect(bubble()).not.toBeNull();
   expect(bubble()!.classList.contains("is-unread")).toBe(false);
+  expect(bubble()!.classList.contains("is-arriving")).toBe(true);
+  act(() => { bubble()!.dispatchEvent(Object.assign(new Event("animationend", { bubbles: true }), { animationName: "buddy-mini-arrive" })); });
+  expect(bubble()!.classList.contains("is-arriving")).toBe(false);
   await act(async () => tauri.handlers.get("buddy-mini:show")!({ payload: "mock-inbox" }));
   await settle();
   expect(bubble()).not.toBeNull();
   expect(bubble()!.classList.contains("is-unread")).toBe(false);
+  expect(bubble()!.classList.contains("is-arriving")).toBe(true);
 });
 
 it("collapses to the avatar bubble; a click expands it and a drag moves the window", async () => {

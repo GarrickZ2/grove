@@ -16,6 +16,7 @@
     "allow-buddy-mini-open",
     "allow-buddy-mini-set-expanded",
     "allow-buddy-mini-set-collapsed-size",
+    "allow-buddy-mini-track-cursor",
     "allow-buddy-mini-close",
     "allow-buddy-mini-open-in-main"
   ]

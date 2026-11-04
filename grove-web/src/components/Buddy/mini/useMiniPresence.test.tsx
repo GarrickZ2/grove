@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SLEEP_AFTER_MS, useMiniPresence } from "./useMiniPresence";
 
-const tauri = vi.hoisted(() => ({ invoke: vi.fn(async () => undefined), cursor: null as null | ((event: { payload: { x: number; y: number; near: boolean } }) => void) }));
+const tauri = vi.hoisted(() => ({ invoke: vi.fn(async () => undefined), cursor: null as null | ((event: { payload: { x: number; y: number; near: boolean; over: boolean } }) => void) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: tauri.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: async (_name: string, handler: typeof tauri.cursor) => { tauri.cursor = handler; return () => { tauri.cursor = null; }; } }));
 
@@ -24,7 +24,7 @@ it("falls asleep when left alone, and wakes with a nearby cursor", async () => {
   await show();
   act(() => { vi.advanceTimersByTime(SLEEP_AFTER_MS); });
   expect(seen.current.sleeping).toBe(true);
-  act(() => tauri.cursor!({ payload: { x: 0.5, y: -0.5, near: true } }));
+  act(() => tauri.cursor!({ payload: { x: 0.5, y: -0.5, near: true, over: true } }));
   expect(seen.current.sleeping).toBe(false);
   expect(seen.current.waking).toBe(true);
   expect(bubble.current.style.getPropertyValue("--look-x")).toBe("0.5");
@@ -35,7 +35,7 @@ it("falls asleep when left alone, and wakes with a nearby cursor", async () => {
 it("a nearby cursor keeps it awake", async () => {
   await show();
   act(() => { vi.advanceTimersByTime(SLEEP_AFTER_MS - 1000); });
-  act(() => tauri.cursor!({ payload: { x: 1, y: 0, near: true } }));
+  act(() => tauri.cursor!({ payload: { x: 1, y: 0, near: true, over: false } }));
   act(() => { vi.advanceTimersByTime(SLEEP_AFTER_MS - 1000); });
   expect(seen.current.sleeping).toBe(false);
   expect(seen.current.following).toBe(true);

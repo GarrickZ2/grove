@@ -9,7 +9,7 @@ export const SLEEP_AFTER_MS = 5 * 60 * 1000;
 /** Long enough for the two blinks and the hop in buddy-mini.css. */
 const WAKE_MS = 900;
 
-interface CursorLook { x: number; y: number; near: boolean }
+interface CursorLook { x: number; y: number; near: boolean; over: boolean }
 
 /**
  * What the collapsed avatar is doing on its own: watching a nearby cursor,
@@ -22,6 +22,7 @@ export function useMiniPresence({ collapsed, tone, activity, lively, bubble }: {
   const [sleeping, setSleeping] = useState(false);
   const [waking, setWaking] = useState(false);
   const [following, setFollowing] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const resting = collapsed && tone === "idle";
   const asleep = useRef(false);
   const sleepTimer = useRef<number | undefined>(undefined);
@@ -56,6 +57,7 @@ export function useMiniPresence({ collapsed, tone, activity, lively, bubble }: {
     void listen<CursorLook>("buddy-mini:cursor", ({ payload }) => {
       if (payload.near) notice();
       setFollowing(payload.near);
+      setHovered(payload.over);
       bubble.current?.style.setProperty("--look-x", String(payload.x));
       bubble.current?.style.setProperty("--look-y", String(payload.y));
     }).then((unlisten) => { if (cancelled) unlisten(); else stop = unlisten; }).catch(() => {});
@@ -63,8 +65,9 @@ export function useMiniPresence({ collapsed, tone, activity, lively, bubble }: {
     return () => {
       cancelled = true; stop?.();
       setFollowing(false);
+      setHovered(false);
       void invoke("buddy_mini_track_cursor", { enabled: false }).catch(() => {});
     };
   }, [tracking, notice, bubble]);
-  return { sleeping, waking, following: following && !sleeping, notice };
+  return { sleeping, waking, following: following && !sleeping, hovered, notice };
 }

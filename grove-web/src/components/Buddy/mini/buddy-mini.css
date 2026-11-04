@@ -57,13 +57,22 @@ html.buddy-mini-page,html.buddy-mini-page body,html.buddy-mini-page #root{height
 .buddy-mini-bubble:active>:first-child{transform:scale(.95)}
 .buddy-mini-bubble:focus-visible{outline:2px solid var(--color-highlight);outline-offset:2px}
 @keyframes buddy-mini-pop{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
+/* Summoned: it lands in the corner, squashes, opens its eyes and sends out one ring. All of it fits the 100px window. */
+.buddy-mini-bubble.is-arriving{animation:buddy-mini-arrive .72s cubic-bezier(.3,.7,.4,1) both}
+.buddy-mini-bubble.is-arriving .buddy-av.is-idle .buddy-av__eye{animation:buddy-hello-wake 1.1s ease-out both}
+.buddy-mini-bubble.is-arriving::before,.buddy-mini-bubble.is-arriving::after{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;opacity:0}
+.buddy-mini-bubble.is-arriving::before{background:radial-gradient(circle,color-mix(in oklab,var(--buddy-color,var(--color-highlight)) 45%,transparent) 0%,transparent 70%);animation:buddy-mini-arrive-glow .9s ease-out .24s}
+.buddy-mini-bubble.is-arriving::after{border:2px solid var(--buddy-color,var(--color-highlight));animation:buddy-mini-arrive-ring .7s cubic-bezier(.2,.7,.3,1) .36s}
+@keyframes buddy-mini-arrive{0%{opacity:0;transform:translateY(-14px) scale(.3)}42%{opacity:1;transform:translateY(2px) scale(1.14,1.06)}58%{transform:scale(1.12,.86)}74%{transform:translateY(-5px) scale(.96,1.05)}88%{transform:scale(1.02,.98)}100%{transform:none}}
+@keyframes buddy-mini-arrive-glow{0%{opacity:0;transform:scale(.7)}35%{opacity:1;transform:scale(1.35)}100%{opacity:0;transform:scale(1.5)}}
+@keyframes buddy-mini-arrive-ring{0%{opacity:.75;transform:scale(.95)}100%{opacity:0;transform:scale(1.5)}}
 /* On its own: reacting to a hover, watching a nearby cursor, sleeping, waking.
    Status animations (working, waiting) are never overridden. */
 .buddy-mini-bubble .buddy-av__eyes{transition:transform .18s ease-out}
 .buddy-mini-bubble .buddy-av__eye{transition:width .16s ease-out,height .16s ease-out}
 .buddy-mini-bubble.is-following .buddy-av.is-idle .buddy-av__eyes{transform:translate(calc(.07em + var(--look-x,0)*.08em),calc(-.07em + var(--look-y,0)*.06em))}
-.buddy-mini-bubble:hover:not(.is-sleeping) .buddy-av.is-idle{animation:buddy-mini-hello .52s cubic-bezier(.3,1.6,.5,1)}
-.buddy-mini-bubble:hover:not(.is-sleeping) .buddy-av.is-idle .buddy-av__eye{width:.13em;height:.26em;animation:none}
+.buddy-mini-bubble:is(:hover,.is-hovered):not(.is-sleeping) .buddy-av.is-idle{animation:buddy-mini-hello .52s cubic-bezier(.3,1.6,.5,1)}
+.buddy-mini-bubble:is(:hover,.is-hovered):not(.is-sleeping) .buddy-av.is-idle .buddy-av__eye{width:.13em;height:.26em;animation:none}
 .buddy-mini-bubble.is-sleeping .buddy-av.is-idle{animation:buddy-mini-breathe 4.8s ease-in-out infinite}
 .buddy-mini-bubble.is-sleeping .buddy-av.is-idle .buddy-av__eyes{transform:translate(.07em,0)}
 .buddy-mini-bubble.is-sleeping .buddy-av.is-idle .buddy-av__eye{width:.15em;height:.035em;animation:none}
@@ -76,7 +85,7 @@ html.buddy-mini-page,html.buddy-mini-page body,html.buddy-mini-page #root{height
 @keyframes buddy-mini-breathe{0%,100%{transform:none}50%{transform:scale(1.025,.975)}}
 @keyframes buddy-mini-blink-twice{0%,30%,60%,100%{transform:scaleY(1)}15%,45%{transform:scaleY(.12)}}
 @keyframes buddy-mini-z{0%{opacity:0;transform:none}20%{opacity:1}100%{opacity:0;transform:translate(13px,-15px)}}
-@media (prefers-reduced-motion:reduce){.buddy-mini-z i{animation:none;opacity:1}.buddy-mini-z i:last-child{transform:translate(9px,-9px)}.buddy-mini-bubble .buddy-av__eyes,.buddy-mini-bubble .buddy-av__eye{transition:none}}
+@media (prefers-reduced-motion:reduce){.buddy-mini-bubble.is-arriving{animation:none}.buddy-mini-bubble.is-arriving::before,.buddy-mini-bubble.is-arriving::after{display:none}.buddy-mini-bubble.is-arriving .buddy-av.is-idle .buddy-av__eye{animation:none}.buddy-mini-z i{animation:none;opacity:1}.buddy-mini-z i:last-child{transform:translate(9px,-9px)}.buddy-mini-bubble .buddy-av__eyes,.buddy-mini-bubble .buddy-av__eye{transition:none}}
 
 /* Status and unread as small dots, no ring around the avatar. */
 .buddy-mini-state{position:absolute;right:3px;bottom:3px;width:13px;height:13px;border-radius:50%;box-shadow:0 0 0 2px rgb(255 255 255/.95)}

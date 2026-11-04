@@ -32,6 +32,8 @@ const MARGIN: f64 = 4.0;
 const AVATAR_CENTER: f64 = 50.0;
 /// The avatar notices the cursor within this distance.
 const FOLLOW_RANGE: f64 = 300.0;
+/// The cursor is on the avatar within this distance of its center.
+const AVATAR_RADIUS: f64 = 30.0;
 /// Distance at which the eyes are looking as far as they go.
 const FULL_LOOK: f64 = 60.0;
 /// Polling is what costs power, so it only runs fast while the avatar is watching.
@@ -47,6 +49,8 @@ struct CursorLook {
     x: f64,
     y: f64,
     near: bool,
+    /// A window that isn't active gets no pointer events, so `:hover` can't say this.
+    over: bool,
 }
 
 /// `dx` and `dy` are logical pixels from the avatar's center to the cursor.
@@ -57,6 +61,7 @@ fn cursor_look(dx: f64, dy: f64) -> CursorLook {
             x: 0.0,
             y: 0.0,
             near: false,
+            over: false,
         };
     }
     // Stay centered when the cursor is on the avatar itself.
@@ -65,6 +70,7 @@ fn cursor_look(dx: f64, dy: f64) -> CursorLook {
         x: dx * reach,
         y: dy * reach,
         near: true,
+        over: distance <= AVATAR_RADIUS,
     }
 }
 
@@ -73,11 +79,17 @@ fn read_cursor_look(app: &AppHandle, window: &tauri::WebviewWindow) -> Option<Cu
     let origin = window.outer_position().ok()?;
     let size = window.inner_size().ok()?;
     let scale = window.scale_factor().ok()?;
-    let center_x = origin.x as f64 + size.width as f64 - AVATAR_CENTER * scale;
-    let center_y = origin.y as f64 + size.height as f64 - AVATAR_CENTER * scale;
+    // On macOS the cursor is scaled by the primary display, whichever the window is on.
+    let cursor_scale = if cfg!(target_os = "macos") {
+        app.primary_monitor().ok()??.scale_factor()
+    } else {
+        scale
+    };
+    let center_x = (origin.x as f64 + size.width as f64) / scale - AVATAR_CENTER;
+    let center_y = (origin.y as f64 + size.height as f64) / scale - AVATAR_CENTER;
     Some(cursor_look(
-        (cursor.x - center_x) / scale,
-        (cursor.y - center_y) / scale,
+        cursor.x / cursor_scale - center_x,
+        cursor.y / cursor_scale - center_y,
     ))
 }
 
@@ -363,6 +375,8 @@ mod tests {
         let far = cursor_look(FOLLOW_RANGE + 1.0, 0.0);
         assert!(!far.near);
         assert!(far.x == 0.0 && far.y == 0.0);
+        assert!(!cursor_look(AVATAR_RADIUS + 1.0, 0.0).over);
+        assert!(cursor_look(AVATAR_RADIUS, 0.0).over);
         let right = cursor_look(120.0, 0.0);
         assert!(right.near && (right.x - 1.0).abs() < 1e-9 && right.y == 0.0);
         let above = cursor_look(0.0, -120.0);

@@ -96,6 +96,7 @@ fn build_tauri() {
                 "buddy_mini_open",
                 "buddy_mini_set_expanded",
                 "buddy_mini_set_collapsed_size",
+                "buddy_mini_track_cursor",
                 "buddy_mini_close",
                 "buddy_mini_open_in_main",
                 "launch_reveal",

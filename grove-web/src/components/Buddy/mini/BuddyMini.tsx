@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -15,6 +15,7 @@ import { useRadioEvents } from "../../../hooks/useRadioEvents";
 import { BUDDY_MOTION_EVENT, type BuddyMotion } from "../../Config/useBuddyMotionSetting";
 import { errorMessage } from "../../../utils/errorMessage";
 import { BuddyAvatar } from "../BuddyAvatar";
+import { resolveBuddyAvatar } from "../buddyAvatarConfig";
 import { BuddyConversation } from "../BuddyConversation";
 import { BuddyGroupAvatar } from "../group/BuddyGroupAvatar";
 import { BuddyGroupConversation } from "../group/BuddyGroupConversation";
@@ -60,6 +61,8 @@ function MiniWindow() {
   const [others, setOthers] = useState<BuddySummary[]>([]);
   /** `closing` plays the shrink into the bubble before the window shrinks. */
   const [phase, setPhase] = useState<"expanded" | "closing" | "collapsed">("collapsed");
+  // Plays when summoned from the main window, not on every collapse.
+  const [arriving, setArriving] = useState(true);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Activity seen when collapsing; newer activity marks the bubble unread. */
@@ -114,7 +117,7 @@ function MiniWindow() {
   // Opening the mini window for another Buddy switches this one, collapsed.
   useEffect(() => {
     let stop: (() => void) | undefined, cancelled = false;
-    void listen<string>("buddy-mini:show", (event) => { opening.current = true; setId(event.payload); setReply(null); setSwitching(false); setPhase("collapsed"); })
+    void listen<string>("buddy-mini:show", (event) => { opening.current = true; setId(event.payload); setReply(null); setSwitching(false); setPhase("collapsed"); setArriving(true); })
       .then((unlisten) => { if (cancelled) unlisten(); else stop = unlisten; }).catch(() => {});
     return () => { cancelled = true; stop?.(); };
   }, []);
@@ -133,7 +136,7 @@ function MiniWindow() {
   }, []);
 
   // Expand: grow the window first (the bubble keeps its corner), then the panel grows out of it.
-  const expand = () => { void invoke("buddy_mini_set_expanded", { expanded: true }).catch(() => {}).finally(() => setPhase("expanded")); };
+  const expand = () => { setArriving(false); void invoke("buddy_mini_set_expanded", { expanded: true }).catch(() => {}).finally(() => setPhase("expanded")); };
   // Collapse: the panel shrinks into the corner, then the window follows.
   const collapse = () => {
     if (panel.current) setHeldSize({ width: panel.current.offsetWidth, height: panel.current.offsetHeight });
@@ -152,7 +155,9 @@ function MiniWindow() {
   const isCollapsed = phase === "collapsed";
   const tone: BuddyStatus = waiting ? "waiting" : subject?.status ?? "idle";
   const face = (size: number) => group ? <BuddyGroupAvatar members={group.members} size={size} /> : buddy && <BuddyAvatar id={buddy.id} avatar={buddy.avatar} size={size} state={buddy.status} />;
-  return <>{isCollapsed && <Bubble name={subject?.name ?? "Buddy"} face={face(56)} tone={tone} peek={peek} activity={subject?.last_activity_at} lively={(motion ?? config?.web.buddy_motion) !== "standard"} unread={!!subject?.last_activity_at && subject.last_activity_at !== seenAt}
+  const lead = group ? group.members[0] && { id: group.members[0].buddy_id, avatar: group.members[0].avatar } : buddy;
+  const color = lead ? resolveBuddyAvatar(lead.id, lead.avatar).color : undefined;
+  return <>{isCollapsed && <Bubble name={subject?.name ?? "Buddy"} face={face(56)} arriving={arriving && !!subject} color={color} onArrived={() => setArriving(false)} tone={tone} peek={peek} activity={subject?.last_activity_at} lively={(motion ?? config?.web.buddy_motion) !== "standard"} unread={!!subject?.last_activity_at && subject.last_activity_at !== seenAt}
     onOpen={() => { setReply(null); expand(); }} onDismissReply={dismissReply} />}
   <div ref={panel} className={`buddy-app buddy-mini${orbit ? " orbit-ui" : ""}${phase === "closing" ? " is-closing" : ""}${isCollapsed ? " is-collapsed" : ""}`} style={isCollapsed ? heldSize : undefined}
     onAnimationEnd={(event) => { if (event.target === event.currentTarget && phase === "closing") collapsed(); }}
@@ -178,9 +183,9 @@ function MiniWindow() {
 }
 
 /** The collapsed avatar: click to open, drag to move the window. Beside it, a speech bubble: typing dots while it works, its reply when done, or a request. */
-function Bubble({ name, face, tone, peek, activity, lively, unread, onOpen, onDismissReply }: { name: string; face: React.ReactNode; tone: BuddyStatus; peek: Peek | null; activity: string | null | undefined; lively: boolean; unread: boolean; onOpen: () => void; onDismissReply: () => void }) {
+function Bubble({ name, face, arriving, color, onArrived, tone, peek, activity, lively, unread, onOpen, onDismissReply }: { name: string; face: React.ReactNode; arriving: boolean; color?: string; onArrived: () => void; tone: BuddyStatus; peek: Peek | null; activity: string | null | undefined; lively: boolean; unread: boolean; onOpen: () => void; onDismissReply: () => void }) {
   const avatar = useRef<HTMLButtonElement>(null);
-  const { sleeping, waking, following, notice } = useMiniPresence({ collapsed: true, tone, activity, lively, bubble: avatar });
+  const { sleeping, waking, following, hovered: cursorOver, notice } = useMiniPresence({ collapsed: true, tone, activity, lively, bubble: avatar });
   const press = useRef<{ x: number; y: number } | null>(null);
   const down = (event: PointerEvent) => { if (event.button === 0) press.current = { x: event.screenX, y: event.screenY }; };
   const move = (event: PointerEvent) => {
@@ -211,7 +216,7 @@ function Bubble({ name, face, tone, peek, activity, lively, unread, onOpen, onDi
       aria-label={peek.kind === "typing" ? `${name} is working` : `${name}: ${peek.text}`}>
       {peek.kind === "typing" ? <span className="buddy-mini-dots" aria-hidden="true"><i /><i /><i /></span> : <><span className="buddy-mini-say-text">{peek.text}</span>{!!peek.more && <span className="buddy-mini-say-more">+{peek.more}</span>}</>}
     </button>}
-    <button type="button" ref={avatar} onPointerEnter={notice} className={`buddy-mini-bubble${unread ? " is-unread" : ""}${sleeping ? " is-sleeping" : ""}${waking ? " is-waking" : ""}${following ? " is-following" : ""}`} aria-label={`Open ${name}${tone !== "idle" ? `, ${tone}` : ""}${unread ? ", new messages" : ""}`}
+    <button type="button" ref={avatar} onPointerEnter={notice} style={color ? { "--buddy-color": color } as CSSProperties : undefined} onAnimationEnd={(event) => { if (event.target === event.currentTarget && event.animationName === "buddy-mini-arrive") onArrived(); }} className={`buddy-mini-bubble${arriving ? " is-arriving" : ""}${unread ? " is-unread" : ""}${sleeping ? " is-sleeping" : ""}${waking ? " is-waking" : ""}${following ? " is-following" : ""}${cursorOver ? " is-hovered" : ""}`} aria-label={`Open ${name}${tone !== "idle" ? `, ${tone}` : ""}${unread ? ", new messages" : ""}`}
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }}>
       {face}
       {sleeping && <span className="buddy-mini-z" aria-hidden="true"><i>z</i><i>z</i></span>}
