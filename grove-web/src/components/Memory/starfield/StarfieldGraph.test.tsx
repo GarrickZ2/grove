@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DialogLayerContext } from "../../ui/dialogLayerContext";
 import { twoCliques } from "./fixtures";
 import { StarfieldGraph } from "./StarfieldGraph";
 
@@ -49,6 +50,12 @@ describe("StarfieldGraph", () => {
     const pause = container.querySelector<HTMLButtonElement>('button[aria-label="Pause motion"]')!;
     act(() => pause.click());
     expect(container.querySelector('button[aria-label="Resume motion"]')?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("opens above the dialog it was expanded from", () => {
+    act(() => root.render(<DialogLayerContext.Provider value={130}><StarfieldGraph entities={data.entities} relations={data.relations} onOpen={() => {}} look="light" /></DialogLayerContext.Provider>));
+    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Expand mind map"]')!.click());
+    expect(document.body.querySelector<HTMLElement>(".osf-full")!.style.zIndex).toBe("130");
   });
 
   it("expand opens the full-window night sky in a portal; Esc closes it", () => {

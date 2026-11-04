@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { useReducedMotion } from "framer-motion";
 import { Maximize2, Minimize2, Minus, Pause, Play, Plus, Scan } from "lucide-react";
 import type { MemoryEntity, MemoryRelation } from "../../../api/memory";
 import { useEscapeScope } from "../../../keyboard/useEscapeScope";
+import { DialogLayerContext } from "../../ui/dialogLayerContext";
 import { buildStarScene, hexRgb, type InlineLook, type RGB } from "./scene";
 import { DEFAULT_GROUND } from "./render";
 import { StarfieldEngine, type Corner, type FocusSnapshot, type Phase } from "./engine";
@@ -60,6 +61,7 @@ export function StarfieldGraph({ entities, relations, onOpen, look, activeCatego
   const [phase, setPhase] = useState<Phase>("card");
   const [paused, setPaused] = useState(false);
   const reduced = Boolean(useReducedMotion());
+  const layer = useContext(DialogLayerContext);
   const coarse = useMemo(() => typeof window !== "undefined" && Boolean(window.matchMedia?.("(pointer: coarse)").matches), []);
   const [engine] = useState(() => new StarfieldEngine({ onFocus: setFocus, onCorner: setCorner, onPhase: setPhase }));
   const scene = useMemo(() => (entities.length ? buildStarScene(entities, relations) : null), [entities, relations]);
@@ -222,7 +224,7 @@ export function StarfieldGraph({ entities, relations, onOpen, look, activeCatego
       {tools(false)}
       {coarse ? null : <span className="osf-hint" aria-hidden="true">Hover a star · click to pin · drag to orbit</span>}
       {fullOpen && typeof document !== "undefined" ? createPortal(
-        <div className={`osf-full${phase === "expanded" ? " is-open" : ""}`} role="dialog" aria-modal="true" aria-label="Memory night sky">
+        <div className={`osf-full${phase === "expanded" ? " is-open" : ""}`} style={{ zIndex: Math.max(60, layer) }} role="dialog" aria-modal="true" aria-label="Memory night sky">
           <div ref={scrimRef} className="osf-scrim" />
           <div ref={stageRef} className="osf-stage">
             <canvas ref={fullInlineRef} className="osf-canvas osf-canvas-under" aria-hidden="true" />
