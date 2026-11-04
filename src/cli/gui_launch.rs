@@ -22,8 +22,13 @@ static REVEALED: AtomicBool = AtomicBool::new(false);
 
 /// Open the launch window. `false` means it could not be created and the
 /// caller should show the main window itself.
-pub fn open(app: &AppHandle, base_url: &str) -> bool {
-    let Ok(url) = format!("{base_url}/launch.html").parse() else {
+///
+/// The page is served by this process's embedded assets in remote mode too
+/// (only `/api` is proxied). `remote` tells it not to read the appearance
+/// config: that lives on the remote backend and needs a sign-in first.
+pub fn open(app: &AppHandle, base_url: &str, remote: bool) -> bool {
+    let query = if remote { "?remote=1" } else { "" };
+    let Ok(url) = format!("{base_url}/launch.html{query}").parse() else {
         return false;
     };
     let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(url))

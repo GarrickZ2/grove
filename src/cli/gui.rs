@@ -687,8 +687,7 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             .min_inner_size(380.0, 600.0)
             .center()
             // Hidden while the launch window plays; `launch_reveal` fades it in.
-            // Remote GUIs skip the launch: their backend may predate launch.html.
-            .visible(is_remote)
+            .visible(false)
             .disable_drag_drop_handler();
 
             // macOS: overlay title bar so traffic lights float over content
@@ -711,7 +710,7 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
 
             let main_window = builder.build()?;
 
-            if !is_remote && !super::gui_launch::open(app.handle(), &target_url) {
+            if !super::gui_launch::open(app.handle(), &target_url, is_remote) {
                 main_window.show()?;
             }
 

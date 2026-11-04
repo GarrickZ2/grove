@@ -63,6 +63,8 @@ export function resolveLaunchLook(config: Partial<ThemeConfig> | null): LaunchLo
 }
 
 export async function loadLaunchLook(): Promise<LaunchLook> {
+  // Remote GUI: the config sits behind the remote backend's sign-in; use the system look.
+  if (new URLSearchParams(window.location.search).has("remote")) return resolveLaunchLook(null);
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), CONFIG_TIMEOUT_MS);
   try {
