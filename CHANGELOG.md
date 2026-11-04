@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.2] - 2026-11-03
+
+### Added
+
+- **Buddy group chats** — Chat with several Buddies in a group, with animations as groups and members come and go.
+- **Read-only sessions** — Open sessions in a read-only mode.
+- **Send behavior** — Choose whether sending while a turn runs queues the message or interrupts the turn.
+- **Agent auto-update** — Update Agents automatically and guide first setup.
+- **Editor project switching** — Switch to linked Projects from the editor.
+- **Sidebar resizing** — Drag to resize the Orbit sidebar.
+
+### Improved
+
+- **Session memory** — Keep recent Sessions and Buddies in memory for faster switching.
+- **Buddy work** — Buddies can interrupt Sessions, work on their queues, stay quiet on turns you needn't see, and update Routines field by field.
+- **Buddy chat** — Fold finished delegations by when they ended, hide automatic approval notes, and highlight @mentions in the composer.
+- **Mini Buddy** — Open collapsed, stay connected while collapsed, show groups, react to the cursor, and play an arrival when opened.
+- **Buddy settings** — Leave Grove settings to the main app.
+- **Remote GUI** — Show the launch page on remote GUIs too.
+
+### Fixed
+
+- **Terminal output** — Store only the final output of each ACP v2 terminal.
+- **Mind map** — Open the full mind map above its dialog.
+- **Grove-meta** — Read envelopes as text outside the bubble and stop an Agent's echo showing raw grove-meta.
+- **Plain HTTP** — Stop relying on `crypto.randomUUID` over plain HTTP.
+- **Cancelled turns** — Stop notifying about turns the user cancelled.
+- **Phone composer** — Keep the composer clear of the home bar.
+
 ## [0.14.1] - 2026-11-03
 
 ### Added
