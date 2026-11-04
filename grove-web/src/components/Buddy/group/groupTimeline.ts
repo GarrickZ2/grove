@@ -2,7 +2,7 @@ import type { BuddyGroupMessage } from "../../../api/buddyGroups";
 
 export type GroupRow =
   | { kind: "user" | "buddy"; id: string; message: BuddyGroupMessage }
-  | { kind: "system"; id: string; text: string }
+  | { kind: "system"; id: string; seq: number; text: string; buddyId: string | null; joined: boolean }
   | { kind: "failed"; id: string; buddyId: string; name: string }
   | { kind: "quiet"; id: string; names: string[]; nobodyReplied: boolean };
 
@@ -22,7 +22,7 @@ export function groupRows(messages: BuddyGroupMessage[], nameOf: (id: string) =>
       rows.push({ kind: "quiet", id, names, nobodyReplied: unanswered && !(last && anyoneWorking) });
     } else if (message.sender_kind === "failed") rows.push({ kind: "failed", id, buddyId: message.sender_id ?? "", name: nameOf(message.sender_id ?? "") });
     else if (isSpeech(message)) rows.push({ kind: message.sender_kind as "user" | "buddy", id, message });
-    else rows.push({ kind: "system", id, text: message.text });
+    else rows.push({ kind: "system", id, seq: message.seq, text: message.text, buddyId: message.sender_id, joined: message.text.endsWith(" joined") });
   }
   return rows;
 }

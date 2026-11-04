@@ -13,6 +13,8 @@ export function useBuddyGroupConversation(group: BuddyGroup, onSent: () => void)
   const id = group.id;
   const [messages, setMessages] = useState<BuddyGroupMessage[]>([]);
   const [hasEarlier, setHasEarlier] = useState(false);
+  /** The last message when the group was opened; anything after it just happened. */
+  const [openedAt, setOpenedAt] = useState<number | null>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -26,6 +28,7 @@ export function useBuddyGroupConversation(group: BuddyGroup, onSent: () => void)
       // Keep pages already loaded; only the tail changes.
       setMessages((known) => [...known.filter((message) => message.group_id === id && message.seq < (page.messages[0]?.seq ?? 0)), ...page.messages]);
       setHasEarlier((known) => known || page.has_earlier);
+      setOpenedAt((known) => known ?? page.messages.at(-1)?.seq ?? 0);
       setError(null);
     } catch (reason) { if (current === request.current) setError(errorMessage(reason)); }
   }, [id]);
@@ -68,5 +71,5 @@ export function useBuddyGroupConversation(group: BuddyGroup, onSent: () => void)
     sending,
     connected: true,
   };
-  return { messages, hasEarlier, loadingEarlier, loadEarlier, error, activity, transport };
+  return { messages, openedAt, hasEarlier, loadingEarlier, loadEarlier, error, activity, transport };
 }

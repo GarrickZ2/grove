@@ -48,3 +48,10 @@ describe("latestGroupReply", () => {
     expect(latestGroupReply(messages, "2026-11-03T10:05:00Z", () => "Mira")).toBeNull();
   });
 });
+
+it("keeps who a member event is about", () => {
+  const [removed, back] = log(["system", "b"], ["system", "b"]);
+  const rows = groupRows([{ ...removed, text: "Kai was removed" }, { ...back, text: "Kai joined" }], () => "", false);
+  expect(rows[0]).toMatchObject({ kind: "system", seq: 1, buddyId: "b", joined: false });
+  expect(rows[1]).toMatchObject({ kind: "system", seq: 2, buddyId: "b", joined: true });
+});

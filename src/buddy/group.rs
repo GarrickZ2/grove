@@ -239,6 +239,23 @@ fn system(group: &str, text: &str) -> Result<()> {
     Ok(())
 }
 
+/// A member coming or going, attributed so the timeline can show who.
+fn member_event(group: &str, buddy: &Buddy, text: &str) -> Result<()> {
+    let name = buddy_name(buddy);
+    with(|conn| {
+        db::append_message(
+            conn,
+            group,
+            "system",
+            Some(&buddy.id),
+            &format!("{name} {text}"),
+            &[],
+            &[],
+        )
+    })?;
+    Ok(())
+}
+
 pub fn add_member(id: &str, buddy_id: &str) -> Result<()> {
     let group = open(id)?;
     let buddy = super::get(buddy_id)?;
@@ -252,7 +269,7 @@ pub fn add_member(id: &str, buddy_id: &str) -> Result<()> {
         tx.commit()?;
         Ok(())
     })?;
-    system(id, &format!("{} joined", buddy_name(&buddy)))?;
+    member_event(id, &buddy, "joined")?;
     changed(id);
     Ok(())
 }
@@ -274,7 +291,7 @@ async fn leave(id: &str, buddy: &Buddy, note: &str) -> Result<()> {
     }
     stop_session(&session_key(buddy, &member)).await;
     tasks::archive_chat_session(&buddy.project_hash, &member.task_id, &member.session_id)?;
-    system(id, &format!("{} {note}", buddy_name(buddy)))?;
+    member_event(id, buddy, note)?;
     changed(id);
     Ok(())
 }

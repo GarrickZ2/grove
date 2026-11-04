@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { MessageCircle, MoreHorizontal, Plus, Search, UserMinus, X } from "lucide-react";
 import type { BuddySummary } from "../../../api/buddies";
 import { addBuddyGroupMember, removeBuddyGroupMember, renameBuddyGroup, type BuddyGroup, type BuddyGroupMember } from "../../../api/buddyGroups";
@@ -10,6 +11,7 @@ const STATUS = { idle: "Idle", working: "Working", waiting: "Waiting" } as const
 
 /** Everything about a group on one page: its name, who's in it, and disbanding it. */
 export function BuddyGroupPanel({ group, buddies, onChanged, onDisband, onOpenBuddy, onClose, closable = false }: { group: BuddyGroup; buddies: BuddySummary[]; onChanged: () => void; onDisband: () => void; onOpenBuddy: (id: string) => void; onClose: () => void; closable?: boolean }) {
+  const reduceMotion = useReducedMotion();
   const [name, setName] = useState(group.name);
   const [edited, setEdited] = useState(group.id);
   if (edited !== group.id) { setEdited(group.id); setName(group.name); }
@@ -38,12 +40,12 @@ export function BuddyGroupPanel({ group, buddies, onChanged, onDisband, onOpenBu
           {!outside.length && <p className="buddy-muted">Everyone's already here</p>}
           <p className="buddy-muted">New members see the last 50 messages.</p>
         </div>}
-        <ul className="buddy-group-members">{group.members.map((member) => <li key={member.buddy_id}>
+        <ul className="buddy-group-members"><AnimatePresence initial={false}>{group.members.map((member) => <motion.li key={member.buddy_id} layout={!reduceMotion} initial={{ opacity: 0, y: -8, scale: 0.94 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, x: 24, height: 0, paddingTop: 0, paddingBottom: 0 }} transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 32 }}>
           <BuddyAvatar id={member.buddy_id} avatar={member.avatar} size={32} state={member.status} />
           <span className="buddy-group-row-copy"><strong>{member.name}</strong>{member.role && <small>{member.role}</small>}</span>
           <span className={`buddy-group-member-status is-${member.status}`}>{STATUS[member.status]}</span>
           <button type="button" className="orbit-icon-button buddy-icon-button" aria-label={`More for ${member.name}`} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setMenu({ member, x: rect.right - 196, y: rect.bottom + 4 }); }}><MoreHorizontal /></button>
-        </li>)}</ul>
+        </motion.li>)}</AnimatePresence></ul>
         {removing && <div className="buddy-group-confirm" role="alert"><p>{removing.name} is working. Removing them stops this turn.</p><div className="buddy-actions"><button type="button" className="buddy-button" onClick={() => setRemoving(null)}>Keep</button><button type="button" className="buddy-button is-danger" onClick={() => { const member = removing; setRemoving(null); run(removeBuddyGroupMember(group.id, member.buddy_id)); }}>Remove</button></div></div>}
         {error && <p role="alert">{error}</p>}
       </div>

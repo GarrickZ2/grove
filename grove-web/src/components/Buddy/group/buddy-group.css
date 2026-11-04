@@ -9,6 +9,24 @@
 .buddy-group-speaker{margin:2px 0 3px;font-size:13px;font-weight:600;line-height:1.4}
 .buddy-group-quiet{padding-left:36px;font-size:12px;color:var(--color-text-muted)}
 .buddy-group-mention{padding:1px 5px;border-radius:6px;font-weight:500;background:color-mix(in oklab,currentColor 14%,transparent)}
+/* A new group arrives one member at a time; the shared burst waits for the last. */
+.buddy-group-hello .buddy-hello-stage{width:auto;min-width:160px}
+.buddy-group-hello-row{position:relative;z-index:1;display:flex;gap:6px}
+.buddy-hello.is-arriving.buddy-group-hello .buddy-hello-avatar{animation-delay:calc(.15s + var(--i)*.14s)}
+.buddy-hello.is-arriving.buddy-group-hello .buddy-av .buddy-av__eye{animation-delay:calc(.15s + var(--i)*.14s),2s}
+.buddy-group-hello .buddy-hello-ring{animation-delay:calc(.62s + var(--landed))}.buddy-group-hello .buddy-hello-ring.is-late{animation-delay:calc(.78s + var(--landed))}
+.buddy-group-hello .buddy-hello-spark{animation-delay:calc(.64s + var(--landed))}
+.buddy-hello.is-arriving.buddy-group-hello h2{animation-delay:calc(.85s + var(--landed))}.buddy-hello.is-arriving.buddy-group-hello p{animation-delay:calc(.97s + var(--landed))}.buddy-hello.is-arriving.buddy-group-hello small{animation-delay:calc(1.09s + var(--landed))}
+/* Members coming and going in the timeline. */
+.buddy-group-arrival{display:flex;align-items:center;justify-content:center;gap:6px}
+.buddy-group-arrival-avatar{display:inline-flex;flex:none}
+.buddy-group-arrival.is-leave .buddy-group-arrival-avatar{filter:grayscale(1);opacity:.55}
+.buddy-group-arrival.is-fresh{animation:buddy-hello-rise .35s cubic-bezier(.2,.7,.3,1) both}
+.buddy-group-arrival.is-fresh.is-join .buddy-group-arrival-avatar{animation:buddy-group-join .62s cubic-bezier(.3,.7,.4,1) both}
+.buddy-group-arrival.is-fresh.is-leave .buddy-group-arrival-avatar{animation:buddy-group-leave .6s ease-in both}
+@keyframes buddy-group-join{0%{opacity:0;transform:translateY(-16px) scale(.4)}50%{opacity:1;transform:translateY(1px) scale(1.15,.85)}72%{transform:translateY(-3px) scale(.96,1.05)}100%{transform:none}}
+@keyframes buddy-group-leave{0%{filter:none;opacity:1;transform:none}35%{filter:none;opacity:1;transform:translateX(-2px)}100%{filter:grayscale(1);opacity:.55;transform:none}}
+@media(prefers-reduced-motion:reduce){.buddy-group-arrival.is-fresh,.buddy-group-arrival.is-fresh .buddy-group-arrival-avatar{animation:none}}
 .buddy-group-working{display:flex;align-items:center;gap:13px;padding-left:4px;font-size:13px;color:var(--color-text-muted)}
 .buddy-group-failed{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-left:36px;padding:8px 12px;font-size:13px;color:var(--color-error);border:1px solid color-mix(in oklab,var(--color-error) 30%,var(--color-border));border-radius:10px;background:color-mix(in oklab,var(--color-error) 4%,var(--color-bg))}
 .buddy-group-failed .buddy-button{color:var(--color-text)}

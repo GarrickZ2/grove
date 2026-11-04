@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type CSSProperties } from "react";
 import { ArrowLeft, File, PanelRight, PictureInPicture2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { BuddySummary } from "../../../api/buddies";
@@ -10,9 +10,11 @@ import { invokeQuiet, isTauriShell } from "../../../utils/tauriShell";
 import { MarkdownRenderer } from "../../ui/MarkdownRenderer";
 import { BuddyAvatar } from "../BuddyAvatar";
 import { BuddyComposer } from "../BuddyComposer";
+import { resolveBuddyAvatar } from "../buddyAvatarConfig";
 import { EVERYONE_ID, mentionRuns, type MentionedBuddy } from "../buddyMentions";
 import { BuddyDelegationsContext, useBuddyDelegationsContext } from "../delegations/buddyDelegationsContext";
 import { DelegationRequestCards } from "../delegations/DelegationRequestCards";
+import { HelloBurst } from "../timeline/BuddyHello";
 import { BuddyGroupAvatar } from "./BuddyGroupAvatar";
 import { groupRows, quietText } from "./groupTimeline";
 import "./buddy-group.css";
@@ -41,8 +43,29 @@ function Spoken({ message, known }: { message: BuddyGroupMessage; known: Mention
   </div></div>;
 }
 
-export function BuddyGroupConversation({ group, buddies, onChanged, compact = false }: { group: BuddyGroup; buddies: BuddySummary[]; onChanged: () => void; compact?: boolean }) {
-  const { messages, hasEarlier, loadingEarlier, loadEarlier, error, activity, transport } = useBuddyGroupConversation(group, onChanged);
+/** A new group's arrival: its members drop in one after another, then the burst. */
+function GroupHello({ group }: { group: BuddyGroup }) {
+  const shown = group.members.slice(0, 5);
+  const first = shown[0];
+  const { color } = resolveBuddyAvatar(first?.buddy_id ?? group.id, first?.avatar ?? null);
+  return <div className="buddy-hello is-arriving buddy-group-hello" style={{ "--buddy-color": color, "--landed": `${Math.max(shown.length - 1, 0) * 0.14}s` } as CSSProperties}>
+    <div className="buddy-hello-stage" aria-hidden="true">
+      <HelloBurst color={color} />
+      <span className="buddy-group-hello-row">{shown.map((member, index) => <span key={member.buddy_id} className="buddy-hello-avatar" style={{ "--i": index } as CSSProperties}><BuddyAvatar id={member.buddy_id} avatar={member.avatar} size={52} /></span>)}</span>
+    </div>
+    <h2>{group.name}</h2>
+    <p>{group.members.map((member) => member.name).join(", ")}</p>
+    <small>Say something, or @ someone to start.</small>
+  </div>;
+}
+
+/** Someone coming or going, with a little movement when it happens while you watch. */
+function MemberEvent({ text, buddyId, avatar, joined, fresh }: { text: string; buddyId: string; avatar: string | null; joined: boolean; fresh: boolean }) {
+  return <p className={`buddy-event buddy-group-arrival ${joined ? "is-join" : "is-leave"}${fresh ? " is-fresh" : ""}`}><span className="buddy-group-arrival-avatar"><BuddyAvatar id={buddyId} avatar={avatar} size={18} /></span>{text}</p>;
+}
+
+export function BuddyGroupConversation({ group, buddies, onChanged, arriving = false, compact = false }: { group: BuddyGroup; buddies: BuddySummary[]; onChanged: () => void; arriving?: boolean; compact?: boolean }) {
+  const { messages, openedAt, hasEarlier, loadingEarlier, loadEarlier, error, activity, transport } = useBuddyGroupConversation(group, onChanged);
   const nameOf = (id: string) => group.members.find((member) => member.buddy_id === id)?.name ?? buddies.find((buddy) => buddy.id === id)?.name ?? "A Buddy";
   const known: MentionedBuddy[] = [...group.members.map((member) => ({ id: member.buddy_id, name: member.name, avatar: member.avatar, role: member.role ?? "" })), { id: EVERYONE_ID, name: "everyone", avatar: null, role: "" }];
   const working = group.members.filter((member) => member.status === "working");
@@ -67,9 +90,11 @@ export function BuddyGroupConversation({ group, buddies, onChanged, compact = fa
     <div className="buddy-timeline" aria-label="Group conversation" ref={scroll} onScroll={(event) => { const node = event.currentTarget; following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>
       <div className="buddy-timeline-content">
         {hasEarlier && <p className="buddy-earlier" role="status">{loadingEarlier ? "Loading earlier messages…" : <button type="button" onClick={() => void loadEarlier()}>Load earlier messages</button>}</p>}
-        {!rows.length && <p className="buddy-event">Say something, or @ someone to start.</p>}
+        {!rows.length && (arriving ? <GroupHello group={group} /> : <p className="buddy-event">Say something, or @ someone to start.</p>)}
         {rows.map((row) => {
-          if (row.kind === "system") return <p key={row.id} className="buddy-event">{row.text}</p>;
+          if (row.kind === "system") return row.buddyId
+            ? <MemberEvent key={row.id} text={row.text} buddyId={row.buddyId} avatar={member(row.buddyId)?.avatar ?? buddies.find((buddy) => buddy.id === row.buddyId)?.avatar ?? null} joined={row.joined} fresh={openedAt !== null && row.seq > openedAt} />
+            : <p key={row.id} className="buddy-event">{row.text}</p>;
           if (row.kind === "quiet") return <p key={row.id} className="buddy-group-quiet">{quietText(row)}</p>;
           if (row.kind === "failed") return <div key={row.id} className="buddy-group-failed" role="status"><span>{row.name} couldn't finish this turn</span>{member(row.buddyId) && <button type="button" className="buddy-button" onClick={() => void askBuddyGroupMember(group.id, row.buddyId)}>Ask again</button>}</div>;
           if (row.kind === "user") return <Spoken key={row.id} message={row.message} known={known} />;
