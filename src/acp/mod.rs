@@ -7814,17 +7814,6 @@ async fn drive_session(
                         message_ids: message_ids.clone(),
                         stop_reason: "killed".to_string(),
                     });
-                    if config.chat_id.is_some() {
-                        notify_acp_event(
-                            &config.project_key,
-                            &config.task_id,
-                            config.chat_id.as_deref(),
-                            "Task Stopped",
-                            "Agent session was stopped",
-                            AcpNotificationEvent::TurnComplete,
-                            None,
-                        );
-                    }
                     break;
                 }
 
@@ -7861,21 +7850,14 @@ async fn drive_session(
                             .filter(|s| !s.is_empty())
                             .unwrap_or_else(|| "Agent finished responding".to_string());
                         let quiet = handle.quiet_turn.load(std::sync::atomic::Ordering::Relaxed);
-                        if config.chat_id.is_some() && !quiet {
+                        // A cancelled turn was stopped on purpose, so there is nothing to announce.
+                        if config.chat_id.is_some() && !quiet && !was_cancelled {
                             notify_acp_event(
                                 &config.project_key,
                                 &config.task_id,
                                 config.chat_id.as_deref(),
-                                if was_cancelled {
-                                    "Task Stopped"
-                                } else {
-                                    "Task Complete"
-                                },
-                                if was_cancelled {
-                                    "Agent turn was cancelled"
-                                } else {
-                                    &summary
-                                },
+                                "Task Complete",
+                                &summary,
                                 AcpNotificationEvent::TurnComplete,
                                 None,
                             );
