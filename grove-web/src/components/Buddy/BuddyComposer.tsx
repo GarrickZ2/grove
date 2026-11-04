@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState, type ClipboardEvent } f
 import { ArrowUp, File as FileIcon, Loader2, Paperclip, Plus, Square, X } from "lucide-react";
 import type { BuddySummary } from "../../api/buddies";
 import { BuddyAvatar } from "./BuddyAvatar";
-import { EVERYONE_ID, mentionAtCaret, mentionCandidates, withMentions } from "./buddyMentions";
+import { EVERYONE_ID, mentionAtCaret, mentionCandidates, mentionRuns, withMentions } from "./buddyMentions";
 import type { PromptCapabilities } from "../../api/buddySessionConnection";
 import { useBuddyComposer, type ComposerTarget } from "../../hooks/useBuddyComposer";
 import { errorMessage } from "../../utils/errorMessage";
@@ -34,6 +34,18 @@ function ImageThumb({ file }: { file: File }) {
   return <img ref={attach} alt="" className="buddy-attachment-thumb" />;
 }
 
+/** Keeps the mention highlights exactly over the text they mark; a textarea can't style its own text. */
+function alignMirror(source: HTMLTextAreaElement, mirror: HTMLElement | null) {
+  if (!mirror) return;
+  const style = window.getComputedStyle(source);
+  for (const property of ["font", "letterSpacing", "lineHeight", "padding", "borderWidth"] as const) mirror.style[property] = style[property];
+  mirror.style.left = `${source.offsetLeft}px`;
+  mirror.style.top = `${source.offsetTop}px`;
+  mirror.style.width = `${source.offsetWidth}px`;
+  mirror.style.height = `${source.offsetHeight}px`;
+  mirror.scrollTop = source.scrollTop;
+}
+
 export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, mentionable = [], transport }: { buddy: ComposerTarget; onSent: () => void; initialText?: string; promptCaps?: PromptCapabilities | null;
   /** Other Buddies the user can @-mention; the message then tells this Buddy who they are. */
   mentionable?: BuddySummary[];
@@ -47,12 +59,13 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, men
   const [focused, setFocused] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const mirror = useRef<HTMLDivElement>(null);
   // Grow with the draft until the CSS max-height, then scroll inside (re-measured when the interface changes its padding).
   useLayoutEffect(() => {
     const element = input.current;
     if (!element) return;
     // scrollHeight leaves out borders; add them back so a bordered field does not scroll by a pixel or two.
-    const fit = () => { element.style.height = "auto"; element.style.height = `${element.scrollHeight + element.offsetHeight - element.clientHeight}px`; };
+    const fit = () => { element.style.height = "auto"; element.style.height = `${element.scrollHeight + element.offsetHeight - element.clientHeight}px`; alignMirror(element, mirror.current); };
     fit();
     // Re-measure when the width changes (a window still settling its size would otherwise leave it tall).
     if (typeof ResizeObserver === "undefined") return;
@@ -126,7 +139,7 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, men
     <form className={orbit ? `buddy-composer is-orbit${buddy.status === "working" ? " is-running" : ""}` : "buddy-composer"} aria-label={`Message ${buddy.name}`} onSubmit={(event) => { event.preventDefault(); void submit(); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!sending) addFiles(Array.from(event.dataTransfer.files)); }}>
       {orbit && buddy.status === "working" && <span className="buddy-oc-orbit" aria-hidden="true"><i /></span>}
       <input ref={fileInput} type="file" multiple hidden aria-label="Attach files" onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-      <textarea ref={input} rows={1} aria-label={`Message ${buddy.name}`} placeholder={`Message ${buddy.name}`} value={text} disabled={sending} onFocus={() => setFocused(true)} onBlur={() => { setFocused(false); setMention(null); }} onChange={(event) => { changeText(event.target.value); trackMention(event.target); }} onSelect={(event) => trackMention(event.currentTarget)} onPaste={paste} onKeyDown={(event) => {
+      <textarea ref={input} rows={1} aria-label={`Message ${buddy.name}`} placeholder={`Message ${buddy.name}`} value={text} disabled={sending} onFocus={() => setFocused(true)} onBlur={() => { setFocused(false); setMention(null); }} onChange={(event) => { changeText(event.target.value); trackMention(event.target); }} onSelect={(event) => trackMention(event.currentTarget)} onScroll={(event) => { if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop; }} onPaste={paste} onKeyDown={(event) => {
         if (picking && !event.nativeEvent.isComposing) {
           const index = Math.min(mention!.index, candidates.length - 1);
           if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const step = event.key === "ArrowDown" ? 1 : -1; setMention({ ...mention!, index: (index + step + candidates.length) % candidates.length }); return; }
@@ -135,6 +148,7 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, men
         }
         if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void submit(); }
       }} />
+      {mentionable.length > 0 && text.includes("@") && <div ref={mirror} className="buddy-composer-mirror" aria-hidden="true">{mentionRuns(text, mentionable).map((run, index) => "buddy" in run ? <mark key={index}>@{run.buddy.name}</mark> : <span key={index}>{run.text}</span>)}<br /></div>}
       {orbit ? <div className="buddy-composer-toolbar">
         {/* Orbit composer look: a quiet attach tool, the typing hint and one send/stop orb whose icon morphs. */}
         <div className="buddy-oc-tools">

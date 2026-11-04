@@ -464,6 +464,10 @@
 .buddy-mention-menu li{display:flex;align-items:center;gap:8px;min-width:0;padding:6px 8px;border-radius:8px;font-size:13.5px;cursor:pointer}
 .buddy-mention-menu li.is-active{background:var(--buddy-selected)}
 .buddy-mention-name{flex-shrink:0;font-weight:500}.buddy-mention-role{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-text-muted);font-size:12.5px}
+/* Highlights behind the typed text: the same text, invisible, laid exactly over the textarea. */
+.buddy-composer .buddy-composer-mirror,.buddy-composer.is-orbit>.buddy-composer-mirror{position:absolute;z-index:1;box-sizing:border-box;overflow:hidden;border:0 solid transparent;color:transparent;white-space:pre-wrap;overflow-wrap:break-word;pointer-events:none}
+.buddy-composer-mirror mark{color:transparent;border-radius:5px;background:color-mix(in oklab,var(--color-text) 14%,transparent);box-shadow:0 0 0 2px color-mix(in oklab,var(--color-text) 14%,transparent)}
+textarea.oc-send-out-source+.buddy-composer-mirror{visibility:hidden}
 .buddy-mention-chip{display:inline-flex;align-items:center;gap:4px;padding:0 6px 0 3px;margin:0 1px;border-radius:999px;background:color-mix(in oklab,currentColor 14%,transparent);font-weight:500;vertical-align:baseline;white-space:nowrap}
 .buddy-mention-chip>*:first-child{transform:translateY(2px)}
 .buddy-user-via{display:inline-flex;align-items:center;gap:4px;margin:0 6px 3px;font-size:11px;line-height:1;color:var(--color-text-muted)}

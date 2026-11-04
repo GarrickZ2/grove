@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { BuddySummary } from "../../api/buddies";
 import { BuddyComposer } from "./BuddyComposer";
 import { BuddyConversationHeader } from "./BuddyConversationHeader";
 import { createBuddiesMock } from "../../api/buddies.mock";
@@ -24,6 +25,15 @@ describe("Buddy composer and header", () => {
     await act(async () => send.click());
     expect(transport.send).toHaveBeenCalledWith("Hi", []);
     expect(send.disabled).toBe(true);
+  });
+  it("highlights a whole @name in the box, not a partial one", () => {
+    const mentionable = [{ id: "b", name: "Release Captain", role: "", avatar: null }] as unknown as BuddySummary[];
+    act(() => root.render(<BuddyComposer buddy={buddy} onSent={vi.fn()} mentionable={mentionable} />));
+    draft("ask @Release");
+    expect(host.querySelector(".buddy-composer-mirror mark")).toBeNull();
+    draft("ask @Release Captain now");
+    expect(host.querySelector(".buddy-composer-mirror mark")?.textContent).toBe("@Release Captain");
+    expect(host.querySelector(".buddy-composer-mirror")?.textContent).toBe("ask @Release Captain now");
   });
   it.each(["working", "waiting"] as const)("offers Stop with empty input while %s and Send when text is present", async (status) => {
     act(() => root.render(<BuddyComposer buddy={{ ...buddy, status }} onSent={vi.fn()} />));
