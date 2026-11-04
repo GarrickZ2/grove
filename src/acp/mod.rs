@@ -5100,6 +5100,7 @@ pub async fn get_or_start_session(
     mut config: AcpStartConfig,
 ) -> crate::error::Result<(Arc<AcpSessionHandle>, broadcast::Receiver<AcpUpdate>)> {
     let _buddy_gate = if let Some(chat) = config.chat_id.as_deref() {
+        crate::storage::tasks::ensure_chat_writable(chat)?;
         crate::buddy::lock_session(chat).await?
     } else {
         None
@@ -5542,6 +5543,29 @@ fn missing_saved_session(error: &acp::Error) -> bool {
     // Resource-not-found is an ACP error code. Codex currently wraps its
     // missing on-disk rollout in an internal error instead.
     i32::from(error.code) == -32002 || error.to_string().contains("no rollout found for thread id")
+}
+
+/// The Agent no longer has this conversation and never will again. Grove's
+/// history is intact, so the Session stays viewable instead of failing every
+/// reconnect.
+fn retire_missing_session(config: &AcpStartConfig, error: &acp::Error) {
+    let Some(chat) = config.chat_id.as_deref().filter(|_| !config.import_session) else {
+        return;
+    };
+    match crate::storage::tasks::mark_chat_readonly(
+        &config.project_key,
+        &config.task_id,
+        chat,
+        crate::storage::tasks::READONLY_AGENT_EXPIRED,
+        serde_json::json!({ "error": error.to_string() }),
+    ) {
+        Ok(true) => crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
+            project_id: config.project_key.clone(),
+            task_id: config.task_id.clone(),
+        }),
+        Ok(false) => {}
+        Err(error) => eprintln!("[acp] failed to mark {chat} read-only: {error}"),
+    }
 }
 
 fn chat_history_is_empty(project: &str, task: &str, chat: &str) -> bool {
@@ -6929,6 +6953,9 @@ async fn drive_session(
                                         .store(false, std::sync::atomic::Ordering::Relaxed);
                                     break 'restore create_new_session!(true);
                                 }
+                                if missing_saved_session(&load_error) {
+                                    retire_missing_session(&config, &load_error);
+                                }
                                 return Err(acp::Error::internal_error().data(format!(
                                     "Resume session failed: {}; load fallback failed: {}",
                                     resume_failure.expect("missing resume failure"),
@@ -6956,6 +6983,12 @@ async fn drive_session(
                         && resume_failure.as_ref().is_some_and(missing_saved_session)
                     {
                         break 'restore create_new_session!(true);
+                    }
+                    if let Some(error) = resume_failure
+                        .as_ref()
+                        .filter(|error| missing_saved_session(error))
+                    {
+                        retire_missing_session(&config, error);
                     }
                     return Err(acp::Error::internal_error().data(format!(
                         "Resume session failed: {}",
@@ -7007,6 +7040,9 @@ async fn drive_session(
                                     .suppress_emit
                                     .store(false, std::sync::atomic::Ordering::Relaxed);
                                 break 'restore create_new_session!(true);
+                            }
+                            if missing_saved_session(&error) {
+                                retire_missing_session(&config, &error);
                             }
                             return Err(acp::Error::internal_error()
                                 .data(format!("Load session failed: {}", error)));

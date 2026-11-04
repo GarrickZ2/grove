@@ -11,7 +11,7 @@ use crate::storage::{agent_graph as graph_db, database, tasks};
 use super::types::*;
 
 fn build_graph_response(project_key: &str, task_id: &str) -> Option<GraphResponse> {
-    let chats = tasks::load_chat_sessions(project_key, task_id).ok()?;
+    let chats = tasks::load_writable_chat_sessions(project_key, task_id).ok()?;
     let active_ids: std::collections::HashSet<&str> =
         chats.iter().map(|chat| chat.id.as_str()).collect();
     let edges: Vec<_> = {
@@ -190,6 +190,7 @@ fn graph_error(code: &str, message: &str) -> (StatusCode, Json<GraphErrorRespons
         "cycle_would_form"
         | "bidirectional_edge"
         | "same_task_required"
+        | "target_read_only"
         | "no_pending_to_remind"
         | "target_not_idle"
         | "target_is_busy" => StatusCode::BAD_REQUEST,
@@ -503,7 +504,7 @@ fn build_mention_candidates(
 ) -> Option<MentionCandidatesResponse> {
     // Verify caller chat exists and belongs to this task — guards against
     // cross-task probes that would otherwise return another task's contacts.
-    let chats = tasks::load_chat_sessions(project_key, task_id).ok()?;
+    let chats = tasks::load_writable_chat_sessions(project_key, task_id).ok()?;
     if !chats.iter().any(|c| c.id == chat_id) {
         return None;
     }

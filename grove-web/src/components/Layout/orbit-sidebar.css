@@ -169,6 +169,7 @@
 .orbit-nav-row:disabled, .orbit-task-new:disabled { opacity: .45; cursor: default; }
 .orbit-section-label { padding: 17px 10px 6px; color: var(--color-text-muted); font-size: 12px; font-weight: 500; }
 .orbit-session { min-height: 32px; }
+.orbit-session-readonly { flex: none; color: var(--color-text-muted); opacity: .75; }
 .orbit-session-nested { padding-left: 32px; }
 .orbit-truncate { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .orbit-task { position: relative; margin-top: var(--orbit-list-row-gap); }

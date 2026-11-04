@@ -1,7 +1,7 @@
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { listChats, type ChatSessionResponse } from "../../../api";
+import { createChat, listChats, type ChatSessionResponse } from "../../../api";
 import type { RadioEventCallbacks } from "../../../hooks/useRadioEvents";
 import type { BottomOriginTurnListHandle } from "./BottomOriginTurnList";
 import { TaskChat } from "./TaskChat";
@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../../api", () => ({
   listChats: vi.fn(),
+  createChat: vi.fn(),
   listArchivedChats: vi.fn(async () => []),
   getChatHistory: vi.fn(async () => ({ events: [], total: 0, session: null })),
   getConfig: vi.fn(async () => ({ layout: {} })),
@@ -62,7 +63,8 @@ vi.mock("../../../utils/agentIcon", () => {
 vi.mock("../../ui", () => ({
   Button: "button", ImageLightbox: () => null, MarkdownRenderer: () => null,
   VSCodeIcon: () => null, FileMentionDropdown: () => null,
-  AgentPickerMenuItems: () => null, DropdownMenu: () => null,
+  AgentPickerMenuItems: ({ onSelectId }: { onSelectId: (id: string) => void }) => <button type="button" onClick={() => onSelectId("codex")}>Pick agent</button>,
+  DropdownMenu: () => null,
 }));
 vi.mock("../TaskDetail/XTerminal", () => ({ XTerminal: () => null }));
 vi.mock("../../Dialogs/ConfirmDialog", () => ({ ConfirmDialog: () => null }));
@@ -180,6 +182,59 @@ describe("TaskChat draft isolation during session completion", () => {
     await openChat("A");
     expect(container.textContent).toContain("Read only");
     expect(container.textContent).not.toMatch(/Connect Failed|failed to connect|Connection closed before/);
+  });
+
+  it("shows a read-only session as history and never connects its agent", async () => {
+    vi.mocked(listChats).mockResolvedValue([chatA, { ...chatB, readonly: { reason: "imported" } }]);
+    await render();
+    await openChat("B");
+    expect(ChatSocket.instances.has("B")).toBe(false);
+    expect(container.textContent).toContain("Imported session · Read-only history");
+    expect(container.textContent).toContain("Continue in new session");
+    expect(container.querySelector('[contenteditable="true"]')).toBeNull();
+  });
+
+  it("drops the composer when the agent turns out to have lost the session", async () => {
+    await render();
+    await openChat("A");
+    expect(editor()).toBeTruthy();
+    await refreshChats([{ ...chatA, readonly: { reason: "agent_expired" } }, chatB]);
+    expect(container.textContent).toContain("test no longer has this session · Read-only history");
+    expect(container.querySelector('[contenteditable="true"]')).toBeNull();
+  });
+
+  it("gives a read-only session the Orbit card in place of the composer", async () => {
+    vi.mocked(listChats).mockResolvedValue([{ ...chatA, readonly: { reason: "imported", meta: { source: "MacBook-Pro" } } }]);
+    await act(async () => root.render(<OrbitInterfaceContext.Provider value><TaskChat projectId="project" taskId="task" /></OrbitInterfaceContext.Provider>));
+    const card = container.querySelector(".ocv-readonly");
+    expect(card?.textContent).toContain("Imported from MacBook-Pro");
+    expect(card?.textContent).toContain("Continue in new session");
+    expect(card?.textContent).toContain("Archive");
+    expect(ChatSocket.instances.has("A")).toBe(false);
+    expect(container.querySelector('[contenteditable="true"]')).toBeNull();
+  });
+
+  it("continues a read-only session in a new one with its history shared in the composer", async () => {
+    const gone: ChatSessionResponse = { ...chatA, agent: "codex", history_path: "~/history.jsonl", readonly: { reason: "agent_expired" } };
+    vi.mocked(listChats).mockResolvedValue([gone]);
+    vi.mocked(createChat).mockResolvedValue({ ...chatB, id: "C", agent: "claude" });
+    const availability = mocks.availability as { baseAgents: unknown[] };
+    availability.baseAgents = [{ id: "codex", display_name: "Codex", available: true }];
+    await act(async () => root.render(<OrbitInterfaceContext.Provider value><TaskChat projectId="project" taskId="task" /></OrbitInterfaceContext.Provider>));
+    expect(container.querySelector(".ocv-readonly")?.textContent).toContain("Codex no longer has this session");
+
+    const continueButton = [...container.querySelectorAll<HTMLButtonElement>(".ocv-readonly button")].find((button) => button.textContent === "Continue in new session")!;
+    await act(async () => continueButton.click());
+    const option = [...document.body.querySelectorAll<HTMLElement>("button, [role='menuitem']")].find((element) => element.textContent === "Pick agent");
+    expect(option).toBeTruthy();
+    await act(async () => option!.click());
+
+    expect(createChat).toHaveBeenCalled();
+    const composer = editor();
+    const chip = composer.querySelector<HTMLElement>("[data-history-path]");
+    expect(chip?.dataset.historyPath).toBe("~/history.jsonl");
+    expect(chip?.dataset.sessionId).toBe("A");
+    availability.baseAgents = [];
   });
 
   async function render() {

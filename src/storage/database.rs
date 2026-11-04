@@ -468,7 +468,11 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             launch_mode    TEXT NOT NULL DEFAULT 'acp',
             archived_at    TEXT,
             -- pinned to the top of its task's session list; NULL when not pinned
-            pinned_at      TEXT
+            pinned_at      TEXT,
+            -- why the Agent can no longer be reached ('imported' | 'agent_expired');
+            -- NULL for an ordinary Session. Terminal: history stays viewable.
+            readonly_reason TEXT,
+            readonly_meta   TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_session_task ON session(project, task_id);
 
@@ -982,6 +986,8 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         )?;
     }
     add_column_if_missing(conn, "session", "pinned_at", "TEXT")?;
+    add_column_if_missing(conn, "session", "readonly_reason", "TEXT")?;
+    add_column_if_missing(conn, "session", "readonly_meta", "TEXT")?;
     add_column_if_missing(
         conn,
         "connects",

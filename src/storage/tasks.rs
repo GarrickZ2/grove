@@ -31,6 +31,21 @@ pub struct ChatSession {
     pub duty: Option<String>,
 }
 
+/// `session.readonly_reason`: restored from an export; the Agent's own session
+/// stayed on the source machine.
+#[allow(dead_code)] // written by the importer
+pub const READONLY_IMPORTED: &str = "imported";
+/// `session.readonly_reason`: the Agent pruned its local session.
+pub const READONLY_AGENT_EXPIRED: &str = "agent_expired";
+
+/// A Session whose Agent cannot be resumed. Permanent; the history stays readable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChatReadOnly {
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
+}
+
 /// 任务状态
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -739,6 +754,103 @@ pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSessio
     Ok(chats)
 }
 
+/// The Sessions of a Task an Agent can still run in. Read-only Sessions stay in
+/// `load_chat_sessions` so they can be viewed; anything that sends to a Session
+/// or offers it as a target lists from here.
+pub fn load_writable_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSession>> {
+    let readonly = load_readonly_chats(project, task_id)?;
+    let mut chats = load_chat_sessions(project, task_id)?;
+    chats.retain(|chat| !readonly.contains_key(&chat.id));
+    Ok(chats)
+}
+
+fn parse_readonly(reason: String, meta: Option<String>) -> ChatReadOnly {
+    ChatReadOnly {
+        reason,
+        meta: meta.and_then(|meta| serde_json::from_str(&meta).ok()),
+    }
+}
+
+/// Read-only Sessions of a Task, archived ones included.
+pub fn load_readonly_chats(
+    project: &str,
+    task_id: &str,
+) -> Result<std::collections::HashMap<String, ChatReadOnly>> {
+    let conn = crate::storage::database::connection();
+    let mut stmt = conn.prepare(
+        "SELECT session_id, readonly_reason, readonly_meta FROM session
+         WHERE project = ?1 AND task_id = ?2 AND readonly_reason IS NOT NULL",
+    )?;
+    let rows = stmt
+        .query_map(params![project, task_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                parse_readonly(row.get(1)?, row.get(2)?),
+            ))
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(rows)
+}
+
+pub fn chat_readonly(chat_id: &str) -> Result<Option<ChatReadOnly>> {
+    let conn = crate::storage::database::try_connection()?;
+    Ok(conn
+        .query_row(
+            "SELECT readonly_reason, readonly_meta FROM session
+             WHERE session_id = ?1 AND readonly_reason IS NOT NULL",
+            [chat_id],
+            |row| Ok(parse_readonly(row.get(0)?, row.get(1)?)),
+        )
+        .optional()?)
+}
+
+/// Every Agent start passes through here, so one check covers the WebSocket,
+/// MCP, Automations, Agent Graph and Connect.
+pub fn ensure_chat_writable(chat_id: &str) -> Result<()> {
+    match chat_readonly(chat_id)? {
+        Some(readonly) => Err(crate::error::GroveError::storage_tagged(
+            "session_read_only",
+            format!(
+                "Session {chat_id} is read-only ({}); its Agent cannot be resumed. Read its history instead.",
+                readonly.reason
+            ),
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Make a Session read-only and drop what was waiting on its Agent. Returns
+/// false when nothing changed. A Buddy Segment is never marked: the Buddy owns
+/// its lifecycle, and a read-only active Segment would lock the Buddy out.
+pub fn mark_chat_readonly(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+    reason: &str,
+    meta: serde_json::Value,
+) -> Result<bool> {
+    let conn = crate::storage::database::connection();
+    let tx = conn.unchecked_transaction()?;
+    let changed = tx.execute(
+        "UPDATE session SET readonly_reason = ?1, readonly_meta = ?2, acp_session_id = NULL
+         WHERE project = ?3 AND task_id = ?4 AND session_id = ?5 AND readonly_reason IS NULL
+           AND NOT EXISTS (SELECT 1 FROM buddy_segments WHERE session_id = ?5)",
+        params![reason, meta.to_string(), project, task_id, chat_id],
+    )? > 0;
+    if changed {
+        tx.execute(
+            "DELETE FROM agent_pending_message WHERE from_session = ?1 OR to_session = ?1",
+            [chat_id],
+        )?;
+        tx.execute(
+            "UPDATE task_group_slots SET target_chat_id = NULL WHERE target_chat_id = ?1",
+            [chat_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(changed)
+}
+
 /// Last activity per active Session of a Task: session_id →
 /// `COALESCE(updated_at, created_at)` as stored (RFC 3339). This is the value
 /// `load_chat_sessions` orders by.
@@ -1386,6 +1498,133 @@ mod tests {
         assert!(!set_chat_session_pinned(&project, "task", &chat_id, true).unwrap());
         assert!(restore_chat_session(&project, "task", &chat_id).unwrap());
         assert!(pinned().is_empty());
+
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    #[test]
+    fn readonly_sessions_stay_viewable_but_refuse_agents() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        let project = format!("project-{}", uuid::Uuid::new_v4().simple());
+        let task_id = "task-readonly";
+        let make_chat = |id: &str| ChatSession {
+            id: id.to_string(),
+            title: id.to_string(),
+            agent: "codex".to_string(),
+            acp_session_id: Some("agent-session".to_string()),
+            created_at: Utc::now(),
+            duty: None,
+        };
+        add_chat_session(&project, task_id, make_chat("live")).unwrap();
+        add_chat_session(&project, task_id, make_chat("gone")).unwrap();
+        {
+            let conn = crate::storage::database::connection();
+            conn.execute(
+                "INSERT INTO agent_pending_message (msg_id, project, task_id, from_session, to_session, body, created_at)
+                 VALUES ('msg', ?1, ?2, 'live', 'gone', 'hi', '2026-11-03T00:00:00Z')",
+                params![project, task_id],
+            )
+            .unwrap();
+        }
+
+        let meta = serde_json::json!({ "error": "no rollout" });
+        assert!(mark_chat_readonly(
+            &project,
+            task_id,
+            "gone",
+            READONLY_AGENT_EXPIRED,
+            meta.clone()
+        )
+        .unwrap());
+        // Terminal: a second mark must not overwrite the original reason.
+        assert!(!mark_chat_readonly(
+            &project,
+            task_id,
+            "gone",
+            READONLY_IMPORTED,
+            serde_json::Value::Null
+        )
+        .unwrap());
+
+        assert_eq!(load_chat_sessions(&project, task_id).unwrap().len(), 2);
+        assert_eq!(
+            load_writable_chat_sessions(&project, task_id)
+                .unwrap()
+                .into_iter()
+                .map(|chat| chat.id)
+                .collect::<Vec<_>>(),
+            vec!["live"]
+        );
+        assert_eq!(
+            chat_readonly("gone").unwrap(),
+            Some(ChatReadOnly {
+                reason: READONLY_AGENT_EXPIRED.to_string(),
+                meta: Some(meta),
+            })
+        );
+        assert!(ensure_chat_writable("live").is_ok());
+        assert!(ensure_chat_writable("gone").is_err());
+        assert_eq!(
+            get_chat_session(&project, task_id, "gone")
+                .unwrap()
+                .unwrap()
+                .acp_session_id,
+            None
+        );
+        let pending: i64 = crate::storage::database::connection()
+            .query_row("SELECT COUNT(*) FROM agent_pending_message", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(pending, 0);
+
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    #[test]
+    fn buddy_segments_are_never_marked_readonly() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        let project = format!("project-{}", uuid::Uuid::new_v4().simple());
+        add_chat_session(
+            &project,
+            "task",
+            ChatSession {
+                id: "segment".to_string(),
+                title: "segment".to_string(),
+                agent: "codex".to_string(),
+                acp_session_id: None,
+                created_at: Utc::now(),
+                duty: None,
+            },
+        )
+        .unwrap();
+        {
+            let conn = crate::storage::database::connection();
+            conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            conn.execute(
+                "INSERT INTO buddy_segments (session_id, buddy_id, seq, agent, started_at)
+                 VALUES ('segment', 'buddy', 1, 'codex', '2026-11-03T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
+
+        assert!(!mark_chat_readonly(
+            &project,
+            "task",
+            "segment",
+            READONLY_AGENT_EXPIRED,
+            serde_json::Value::Null
+        )
+        .unwrap());
+        assert_eq!(chat_readonly("segment").unwrap(), None);
 
         crate::storage::set_grove_dir_override(None);
     }

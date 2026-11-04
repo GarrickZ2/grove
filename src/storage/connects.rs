@@ -104,6 +104,7 @@ fn reset_unavailable_sessions(conn: &rusqlite::Connection, id: Option<&str>) -> 
                AND session.project=connects.project_id
                AND session.task_id=connects.task_id
                AND session.archived_at IS NULL
+               AND session.readonly_reason IS NULL
          )",
         params![now(), id],
     )?;

@@ -22,6 +22,8 @@ pub enum AgentGraphError {
     AgentSpawnFailed,
     /// 目标 session 已被终止
     SessionTerminated,
+    /// 目标 session 只读，其 Agent 无法恢复
+    TargetReadOnly,
     /// 等待 ACP ready 超时（spawn 90s）/ 投递超时（send 10s）
     Timeout,
     /// caller→to 已有未回复 pending message
@@ -58,6 +60,7 @@ impl AgentGraphError {
             Self::AgentOffline => "agent_offline",
             Self::AgentSpawnFailed => "agent_spawn_failed",
             Self::SessionTerminated => "session_terminated",
+            Self::TargetReadOnly => "target_read_only",
             Self::Timeout => "timeout",
             Self::PreviousMessagePending => "previous_message_pending",
             Self::TicketNotFound => "ticket_not_found",
@@ -86,6 +89,7 @@ impl AgentGraphError {
             Self::NameTaken => "another session in this task already uses that name",
             Self::CallerUnknown => "caller chat_id is not registered with Grove",
             Self::SameTaskRequired => "agent_graph is per-task; from and to must be in the same task",
+            Self::TargetReadOnly => "target session is read-only; its Agent cannot be resumed, read its history via history_path from grove_list_chats instead",
             Self::InvalidConfig { .. } => "config field value is not in target session's available list; call grove_agent_capability first to discover valid ids, then retry — see the `allowed` field in this response for valid ids",
             Self::Internal(_) => "internal error in Grove; check server logs",
         }
@@ -131,6 +135,7 @@ impl From<crate::error::GroveError> for AgentGraphError {
                 "no_edge" => Self::NoEdge,
                 "previous_message_pending" => Self::PreviousMessagePending,
                 "same_task_required" => Self::SameTaskRequired,
+                "target_read_only" => Self::TargetReadOnly,
                 "cycle_would_form" => Self::CycleWouldForm,
                 "endpoint_not_found" => Self::TargetNotFound,
                 "duty_locked" => Self::DutyForbidden,
