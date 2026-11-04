@@ -56,6 +56,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
       { id: "default", label: "Default agent" },
       { id: "manage", label: "Manage" },
       { id: "browser", label: "Browser control" },
+      { id: "sending", label: "Sending" },
       { id: "history", label: "Chat history" },
       { id: "render", label: "Render window" },
     ],

@@ -12,7 +12,7 @@ const configContext = {
   refresh: vi.fn(),
 };
 
-vi.mock("../../context", () => ({ useConfig: () => configContext, useTheme: () => ({ theme: { id: "light", name: "Light" } }) }));
+vi.mock("../../context", () => ({ useBanner: () => ({ showBanner: vi.fn() }), useConfig: () => configContext, useTheme: () => ({ theme: { id: "light", name: "Light" } }) }));
 vi.mock("../../hooks/useAgentCatalogRevision", () => ({ useAgentCatalogRevision: () => 0 }));
 vi.mock("../../keyboard", () => ({ useKeyboardScope: () => undefined }));
 vi.mock("../../keyboard/useEscapeScope", () => ({ useEscapeScope: () => undefined }));
@@ -171,7 +171,7 @@ describe("OrbitSettingsPage", () => {
   it("shows the Agents sections and flags the missing chat agent", async () => {
     await render();
     expect(container.querySelector("h1")?.textContent).toBe("Agents");
-    expect(groupLabels()).toEqual(["Default agent", "Manage", "Browser control", "Chat history", "Render window"]);
+    expect(groupLabels()).toEqual(["Default agent", "Manage", "Browser control", "Sending", "Chat history", "Render window"]);
     expect(navItem("Agents")?.querySelector('[aria-label="Needs setup"]')).not.toBeNull();
   });
 
@@ -192,6 +192,12 @@ describe("OrbitSettingsPage", () => {
     await flush(500);
     expect(vi.mocked(patchConfig).mock.lastCall?.[0]).toMatchObject({ auto_link: { patterns: ["node_modules", "**/dist"] } });
     expect(container.querySelector(".oui-saved")?.textContent).toContain("Saved");
+  });
+
+  it("saves how messages send while the agent works", async () => {
+    await render("Agents");
+    click(buttonByText("Interrupt"));
+    expect(patchConfig).toHaveBeenCalledWith({ web: { send_mode: "interrupt" } });
   });
 
   it("toggles indexing languages as chips", async () => {
@@ -224,7 +230,7 @@ describe("OrbitSettingsPage", () => {
     resizeContent(803);
     expect(openSubs()).toEqual([]);
     resizeContent(1400);
-    expect(openSubs()).toEqual(["Default agent", "Manage", "Browser control", "Chat history", "Render window"]);
+    expect(openSubs()).toEqual(["Default agent", "Manage", "Browser control", "Sending", "Chat history", "Render window"]);
     resizeContent(700);
     expect(openSubs()).toEqual([]);
   });

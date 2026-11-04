@@ -4,6 +4,7 @@ import { AgentPicker, CustomAgentModal } from "../../../components/ui";
 import { CustomAgentsModal } from "../../../components/Config/CustomAgentsModal";
 import { MarketplaceModal } from "../../../components/Config/MarketplaceModal";
 import { Block, Group, Lead, Row, Segmented, Toggle } from "../../ui";
+import { useSendModeSetting, type SendMode } from "../../../components/Config/useSendModeSetting";
 import { BrowserControlGroup } from "./BrowserControlGroup";
 import type { SettingsPageProps } from "./types";
 
@@ -12,6 +13,7 @@ function countLabel(count: number) {
 }
 
 export function AgentsPage({ settings }: SettingsPageProps) {
+  const { sendMode, setSendMode } = useSendModeSetting();
   const {
     acpAgent,
     setAcpAgent,
@@ -93,6 +95,20 @@ export function AgentsPage({ settings }: SettingsPageProps) {
       </Group>
 
       <BrowserControlGroup settings={settings} />
+
+      <Group title="Sending" anchorId="sending">
+        <Row title="While the agent is working" description={sendMode === "interrupt" ? "Your message stops the current turn and goes out right away." : "Your message waits in the queue until the turn ends."}>
+          <Segmented<SendMode>
+            ariaLabel="While the agent is working"
+            value={sendMode}
+            options={[
+              { value: "queue", label: "Queue" },
+              { value: "interrupt", label: "Interrupt" },
+            ]}
+            onChange={setSendMode}
+          />
+        </Row>
+      </Group>
 
       <Group title="Chat history" anchorId="history">
         <Row title="Messages to load" description="How much history this browser downloads.">

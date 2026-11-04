@@ -2826,6 +2826,13 @@ export function TaskChat({
   const taskFilesLoadingRef = useRef(false);
   const { selectedProject, projects } = useProject();
   const { config: appConfig } = useConfig();
+  const interruptOnSend = appConfig?.web?.send_mode === "interrupt";
+  const interruptOnSendRef = useRef(interruptOnSend);
+  useEffect(() => { interruptOnSendRef.current = interruptOnSend; }, [interruptOnSend]);
+  /** Call before queueing: with "Interrupt" on, the message goes out as soon as this stops the turn. */
+  const interruptTurn = useCallback((ws: WebSocket) => {
+    if (interruptOnSendRef.current) ws.send(JSON.stringify({ type: "cancel" }));
+  }, []);
   const { theme } = useTheme();
   const {
     drafts: previewCommentDrafts,
@@ -7568,6 +7575,7 @@ export function TaskChat({
 
       // 3. Send over WebSocket
       const msgType = busy ? "queue_message" : "prompt";
+      if (busy) interruptTurn(ws);
       if (
         shouldFollowTaskChatSend(
           busy,
@@ -7590,7 +7598,7 @@ export function TaskChat({
     return () => {
       window.removeEventListener("grove-send-comment-to-chat", handleSendComment);
     };
-  }, [activeChatId, isBusy, buildPromptConfig, requestBottom]);
+  }, [activeChatId, isBusy, buildPromptConfig, requestBottom, interruptTurn]);
 
   const finishComposerAfterSend = useCallback((el: HTMLElement) => {
     if (isPhoneLayout) {
@@ -7665,7 +7673,7 @@ export function TaskChat({
       // actual dispatch, including Retry, rather than reuse the original mode.
       const mode = pendingInputMode(chatId, id);
       const location = mode === "queue_message" ? "queue" : "timeline";
-      if (location === "queue" && chatId === getActiveChatId()) openInputQueue();
+      if (location === "queue" && chatId === getActiveChatId() && !interruptOnSendRef.current) openInputQueue();
       updatePendingInputs(chatId, (items) => items.map((item) => item.id === id
         ? { ...item, attachments: contentAttachments, mode, dispatched: true, sentAt: Date.now() }
         : item));
@@ -7678,6 +7686,7 @@ export function TaskChat({
       if (hasVoiceInstruction) {
         sendAgentVoiceState(chatId, loadAgentVoiceState(projectId, taskId, chatId), true);
       }
+      if (mode === "queue_message") interruptTurn(ws);
       ws.send(JSON.stringify({
         type: mode,
         client_message_id: id,
@@ -7694,7 +7703,7 @@ export function TaskChat({
         ? { ...item, status: "failed", error: error instanceof Error ? error.message : String(error) }
         : item));
     }
-  }, [projectId, taskId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, pendingInputMode, getActiveChatId, openInputQueue]);
+  }, [projectId, taskId, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, pendingInputMode, getActiveChatId, openInputQueue, interruptTurn]);
 
   // Orbit first message: shown as a "sending" bubble as soon as its Session is
   // open (so it doesn't look lost while the Agent starts), dispatched on session_ready.
@@ -7888,7 +7897,7 @@ export function TaskChat({
     sentPops.record(input.id, { queued: input.mode === "queue_message" });
     if (inputLocation(input) === "timeline") {
       updateLocalInputPlacements(activeChatId, (items) => [...items, { id: input.id, position: messageTimeline.endPosition }]);
-    } else {
+    } else if (!interruptOnSendRef.current) {
       openInputQueue();
     }
     updatePendingInputs(activeChatId, (items) => [...items, input]);
@@ -7975,7 +7984,7 @@ export function TaskChat({
       ...items.filter((item) => item.id !== input.id),
       { ...input, id, mode, status: "sending", serverAccepted: false, serverQueued: false, dispatched: false, cancelled: false, sentAt: Date.now(), submittedAt: id === input.id ? input.submittedAt ?? input.sentAt : Date.now(), error: undefined },
     ]);
-    if (mode === "queue_message") openInputQueue();
+    if (mode === "queue_message" && !interruptOnSendRef.current) openInputQueue();
     requestBottom("auto");
     void dispatchPendingInput(activeChatId, id, id === input.id);
   }, [activeChatId, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, requestBottom, dispatchPendingInput, pendingInputMode, openInputQueue]);
@@ -8056,6 +8065,7 @@ export function TaskChat({
     ) {
       requestBottom("auto");
     }
+    if (isBusy) interruptTurn(wsRef.current);
     wsRef.current.send(
       JSON.stringify({
         type: isBusy ? "queue_message" : "prompt",
@@ -8080,6 +8090,7 @@ export function TaskChat({
     // Part B: 删乐观 updateBusy — 等后端事件
     onUserMessageSent?.();
   }, [
+    interruptTurn,
     activeChatId,
     buildPromptConfig,
     clearPreviewCommentDrafts,
@@ -8106,6 +8117,7 @@ export function TaskChat({
     ) {
       requestBottom("auto");
     }
+    if (isBusy) interruptTurn(wsRef.current);
     wsRef.current.send(
       JSON.stringify({
         type: isBusy ? "queue_message" : "prompt",
@@ -8120,6 +8132,7 @@ export function TaskChat({
     // Part B: 删乐观 updateBusy — 等后端事件
     onUserMessageSent?.();
   }, [
+    interruptTurn,
     activeChatId,
     buildPromptConfig,
     requestBottom,
@@ -8400,6 +8413,7 @@ export function TaskChat({
       ) {
         requestBottom("auto");
       }
+      if (isBusy) interruptTurn(wsRef.current);
       wsRef.current.send(
         JSON.stringify(
           isBusy
@@ -8419,7 +8433,7 @@ export function TaskChat({
       );
       onUserMessageSent?.();
     },
-    [isBusy, requestBottom, buildPromptConfig, onUserMessageSent],
+    [isBusy, requestBottom, buildPromptConfig, onUserMessageSent, interruptTurn],
   );
 
   const resolveAskForm = useCallback((id: string) => {
@@ -11023,7 +11037,7 @@ export function TaskChat({
                               : isTerminalMode
                                 ? "Enter shell command\u2026"
                                 : isBusy
-                                  ? orbitShell ? "Add a follow-up \u2014 it queues until this turn ends" : "Queue a message\u2026"
+                                  ? interruptOnSend ? "Send a message \u2014 it stops this turn" : orbitShell ? "Add a follow-up \u2014 it queues until this turn ends" : "Queue a message\u2026"
                                   : "Ask anything… use @ for mentions, / for commands"}
                       </div>
                     )}
@@ -11155,10 +11169,10 @@ export function TaskChat({
   ) : null;
   // Only while typing; the permanent "Enter send" label is gone.
   const orbitComposerHint = hasContent && isInputFocused && !activePermissionMessage
-    ? isInputExpanded ? "⌘⏎ send · ⏎ newline" : `⏎ ${isBusy && !editingPendingId ? "queue" : "send"} · ⇧⏎ newline`
+    ? isInputExpanded ? "⌘⏎ send · ⏎ newline" : `⏎ ${isBusy && !editingPendingId && !interruptOnSend ? "queue" : "send"} · ⇧⏎ newline`
     : null;
   // One button for send and stop — same cases as the Workbench buttons.
-  const orbitOrbAction = resolveOrbAction({ editing: !!editingPendingId, permissionPending: !!activePermissionMessage, busy: isBusy, hasContent, pendingCount: pendingMessages.length });
+  const orbitOrbAction = resolveOrbAction({ editing: !!editingPendingId, permissionPending: !!activePermissionMessage, busy: isBusy, hasContent, pendingCount: pendingMessages.length, interrupt: interruptOnSend });
   const orbitOrbDisabled = orbitOrbAction === "save"
     ? !hasContent || !isConnected || isSavingPendingEdit || pendingEditImporting || pendingEditGone || !!activePermissionMessage
     : orbitOrbAction === "send"

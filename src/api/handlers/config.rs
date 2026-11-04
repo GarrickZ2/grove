@@ -108,6 +108,8 @@ pub struct WebConfigDto {
     pub terminal_mode: Option<String>,
     pub workspace_layout: Option<String>,
     pub interface: Option<String>,
+    pub buddy_motion: Option<String>,
+    pub send_mode: Option<String>,
     pub show_hide_window_shortcut: Option<String>,
 }
 
@@ -164,6 +166,8 @@ impl From<&Config> for ConfigResponse {
                 terminal_mode: config.web.terminal_mode.clone(),
                 workspace_layout: config.web.workspace_layout.clone(),
                 interface: config.web.interface.clone(),
+                buddy_motion: config.web.buddy_motion.clone(),
+                send_mode: config.web.send_mode.clone(),
                 show_hide_window_shortcut: config.web.show_hide_window_shortcut.clone(),
             },
             auto_link: AutoLinkConfigDto {
@@ -318,6 +322,8 @@ pub struct WebConfigPatch {
     pub terminal_mode: Option<String>,
     pub workspace_layout: Option<String>,
     pub interface: Option<String>,
+    pub buddy_motion: Option<String>,
+    pub send_mode: Option<String>,
     pub show_hide_window_shortcut: Option<String>,
 }
 
@@ -341,6 +347,22 @@ pub async fn patch_config(
         .as_ref()
         .and_then(|web| web.interface.as_deref())
         .is_some_and(|interface| !matches!(interface, "workbench" | "orbit"))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if patch
+        .web
+        .as_ref()
+        .and_then(|web| web.buddy_motion.as_deref())
+        .is_some_and(|motion| !matches!(motion, "lively" | "standard"))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if patch
+        .web
+        .as_ref()
+        .and_then(|web| web.send_mode.as_deref())
+        .is_some_and(|mode| !matches!(mode, "queue" | "interrupt"))
     {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -440,6 +462,12 @@ pub async fn patch_config(
         }
         if let Some(interface) = web_patch.interface {
             config.web.interface = Some(interface);
+        }
+        if let Some(motion) = web_patch.buddy_motion {
+            config.web.buddy_motion = Some(motion);
+        }
+        if let Some(mode) = web_patch.send_mode {
+            config.web.send_mode = Some(mode);
         }
         if let Some(shortcut) = web_patch.show_hide_window_shortcut {
             let shortcut = shortcut.trim().to_string();
@@ -1010,6 +1038,44 @@ fn convert_icns_to_png(icns_path: &Path, output_path: &Path) -> Option<Vec<u8>> 
 mod tests {
     use super::*;
     use crate::storage::{buddies::test_support::Store, database};
+
+    #[tokio::test]
+    async fn send_mode_accepts_its_two_modes_only() {
+        let _lock = database::test_lock().lock().await;
+        let _store = Store::new();
+        let patch = |mode: &str| {
+            serde_json::from_value(serde_json::json!({"web":{"send_mode":mode}})).unwrap()
+        };
+        let saved = patch_config(Json(patch("interrupt"))).await.unwrap();
+        assert_eq!(saved.0.web.send_mode.as_deref(), Some("interrupt"));
+        assert_eq!(
+            patch_config(Json(patch("later"))).await.err(),
+            Some(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            config::load_config().web.send_mode.as_deref(),
+            Some("interrupt")
+        );
+    }
+
+    #[tokio::test]
+    async fn buddy_motion_accepts_its_two_modes_only() {
+        let _lock = database::test_lock().lock().await;
+        let _store = Store::new();
+        let patch = |motion: &str| {
+            serde_json::from_value(serde_json::json!({"web":{"buddy_motion":motion}})).unwrap()
+        };
+        let saved = patch_config(Json(patch("standard"))).await.unwrap();
+        assert_eq!(saved.0.web.buddy_motion.as_deref(), Some("standard"));
+        assert_eq!(
+            patch_config(Json(patch("wild"))).await.err(),
+            Some(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            config::load_config().web.buddy_motion.as_deref(),
+            Some("standard")
+        );
+    }
 
     #[tokio::test]
     async fn web_interface_accepts_workbench_and_orbit_but_rejects_buddy_without_writing() {

@@ -607,6 +607,13 @@ pub struct WebConfig {
     /// GUI-only global shortcut for showing or hiding the main window.
     #[serde(default)]
     pub show_hide_window_shortcut: Option<String>,
+    /// Mini Buddy motion: "lively" (default) follows the cursor, "standard" doesn't.
+    #[serde(default)]
+    pub buddy_motion: Option<String>,
+    /// Sending while the agent works: "queue" (default) waits for the turn to
+    /// end, "interrupt" stops it and sends right away.
+    #[serde(default)]
+    pub send_mode: Option<String>,
 }
 
 /// 自定义布局配置

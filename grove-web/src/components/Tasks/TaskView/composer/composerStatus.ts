@@ -150,11 +150,13 @@ export function resolveOrbAction(state: {
   busy: boolean;
   hasContent: boolean;
   pendingCount: number;
+  /** Sending stops the running turn instead of queueing. */
+  interrupt?: boolean;
 }): OrbAction {
   if (state.editing) return "save";
   if (state.permissionPending) return state.busy ? "stop" : "idle";
   if (!state.busy) return state.hasContent ? "send" : "idle";
-  if (state.hasContent) return "queue";
+  if (state.hasContent) return state.interrupt ? "send" : "queue";
   return state.pendingCount > 0 ? "sendNow" : "stop";
 }
 

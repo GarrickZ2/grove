@@ -82,6 +82,7 @@ describe("helpers", () => {
     expect(resolveOrbAction({ ...state, hasContent: true })).toBe("send");
     expect(resolveOrbAction({ ...state, busy: true })).toBe("stop");
     expect(resolveOrbAction({ ...state, busy: true, hasContent: true })).toBe("queue");
+    expect(resolveOrbAction({ ...state, busy: true, hasContent: true, interrupt: true })).toBe("send");
     expect(resolveOrbAction({ ...state, busy: true, pendingCount: 2 })).toBe("sendNow");
     expect(resolveOrbAction({ ...state, busy: true, permissionPending: true, hasContent: true })).toBe("stop");
     expect(resolveOrbAction({ ...state, permissionPending: true, hasContent: true })).toBe("idle");

@@ -50,6 +50,10 @@ export interface WebConfig {
   /** Workspace layout mode: "flex" (default) | "ide" */
   workspace_layout?: "flex" | "ide";
   interface?: "workbench" | "orbit";
+  /** Mini Buddy motion: "lively" (default) follows the cursor, "standard" doesn't. */
+  buddy_motion?: "lively" | "standard";
+  /** Sending while the agent works: "queue" (default) waits, "interrupt" stops the turn first. */
+  send_mode?: "queue" | "interrupt";
   /** GUI-only global shortcut for showing or hiding the main window. */
   show_hide_window_shortcut?: string;
 }
