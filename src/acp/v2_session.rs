@@ -402,8 +402,8 @@ async fn drive(
                                 }
                             }
                             super::v2_state::Transition::Completed(idle) => {
-                                for terminal in terminals.values() { emit_terminal(&state, terminal, true); }
-                                for (session, child) in &child_terminals { for terminal in child.values() { state.handle.emit_child(session, terminal_event(terminal, true)); } }
+                                for terminal in terminals.take_unsaved() { emit_terminal(&state, terminal, true); }
+                                for (session, child) in &mut child_terminals { for terminal in child.take_unsaved() { state.handle.emit_child(session, terminal_event(terminal, true)); } }
                                 if let Some(turn) = turn.as_mut() {
                                     turn.idle = Some(idle);
                                 } else {
@@ -584,11 +584,11 @@ async fn drive(
             usage: None,
         });
     }
-    for terminal in terminals.values() {
+    for terminal in terminals.take_unsaved() {
         emit_terminal(&state, terminal, true);
     }
-    for (session, child) in &child_terminals {
-        for terminal in child.values() {
+    for (session, child) in &mut child_terminals {
+        for terminal in child.take_unsaved() {
             state
                 .handle
                 .emit_child(session, terminal_event(terminal, true));

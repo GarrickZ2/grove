@@ -9,6 +9,8 @@ pub struct Terminal {
     pub state: v2::TerminalUpdate,
     pub bytes: Vec<u8>,
     pub truncated: bool,
+    /// Changed since the last checkpoint stored it in history.
+    unsaved: bool,
 }
 
 #[derive(Default)]
@@ -25,7 +27,16 @@ impl Terminals {
             state: v2::TerminalUpdate::new(id),
             bytes: Vec::new(),
             truncated: false,
+            unsaved: false,
         })
+    }
+
+    /// Terminals a checkpoint still has to store. Snapshots are cumulative, so
+    /// one that has not changed since the last checkpoint adds nothing.
+    pub fn take_unsaved(&mut self) -> impl Iterator<Item = &Terminal> {
+        self.items
+            .values_mut()
+            .filter_map(|terminal| std::mem::take(&mut terminal.unsaved).then_some(&*terminal))
     }
 
     pub fn update(&mut self, update: v2::TerminalUpdate) -> Result<&Terminal, DecodeError> {
@@ -41,6 +52,7 @@ impl Terminals {
             terminal.truncated = false;
         }
         terminal.state.apply_update(update);
+        terminal.unsaved = true;
         Ok(terminal)
     }
 
@@ -48,6 +60,7 @@ impl Terminals {
         let bytes = STANDARD.decode(&chunk.data)?;
         let terminal = self.get_or_insert(&chunk.terminal_id.to_string());
         terminal.bytes.extend(bytes);
+        terminal.unsaved = true;
         Ok(terminal)
     }
 }
@@ -77,6 +90,21 @@ mod tests {
         assert!(terminals.update(invalid).is_err());
         assert_eq!(terminals.items["one"].bytes, b"new!");
         assert!(terminals.items["one"].state.command.is_undefined());
+    }
+
+    #[test]
+    fn only_changed_terminals_wait_for_the_next_checkpoint() {
+        let mut terminals = Terminals::default();
+        let chunk =
+            |id: &str| serde_json::from_value(json!({"terminalId":id, "data":"IQ=="})).unwrap();
+        terminals.chunk(&chunk("one")).unwrap();
+        terminals.chunk(&chunk("two")).unwrap();
+        assert_eq!(terminals.take_unsaved().count(), 2);
+        assert_eq!(terminals.take_unsaved().count(), 0);
+        terminals.chunk(&chunk("two")).unwrap();
+        let unsaved: Vec<_> = terminals.take_unsaved().collect();
+        assert_eq!(unsaved.len(), 1);
+        assert_eq!(unsaved[0].bytes, b"!!");
     }
 
     #[test]

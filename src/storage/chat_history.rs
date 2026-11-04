@@ -6,8 +6,9 @@
 //! 每条可持久化事件在 emit 时直接 append 到磁盘，避免 agent 中途断开丢失数据。
 //! - `Busy`、`Error`、`SessionEnded`、`SessionReady`、`AvailableCommands`、`QueueUpdate` 不持久化
 
+use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, Seek, SeekFrom, Write};
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -17,8 +18,11 @@ use crate::acp::{AcpUpdate, ContentBlockData, ToolCallContentData};
 /// 单个 `ToolCallUpdate.content` 写入/读取时的最大字节数。超过的部分硬截断。
 const MAX_TOOL_CONTENT_BYTES: usize = 32 * 1024;
 
-/// `load_history` 只读文件尾部这么多字节，避免超大 history.jsonl 把内存打爆。
+/// `load_history` 最多保留这么多字节的最新内容，避免超大 history.jsonl 把内存打爆。
 const MAX_HISTORY_READ_BYTES: u64 = 50 * 1024 * 1024;
+
+/// A persisted v2 terminal snapshot. Subagent copies are nested and start differently.
+const V2_TERMINAL_LINE_PREFIX: &str = r#"{"type":"v2_terminal_output_update","#;
 
 /// 截断标记，附加在被截断的 content 末尾。
 const TRUNCATED_MARKER: &str = "\n...[truncated]";
@@ -248,7 +252,6 @@ pub fn should_persist(update: &AcpUpdate) -> bool {
         update,
         AcpUpdate::V2TerminalOutputUpdate {
             checkpoint: false,
-            exit_status: None,
             ..
         }
     ) {
@@ -339,9 +342,8 @@ fn append_json_line(f: &mut fs::File, event: &AcpUpdate) {
 
 /// 从磁盘加载 chat 历史。
 ///
-/// 为了防止超大 history.jsonl 把内存打爆，只读文件尾部
-/// `MAX_HISTORY_READ_BYTES` 字节。如果在中间 seek，会丢弃第一条不完整的行，
-/// 从下一个 `\n` 开始解析。
+/// 为了防止超大 history.jsonl 把内存打爆，只保留最新的
+/// `MAX_HISTORY_READ_BYTES` 字节（按整行计，重复的终端快照不占额度）。
 ///
 /// 另外对每条事件的 `ToolCallUpdate.content` 做兜底截断，保护历史文件里
 /// 已经写入的超大 content（在截断逻辑上线前生成的）。
@@ -375,40 +377,64 @@ fn contains_client_message_id_at_path(path: &Path, id: &str) -> bool {
     false
 }
 
-fn load_history_from_path(path: &Path, max_read_bytes: Option<u64>) -> Vec<AcpUpdate> {
-    let mut file = match fs::File::open(path) {
-        Ok(f) => f,
-        Err(_) => return Vec::new(),
+/// The terminal a persisted v2 terminal snapshot belongs to.
+fn v2_terminal_snapshot_id(line: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Snapshot {
+        terminal_id: String,
+    }
+    if !line.starts_with(V2_TERMINAL_LINE_PREFIX) {
+        return None;
+    }
+    let snapshot: Snapshot = serde_json::from_str(line).ok()?;
+    Some(snapshot.terminal_id)
+}
+
+/// Read history lines, keeping the newest `max_read_bytes` of them.
+///
+/// v2 terminal snapshots are cumulative, so only each terminal's last one is
+/// kept. Older versions stored one on every tool update; those copies must not
+/// count against the limit or they push the conversation out of it. The last
+/// one also keeps its place: replay applies a snapshot to tool rows that already
+/// exist, and that is the copy that reaches them all.
+fn read_history_lines(path: &Path, max_read_bytes: Option<u64>) -> Vec<String> {
+    let Ok(file) = fs::File::open(path) else {
+        return Vec::new();
     };
-
-    let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
-    let mut skip_partial_first_line = false;
-    if let Some(max_read_bytes) = max_read_bytes {
-        if file_len > max_read_bytes {
-            let start = file_len - max_read_bytes;
-            if file.seek(SeekFrom::Start(start)).is_ok() {
-                skip_partial_first_line = true;
-            }
-        }
-    }
-
-    let mut reader = std::io::BufReader::new(file);
-    if skip_partial_first_line {
-        // 丢弃从 seek 位置到下一个 '\n' 之间的残缺行
-        let mut discard = Vec::new();
-        let _ = reader.read_until(b'\n', &mut discard);
-    }
-
-    let mut history = Vec::new();
-
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
+    let mut lines: Vec<Option<String>> = Vec::new();
+    let mut oldest = 0;
+    let mut retained_bytes = 0u64;
+    let mut snapshots: HashMap<String, usize> = HashMap::new();
+    for line in std::io::BufReader::new(file).lines() {
+        let Ok(line) = line else { continue };
         if line.trim().is_empty() {
             continue;
         }
+        if let Some(terminal_id) = v2_terminal_snapshot_id(&line) {
+            if let Some(index) = snapshots.insert(terminal_id, lines.len()) {
+                if let Some(older) = lines[index].take() {
+                    retained_bytes -= older.len() as u64;
+                }
+            }
+        }
+        retained_bytes += line.len() as u64;
+        lines.push(Some(line));
+        if let Some(max_read_bytes) = max_read_bytes {
+            while retained_bytes > max_read_bytes {
+                if let Some(evicted) = lines[oldest].take() {
+                    retained_bytes -= evicted.len() as u64;
+                }
+                oldest += 1;
+            }
+        }
+    }
+    lines.into_iter().flatten().collect()
+}
+
+fn load_history_from_path(path: &Path, max_read_bytes: Option<u64>) -> Vec<AcpUpdate> {
+    let mut history = Vec::new();
+
+    for line in read_history_lines(path, max_read_bytes) {
         // 容错：旧版本存在并发 append 竞态，可能把多个 JSON 对象写到同一行
         // （`{a}{b}` 这种），用 StreamDeserializer 把一行里所有能解出的对象都拿到。
         let stream = serde_json::Deserializer::from_str(&line).into_iter::<AcpUpdate>();
@@ -920,6 +946,82 @@ mod tests {
         assert!(
             matches!(&load_history_from_path(&path, None)[0], AcpUpdate::V2TerminalOutputUpdate { command: Some(command), cwd: Some(cwd), .. } if command == "ls" && cwd == "/tmp")
         );
+    }
+
+    fn exited_terminal(id: &str, output: &str, checkpoint: bool) -> AcpUpdate {
+        AcpUpdate::V2TerminalOutputUpdate {
+            terminal_id: id.into(),
+            output: output.into(),
+            truncated: false,
+            exit_status: Some(crate::acp::TerminalExitStatusData {
+                exit_code: Some(0),
+                signal: None,
+            }),
+            command: None,
+            cwd: None,
+            checkpoint,
+            meta: Default::default(),
+        }
+    }
+
+    fn user_message(text: &str) -> AcpUpdate {
+        serde_json::from_value(serde_json::json!({"type": "user_message", "text": text})).unwrap()
+    }
+
+    fn terminal_outputs(events: &[AcpUpdate]) -> Vec<(usize, String)> {
+        events
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| match event {
+                AcpUpdate::V2TerminalOutputUpdate { output, .. } => Some((index, output.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_v2_terminal_checkpoints_are_persisted() {
+        assert!(!should_persist(&exited_terminal("terminal", "done", false)));
+        assert!(should_persist(&exited_terminal("terminal", "done", true)));
+    }
+
+    #[test]
+    fn each_v2_terminal_keeps_only_its_last_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        for event in [
+            exited_terminal("one", "first", false),
+            user_message("between"),
+            exited_terminal("two", "other", false),
+            exited_terminal("one", "first and more", true),
+            exited_terminal("one", "final", false),
+        ] {
+            append_event_to_path(&path, &event);
+        }
+
+        let events = load_history_from_path(&path, None);
+        assert_eq!(
+            terminal_outputs(&events),
+            [(1, "other".to_string()), (2, "final".to_string()),]
+        );
+    }
+
+    #[test]
+    fn repeated_v2_terminal_snapshots_do_not_push_out_the_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        append_event_to_path(&path, &user_message("first prompt"));
+        let snapshot = exited_terminal("terminal", &"x".repeat(1024), false);
+        for _ in 0..50 {
+            append_event_to_path(&path, &snapshot);
+        }
+
+        let events = load_history_from_path(&path, Some(4 * 1024));
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            AcpUpdate::UserMessage { text, .. } if text == "first prompt"
+        ));
     }
 
     #[test]
