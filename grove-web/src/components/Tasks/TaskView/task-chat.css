@@ -309,7 +309,20 @@
   70%, 100% { box-shadow: 0 0 0 7px transparent; }
 }
 
+/* The input area floats above the home bar; keep the transcript hidden below it too. */
+.task-chat-input-scrim {
+  bottom: calc(-1 * max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom, 0px)));
+}
+
 @media (max-width: 767px) {
+  /* Narrow lines: wrap identifiers whole, and keep both pieces of a split one rounded. */
+  .task-chat-message-pane :not(pre) > code {
+    word-break: normal;
+    overflow-wrap: anywhere;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+
   .mobile-composer-status-scroll {
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;

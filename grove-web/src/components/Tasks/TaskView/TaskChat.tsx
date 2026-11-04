@@ -1153,7 +1153,7 @@ function TaskChatVirtuosoFooter({
       )}
       <div
         style={{
-          height: `calc(${context.inputAreaHeight + 16 + (context.bottomFadePad ?? 0)}px + var(--grove-kb-inset, 0px))`,
+          height: `calc(${context.inputAreaHeight + 16 + (context.bottomFadePad ?? 0)}px + max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom, 0px)))`,
         }}
       />
     </div>
@@ -11942,7 +11942,7 @@ export function TaskChat({
               className="pointer-events-none absolute inset-x-0 z-10 px-3 pb-4 pt-2"
               style={{ bottom: "max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom))" }}
             >
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
+              <div className="task-chat-input-scrim pointer-events-none absolute inset-x-0 h-20 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
               <div className="pointer-events-auto relative mx-auto flex w-fit max-w-full items-center gap-2 rounded-full border border-[color-mix(in_srgb,var(--color-success)_28%,var(--color-border))] bg-[color-mix(in_srgb,var(--color-bg)_94%,var(--color-success))] px-3.5 py-2 text-xs text-[var(--color-text-secondary)] shadow-sm backdrop-blur-md">
                 {isViewingArchived ? (
                   <Archive className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
@@ -11969,7 +11969,7 @@ export function TaskChat({
             data-sent-pop-cover={orbitComposer || undefined}
             onPointerDownCapture={markComposerInteraction}
             onFocusCapture={markComposerInteraction}
-            className={`task-chat-input-area pointer-events-none absolute inset-x-0 z-10 px-3 pt-2 ${showMobileComposerPill ? "pb-2" : "pb-4"}`}
+            className={`task-chat-input-area pointer-events-none absolute inset-x-0 z-10 px-3 pt-2 ${showMobileComposerPill || orbitPhoneShell ? "pb-2" : "pb-4"}`}
             style={{
               bottom: showMobileComposerPill
                 ? "0px"
@@ -11979,7 +11979,7 @@ export function TaskChat({
             {orbitComposer ? (
               <div className="ocv-fade" aria-hidden="true" />
             ) : !showMobileComposerPill && (
-              <div className="task-chat-input-scrim pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
+              <div className="task-chat-input-scrim pointer-events-none absolute inset-x-0 h-24 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
             )}
 
             <AnimatePresence initial={false}>
@@ -12109,10 +12109,11 @@ export function TaskChat({
                         // (unscrollable) transcript, so the pill would stick.
                         beginBottomReattachment("auto");
                       }}
-                      className="pointer-events-auto group inline-flex h-8 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_86%,transparent)] px-3 text-xs font-medium text-[var(--color-text-muted)] shadow-[0_1px_2px_rgba(0,0,0,0.08),0_6px_20px_rgba(0,0,0,0.10)] backdrop-blur-xl transition-[color,background-color,border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-[color-mix(in_srgb,var(--color-highlight)_24%,var(--color-border))] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] hover:shadow-[0_2px_4px_rgba(0,0,0,0.10),0_8px_24px_rgba(0,0,0,0.14)] active:translate-y-0 select-none"
+                      aria-label="Scroll to bottom"
+                      className={`pointer-events-auto group inline-flex ${orbitPhoneShell ? "h-10 w-10 justify-center" : "h-8 gap-1.5 px-3"} items-center rounded-full border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_86%,transparent)] text-xs font-medium text-[var(--color-text-muted)] shadow-[0_1px_2px_rgba(0,0,0,0.08),0_6px_20px_rgba(0,0,0,0.10)] backdrop-blur-xl transition-[color,background-color,border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-[color-mix(in_srgb,var(--color-highlight)_24%,var(--color-border))] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] hover:shadow-[0_2px_4px_rgba(0,0,0,0.10),0_8px_24px_rgba(0,0,0,0.14)] active:translate-y-0 select-none`}
                     >
                       <ArrowDown className="h-3.5 w-3.5 text-[var(--color-highlight)] transition-transform duration-150 group-hover:translate-y-0.5" />
-                      <span>Scroll to bottom</span>
+                      {!orbitPhoneShell && <span>Scroll to bottom</span>}
                     </button>
                   </motion.div>
                 )}
