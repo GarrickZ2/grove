@@ -22,7 +22,7 @@
 .orbit-handoff-enter { animation: orbit-handoff-in .26s cubic-bezier(.25, 1, .5, 1); }
 @keyframes orbit-handoff-in { from { opacity: 0; } }
 /* 30px host = button height, centered at 20px (40px bar) or 27px (macOS traffic lights). */
-.orbit-workspace-toolbar { position: absolute; top: 5px; right: 8px; left: 256px; height: 30px; z-index: 50; pointer-events: auto; display: flex; align-items: center; }
+.orbit-workspace-toolbar { position: absolute; top: 5px; right: 8px; left: var(--orbit-sidebar-width, 256px); height: 30px; z-index: 50; pointer-events: auto; display: flex; align-items: center; }
 .orbit-workspace-toolbar.has-mac-controls { top: 12px; }
 /* Collapsed: first toolbar button sits 10px after the sidebar's two title-bar icons. */
 .orbit-workspace-toolbar.is-collapsed { left: 76px; }
@@ -90,7 +90,7 @@
   inset: 0 auto 0 0;
   display: flex;
   flex-direction: column;
-  width: 256px;
+  width: var(--orbit-sidebar-width, 256px);
   color: var(--color-text);
   --orbit-surface: color-mix(in oklab, var(--color-bg) 94.5%, var(--color-text) 5.5%);
   background:

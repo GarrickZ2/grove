@@ -28,6 +28,7 @@ import { sessionActivityReducer, type SessionActivityState } from "./orbitSessio
 import type { Plugin } from "../../api/plugins";
 import { PluginIcon } from "../Plugins/PluginIcon";
 import { pluginPageEntries } from "../Plugins/pluginPages";
+import { SidebarResizer } from "./SidebarResizer";
 import "./orbit-sidebar.css";
 
 interface OrbitSidebarProps {
@@ -333,6 +334,7 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
 
   return (
     <aside className={`orbit-sidebar${collapsed ? " is-collapsed" : ""}${hasMacControls ? " has-mac-controls" : ""}${variant ? ` is-${variant}` : ""}`} aria-label="Orbit sidebar">
+      {!collapsed && !drawer && <SidebarResizer />}
       {/* A narrowed macOS window: the drawer's header starts below the traffic lights, on a strip that drags the window. */}
       {drawer && hasMacControls && <div className="orbit-drawer-titlebar" data-tauri-drag-region="deep" data-window-drag-strip />}
       {!drawer && <div className="orbit-titlebar" data-tauri-drag-region="deep">

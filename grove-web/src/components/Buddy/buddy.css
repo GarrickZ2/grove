@@ -121,7 +121,7 @@
 .buddy-overlay{position:fixed;inset:0;z-index:60;background:var(--color-bg)}
 /* Orbit chrome; only avatars use a fixed palette. */
 .buddy-app{--orbit-surface:color-mix(in oklab,var(--color-bg) 94.5%,var(--color-text) 5.5%);--buddy-sidebar-bg:var(--orbit-surface);--orbit-hover:color-mix(in oklab,var(--color-text) 9%,transparent);--orbit-selected:color-mix(in oklab,var(--color-text) 10%,transparent)}
-.buddy-sidebar{width:256px;animation:buddy-layout-in 180ms ease-out}
+.buddy-sidebar{position:relative;width:var(--orbit-sidebar-width,256px);animation:buddy-layout-in 180ms ease-out}
 .buddy-app{--buddy-header-inset:16px;--buddy-header-height:52px}
 .buddy-app.has-mac-controls{--buddy-header-inset:96px;--buddy-header-height:54px}
 .buddy-sidebar-top{height:var(--buddy-header-height);min-height:var(--buddy-header-height);padding:0 12px 0 var(--buddy-header-inset)}

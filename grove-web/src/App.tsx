@@ -1767,7 +1767,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
             listener in the parent useEffect to trigger startDragging(). */}
       <div
         className={`fixed top-0 left-0 right-0 h-6 z-[45] ${isMobile ? "hidden" : ""}`}
-        style={!isMobile && orbit && globalConfig?.web.workspace_layout === "flex" && !orbitHeaderVisible ? { right: "auto", width: 256 } : undefined}
+        style={!isMobile && orbit && globalConfig?.web.workspace_layout === "flex" && !orbitHeaderVisible ? { right: "auto", width: "var(--orbit-sidebar-width, 256px)" } : undefined}
         data-tauri-drag-region="deep"
         data-window-drag-strip
       />
@@ -1858,7 +1858,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
                 // collapsed → 96px; expanded → 280px. Matches the visual gap of the
                 // sidebar's left:12 in both expanded/collapsed modes, so the
                 // floating-panel language stays consistent.
-                left: orbit ? (effectiveSidebarMode === "collapsed" ? "0px" : "256px") : effectiveSidebarMode === "island"
+                left: orbit ? (effectiveSidebarMode === "collapsed" ? "0px" : "var(--orbit-sidebar-width, 256px)") : effectiveSidebarMode === "island"
                   ? "12px"
                   : (effectiveSidebarMode === "collapsed" ? "96px" : "280px"),
                 boxShadow: orbit ? "none" :
