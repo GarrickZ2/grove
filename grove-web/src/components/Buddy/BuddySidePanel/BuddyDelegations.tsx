@@ -1,20 +1,23 @@
-import { useContext, useState } from "react";
+import { useContext, useState, type ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
 import type { Buddy, BuddyDelegation } from "../../../api/buddies";
 import { useProject } from "../../../context";
 import { errorMessage } from "../../../utils/errorMessage";
 import { MarkdownRenderer } from "../../ui/MarkdownRenderer";
 import { ConfirmDialog } from "../../Dialogs";
-import { formatRelative } from "../../Automation/automationFormat";
 import { BuddyNavigationContext } from "../buddyNavigation";
 import { useBuddyDelegationsContext } from "../delegations/buddyDelegationsContext";
-import { elapsedLabel, useNow } from "../delegations/delegationFormat";
+import { elapsedLabel, finishedLabel, groupFinished, useNow, type FinishedPeriod } from "../delegations/delegationFormat";
 import { DelegationRequestCards } from "../delegations/DelegationRequestCards";
 
 const GROUPS: { label: string; match: (item: BuddyDelegation) => boolean }[] = [
   { label: "Needs you", match: item => item.status === "waiting" },
   { label: "Running", match: item => item.status === "running" },
-  { label: "Done", match: item => item.status === "done" || item.status === "failed" || item.status === "cancelled" },
 ];
+const isFinished = (item: BuddyDelegation) => item.status === "done" || item.status === "failed" || item.status === "cancelled";
+
+/** This week's rows shown before "Show more"; a failure always stays in view. */
+const WEEK_PEEK = 5;
 
 // Briefs are full hand-off documents; show a peek and let the user expand it.
 const LONG_BRIEF_CHARS = 240;
@@ -35,8 +38,25 @@ const PILL: Record<BuddyDelegation["status"], string> = { waiting: "Waiting", ru
 /** Running work shows how long it has been going; finished work shows when it ended. */
 function delegationTime(delegation: BuddyDelegation, now: number): string {
   if (delegation.status === "running" || delegation.status === "waiting") return elapsedLabel(delegation.created_at, now);
-  const ended = new Date(delegation.completed_at ?? delegation.updated_at);
-  return ended.toDateString() === new Date(now).toDateString() ? ended.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : formatRelative(ended);
+  return finishedLabel(delegation, now);
+}
+
+/** One period of finished work. Recent work stays open; older work folds away but is still a click from here. */
+function FinishedGroup({ period, items, expanded, renderItem }: { period: FinishedPeriod; items: BuddyDelegation[]; expanded: string | null; renderItem: (item: BuddyDelegation) => ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const earlier = period === "Earlier";
+  const week = period === "This week";
+  const shown = open || !(earlier || week) ? items
+    : earlier ? items.filter(item => item.id === expanded)
+    : items.filter((item, index) => index < WEEK_PEEK || item.status === "failed" || item.id === expanded);
+  const hidden = items.length - shown.length;
+  return <section aria-label={period}>
+    <h3 className="buddy-delegation-group">{earlier
+      ? <button type="button" className="buddy-delegation-fold" aria-expanded={open} onClick={() => setOpen(!open)}><ChevronRight size={13} aria-hidden="true" />Earlier<span>{items.length}</span></button>
+      : period}</h3>
+    {shown.length > 0 && <ul className="buddy-delegation-list">{shown.map(renderItem)}</ul>}
+    {week && (hidden > 0 || open) && <button type="button" className="buddy-delegation-more" onClick={() => setOpen(!open)}>{open ? "Show less" : `Show ${hidden} more`}</button>}
+  </section>;
 }
 
 function DelegationItem({ buddy, delegation, expanded, onToggle, onCancel, now }: { buddy: Buddy; delegation: BuddyDelegation; expanded: boolean; onToggle: () => void; onCancel: () => void; now: number }) {
@@ -78,15 +98,17 @@ export function BuddyDelegations({ buddy }: { buddy: Buddy }) {
   const [cancelling, setCancelling] = useState<BuddyDelegation | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const now = useNow(items.some(item => item.status === "running"));
+  const renderItem = (item: BuddyDelegation) => <DelegationItem key={item.id} buddy={buddy} delegation={item} now={now} expanded={expanded === item.id} onToggle={() => setExpanded(expanded === item.id ? null : item.id)} onCancel={() => setCancelling(item)} />;
   return <div className="buddy-panel-section">
     {(error || failure) && <p role="alert">{failure || error}</p>}
     {!items.length && <p className="buddy-muted">No delegations yet. When {buddy.name} hands a bigger job to a subagent, it shows up here.</p>}
     {GROUPS.map(group => {
       const members = items.filter(group.match);
       return members.length ? <section key={group.label} aria-label={group.label}><h3 className="buddy-delegation-group">{group.label}</h3>
-        <ul className="buddy-delegation-list">{members.map(item => <DelegationItem key={item.id} buddy={buddy} delegation={item} now={now} expanded={expanded === item.id} onToggle={() => setExpanded(expanded === item.id ? null : item.id)} onCancel={() => setCancelling(item)} />)}</ul>
+        <ul className="buddy-delegation-list">{members.map(renderItem)}</ul>
       </section> : null;
     })}
+    {groupFinished(items.filter(isFinished), now).map(group => <FinishedGroup key={group.period} period={group.period} items={group.items} expanded={expanded} renderItem={renderItem} />)}
     <ConfirmDialog isOpen={cancelling !== null} title="Cancel delegation?" message={`The subagent working on "${cancelling?.title ?? ""}" stops its current turn. Its session and history are kept.`} confirmLabel="Cancel delegation" cancelLabel="Keep running" variant="danger"
       onCancel={() => setCancelling(null)} onConfirm={() => { const target = cancelling; setCancelling(null); setFailure(null); if (target) void cancel(target.id).catch(reason => setFailure(errorMessage(reason))); }} />
   </div>;

@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Buddy, BuddyDelegation } from "../../../api/buddies";
 import { BuddyDelegationsContext, type BuddyDelegationsValue } from "../delegations/buddyDelegationsContext";
 import { BuddyNavigationContext } from "../buddyNavigation";
@@ -23,7 +23,8 @@ const button = (text: string) => [...host.querySelectorAll("button")].find(node 
 it("groups delegations, expands the focused item, and opens or cancels it", async () => {
   const cancel = vi.fn(async () => {}); const navigate = vi.fn(async () => {});
   render({ items: [delegation("done", "done", { last_result: "All green" }), delegation("wait", "waiting"), delegation("run", "running", { target_project: "buddy-project" })], focused: "done", cancel }, navigate);
-  expect([...host.querySelectorAll("h3")].map(node => node.textContent)).toEqual(["Needs you", "Running", "Done"]);
+  expect([...host.querySelectorAll("h3")].map(node => node.textContent)).toEqual(["Needs you", "Running", "Earlier1"]);
+  await act(async () => button("Earlier").click());
   expect([...host.querySelectorAll(".buddy-delegation-pill")].map(node => node.textContent)).toEqual(["Waiting", "Running", "Done"]);
   expect(host.querySelector(".buddy-delegation.is-running")?.textContent).toContain("Scout ·");
   expect(host.querySelector(".buddy-delegation.is-waiting")?.textContent).toContain("Grove · t ·");
@@ -56,4 +57,39 @@ it("clamps a long brief behind a toggle", async () => {
 it("explains the empty state", () => {
   render({});
   expect(host.textContent).toContain("No delegations yet");
+});
+
+describe("finished work", () => {
+  const now = new Date(2026, 10, 5, 12).getTime(); // A Thursday.
+  const at = (day: number, hour = 9) => ({ completed_at: new Date(2026, 10, day, hour).toISOString() });
+  beforeEach(() => { vi.useFakeTimers({ now, toFake: ["Date"] }); });
+  afterEach(() => { vi.useRealTimers(); });
+  const headings = () => [...host.querySelectorAll("h3")].map(node => node.textContent);
+  const titles = () => [...host.querySelectorAll(".buddy-delegation-title")].map(node => node.textContent);
+
+  it("sorts it into periods by when it ended", () => {
+    render({ items: [delegation("old", "done", at(1)), delegation("week", "done", at(3)), delegation("today", "done", at(5)), delegation("yesterday", "done", at(4)), delegation("open", "running")] });
+    expect(headings()).toEqual(["Running", "Today", "Yesterday", "This week", "Earlier1"]);
+    expect(titles()).toEqual(["Task open", "Task today", "Task yesterday", "Task week"]);
+  });
+
+  it("peeks at this week but keeps its failures in view", () => {
+    const items = [1, 2, 3, 4, 5, 6].map(hour => delegation(`w${hour}`, "done", at(3, 20 - hour)));
+    render({ items: [...items, delegation("bad", "failed", at(3, 1))] });
+    expect(titles()).toEqual(["Task w1", "Task w2", "Task w3", "Task w4", "Task w5", "Task bad"]);
+    act(() => button("Show 1 more").click());
+    expect(titles()).toHaveLength(7);
+    act(() => button("Show less").click());
+    expect(titles()).toHaveLength(6);
+  });
+
+  it("opens Earlier on request and always shows the focused item", () => {
+    render({ items: [delegation("a", "done", at(1, 9)), delegation("b", "failed", at(1, 10))] });
+    expect(titles()).toEqual([]);
+    act(() => button("Earlier").click());
+    expect(titles()).toEqual(["Task b", "Task a"]);
+    act(() => button("Earlier").click());
+    render({ items: [delegation("a", "done", at(1, 9)), delegation("b", "failed", at(1, 10))], focused: "a" });
+    expect(titles()).toEqual(["Task a"]);
+  });
 });

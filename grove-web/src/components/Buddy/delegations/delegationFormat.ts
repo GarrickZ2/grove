@@ -19,6 +19,42 @@ export function delegationStatusLabel(delegation: BuddyDelegation, now = Date.no
   }
 }
 
+export type FinishedPeriod = "Today" | "Yesterday" | "This week" | "Earlier";
+
+export function finishedAt(delegation: BuddyDelegation): number {
+  return Date.parse(delegation.completed_at ?? delegation.updated_at);
+}
+
+function finishedPeriod(time: number, now: number): FinishedPeriod {
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  if (time >= today.getTime()) return "Today";
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (time >= yesterday.getTime()) return "Yesterday";
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  return time >= monday.getTime() ? "This week" : "Earlier";
+}
+
+/** Finished work by when it ended, newest first. Empty periods are left out. */
+export function groupFinished(items: BuddyDelegation[], now = Date.now()): { period: FinishedPeriod; items: BuddyDelegation[] }[] {
+  const newest = [...items].sort((a, b) => finishedAt(b) - finishedAt(a));
+  return (["Today", "Yesterday", "This week", "Earlier"] as const)
+    .map(period => ({ period, items: newest.filter(item => finishedPeriod(finishedAt(item), now) === period) }))
+    .filter(group => group.items.length > 0);
+}
+
+/** When it ended, with no more than its group's heading leaves out. */
+export function finishedLabel(delegation: BuddyDelegation, now = Date.now()): string {
+  const ended = new Date(finishedAt(delegation));
+  const period = finishedPeriod(ended.getTime(), now);
+  if (period === "Today" || period === "Yesterday") return ended.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (period === "This week") return ended.toLocaleDateString([], { weekday: "short" });
+  const otherYear = ended.getFullYear() !== new Date(now).getFullYear();
+  return ended.toLocaleDateString([], { month: "short", day: "numeric", ...(otherYear ? { year: "numeric" } : {}) });
+}
+
 /** Re-renders while `active`, so running elapsed time stays current. */
 export function useNow(active: boolean, interval = 15000): number {
   const [now, setNow] = useState(() => Date.now());
