@@ -3,9 +3,12 @@ import { motion } from "framer-motion";
 import { Check, FolderOpen, FolderPlus, GitBranch, Palette, RotateCw, type LucideIcon } from "lucide-react";
 import { getVersion } from "../../api";
 import { MarketplaceModal } from "../../components/Config/MarketplaceModal";
+import { useIsMobile } from "../../hooks";
 import { GroveIcon } from "../../components/Layout/GroveIcon";
 import type { WelcomeAction } from "../../components/Welcome/WelcomePage";
 import { agentIconComponent } from "../../utils/agentIcon";
+import { useOrbitInterface } from "../ui/interfaceContext";
+import { AGENT_INTRO_SEEN_KEY, hasSeen, markSeen } from "./storage";
 import { useDetectedAgents, type AgentDetection } from "./useDetectedAgents";
 import "../tokens.css";
 import "../ui/orbit-ui.css";
@@ -17,6 +20,8 @@ const ACTIONS: { id: WelcomeAction; icon: LucideIcon; title: string; description
   { id: "new", icon: FolderPlus, title: "Create a project", description: "Start from an empty folder.", tint: "linear-gradient(150deg,#fcd34d,#b45309)", glow: "rgb(180 83 9 / 55%)" },
   { id: "studio", icon: Palette, title: "Start a Studio", description: "For design, docs and assets. No Git needed.", tint: "linear-gradient(150deg,#f9a8d4,#be185d)", glow: "rgb(190 24 93 / 55%)" },
 ];
+
+const AGENT_INTRO = "Choose the agents you use. Grove runs them on your machine, and you'll sign in the first time you use each one.";
 
 /** Agent chips shown before the rest fold into "+N". */
 const CHIP_LIMIT = 4;
@@ -83,6 +88,17 @@ export function OrbitWelcome({ onAction }: { onAction: (action: WelcomeAction) =
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const { detection, checking, recheck } = useDetectedAgents();
   const isRemote = typeof window !== "undefined" && !!(window as unknown as Record<string, unknown>).__GROVE_REMOTE__;
+  const orbit = useOrbitInterface();
+  // Welcome renders outside TabletAsDesktopContext, so isMobile still counts tablets.
+  const { isMobile, isTablet } = useIsMobile();
+  const phone = isMobile && !isTablet;
+  // This page is drawn before the config loads, so Workbench can land here for a moment.
+  const [introPending, setIntroPending] = useState(() => !hasSeen(AGENT_INTRO_SEEN_KEY));
+  const showIntro = introPending && orbit && !phone && !isRemote;
+
+  useEffect(() => {
+    if (showIntro) markSeen(AGENT_INTRO_SEEN_KEY);
+  }, [showIntro]);
 
   useEffect(() => {
     getVersion().then((res) => setVersion(res.version)).catch(() => {});
@@ -126,7 +142,7 @@ export function OrbitWelcome({ onAction }: { onAction: (action: WelcomeAction) =
           {isRemote && <span className="owl-remote">Remote</span>}
         </p>
       )}
-      <MarketplaceModal open={marketplaceOpen} initialTab="explore" onClose={() => { setMarketplaceOpen(false); recheck(); }} />
+      <MarketplaceModal open={marketplaceOpen || showIntro} initialTab="explore" intro={showIntro ? AGENT_INTRO : undefined} onClose={() => { setMarketplaceOpen(false); setIntroPending(false); recheck(); }} />
     </motion.div>
   );
 }

@@ -541,6 +541,72 @@ fn expand_path_for_app_bundle() {
     unsafe {
         std::env::set_var("PATH", &new_path);
     }
+
+    // A login shell skips .zshrc, which is where nvm and friends add Node.
+    // Starting an interactive one takes seconds, so only fall back to it then.
+    if crate::check::command_exists("npx") {
+        return;
+    }
+    let Some(interactive_path) = read_interactive_path(&shell, INTERACTIVE_SHELL_TIMEOUT) else {
+        return;
+    };
+    for p in interactive_path.split(':') {
+        if !p.is_empty() && !parts.contains(&p) {
+            parts.push(p);
+        }
+    }
+    let new_path = parts.join(":");
+    // SAFETY: see above
+    #[allow(unused_unsafe)]
+    unsafe {
+        std::env::set_var("PATH", &new_path);
+    }
+}
+
+/// Fence around the PATH: interactive shells can print anything on startup.
+#[cfg(target_os = "macos")]
+const PATH_MARKER: &str = "__GROVE_PATH__";
+#[cfg(target_os = "macos")]
+const INTERACTIVE_SHELL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[cfg(target_os = "macos")]
+fn marked_path(output: &str) -> Option<&str> {
+    let (_, rest) = output.split_once(PATH_MARKER)?;
+    let (path, _) = rest.split_once(PATH_MARKER)?;
+    Some(path)
+}
+
+/// The PATH an interactive login shell ends up with. Reads only as far as the
+/// closing marker, because something started from .zshrc can hold stdout open.
+#[cfg(target_os = "macos")]
+fn read_interactive_path(shell: &str, timeout: std::time::Duration) -> Option<String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+
+    let script = format!("printf '%s%s%s' {PATH_MARKER} \"$PATH\" {PATH_MARKER}");
+    let mut child = Command::new(shell)
+        .args(["-i", "-l", "-c", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut output, mut chunk) = (Vec::new(), [0; 4096]);
+        while let Ok(read @ 1..) = stdout.read(&mut chunk) {
+            output.extend_from_slice(&chunk[..read]);
+            if let Some(path) = marked_path(&String::from_utf8_lossy(&output)) {
+                let _ = sender.send(path.to_string());
+                return;
+            }
+        }
+    });
+    let path = receiver.recv_timeout(timeout).ok();
+    let _ = child.kill();
+    let _ = child.wait();
+    path
 }
 
 /// Execute the GUI desktop application
@@ -983,5 +1049,67 @@ fn handle_grove_deep_link(app: &tauri::AppHandle, url_str: &str) {
                 eprintln!("[DeepLink] Resolve permission failed: {}", e);
             }
         }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    fn fake_shell(dir: &std::path::Path, body: &str) -> String {
+        let path = dir.join("shell");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn the_path_is_read_from_between_its_markers() {
+        let output = format!("Welcome!\n{PATH_MARKER}/nvm/bin:/usr/bin{PATH_MARKER}bye\n");
+        assert_eq!(marked_path(&output), Some("/nvm/bin:/usr/bin"));
+        assert_eq!(marked_path("no markers"), None);
+        assert_eq!(marked_path(&format!("{PATH_MARKER}/cut/off")), None);
+    }
+
+    #[test]
+    fn the_shell_is_started_interactive_and_login() {
+        let temp = tempfile::tempdir().unwrap();
+        let shell = fake_shell(
+            temp.path(),
+            r#"echo noise; [ "$1 $2 $3" = "-i -l -c" ] && PATH=/nvm/bin /bin/sh -c "$4""#,
+        );
+        assert_eq!(
+            read_interactive_path(&shell, Duration::from_secs(5)).as_deref(),
+            Some("/nvm/bin")
+        );
+    }
+
+    #[test]
+    fn a_shell_that_prints_nothing_gives_up_at_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let shell = fake_shell(temp.path(), "exit 0");
+        assert_eq!(read_interactive_path(&shell, Duration::from_secs(5)), None);
+    }
+
+    #[test]
+    fn a_hanging_shell_is_abandoned_at_the_timeout() {
+        let temp = tempfile::tempdir().unwrap();
+        let shell = fake_shell(temp.path(), "sleep 30");
+        let started = Instant::now();
+        assert_eq!(
+            read_interactive_path(&shell, Duration::from_millis(200)),
+            None
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_missing_shell_is_not_an_error() {
+        assert_eq!(
+            read_interactive_path("/no/such/shell", Duration::from_secs(1)),
+            None
+        );
     }
 }

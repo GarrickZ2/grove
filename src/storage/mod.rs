@@ -1,3 +1,4 @@
+pub mod agent_auto_update;
 pub mod agent_graph;
 pub mod agent_install;
 pub mod agent_registry;

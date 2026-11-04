@@ -8,6 +8,8 @@ export const INTERFACE_KEY = "grove:interface";
 export const TURN_HINTS_SEEN_KEY = "grove:firstrun.turn-hints";
 /** A first message was sent from the New page; starter prompts stop showing. */
 export const STARTERS_DONE_KEY = "grove:firstrun.starters";
+/** The Marketplace has opened by itself with its one-line intro. */
+export const AGENT_INTRO_SEEN_KEY = "grove:firstrun.agent-intro";
 
 function read(key: string): string | null {
   try { return window.localStorage.getItem(key); } catch { return null; }

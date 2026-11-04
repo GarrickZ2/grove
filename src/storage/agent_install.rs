@@ -61,67 +61,77 @@ pub fn install_dir(agent_id: &str, version: &str) -> PathBuf {
         .join(version)
 }
 
-/// Download + extract a binary archive. Heavy IO — caller must drive this
-/// inside `tokio::task::spawn_blocking` or otherwise off the async runtime.
+/// Download + extract a binary archive and return the absolute path of its
+/// `cmd`, ready to be stored as `install_path`.
 ///
-/// Returns the install_path (absolute) on success, ready to be stored on
-/// `InstalledAgent.install_path`. Cleans up the target dir on failure so
-/// retries land on a clean slate.
+/// Everything happens in a temporary sibling directory that replaces the
+/// target only once the archive has extracted and `cmd` is in it, so a failure
+/// at any point leaves an existing install as it was.
 pub async fn download_and_extract(
     agent_id: &str,
     version: &str,
     target: &BinaryTarget,
 ) -> Result<PathBuf> {
     let dest = install_dir(agent_id, version);
+    // Validates containment too, so a malicious registry can't escape with
+    // `..` segments.
+    let bin_path = sanitize_extract_path(&dest, Path::new(target.cmd.trim_start_matches("./")))?;
+    let cmd_rel = bin_path
+        .strip_prefix(&dest)
+        .map_err(|e| GroveError::storage(format!("cmd path: {}", e)))?
+        .to_path_buf();
 
-    // Wipe any partial install from a previous attempt — keeps semantics
-    // simple ("install_path always points at a valid extracted archive").
-    if dest.exists() {
-        std::fs::remove_dir_all(&dest).ok();
-    }
-    std::fs::create_dir_all(&dest)?;
+    let parent = dest
+        .parent()
+        .ok_or_else(|| GroveError::storage("install dir has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    // Same parent, so the final rename can't cross filesystems.
+    let staging = tempfile::Builder::new()
+        .prefix(".installing-")
+        .tempdir_in(parent)?;
 
     let archive_url = target.archive.clone();
     let bytes = fetch_archive(&archive_url).await?;
     let archive_kind = detect_archive_kind(&archive_url);
 
     // Extraction is purely blocking — run on a worker thread.
-    let dest_clone = dest.clone();
-    let extract_result = tokio::task::spawn_blocking(move || match archive_kind {
-        ArchiveKind::TarGz => extract_tar_gz(&bytes, &dest_clone),
-        ArchiveKind::Zip => extract_zip(&bytes, &dest_clone),
+    let staged = staging.path().to_path_buf();
+    tokio::task::spawn_blocking(move || match archive_kind {
+        ArchiveKind::TarGz => extract_tar_gz(&bytes, &staged),
+        ArchiveKind::Zip => extract_zip(&bytes, &staged),
     })
     .await
-    .map_err(|e| GroveError::storage(format!("extract task: {}", e)))?;
+    .map_err(|e| GroveError::storage(format!("extract task: {}", e)))??;
 
-    if let Err(e) = extract_result {
-        // Best-effort cleanup so the next attempt starts fresh.
-        let _ = std::fs::remove_dir_all(&dest);
-        return Err(e);
+    let staged_cmd = staging.path().join(&cmd_rel);
+    if !staged_cmd.is_file() {
+        return Err(GroveError::storage(format!(
+            "archive has no {:?}",
+            target.cmd
+        )));
     }
-
-    // chmod +x on the cmd binary (and anything in extracted dir that looks
-    // like an executable). Windows ignores this entirely.
+    // Windows has no execute bit.
     #[cfg(unix)]
-    {
-        let cmd_path = dest.join(target.cmd.trim_start_matches("./"));
-        if cmd_path.exists() {
-            mark_executable(&cmd_path)?;
-        } else {
-            // Some archives put the binary one level deep. We don't try to
-            // outsmart that — the launcher resolves `target.cmd` literally
-            // and will error loudly if the path is wrong. But mark every
-            // top-level file executable as a safety net for `./cmd` -style
-            // entries that resolve to extracted_root/<exe>.
-            for entry in std::fs::read_dir(&dest)?.flatten() {
-                if entry.path().is_file() {
-                    let _ = mark_executable(&entry.path());
-                }
-            }
-        }
-    }
+    mark_executable(&staged_cmd)?;
 
-    Ok(dest)
+    replace_dir(staging.path(), &dest)?;
+    Ok(bin_path)
+}
+
+/// Swap `staged` into place, putting the previous `dest` back if that fails.
+fn replace_dir(staged: &Path, dest: &Path) -> Result<()> {
+    if !dest.exists() {
+        std::fs::rename(staged, dest)?;
+        return Ok(());
+    }
+    let previous = dest.with_file_name(format!(".replaced-{}", uuid::Uuid::new_v4()));
+    std::fs::rename(dest, &previous)?;
+    if let Err(e) = std::fs::rename(staged, dest) {
+        let _ = std::fs::rename(&previous, dest);
+        return Err(e.into());
+    }
+    let _ = std::fs::remove_dir_all(&previous);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -297,6 +307,22 @@ mod tests {
         let dest = Path::new("/tmp/install");
         assert!(sanitize_extract_path(dest, Path::new("../etc/passwd")).is_err());
         assert!(sanitize_extract_path(dest, Path::new("ok/file")).is_ok());
+    }
+
+    #[test]
+    fn replacing_keeps_only_the_new_contents() {
+        let temp = tempfile::tempdir().unwrap();
+        let (staged, dest) = (temp.path().join("staged"), temp.path().join("1.0.0"));
+        std::fs::create_dir(&staged).unwrap();
+        std::fs::write(staged.join("new"), "new").unwrap();
+        std::fs::create_dir(&dest).unwrap();
+        std::fs::write(dest.join("old"), "old").unwrap();
+
+        replace_dir(&staged, &dest).unwrap();
+
+        assert!(dest.join("new").exists());
+        assert!(!dest.join("old").exists());
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
     }
 
     #[test]

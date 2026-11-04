@@ -63,6 +63,7 @@ pub struct InstalledAgentView {
     pub args_override: Vec<String>,
     pub env_override: HashMap<String, String>,
     pub acp_protocol_version: u8,
+    pub auto_update: bool,
     /// Last real ACP capability declaration, cached on the installed Agent so
     /// configuration UIs do not need to launch a 10–20 second probe Session.
     pub capability_snapshot: Option<serde_json::Value>,
@@ -91,6 +92,7 @@ impl From<&InstalledAgent> for InstalledAgentView {
             args_override: a.args_override.clone(),
             env_override: a.env_override.clone(),
             acp_protocol_version: installed_agents::get_acp_protocol_version(&a.id).unwrap_or(1),
+            auto_update: installed_agents::get_auto_update(&a.id).unwrap_or(true),
             capability_snapshot: installed_agents::get_capability_snapshot(&a.id)
                 .ok()
                 .flatten(),
@@ -163,6 +165,8 @@ pub struct MarketplaceResponse {
     /// section, though after the v2.6 changes curated agents are also
     /// auto-installed for fresh users so they normally appear in Installed.
     pub curated: Vec<String>,
+    pub npx_available: bool,
+    pub uvx_available: bool,
 }
 
 // ─── GET /api/v1/agents/marketplace ──────────────────────────────────────────
@@ -256,6 +260,8 @@ pub async fn list_marketplace() -> Result<Json<MarketplaceResponse>, Marketplace
         registry_fetched_at: fetched_at,
         registry_stale: stale,
         curated: crate::storage::curated_agents::onboarding_agent_ids_owned(),
+        npx_available: crate::check::command_exists("npx"),
+        uvx_available: crate::check::command_exists("uvx"),
     }))
 }
 
@@ -548,79 +554,32 @@ async fn install_binary(reg: &RegistryAgent) -> Result<Json<InstallResponse>, Ma
 
     if target.archive.is_empty() {
         // Synthetic Trae/TraeX have empty archive — they aren't installable
-        // through grove's installer. Reject early so we don't write a
-        // poisoned `installing` row.
+        // through grove's installer.
         return Err(MarketplaceError::BadRequest(format!(
             "{} is PATH-detected only and can't be installed via the marketplace",
             reg.id
         )));
     }
 
-    // Mark installing up front so the UI can render a spinner.
-    let installing = Installation {
+    // The record only changes once the archive is in place, so a failed
+    // download leaves an existing install usable.
+    let bin_path =
+        crate::storage::agent_install::download_and_extract(&reg.id, &reg.version, &target)
+            .await
+            .map_err(|e| MarketplaceError::internal(format!("binary install failed: {}", e)))?;
+    let installed = Installation {
         method: InstallMethod::Binary,
         version: reg.version.clone(),
-        install_path: None,
-        status: InstallStatus::Installing,
+        install_path: Some(bin_path.to_string_lossy().into_owned()),
+        status: InstallStatus::Installed,
         failure_reason: None,
         installed_at: chrono::Utc::now(),
     };
-    installed_agents::add_installation(&reg.id, installing)
-        .map_err(|e| MarketplaceError::internal(format!("upsert installing-state: {}", e)))?;
-
-    match crate::storage::agent_install::download_and_extract(&reg.id, &reg.version, &target).await
-    {
-        Ok(install_path) => {
-            // Resolve the actual binary path inside the extracted dir,
-            // validating containment against the install root so a
-            // malicious registry can't escape with `..` segments.
-            let cmd_rel = target.cmd.trim_start_matches("./");
-            let bin_path = match crate::storage::agent_install::sanitize_extract_path(
-                &install_path,
-                std::path::Path::new(cmd_rel),
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    let _ = std::fs::remove_dir_all(&install_path);
-                    let _ = installed_agents::set_installation_status(
-                        &reg.id,
-                        InstallMethod::Binary,
-                        InstallStatus::Failed,
-                        Some(format!("invalid cmd path: {}", e)),
-                    );
-                    return Err(MarketplaceError::BadRequest(format!(
-                        "registry entry rejected: cmd path escapes install dir ({:?})",
-                        target.cmd
-                    )));
-                }
-            };
-            let installed = Installation {
-                method: InstallMethod::Binary,
-                version: reg.version.clone(),
-                install_path: Some(bin_path.to_string_lossy().into_owned()),
-                status: InstallStatus::Installed,
-                failure_reason: None,
-                installed_at: chrono::Utc::now(),
-            };
-            let agent = installed_agents::add_installation(&reg.id, installed)
-                .map_err(|e| MarketplaceError::internal(format!("upsert installed: {}", e)))?;
-            Ok(Json(InstallResponse {
-                agent: InstalledAgentView::from(&agent),
-            }))
-        }
-        Err(e) => {
-            let _ = installed_agents::set_installation_status(
-                &reg.id,
-                InstallMethod::Binary,
-                InstallStatus::Failed,
-                Some(e.to_string()),
-            );
-            Err(MarketplaceError::internal(format!(
-                "binary install failed: {}",
-                e
-            )))
-        }
-    }
+    let agent = installed_agents::add_installation(&reg.id, installed)
+        .map_err(|e| MarketplaceError::internal(format!("upsert installed: {}", e)))?;
+    Ok(Json(InstallResponse {
+        agent: InstalledAgentView::from(&agent),
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -706,6 +665,8 @@ pub struct PatchRequest {
     pub hidden: Option<bool>,
     #[serde(default)]
     pub acp_protocol_version: Option<u8>,
+    #[serde(default)]
+    pub auto_update: Option<bool>,
 }
 
 /// PATCH /api/v1/agents/marketplace/{id}
@@ -741,6 +702,10 @@ pub async fn patch_agent(
     if let Some(version) = body.acp_protocol_version {
         installed_agents::set_acp_protocol_version(&id, version)
             .map_err(|e| MarketplaceError::internal(format!("protocol version: {e}")))?;
+    }
+    if let Some(enabled) = body.auto_update {
+        installed_agents::set_auto_update(&id, enabled)
+            .map_err(|e| MarketplaceError::internal(format!("auto update: {e}")))?;
     }
     Ok(Json(InstalledAgentView::from(&updated)))
 }

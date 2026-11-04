@@ -59,11 +59,17 @@ import {
   setMarketplaceIcons,
 } from "../../utils/agentIcon";
 
+import { openExternalUrl } from "../../utils/openExternal";
+import { Switch } from "../ui/Switch";
+import { missingRuntimes } from "./marketplaceRuntimes";
+
 interface MarketplaceModalProps {
   open: boolean;
   onClose: () => void;
   /** Tab shown each time the modal opens. Defaults to "installed". */
   initialTab?: "installed" | "explore";
+  /** One line above the tabs, for a first visit. */
+  intro?: string;
 }
 
 type TabKind = "installed" | "explore";
@@ -105,7 +111,7 @@ function hasUpdate(a: MarketplaceAgent): boolean {
   return Boolean(installed && latest && installed !== latest);
 }
 
-export function MarketplaceModal({ open, onClose, initialTab }: MarketplaceModalProps) {
+export function MarketplaceModal({ open, onClose, initialTab, intro }: MarketplaceModalProps) {
   const catalogRevision = useAgentCatalogRevision();
   const [data, setData] = useState<MarketplaceResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -264,6 +270,23 @@ export function MarketplaceModal({ open, onClose, initialTab }: MarketplaceModal
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {intro && (
+          <p className="border-b border-[var(--color-border)] px-5 py-3 text-sm text-[var(--color-text)]">{intro}</p>
+        )}
+
+        {data && missingRuntimes(data).map((runtime) => (
+          <div key={runtime.name} className="flex items-center gap-2 border-b border-[color-mix(in_srgb,var(--color-warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_8%,transparent)] px-5 py-2 text-xs text-[var(--color-text)]">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0 text-[var(--color-warning)]" />
+            <span className="min-w-0 flex-1">{runtime.agents.join(", ")} {runtime.agents.length === 1 ? "needs" : "need"} {runtime.name}, which isn't on this computer.</span>
+            <button type="button" onClick={() => openExternalUrl(runtime.url)} className="shrink-0 rounded-md border border-[var(--color-border)] px-2 py-1 font-medium hover:bg-[var(--color-bg-tertiary)]">
+              {runtime.installLabel}
+            </button>
+            <button type="button" onClick={() => void reload()} disabled={loading} className="shrink-0 rounded-md px-2 py-1 font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50">
+              Check again
+            </button>
+          </div>
+        ))}
 
         {/* Tabs + Search */}
         <div className="flex items-center gap-3 border-b border-[var(--color-border)] px-5 py-3">
@@ -655,6 +678,16 @@ function AgentDetail({ agent, busy, onClose, onInstall, onUninstall, onPatch }: 
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {installed?.installations.some((install) => install.method !== "external") && (
+          <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium text-[var(--color-text)]">Auto update</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">Moves to new versions on its own. Running sessions aren't affected.</div>
+            </div>
+            <Switch label="Auto update" checked={installed.auto_update} disabled={busy} onChange={(auto_update) => onPatch({ auto_update })} />
           </div>
         )}
 

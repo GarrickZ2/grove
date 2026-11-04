@@ -1,11 +1,13 @@
 import { createElement, useEffect, useMemo, useRef, useState, type ComponentType, type DragEvent, type ReactNode } from "react";
-import { Sparkle, BookOpen, ChevronDown, FileText, FlaskConical, Folder, FolderTree, GitBranch, Globe, Laptop, ListChecks, Mic, Paperclip, PenLine, Terminal, type LucideIcon } from "lucide-react";
+import { Plus, Sparkle, BookOpen, ChevronDown, FileText, FlaskConical, Folder, FolderTree, GitBranch, Globe, Laptop, ListChecks, Mic, Paperclip, PenLine, Terminal, type LucideIcon } from "lucide-react";
 import { createChat, listChats } from "../../api";
 import type { AgentConfigSelection } from "../../api/agentConfig";
 import { listInstalledAgentConfigs, type InstalledAgentConfig } from "../../api/marketplace";
 import type { SessionConfigOption } from "../../api/tasks";
 import { useProject, useTheme } from "../../context";
 import { useIsMobile } from "../../hooks";
+import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
+import { MarketplaceModal } from "../Config/MarketplaceModal";
 import { agentOptions, type AgentOption } from "../../data/agents";
 import { configForAgent } from "../../utils/agentConfig";
 import { agentIconComponent } from "../../utils/agentIcon";
@@ -158,7 +160,10 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   // In Orbit only phones are "mobile"; tablets keep the desktop layout.
   const { isMobile: phone } = useIsMobile();
   const { baseAgents, customAgents, customAgentPersonas, acpAvailabilityLoaded } = useACPAvailability();
+  const catalogRevision = useAgentCatalogRevision();
   const [agents, setAgents] = useState<InstalledAgentConfig[]>([]);
+  const knownAgents = useRef<InstalledAgentConfig[]>([]);
+  const [marketplaceTab, setMarketplaceTab] = useState<"installed" | "explore" | null>(null);
   const [selection, setSelection] = useState<AgentConfigSelection>({ source: "default" });
   const [taskId, setTaskId] = useState(initialTaskId);
   const [initialDraftHtml] = useState(readDraftHtml);
@@ -199,16 +204,25 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     listInstalledAgentConfigs()
       .then((installed) => {
         if (disposed) return;
+        const known = knownAgents.current;
+        knownAgents.current = installed;
         setAgents(installed);
         const preferred = installed.find((agent) => agent.id === readLastAgent()) ?? installed[0];
-        if (preferred) setSelection(configForAgent(preferred));
+        // Catalog changes keep the user's choice unless its Agent is gone.
+        // Custom Agents aren't in this list, so absence alone proves nothing.
+        setSelection((current) => {
+          const gone = known.some((agent) => agent.id === current.agent_id) && !installed.some((agent) => agent.id === current.agent_id);
+          if (current.agent_id && !gone) return current;
+          if (preferred) return configForAgent(preferred);
+          return gone ? { source: "default" } : current;
+        });
       })
       .catch((reason) => {
         console.error("Failed to load installed Agents", reason);
         if (!disposed) setError("Could not load installed Agents.");
       })
     return () => { disposed = true; };
-  }, []);
+  }, [catalogRevision]);
 
   useEffect(() => {
     // On a phone, focusing would throw the keyboard up before the user asks for it.
@@ -241,6 +255,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     ...customAgents.map((server) => ({ id: server.id, label: server.name, icon: iconOf(server.type === "remote" ? Globe : Terminal) })),
     ...customAgentPersonas.map((item) => ({ id: item.id, label: item.name, group: "Custom Agents", icon: iconOf(agentIconComponent(item.base_agent)) })),
   ];
+  const noAgents = !phone && acpAvailabilityLoaded && agentItems.length === 0 && !agentId;
   const chooseAgent = (id: string) => {
     const installed = agents.find((candidate) => candidate.id === id);
     setSelection(installed ? configForAgent(installed) : { source: "default", agent_id: id });
@@ -260,7 +275,8 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   // Desktop: every setting lives in the composer's one setup chip.
   const setupFields: SetupField[] = [
     { id: "agent", kind: "agent", label: "Agent", value: agentId, onSelect: chooseAgent,
-      options: agentItems.map((item) => ({ value: item.id, label: item.label, group: item.group, icon: item.icon })) },
+      options: agentItems.map((item) => ({ value: item.id, label: item.label, group: item.group, icon: item.icon })),
+      action: phone ? undefined : { label: "Manage agents...", onSelect: () => setMarketplaceTab("installed") } },
     ...([quick.model, quick.mode, quick.thinking] as const).flatMap((option, index): SetupField[] => option ? [{
       id: option.id, kind: (["model", "mode", "thinking"] as const)[index], label: option.name,
       options: dropdownValues(option), value: valueOf(option), onSelect: (value: string) => setOption(option, value),
@@ -453,7 +469,11 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
                 </button>
               )}
               hint={!phone && text.trim() && inputFocused ? "\u23CE send \u00b7 \u21E7\u23CE newline" : null}
-              setup={<OrbitSetupChip agentLabel={agentLabel || (acpAvailabilityLoaded ? "Choose agent" : "Loading\u2026")} agentIcon={agentIcon} fields={setupFields} toggles={setupToggles} emptyNote={agent && !snapshot ? `${agent.name} hasn't connected yet, so it starts with its defaults.` : undefined} sheet={phone} />}
+              setup={noAgents ? (
+                <button type="button" className="oc-setup-chip" onClick={() => setMarketplaceTab("explore")}>
+                  <Plus size={12} aria-hidden="true" /><span className="oc-setup-name">Add an agent</span>
+                </button>
+              ) : <OrbitSetupChip agentLabel={agentLabel || (acpAvailabilityLoaded ? "Choose agent" : "Loading\u2026")} agentIcon={agentIcon} fields={setupFields} toggles={setupToggles} emptyNote={agent && !snapshot ? `${agent.name} hasn't connected yet, so it starts with its defaults.` : undefined} sheet={phone} />}
               orb={<OrbitSendOrb action={text.trim() || attachments.length > 0 ? "send" : "idle"} disabled={!canSend} busy={sending} onSend={() => void send()} sendTitle="Send (Enter)" />}
             >
               {attachmentList}
@@ -534,6 +554,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
           </section>
         )}
       </div>
+      <MarketplaceModal open={marketplaceTab !== null} initialTab={marketplaceTab ?? undefined} onClose={() => setMarketplaceTab(null)} />
     </div>
   );
 }

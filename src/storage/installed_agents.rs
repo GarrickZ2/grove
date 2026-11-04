@@ -266,6 +266,30 @@ pub fn set_acp_protocol_version(id: &str, version: u8) -> Result<()> {
     Ok(())
 }
 
+/// Whether new Registry versions are picked up on their own. On by default.
+pub fn get_auto_update(id: &str) -> Result<bool> {
+    let conn = crate::storage::database::connection();
+    let enabled = conn
+        .query_row(
+            "SELECT auto_update FROM installed_agents WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, bool>(0),
+        )
+        .optional()?;
+    Ok(enabled.unwrap_or(true))
+}
+
+pub fn set_auto_update(id: &str, enabled: bool) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE installed_agents SET auto_update = ?1 WHERE id = ?2",
+        params![enabled, id],
+    )?;
+    drop(conn);
+    crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
+    Ok(())
+}
+
 pub fn get_capability_updated_at(id: &str) -> Result<Option<String>> {
     let conn = crate::storage::database::connection();
     conn.query_row(
@@ -485,24 +509,37 @@ pub fn patch_or_create(
     Ok(agent)
 }
 
-/// Update the status of a specific installation channel. Used by the install
-/// handlers to transition installing → installed / failed.
-pub fn set_installation_status(
+/// Move a channel to a new version, unless it changed since the caller read
+/// it. Returns whether the record was written.
+pub fn update_installation_version(
     id: &str,
     method: InstallMethod,
-    status: InstallStatus,
-    failure_reason: Option<String>,
-) -> Result<()> {
-    let Some(mut agent) = get(id)? else {
-        return Ok(());
+    expected_version: &str,
+    version: &str,
+    install_path: Option<String>,
+) -> Result<bool> {
+    let conn = crate::storage::database::connection();
+    let Some(mut agent) = get_on(&conn, id)? else {
+        return Ok(false);
     };
-    if let Some(install) = agent.installations.iter_mut().find(|i| i.method == method) {
-        install.status = status;
-        install.failure_reason = failure_reason;
+    let Some(install) = agent.installations.iter_mut().find(|install| {
+        install.method == method
+            && install.version == expected_version
+            && install.status == InstallStatus::Installed
+    }) else {
+        return Ok(false);
+    };
+    let now = Utc::now();
+    install.version = version.to_string();
+    if install_path.is_some() {
+        install.install_path = install_path;
     }
-    agent.updated_at = Utc::now();
-    upsert(&agent)?;
-    Ok(())
+    install.installed_at = now;
+    agent.updated_at = now;
+    upsert_on(&conn, &agent)?;
+    drop(conn);
+    crate::radio::publish(crate::radio::RadioEvent::AgentsChanged);
+    Ok(true)
 }
 
 /// Build the version-pinned package string for `npx -y <pkg>` / `uvx <pkg>`.

@@ -36,7 +36,7 @@ function snapshot(ids: string[]): MarketplaceResponse {
       id, name: id, install_state: "grove-installed",
       installed: { hidden: false },
     }) as MarketplaceAgent),
-    curated: [], registry_stale: false, registry_fetched_at: null,
+    curated: [], registry_stale: false, registry_fetched_at: null, npx_available: true, uvx_available: true,
   };
 }
 

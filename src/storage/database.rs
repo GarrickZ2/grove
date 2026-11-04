@@ -686,6 +686,7 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             args_override             TEXT NOT NULL DEFAULT '[]',          -- JSON array of strings
             env_override              TEXT NOT NULL DEFAULT '{}',          -- JSON map
             acp_protocol_version      INTEGER NOT NULL DEFAULT 1,
+            auto_update               INTEGER NOT NULL DEFAULT 1,
             capability_snapshot_json  TEXT,
             capability_updated_at     TEXT,
             hidden                    INTEGER NOT NULL DEFAULT 0,
@@ -1107,6 +1108,9 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         conn.execute_batch("ALTER TABLE installed_agents ADD COLUMN capability_updated_at TEXT;");
     let _ = conn.execute_batch(
         "ALTER TABLE installed_agents ADD COLUMN acp_protocol_version INTEGER NOT NULL DEFAULT 1;",
+    );
+    let _ = conn.execute_batch(
+        "ALTER TABLE installed_agents ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 1;",
     );
     let _ = conn.execute_batch(
         "ALTER TABLE skill_sources ADD COLUMN management_mode TEXT NOT NULL DEFAULT 'referenced';",

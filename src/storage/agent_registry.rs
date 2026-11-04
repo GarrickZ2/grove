@@ -504,8 +504,9 @@ pub async fn refresh_if_stale() {
     if !is_stale() {
         return;
     }
-    if let Err(e) = refresh().await {
-        eprintln!("[agent_registry] background refresh failed: {}", e);
+    match refresh().await {
+        Ok(_) => crate::storage::agent_auto_update::run(&get()).await,
+        Err(e) => eprintln!("[agent_registry] background refresh failed: {}", e),
     }
 }
 

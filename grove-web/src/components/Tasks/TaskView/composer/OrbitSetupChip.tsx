@@ -23,6 +23,8 @@ export interface SetupField {
   value: string;
   loading?: boolean;
   onSelect: (value: string) => void;
+  /** A command under the options, such as managing what they come from. */
+  action?: { label: string; onSelect: () => void };
 }
 
 /** A boolean session option: a toggle right in its menu row. */
@@ -269,6 +271,7 @@ export const OrbitSetupChip = memo(function OrbitSetupChip({ agentLabel, agentIc
                 if (value !== subField.value) subField.onSelect(value);
                 close(true);
               }}
+              onAction={() => { close(false); subField.action?.onSelect(); }}
             />
           )}
         </div>
@@ -277,13 +280,14 @@ export const OrbitSetupChip = memo(function OrbitSetupChip({ agentLabel, agentIc
   );
 });
 
-function SubMenu({ field, menuRef, takeFocus, onBack, onPick, onEnter }: {
+function SubMenu({ field, menuRef, takeFocus, onBack, onPick, onAction, onEnter }: {
   field: SetupField;
   menuRef: RefObject<HTMLDivElement | null>;
   onEnter: () => void;
   takeFocus: boolean;
   onBack: () => void;
   onPick: (value: string) => void;
+  onAction: () => void;
 }) {
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -398,6 +402,13 @@ function SubMenu({ field, menuRef, takeFocus, onBack, onPick, onEnter }: {
         ))}
         {visible.length === 0 && <p className="oc-menu-note">No matches</p>}
       </div>
+      {field.action && (
+        <div className="oc-sub-foot">
+          <button type="button" role="menuitem" data-option="" className="oc-sub-item" onMouseDown={(event) => event.preventDefault()} onMouseEnter={(event) => event.currentTarget.focus({ preventScroll: true })} onClick={onAction}>
+            <span className="oc-sub-name">{field.action.label}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

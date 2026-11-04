@@ -35,6 +35,7 @@ export interface InstalledAgentView {
   args_override: string[];
   env_override: Record<string, string>;
   acp_protocol_version: 1 | 2;
+  auto_update: boolean;
   capability_snapshot: AgentCapabilitySnapshot | null;
   capability_updated_at: string | null;
   hidden: boolean;
@@ -99,6 +100,8 @@ export interface MarketplaceResponse {
    *  curated agents into `installed_agents` so they show up in Installed
    *  tab naturally). */
   curated: string[];
+  npx_available: boolean;
+  uvx_available: boolean;
 }
 
 export interface PatchAgentRequest {
@@ -106,6 +109,7 @@ export interface PatchAgentRequest {
   args_override?: string[];
   env_override?: Record<string, string>;
   acp_protocol_version?: 1 | 2;
+  auto_update?: boolean;
   hidden?: boolean;
 }
 
