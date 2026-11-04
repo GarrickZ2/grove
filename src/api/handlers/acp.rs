@@ -1917,6 +1917,9 @@ pub struct ChatSessionResponse {
     /// value the list is ordered by. Only `list_chats` fills it in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    /// Set when the Agent cannot be resumed. Only `list_chats` fills it in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readonly: Option<tasks::ChatReadOnly>,
 }
 
 #[derive(Serialize)]
@@ -1985,6 +1988,7 @@ impl ChatSessionResponse {
             history_path,
             pinned: false,
             updated_at: None,
+            readonly: None,
         }
     }
 }
@@ -2082,6 +2086,8 @@ pub async fn list_chats(
         .map_err(|e| AcpError::Internal(e.to_string()))?;
     let activity = tasks::load_chat_activity(&project_key, &task_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?;
+    let readonly = tasks::load_readonly_chats(&project_key, &task_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?;
 
     // Pinned sessions first; the stable sort keeps recency order within each group.
     let mut chats: Vec<ChatSessionResponse> = chats
@@ -2089,6 +2095,7 @@ pub async fn list_chats(
         .map(|c| ChatSessionResponse {
             pinned: pinned.contains(&c.id),
             updated_at: activity.get(&c.id).cloned(),
+            readonly: readonly.get(&c.id).cloned(),
             ..ChatSessionResponse::build(&project_key, &task_id, c)
         })
         .collect();

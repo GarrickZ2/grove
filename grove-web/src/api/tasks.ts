@@ -501,6 +501,13 @@ export interface ChatSessionResponse {
   pinned?: boolean;
   /** Last activity (RFC 3339); only the chat list returns it, on newer servers. */
   updated_at?: string;
+  /** Set when the Agent can no longer be resumed; the history stays readable. */
+  readonly?: ChatReadOnly;
+}
+
+export interface ChatReadOnly {
+  reason: "imported" | "agent_expired";
+  meta?: Record<string, unknown>;
 }
 
 export interface ImportableSession {

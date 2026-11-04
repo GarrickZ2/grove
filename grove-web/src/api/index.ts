@@ -117,6 +117,7 @@ export type {
   LinkedProjectItem,
   LinkedProjectsResponse,
   ChatSessionResponse,
+  ChatReadOnly,
   ImportableSession,
   ImportSessionsPage,
   ArtifactFile,

@@ -294,7 +294,7 @@ import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
 import type { ChatSessionResponse, CustomAgentServer, ImportableSession } from "../../../api";
 import { useProjectMentions } from "./useProjectMentions";
 import { createFileChip } from "./fileMentionChip";
-import { createMentionChip, filterComposerMentions, getPromptFromEditable, mentionCategorySelectors, mentionStartIndex, parseMentionQuery, setPromptInEditable } from "./composerMentions";
+import { createAgentMentionChip, createMentionChip, filterComposerMentions, getPromptFromEditable, mentionCategorySelectors, mentionStartIndex, parseMentionQuery, setPromptInEditable } from "./composerMentions";
 import { dragCarriesGroveFiles, endGroveFileDrag, groveDragCount, groveDropPaths } from "../../../utils/groveFileDrag";
 import { nextMentionIndex } from "../../../utils/fileMention";
 import { openExternalUrl } from "../../../utils/openExternal";
@@ -308,6 +308,8 @@ import { OrbitConversationContext, useOrbitConversation } from "./conversation/O
 import { OrbitTurnRail } from "./conversation/OrbitTurnRail";
 import { OrbitLiveWorkHeader, OrbitSettledWorkHeader } from "./conversation/OrbitLiveWork";
 import { OrbitPermissionRecord, OrbitPermissionRequest } from "./conversation/OrbitPermissionCard";
+import { OrbitReadOnlyCard } from "./conversation/OrbitReadOnlyCard";
+import { readOnlyCopy } from "./conversation/readOnlyCopy";
 import { isStalePermissionError, resolveStalePermission, stalePermissionId } from "./conversation/permissionCard";
 import { liveGroupTail, summarizeLiveWork } from "./conversation/liveWork";
 import { SentPopContext, sentPops, useSentPop } from "./conversation/sentPop";
@@ -757,6 +759,8 @@ interface SessionActionsMenuProps {
   onDelete: (chatId: string) => void;
   onArchive: (chatId: string) => void;
   onRename?: () => void;
+  /** No Agent behind this Session: only its local actions apply. */
+  readOnly?: boolean;
 }
 
 export function SessionActionsMenu({
@@ -785,12 +789,13 @@ export function SessionActionsMenu({
   onDelete,
   onArchive,
   onRename,
+  readOnly = false,
 }: SessionActionsMenuProps) {
   const items: Parameters<typeof DropdownMenu>[0]["items"] = [];
 
   if (onRename) items.push({ id: "rename", label: "Rename", icon: Pencil, onClick: onRename });
 
-  if (forkCapable) {
+  if (forkCapable && !readOnly) {
     items.push({
       id: "fork",
       label: "Fork",
@@ -799,7 +804,7 @@ export function SessionActionsMenu({
       disabled: actionsDisabled,
     });
   }
-  if (importCapable) {
+  if (importCapable && !readOnly) {
     const children: NonNullable<
       Parameters<typeof DropdownMenu>[0]["items"][number]["children"]
     > = importSessions.map((session) => ({
@@ -822,23 +827,25 @@ export function SessionActionsMenu({
     });
     items.push({ id: "import", label: "Import", icon: Download, children, onOpen: onOpenImport, wideChildren: true, disabled: actionsDisabled });
   }
-  items.push({
-    id: "refresh",
-    label: "Refresh",
-    description: "Reload chat without restarting the agent",
-    icon: RotateCw,
-    onClick: onRefresh,
-    disabled: refreshDisabled,
-  });
-  items.push({
-    id: "reconnect",
-    label: "Reconnect",
-    description: "Restart the ACP agent session",
-    icon: RefreshCw,
-    onClick: onReconnect,
-    disabled: reconnectDisabled,
-  });
-  if (authMethods.length > 0) {
+  if (!readOnly) {
+    items.push({
+      id: "refresh",
+      label: "Refresh",
+      description: "Reload chat without restarting the agent",
+      icon: RotateCw,
+      onClick: onRefresh,
+      disabled: refreshDisabled,
+    });
+    items.push({
+      id: "reconnect",
+      label: "Reconnect",
+      description: "Restart the ACP agent session",
+      icon: RefreshCw,
+      onClick: onReconnect,
+      disabled: reconnectDisabled,
+    });
+  }
+  if (authMethods.length > 0 && !readOnly) {
     items.push({
       id: "login",
       label: "Login",
@@ -851,7 +858,7 @@ export function SessionActionsMenu({
       })),
     });
   }
-  if (logoutCapable) {
+  if (logoutCapable && !readOnly) {
     items.push({
       id: "logout",
       label: "Logout",
@@ -2554,6 +2561,9 @@ export function TaskChat({
     left: number;
   } | null>(null);
   const showAgentPickerRef = useRef(false);
+  // The read-only Session the open picker will continue from, if any.
+  const continueFromChatRef = useRef<ChatSessionResponse | null>(null);
+  const toggleAgentPickerRef = useRef<(el: HTMLElement) => void>(() => {});
   const [sessionRailCollapsed, setSessionRailCollapsed] = useState<boolean>(
     () => {
       if (!canManageSessions) return true;
@@ -3495,6 +3505,11 @@ export function TaskChat({
     chats.find((c) => c.id === activeChatId) ??
     archivedChats.find((c) => c.id === activeChatId);
   const isViewingArchived = archivedChats.some((chat) => chat.id === activeChatId);
+  const activeReadOnly = isViewingArchived ? undefined : activeChat?.readonly;
+  const activeAgentName = baseAgents.find((agent) => agent.id === activeChat?.agent)?.display_name
+    ?? agentOptions.find((option) => option.value === activeChat?.agent || option.id === activeChat?.agent)?.label
+    ?? activeChat?.agent
+    ?? "The agent";
 
   const refreshSpeakingProfiles = useCallback(() => {
     void listSpeakingProfiles()
@@ -3592,8 +3607,8 @@ export function TaskChat({
     window.addEventListener("grove:speaking-profile-deleted", handleDeleted);
     return () => window.removeEventListener("grove:speaking-profile-deleted", handleDeleted);
   }, [activeChatId, agentVoiceState.speakingProfileId, projectId, sendAgentVoiceState, taskId]);
-  const isReadOnlyHistory = finished || isViewingArchived;
-  const connectionStatus = isRemoteSession ? "read_only" : activeChatId ? chatConnectionStatuses[activeChatId] ?? "disconnected" : "disconnected";
+  const isReadOnlyHistory = finished || isViewingArchived || activeReadOnly !== undefined;
+  const connectionStatus = isRemoteSession || activeReadOnly ? "read_only" : activeChatId ? chatConnectionStatuses[activeChatId] ?? "disconnected" : "disconnected";
   const connectionPending = connectionStatus === "connecting" || connectionStatus === "reconnecting";
   const connectionLabel = connectionPending && activeChatId && connectionStages[activeChatId]
     ? `${chatConnectionLabels[connectionStatus]} · ${connectionStages[activeChatId]}`
@@ -4810,7 +4825,13 @@ export function TaskChat({
 
   useEffect(() => {
     showAgentPickerRef.current = showAgentPicker;
+    if (!showAgentPicker) continueFromChatRef.current = null;
   }, [showAgentPicker]);
+
+  const continueFromChat = useCallback((chat: ChatSessionResponse, anchor: HTMLElement) => {
+    toggleAgentPickerRef.current(anchor);
+    continueFromChatRef.current = chat;
+  }, []);
 
   const toggleAgentPicker = useCallback((el: HTMLElement) => {
     if (showAgentPickerRef.current) {
@@ -4845,6 +4866,9 @@ export function TaskChat({
     setShowChatMenu(false);
     setShowAgentPicker(true);
   }, []);
+  useEffect(() => {
+    toggleAgentPickerRef.current = toggleAgentPicker;
+  }, [toggleAgentPicker]);
 
   useEffect(() => {
     if (!showAgentPicker) return;
@@ -5130,6 +5154,18 @@ export function TaskChat({
     setHasContent(text.length > 0 || el.querySelector("[data-command],[data-file]") !== null);
   }, [activeChatId]);
 
+  // A history-only view has no composer, so `restoreChatState` found no editor
+  // to fill when the switch out of one ran. Fill it now that it has mounted.
+  useEffect(() => {
+    const el = editableRef.current;
+    if (isReadOnlyHistory || !activeChatId || !el || el.innerHTML) return;
+    const cached = perChatStateRef.current.get(activeChatId);
+    const draftHtml = cached ? cached.draftHtml : loadChatDraft(activeChatId);
+    if (!draftHtml) return;
+    el.innerHTML = draftHtml;
+    setHasContent(true);
+  }, [isReadOnlyHistory, activeChatId]);
+
   // Forward-declared ref for connectChatWs so handlers defined before its
   // useCallback (e.g. the ChatListChanged refetch handler) can call it
   // without creating a TDZ reference that React Compiler refuses to compile.
@@ -5198,6 +5234,9 @@ export function TaskChat({
         // waiting for the post-render effect would reopen the reorder race.
         chatsRef.current = visibleFresh;
         setChats(visibleFresh);
+        visibleFresh.forEach((chat) => {
+          if (chat.readonly) cancelPendingReconnectRef.current(chat.id);
+        });
 
         // If a tray/notification deep-link was waiting on this chat to
         // appear (race: Open clicked before grove_agent_graph_spawn's chat is in
@@ -5644,7 +5683,7 @@ export function TaskChat({
       // Wait for the chats list so the chat is known; the caller retries
       // once it loads via the [activeChatId, chats] effect below.
       const chat = chatsRef.current.find((c) => c.id === chatId);
-      if (!chat) {
+      if (!chat || chat.readonly) {
         connectingRef.current.delete(chatId);
         return;
       }
@@ -7157,8 +7196,9 @@ export function TaskChat({
       restoreChatState(chatId);
       if (backgroundConnections.observe(chatId)) attachOnlyChatsRef.current.delete(chatId);
       setShowChatMenu(false);
-      const archived = archivedChats.some((chat) => chat.id === chatId);
-      if (!archived) {
+      const historyOnly = archivedChats.some((chat) => chat.id === chatId)
+        || chatsRef.current.some((chat) => chat.id === chatId && chat.readonly);
+      if (!historyOnly) {
         await connectChatWs(chatId);
         wsRef.current = wsMapRef.current.get(chatId) ?? null;
       } else {
@@ -7189,6 +7229,7 @@ export function TaskChat({
   const handleNewChatWithAgent = useCallback(
     async (agent: string) => {
       if (!canManageSessions) return;
+      const continueFrom = continueFromChatRef.current;
       setShowAgentPicker(false);
       try {
         const newChat = await createChat(
@@ -7197,6 +7238,18 @@ export function TaskChat({
           buildDefaultSessionTitle(),
           agent,
         );
+        if (continueFrom) {
+          // The new Session starts with the old history shared in its composer.
+          saveChatDraft(newChat.id, `${createAgentMentionChip({
+            path: `chat:${continueFrom.id}`,
+            isDir: false,
+            kind: "chat_history",
+            displayName: continueFrom.title,
+            sessionId: continueFrom.id,
+            historyPath: continueFrom.history_path,
+            agentName: continueFrom.agent,
+          }).outerHTML}&nbsp;`);
+        }
         setChats((prev) => promoteSession([newChat, ...prev], newChat.id));
         switchChat(newChat.id);
       } catch (err) {
@@ -11360,6 +11413,7 @@ export function TaskChat({
   // (portaled into its slot) and at the right end of the chat header.
   const orbitSessionMenu = orbitHeader && activeChat && !isViewingArchived ? (
         <SessionActionsMenu
+          readOnly={activeReadOnly !== undefined}
           surface="orbit" chatId={activeChat.id} forkCapable={forkCapable} importCapable={importCapable}
           importSessions={importSessions} importLoading={importLoading} importNextCursor={importNextCursor}
           authMethods={authMethods} logoutCapable={logoutCapable}
@@ -11524,6 +11578,7 @@ export function TaskChat({
                               <div className="min-w-0 flex-1">
                                 <div className="truncate">{chat.title || "Untitled chat"}</div>
                               </div>
+                              {chat.readonly && <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">Read-only</span>}
                               {hasUnreadCompletion && (
                                 <span
                                   className="taskchat-session-unread-dot"
@@ -11648,6 +11703,7 @@ export function TaskChat({
                 </>
               ) : activeChat ? (
                 <SessionActionsMenu
+          readOnly={activeReadOnly !== undefined}
                   surface="header"
                   chatId={activeChat.id}
                   forkCapable={forkCapable}
@@ -11816,6 +11872,7 @@ export function TaskChat({
                     </>
                   ) : activeChat ? (
                     <SessionActionsMenu
+          readOnly={activeReadOnly !== undefined}
                       surface="sidebar"
                       chatId={activeChat.id}
                       forkCapable={forkCapable}
@@ -11898,6 +11955,7 @@ export function TaskChat({
                           )}
                         </div>
                       </button>
+                      {chat.readonly && <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">Read-only</span>}
                       {hasUnreadCompletion && (
                         <span
                           className="taskchat-session-unread-dot"
@@ -12131,14 +12189,56 @@ export function TaskChat({
               className="pointer-events-none absolute inset-x-0 z-10 px-3 pb-4 pt-2"
               style={{ bottom: "max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom))" }}
             >
+              {orbitShell && activeReadOnly && activeChat ? (
+                <>
+                  {orbitComposer && <div className="ocv-fade" aria-hidden="true" />}
+                  <div className="pointer-events-auto relative mx-auto w-full max-w-[920px]">
+                    <OrbitReadOnlyCard
+                      readonly={activeReadOnly}
+                      agentName={activeAgentName}
+                      onContinue={canManageSessions ? (anchor) => continueFromChat(activeChat, anchor) : undefined}
+                      onArchive={canManageSessions ? () => void handleArchiveChat(activeChat.id) : undefined}
+                    />
+                  </div>
+                </>
+              ) : (<>
               <div className="task-chat-input-scrim pointer-events-none absolute inset-x-0 h-20 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
-              <div className="pointer-events-auto relative mx-auto flex w-fit max-w-full items-center gap-2 rounded-full border border-[color-mix(in_srgb,var(--color-success)_28%,var(--color-border))] bg-[color-mix(in_srgb,var(--color-bg)_94%,var(--color-success))] px-3.5 py-2 text-xs text-[var(--color-text-secondary)] shadow-sm backdrop-blur-md">
-                {isViewingArchived ? (
+              <div className={`pointer-events-auto relative mx-auto flex w-fit max-w-full items-center gap-2 rounded-full border px-3.5 py-2 text-xs text-[var(--color-text-secondary)] shadow-sm backdrop-blur-md ${activeReadOnly
+                ? "border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
+                : "border-[color-mix(in_srgb,var(--color-success)_28%,var(--color-border))] bg-[color-mix(in_srgb,var(--color-bg)_94%,var(--color-success))]"}`}>
+                {isViewingArchived || activeReadOnly ? (
                   <Archive className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
                 ) : (
                   <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--color-success)]" />
                 )}
-                <span>{isViewingArchived ? "Archived session · Read-only history" : "Run finished · Read-only history"}</span>
+                <span>
+                  {isViewingArchived
+                    ? "Archived session · Read-only history"
+                    : activeReadOnly
+                      ? `${readOnlyCopy(activeReadOnly, activeAgentName).title} · Read-only history`
+                      : "Run finished · Read-only history"}
+                </span>
+                {activeReadOnly && activeChat && canManageSessions && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(event) => continueFromChat(activeChat, event.currentTarget)}
+                      className="ml-1 flex shrink-0 items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--color-highlight)_30%,var(--color-border))] bg-[color-mix(in_srgb,var(--color-highlight)_9%,transparent)] px-2 py-0.5 font-medium text-[var(--color-highlight)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-highlight)_16%,transparent)]"
+                      title="Start a new session with this history shared"
+                    >
+                      <span>Continue in new session</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleArchiveChat(activeChat.id)}
+                      className="flex shrink-0 items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-0.5 font-medium transition-colors hover:text-[var(--color-text)]"
+                      title="Archive session"
+                    >
+                      <Archive className="h-3 w-3" />
+                      <span>Archive</span>
+                    </button>
+                  </>
+                )}
                 {isViewingArchived && activeChat && (
                   <button
                     type="button"
@@ -12151,6 +12251,7 @@ export function TaskChat({
                   </button>
                 )}
               </div>
+              </>)}
             </div>
           ) : (
           <div

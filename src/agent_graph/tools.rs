@@ -107,6 +107,12 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
     if target_project != caller_project || target_task != caller_task {
         return Err(AgentGraphError::SameTaskRequired);
     }
+    if tasks::chat_readonly(&target_chat.id)
+        .map_err(AgentGraphError::from)?
+        .is_some()
+    {
+        return Err(AgentGraphError::TargetReadOnly);
+    }
 
     // duty 三态
     let mut duty_set_by_this_call = false;
@@ -440,7 +446,7 @@ pub async fn grove_agent_contacts(
 ) -> AgentGraphResult<ContactsOutput> {
     let (caller_project, caller_task, caller_chat) = cx.caller_context()?;
     let active_ids: std::collections::HashSet<String> =
-        tasks::load_chat_sessions(&caller_project, &caller_task)
+        tasks::load_writable_chat_sessions(&caller_project, &caller_task)
             .map_err(AgentGraphError::from)?
             .into_iter()
             .map(|chat| chat.id)

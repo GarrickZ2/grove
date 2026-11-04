@@ -717,7 +717,8 @@ fn get_chat_info_for_slot(
 ) -> Option<ServerMessage> {
     let slot = find_slot_in(groups, group_id, position)?;
 
-    let chats = tasks::load_chat_sessions(&slot.project_id, &slot.task_id).unwrap_or_default();
+    let chats =
+        tasks::load_writable_chat_sessions(&slot.project_id, &slot.task_id).unwrap_or_default();
     let available_chats: Vec<ChatRef> = chats
         .iter()
         .rev() // newest first
@@ -781,7 +782,7 @@ async fn send_prompt_to_task(
         })
         .or_else(|| slot.target_chat_id.clone())
         .or_else(|| {
-            tasks::load_chat_sessions(&slot.project_id, &slot.task_id)
+            tasks::load_writable_chat_sessions(&slot.project_id, &slot.task_id)
                 .unwrap_or_default()
                 .first()
                 .map(|c| c.id.clone())
@@ -852,7 +853,8 @@ fn switch_chat(
 ) -> Option<ServerMessage> {
     let slot = find_slot_in(groups, group_id, position)?;
 
-    let chats = tasks::load_chat_sessions(&slot.project_id, &slot.task_id).unwrap_or_default();
+    let chats =
+        tasks::load_writable_chat_sessions(&slot.project_id, &slot.task_id).unwrap_or_default();
     if chats.is_empty() {
         return Some(ServerMessage::ChatInfo {
             position,

@@ -1,7 +1,7 @@
 import { BuddyEntryIcon, BuddyWaitingCount } from "../Buddy/BuddyEntryIcon";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
-  Bell, Blocks, Brain, BarChart2, ChevronDown, ChevronRight, Folder, FolderOpen,
+  Bell, Blocks, Brain, BarChart2, ChevronDown, ChevronRight, Folder, FolderOpen, History,
   LayoutDashboard, Layers, MonitorSmartphone, MoreHorizontal, PanelLeftClose, PanelLeftOpen,
   Plus, Repeat, Search, Settings, SquarePen, Pencil, Archive, Trash2, ArrowUp, ArrowDown, Pin, PinOff,
 } from "lucide-react";
@@ -315,6 +315,7 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
       <div key={chat.id} className={`orbit-session-row${selected ? " is-selected" : ""}${chat.pinned ? " is-pinned" : ""}`}>
         <button type="button" title={chat.title} onClick={() => openChat(taskId, chat.id)} className={`orbit-row orbit-session${taskId === "_local" ? "" : " orbit-session-nested"}`}>
           <span className="orbit-truncate">{chat.title || "New Chat"}</span>
+          {chat.readonly && <History size={13} strokeWidth={1.7} className="orbit-session-readonly" aria-label="Read-only history"><title>Read-only history</title></History>}
           {indicator && <span className={`orbit-status${indicator === "waiting" ? " is-waiting" : indicator === "completed" ? " is-completed" : ""}`} title={indicatorLabel ?? undefined} aria-label={indicatorLabel ?? undefined} />}
         </button>
         <button type="button" className="orbit-session-pin" title={chat.pinned ? "Unpin" : "Pin to top"} aria-label={chat.pinned ? `Unpin ${target.name}` : `Pin ${target.name} to top`} aria-pressed={!!chat.pinned} onClick={() => void togglePinned(taskId, chat)}>

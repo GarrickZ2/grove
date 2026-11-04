@@ -441,3 +441,46 @@
   box-shadow: inset 0 0 0 1px var(--ocv-line);
 }
 .ocv-special > div > div:last-child:not(:first-child) > div > div:first-child { border-bottom-color: var(--ocv-line); background: none; }
+
+/* Read-only Session: stands where the composer would, so the conversation
+   keeps its bottom edge when an Agent turns out to be gone. */
+.ocv-readonly {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid color-mix(in oklab, var(--color-border) 62%, transparent);
+  border-radius: 18px;
+  background: color-mix(in oklab, var(--color-bg-secondary) 86%, var(--color-bg));
+  box-shadow: 0 24px 60px -30px rgb(0 0 0 / 35%);
+  color: var(--color-text);
+  animation: ocv-readonly-in 240ms cubic-bezier(.25, 1, .5, 1) both;
+}
+.ocv-readonly-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-text) 7%, transparent);
+  color: var(--color-text-muted);
+}
+.ocv-readonly-icon svg { width: 15px; height: 15px; }
+.ocv-readonly-text { min-width: 180px; flex: 1 1 0; }
+.ocv-readonly-title { font-size: 13px; font-weight: 500; line-height: 1.4; }
+.ocv-readonly-detail { color: var(--color-text-muted); font-size: 12px; line-height: 1.4; }
+.ocv-readonly-actions { display: flex; flex: none; max-width: 100%; align-items: center; gap: 6px; margin-left: auto; }
+.ocv-readonly .ocv-btn svg { width: 13px; height: 13px; margin-right: 6px; }
+.ocv-btn.is-plain { background: none; box-shadow: none; color: var(--color-text-muted); }
+.ocv-btn.is-plain:hover { background: color-mix(in oklab, var(--color-text) 7%, transparent); color: var(--color-text); }
+.ocv-readonly .ocv-btn:focus-visible { outline: 2px solid var(--color-highlight); outline-offset: 2px; }
+@keyframes ocv-readonly-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ocv-readonly { animation: none; }
+}

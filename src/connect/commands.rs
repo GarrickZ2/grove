@@ -299,7 +299,7 @@ pub fn task_options(project_id: &str) -> Vec<TaskOption> {
 }
 
 pub fn session_options(project_id: &str, task_id: &str) -> Vec<TaskOption> {
-    crate::storage::tasks::load_chat_sessions(project_id, task_id)
+    crate::storage::tasks::load_writable_chat_sessions(project_id, task_id)
         .unwrap_or_default()
         .into_iter()
         .map(|chat| TaskOption {

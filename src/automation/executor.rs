@@ -1119,10 +1119,29 @@ fn resolve_chat(a: &Automation, task_id: &str) -> Result<String, String> {
         }
         TargetMode::Existing => {
             let chat_id = a.chat_id.clone().ok_or("existing mode requires chat_id")?;
-            tasks::get_chat_session(&a.project, task_id, &chat_id)
+            let chat = tasks::get_chat_session(&a.project, task_id, &chat_id)
                 .map_err(|e| e.to_string())?
                 .ok_or("Chat session was deleted")?;
-            Ok(chat_id)
+            if tasks::chat_readonly(&chat_id)
+                .map_err(|e| e.to_string())?
+                .is_none()
+            {
+                return Ok(chat_id);
+            }
+            // The bound Session can't run any more. Carry on in a new one with
+            // the same Agent and bind to it, so later firings reuse it.
+            let successor = tasks::ChatSession {
+                id: tasks::generate_chat_id(),
+                acp_session_id: None,
+                created_at: Utc::now(),
+                ..chat
+            };
+            tasks::add_chat_session(&a.project, task_id, successor.clone())
+                .map_err(|e| e.to_string())?;
+            let mut rebound = a.clone();
+            rebound.chat_id = Some(successor.id.clone());
+            automations::update(&rebound).map_err(|e| e.to_string())?;
+            Ok(successor.id)
         }
         TargetMode::New => {
             let template = a
@@ -1169,4 +1188,63 @@ pub fn advance_next_run(a: &Automation) -> Option<i64> {
     cron_util::next_scheduled(&a.schedule_cron, a.window)
         .ok()
         .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn existing_mode_moves_off_a_readonly_session_once() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+
+        let project = format!("project-{}", uuid::Uuid::new_v4().simple());
+        tasks::add_chat_session(
+            &project,
+            "task",
+            tasks::ChatSession {
+                id: "gone".to_string(),
+                title: "Nightly".to_string(),
+                agent: "codex".to_string(),
+                acp_session_id: None,
+                created_at: Utc::now(),
+                duty: None,
+            },
+        )
+        .unwrap();
+        crate::storage::database::connection()
+            .execute(
+                "INSERT INTO automations (
+                    id, project, name, enabled, task_mode, task_id, session_mode, chat_id,
+                    prompt, schedule_cron, created_at, updated_at
+                 ) VALUES ('nightly', ?1, 'Nightly', 1, 'existing', 'task', 'existing', 'gone',
+                           'prompt', '0 3 * * *', 1, 1)",
+                [&project],
+            )
+            .unwrap();
+        tasks::mark_chat_readonly(
+            &project,
+            "task",
+            "gone",
+            tasks::READONLY_AGENT_EXPIRED,
+            serde_json::Value::Null,
+        )
+        .unwrap();
+
+        let automation = automations::get("nightly").unwrap().unwrap();
+        let successor = resolve_chat(&automation, "task").unwrap();
+        assert_ne!(successor, "gone");
+        let chat = tasks::get_chat_session(&project, "task", &successor)
+            .unwrap()
+            .unwrap();
+        assert_eq!(chat.agent, "codex");
+
+        // Rebound: the next firing reuses the successor instead of forking again.
+        let automation = automations::get("nightly").unwrap().unwrap();
+        assert_eq!(resolve_chat(&automation, "task").unwrap(), successor);
+
+        crate::storage::set_grove_dir_override(None);
+    }
 }

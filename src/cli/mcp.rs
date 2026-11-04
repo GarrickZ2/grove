@@ -1295,7 +1295,7 @@ impl GroveMcpServer {
     /// List chats for a task
     #[tool(
         name = "list_chats",
-        description = "List all chat sessions under a task. Returns id, title, agent, and creation time for each chat."
+        description = "List all chat sessions under a task. Returns id, title, agent, creation time and history_path for each chat. A chat with `readonly` set cannot be resumed or sent to; read its history_path (a JSONL file) instead."
     )]
     async fn grove_list_chats(
         &self,
@@ -3029,6 +3029,17 @@ async fn chat_status_impl(p: ChatStatusParams) -> Result<CallToolResult, McpErro
     let (project_key, project_path, project_name) = resolve_project_for_mcp(&p.project_id)?;
     let task = resolve_task_for_mcp(&project_key, &p.task_id)?;
 
+    // A read-only Session has no Agent to connect to; report it without starting one.
+    if let Some(readonly) = tasks::chat_readonly(&p.chat_id)
+        .map_err(|e| McpError::internal_error(format!("Failed to load chat: {e}"), None))?
+    {
+        return ok_json(json!({
+            "state": "read_only",
+            "readonly": readonly,
+            "history_path": chat_history::history_file_path(&project_key, &p.task_id, &p.chat_id),
+        }));
+    }
+
     // Auto-connect: resolve session (local, remote, or start new)
     let access = resolve_session_access(
         &project_key,
@@ -3268,6 +3279,8 @@ async fn list_chats_impl(p: ListChatsParams) -> Result<CallToolResult, McpError>
 
     let chats = tasks::load_chat_sessions(&project_key, &p.task_id)
         .map_err(|e| McpError::internal_error(format!("Failed to load chats: {e}"), None))?;
+    let readonly = tasks::load_readonly_chats(&project_key, &p.task_id)
+        .map_err(|e| McpError::internal_error(format!("Failed to load chats: {e}"), None))?;
 
     let items: Vec<serde_json::Value> = chats
         .iter()
@@ -3281,6 +3294,8 @@ async fn list_chats_impl(p: ListChatsParams) -> Result<CallToolResult, McpError>
                 "title": c.title,
                 "agent": c.agent,
                 "created_at": c.created_at.to_rfc3339(),
+                "history_path": chat_history::history_file_path(&project_key, &p.task_id, &c.id),
+                "readonly": readonly.get(&c.id),
             })
         })
         .collect();
