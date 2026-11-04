@@ -28,6 +28,10 @@ export function AgentsPage({ settings }: SettingsPageProps) {
     setChatHistoryRecentTurns,
     chatHistoryRecentTurnsDraft,
     setChatHistoryRecentTurnsDraft,
+    recentSessions,
+    setRecentSessions,
+    recentSessionsDraft,
+    setRecentSessionsDraft,
     chatHistoryIncludeMedia,
     setChatHistoryIncludeMedia,
     chatHistoryIncludeToolDetails,
@@ -44,6 +48,13 @@ export function AgentsPage({ settings }: SettingsPageProps) {
   const [showMarketplace, setShowMarketplace] = useState(false);
   const [showCustomAgents, setShowCustomAgents] = useState(false);
   const [showCustomServers, setShowCustomServers] = useState(false);
+
+  const commitRecentSessions = () => {
+    const parsed = Math.floor(Number(recentSessionsDraft));
+    const next = Number.isFinite(parsed) && recentSessionsDraft.trim() !== "" ? Math.max(0, Math.min(200, parsed)) : recentSessions;
+    setRecentSessions(next);
+    setRecentSessionsDraft(String(next));
+  };
 
   const commitRecentTurns = () => {
     const next = Math.max(1, Math.min(10000, Math.floor(Number(chatHistoryRecentTurnsDraft) || chatHistoryRecentTurns)));
@@ -144,6 +155,18 @@ export function AgentsPage({ settings }: SettingsPageProps) {
             />
           </Row>
         ) : null}
+        <Row title="Sessions kept in memory" description="Recent sessions and Buddies that open instantly. 0 turns this off.">
+          <input
+            type="number"
+            min={0}
+            max={200}
+            className="oui-field"
+            value={recentSessionsDraft}
+            onChange={(event) => setRecentSessionsDraft(event.target.value)}
+            onBlur={commitRecentSessions}
+            aria-label="Sessions kept in memory"
+          />
+        </Row>
         <Row
           title="Images & audio"
           description={chatHistoryIncludeMedia ? "Download historical media with messages." : "Show placeholders without downloading media."}

@@ -5,6 +5,8 @@ export interface ChatHistoryPreferences {
   includeToolDetails: boolean;
   renderWindowLimit: number;
   renderWindowTrigger: number;
+  /** Sessions kept in memory after leaving their Task, including Buddies. 0 disables this. */
+  recentSessions: number;
 }
 
 export const CHAT_HISTORY_PREFERENCES_KEY = "grove:chat-history-preferences:v1";
@@ -16,6 +18,7 @@ export const DEFAULT_CHAT_HISTORY_PREFERENCES: ChatHistoryPreferences = {
   includeToolDetails: true,
   renderWindowLimit: 0,
   renderWindowTrigger: 1500,
+  recentSessions: 30,
 };
 
 export function loadChatHistoryPreferences(legacy?: { render_window_limit?: number; render_window_trigger?: number }): ChatHistoryPreferences {
@@ -29,6 +32,7 @@ export function loadChatHistoryPreferences(legacy?: { render_window_limit?: numb
         includeToolDetails: saved.includeToolDetails !== false,
         renderWindowLimit: Number.isSafeInteger(saved.renderWindowLimit) && saved.renderWindowLimit! >= 0 ? saved.renderWindowLimit! : 0,
         renderWindowTrigger: Number.isSafeInteger(saved.renderWindowTrigger) && saved.renderWindowTrigger! > 0 ? saved.renderWindowTrigger! : 1500,
+        recentSessions: Number.isSafeInteger(saved.recentSessions) && saved.recentSessions! >= 0 ? saved.recentSessions! : DEFAULT_CHAT_HISTORY_PREFERENCES.recentSessions,
       };
     }
   } catch { /* Storage can be unavailable in private browsing. */ }

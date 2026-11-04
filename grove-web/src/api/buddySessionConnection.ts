@@ -32,9 +32,11 @@ function promptCapabilities(value: unknown): PromptCapabilities | null {
 /** Attach to the same session protocol as TaskChat. Never create another session.
  *  `compact` is only for the Buddy's own Segment; observed subagent sessions keep their queue mode.
  *  With `recentTurns`, only the latest turns load; `history` gets the index they start at, so the
- *  rest (and earlier Segments) can be paged in on demand. */
-export function connectBuddySession(buddy: SessionIdentity, callbacks: { history: (events: BuddyEvent[], busy: boolean, start: number) => void; event: (event: BuddyEvent) => void; ready: (ready: boolean) => void; error: (message: string) => void; capabilities?: (caps: PromptCapabilities) => void }, { compact = true, recentTurns }: { compact?: boolean; recentTurns?: number } = {}) {
-  let stopped = false, socket: WebSocket | null = null, owned = false, releaseWatch: (() => void) | undefined;
+ *  rest (and earlier Segments) can be paged in on demand.
+ *  With `socket`, resume a parked connection whose state is already current: no history request.
+ *  Disposing with `keepSocket` returns a ready socket this connection owns instead of closing it. */
+export function connectBuddySession(buddy: SessionIdentity, callbacks: { history: (events: BuddyEvent[], busy: boolean, start: number) => void; event: (event: BuddyEvent) => void; ready: (ready: boolean) => void; error: (message: string) => void; capabilities?: (caps: PromptCapabilities) => void }, { compact = true, recentTurns, socket: parked }: { compact?: boolean; recentTurns?: number; socket?: WebSocket | null } = {}) {
+  let stopped = false, socket: WebSocket | null = null, owned = false, sessionReady = false, releaseWatch: (() => void) | undefined;
   const queueMode = () => { if (compact) socket?.send(JSON.stringify({ type: "set_queue_mode", mode: "compact" })); };
   let hydrated = false;
   const buffered: BuddyEvent[] = [];
@@ -42,6 +44,7 @@ export function connectBuddySession(buddy: SessionIdentity, callbacks: { history
     let event: BuddyEvent;
     try { event = JSON.parse(raw.data) as BuddyEvent; } catch { return; }
     if (event.type === "session_ready") {
+      sessionReady = true;
       queueMode(); callbacks.ready(true);
       const caps = promptCapabilities(event.prompt_capabilities);
       if (caps) callbacks.capabilities?.(caps);
@@ -51,6 +54,12 @@ export function connectBuddySession(buddy: SessionIdentity, callbacks: { history
   };
   const closed = () => { if (!stopped) { callbacks.ready(false); callbacks.error("Session disconnected. Reconnect to continue."); } };
   void (async () => {
+    if (parked) {
+      socket = parked; owned = true; sessionReady = true; hydrated = true;
+      queueMode(); callbacks.ready(true);
+      socket.addEventListener("message", received); socket.addEventListener("close", closed);
+      return;
+    }
     try {
       socket = getChatSocket(buddy.project_hash, buddy.local_task_id, buddy.active_session_id);
       if (!socket) {
@@ -78,7 +87,12 @@ export function connectBuddySession(buddy: SessionIdentity, callbacks: { history
       }
     }
   })();
-  return () => { stopped = true; releaseWatch?.(); socket?.removeEventListener("message", received); socket?.removeEventListener("close", closed); if (owned) socket?.close(); };
+  return ({ keepSocket = false }: { keepSocket?: boolean } = {}): WebSocket | null => {
+    const kept = keepSocket && owned && hydrated && sessionReady && socket?.readyState === WebSocket.OPEN ? socket : null;
+    stopped = true; releaseWatch?.(); socket?.removeEventListener("message", received); socket?.removeEventListener("close", closed);
+    if (owned && !kept) socket?.close();
+    return kept;
+  };
 }
 
 const AGENT_RESTARTED = "grove:buddy-agent-restarted";

@@ -65,3 +65,20 @@ it("ignores delayed old history after switching away", async () => {
   expect(callbacks.history).not.toHaveBeenCalled();
   expect(callbacks.event).not.toHaveBeenCalled();
 });
+
+it("resumes a parked socket without another history request, and can hand it back", async () => {
+  class FakeSocket extends EventTarget { static OPEN = 1; readyState = 1; send = vi.fn(); close = vi.fn(); }
+  vi.stubGlobal("WebSocket", FakeSocket);
+  const socket = new FakeSocket();
+  const callbacks = { history: vi.fn(), event: vi.fn(), ready: vi.fn(), error: vi.fn() };
+  const dispose = connectBuddySession({ project_hash: "p", local_task_id: "_local", active_session_id: "current" }, callbacks, { socket: socket as unknown as WebSocket });
+  await vi.waitFor(() => expect(callbacks.ready).toHaveBeenCalledWith(true));
+  socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "message_chunk", text: "Live" }) }));
+  expect(callbacks.event).toHaveBeenCalledWith({ type: "message_chunk", text: "Live" });
+  expect(getChatHistory).not.toHaveBeenCalled();
+  expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: "set_queue_mode", mode: "compact" }));
+  expect(dispose({ keepSocket: true })).toBe(socket);
+  expect(socket.close).not.toHaveBeenCalled();
+  socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "message_chunk", text: "Later" }) }));
+  expect(callbacks.event).toHaveBeenCalledOnce();
+});

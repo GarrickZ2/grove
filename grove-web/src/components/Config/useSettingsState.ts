@@ -86,6 +86,8 @@ export function useSettingsState() {
   const [chatRenderWindowTriggerDraft, setChatRenderWindowTriggerDraft] = useState("1500");
   const [chatHistoryRecentTurns, setChatHistoryRecentTurns] = useState(0);
   const [chatHistoryRecentTurnsDraft, setChatHistoryRecentTurnsDraft] = useState("0");
+  const [recentSessions, setRecentSessions] = useState(30);
+  const [recentSessionsDraft, setRecentSessionsDraft] = useState("30");
   const [chatHistoryIncludeMedia, setChatHistoryIncludeMedia] = useState(true);
   const [chatHistoryIncludeToolDetails, setChatHistoryIncludeToolDetails] = useState(true);
   // Agent command availability: command name → exists on PATH
@@ -262,6 +264,8 @@ export function useSettingsState() {
     setChatRenderWindowTriggerDraft(String(renderWindowTrigger));
     setChatHistoryRecentTurns(preferences.recentTurns);
     setChatHistoryRecentTurnsDraft(String(preferences.recentTurns));
+    setRecentSessions(preferences.recentSessions);
+    setRecentSessionsDraft(String(preferences.recentSessions));
     setChatHistoryIncludeMedia(preferences.includeMedia);
     setChatHistoryIncludeToolDetails(preferences.includeToolDetails);
 
@@ -501,13 +505,14 @@ export function useSettingsState() {
       includeToolDetails: chatHistoryIncludeToolDetails,
       renderWindowLimit: chatRenderWindowLimit,
       renderWindowTrigger: chatRenderWindowTrigger,
+      recentSessions,
     };
     saveChatHistoryPreferences(preferences);
     const serialized = JSON.stringify(preferences);
     const isChange = lastSavedPrefsRef.current !== null && lastSavedPrefsRef.current !== serialized;
     lastSavedPrefsRef.current = serialized;
     if (isChange) void Promise.resolve().then(() => setSavedCount((count) => count + 1));
-  }, [isLoaded, chatHistoryRecentTurns, chatHistoryIncludeMedia, chatHistoryIncludeToolDetails, chatRenderWindowLimit, chatRenderWindowTrigger]);
+  }, [isLoaded, chatHistoryRecentTurns, chatHistoryIncludeMedia, chatHistoryIncludeToolDetails, chatRenderWindowLimit, chatRenderWindowTrigger, recentSessions]);
 
   // Auto-save when any server config value changes (debounced)
   useEffect(() => {
@@ -808,6 +813,10 @@ export function useSettingsState() {
     setChatHistoryRecentTurns,
     chatHistoryRecentTurnsDraft,
     setChatHistoryRecentTurnsDraft,
+    recentSessions,
+    setRecentSessions,
+    recentSessionsDraft,
+    setRecentSessionsDraft,
     chatHistoryIncludeMedia,
     setChatHistoryIncludeMedia,
     chatHistoryIncludeToolDetails,

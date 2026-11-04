@@ -49,6 +49,18 @@ export class BackgroundChatConnections {
   track(id: string, now: number) { if (!this.activity.has(id)) this.activity.set(id, now); }
   recordActivity(id: string, now: number) { this.activity.set(id, now); }
 
+  /** A parked Session stops being this view's to release or fence. */
+  forget(id: string) {
+    const lastActivity = this.activity.get(id);
+    this.activity.delete(id);
+    return lastActivity;
+  }
+  /** A parked Session returns live, keeping its idle clock. */
+  adopt(id: string, lastActivity: number) {
+    this.activity.set(id, lastActivity);
+    if (this.released.delete(id)) this.save([], [id]);
+  }
+
   /** Called on a real transition into a visible session, not on recovery. */
   observe(id: string) {
     const resumed = this.released.delete(id);
@@ -69,14 +81,22 @@ export class BackgroundChatConnections {
   }
 }
 
+const socketActivity = new WeakMap<WebSocket, () => void>();
+
 /** Wrap this socket only, so every send path shares the same activity clock. */
 export function trackChatSocketSends(socket: WebSocket, activity: () => void) {
   registerChatSocket(socket);
+  socketActivity.set(socket, activity);
   const send = socket.send.bind(socket);
   socket.send = (data) => {
     send(data);
-    activity();
+    socketActivity.get(socket)?.();
   };
+}
+
+/** A socket outlives the view that wrapped it; sends now count for its new owner. */
+export function retrackChatSocketSends(socket: WebSocket, activity: () => void) {
+  socketActivity.set(socket, activity);
 }
 
 /** Visibility follows the chat panel, not keyboard focus in its composer. */

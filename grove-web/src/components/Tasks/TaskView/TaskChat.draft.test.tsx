@@ -1,10 +1,11 @@
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { listChats, type ChatSessionResponse } from "../../../api";
+import { getChatHistory, listChats, type ChatSessionResponse } from "../../../api";
 import type { RadioEventCallbacks } from "../../../hooks/useRadioEvents";
 import type { BottomOriginTurnListHandle } from "./BottomOriginTurnList";
 import { TaskChat } from "./TaskChat";
+import { parkedSessionKeys, resetSessionPool } from "./sessionPool";
 import { OrbitInterfaceContext } from "../../../orbit/ui/interfaceContext";
 import { beginGroveFileDrag } from "../../../utils/groveFileDrag";
 
@@ -162,6 +163,7 @@ describe("TaskChat draft isolation during session completion", () => {
 
   afterEach(() => {
     act(() => root.unmount());
+    resetSessionPool();
     container.remove();
     delete win.__grove_pending_chat;
     Reflect.deleteProperty(HTMLElement.prototype, "scrollTo");
@@ -224,6 +226,82 @@ describe("TaskChat draft isolation during session completion", () => {
     });
     await refreshChats();
   }
+
+  async function leaveTask() {
+    act(() => root.unmount());
+    root = createRoot(container);
+  }
+
+  describe("session pool", () => {
+    const userMessage = (text: string) => ({ type: "user_message", text, client_message_id: text });
+    const key = "chat:project:task:A";
+
+    beforeEach(async () => {
+      await render();
+      await act(async () => ChatSocket.instances.get("A")!.receive(userMessage("Before leaving")));
+      expect(container.textContent).toContain("Before leaving");
+    });
+
+    it("keeps the socket across a Task switch and reopens without a history request", async () => {
+      const socket = ChatSocket.instances.get("A")!;
+      await leaveTask();
+      expect(socket.readyState).toBe(ChatSocket.OPEN);
+      expect(parkedSessionKeys("chat:")).toEqual([key]);
+      expect(socket.onmessage).toBeNull();
+      act(() => socket.receive(userMessage("While away")));
+      vi.mocked(getChatHistory).mockClear();
+      await render();
+      expect(parkedSessionKeys("chat:")).toEqual([]);
+      expect(ChatSocket.instances.get("A")).toBe(socket);
+      expect(getChatHistory).not.toHaveBeenCalled();
+      expect(container.textContent).toContain("Before leaving");
+      expect(container.textContent).toContain("While away");
+      expect(container.textContent).not.toContain("Connect Failed");
+    });
+
+    it("hands live events back to the reopened view", async () => {
+      const socket = ChatSocket.instances.get("A")!;
+      await leaveTask();
+      await render();
+      await act(async () => socket.receive(userMessage("After return")));
+      expect(container.textContent).toContain("After return");
+    });
+
+    it("shows the parked transcript at once, then reconciles after the socket dropped", async () => {
+      const socket = ChatSocket.instances.get("A")!;
+      await leaveTask();
+      act(() => socket.close());
+      vi.mocked(getChatHistory).mockClear();
+      let finishHistory!: (value: Awaited<ReturnType<typeof getChatHistory>>) => void;
+      vi.mocked(getChatHistory).mockReturnValueOnce(new Promise((resolve) => { finishHistory = resolve; }));
+      await render();
+      expect(container.textContent).toContain("Before leaving");
+      expect(getChatHistory).toHaveBeenCalledOnce();
+      expect(ChatSocket.instances.get("A")).not.toBe(socket);
+      await act(async () => finishHistory({ events: [userMessage("From the server")], total: 1, session: null } as never));
+      expect(container.textContent).toContain("From the server");
+      expect(container.textContent).not.toContain("Before leaving");
+    });
+
+    it("lands on a deep-linked Session rather than the one left on screen", async () => {
+      await openChat("B");
+      await act(async () => ChatSocket.instances.get("B")!.receive(userMessage("Session B text")));
+      await openChat("A");
+      await leaveTask();
+      win.__grove_pending_chat = { projectId: "project", taskId: "task", chatId: "B" };
+      await render();
+      expect(container.textContent).toContain("Session B text");
+      expect(container.textContent).not.toContain("Before leaving");
+    });
+
+    it("does not keep the socket of an archived Task", async () => {
+      const socket = ChatSocket.instances.get("A")!;
+      await act(async () => root.render(<TaskChat projectId="project" taskId="task" finished />));
+      await leaveTask();
+      expect(socket.readyState).toBe(ChatSocket.CLOSED);
+      expect(parkedSessionKeys("chat:")).toEqual([]);
+    });
+  });
 
   it("under Orbit pops the bubble of a message sent here, through the real echo sequence, and not history", async () => {
     await act(async () => root.render(<OrbitInterfaceContext.Provider value><TaskChat projectId="project" taskId="task" /></OrbitInterfaceContext.Provider>));

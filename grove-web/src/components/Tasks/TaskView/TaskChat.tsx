@@ -6,7 +6,9 @@ import { watchChatConnection, withConnectionDeadline } from "./chatConnectionAtt
 import { resolveAuthenticationMessages } from "./authenticationState";
 import { compactConversationText, readableConversationText } from "./conversationPreview";
 import { useComposerInteractionBoundary } from "./useComposerInteractionBoundary";
-import { BackgroundChatConnections, trackChatSocketSends, watchBackgroundChatConnections } from "./backgroundChatConnections";
+import { BackgroundChatConnections, retrackChatSocketSends, trackChatSocketSends, watchBackgroundChatConnections } from "./backgroundChatConnections";
+import { adoptSession, parkedSessionKeys, parkSession } from "./sessionPool";
+import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
 import { historyComposerPlans, planDocumentTitle, reducePlanDocumentEvent, sessionPlanDocuments, type PlanDocumentMessage } from "./executionPlans";
 import { PlanDocumentsPanel, type PlanMarkdownOptions } from "./PlanDocumentsPanel";
 import { buildRenderItems, buildSequentialRenderItems, buildToolTimelineRows, backgroundToolLabel, timelineToolLabel, finalFailedTool, toolTimelineLegacyDiff, toolTimelineExpansionKey, toggleToolTimelineDetail, toolTimelineRowState, shellTimelineDisplay, toolTimelineWindow, type ToolTimelineRow, type RenderItem, type WorkSummaryItem, type ToolSectionItem } from "./chatRenderItems";
@@ -244,7 +246,6 @@ import {
 } from "./planEntries";
 import { listSketches, type SketchMeta } from "../../../api/sketches";
 import { resolveMemoryEntities, type MemoryEntityMetadata } from "../../../api/memory";
-import { writeLastActiveTab } from "../../../utils/lastActiveTab";
 import { perfMark } from "../../../perf/marks";
 import { useReportDebugId } from "../../../perf/debugIdsStore";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
@@ -1048,6 +1049,335 @@ const applyConfigOptionsToCachedState = (
   state.thoughtLevel = thinking.current;
   state.thoughtLevelConfigId = quick.thinking?.id ?? "";
 };
+
+/** Side effects a background Session event has outside its cached state. */
+interface CachedChatEventEffects {
+  renderWindow: ChatRenderWindowSettings;
+  permissionResponseId: string | undefined;
+  onRunning: (running: boolean) => void;
+  onReady: () => void;
+}
+
+/** Applies a server message to a cached Session; returns whether its transcript changed.
+ *  Runs both for hidden Sessions of a mounted TaskChat and for parked ones. */
+function reduceChatEventForCache(
+  state: PerChatState,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  msg: any,
+  effects: CachedChatEventEffects,
+): boolean {
+  let messagesChanged = false;
+  switch (msg.type) {
+    case "remote_session":
+      state.isConnected = false;
+      state.isRemoteSession = true;
+      state.remoteOwnerName = msg.agent_name || "Unknown";
+      break;
+    case "error": {
+      const msgText = msg.message ?? "";
+      if (isStalePermissionError(msgText)) {
+        state.messages = resolveStalePermission(
+          state.messages,
+          stalePermissionId(msgText, effects.permissionResponseId),
+        );
+      } else {
+        state.messages = [
+          ...state.messages,
+          { type: "system", content: msgText },
+        ];
+        state.isBusy = false;
+        effects.onRunning(false);
+      }
+      messagesChanged = true;
+      break;
+    }
+    case "session_ready":
+      state.messages = resetSubagentActivity(state.messages);
+      state.isConnected = true;
+      if (msg.uses_config_options || (Array.isArray(msg.config_options) && msg.config_options.length > 0)) {
+        applyConfigOptionsToCachedState(state, msg.config_options ?? []);
+      } else {
+        state.sessionConfigOptions = [];
+        state.modeOptions = (msg.available_modes ?? []).map(
+          (m: { id: string; name: string; description?: string }) => ({
+            label: m.name,
+            value: m.id,
+            description: m.description,
+          }),
+        );
+        state.permissionLevel = msg.current_mode_id ?? "";
+        state.modelOptions = (msg.available_models ?? []).map(
+          (m: { id: string; name: string }) => ({
+            label: m.name,
+            value: m.id,
+          }),
+        );
+        state.selectedModel = msg.current_model_id ?? "";
+        state.thoughtLevelOptions = (msg.available_thought_levels ?? []).map(
+          (t: { id: string; name: string }) => ({
+            label: t.name,
+            value: t.id,
+          }),
+        );
+        state.thoughtLevel = msg.current_thought_level_id ?? "";
+        state.thoughtLevelConfigId = msg.thought_level_config_id ?? "";
+      }
+      if (msg.prompt_capabilities) {
+        state.promptCaps = {
+          image: msg.prompt_capabilities.image ?? false,
+          audio: msg.prompt_capabilities.audio ?? false,
+          embeddedContext:
+            msg.prompt_capabilities.embedded_context ?? false,
+        };
+      }
+      state.forkCapable = !!msg.fork_capable;
+      state.importCapable = !!msg.import_capable;
+      state.deleteCapable = !!msg.delete_capable;
+      state.authMethods = msg.auth_methods ?? [];
+      state.logoutCapable = !!msg.logout_capable;
+      effects.onReady();
+      break;
+    case "auth_required": {
+      const methods: AuthMethodOption[] =
+        Array.isArray(msg.methods) ? msg.methods : [];
+      state.messages = [
+        ...state.messages,
+        {
+          type: "auth_required",
+          methods,
+          agentName: msg.agent_name ?? null,
+          status: "idle",
+        },
+      ];
+      state.isBusy = false;
+      effects.onRunning(false);
+      messagesChanged = true;
+      break;
+    }
+    case "auth_succeeded":
+      state.messages = resolveAuthenticationMessages(state.messages);
+      messagesChanged = true;
+      break;
+    case "auth_failed": {
+      const errorMessage =
+        typeof msg.message === "string"
+          ? msg.message
+          : "Authentication failed. Please try again.";
+      const nextMessages = [...state.messages];
+      for (let i = nextMessages.length - 1; i >= 0; i -= 1) {
+        const message = nextMessages[i];
+        if (
+          message.type === "auth_required" &&
+          message.status === "in_progress"
+        ) {
+          nextMessages[i] = {
+            ...message,
+            status: "failed",
+            errorMessage,
+          };
+          break;
+        }
+      }
+      state.messages = nextMessages;
+      state.isBusy = false;
+      effects.onRunning(false);
+      messagesChanged = true;
+      break;
+    }
+    case "thought_levels_update":
+      state.thoughtLevelOptions = (msg.available ?? []).map(
+        (t: { id: string; name: string }) => ({
+          label: t.name,
+          value: t.id,
+        }),
+      );
+      state.thoughtLevel = msg.current ?? "";
+      state.thoughtLevelConfigId = msg.config_id ?? "";
+      break;
+    case "config_options_update":
+      applyConfigOptionsToCachedState(state, msg.config_options ?? []);
+      break;
+    case "config_option_error":
+      state.messages = [
+        ...state.messages,
+        { type: "system", content: msg.message },
+      ];
+      messagesChanged = true;
+      break;
+    case "mode_changed":
+      state.permissionLevel = msg.mode_id;
+      break;
+    case "model_changed":
+      state.selectedModel = msg.model_id;
+      break;
+    case "usage_update":
+      state.contextUsage = {
+        used: Number(msg.used) || 0,
+        size: Number(msg.size) || 0,
+        cost: msg.cost
+          ? {
+              amount: Number(msg.cost.amount) || 0,
+              currency: String(msg.cost.currency ?? ""),
+            }
+          : null,
+      };
+      break;
+    case "message_chunk":
+    case "message_content_chunk":
+    case "v2_message_update":
+    case "v2_message_bind":
+    case "tool_call":
+    case "v2_tool_update":
+    case "thought_chunk":
+    case "tool_call_update":
+    case "terminal_output_update":
+    case "subagent_update":
+    case "subagent_event":
+    case "session_message":
+    case "plan_document_update":
+    case "plan_document_removed":
+    case "compaction_update":
+    case "compaction_summary_chunk":
+    case "session_notice":
+    case "permission_request":
+    case "permission_response":
+    case "ask_form":
+    case "elicitation_request":
+    case "elicitation_resolved":
+    case "elicitation_validation_error":
+    case "elicitation_complete":
+    case "complete":
+    case "user_message":
+    case "user_message_time":
+    case "turn_interrupted":
+    case "terminal_execute":
+    case "terminal_chunk":
+    case "terminal_complete":
+      messagesChanged = true;
+      state.messages = reduceHistoryMessages(state.messages, msg);
+      if (msg.type === "plan_document_update" || msg.type === "plan_document_removed") {
+        state.planFilePath = "";
+        state.planFileContent = "";
+      }
+      state.readMemoryIds = [
+        ...new Set([
+          ...(state.readMemoryIds ?? []),
+          ...collectReadMemoryIds(state.messages),
+        ]),
+      ];
+      if (msg.type === "terminal_execute") {
+        state.isBusy = true;
+        effects.onRunning(true);
+      }
+      if (msg.type === "complete" || msg.type === "terminal_complete") {
+        const pruned = pruneChatViewMessages(
+          state.messages,
+          state.hiddenMessageCount,
+          effects.renderWindow,
+        );
+        state.messages = pruned.messages;
+        state.hiddenMessageCount = pruned.hiddenMessageCount;
+        state.isBusy = false;
+        effects.onRunning(false);
+      }
+      break;
+    case "queue_update":
+      // 即使该 chat 当前不是 active,也得把 queue 写进 cache,
+      // 否则用户切回来时只能看到空 queue(WS 不会主动再发一次)。
+      state.pendingMessages = normalizeQueuedInputs(msg.messages ?? []);
+      break;
+    case "queue_message_gone":
+      // 后台 chat 的编辑状态由前端 active 路径管理,这里只需让 cache
+      // 不要保留已发出的消息;cache 的 pendingMessages 会被下一条
+      // queue_update 自然覆盖,这里不用手动处理。
+      break;
+    case "busy":
+      state.isBusy = msg.value;
+      effects.onRunning(msg.value);
+      if (!msg.value) {
+        const pruned = pruneChatViewMessages(
+          reduceHistoryMessages(state.messages, msg),
+          state.hiddenMessageCount,
+          effects.renderWindow,
+        );
+        state.messages = pruned.messages;
+        state.hiddenMessageCount = pruned.hiddenMessageCount;
+        messagesChanged = true;
+      }
+      break;
+    case "plan_update": {
+      const entries = normalizePlanEntries(msg.entries);
+      state.planEntries = entries;
+      state.showPlan = nextPlanVisibility(state.showPlan, entries);
+      break;
+    }
+    case "plan_file_update":
+      state.planFilePath = msg.path;
+      if (msg.content) {
+        state.planFileContent = msg.content;
+      }
+      break;
+    case "available_commands":
+      state.slashCommands = msg.commands ?? [];
+      break;
+    case "auth_logged_out":
+      state.messages = [
+        ...state.messages,
+        { type: "system", content: "Signed out of the agent." },
+      ];
+      messagesChanged = true;
+      break;
+    case "session_ended":
+      state.messages = reduceHistoryMessages(state.messages, msg);
+      messagesChanged = true;
+      state.isConnected = false;
+      break;
+  }
+  return messagesChanged;
+}
+
+function ChatHistorySkeleton() {
+  return (
+    <div className="absolute inset-x-0 top-0 z-10 flex animate-pulse flex-col gap-5 p-6" role="status" aria-label="Loading conversation">
+      {["w-2/5 self-end", "w-4/5", "w-3/5", "w-1/3 self-end", "w-2/3"].map((width) => (
+        <div key={width} className={`h-4 rounded-md bg-[var(--color-bg-tertiary)] ${width}`} />
+      ))}
+    </div>
+  );
+}
+
+/** What survives a TaskChat unmount for one Session of the Task. */
+interface ParkedChat {
+  state: PerChatState;
+  /** The transcript matches the server, so opening needs no history request. */
+  loaded: boolean;
+  historyTotal: number | null;
+  protocolVersion: 1 | 2 | undefined;
+  /** Lets the Task render its Session list before the list request returns. */
+  chats: ChatSessionResponse[];
+  /** The Session on screen when the Task was left. */
+  wasActive: boolean;
+}
+
+const parkedChatPrefix = (projectId: string, taskId: string) => `chat:${projectId}:${taskId}:`;
+
+function applyParkedChatEvent(
+  data: ParkedChat,
+  socket: WebSocket,
+  renderWindow: ChatRenderWindowSettings,
+  event: { type?: string },
+) {
+  // An Agent restart leaves a gap the live stream cannot fill.
+  if (event.type === "session_ready") data.loaded = false;
+  reduceChatEventForCache(data.state, event, {
+    renderWindow,
+    permissionResponseId: undefined,
+    onRunning: () => {},
+    onReady: () => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "set_queue_mode", mode: loadQueueMode() }));
+    },
+  });
+}
 
 function defaultPerChatState(): PerChatState {
   return {
@@ -2385,6 +2715,8 @@ export function TaskChat({
   const [connectPhaseStartedAt, setConnectPhaseStartedAt] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [historySyncVersion, setHistorySyncVersion] = useState(0);
+  // Drives the placeholder while a Session with nothing cached loads.
+  const [hydratingChatId, setHydratingChatId] = useState<string | null>(null);
   const { resolveMessages, forgetMessages, updateMessages } =
     useLiveSessionMessages(activeChatId, messages);
   const [hiddenMessageCount, setHiddenMessageCount] = useState(0);
@@ -4735,13 +5067,21 @@ export function TaskChat({
     }
   }, [resolveMessages, updateBusy, updateHiddenMessageCount]);
 
+  // A parked Session may already be on screen, so landing elsewhere must swap
+  // its state too. Nothing else restores it on this path.
+  const activateLoadedChat = useCallback((chatId: string) => {
+    const current = getActiveChatId();
+    setActiveChatId(chatId);
+    if (current !== chatId && (current || perChatStateRef.current.has(chatId))) restoreChatState(chatId);
+  }, [getActiveChatId, restoreChatState, setActiveChatId]);
+
   // Initial chat list load is encapsulated in useInitialChatLoad.
   useInitialChatLoad({
     projectId,
     taskId,
     fixedChatId,
     setChats,
-    setActiveChatId,
+    setActiveChatId: activateLoadedChat,
     autoCreate: !orbitHeader,
     onEmpty: () => openOrbitNewForEmptyTaskRef.current(),
   });
@@ -4953,62 +5293,8 @@ export function TaskChat({
   }, [onConnectedProp, onDisconnectedProp]);
 
   /** Connect a WebSocket for a given chat ID (idempotent) */
-  const connectChatWs = useCallback(
-    async (chatId: string, importing = false, attachOnly = false) => {
-      if (finishedRef.current || !backgroundConnections.canConnect(chatId)) return;
-      const connectionTicket = backgroundConnections.ticket();
-      backgroundConnections.track(chatId, Date.now());
-      if (wsMapRef.current.has(chatId)) return; // Already connected
-      if (connectingRef.current.has(chatId)) return; // Connection already in-flight
-      // Wait for the chats list so the chat is known; the caller retries
-      // once it loads via the [activeChatId, chats] effect below.
-      const chat = chatsRef.current.find((c) => c.id === chatId);
-      if (!chat) {
-        connectingRef.current.delete(chatId);
-        return;
-      }
-      connectingRef.current.add(chatId);
-      setConnectionErrors((previous) => ({ ...previous, [chatId]: "" }));
-      setChatConnectionStatus(chatId, (current) => current === "reconnecting" ? current : "connecting");
-      if (chatId === getActiveChatId()) {
-        setConnectPhase(null);
-        setConnectPhaseStartedAt(null);
-      }
-
-      const host = getApiHost();
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const onlyExisting = attachOnly || attachOnlyChatsRef.current.has(chatId);
-      const query = [importing ? "import=true" : "", onlyExisting ? "attach_only=true" : ""]
-        .filter(Boolean).join("&");
-      let ws: WebSocket;
-      try {
-        const url = await withConnectionDeadline(() => appendHmacToUrl(
-          `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/ws${query ? `?${query}` : ""}`,
-        ), 15000, "Timed out preparing the connection. Use Reconnect to retry.");
-        // Never create a late attachment after this view finishes or releases.
-        if (finishedRef.current || !backgroundConnections.canFinishConnect(chatId, connectionTicket)) {
-          setChatConnectionStatus(chatId, "disconnected");
-          return;
-        }
-        if (wsMapRef.current.has(chatId)) return;
-        ws = new WebSocket(url);
-      } catch (error) {
-        setChatConnectionStatus(chatId, "failed");
-        setConnectionErrors((previous) => ({ ...previous, [chatId]: apiErrorMessage(error) }));
-        if (chatId === getActiveChatId()) {
-          setMessages((previous) => appendSystemMessage(previous, `Connection failed: ${apiErrorMessage(error)}`));
-        }
-        return;
-      } finally {
-        connectingRef.current.delete(chatId);
-      }
-      trackChatSocketSends(ws, () => backgroundConnections.recordActivity(chatId, Date.now()));
-      wsMapRef.current.set(chatId, ws);
-      lastWsMessageAtRef.current.set(chatId, Date.now());
-      // This connection starts unproven; only a session_ready flips it.
-      wsSessionEverReadyRef.current.set(chatId, false);
-      startedInputIdsRef.current.delete(chatId);
-
+  const bindChatSocket = useCallback(
+    (chatId: string, ws: WebSocket) => {
       ws.onopen = () => {
         sendAgentVoiceState(chatId, loadAgentVoiceState(projectId, taskId, chatId));
       };
@@ -5344,6 +5630,67 @@ export function TaskChat({
           setMessages((prev) => appendSystemMessage(prev, "Connection error."));
         }
       };
+    },
+    [backgroundConnections, projectId, taskId, getActiveChatId, setChatConnectionStatus, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, reconcileInputQueue, savePendingInputState, finishPendingQueueEdit, failPendingQueueEdit, resumeEditedQueue],
+  );
+
+  const connectChatWs = useCallback(
+    async (chatId: string, importing = false, attachOnly = false) => {
+      if (finishedRef.current || !backgroundConnections.canConnect(chatId)) return;
+      const connectionTicket = backgroundConnections.ticket();
+      backgroundConnections.track(chatId, Date.now());
+      if (wsMapRef.current.has(chatId)) return; // Already connected
+      if (connectingRef.current.has(chatId)) return; // Connection already in-flight
+      // Wait for the chats list so the chat is known; the caller retries
+      // once it loads via the [activeChatId, chats] effect below.
+      const chat = chatsRef.current.find((c) => c.id === chatId);
+      if (!chat) {
+        connectingRef.current.delete(chatId);
+        return;
+      }
+      connectingRef.current.add(chatId);
+      setConnectionErrors((previous) => ({ ...previous, [chatId]: "" }));
+      setChatConnectionStatus(chatId, (current) => current === "reconnecting" ? current : "connecting");
+      if (chatId === getActiveChatId()) {
+        setConnectPhase(null);
+        setConnectPhaseStartedAt(null);
+      }
+
+      const host = getApiHost();
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const onlyExisting = attachOnly || attachOnlyChatsRef.current.has(chatId);
+      const query = [importing ? "import=true" : "", onlyExisting ? "attach_only=true" : ""]
+        .filter(Boolean).join("&");
+      let ws: WebSocket;
+      try {
+        const url = await withConnectionDeadline(() => appendHmacToUrl(
+          `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/ws${query ? `?${query}` : ""}`,
+        ), 15000, "Timed out preparing the connection. Use Reconnect to retry.");
+        // Never create a late attachment after this view finishes or releases.
+        if (finishedRef.current || !backgroundConnections.canFinishConnect(chatId, connectionTicket)) {
+          setChatConnectionStatus(chatId, "disconnected");
+          return;
+        }
+        if (wsMapRef.current.has(chatId)) return;
+        ws = new WebSocket(url);
+      } catch (error) {
+        setChatConnectionStatus(chatId, "failed");
+        setConnectionErrors((previous) => ({ ...previous, [chatId]: apiErrorMessage(error) }));
+        if (chatId === getActiveChatId()) {
+          setMessages((previous) => appendSystemMessage(previous, `Connection failed: ${apiErrorMessage(error)}`));
+        }
+        return;
+      } finally {
+        connectingRef.current.delete(chatId);
+      }
+      trackChatSocketSends(ws, () => backgroundConnections.recordActivity(chatId, Date.now()));
+      wsMapRef.current.set(chatId, ws);
+      lastWsMessageAtRef.current.set(chatId, Date.now());
+      // This connection starts unproven; only a session_ready flips it.
+      wsSessionEverReadyRef.current.set(chatId, false);
+      startedInputIdsRef.current.delete(chatId);
+
+      bindChatSocket(chatId, ws);
       watchChatConnection(ws, (message) => {
         if (wsMapRef.current.get(chatId) !== ws) return;
         setChatConnectionStatus(chatId, "failed");
@@ -5355,13 +5702,113 @@ export function TaskChat({
         if (wsMapRef.current.get(chatId) === ws) setConnectionStages((previous) => ({ ...previous, [chatId]: phase }));
       });
     },
-    [backgroundConnections, projectId, taskId, getActiveChatId, setChatConnectionStatus, sendAgentVoiceState, updatePendingInputs, updateLocalInputPlacements, reconcileInputQueue, savePendingInputState, finishPendingQueueEdit, failPendingQueueEdit, resumeEditedQueue],
+    [backgroundConnections, bindChatSocket, projectId, taskId, getActiveChatId, setChatConnectionStatus],
   );
 
 
   useEffect(() => {
     connectChatWsRef.current = connectChatWs;
   }, [connectChatWs]);
+
+  // ─── Session pool ──────────────────────────────────────────────────────
+  // Leaving a Task hands its Sessions to the pool, which keeps their sockets
+  // and transcripts current; returning takes them back before the first paint.
+  const usesSessionPool = canManageSessions && !fixedChatId;
+  const sessionViewedAtRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (activeChatId) sessionViewedAtRef.current.set(activeChatId, Date.now());
+  }, [activeChatId]);
+  const parkSessionsRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    parkSessionsRef.current = () => {
+      if (finishedRef.current) return;
+      saveCurrentChatState();
+      const active = getActiveChatId();
+      const now = Date.now();
+      for (const { id } of chatsRef.current) {
+        const state = perChatStateRef.current.get(id);
+        const runtime = historyRuntimeRef.current.get(id);
+        const loaded = !!runtime?.loaded && !runtime.needsResync && runtime.loadingGeneration === null;
+        if (!state || state.isRemoteSession || (!loaded && state.messages.length === 0)) continue;
+        const ws = wsMapRef.current.get(id);
+        // In-flight sends and edits resolve through this view's handlers.
+        const keepSocket = !!ws && ws.readyState === WebSocket.OPEN && !!wsSessionEverReadyRef.current.get(id)
+          && !(pendingInputsRef.current.get(id)?.length) && pendingQueueEditRef.current?.chatId !== id;
+        const lastActivityAt = backgroundConnections.forget(id) ?? now;
+        const socket = keepSocket ? ws : null;
+        if (socket) {
+          socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null;
+          wsMapRef.current.delete(id);
+        }
+        state.messages = resolveMessages(id, state.messages);
+        state.isBusy = runtimeBusyRef.current.get(id) ?? state.isBusy;
+        // The composer goes with the view; its draft is back in localStorage.
+        state.draftAttachments = undefined;
+        const renderWindow = chatRenderWindowSettings;
+        parkSession<ParkedChat>(`${parkedChatPrefix(projectId, taskId)}${id}`, {
+          data: { state, loaded: !!socket && loaded, historyTotal: runtime?.historyTotal ?? null, protocolVersion: chatProtocolVersions[id], chats: chatsRef.current, wasActive: id === active },
+          socket,
+          viewedAt: id === active ? now : sessionViewedAtRef.current.get(id) ?? 0,
+          lastMessageAt: lastWsMessageAtRef.current.get(id) ?? now,
+          lastActivityAt,
+          apply: (data, event) => { if (socket) applyParkedChatEvent(data, socket, renderWindow, event); },
+          isBusy: (data) => data.loaded && data.state.isBusy,
+          onSocketLost: (data) => { data.state.isConnected = false; data.loaded = false; },
+        });
+      }
+    };
+  });
+  useLayoutEffect(() => {
+    if (!usesSessionPool) return;
+    const prefix = parkedChatPrefix(projectId, taskId);
+    const keys = parkedSessionKeys(prefix);
+    let chats: ChatSessionResponse[] | null = null;
+    let wasActive: string | null = null;
+    for (const key of keys) {
+      const session = adoptSession<ParkedChat>(key);
+      if (!session) continue;
+      const id = key.slice(prefix.length);
+      const { data, socket } = session;
+      chats = data.chats;
+      if (data.wasActive) wasActive = id;
+      data.state.draftHtml = loadChatDraft(id);
+      data.state.isConnected = !!socket;
+      perChatStateRef.current.set(id, data.state);
+      updateMessages(id, data.state.messages);
+      runtimeBusyRef.current.set(id, data.state.isBusy);
+      sessionViewedAtRef.current.set(id, session.viewedAt);
+      setSessionActivity((previous) => updateSessionRunning(previous, id, data.state.isBusy, getActiveChatId()));
+      historyRuntimeRef.current.set(id, {
+        ...defaultChatHistoryRuntime(),
+        loaded: data.loaded,
+        needsResync: !data.loaded,
+        historyTotal: data.historyTotal,
+        connected: !!socket,
+      });
+      if (!socket) continue;
+      wsMapRef.current.set(id, socket);
+      lastWsMessageAtRef.current.set(id, session.lastMessageAt);
+      wsSessionEverReadyRef.current.set(id, true);
+      backgroundConnections.adopt(id, session.lastActivityAt);
+      retrackChatSocketSends(socket, () => backgroundConnections.recordActivity(id, Date.now()));
+      bindChatSocket(id, socket);
+      setChatConnectionStatus(id, "connected");
+      setChatProtocolVersions((previous) => ({ ...previous, [id]: data.protocolVersion }));
+    }
+    if (chats) {
+      chatsRef.current = chats;
+      setChats(chats);
+      const pending = (window as unknown as { __grove_pending_chat?: { projectId: string; taskId: string; chatId: string } }).__grove_pending_chat;
+      const wanted = pending?.projectId === projectId && pending.taskId === taskId
+        ? pending.chatId
+        : readLastActiveTab("chat", projectId, taskId) ?? wasActive;
+      if (wanted && perChatStateRef.current.has(wanted)) {
+        setActiveChatId(wanted);
+        restoreChatState(wanted);
+      }
+    }
+    return () => parkSessionsRef.current();
+  }, [backgroundConnections, bindChatSocket, getActiveChatId, projectId, restoreChatState, setActiveChatId, setChatConnectionStatus, taskId, updateMessages, usesSessionPool]);
 
   // Observe the visible session, independent of composer keyboard focus.
   // Hidden keep-alive panels and hidden browser tabs release their sockets,
@@ -5553,7 +6000,8 @@ export function TaskChat({
       runtime.loadingGeneration = isInitialImport ? null : generation;
       runtime.bufferedEvents = [];
     }
-    (async () => {
+    setHydratingChatId(chatId);
+    void (async () => {
       // Step 1: Connect WS for real-time events
       if (!isReadOnlyHistory) await connectChatWs(chatId);
       wsRef.current = wsMapRef.current.get(chatId) ?? null;
@@ -5939,7 +6387,7 @@ export function TaskChat({
           }
         }
       }
-    })();
+    })().finally(() => setHydratingChatId((current) => current === chatId ? null : current));
     // Note: activeChat?.id is in deps so that when chats finish loading
     // after this effect's first run (connectChatWs bailed on an unknown
     // chat), the effect re-fires and connects.
@@ -6580,298 +7028,24 @@ export function TaskChat({
       // empty cache. This keeps the live runtime and the switch cache on the
       // same history branch.
       if (!cached) state.messages = resolveMessages(chatId, state.messages);
-      let messagesChanged = false;
-      switch (msg.type) {
-        case "remote_session":
-          state.isConnected = false;
-          state.isRemoteSession = true;
-          state.remoteOwnerName = msg.agent_name || "Unknown";
-          break;
-        case "error": {
-          const msgText = msg.message ?? "";
-          if (isStalePermissionError(msgText)) {
-            state.messages = resolveStalePermission(
-              state.messages,
-              stalePermissionId(msgText, lastPermissionResponseRef.current.get(chatId)),
-            );
-          } else {
-            state.messages = [
-              ...state.messages,
-              { type: "system", content: msgText },
-            ];
-            state.isBusy = false;
-            runtimeBusyRef.current.set(chatId, false);
-            setSessionActivity((previous) =>
-              updateSessionRunning(previous, chatId, false, getActiveChatId()),
-            );
-          }
-          messagesChanged = true;
-          break;
-        }
-        case "session_ready":
-          state.messages = resetSubagentActivity(state.messages);
-          state.isConnected = true;
-          if (msg.uses_config_options || (Array.isArray(msg.config_options) && msg.config_options.length > 0)) {
-            applyConfigOptionsToCachedState(state, msg.config_options ?? []);
-          } else {
-            state.sessionConfigOptions = [];
-            state.modeOptions = (msg.available_modes ?? []).map(
-              (m: { id: string; name: string; description?: string }) => ({
-                label: m.name,
-                value: m.id,
-                description: m.description,
-              }),
-            );
-            state.permissionLevel = msg.current_mode_id ?? "";
-            state.modelOptions = (msg.available_models ?? []).map(
-              (m: { id: string; name: string }) => ({
-                label: m.name,
-                value: m.id,
-              }),
-            );
-            state.selectedModel = msg.current_model_id ?? "";
-            state.thoughtLevelOptions = (msg.available_thought_levels ?? []).map(
-              (t: { id: string; name: string }) => ({
-                label: t.name,
-                value: t.id,
-              }),
-            );
-            state.thoughtLevel = msg.current_thought_level_id ?? "";
-            state.thoughtLevelConfigId = msg.thought_level_config_id ?? "";
-          }
-          if (msg.prompt_capabilities) {
-            state.promptCaps = {
-              image: msg.prompt_capabilities.image ?? false,
-              audio: msg.prompt_capabilities.audio ?? false,
-              embeddedContext:
-                msg.prompt_capabilities.embedded_context ?? false,
-            };
-          }
-          state.forkCapable = !!msg.fork_capable;
-          state.importCapable = !!msg.import_capable;
-          state.deleteCapable = !!msg.delete_capable;
-          state.authMethods = msg.auth_methods ?? [];
-          state.logoutCapable = !!msg.logout_capable;
-          {
-            const bgWs = wsMapRef.current.get(chatId);
-            if (bgWs && bgWs.readyState === WebSocket.OPEN) {
-              bgWs.send(
-                JSON.stringify({ type: "set_queue_mode", mode: loadQueueMode() }),
-              );
-            }
-          }
-          break;
-        case "auth_required": {
-          const methods: AuthMethodOption[] =
-            Array.isArray(msg.methods) ? msg.methods : [];
-          state.messages = [
-            ...state.messages,
-            {
-              type: "auth_required",
-              methods,
-              agentName: msg.agent_name ?? null,
-              status: "idle",
-            },
-          ];
-          state.isBusy = false;
-          runtimeBusyRef.current.set(chatId, false);
+      const messagesChanged = reduceChatEventForCache(state, msg, {
+        renderWindow: chatRenderWindowSettings,
+        permissionResponseId: lastPermissionResponseRef.current.get(chatId),
+        onRunning: (running) => {
+          runtimeBusyRef.current.set(chatId, running);
           setSessionActivity((previous) =>
-            updateSessionRunning(previous, chatId, false, getActiveChatId()),
+            updateSessionRunning(previous, chatId, running, getActiveChatId()),
           );
-          messagesChanged = true;
-          break;
-        }
-        case "auth_succeeded":
-          state.messages = resolveAuthenticationMessages(state.messages);
-          messagesChanged = true;
-          break;
-        case "auth_failed": {
-          const errorMessage =
-            typeof msg.message === "string"
-              ? msg.message
-              : "Authentication failed. Please try again.";
-          const nextMessages = [...state.messages];
-          for (let i = nextMessages.length - 1; i >= 0; i -= 1) {
-            const message = nextMessages[i];
-            if (
-              message.type === "auth_required" &&
-              message.status === "in_progress"
-            ) {
-              nextMessages[i] = {
-                ...message,
-                status: "failed",
-                errorMessage,
-              };
-              break;
-            }
-          }
-          state.messages = nextMessages;
-          state.isBusy = false;
-          runtimeBusyRef.current.set(chatId, false);
-          setSessionActivity((previous) =>
-            updateSessionRunning(previous, chatId, false, getActiveChatId()),
-          );
-          messagesChanged = true;
-          break;
-        }
-        case "thought_levels_update":
-          state.thoughtLevelOptions = (msg.available ?? []).map(
-            (t: { id: string; name: string }) => ({
-              label: t.name,
-              value: t.id,
-            }),
-          );
-          state.thoughtLevel = msg.current ?? "";
-          state.thoughtLevelConfigId = msg.config_id ?? "";
-          break;
-        case "config_options_update":
-          applyConfigOptionsToCachedState(state, msg.config_options ?? []);
-          break;
-        case "config_option_error":
-          state.messages = [
-            ...state.messages,
-            { type: "system", content: msg.message },
-          ];
-          messagesChanged = true;
-          break;
-        case "mode_changed":
-          state.permissionLevel = msg.mode_id;
-          break;
-        case "model_changed":
-          state.selectedModel = msg.model_id;
-          break;
-        case "usage_update":
-          state.contextUsage = {
-            used: Number(msg.used) || 0,
-            size: Number(msg.size) || 0,
-            cost: msg.cost
-              ? {
-                  amount: Number(msg.cost.amount) || 0,
-                  currency: String(msg.cost.currency ?? ""),
-                }
-              : null,
-          };
-          break;
-        case "message_chunk":
-        case "message_content_chunk":
-        case "v2_message_update":
-        case "v2_message_bind":
-        case "tool_call":
-        case "v2_tool_update":
-        case "thought_chunk":
-        case "tool_call_update":
-        case "terminal_output_update":
-        case "subagent_update":
-        case "subagent_event":
-        case "session_message":
-        case "plan_document_update":
-        case "plan_document_removed":
-        case "compaction_update":
-        case "compaction_summary_chunk":
-        case "session_notice":
-        case "permission_request":
-        case "permission_response":
-        case "ask_form":
-        case "elicitation_request":
-        case "elicitation_resolved":
-        case "elicitation_validation_error":
-        case "elicitation_complete":
-        case "complete":
-        case "user_message":
-        case "user_message_time":
-        case "turn_interrupted":
-        case "terminal_execute":
-        case "terminal_chunk":
-        case "terminal_complete":
-          messagesChanged = true;
-          state.messages = reduceHistoryMessages(state.messages, msg);
-          if (msg.type === "plan_document_update" || msg.type === "plan_document_removed") {
-            state.planFilePath = "";
-            state.planFileContent = "";
-          }
-          state.readMemoryIds = [
-            ...new Set([
-              ...(state.readMemoryIds ?? []),
-              ...collectReadMemoryIds(state.messages),
-            ]),
-          ];
-          if (msg.type === "terminal_execute") {
-            state.isBusy = true;
-            runtimeBusyRef.current.set(chatId, true);
-            setSessionActivity((previous) =>
-              updateSessionRunning(previous, chatId, true, getActiveChatId()),
+        },
+        onReady: () => {
+          const bgWs = wsMapRef.current.get(chatId);
+          if (bgWs && bgWs.readyState === WebSocket.OPEN) {
+            bgWs.send(
+              JSON.stringify({ type: "set_queue_mode", mode: loadQueueMode() }),
             );
           }
-          if (msg.type === "complete" || msg.type === "terminal_complete") {
-            const pruned = pruneChatViewMessages(
-              state.messages,
-              state.hiddenMessageCount,
-              chatRenderWindowSettings,
-            );
-            state.messages = pruned.messages;
-            state.hiddenMessageCount = pruned.hiddenMessageCount;
-            state.isBusy = false;
-            runtimeBusyRef.current.set(chatId, false);
-            setSessionActivity((previous) =>
-              updateSessionRunning(previous, chatId, false, getActiveChatId()),
-            );
-          }
-          break;
-        case "queue_update":
-          // 即使该 chat 当前不是 active,也得把 queue 写进 cache,
-          // 否则用户切回来时只能看到空 queue(WS 不会主动再发一次)。
-          state.pendingMessages = normalizeQueuedInputs(msg.messages ?? []);
-          break;
-        case "queue_message_gone":
-          // 后台 chat 的编辑状态由前端 active 路径管理,这里只需让 cache
-          // 不要保留已发出的消息;cache 的 pendingMessages 会被下一条
-          // queue_update 自然覆盖,这里不用手动处理。
-          break;
-        case "busy":
-          state.isBusy = msg.value;
-          runtimeBusyRef.current.set(chatId, msg.value);
-          setSessionActivity((previous) =>
-            updateSessionRunning(previous, chatId, msg.value, getActiveChatId()),
-          );
-          if (!msg.value) {
-            const pruned = pruneChatViewMessages(
-              reduceHistoryMessages(state.messages, msg),
-              state.hiddenMessageCount,
-              chatRenderWindowSettings,
-            );
-            state.messages = pruned.messages;
-            state.hiddenMessageCount = pruned.hiddenMessageCount;
-            messagesChanged = true;
-          }
-          break;
-        case "plan_update": {
-          const entries = normalizePlanEntries(msg.entries);
-          state.planEntries = entries;
-          state.showPlan = nextPlanVisibility(state.showPlan, entries);
-          break;
-        }
-        case "plan_file_update":
-          state.planFilePath = msg.path;
-          if (msg.content) {
-            state.planFileContent = msg.content;
-          }
-          break;
-        case "available_commands":
-          state.slashCommands = msg.commands ?? [];
-          break;
-        case "auth_logged_out":
-          state.messages = [
-            ...state.messages,
-            { type: "system", content: "Signed out of the agent." },
-          ];
-          messagesChanged = true;
-          break;
-        case "session_ended":
-          state.messages = reduceHistoryMessages(state.messages, msg);
-          messagesChanged = true;
-          state.isConnected = false;
-          break;
-      }
+        },
+      });
       perChatStateRef.current.set(chatId, state);
       // useLiveSessionMessages is the source used by restoreChatState. Keep
       // it in sync with background WS reductions; otherwise it would win over
@@ -11885,6 +12059,7 @@ export function TaskChat({
               newest tail. Dynamic heights above the reader cannot perturb
               the newest messages, and older history is admitted ten turns
               at a time. */}
+          {hydratingChatId === activeChatId && activeChatId && messages.length === 0 && <ChatHistorySkeleton />}
           <ChatListErrorBoundary
             resetKey={activeChatId}
             projectId={projectId}
