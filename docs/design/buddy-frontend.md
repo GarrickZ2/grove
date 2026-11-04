@@ -94,7 +94,6 @@ Grove 没有用户账户，Buddy 内不显示用户信息。
 - 顶部 52px：traffic light、"‹ Orbit"。
 - 分组标题行 34px："Buddies"（12.5px / 500 次要色）+ 右侧 28px "+"（新建）。
 - 列表行：最小高 48px，padding 7px 8px，圆角 8px，间距 2px；30px 头像 + 名称（14px / 500，waiting 为 600）+ 时间（11.5px）+ 预览（12.5px 单行，waiting 时为 "Needs your approval" 琥珀色）。
-- 底部 `orbit-footer` 样式：Settings 行，在 Buddy 内以覆盖层打开全局 `SettingsPage`（使用真实全局 config），关闭回到对话。
 - 超过 8 个时标题行出现搜索按钮，展开为搜索框；拖拽排序 → `PATCH /buddies/order`；右键菜单：设置、归档。
 
 ## 4. 头像

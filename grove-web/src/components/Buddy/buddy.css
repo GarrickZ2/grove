@@ -8,7 +8,7 @@
 .buddy-icon-button svg{width:18px;height:18px}
 .buddy-search{display:flex;align-items:center;gap:8px;height:34px;margin:4px 12px 12px;padding:0 10px;border:1px solid var(--buddy-border);border-radius:9px;color:var(--color-text-muted);background:var(--color-bg)}
 .buddy-search input{width:100%;min-width:0;background:transparent;outline:none;font-size:13px;color:var(--color-text)}
-.buddy-list{flex:1;min-height:0;overflow:auto;padding:0 8px}
+.buddy-list{flex:1;min-height:0;overflow:auto;padding:0 8px max(8px,env(safe-area-inset-bottom,0px))}
 .buddy-list-item{display:flex;align-items:center;gap:12px;padding:10px;width:100%;border-radius:12px;text-align:left;margin-bottom:2px}
 .buddy-list-item.is-selected,.buddy-list-item:hover{background:var(--buddy-selected)}
 .buddy-list-avatar{position:relative;flex-shrink:0}
@@ -22,9 +22,6 @@
 .buddy-list-preview{display:block;font-size:13px;color:var(--color-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}
 .buddy-list-item.is-waiting .buddy-list-title{font-weight:600}
 .buddy-list-item.is-waiting .buddy-list-preview{color:var(--buddy-waiting-text)}
-.buddy-sidebar footer{height:56px;padding:8px 12px;border-top:1px solid var(--buddy-border)}
-.buddy-sidebar footer button{display:flex;gap:10px;align-items:center;width:100%;height:40px;padding:0 12px;border-radius:10px;font-size:14px}
-.buddy-sidebar footer button:hover{background:var(--buddy-selected)}
 .buddy-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 .buddy-empty{display:flex;flex:1;flex-direction:column;justify-content:center;align-items:center;padding:32px;text-align:center;gap:16px}
 .buddy-empty h2{font-size:22px;font-weight:600}
@@ -55,8 +52,6 @@
 .buddy-agent-menu{position:relative;min-width:0}
 .buddy-agent-menu>.buddy-button{max-width:100%;height:28px;min-height:28px;padding:0 10px;border:0;border-radius:999px;font-size:12px;gap:6px}.buddy-agent-brand{display:inline-flex;align-items:center;flex:none;width:16px;height:16px}
 .buddy-agent-menu>.buddy-button span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.buddy-global-settings{position:fixed;inset:0;overflow:auto;background:var(--color-bg);z-index:45;padding:48px 24px 24px}
-.buddy-global-close{position:fixed;right:16px;top:12px;z-index:46;background:var(--color-bg)}
 .buddy-menu{display:flex;flex-direction:column;gap:8px}
 .buddy-menu button{text-align:left;padding:10px;border-radius:8px}
 .buddy-menu button:hover{background:var(--color-bg-secondary)}
@@ -102,8 +97,6 @@
   .buddy-list{padding:0 12px}
   .buddy-list-item{min-height:68px}
   .buddy-list-title{font-size:16px}
-  .buddy-sidebar footer{height:calc(64px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px)}
-  .buddy-sidebar footer button{min-height:44px}
   .buddy-conversation-header{height:64px;min-height:64px;padding:0 8px;gap:6px}
   .buddy-header-status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .buddy-composer-wrap{width:calc(100% - 24px);margin:8px auto calc(20px + env(safe-area-inset-bottom,0px))}
@@ -115,7 +108,6 @@
   .buddy-sheet .buddy-button,.buddy-dialog .buddy-button{min-height:44px}
   .buddy-sheet .buddy-form input,.buddy-dialog .buddy-form input,.buddy-form textarea{font-size:16px}
   .buddy-avatar-options button{width:36px;height:44px}
-  .buddy-global-settings{padding:60px 12px 24px}
 }
 
 .buddy-overlay{position:fixed;inset:0;z-index:60;background:var(--color-bg)}
@@ -383,10 +375,6 @@
 @media(max-height:760px){.buddy-memory-modal.is-orbit .buddy-memory-modal-close{top:25px}}
 @media(max-width:860px){.buddy-memory-modal.is-orbit .buddy-memory-modal-close{top:14px;right:12px}}
 /* Orbit settings over Buddy: a window-header bar holds the close button; the page fills the rest. */
-.orbit-ui .buddy-global-settings.is-orbit{display:flex;flex-direction:column;padding:0;overflow:hidden;background:var(--o-bg)}
-.buddy-global-bar{height:40px;flex-shrink:0;display:flex;align-items:center;justify-content:flex-end;padding:0 8px;border-bottom:1px solid var(--o-border)}
-.buddy-app.has-mac-controls .buddy-global-bar{height:54px}
-.buddy-global-body{flex:1;min-height:0;display:flex}
 /* Orbit composer look (copied from Tasks/TaskView/composer/orbit-composer.css): gradient hairline frame, green→cyan→violet edge on focus,
    a light circling the edge while the Buddy works, a quiet attach tool, the typing hint and one flat ink orb that morphs between send and stop. */
 @property --buddy-oc-ang{syntax:"<angle>";inherits:false;initial-value:0deg}

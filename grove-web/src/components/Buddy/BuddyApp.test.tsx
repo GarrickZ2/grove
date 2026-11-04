@@ -16,7 +16,6 @@ vi.mock("../../api/buddies", () => ({ listBuddies: vi.fn(), getBuddy: vi.fn(), c
 vi.mock("./BuddyConversation", () => ({ BuddyConversation: ({ buddy }: { buddy: { name: string } }) => <div>Say hi to {buddy.name}</div> }));
 vi.mock("./BuddySidePanel/BuddySidePanel", () => ({ BuddySidePanel: ({ onClose }: { onClose: () => void }) => <aside aria-label="Buddy panel"><button aria-label="Close panel" onClick={onClose}>Close</button></aside> }));
 vi.mock("../../context", () => ({ useConfig: () => ({ config: { acp: { agent_command: "claude-code" } } }) }));
-vi.mock("../Config/SettingsPage", () => ({ SettingsPage: () => <div>Global settings content</div> }));
 vi.mock("../ui/DialogShell", () => ({ DialogShell: ({ children, isOpen }: { children: React.ReactNode; isOpen: boolean }) => isOpen ? <div role="dialog">{children}</div> : null }));
 vi.mock("../../keyboard/useEscapeScope", () => ({ useEscapeScope: () => {} }));
 
@@ -66,11 +65,9 @@ describe("Buddy shell and creation", () => {
     expect(host.textContent).toContain("Say hi to Docs Partner");
   });
 
-  it("opens and closes the reused global settings page", () => {
-    act(() => button("Settings").click());
-    expect(host.textContent).toContain("Global settings content");
-    act(() => button("Close Grove settings").click());
-    expect(host.textContent).not.toContain("Global settings content");
+  it("leaves Grove settings to the main app", () => {
+    expect(host.querySelector('[aria-label="Grove settings"]')).toBeNull();
+    expect([...host.querySelectorAll("button")].some((item) => item.textContent === "Settings")).toBe(false);
   });
   it("labels the return action Grove and reserves native macOS titlebar clearance", async () => {
     const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
@@ -152,10 +149,7 @@ describe("Buddy shell and creation", () => {
     expect(host.querySelector(".buddy-main")?.hasAttribute("data-window-drag-strip")).toBe(false);
     act(() => button("Back to Grove").click());
     expect(exit).toHaveBeenCalledOnce();
-    if (count === 0) {
-      act(() => button("Grove settings").click());
-      expect(host.textContent).toContain("Global settings content");
-    } else {
+    if (count > 0) {
       act(() => button("Open Buddy panel").click());
       expect(host.querySelector('[aria-label="Buddy panel"]')).not.toBeNull();
       if (count === 1) {

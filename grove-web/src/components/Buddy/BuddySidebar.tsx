@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Bot, Mail, MailOpen, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, Trash2, Users } from "lucide-react";
+import { Mail, MailOpen, Pin, PinOff, Plus, Search, SlidersHorizontal, Smile, Trash2, Users } from "lucide-react";
 import type { BuddyListEntry } from "../../api/buddyGroups";
 import { useSortable } from "../../hooks/useSortable";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
@@ -9,14 +9,14 @@ import { BuddyPinTile } from "./BuddyPinTile";
 import { BuddySwipeRow } from "./BuddySwipeRow";
 import { SidebarResizer } from "../Layout/SidebarResizer";
 
-export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, onCreate, onCreateGroup, onGlobalSettings, onBuddySettings, onDelete, onPin, onMarkRead, onMarkUnread, onReorder, phone = false, error, loading = false, onRetry, exit, toggle }: {
+export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, onCreate, onCreateGroup, onBuddySettings, onDelete, onPin, onMarkRead, onMarkUnread, onReorder, phone = false, error, loading = false, onRetry, exit, toggle }: {
   exit?: React.ReactNode; toggle?: React.ReactNode; items: BuddyListEntry[]; unread?: Set<string>; selectedId: string;
   /** The conversation on screen; it is always read, so it can't be marked unread. */
   viewingId: string;
   onSelect: (id: string) => void; onCreate: () => void;
   /** Offered beside New Buddy once there are Buddies to put in a group. */
   onCreateGroup?: () => void;
-  onGlobalSettings: () => void; onBuddySettings: (id: string) => void; onDelete: (id: string) => void;
+  onBuddySettings: (id: string) => void; onDelete: (id: string) => void;
   onPin: (id: string, pinned: boolean) => void; onMarkRead: (id: string) => void; onMarkUnread: (id: string) => void;
   onReorder: (ids: string[]) => void; phone?: boolean; error?: string | null; loading?: boolean; onRetry?: () => void;
 }) {
@@ -93,8 +93,7 @@ export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, o
       </>}
       {!(searching ? matches.length : items.length) && <p className="buddy-muted">{loading ? "Loading Buddies…" : searching ? "No matching Buddies" : "Create your first Buddy"}</p>}
     </div>
-    <footer className="orbit-footer"><button className="orbit-row orbit-nav-row" type="button" onClick={onGlobalSettings}><Settings size={18} />Settings</button></footer>
     <ContextMenu items={menu ? menuItems(menu.id) : []} position={menu ? { x: menu.x, y: menu.y } : null} onClose={() => setMenu(null)} />
-    <ContextMenu items={[{ id: "buddy", label: "New Buddy", icon: Bot, onClick: onCreate }, { id: "group", label: "New Group", icon: Users, onClick: () => onCreateGroup?.() }]} position={newMenu} onClose={() => setNewMenu(null)} />
+    <ContextMenu items={[{ id: "buddy", label: "New Buddy", icon: Smile, onClick: onCreate }, { id: "group", label: "New Group", icon: Users, onClick: () => onCreateGroup?.() }]} position={newMenu} onClose={() => setNewMenu(null)} />
   </aside>;
 }
