@@ -42,6 +42,10 @@ pub enum RadioEvent {
         count: usize,
     },
     GroupChanged,
+    /// A Buddy group's messages, members or details changed.
+    BuddyGroupChanged {
+        group_id: String,
+    },
     /// Installed channels, registry metadata, or custom Agent configuration changed.
     AgentsChanged,
     ThemeChanged {
@@ -212,6 +216,8 @@ pub enum TurnEvent {
     Completed {
         stop_reason: String,
         message: String,
+        /// A Buddy chose to keep this turn from the user.
+        quiet: bool,
     },
     Failed {
         message: String,

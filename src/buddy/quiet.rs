@@ -3,12 +3,20 @@
 //! interrupted by it. People always get an answer, and so does bad news.
 use crate::acp::AcpUpdate;
 use crate::error::{GroveError, Result};
-use crate::storage::{buddies::Buddy, chat_history, tasks};
+use crate::storage::{buddies::Buddy, chat_history};
 use serde_json::Value;
 
 /// Whether a turn started by this prompt may stay quiet.
 fn may_stay_quiet(sender: Option<&str>, text: &str) -> Result<()> {
-    if !sender.is_some_and(|s| s.starts_with("buddy:") || s.starts_with("automation:")) {
+    if sender.is_some_and(|s| s.starts_with("group:") && s.ends_with(":must")) {
+        return Err(GroveError::invalid_data(
+            "The user is asking you directly: answer them.",
+        ));
+    }
+    let woken_by_others = sender.is_some_and(|s| {
+        s.starts_with("buddy:") || s.starts_with("automation:") || s.starts_with("group:")
+    });
+    if !woken_by_others {
         return Err(GroveError::invalid_data(
             "The user is talking to you: answer them.",
         ));
@@ -32,14 +40,15 @@ pub fn stay_quiet(buddy: &Buddy, session: &str, reason: &str) -> Result<()> {
     if reason.trim().is_empty() {
         return Err(GroveError::invalid_data("reason is required"));
     }
-    let history = chat_history::load_history(&buddy.project_hash, tasks::LOCAL_TASK_ID, session);
+    let task = super::group::session_task(session);
+    let history = chat_history::load_history(&buddy.project_hash, &task, session);
     let started_by = history.iter().rev().find_map(|update| match update {
         AcpUpdate::UserMessage { text, sender, .. } => Some((sender.as_deref(), text.as_str())),
         _ => None,
     });
     let (sender, text) = started_by.unwrap_or((None, ""));
     may_stay_quiet(sender, text)?;
-    let key = format!("{}:{}:{session}", buddy.project_hash, tasks::LOCAL_TASK_ID);
+    let key = format!("{}:{task}:{session}", buddy.project_hash);
     let handle = crate::acp::get_session_handle(&key)
         .ok_or_else(|| GroveError::not_found("Buddy runtime is no longer active"))?;
     handle.mark_quiet_turn(reason.trim().to_owned());
@@ -99,6 +108,8 @@ Follow-up"#
         assert!(may_stay_quiet(Some("buddy:a"), &prompt("waiting")).is_err());
         assert!(may_stay_quiet(Some("buddy:a"), &prompt("done")).is_ok());
         assert!(may_stay_quiet(Some("automation:r"), "check").is_ok());
+        assert!(may_stay_quiet(Some("group:g:open"), "hi").is_ok());
+        assert!(may_stay_quiet(Some("group:g:must"), "hi").is_err());
     }
 
     #[test]

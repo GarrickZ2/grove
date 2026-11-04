@@ -8870,6 +8870,7 @@ impl AcpSessionHandle {
                     TurnEvent::Completed {
                         stop_reason: stop_reason.clone(),
                         message: self.last_turn_reply.lock().unwrap().trim().to_owned(),
+                        quiet: self.quiet_turn.load(std::sync::atomic::Ordering::Relaxed),
                     },
                     true,
                 )

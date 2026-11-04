@@ -56,7 +56,8 @@ describe("Buddy shell and creation", () => {
   });
 
   it("creates a Buddy with the global default Agent and chosen avatar", async () => {
-    await act(async () => button("Create Buddy").click());
+    await act(async () => button("New").click());
+    await act(async () => menuItem("New Buddy").click());
     const name = host.querySelector<HTMLFormElement>('form[aria-label="Create Buddy"]')!.querySelector<HTMLInputElement>("input")!;
     input(name, "Docs Partner");
     act(() => button("drop avatar").click());

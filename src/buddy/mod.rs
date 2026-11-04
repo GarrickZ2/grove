@@ -12,6 +12,7 @@ pub mod attachments;
 pub mod chat;
 pub mod configuration;
 pub mod delegations;
+pub mod group;
 mod instruction;
 pub mod preview;
 pub mod quiet;
@@ -343,8 +344,28 @@ pub(crate) fn configure_start(config: &mut crate::acp::AcpStartConfig) -> Result
             return Err(GroveError::invalid_data("Buddy Segment scope mismatch"));
         }
         config.mcp_server_policy = crate::acp::McpServerPolicy::Buddy;
+    } else if let Some(member) = crate::storage::buddy_groups::member_by_session(&conn, chat)? {
+        let buddy = db::get(&conn, &member.buddy_id)?
+            .ok_or_else(|| GroveError::storage("Missing Buddy"))?;
+        if config.project_key != buddy.project_hash || config.task_id != member.task_id {
+            return Err(GroveError::invalid_data("Buddy group scope mismatch"));
+        }
+        config.mcp_server_policy = crate::acp::McpServerPolicy::Buddy;
     }
     Ok(())
+}
+
+/// Name, role and what the Buddy looks after, as its bootstrap states them.
+fn push_identity(instruction: &mut String, name: &str, buddy: &db::Buddy, duty: Option<&str>) {
+    instruction.push_str(&format!("\nYour name is {name}."));
+    let role = duty.unwrap_or("").trim().trim_end_matches(['.', '。']);
+    if !role.is_empty() {
+        instruction.push_str(&format!(" Your role: {role}."));
+    }
+    let description = buddy.description.trim().trim_end_matches(['.', '。']);
+    if !description.is_empty() && description != role {
+        instruction.push_str(&format!(" What you look after: {description}."));
+    }
 }
 
 pub(crate) fn bootstrap(config: &crate::acp::AcpStartConfig) -> String {
@@ -355,20 +376,12 @@ pub(crate) fn bootstrap(config: &crate::acp::AcpStartConfig) -> String {
             let buddy = { db::get(&database::connection(), &segment.buddy_id) };
             if let Ok(Some(buddy)) = buddy {
                 if let Ok(Some(persona)) = custom_agent::get(&buddy.custom_agent_id) {
-                    instruction.push_str(&format!("\nYour name is {}.", persona.name));
-                    let role = persona
-                        .duty
-                        .as_deref()
-                        .unwrap_or("")
-                        .trim()
-                        .trim_end_matches(['.', '。']);
-                    if !role.is_empty() {
-                        instruction.push_str(&format!(" Your role: {role}."));
-                    }
-                    let description = buddy.description.trim().trim_end_matches(['.', '。']);
-                    if !description.is_empty() && description != role {
-                        instruction.push_str(&format!(" What you look after: {description}."));
-                    }
+                    push_identity(
+                        &mut instruction,
+                        &persona.name,
+                        &buddy,
+                        persona.duty.as_deref(),
+                    );
                     instruction.push_str(&format!(
                         "\nReference IDs for tool calls only; never mention them in conversation:\n{}\n",
                         serde_json::json!({
@@ -416,6 +429,28 @@ pub(crate) fn bootstrap(config: &crate::acp::AcpStartConfig) -> String {
                     }
                 }
             }
+        } else if let Ok(Some(member)) = group::member_of(chat) {
+            if let Ok(buddy) = get(&member.buddy_id) {
+                if let Ok(Some(persona)) = custom_agent::get(&buddy.custom_agent_id) {
+                    push_identity(
+                        &mut instruction,
+                        &persona.name,
+                        &buddy,
+                        persona.duty.as_deref(),
+                    );
+                    instruction.push_str(&format!(
+                        "\nReference IDs for tool calls only; never mention them in conversation:\n{}\n",
+                        serde_json::json!({
+                            "buddy_id": buddy.id,
+                            "project_id": buddy.project_hash,
+                            "session_id": chat,
+                            "group_id": member.group_id,
+                            "agent": member.agent,
+                        })
+                    ));
+                }
+            }
+            instruction.push_str(&group::bootstrap(&member));
         }
     }
     if let Some(persona) = &config.persona_injection {

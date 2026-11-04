@@ -557,6 +557,40 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS ix_buddy_delegations_buddy
             ON buddy_delegations(buddy_id, updated_at DESC);
 
+        CREATE TABLE IF NOT EXISTS buddy_groups (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            sort_position INTEGER,
+            pinned_at TEXT,
+            archived_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS buddy_group_members (
+            group_id TEXT NOT NULL REFERENCES buddy_groups(id) ON DELETE CASCADE,
+            buddy_id TEXT NOT NULL REFERENCES buddies(id) ON DELETE CASCADE,
+            task_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            agent TEXT NOT NULL,
+            seen_seq INTEGER NOT NULL,
+            pending_wake TEXT,
+            left_at TEXT,
+            PRIMARY KEY (group_id, buddy_id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_buddy_group_members_session
+            ON buddy_group_members(session_id);
+        CREATE TABLE IF NOT EXISTS buddy_group_messages (
+            group_id TEXT NOT NULL REFERENCES buddy_groups(id) ON DELETE CASCADE,
+            seq INTEGER NOT NULL,
+            sender_kind TEXT NOT NULL,
+            sender_id TEXT,
+            text TEXT NOT NULL,
+            mentions TEXT NOT NULL DEFAULT '[]',
+            attachments TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (group_id, seq)
+        );
+
         CREATE TRIGGER IF NOT EXISTS buddy_ended_session_update
         BEFORE UPDATE ON session
         WHEN EXISTS(SELECT 1 FROM buddy_segments WHERE session_id = OLD.session_id AND ended_at IS NOT NULL)

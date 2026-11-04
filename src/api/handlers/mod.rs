@@ -45,3 +45,4 @@ pub mod walkie_talkie;
 pub mod buddy_mcp;
 
 pub mod buddies;
+pub mod buddy_groups;

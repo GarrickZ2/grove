@@ -44,10 +44,17 @@ pub(crate) fn caller(parts: &Parts) -> Result<(crate::storage::buddies::Buddy, S
         .ok_or_else(|| McpError::invalid_request("Invalid Buddy token", None))?;
     let conn = crate::storage::database::connection();
     crate::storage::buddies::ensure_session_writable_on(&conn, &session).map_err(internal)?;
-    let segment = crate::storage::buddies::get_segment(&conn, &session)
-        .map_err(internal)?
-        .ok_or_else(|| McpError::invalid_request("Not a Buddy Segment", None))?;
-    let buddy = crate::storage::buddies::get(&conn, &segment.buddy_id)
+    let segment = crate::storage::buddies::get_segment(&conn, &session).map_err(internal)?;
+    let buddy_id = match segment {
+        Some(segment) => segment.buddy_id,
+        None => {
+            crate::storage::buddy_groups::member_by_session(&conn, &session)
+                .map_err(internal)?
+                .ok_or_else(|| McpError::invalid_request("Not a Buddy Segment", None))?
+                .buddy_id
+        }
+    };
+    let buddy = crate::storage::buddies::get(&conn, &buddy_id)
         .map_err(internal)?
         .ok_or_else(|| McpError::invalid_request("Buddy not found", None))?;
     Ok((buddy, session))
@@ -256,7 +263,7 @@ impl FilesInput {
             files.extend(
                 crate::buddy::attachments::latest_from_user(
                     &buddy.project_hash,
-                    crate::storage::tasks::LOCAL_TASK_ID,
+                    &crate::buddy::group::session_task(session),
                     session,
                 )
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
@@ -528,7 +535,7 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "stay_quiet",
-        description = "Don't bother the user with this turn: nothing you say in it is shown to them, and they get no notification. Use it when a Routine, another Buddy or a finished Session woke you and the user has nothing to learn or decide. You keep working normally, so save anything worth remembering. Refused when the user sent the message, or when a Session failed or is waiting."
+        description = "Don't bother the user with this turn: nothing you say in it is shown to them, and they get no notification. Use it when a Routine, another Buddy or a finished Session woke you and the user has nothing to learn or decide. In a group, use it when a message wasn't really for you: nothing goes to the group. You keep working normally, so save anything worth remembering. Refused when the user sent the message or named you in a group, or when a Session failed or is waiting."
     )]
     async fn stay_quiet(
         &self,
@@ -538,6 +545,18 @@ impl BuddyMcpService {
         let (buddy, session) = caller(&parts)?;
         crate::buddy::quiet::stay_quiet(&buddy, &session, &input.reason).map_err(invalid)?;
         success(serde_json::json!({"quiet":true}))
+    }
+    #[tool(
+        name = "read_group",
+        description = "Who is in a group you belong to, what each of them does and whether they are working, plus its messages newest last. Page back with before_seq. Outside a group, leave group empty to list your groups."
+    )]
+    async fn read_group(
+        &self,
+        Parameters(input): Parameters<crate::buddy::group::ReadGroupInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        let (buddy, session) = caller(&parts)?;
+        success(crate::buddy::group::read(&buddy, &session, input).map_err(invalid)?)
     }
     #[tool(
         name = "manage_queue",

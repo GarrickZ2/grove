@@ -8,7 +8,7 @@ import { prepareFileAttachment, type Attachment } from "../components/Tasks/Task
 import { sentPops } from "../components/Tasks/TaskView/conversation/sentPop";
 import { createClientMessageId } from "../utils/clientMessageId";
 
-function fileData(file: File): Promise<string> {
+export function fileData(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(new Error("Could not read attachment")); reader.readAsDataURL(file);
   });
@@ -18,7 +18,9 @@ function inlineAllowed(type: Attachment["type"], caps: PromptCapabilities | null
   if (type === "resource") return false;
   return !caps || caps[type];
 }
-export function useBuddyComposer(buddy: Buddy, onSent: () => void, caps?: PromptCapabilities | null) {
+/** What sending needs to know about a conversation. */
+export type ComposerTarget = Pick<Buddy, "id" | "name" | "status" | "project_hash" | "local_task_id" | "active_session_id">;
+export function useBuddyComposer(buddy: ComposerTarget, onSent: () => void, caps?: PromptCapabilities | null) {
   const socket = useSyncExternalStore(subscribeChatSockets, () => getChatSocket(buddy.project_hash, buddy.local_task_id, buddy.active_session_id));
   const [sending, setSending] = useState(false);
   const inFlight = useRef(false);

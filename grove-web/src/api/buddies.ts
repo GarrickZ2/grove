@@ -28,6 +28,7 @@ export interface BuddySummary {
   pinned: boolean;
   /** What the Buddy is for, in the user's words; empty when unset. */
   role: string;
+  sort_position?: number | null;
 }
 
 export interface BuddySegment {

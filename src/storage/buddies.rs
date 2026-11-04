@@ -300,11 +300,15 @@ pub fn reorder(conn: &Connection, ids: &[String]) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     let now = Utc::now().to_rfc3339();
     for (position, id) in ids.iter().enumerate() {
-        if tx.execute(
+        // The sidebar orders Buddies and groups as one list.
+        let changed = tx.execute(
             "UPDATE buddies SET sort_position=?2,updated_at=?3 WHERE id=?1",
             params![id, position as i64, now],
-        )? == 0
-        {
+        )? + tx.execute(
+            "UPDATE buddy_groups SET sort_position=?2,updated_at=?3 WHERE id=?1",
+            params![id, position as i64, now],
+        )?;
+        if changed == 0 {
             return Err(GroveError::not_found("Buddy not found"));
         }
     }

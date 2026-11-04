@@ -1,10 +1,10 @@
 import { useCallback, useLayoutEffect, useRef, useState, type ClipboardEvent } from "react";
 import { ArrowUp, File as FileIcon, Loader2, Paperclip, Plus, Square, X } from "lucide-react";
-import type { Buddy, BuddySummary } from "../../api/buddies";
+import type { BuddySummary } from "../../api/buddies";
 import { BuddyAvatar } from "./BuddyAvatar";
-import { mentionAtCaret, mentionCandidates, withMentions } from "./buddyMentions";
+import { EVERYONE_ID, mentionAtCaret, mentionCandidates, withMentions } from "./buddyMentions";
 import type { PromptCapabilities } from "../../api/buddySessionConnection";
-import { useBuddyComposer } from "../../hooks/useBuddyComposer";
+import { useBuddyComposer, type ComposerTarget } from "../../hooks/useBuddyComposer";
 import { errorMessage } from "../../utils/errorMessage";
 import { readBuddyPreference, writeBuddyPreference } from "./buddyStorage";
 import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
@@ -34,9 +34,11 @@ function ImageThumb({ file }: { file: File }) {
   return <img ref={attach} alt="" className="buddy-attachment-thumb" />;
 }
 
-export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, mentionable = [] }: { buddy: Buddy; onSent: () => void; initialText?: string; promptCaps?: PromptCapabilities | null;
+export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, mentionable = [], transport }: { buddy: ComposerTarget; onSent: () => void; initialText?: string; promptCaps?: PromptCapabilities | null;
   /** Other Buddies the user can @-mention; the message then tells this Buddy who they are. */
-  mentionable?: BuddySummary[] }) {
+  mentionable?: BuddySummary[];
+  /** Sends somewhere other than the Buddy's Session; the text goes as typed. */
+  transport?: ReturnType<typeof useBuddyComposer> }) {
   const draftKey = `draft-${buddy.id}-${buddy.active_session_id}`;
   const [text, setText] = useState(() => initialText || readBuddyPreference(draftKey));
   const [files, setFiles] = useState<File[]>([]);
@@ -59,7 +61,8 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, men
     observer.observe(element);
     return () => observer.disconnect();
   }, [text, orbit]);
-  const { send, stop, sending, connected } = useBuddyComposer(buddy, onSent, promptCaps);
+  const session = useBuddyComposer(buddy, onSent, promptCaps);
+  const { send, stop, sending, connected } = transport ?? session;
   const addFiles = (added: File[]) => { if (added.length) setFiles((current) => [...current, ...added]); };
   const paste = (event: ClipboardEvent) => {
     const pasted = pastedFiles(event);
@@ -101,7 +104,7 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, men
     setError(null);
     // Orbit: the typed text leaves the box while the send goes out (visual only).
     const restore = orbit ? playTextareaSendOut(input.current) : () => {};
-    try { await send(withMentions(text.trim(), mentionable), files); changeText(""); setFiles([]); setMention(null); }
+    try { await send(transport ? text.trim() : withMentions(text.trim(), mentionable), files); changeText(""); setFiles([]); setMention(null); }
     catch (reason) { setError(errorMessage(reason)); }
     finally { restore(); }
   };
@@ -117,7 +120,7 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, men
       const active = index === Math.min(mention!.index, candidates.length - 1);
       return <li key={candidate.id} role="option" aria-selected={active} className={active ? "is-active" : undefined}
         onMouseDown={(event) => { event.preventDefault(); pick(candidate); }} onMouseEnter={() => setMention((current) => current && { ...current, index })}>
-        <BuddyAvatar id={candidate.id} avatar={candidate.avatar} size={22} /><span className="buddy-mention-name">{candidate.name}</span>{candidate.role && <span className="buddy-mention-role">{candidate.role}</span>}
+        {candidate.id === EVERYONE_ID ? <span className="buddy-mention-everyone" aria-hidden="true">@</span> : <BuddyAvatar id={candidate.id} avatar={candidate.avatar} size={22} />}<span className="buddy-mention-name">{candidate.name}</span>{candidate.role && <span className="buddy-mention-role">{candidate.role}</span>}
       </li>;
     })}</ul>}
     <form className={orbit ? `buddy-composer is-orbit${buddy.status === "working" ? " is-running" : ""}` : "buddy-composer"} aria-label={`Message ${buddy.name}`} onSubmit={(event) => { event.preventDefault(); void submit(); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!sending) addFiles(Array.from(event.dataTransfer.files)); }}>

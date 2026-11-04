@@ -96,7 +96,8 @@ fn hops(text: &str) -> impl Iterator<Item = u64> + '_ {
 /// Buddy message that started this turn, or 1 when the user (or anything
 /// else) did.
 fn next_hop(caller: &Buddy, session: &str) -> u64 {
-    let history = chat_history::load_history(&caller.project_hash, tasks::LOCAL_TASK_ID, session);
+    let task = super::group::session_task(session);
+    let history = chat_history::load_history(&caller.project_hash, &task, session);
     let started_by = history.iter().rev().find_map(|update| match update {
         crate::acp::AcpUpdate::UserMessage { text, .. } => Some(text.as_str()),
         _ => None,

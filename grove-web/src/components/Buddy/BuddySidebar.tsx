@@ -1,18 +1,21 @@
 import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Mail, MailOpen, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, Trash2 } from "lucide-react";
-import type { BuddySummary } from "../../api/buddies";
+import { Bot, Mail, MailOpen, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, Trash2, Users } from "lucide-react";
+import type { BuddyListEntry } from "../../api/buddyGroups";
 import { useSortable } from "../../hooks/useSortable";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import { BuddyListItem } from "./BuddyListItem";
 import { BuddyPinTile } from "./BuddyPinTile";
 import { BuddySwipeRow } from "./BuddySwipeRow";
+import { SidebarResizer } from "../Layout/SidebarResizer";
 
-export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, onCreate, onGlobalSettings, onBuddySettings, onDelete, onPin, onMarkRead, onMarkUnread, onReorder, phone = false, error, loading = false, onRetry, exit, toggle }: {
-  exit?: React.ReactNode; toggle?: React.ReactNode; items: BuddySummary[]; unread?: Set<string>; selectedId: string;
+export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, onCreate, onCreateGroup, onGlobalSettings, onBuddySettings, onDelete, onPin, onMarkRead, onMarkUnread, onReorder, phone = false, error, loading = false, onRetry, exit, toggle }: {
+  exit?: React.ReactNode; toggle?: React.ReactNode; items: BuddyListEntry[]; unread?: Set<string>; selectedId: string;
   /** The conversation on screen; it is always read, so it can't be marked unread. */
   viewingId: string;
   onSelect: (id: string) => void; onCreate: () => void;
+  /** Offered beside New Buddy once there are Buddies to put in a group. */
+  onCreateGroup?: () => void;
   onGlobalSettings: () => void; onBuddySettings: (id: string) => void; onDelete: (id: string) => void;
   onPin: (id: string, pinned: boolean) => void; onMarkRead: (id: string) => void; onMarkUnread: (id: string) => void;
   onReorder: (ids: string[]) => void; phone?: boolean; error?: string | null; loading?: boolean; onRetry?: () => void;
@@ -20,6 +23,7 @@ export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, o
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null);
   const [swipeOpen, setSwipeOpen] = useState<string | null>(null);
   const reduceMotion = useReducedMotion();
   const byId = new Map(items.map((item) => [item.id, item]));
@@ -44,14 +48,14 @@ export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, o
     if (isUnread(id)) items.push({ id: "read", label: "Mark as read", icon: MailOpen, onClick: () => onMarkRead(id) });
     else if (id !== viewingId) items.push({ id: "unread", label: "Mark as unread", icon: Mail, onClick: () => onMarkUnread(id) });
     items.push(
-      { id: "settings", label: "Buddy settings", icon: SlidersHorizontal, onClick: () => onBuddySettings(id) },
+      { id: "settings", label: buddy.group ? "Group settings" : "Buddy settings", icon: SlidersHorizontal, onClick: () => onBuddySettings(id) },
       { id: "separator", label: "", divider: true, onClick: () => {} },
-      { id: "delete", label: "Delete…", icon: Trash2, variant: "danger", onClick: () => onDelete(id) },
+      { id: "delete", label: buddy.group ? "Disband…" : "Delete…", icon: Trash2, variant: "danger", onClick: () => onDelete(id) },
     );
     return items;
   };
 
-  const row = (buddy: BuddySummary, sortable?: ReturnType<typeof list.itemProps>) => {
+  const row = (buddy: BuddyListEntry, sortable?: ReturnType<typeof list.itemProps>) => {
     const item = <BuddyListItem buddy={buddy} selected={buddy.id === selectedId} unread={isUnread(buddy.id)} avatarSize={phone ? 44 : 36}
       onSelect={() => onSelect(buddy.id)} onMenu={(at) => openMenu(buddy.id, at)} sortable={sortable} />;
     if (!phone) return item;
@@ -62,8 +66,9 @@ export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, o
   };
 
   return <aside className="buddy-sidebar" aria-label="Buddies">
+    {toggle && <SidebarResizer />}
     <div className="buddy-sidebar-top" data-tauri-drag-region="deep" data-window-drag-strip>{exit}{toggle}</div>
-    <div className="buddy-sidebar-heading"><h1>Buddies</h1>{items.length > 8 && <button type="button" className="orbit-icon-button" aria-label="Search Buddies" aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setQuery(""); }}><Search size={16} /></button>}<button type="button" className="buddy-icon-button" aria-label="Create Buddy" onClick={onCreate}><Plus /></button></div>
+    <div className="buddy-sidebar-heading"><h1>Buddies</h1>{items.length > 8 && <button type="button" className="orbit-icon-button" aria-label="Search Buddies" aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setQuery(""); }}><Search size={16} /></button>}<button type="button" className="buddy-icon-button" aria-label={onCreateGroup ? "New" : "Create Buddy"} aria-haspopup={onCreateGroup ? "menu" : undefined} aria-expanded={onCreateGroup ? !!newMenu : undefined} onClick={(event) => { if (!onCreateGroup) { onCreate(); return; } const rect = event.currentTarget.getBoundingClientRect(); setNewMenu({ x: rect.right - 176, y: rect.bottom + 6 }); }}><Plus /></button></div>
     {searchOpen && <label className="buddy-search"><Search size={15} /><input aria-label="Search Buddies" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} /></label>}
     {error && <p role="alert">{error}<button type="button" className="buddy-button" onClick={onRetry}>Retry</button></p>}
     <div className="buddy-list">
@@ -90,5 +95,6 @@ export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, o
     </div>
     <footer className="orbit-footer"><button className="orbit-row orbit-nav-row" type="button" onClick={onGlobalSettings}><Settings size={18} />Settings</button></footer>
     <ContextMenu items={menu ? menuItems(menu.id) : []} position={menu ? { x: menu.x, y: menu.y } : null} onClose={() => setMenu(null)} />
+    <ContextMenu items={[{ id: "buddy", label: "New Buddy", icon: Bot, onClick: onCreate }, { id: "group", label: "New Group", icon: Users, onClick: () => onCreateGroup?.() }]} position={newMenu} onClose={() => setNewMenu(null)} />
   </aside>;
 }

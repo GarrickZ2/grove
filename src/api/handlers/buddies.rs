@@ -12,8 +12,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-type ApiError = (StatusCode, Json<Value>);
-fn error(error: GroveError) -> ApiError {
+pub(super) type ApiError = (StatusCode, Json<Value>);
+pub(super) fn error(error: GroveError) -> ApiError {
     let status = match &error {
         GroveError::StorageTagged {
             tag: "buddy_busy", ..
@@ -120,6 +120,7 @@ pub async fn archive(
     if query.pause_routines {
         buddy::routines::pause_all(&buddy).map_err(error)?;
     }
+    buddy::group::leave_all(&id).await.map_err(error)?;
     db::archive(&database::connection(), &id).map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
 }

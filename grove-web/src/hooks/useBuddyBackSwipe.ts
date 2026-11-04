@@ -1,8 +1,11 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 /** Like Orbit's drawer gesture: preserve vertical scrolling, editable fields
  * and horizontal scrollers. A phone conversation returns to the Buddy list. */
 export function useBuddyBackSwipe({ enabled, pageRef, onBack }: { enabled: boolean; pageRef: RefObject<HTMLElement | null>; onBack: () => void }) {
+  // Read at the end of the swipe, so a re-render mid-gesture doesn't restart it.
+  const latest = useRef(onBack);
+  useEffect(() => { latest.current = onBack; }, [onBack]);
   useEffect(() => {
     const page = pageRef.current;
     if (!enabled || !page) return;
@@ -36,7 +39,7 @@ export function useBuddyBackSwipe({ enabled, pageRef, onBack }: { enabled: boole
     const end = (event: TouchEvent) => {
       const elapsed = start ? event.timeStamp - start.time : 0;
       const goBack = dragging && (distance > window.innerWidth * 0.35 || (distance > 40 && elapsed > 0 && distance / elapsed > 0.45));
-      reset(); if (goBack) onBack();
+      reset(); if (goBack) latest.current();
     };
     page.addEventListener("touchstart", begin, { passive: true });
     page.addEventListener("touchmove", move, { passive: false });
@@ -46,5 +49,5 @@ export function useBuddyBackSwipe({ enabled, pageRef, onBack }: { enabled: boole
       page.removeEventListener("touchstart", begin); page.removeEventListener("touchmove", move);
       page.removeEventListener("touchend", end); page.removeEventListener("touchcancel", reset); reset();
     };
-  }, [enabled, pageRef, onBack]);
+  }, [enabled, pageRef]);
 }

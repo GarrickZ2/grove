@@ -432,6 +432,7 @@ pub(crate) fn observe(event: &RadioEvent) -> Vec<Notice> {
                 TurnEvent::Completed {
                     stop_reason,
                     message,
+                    ..
                 } => {
                     entry.pending.remove(&round);
                     if entry.awaiting_form && latest {
@@ -582,7 +583,7 @@ pub(crate) async fn deliver(notice: Notice) -> Result<()> {
     if notice.status == Status::Waiting && d.status != Status::Waiting {
         return Ok(());
     }
-    let (buddy, handle, _activity) = active_handle(&notice.buddy_id).await?;
+    let (buddy, handle, _activity) = reporting_handle(&notice.buddy_id, &d.from_session).await?;
     let _gate = super::lock(&format!("delegation:{}", d.id)).await;
     let mut metadata = json!({"delegation_id":d.id,"target_session":d.target_session,"message_id":notice.message_id,"status":notice.status});
     let mut body = notice.text.clone();
@@ -651,6 +652,30 @@ pub fn start() {
             }
         }
     });
+}
+
+/// Where a follow-up reports: back to the group that started it, otherwise
+/// the Buddy's current Segment.
+async fn reporting_handle(
+    buddy_id: &str,
+    from_session: &str,
+) -> Result<(Buddy, Arc<acp::AcpSessionHandle>, acp::ActivityGuard)> {
+    let buddy = super::get(buddy_id)?;
+    let Some(member) = super::group::followup_session(&buddy, from_session)? else {
+        return active_handle(buddy_id).await;
+    };
+    let (handle, activity) = crate::agent_graph::tools::ensure_target_handle(
+        &buddy.project_hash,
+        &member.task_id,
+        &member.session_id,
+    )
+    .await
+    .map_err(|e| GroveError::storage(e.to_string()))?;
+    handle
+        .wait_until_ready(crate::agent_graph::tools::ACP_SESSION_READY_TIMEOUT)
+        .await
+        .map_err(GroveError::storage)?;
+    Ok((buddy, handle, activity))
 }
 
 pub(crate) async fn active_handle(

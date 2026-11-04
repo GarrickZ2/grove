@@ -134,6 +134,39 @@ pub fn create_api_router() -> Router {
             "/buddies/{id}/delegations/{did}/cancel",
             post(handlers::buddies::cancel),
         )
+        .route(
+            "/buddy-groups",
+            get(handlers::buddy_groups::list).post(handlers::buddy_groups::create),
+        )
+        .route(
+            "/buddy-groups/{id}",
+            get(handlers::buddy_groups::get)
+                .patch(handlers::buddy_groups::update)
+                .delete(handlers::buddy_groups::disband),
+        )
+        .route("/buddy-groups/{id}/pin", put(handlers::buddy_groups::pin))
+        .route(
+            "/buddy-groups/{id}/stop",
+            post(handlers::buddy_groups::stop),
+        )
+        .route(
+            "/buddy-groups/{id}/messages",
+            get(handlers::buddy_groups::messages)
+                .post(handlers::buddy_groups::send)
+                .layer(DefaultBodyLimit::max(128 * 1024 * 1024)),
+        )
+        .route(
+            "/buddy-groups/{id}/members",
+            post(handlers::buddy_groups::add_member),
+        )
+        .route(
+            "/buddy-groups/{id}/members/{buddy_id}",
+            delete(handlers::buddy_groups::remove_member),
+        )
+        .route(
+            "/buddy-groups/{id}/members/{buddy_id}/ask",
+            post(handlers::buddy_groups::ask_again),
+        )
         // Custom Agent (Persona) API
         .route(
             "/custom-agents",
@@ -2020,6 +2053,7 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
     start_automation_runtime();
     crate::connect::start();
     crate::buddy::delegations::start();
+    crate::buddy::group::start();
 
     // Start the in-process agent_graph MCP listener (loopback-only). Failure to
     // bind is non-fatal — the rest of the server still boots; ACP sessions will

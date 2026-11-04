@@ -516,7 +516,10 @@ pub async fn create_project(input: CreateProjectInput) -> Result<Value> {
 pub fn ensure_not_own_segment(buddy: &Buddy, session: &str) -> Result<()> {
     let segment =
         crate::storage::buddies::get_segment(&crate::storage::database::connection(), session)?;
-    if segment.is_some_and(|segment| segment.buddy_id == buddy.id) {
+    let member = super::group::member_of(session)?;
+    if segment.is_some_and(|segment| segment.buddy_id == buddy.id)
+        || member.is_some_and(|member| member.buddy_id == buddy.id)
+    {
         return Err(GroveError::invalid_data("That is your own conversation"));
     }
     Ok(())

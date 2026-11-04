@@ -4,6 +4,9 @@ import { buildGroveMetaTag, parseGroveMetaSegments } from "../../utils/groveMeta
 /** Envelope type carrying the Buddies a message @-mentions. */
 export const BUDDY_MENTIONS = "buddy_mentions";
 
+/** The picker's stand-in for @everyone in a group. */
+export const EVERYONE_ID = "everyone";
+
 export interface MentionedBuddy { id: string; name: string; avatar: string | null; role: string }
 
 /** The `@query` being typed at the caret, if any: where it starts and what follows the @. */

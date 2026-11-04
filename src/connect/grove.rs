@@ -1110,6 +1110,7 @@ pub async fn handle_turn_event(
         TurnEvent::Completed {
             stop_reason,
             message,
+            ..
         } => {
             let matched_routes = routes(&message_ids);
             let stopped = {
