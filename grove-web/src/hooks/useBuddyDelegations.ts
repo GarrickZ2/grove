@@ -7,6 +7,7 @@ import { emptyBuddyTimeline, reduceBuddyEvent, type BuddyEvent, type BuddyTimeli
 import { restoreBuddyHistory } from "../components/Buddy/timeline/buddySegmentHistory";
 import { errorMessage } from "../utils/errorMessage";
 import { useRadioEvents } from "./useRadioEvents";
+import { createClientMessageId } from "../utils/clientMessageId";
 
 export const isOpenDelegation = (delegation: BuddyDelegation) => delegation.status === "running" || delegation.status === "waiting";
 
@@ -77,7 +78,7 @@ export function useDelegationRequests(delegations: BuddyDelegation[]): Record<st
       ...value,
       sendEvent: event => socket().send(JSON.stringify(event)),
       dispatch: event => setStates(previous => previous[delegation.id] ? { ...previous, [delegation.id]: { ...previous[delegation.id], timeline: reduceBuddyEvent(previous[delegation.id].timeline, event) } } : previous),
-      sendText: text => sendSessionInput(socket(), { text, attachments: [], id: crypto.randomUUID(), busy: value.timeline.busy }, new AbortController().signal),
+      sendText: text => sendSessionInput(socket(), { text, attachments: [], id: createClientMessageId(), busy: value.timeline.busy }, new AbortController().signal),
     };
   }
   return result;

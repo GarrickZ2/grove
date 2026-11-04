@@ -6,6 +6,7 @@ import { uploadChatAttachment } from "../api/tasks";
 import type { PromptCapabilities } from "../api/buddySessionConnection";
 import { prepareFileAttachment, type Attachment } from "../components/Tasks/TaskView/chatAttachments";
 import { sentPops } from "../components/Tasks/TaskView/conversation/sentPop";
+import { createClientMessageId } from "../utils/clientMessageId";
 
 function fileData(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -42,7 +43,7 @@ export function useBuddyComposer(buddy: Buddy, onSent: () => void, caps?: Prompt
           attachments.push({ type: "resource_link", uri: saved.uri, name: saved.name, mime_type: saved.mime_type, size: saved.size });
         }
       }
-      const id = crypto.randomUUID();
+      const id = createClientMessageId();
       const busy = buddy.status !== "idle";
       // Orbit pops this message's bubble in when it appears (sentPop).
       sentPops.record(id, { queued: busy });

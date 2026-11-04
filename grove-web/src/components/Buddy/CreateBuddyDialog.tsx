@@ -13,11 +13,12 @@ import { BuddyAgentFields } from "./BuddyAgentFields";
 import { resolveBuddyAvatar } from "./buddyAvatarConfig";
 import { configForAgent } from "../../utils/agentConfig";
 import { resolveAgentIcon } from "../../utils/agentIcon";
+import { createClientMessageId } from "../../utils/clientMessageId";
 
 export function CreateBuddyDialog({ onClose, onCreate, template }: { template?: BuddyTemplate; onClose: () => void; onCreate: (input: CreateBuddyInput) => Promise<Buddy> }) {
   const { config: global } = useConfig();
   const { agents, error: agentError, loading: agentsLoading, retry: retryAgents } = useBuddyAgents();
-  const [avatar, setAvatar] = useState(() => template?.avatar ?? resolveBuddyAvatar(crypto.randomUUID()));
+  const [avatar, setAvatar] = useState(() => template?.avatar ?? resolveBuddyAvatar(createClientMessageId()));
   const [name, setName] = useState(template?.name ?? "");
   const [role, setRole] = useState(template?.role ?? "");
   const [instructions, setInstructions] = useState(template?.instructions ?? "");

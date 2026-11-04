@@ -77,3 +77,11 @@ it("interrupts a running turn before sending, and only sends while idle", async 
   await act(async () => harness.send("next", []));
   expect(send).not.toHaveBeenCalled();
 });
+
+it("sends on an HTTP LAN origin, where randomUUID doesn't exist", async () => {
+  vi.stubGlobal("crypto", { getRandomValues: (bytes: Uint8Array) => bytes });
+  vi.mocked(getChatSocket).mockReturnValue({ readyState: WebSocket.OPEN, send: vi.fn() } as unknown as WebSocket);
+  act(() => root.render(<Harness />));
+  await act(async () => composer.send("are the repos clean", []));
+  expect(sendSessionInput).toHaveBeenCalledOnce();
+});

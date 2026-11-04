@@ -2,6 +2,7 @@ import { Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "../ui";
 import { mcpIconButtonClass, mcpInputClass } from "./McpConnectionViews";
 import type { Variable } from "./mcpSetupTypes";
+import { createClientMessageId } from "../../utils/clientMessageId";
 
 export function VariableDefinitions({
   variables,
@@ -29,7 +30,7 @@ export function VariableDefinitions({
             onChange([
               ...variables,
               {
-                id: crypto.randomUUID(),
+                id: createClientMessageId(),
                 name: "",
                 required: true,
                 secret: true,
