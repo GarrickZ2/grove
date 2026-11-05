@@ -110,9 +110,9 @@ pub fn send(id: &str, frame: Frame) -> bool {
         .is_some_and(|session| session.frames.send(frame).is_ok())
 }
 
-/// Machines before 0.15 ignore calls.
+/// Machines before 0.14.3 ignore calls.
 fn answers_no_calls(version: &str) -> bool {
-    semver::Version::parse(version).is_ok_and(|version| version < semver::Version::new(0, 15, 0))
+    semver::Version::parse(version).is_ok_and(|version| version < semver::Version::new(0, 14, 3))
 }
 
 /// Ask a machine for something and wait for its answer.
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn older_machines_are_known_not_to_answer() {
         assert!(answers_no_calls("0.14.2"));
-        assert!(!answers_no_calls("0.15.0"));
+        assert!(!answers_no_calls("0.14.3"));
         assert!(!answers_no_calls("1.0.0"));
         assert!(!answers_no_calls("unknown"));
     }
