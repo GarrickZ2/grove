@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# In a linked worktree git hands hooks GIT_DIR and GIT_INDEX_FILE. cargo test
+# would inherit them, and the tests' own `git init` and `git commit` would run
+# against this repository instead of their temp dirs.
+# shellcheck disable=SC2046
+unset $(git rev-parse --local-env-vars)
+
 echo "=== Pre-commit checks ==="
 
 # 1. Format check
