@@ -614,6 +614,12 @@ pub struct WebConfig {
     /// end, "interrupt" stops it and sends right away.
     #[serde(default)]
     pub send_mode: Option<String>,
+    /// Where the Orbit terminal docks: "bottom" (default) or "left".
+    #[serde(default)]
+    pub terminal_position: Option<String>,
+    /// Show the machine switcher in the sidebar. Off unless turned on.
+    #[serde(default)]
+    pub multi_machine: bool,
 }
 
 /// 自定义布局配置

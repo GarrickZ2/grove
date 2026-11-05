@@ -7,7 +7,7 @@
  * may rely on absent fields).
  */
 
-import { apiClient } from "./client";
+import { apiClient, requestAt } from "./client";
 import { agentCatalogReader, invalidateAgentCatalog } from "./agentCatalogChanges";
 
 export type InstallMethod = "npx" | "binary" | "uvx" | "external";
@@ -116,6 +116,10 @@ export interface PatchAgentRequest {
 export const listMarketplace = agentCatalogReader(async (): Promise<MarketplaceResponse> => {
   return apiClient.get<MarketplaceResponse>("/api/v1/agents/marketplace");
 });
+
+export async function listInstalledAgentConfigsAt(base: string): Promise<InstalledAgentConfig[]> {
+  return (await requestAt<{ agents: InstalledAgentConfig[] }>(base, "/api/v1/agents/installed")).agents;
+}
 
 export const listInstalledAgentConfigs = agentCatalogReader(async (): Promise<InstalledAgentConfig[]> => {
   const response = await apiClient.get<{ agents: InstalledAgentConfig[] }>(

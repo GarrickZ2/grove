@@ -532,19 +532,8 @@ pub struct MentionOutgoing {
     pub duty: Option<String>,
 }
 
-/// Candidate for replying to a session that is currently waiting on caller.
-#[derive(Debug, Serialize)]
-pub struct MentionPendingReply {
-    pub session_id: String,
-    pub name: String,
-    pub agent: String,
-    pub msg_id: String,
-    pub body_preview: String,
-}
-
 #[derive(Debug, Serialize)]
 pub struct MentionCandidatesResponse {
     pub agents: Vec<MentionAgent>,
     pub outgoing: Vec<MentionOutgoing>,
-    pub pending_replies: Vec<MentionPendingReply>,
 }

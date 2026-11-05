@@ -27,6 +27,7 @@
 //! [`set_listener_port`], and call [`register_token`] / [`unregister_token`]
 //! around each ACP session lifecycle.
 
+use super::session_mcp;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -50,9 +51,9 @@ use serde::{Deserialize, Serialize};
 use crate::agent_graph::ask_form;
 use crate::agent_graph::error::AgentGraphError;
 use crate::agent_graph::tools::{
-    grove_agent_capability, grove_agent_contacts, grove_agent_reply, grove_agent_send,
-    grove_agent_set_title, grove_agent_spawn, CapabilityInput, ContactsInput, ReplyInput,
-    SendInput, SetTitleInput, SpawnInput, ToolContext,
+    grove_agent_capability, grove_agent_contacts, grove_agent_send, grove_agent_set_title,
+    grove_agent_spawn, CapabilityInput, ContactsInput, SendInput, SetTitleInput, SpawnInput,
+    ToolContext,
 };
 use crate::error::GroveError;
 use crate::storage::{config, memory, tasks};
@@ -402,7 +403,7 @@ impl AgentGraphMcpService {
 
     #[tool(
         name = "graph_send",
-        description = "Deliver a message to another Session in your task. Requires a caller→to outgoing edge. The target sees the message as a user prompt wrapped in a `<grove-meta>{...}</grove-meta>` envelope (JSON inside). The envelope's `system-prompt` field carries the human-readable framing (sender name, session id, kind=send, msg_id) and the `message` field carries your raw text. If the target is busy, the message is queued and visible in its pending list; it dequeues automatically when the current turn ends. Single-in-flight: cannot send a second message before the previous one is replied to."
+        description = "Deliver a message to another Session in your task. Requires a caller→to outgoing edge. The target sees the message as a user prompt wrapped in a `<grove-meta>{...}</grove-meta>` envelope (JSON inside). The envelope's `system-prompt` field carries the human-readable framing (sender name, session id, kind=send, msg_id) and the `message` field carries your raw text. If the target is busy, the message waits until its current turn ends; set interrupt to stop that turn so it reads this next, keeping its context (use this to correct something you already sent: it replaces your unanswered message). The target's final response comes back to you automatically as a new message, but only after you end your turn: it cannot reach you while your turn is running, so after sending, finish any other work and end your turn. Never sleep, poll or keep the turn open to wait. Single-in-flight: you cannot message a target again until it has answered and you have read that answer."
     )]
     async fn grove_agent_send_tool(
         &self,
@@ -417,24 +418,8 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
-        name = "graph_reply",
-        description = "Reply to a pending message addressed to you. Consumes the reply ticket. The original sender receives the reply wrapped in a `<grove-meta>{...}</grove-meta>` envelope (JSON), with `system-prompt` describing the reply framing (sender, session id, kind=reply, msg_id) and `message` carrying your raw text. No edge requirement; reply is always permitted on a valid ticket."
-    )]
-    async fn grove_agent_reply_tool(
-        &self,
-        Parameters(input): Parameters<ReplyInput>,
-        Extension(parts): Extension<Parts>,
-    ) -> Result<CallToolResult, McpError> {
-        let cx = caller_context_from_parts(&parts)?;
-        match grove_agent_reply(&cx, input).await {
-            Ok(out) => json_success(&out),
-            Err(e) => Ok(tool_error(e)),
-        }
-    }
-
-    #[tool(
         name = "graph_contacts",
-        description = "Return your own metadata, who you can contact (outgoing edges), pending replies you owe, pending messages awaiting reply from others, and all spawnable targets (base agents, custom servers, personas) via can_spawn[]."
+        description = "Return your own metadata, who you can contact (outgoing edges), messages still awaiting a reply, and all spawnable targets (base agents, custom servers, personas) via can_spawn[]. Replies never show up here: they come as your next message after you end your turn, so do not use this to wait for one."
     )]
     async fn grove_agent_contacts_tool(
         &self,
@@ -444,6 +429,51 @@ impl AgentGraphMcpService {
         let cx = caller_context_from_parts(&parts)?;
         match grove_agent_contacts(&cx, input).await {
             Ok(out) => json_success(&out),
+            Err(e) => Ok(tool_error(e)),
+        }
+    }
+
+    #[tool(
+        name = "read_session",
+        description = "Read a Session you can reach as numbered entries (user and assistant messages; Grove envelopes removed), newest page first. Page with before/after using the returned cursors. include_tools adds one line per tool call and the files touched. Entries list their images and files with paths; the page's newest images are shown to you. history_path is the raw event log for grep when you need detail. status says whether the Session is idle, running or waiting; current_prompt is what it is working on; queue lists the prompts waiting behind it, next to run first. This is not a way to wait for a reply: replies come as your next message after you end your turn."
+    )]
+    async fn read_session(
+        &self,
+        Parameters(input): Parameters<crate::buddy::tools::ReadSessionInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        match caller_context_from_parts(&parts)?.scope() {
+            Ok(scope) => session_mcp::read_session(&scope, input),
+            Err(e) => Ok(tool_error(e)),
+        }
+    }
+
+    #[tool(
+        name = "search_sessions",
+        description = "Find messages containing some words in one Session, or across the Sessions of a Project you can reach. Each match gives the Session and entry index; read around it with read_session (before = index + 1)."
+    )]
+    async fn search_sessions(
+        &self,
+        Parameters(input): Parameters<crate::buddy::tools::SearchSessionsInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        match caller_context_from_parts(&parts)?.scope() {
+            Ok(scope) => session_mcp::search_sessions(&scope, input),
+            Err(e) => Ok(tool_error(e)),
+        }
+    }
+
+    #[tool(
+        name = "manage_queue",
+        description = "Work on a Session's queue, as the user can in the composer: edit or remove a queued prompt by its id from read_session, or send_now to stop the current turn so the next queued prompt runs (with nothing queued, this just stops the turn). The result is the queue afterwards."
+    )]
+    async fn manage_queue(
+        &self,
+        Parameters(input): Parameters<crate::buddy::tools::ManageQueueInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        match caller_context_from_parts(&parts)?.scope() {
+            Ok(scope) => session_mcp::manage_queue(&scope, input).await,
             Err(e) => Ok(tool_error(e)),
         }
     }
@@ -1228,6 +1258,25 @@ pub fn build_router() -> Router {
 mod tests {
     use super::*;
 
+    /// One capability, two scopes: both servers must offer it identically.
+    #[test]
+    fn shared_session_tools_match_the_buddy_server() {
+        let graph = AgentGraphMcpService::new().tool_router.list_all();
+        let buddy = super::super::buddy_mcp::tool_list();
+        for name in ["read_session", "search_sessions", "manage_queue"] {
+            let find = |tools: &[rmcp::model::Tool]| {
+                tools
+                    .iter()
+                    .find(|tool| tool.name == name)
+                    .cloned()
+                    .unwrap_or_else(|| panic!("{name} missing"))
+            };
+            let (graph, buddy) = (find(&graph), find(&buddy));
+            assert_eq!(graph.description, buddy.description, "{name}");
+            assert_eq!(graph.input_schema, buddy.input_schema, "{name}");
+        }
+    }
+
     fn schema_fields(
         schema: &serde_json::Map<String, serde_json::Value>,
     ) -> std::collections::HashSet<String> {
@@ -1529,7 +1578,7 @@ mod tests {
         }
         assert!(names.contains(&"graph_spawn".to_string()));
         assert!(names.contains(&"graph_send".to_string()));
-        assert!(names.contains(&"graph_reply".to_string()));
+        assert!(!names.contains(&"graph_reply".to_string()));
         assert!(names.contains(&"graph_contacts".to_string()));
         assert!(names.contains(&"graph_capability".to_string()));
         assert!(names.contains(&"browser_open".to_string()));
@@ -1543,7 +1592,7 @@ mod tests {
         assert!(names.contains(&"browser_screenshot".to_string()));
         assert!(names.contains(&"set_title".to_string()));
         assert!(names.contains(&"ask_form".to_string()));
-        assert_eq!(names.len(), 22);
+        assert_eq!(names.len(), 24);
     }
 
     #[test]
@@ -1752,7 +1801,9 @@ mod tests {
         for tool in [
             "graph_spawn",
             "graph_send",
-            "graph_reply",
+            "read_session",
+            "search_sessions",
+            "manage_queue",
             "graph_contacts",
             "graph_capability",
             "speak",

@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from '../../api/client';
 import { HTML_FILE_NAVIGATION_MESSAGE } from '../Review/htmlFileNavigation';
-import { getPreviewRenderer } from "../Review/previewRenderers";
+import { getPreviewRenderer, resolveFullRenderer } from "../Review/previewRenderers";
 import {
   FullFilePreview,
 } from "./FullFilePreview";
@@ -16,6 +16,26 @@ import {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("FullFilePreview", () => {
+  it("shows known binaries as an info page, never as text", () => {
+    const html = renderToStaticMarkup(
+      <FullFilePreview fileName="out/dataset.ZIP" content="" fileSize={2048} onDownload={() => {}} onOpenFile={() => {}} />,
+    );
+
+    expect(html).toContain('data-file-preview-renderer="file-info"');
+    expect(html).toContain("dataset.ZIP");
+    expect(html).toContain("ZIP · 2");
+    expect(html).toContain("Download");
+    expect(html).toContain("Open in default app");
+    expect(getPreviewRenderer("out/dataset.zip", "diff")).toBeUndefined();
+  });
+
+  it("falls back to the info page when an unknown file turns out binary", () => {
+    expect(resolveFullRenderer("data.custom", "PK\u0003\u0004\u0000\u0000")?.id).toBe("file-info");
+    expect(resolveFullRenderer("data.custom", "\ufffd\ufffd\ufffd a")?.id).toBe("file-info");
+    expect(resolveFullRenderer("notes.custom", "plain 中文 text")?.id).toBe("source");
+    expect(resolveFullRenderer("report.pdf", "\u0000")?.id).toBe("pdf");
+  });
+
   it("keeps the large-markdown threshold in one shared policy", () => {
     expect(isVirtualizedMarkdownPreview(
       "design.md",

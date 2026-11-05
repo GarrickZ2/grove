@@ -21,7 +21,7 @@ pub(super) fn error(error: GroveError) -> ApiError {
         GroveError::InvalidData(_)
         | GroveError::JsonParse(_)
         | GroveError::StorageTagged {
-            tag: "unknown_base_agent" | "buddy_segment_read_only",
+            tag: "unknown_base_agent" | "buddy_segment_read_only" | crate::machines::LOGIN_REQUIRED,
             ..
         } => StatusCode::BAD_REQUEST,
         GroveError::NotFound(_) => StatusCode::NOT_FOUND,

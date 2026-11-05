@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  listResources, uploadResource, deleteResource,
+  listResources, uploadResourceWithProgress, deleteResource,
   previewResource, resourceDownloadUrl, openResourceFile, revealResourceFile,
   createResourceFolder, moveResource, createResourceLink, updateResourceLink,
   listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir,
@@ -13,6 +13,7 @@ import {
   type FileConflictState,
 } from "../ui";
 import { openExternalUrl } from "../../utils/openExternal";
+import { isAbort, startTransfer } from "../../transfers/store";
 import { DRAG_TYPE, dropContainsDirectory, errorMessage, joinPath } from "./resourceModel";
 
 export interface LinkDraft {
@@ -111,11 +112,25 @@ export function useResourceLibrary(projectId: string | undefined, browseFolder: 
     setFileError(null);
     const pathArg = currentPath || undefined;
     let caught: unknown = null;
+    const transfers = batch.map((file) => startTransfer("upload", file.name, file.size));
+    for (const [index, file] of batch.entries()) {
+      const transfer = transfers[index];
+      try {
+        await uploadResourceWithProgress(projectId, file, pathArg, (fraction) => transfer.progress(fraction * file.size), transfer.signal);
+        transfer.finish();
+      } catch (err) {
+        if (isAbort(err)) {
+          transfer.cancelled();
+          continue;
+        }
+        caught ??= err;
+        transfer.fail(errorMessage(err, "Upload failed"));
+      }
+    }
     try {
-      await uploadResource(projectId, batch, pathArg);
       await loadFiles();
     } catch (err) {
-      caught = err;
+      caught ??= err;
     }
     if (caught !== null) {
       setFileError(errorMessage(caught, "Upload failed"));

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::AgentGraphError;
 use super::inject::{build_injected_prompt, InjectKind};
+use super::replies;
 use crate::acp::{self, AcpSessionHandle, AcpStartConfig, AcpUpdate, QueuedConfig, QueuedMessage};
 use crate::radio::{publish as broadcast_radio_event, RadioEvent};
 use crate::storage::{agent_graph as graph_db, custom_agent, database, tasks, workspace};
@@ -30,6 +31,16 @@ pub struct ToolContext {
 impl ToolContext {
     pub fn new(caller_chat_id: String) -> Self {
         Self { caller_chat_id }
+    }
+
+    /// What this caller may reach through the shared Session tools.
+    pub fn scope(&self) -> AgentGraphResult<crate::session_scope::SessionScope> {
+        let (project, task, chat) = self.caller_context()?;
+        Ok(crate::session_scope::SessionScope::Graph {
+            project,
+            task,
+            chat: chat.id,
+        })
     }
 
     /// 解析 caller 的 (project_key, task_id, ChatSession)，找不到 → CallerUnknown。
@@ -79,23 +90,25 @@ pub struct SendInput {
     /// session before delivery. Use `grove_agent_capability` to discover valid values.
     #[serde(default)]
     pub config: Option<SendConfig>,
-    /// Opt-in reply-reminder interval, in seconds. When set (> 0), Grove arms a
-    /// detached watchdog after this send: each interval, if the ticket is still
-    /// pending and the ally has gone idle (turn ended → likely stalled, errored,
-    /// or finished without calling the reply tool), it re-injects a `Remind`
-    /// nudge to the ally to call the reply tool. Capped at 3 reminders. The
-    /// pending ticket is **never** auto-cleared — a stuck delegation stays
-    /// visible for a human to investigate. Leave unset (the default) for no
-    /// reminders; this is the caller's call so skills can shape the workflow.
+    /// Stop the target's current turn so it gets to this message now instead
+    /// of when that turn ends; it keeps its context. Your own unanswered
+    /// message to this target, if any, is replaced by this one.
     #[serde(default)]
-    pub auto_remind: Option<u64>,
+    pub interrupt: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SendOutput {
     pub msg_id: String,
     pub delivered_at: String,
+    /// What to do next. Tool results are what an Agent reads at the moment it
+    /// decides whether to wait, so the rule is repeated here.
+    pub next: &'static str,
 }
+
+const SEND_NEXT: &str = "Sent. End your turn now unless you have other work to finish: the reply \
+     comes as your next message, and it cannot reach you while this turn is running. Do not \
+     sleep, poll, or keep the turn open to wait.";
 
 pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphResult<SendOutput> {
     let (caller_project, caller_task, caller_chat) = cx.caller_context()?;
@@ -135,6 +148,37 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
         }
     }
 
+    // Backpressure: the previous answer from this target is waiting in the
+    // caller's own queue, unread. Sending more would only stack up work the
+    // caller has not looked at. The queue can hold nothing else from a target
+    // the caller has an edge to, because the graph has no reverse edges.
+    let caller_key = format!("{}:{}:{}", caller_project, caller_task, caller_chat.id);
+    let target_sender = format!("agent:{}", target_chat.id);
+    if acp::get_session_handle(&caller_key).is_some_and(|handle| {
+        handle
+            .get_queue()
+            .iter()
+            .any(|queued| queued.sender.as_deref() == Some(target_sender.as_str()))
+    }) {
+        return Err(AgentGraphError::UnreadReply);
+    }
+
+    // Decided before delivery: delivering may start the very turn we'd stop.
+    let running = input
+        .interrupt
+        .then(|| crate::buddy::tools::running_session(&target_chat.id))
+        .transpose()
+        .map_err(AgentGraphError::from)?
+        .flatten();
+    if input.interrupt {
+        supersede_pending(
+            &caller_project,
+            &caller_task,
+            &caller_chat.id,
+            &target_chat.id,
+        )?;
+    }
+
     // 单线在途 + edge 校验由 insert_pending_message 内部完成（spec §5）
     let msg_id = format!("msg-{}", uuid::Uuid::new_v4());
     {
@@ -164,6 +208,15 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
         body_excerpt: Some(super::pending_body_excerpt(&input.message)),
     });
 
+    // Follow the target before delivery: its final response becomes the reply.
+    replies::watch(
+        &caller_project,
+        &caller_task,
+        &caller_chat.id,
+        &target_chat,
+        &msg_id,
+    );
+
     // 投递：busy → 排队；idle → send_prompt 同步 broadcast UserMessage
     // Config 覆盖（model / mode / thought_level）在 deliver_to_session 内部完成，
     // 确保离线 session 唤醒后也能正确应用。
@@ -180,9 +233,11 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
         &input.message,
         Some(&msg_id),
         input.config.clone(),
+        msg_id.clone(),
     )
     .await;
     if let Err(e) = delivery {
+        replies::unwatch(&target_chat.id, &msg_id);
         {
             let conn = database::connection();
             let _ = graph_db::delete_pending_message(&conn, &msg_id);
@@ -205,154 +260,48 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
         return Err(e);
     }
 
-    // Opt-in reply-reminder watchdog (see `SendInput::auto_remind`). Off unless the
-    // caller passes `auto_remind > 0`, so default behaviour is unchanged and each
-    // agent/skill decides whether a stalled ally should be nudged. The orchestrator
-    // ends its turn after sending and waits for the ally to call the reply tool; if
-    // the ally finishes, errors, or dies without replying, the ticket lingers. This
-    // watchdog re-injects a `Remind` nudge (idle-gated, capped) but — by design —
-    // never clears the ticket: a delegation that goes unanswered stays visible for a
-    // human to investigate.
-    if let Some(interval_secs) = input.auto_remind.filter(|s| *s > 0) {
-        const MAX_REMINDERS: u32 = 3;
-        // Bound the task's lifetime if the ally stays busy (mid-task) forever, so a
-        // permanently-working ally doesn't keep a watchdog task alive indefinitely.
-        const MAX_REARMS: u32 = 5;
-        let project = caller_project.clone();
-        let task = caller_task.clone();
-        let ally_chat_id = target_chat.id.clone();
-        let watch_msg_id = msg_id.clone();
-        // A `Remind` envelope carries the original sender identity + msg_id so the
-        // ally knows this nudges an existing pending request, not a new one.
-        let reminder = build_injected_prompt(
-            &caller_chat.id,
-            &caller_chat.title,
-            &caller_chat.agent,
-            InjectKind::Remind,
-            "",
-            Some(&watch_msg_id),
-        );
-        tokio::spawn(async move {
-            let interval = Duration::from_secs(interval_secs);
-            let mut sent = 0u32;
-            let mut rearms = 0u32;
-            loop {
-                tokio::time::sleep(interval).await;
-                // Ticket gone (replied or chat deleted) → nothing left to nudge.
-                let still_pending = {
-                    let conn = database::connection();
-                    graph_db::get_pending_message(&conn, &watch_msg_id)
-                        .map(|o| o.is_some())
-                        .unwrap_or(false)
-                };
-                if !still_pending {
-                    return;
-                }
-                // `deliver_user_remind` only delivers when the ally is idle (CAS on
-                // is_busy) and its handle is alive. A busy ally is mid-task, so we
-                // re-arm a bounded number of times rather than interrupt it; a dead
-                // handle also surfaces as an error and is re-armed then dropped.
-                match deliver_user_remind(&project, &task, &ally_chat_id, reminder.clone()).await {
-                    Ok(()) => {
-                        sent += 1;
-                        if sent >= MAX_REMINDERS {
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        rearms += 1;
-                        if rearms >= MAX_REARMS {
-                            break;
-                        }
-                    }
-                }
-            }
-            // Intentionally leave the pending ticket in place — see the comment on
-            // the watchdog above.
+    if let Some(handle) = running {
+        handle.attribute_action(crate::radio::TurnAction {
+            by: crate::radio::TurnActor::Agent,
+            kind: crate::radio::TurnActionKind::Interrupt,
         });
+        handle
+            .cancel()
+            .await
+            .map_err(|e| AgentGraphError::Internal(e.to_string()))?;
     }
 
     Ok(SendOutput {
         msg_id,
         delivered_at: Utc::now().to_rfc3339(),
+        next: SEND_NEXT,
     })
 }
 
-// ─── grove_agent_reply ────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct ReplyInput {
-    /// The msg_id of the pending message to reply to.
-    pub msg_id: String,
-    /// Reply body.
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ReplyOutput {
-    pub delivered_at: String,
-}
-
-pub async fn grove_agent_reply(
-    cx: &ToolContext,
-    input: ReplyInput,
-) -> AgentGraphResult<ReplyOutput> {
-    let (caller_project, caller_task, caller_chat) = cx.caller_context()?;
-
-    // 取 pending message
-    let pending = {
-        let conn = database::connection();
-        graph_db::get_pending_message(&conn, &input.msg_id).map_err(AgentGraphError::from)?
+/// Withdraw the caller's unanswered message to `target`: a correction replaces
+/// it, so nothing should come back for the old one.
+fn supersede_pending(project: &str, task: &str, from: &str, target: &str) -> AgentGraphResult<()> {
+    let sent = graph_db::awaiting_reply_for(&database::connection(), from)
+        .map_err(AgentGraphError::from)?;
+    for pending in sent.into_iter().filter(|p| p.to_session == target) {
+        replies::unwatch(target, &pending.msg_id);
+        if let Some(handle) = acp::get_session_handle(&format!("{project}:{task}:{target}")) {
+            let (_, messages) = handle.dequeue_message_by_id(&pending.msg_id);
+            handle.emit(AcpUpdate::QueueUpdate { messages });
+        }
+        graph_db::delete_pending_message(&database::connection(), &pending.msg_id)
+            .map_err(AgentGraphError::from)?;
+        broadcast_radio_event(RadioEvent::PendingChanged {
+            project_id: project.to_string(),
+            task_id: task.to_string(),
+            msg_id: pending.msg_id,
+            from_chat_id: from.to_string(),
+            to_chat_id: target.to_string(),
+            op: "deleted".to_string(),
+            body_excerpt: None,
+        });
     }
-    .ok_or(AgentGraphError::TicketNotFound)?;
-
-    // ticket 必须是 *给 caller 的*（caller 是 to_session）
-    if pending.to_session != caller_chat.id {
-        return Err(AgentGraphError::TicketNotFound);
-    }
-    if pending.task_id != caller_task {
-        return Err(AgentGraphError::SameTaskRequired);
-    }
-
-    // 投递到原发送方（pending.from_session）。这条 chat 的存活性由
-    // ensure_target_handle 内部 find_chat_session 校验，不在这里重复 lookup。
-    deliver_to_session(
-        &caller_project,
-        &caller_task,
-        &pending.from_session,
-        &caller_chat,
-        InjectKind::Reply,
-        &input.message,
-        None,
-        None,
-    )
-    .await?;
-
-    // The caller answered the message it was given: if its turn now ends
-    // normally, the graph shows it as done (see `node_outcome`).
-    let caller_key = format!("{}:{}:{}", caller_project, caller_task, caller_chat.id);
-    if let Some(handle) = crate::acp::get_session_handle(&caller_key) {
-        handle.record_graph_reply();
-    }
-
-    // 投递成功后消费 ticket
-    {
-        let conn = database::connection();
-        graph_db::delete_pending_message(&conn, &input.msg_id).map_err(AgentGraphError::from)?;
-    }
-    broadcast_radio_event(RadioEvent::PendingChanged {
-        project_id: caller_project.clone(),
-        task_id: caller_task.clone(),
-        msg_id: input.msg_id.clone(),
-        from_chat_id: pending.from_session.clone(),
-        to_chat_id: pending.to_session.clone(),
-        op: "deleted".to_string(),
-        body_excerpt: None,
-    });
-
-    Ok(ReplyOutput {
-        delivered_at: Utc::now().to_rfc3339(),
-    })
+    Ok(())
 }
 
 // ─── grove_agent_contacts ─────────────────────────────────────────────────────
@@ -374,14 +323,6 @@ pub struct ContactsCanContact {
     pub name: String,
     pub duty: Option<String>,
     pub purpose: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ContactsPendingReply {
-    pub msg_id: String,
-    pub from: String,
-    pub message_excerpt: String,
-    pub received_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -432,8 +373,11 @@ pub struct ContactsOutput {
     #[serde(rename = "self")]
     pub self_: ContactsSelf,
     pub can_contact: Vec<ContactsCanContact>,
-    pub pending_replies: Vec<ContactsPendingReply>,
     pub awaiting_reply: Vec<ContactsAwaitingReply>,
+    /// Present while something is awaited, so looking here does not turn into
+    /// a polling loop.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub awaiting_note: Option<&'static str>,
     /// All targets the caller can pass as `grove_agent_spawn.agent`:
     /// base agents, custom ACP servers, and personas — in that order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -455,8 +399,6 @@ pub async fn grove_agent_contacts(
     let conn = database::connection();
     let outgoing =
         graph_db::outgoing_for_session(&conn, &caller_chat.id).map_err(AgentGraphError::from)?;
-    let incoming_pending =
-        graph_db::pending_replies_for(&conn, &caller_chat.id).map_err(AgentGraphError::from)?;
     let outgoing_pending =
         graph_db::awaiting_reply_for(&conn, &caller_chat.id).map_err(AgentGraphError::from)?;
     drop(conn);
@@ -471,17 +413,7 @@ pub async fn grove_agent_contacts(
             purpose: c.purpose,
         })
         .collect();
-    let pending_replies = incoming_pending
-        .into_iter()
-        .filter(|pending| active_ids.contains(&pending.from_session))
-        .map(|p| ContactsPendingReply {
-            msg_id: p.msg_id,
-            from: p.from_session,
-            message_excerpt: excerpt(&p.body),
-            received_at: p.created_at.to_rfc3339(),
-        })
-        .collect();
-    let awaiting_reply = outgoing_pending
+    let awaiting_reply: Vec<ContactsAwaitingReply> = outgoing_pending
         .into_iter()
         .filter(|pending| active_ids.contains(&pending.to_session))
         .map(|p| ContactsAwaitingReply {
@@ -548,11 +480,14 @@ pub async fn grove_agent_contacts(
             task_id: caller_task,
         },
         can_contact,
-        pending_replies,
+        awaiting_note: (!awaiting_reply.is_empty()).then_some(CONTACTS_AWAITING_NOTE),
         awaiting_reply,
         can_spawn,
     })
 }
+
+const CONTACTS_AWAITING_NOTE: &str = "Replies arrive as your next message after you end your \
+     turn. They will never appear here; do not check again to wait for one.";
 
 fn excerpt(body: &str) -> String {
     super::excerpt_chars(body, 160)
@@ -864,6 +799,7 @@ async fn deliver_to_session(
     body: &str,
     msg_id: Option<&str>,
     config: Option<SendConfig>,
+    queue_id: String,
 ) -> AgentGraphResult<()> {
     // Synchronous spawn-on-demand: if the target session isn't running, start
     // it and wait for SessionReady before delivering. Errors here mean the
@@ -972,7 +908,34 @@ async fn deliver_to_session(
 
     deliver_prompt(
         &target_handle,
-        QueuedMessage::new(injected, Vec::new(), Some(sender), false, queued_config),
+        QueuedMessage::new(injected, Vec::new(), Some(sender), false, queued_config)
+            .with_id(queue_id),
+    )
+    .await
+}
+
+/// Send `replier`'s answer to the Session that messaged it. Wakes that Session
+/// if it was retired. `replier` is passed in because it may be gone by now, and
+/// that is exactly when the sender must hear about it. `queue_id` was reserved
+/// by the caller so tickets waiting on this reply can recognise its turn.
+pub(super) async fn deliver_reply(
+    project_key: &str,
+    task_id: &str,
+    target_chat_id: &str,
+    replier: &tasks::ChatSession,
+    body: &str,
+    queue_id: String,
+) -> AgentGraphResult<()> {
+    deliver_to_session(
+        project_key,
+        task_id,
+        target_chat_id,
+        replier,
+        InjectKind::Reply,
+        body,
+        None,
+        None,
+        queue_id,
     )
     .await
 }
@@ -1361,7 +1324,7 @@ mod tests {
                 message: "hi".into(),
                 duty: None,
                 config: None,
-                auto_remind: None,
+                interrupt: false,
             },
         )
         .await
@@ -1382,7 +1345,7 @@ mod tests {
                 message: "hi".into(),
                 duty: Some("x".into()),
                 config: None,
-                auto_remind: None,
+                interrupt: false,
             },
         )
         .await
@@ -1404,7 +1367,7 @@ mod tests {
                 message: "hi".into(),
                 duty: Some("x".into()),
                 config: None,
-                auto_remind: None,
+                interrupt: false,
             },
         )
         .await
@@ -1430,7 +1393,7 @@ mod tests {
                 message: "hi".into(),
                 duty: None, // 没传 duty 但 B 也没 duty
                 config: None,
-                auto_remind: None,
+                interrupt: false,
             },
         )
         .await
@@ -1456,7 +1419,7 @@ mod tests {
                 message: "hi".into(),
                 duty: Some("override".into()),
                 config: None,
-                auto_remind: None,
+                interrupt: false,
             },
         )
         .await
@@ -1479,7 +1442,7 @@ mod tests {
                 message: "hi".into(),
                 duty: None,
                 config: None,
-                auto_remind: None,
+                interrupt: false,
             },
         )
         .await
@@ -1509,7 +1472,7 @@ mod tests {
                 message: "second".into(),
                 duty: None,
                 config: None,
-                auto_remind: None,
+                interrupt: false,
             },
         )
         .await
@@ -1518,48 +1481,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ticket_not_found_reply() {
+    async fn session_tools_reach_only_connected_sessions_in_the_task() {
         let _l = test_lock().lock().await;
         let _h = TempHome::new();
         seed_chat("p", "t", "chat-A", "A", None);
-        let cx = ToolContext::new("chat-A".into());
-        let err = grove_agent_reply(
-            &cx,
-            ReplyInput {
-                msg_id: "msg-bogus".into(),
-                message: "ok".into(),
-            },
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(err.code(), "ticket_not_found");
+        seed_chat("p", "t", "chat-B", "B", None);
+        seed_chat("p", "t", "chat-C", "C", None);
+        seed_chat("p", "t2", "chat-D", "D", None);
+        seed_edge(&database::connection(), "t", "chat-A", "chat-B");
+
+        let scope = |caller: &str| ToolContext::new(caller.into()).scope().unwrap();
+        let (a, b) = (scope("chat-A"), scope("chat-B"));
+
+        assert!(a.ensure_readable("chat-B").is_ok(), "outgoing edge");
+        assert!(b.ensure_readable("chat-A").is_ok(), "the sender it answers");
+        let denied = |r: crate::error::Result<()>| r.unwrap_err().to_string();
+        assert!(denied(a.ensure_readable("chat-C")).contains("no_edge"));
+        assert!(denied(a.ensure_readable("chat-D")).contains("same_task_required"));
+        assert!(a.ensure_readable("chat-missing").is_err());
+
+        // Directing follows the edge: an Agent cannot steer who directs it.
+        assert!(a.ensure_manageable("chat-B").is_ok());
+        assert!(denied(b.ensure_manageable("chat-A")).contains("no_edge"));
     }
 
     #[tokio::test]
-    async fn reply_wrong_recipient() {
+    async fn interrupting_send_replaces_the_unanswered_message() {
         let _l = test_lock().lock().await;
         let _h = TempHome::new();
-        // A→B pending；C 来 reply 不该过
-        seed_chat("p", "t", "chat-A", "A", None);
-        seed_chat("p", "t", "chat-B", "B", Some("d"));
-        seed_chat("p", "t", "chat-C", "C", None);
-        let conn = database::connection();
-        seed_edge(&conn, "t", "chat-A", "chat-B");
-        graph_db::insert_pending_message(&conn, "msg-1", "t", "chat-A", "chat-B", "hi")
-            .expect("pending");
-        drop(conn);
+        seed_chat("p", "t", "chat-A", "Alice", Some("d"));
+        seed_chat("p", "t", "chat-B", "Bob", Some("w"));
+        seed_edge(&database::connection(), "t", "chat-A", "chat-B");
+        let (handle_b, _rx_b, _guard_b) =
+            acp::new_handle_for_test("p:t:chat-B", "p", "t", "chat-B");
+        handle_b
+            .is_busy
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        let cx = ToolContext::new("chat-C".into());
-        let err = grove_agent_reply(
-            &cx,
-            ReplyInput {
-                msg_id: "msg-1".into(),
-                message: "fake".into(),
-            },
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(err.code(), "ticket_not_found");
+        let cx = ToolContext::new("chat-A".into());
+        let send = |message: &str, interrupt| SendInput {
+            to: "chat-B".into(),
+            message: message.into(),
+            duty: None,
+            config: None,
+            interrupt,
+        };
+        let first = grove_agent_send(&cx, send("first", false)).await.unwrap();
+        let err = grove_agent_send(&cx, send("again", false))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "previous_message_pending");
+
+        let second = grove_agent_send(&cx, send("fixed", true)).await.unwrap();
+        let conn = database::connection();
+        assert!(graph_db::get_pending_message(&conn, &first.msg_id)
+            .unwrap()
+            .is_none());
+        assert!(graph_db::get_pending_message(&conn, &second.msg_id)
+            .unwrap()
+            .is_some());
+        drop(conn);
+        let queue = handle_b.get_queue();
+        assert_eq!(queue.len(), 1);
+        assert!(queue[0].text.ends_with("fixed"));
     }
 
     #[tokio::test]
@@ -1584,7 +1568,7 @@ mod tests {
         assert_eq!(out.self_.duty.as_deref(), Some("dispatcher"));
         assert_eq!(out.can_contact.len(), 2);
         assert_eq!(out.awaiting_reply.len(), 1);
-        assert_eq!(out.pending_replies.len(), 0);
+        assert_eq!(out.awaiting_note, Some(CONTACTS_AWAITING_NOTE));
         assert_eq!(out.awaiting_reply[0].msg_id, "msg-1");
     }
 
@@ -1731,7 +1715,7 @@ mod tests {
                 message: "hello from A".into(),
                 duty: None,
                 config: None,
-                auto_remind: None,
+                interrupt: false,
             },
         )
         .await
@@ -1751,7 +1735,7 @@ mod tests {
                 assert!(text.contains("\"name\":\"Alice\""));
                 assert!(text.contains("\"msg_id\":\"msg-"));
                 assert!(text.contains("\n\nhello from A"));
-                assert!(text.contains("grove_agent_graph_reply"));
+                assert!(text.contains("returned to \\\"Alice\\\" automatically"));
                 assert_eq!(sender.as_deref(), Some("agent:chat-A"));
             }
             other => panic!("expected UserMessage, got {:?}", other),
@@ -1792,7 +1776,7 @@ mod tests {
                 message: "queued msg".into(),
                 duty: None,
                 config: None,
-                auto_remind: None,
+                interrupt: false,
             },
         )
         .await
@@ -1849,7 +1833,7 @@ mod tests {
                 message: "delayed msg".into(),
                 duty: None,
                 config: None,
-                auto_remind: None,
+                interrupt: false,
             },
         )
         .await
@@ -1875,42 +1859,116 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reply_then_normal_turn_end_marks_replier_done() {
-        use crate::agent_graph::node_outcome::TurnEnd;
+    async fn reply_is_injected_to_sender_with_replier_identity() {
         let _l = test_lock().lock().await;
         let _h = TempHome::new();
         seed_chat("p", "t", "chat-A", "Alice", Some("d"));
         seed_chat("p", "t", "chat-B", "Bob", Some("w"));
-        let conn = database::connection();
-        seed_edge(&conn, "t", "chat-A", "chat-B");
-        graph_db::insert_pending_message(&conn, "msg-1", "t", "chat-A", "chat-B", "do x")
-            .expect("p1");
-        drop(conn);
 
         let key_a = "p:t:chat-A".to_string();
-        let (_handle_a, _rx_a, _guard_a) = acp::new_handle_for_test(&key_a, "p", "t", "chat-A");
-        let key_b = "p:t:chat-B".to_string();
-        let (handle_b, _rx_b, _guard_b) = acp::new_handle_for_test(&key_b, "p", "t", "chat-B");
+        let (_handle_a, mut rx_a, _guard_a) = acp::new_handle_for_test(&key_a, "p", "t", "chat-A");
 
-        // B is mid-turn when it calls the reply tool.
+        let bob = tasks::get_chat_session("p", "t", "chat-B")
+            .unwrap()
+            .unwrap();
+        deliver_reply("p", "t", "chat-A", &bob, "done", "reply-1".into())
+            .await
+            .expect("reply ok");
+
+        let event = drain_until(&mut rx_a, |u| matches!(u, AcpUpdate::UserMessage { .. })).await;
+        match event {
+            AcpUpdate::UserMessage {
+                text,
+                sender,
+                client_message_id,
+                ..
+            } => {
+                assert!(text.contains("\"type\":\"agent_inject_reply\""));
+                assert!(text.contains("\"sid\":\"chat-B\""));
+                assert!(text.contains("\"name\":\"Bob\""));
+                assert!(text.ends_with("done"));
+                assert_eq!(sender.as_deref(), Some("agent:chat-B"));
+                assert_eq!(client_message_id.as_deref(), Some("reply-1"));
+            }
+            other => panic!("expected UserMessage, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn unread_reply_blocks_another_send_to_that_target_only() {
+        let _l = test_lock().lock().await;
+        let _h = TempHome::new();
+        seed_chat("p", "t", "chat-A", "Alice", Some("d"));
+        seed_chat("p", "t", "chat-B", "Bob", Some("w"));
+        seed_chat("p", "t", "chat-C", "Carol", Some("w"));
+        let conn = database::connection();
+        seed_edge(&conn, "t", "chat-A", "chat-B");
+        seed_edge(&conn, "t", "chat-A", "chat-C");
+        drop(conn);
+
+        // A keeps its turn open, so B's answer sits unread in its queue.
+        let (handle_a, _rx_a, _guard_a) =
+            acp::new_handle_for_test("p:t:chat-A", "p", "t", "chat-A");
+        handle_a
+            .is_busy
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let bob = tasks::get_chat_session("p", "t", "chat-B")
+            .unwrap()
+            .unwrap();
+        deliver_reply("p", "t", "chat-A", &bob, "done", "reply-2".into())
+            .await
+            .expect("reply queued");
+        let (_handle_b, _rx_b, _guard_b) =
+            acp::new_handle_for_test("p:t:chat-B", "p", "t", "chat-B");
+        let (_handle_c, _rx_c, _guard_c) =
+            acp::new_handle_for_test("p:t:chat-C", "p", "t", "chat-C");
+
+        let cx = ToolContext::new("chat-A".into());
+        let send = |to: &str| SendInput {
+            to: to.into(),
+            message: "more".into(),
+            duty: None,
+            config: None,
+            interrupt: false,
+        };
+        let err = grove_agent_send(&cx, send("chat-B")).await.unwrap_err();
+        assert_eq!(err.code(), "unread_reply");
+        // Nothing was recorded, so ending the turn is all it takes to recover.
+        let conn = database::connection();
+        assert!(graph_db::awaiting_reply_for(&conn, "chat-A")
+            .unwrap()
+            .is_empty());
+        drop(conn);
+
+        grove_agent_send(&cx, send("chat-C"))
+            .await
+            .expect("other targets stay open");
+    }
+
+    #[tokio::test]
+    async fn answered_turn_marks_the_node_done() {
+        use crate::agent_graph::node_outcome::TurnEnd;
+        let _l = test_lock().lock().await;
+        let _h = TempHome::new();
+        seed_chat("p", "t", "chat-done-A", "Alice", Some("d"));
+        seed_chat("p", "t", "chat-done-B", "Bob", Some("w"));
+        let (handle_b, _rx_b, _guard_b) =
+            acp::new_handle_for_test("p:t:chat-done-B", "p", "t", "chat-done-B");
+
+        handle_b.emit(AcpUpdate::PromptStarted {
+            message_ids: vec!["msg-done".into()],
+        });
         handle_b.emit(AcpUpdate::Busy { value: true });
-        assert_eq!(handle_b.node_outcome(), None);
-        grove_agent_reply(
-            &ToolContext::new("chat-B".into()),
-            ReplyInput {
-                msg_id: "msg-1".into(),
-                message: "done".into(),
-            },
-        )
-        .await
-        .expect("reply ok");
-        assert!(handle_b.turn_record().replied);
-        // Still busy: the live status wins until the turn ends.
+        let bob = tasks::get_chat_session("p", "t", "chat-done-B")
+            .unwrap()
+            .unwrap();
+        replies::watch("p", "t", "chat-done-A", &bob, "msg-done");
         assert_eq!(handle_b.node_outcome(), None);
 
         handle_b.finish_turn(TurnEnd::EndTurn);
         handle_b.emit(AcpUpdate::Busy { value: false });
         assert_eq!(handle_b.node_outcome(), Some("done"));
+        replies::unwatch("chat-done-B", "msg-done");
 
         // The next turn clears it; a failed turn reads as error.
         handle_b.emit(AcpUpdate::Busy { value: true });
@@ -1918,55 +1976,6 @@ mod tests {
         handle_b.finish_turn(TurnEnd::Failed);
         handle_b.emit(AcpUpdate::Busy { value: false });
         assert_eq!(handle_b.node_outcome(), Some("error"));
-    }
-
-    #[tokio::test]
-    async fn reply_consumes_ticket_and_injects_to_origin() {
-        let _l = test_lock().lock().await;
-        let _h = TempHome::new();
-        seed_chat("p", "t", "chat-A", "Alice", Some("d"));
-        seed_chat("p", "t", "chat-B", "Bob", Some("w"));
-        let conn = database::connection();
-        seed_edge(&conn, "t", "chat-A", "chat-B");
-        // Pre-stage a pending message A→B that B will reply to.
-        graph_db::insert_pending_message(&conn, "msg-1", "t", "chat-A", "chat-B", "do x")
-            .expect("p1");
-        drop(conn);
-
-        // Mock A so we can observe the reply being injected back to it.
-        let key_a = "p:t:chat-A".to_string();
-        let (_handle_a, mut rx_a, _guard_a) = acp::new_handle_for_test(&key_a, "p", "t", "chat-A");
-
-        let cx_b = ToolContext::new("chat-B".into());
-        let out = grove_agent_reply(
-            &cx_b,
-            ReplyInput {
-                msg_id: "msg-1".into(),
-                message: "done".into(),
-            },
-        )
-        .await
-        .expect("reply ok");
-        assert!(!out.delivered_at.is_empty());
-
-        let event = drain_until(&mut rx_a, |u| matches!(u, AcpUpdate::UserMessage { .. })).await;
-        match event {
-            AcpUpdate::UserMessage { text, sender, .. } => {
-                assert!(text.starts_with("<grove-meta>"));
-                assert!(text.contains("\"type\":\"agent_inject_reply\""));
-                assert!(text.contains("\"sid\":\"chat-B\""));
-                assert!(text.contains("\"name\":\"Bob\""));
-                assert!(text.ends_with("done"));
-                assert_eq!(sender.as_deref(), Some("agent:chat-B"));
-            }
-            other => panic!("expected UserMessage, got {:?}", other),
-        }
-
-        // Pending row consumed.
-        let conn = database::connection();
-        assert!(graph_db::get_pending_message(&conn, "msg-1")
-            .expect("query")
-            .is_none());
     }
 
     #[tokio::test]

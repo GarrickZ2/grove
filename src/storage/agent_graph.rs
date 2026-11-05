@@ -361,7 +361,28 @@ pub fn insert_pending_message(
     Ok(())
 }
 
-/// 删除一条 pending message（即"reply 消费 ticket"）。
+/// 两个 session 在 task 内是否有边（任一方向）。
+pub fn sessions_connected(conn: &Connection, task_id: &str, a: &str, b: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM agent_edge
+             WHERE task_id = ?1
+               AND ((from_session = ?2 AND to_session = ?3)
+                 OR (from_session = ?3 AND to_session = ?2))",
+            params![task_id, a, b],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// 启动时清空：Agent 进程不跨 Grove 重启，遗留 ticket 永远等不到回复，
+/// 只会把发送方卡死在 previous_message_pending。
+pub fn clear_pending_messages(conn: &Connection) -> Result<usize> {
+    Ok(conn.execute("DELETE FROM agent_pending_message", [])?)
+}
+
+/// 删除一条 pending message（回复已进入发送方队列后关闭 ticket）。
 /// 找不到 msg_id 报错。
 #[allow(dead_code)]
 pub fn delete_pending_message(conn: &Connection, msg_id: &str) -> Result<()> {
@@ -440,7 +461,7 @@ pub fn incoming_for_session(conn: &Connection, session_id: &str) -> Result<Vec<A
     Ok(edges)
 }
 
-/// 别人欠我回复的消息（contacts.pending_replies 数据源）。
+/// 发给我、还没回复的消息。
 #[allow(dead_code)]
 pub fn pending_replies_for(
     conn: &Connection,
@@ -838,6 +859,19 @@ mod tests {
         assert_eq!(msg.to_session, "b");
         assert_eq!(msg.body, "hello");
         assert_eq!(msg.task_id, "task-1");
+    }
+
+    #[test]
+    fn clear_pending_messages_drops_every_ticket() {
+        let conn = test_conn();
+        insert_session(&conn, "a", "task-1");
+        insert_session(&conn, "b", "task-1");
+        add_edge(&conn, "task-1", "a", "b", None).unwrap();
+        insert_pending_message(&conn, "msg-1", "task-1", "a", "b", "hello").unwrap();
+
+        assert_eq!(clear_pending_messages(&conn).unwrap(), 1);
+
+        assert!(get_pending_message(&conn, "msg-1").unwrap().is_none());
     }
 
     #[test]

@@ -193,7 +193,11 @@ impl Session {
             .map_err(|error| error.to_string())
     }
 
+    /// A person asking from a connected chat app.
     pub(crate) async fn cancel(&self) -> Result<(), String> {
+        self.handle.attribute_action(crate::radio::TurnAction::user(
+            crate::radio::TurnActionKind::Cancel,
+        ));
         self.handle
             .cancel()
             .await

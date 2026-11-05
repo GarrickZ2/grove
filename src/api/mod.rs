@@ -53,6 +53,22 @@ pub fn create_api_router() -> Router {
     let v1 = Router::new()
         // Version API
         .route("/version", get(handlers::version::get_version))
+        // Paired machines
+        .route(
+            "/machines",
+            get(handlers::machines::overview).post(handlers::machines::pair),
+        )
+        .route("/machines/self", get(handlers::machines::this))
+        .route("/machines/link", get(handlers::machines::link))
+        .route(
+            "/machines/{id}",
+            patch(handlers::machines::update).delete(handlers::machines::remove),
+        )
+        .route("/machines/{id}/open", post(handlers::machines::open))
+        .route(
+            "/machines/{id}/session",
+            post(handlers::machines::refresh_session),
+        )
         // Agent usage quota API (Claude Code / Codex / Gemini)
         .route(
             "/agent-usage/{agent}",
@@ -1334,6 +1350,25 @@ pub fn has_embedded_assets() -> bool {
     FrontendAssets::get("index.html").is_some()
 }
 
+/// Serve the frontend for everything the API router doesn't answer.
+/// Priority: external static_dir > embedded assets.
+/// Static files are NOT auth-protected (SPA needs to load to show login page).
+pub(crate) fn with_frontend(api_router: Router, static_dir: Option<PathBuf>) -> Router {
+    if let Some(dir) = static_dir {
+        let index_file = dir.join("index.html");
+        let serve_dir = ServeDir::new(&dir).not_found_service(ServeFile::new(&index_file));
+        api_router
+            .fallback_service(serve_dir)
+            .layer(middleware::from_fn(sw_cache_control_middleware))
+    } else if has_embedded_assets() {
+        api_router
+            .fallback(serve_embedded)
+            .layer(middleware::from_fn(sw_cache_control_middleware))
+    } else {
+        api_router
+    }
+}
+
 /// Create the full router with static file serving and optional auth
 pub fn create_router(
     static_dir: Option<PathBuf>,
@@ -1447,21 +1482,7 @@ pub fn create_router(
             .layer(middleware::from_fn(csrf::csrf_middleware))
     };
 
-    // Priority: external static_dir > embedded assets
-    // Static files are NOT auth-protected (SPA needs to load to show login page)
-    let router = if let Some(dir) = static_dir {
-        let index_file = dir.join("index.html");
-        let serve_dir = ServeDir::new(&dir).not_found_service(ServeFile::new(&index_file));
-        api_router
-            .fallback_service(serve_dir)
-            .layer(middleware::from_fn(sw_cache_control_middleware))
-    } else if has_embedded_assets() {
-        api_router
-            .fallback(serve_embedded)
-            .layer(middleware::from_fn(sw_cache_control_middleware))
-    } else {
-        api_router
-    };
+    let router = with_frontend(api_router, static_dir);
     if mobile {
         router.layer(middleware::from_fn(frame_guard_middleware))
     } else {
@@ -1550,10 +1571,57 @@ fn sign_proxy_gui_action(
     builder
 }
 
+/// Where a proxy forwards to.
+pub(crate) struct ProxyTarget {
+    pub url: String,
+    /// Set when this side signs every request itself, rather than passing on
+    /// what the frontend signed.
+    pub signer: Option<ProxySigner>,
+}
+
+pub(crate) struct ProxySigner {
+    /// `None` for a server without a passkey.
+    pub authorization: Option<RemoteAuthorization>,
+    /// Sent with every request, for a front door such as an access proxy.
+    pub headers: Vec<(String, String)>,
+}
+
+/// Sign a WebSocket URL: the signature rides in the query, covering the rest
+/// of it. Mirrors `appendHmacToUrl` in the frontend.
+pub(crate) fn sign_ws_url(ws_url: &str, authorization: &RemoteAuthorization) -> String {
+    use hmac::{Hmac, Mac};
+    let Ok(mut url) = url::Url::parse(ws_url) else {
+        return ws_url.to_string();
+    };
+    if let Some(id) = &authorization.device_id {
+        url.query_pairs_mut().append_pair("device_id", id);
+    }
+    let canonical = auth::canonical_path(url.path(), url.query(), &["ts", "nonce", "sig"]);
+    let timestamp = chrono::Utc::now().timestamp().to_string();
+    let nonce = auth::generate_secret_key();
+    let Ok(mut mac) = Hmac::<sha2::Sha256>::new_from_slice(authorization.signing_key.as_bytes())
+    else {
+        return ws_url.to_string();
+    };
+    mac.update(format!("{timestamp}|{nonce}|GET|{canonical}").as_bytes());
+    let signature = hex::encode(mac.finalize().into_bytes());
+    url.query_pairs_mut()
+        .append_pair("ts", &timestamp)
+        .append_pair("nonce", &nonce)
+        .append_pair("sig", &signature);
+    url.to_string()
+}
+
 /// Create a router that proxies all WebSocket and HTTP requests to the remote server.
 pub fn create_proxy_router(remote: String) -> Router {
+    proxy_router(Arc::new(ProxyTarget {
+        url: remote,
+        signer: None,
+    }))
+}
+
+pub(crate) fn proxy_router(target: Arc<ProxyTarget>) -> Router {
     use axum::routing::any;
-    let remote_arc = Arc::new(remote);
 
     Router::new() // Map all known WebSocket routes
         .route("/ws", any(ws_proxy_handler))
@@ -1562,6 +1630,7 @@ pub fn create_proxy_router(remote: String) -> Router {
         .route("/api/v1/walkie-talkie/ws", any(ws_proxy_handler))
         .route("/api/v1/radio/events/ws", any(ws_proxy_handler))
         .route("/api/v1/ai/transcribe-stream", any(ws_proxy_handler))
+        .route("/api/v1/ai/agent-voice/runtime/ws", any(ws_proxy_handler))
         .route(
             "/api/v1/projects/{id}/tasks/{taskId}/terminal",
             any(ws_proxy_handler),
@@ -1584,12 +1653,12 @@ pub fn create_proxy_router(remote: String) -> Router {
         )
         // Map all other HTTP requests
         .route("/api/v1/{*path}", any(http_proxy_handler))
-        .with_state(remote_arc)
+        .with_state(target)
 }
 
 /// Handler specifically for proxying WebSockets.
 async fn ws_proxy_handler(
-    State(remote_url): State<Arc<String>>,
+    State(target): State<Arc<ProxyTarget>>,
     ws: axum::extract::ws::WebSocketUpgrade,
     req: axum::extract::Request,
 ) -> axum::response::Response {
@@ -1598,14 +1667,14 @@ async fn ws_proxy_handler(
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or("");
-    let remote_target = format!("{}{}", remote_url.trim_end_matches('/'), path_and_query);
+    let remote_target = format!("{}{}", target.url.trim_end_matches('/'), path_and_query);
     let headers = req.headers().clone();
-    handle_websocket_proxy(ws, remote_target, headers).await
+    handle_websocket_proxy(ws, remote_target, headers, target).await
 }
 
 /// Handler for proxying normal HTTP requests.
-async fn http_proxy_handler(
-    State(remote_url): State<Arc<String>>,
+pub(crate) async fn http_proxy_handler(
+    State(target): State<Arc<ProxyTarget>>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
@@ -1616,13 +1685,15 @@ async fn http_proxy_handler(
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_default();
-    let remote_target = format!("{}{}", remote_url.trim_end_matches('/'), path_and_query);
+    let remote_target = format!("{}{}", target.url.trim_end_matches('/'), path_and_query);
 
     let method = req.method().clone();
     let headers = req.headers().clone();
     // Native banner actions have no signature. Preserve signatures supplied
     // by frontend callers, and sign native actions with the current device.
-    let remote_authorization = if req.uri().path().starts_with("/api/v1/gui/")
+    let remote_authorization = if let Some(signer) = &target.signer {
+        signer.authorization.clone()
+    } else if req.uri().path().starts_with("/api/v1/gui/")
         && !headers.contains_key("x-signature")
         && !headers.contains_key("x-device-id")
     {
@@ -1634,10 +1705,12 @@ async fn http_proxy_handler(
     let sig_query = req.uri().query().map(str::to_string);
     let body = req.into_body();
 
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let mut client = reqwest::Client::builder().danger_accept_invalid_certs(true);
+    if target.signer.is_some() {
+        // A redirect here is a sign-in page, never an API answer.
+        client = client.redirect(reqwest::redirect::Policy::none());
+    }
+    let client = client.build().unwrap_or_else(|_| reqwest::Client::new());
 
     let mut builder = client.request(method.clone(), &remote_target);
 
@@ -1660,7 +1733,10 @@ async fn http_proxy_handler(
                 || key_str.eq_ignore_ascii_case("x-nonce")
                 || key_str.eq_ignore_ascii_case("x-signature")
                 || key_str.eq_ignore_ascii_case("x-device-id"));
+        // A signing proxy talks for itself: cookies here are this origin's.
+        let is_local_cookie = target.signer.is_some() && key_str.eq_ignore_ascii_case("cookie");
         if !is_sig_header
+            && !is_local_cookie
             && !key_str.eq_ignore_ascii_case("host")
             && !key_str.starts_with("sec-websocket-")
             && !key_str.eq_ignore_ascii_case("origin")
@@ -1686,6 +1762,12 @@ async fn http_proxy_handler(
         }
     }
 
+    if let Some(signer) = &target.signer {
+        for (name, value) in &signer.headers {
+            builder = builder.header(name, value);
+        }
+    }
+
     if let Some(authorization) = &remote_authorization {
         builder = sign_proxy_gui_action(
             builder,
@@ -1697,6 +1779,11 @@ async fn http_proxy_handler(
     }
 
     match builder.send().await {
+        Ok(resp) if target.signer.is_some() && resp.status().is_redirection() => (
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({"message": "This machine needs you to sign in again"})),
+        )
+            .into_response(),
         Ok(resp) => {
             let status = resp.status();
             let resp_headers = resp.headers().clone();
@@ -1721,6 +1808,7 @@ async fn handle_websocket_proxy(
     ws_upgrade: axum::extract::ws::WebSocketUpgrade,
     remote_target: String,
     headers: axum::http::HeaderMap,
+    target: Arc<ProxyTarget>,
 ) -> axum::response::Response {
     use futures::SinkExt;
     use futures::StreamExt;
@@ -1732,6 +1820,14 @@ async fn handle_websocket_proxy(
         remote_target.replacen("http://", "ws://", 1)
     } else {
         remote_target
+    };
+    let ws_url = match target
+        .signer
+        .as_ref()
+        .and_then(|signer| signer.authorization.as_ref())
+    {
+        Some(authorization) => sign_ws_url(&ws_url, authorization),
+        None => ws_url,
     };
 
     ws_upgrade.on_upgrade(move |client_ws| async move {
@@ -1748,13 +1844,25 @@ async fn handle_websocket_proxy(
         if let Some(auth) = headers.get("authorization") {
             request.headers_mut().insert("authorization", auth.clone());
         }
-        if let Some(cookie) = headers.get("cookie") {
-            request.headers_mut().insert("cookie", cookie.clone());
+        if target.signer.is_none() {
+            if let Some(cookie) = headers.get("cookie") {
+                request.headers_mut().insert("cookie", cookie.clone());
+            }
         }
         if let Some(sec_ws_protocol) = headers.get("sec-websocket-protocol") {
             request
                 .headers_mut()
                 .insert("sec-websocket-protocol", sec_ws_protocol.clone());
+        }
+        if let Some(signer) = &target.signer {
+            for (name, value) in &signer.headers {
+                if let (Ok(name), Ok(value)) = (
+                    axum::http::HeaderName::from_bytes(name.as_bytes()),
+                    axum::http::HeaderValue::from_str(value),
+                ) {
+                    request.headers_mut().insert(name, value);
+                }
+            }
         }
 
         let remote_conn = match tokio_tungstenite::connect_async(request).await {
@@ -1989,6 +2097,9 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
     // GET /api/v1/version).
     crate::notification_renderer::spawn();
 
+    // Reconnect to paired machines.
+    crate::machines::start(port);
+
     // Recover any installed_agents row stuck in `installing` — happens when
     // grove was killed mid-download. Marking them failed lets the user
     // retry from Marketplace instead of staring at a perpetual spinner.
@@ -2053,6 +2164,7 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
     start_automation_runtime();
     crate::connect::start();
     crate::buddy::delegations::start();
+    crate::agent_graph::replies::start();
     crate::buddy::group::start();
 
     // Start the in-process agent_graph MCP listener (loopback-only). Failure to
@@ -2243,6 +2355,35 @@ pub async fn start_server(
 mod tests {
     use super::*;
     use tower::ServiceExt;
+
+    #[test]
+    fn signed_websocket_urls_verify_on_the_server() {
+        let server = auth::ServerAuth::hmac("signing-key".into(), false);
+        let signed = sign_ws_url(
+            "ws://devbox:3900/api/v1/machines/link?session=1",
+            &RemoteAuthorization {
+                signing_key: "signing-key".into(),
+                device_id: None,
+            },
+        );
+        let url = url::Url::parse(&signed).unwrap();
+        let param = |name: &str| {
+            url.query_pairs()
+                .find(|(key, _)| key == name)
+                .unwrap()
+                .1
+                .to_string()
+        };
+        let canonical = auth::canonical_path(url.path(), url.query(), &["ts", "nonce", "sig"]);
+        assert_eq!(canonical, "/api/v1/machines/link?session=1");
+        assert!(server.verify_signature(
+            &param("ts"),
+            &param("nonce"),
+            "GET",
+            &canonical,
+            &param("sig"),
+        ));
+    }
 
     async fn auth_info_response(auth: ServerAuth) -> axum::response::Response {
         create_router(None, Arc::new(auth), None)

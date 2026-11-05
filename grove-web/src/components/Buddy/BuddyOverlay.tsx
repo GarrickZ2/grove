@@ -51,7 +51,7 @@ export function BuddyOverlay({ open, onOpen, onExit, children }: { open: boolean
   useRadioEvents({ onConnected: () => { void data.refresh(); }, onChatStatus: () => { void data.refresh(); }, onPromptSent: () => { void data.refresh(); } });
   return <BuddyLaunchContext.Provider value={{ items: data.items, open: launch }}>
     <InteractionContext.Provider value={!open}><div inert={open || undefined} aria-hidden={open || undefined} style={{ height: "100%" }}>{children}</div></InteractionContext.Provider>
-    <AnimatePresence>{open && <motion.div ref={overlay} tabIndex={-1} role="dialog" aria-label="Buddies" aria-modal="true" className={orbit ? "buddy-overlay orbit-ui" : "buddy-overlay"} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+    <AnimatePresence initial={false}>{open && <motion.div ref={overlay} tabIndex={-1} role="dialog" aria-label="Buddies" aria-modal="true" className={orbit ? "buddy-overlay orbit-ui" : "buddy-overlay"} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
       <DialogLayerContext.Provider value={80}><BuddyNavigationContext.Provider value={{ interfaceName, navigate }}><CommandPaletteProvider><BuddyApp onExit={onExit} request={request} /><BuddyCommands onExit={onExit} open={launch} items={data.items} /></CommandPaletteProvider></BuddyNavigationContext.Provider></DialogLayerContext.Provider>
     </motion.div>}</AnimatePresence>
   </BuddyLaunchContext.Provider>;

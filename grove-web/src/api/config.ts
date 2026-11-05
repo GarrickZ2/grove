@@ -54,6 +54,10 @@ export interface WebConfig {
   buddy_motion?: "lively" | "standard";
   /** Sending while the agent works: "queue" (default) waits, "interrupt" stops the turn first. */
   send_mode?: "queue" | "interrupt";
+  /** Where the Orbit terminal docks: "bottom" (default) or "left". */
+  terminal_position?: "bottom" | "left";
+  /** Show the machine switcher in the sidebar. Off by default. */
+  multi_machine?: boolean;
   /** GUI-only global shortcut for showing or hiding the main window. */
   show_hide_window_shortcut?: string;
 }

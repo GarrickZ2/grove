@@ -7,8 +7,8 @@
 //! - **error** — the ACP `session/prompt` request itself failed (JSON-RPC
 //!   error, auth required, transport failure). Cancels, kills and other stop
 //!   reasons are not errors.
-//! - **done** — during its last turn the agent answered the message it was
-//!   given with `grove_agent_graph_reply`, the turn then ended with
+//! - **done** — its last turn answered the message it was given: the final
+//!   response went back to the sender (see `replies`), the turn ended with
 //!   `end_turn`, and it owes no other reply. This is completion in the graph
 //!   sense: a delegated agent handed its result back to whoever asked.
 //!
@@ -50,7 +50,7 @@ impl TurnEnd {
 /// Per-session record of the current/last turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TurnRecord {
-    /// The agent called the graph reply tool during this turn.
+    /// This turn's final response answers a graph message.
     pub replied: bool,
     pub end: TurnEnd,
 }
@@ -61,7 +61,7 @@ impl TurnRecord {
         *self = Self::default();
     }
 
-    /// The agent delivered a graph reply during this turn.
+    /// This turn answers a graph message.
     pub fn record_reply(&mut self) {
         self.replied = true;
     }

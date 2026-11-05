@@ -23,6 +23,7 @@ vi.mock("../../hooks", () => ({ useRadioEvents: (callbacks: typeof radio.callbac
 vi.mock("../../hooks/useRadioEvents", () => ({ refreshRadioActivity: vi.fn() }));
 vi.mock("../../hooks/useIsMobile", () => ({ useIsMobile: () => ({ isMobile: false, isTouchDevice: false }) }));
 vi.mock("./OrbitProjectSelector", () => ({ OrbitProjectSelector: () => <div>Project selector</div> }));
+vi.mock("./OrbitMachineMenu", () => ({ OrbitMachineEntry: () => null }));
 vi.mock("./OrbitNotificationPopover", () => ({ OrbitNotificationPopover: () => null }));
 vi.mock("../ui/DialogShell", () => ({ DialogShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock("../Dialogs", () => ({ ConfirmDialog: ({ onConfirm }: { onConfirm: () => void }) => <button onClick={onConfirm}>Confirm deletion</button> }));

@@ -8,6 +8,8 @@ import {
   paneTypeColors,
   paneTypeLabels,
 } from "../../../components/Config/settingsConstants";
+import { useTerminalPositionSetting } from "../../../components/Config/useTerminalPositionSetting";
+import type { TerminalPosition } from "../../../components/Tasks/IDELayout/orbitDock";
 import { Block, Button, DrawnCheck, Group, Row, Segmented } from "../../ui";
 import type { SettingsPageProps } from "./types";
 
@@ -72,6 +74,7 @@ function StageView({ node }: { node: StageNode }) {
 }
 
 export function TerminalPage({ settings }: SettingsPageProps) {
+  const { terminalPosition, setTerminalPosition } = useTerminalPositionSetting();
   const {
     depStates,
     isChecking,
@@ -143,6 +146,22 @@ export function TerminalPage({ settings }: SettingsPageProps) {
               },
             ]}
             onChange={setWebTerminalMode}
+          />
+        </Row>
+        <Row
+          title="Terminal panel"
+          description={terminalPosition === "left"
+            ? "Opens in the left column, taking turns with the other left panels."
+            : "Opens under the Agent."}
+        >
+          <Segmented<TerminalPosition>
+            ariaLabel="Terminal panel position"
+            value={terminalPosition}
+            options={[
+              { value: "bottom", label: "Bottom" },
+              { value: "left", label: "Left" },
+            ]}
+            onChange={setTerminalPosition}
           />
         </Row>
         {multiplexer ? (

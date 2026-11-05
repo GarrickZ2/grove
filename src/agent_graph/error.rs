@@ -28,8 +28,8 @@ pub enum AgentGraphError {
     Timeout,
     /// caller→to 已有未回复 pending message
     PreviousMessagePending,
-    /// reply 的 msg_id 找不到 / 已被消费
-    TicketNotFound,
+    /// 目标的回复已在 caller 自己的队列里、还没读，不能再发
+    UnreadReply,
     /// spawn 的 name 在同 task 内已被占用
     NameTaken,
     /// caller chat_id 不属于已知 session（token 失效 / 数据脏）
@@ -63,7 +63,7 @@ impl AgentGraphError {
             Self::TargetReadOnly => "target_read_only",
             Self::Timeout => "timeout",
             Self::PreviousMessagePending => "previous_message_pending",
-            Self::TicketNotFound => "ticket_not_found",
+            Self::UnreadReply => "unread_reply",
             Self::NameTaken => "name_taken",
             Self::CallerUnknown => "caller_unknown",
             Self::SameTaskRequired => "same_task_required",
@@ -84,8 +84,8 @@ impl AgentGraphError {
             Self::AgentSpawnFailed => "spawning the new agent process failed; see Grove logs",
             Self::SessionTerminated => "target session has been killed",
             Self::Timeout => "timed out waiting for ACP session to be ready",
-            Self::PreviousMessagePending => "you already have an unanswered send to this target; wait for reply or work on something else",
-            Self::TicketNotFound => "no pending message with that msg_id; it may have been answered or expired",
+            Self::PreviousMessagePending => "this target has not answered your last message yet; end your turn and its reply comes as your next message. Do not sleep, poll or retry in this turn",
+            Self::UnreadReply => "this target's reply is already waiting for you but cannot reach you during a turn; end your turn now to read it, then send again if still needed",
             Self::NameTaken => "another session in this task already uses that name",
             Self::CallerUnknown => "caller chat_id is not registered with Grove",
             Self::SameTaskRequired => "agent_graph is per-task; from and to must be in the same task",

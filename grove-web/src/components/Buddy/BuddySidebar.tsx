@@ -1,15 +1,20 @@
 import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Mail, MailOpen, Pin, PinOff, Plus, Search, SlidersHorizontal, Smile, Trash2, Users } from "lucide-react";
+import { ChevronDown, Mail, MailOpen, Pin, PinOff, Plus, Search, SlidersHorizontal, Smile, Trash2, Users } from "lucide-react";
 import type { BuddyListEntry } from "../../api/buddyGroups";
 import { useSortable } from "../../hooks/useSortable";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import { BuddyListItem } from "./BuddyListItem";
 import { BuddyPinTile } from "./BuddyPinTile";
 import { BuddySwipeRow } from "./BuddySwipeRow";
+import { readBuddyPreference, writeBuddyPreference } from "./buddyStorage";
+import type { BuddyTarget, MachineBuddies } from "./useMachineBuddies";
 import { SidebarResizer } from "../Layout/SidebarResizer";
 
-export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, onCreate, onCreateGroup, onBuddySettings, onDelete, onPin, onMarkRead, onMarkUnread, onReorder, phone = false, error, loading = false, onRetry, exit, toggle }: {
+export function BuddySidebar({ machines, onOpenMachine, onCreateOnMachine, items, unread, selectedId, viewingId, onSelect, onCreate, onCreateGroup, onBuddySettings, onDelete, onPin, onMarkRead, onMarkUnread, onReorder, phone = false, error, loading = false, onRetry, exit, toggle }: {
+  /** Sections per machine when this Grove spans several; the list is the current one. */
+  machines?: MachineBuddies[]; onOpenMachine?: (section: MachineBuddies, target: BuddyTarget) => void;
+  onCreateOnMachine?: (section: MachineBuddies) => void;
   exit?: React.ReactNode; toggle?: React.ReactNode; items: BuddyListEntry[]; unread?: Set<string>; selectedId: string;
   /** The conversation on screen; it is always read, so it can't be marked unread. */
   viewingId: string;
@@ -25,6 +30,13 @@ export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, o
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null);
   const [swipeOpen, setSwipeOpen] = useState<string | null>(null);
+  const [folded, setFolded] = useState(() => new Set(readBuddyPreference("machines-folded").split(",").filter(Boolean)));
+  const toggleFolded = (id: string) => {
+    const next = new Set(folded);
+    if (!next.delete(id)) next.add(id);
+    setFolded(next);
+    writeBuddyPreference("machines-folded", [...next].join(","));
+  };
   const reduceMotion = useReducedMotion();
   const byId = new Map(items.map((item) => [item.id, item]));
   const pinnedIds = items.filter((item) => item.pinned).map((item) => item.id);
@@ -65,13 +77,8 @@ export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, o
       blocked={list.isDragging}>{item}</BuddySwipeRow>;
   };
 
-  return <aside className="buddy-sidebar" aria-label="Buddies">
-    {toggle && <SidebarResizer />}
-    <div className="buddy-sidebar-top" data-tauri-drag-region="deep" data-window-drag-strip>{exit}{toggle}</div>
-    <div className="buddy-sidebar-heading"><h1>Buddies</h1>{items.length > 8 && <button type="button" className="orbit-icon-button" aria-label="Search Buddies" aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setQuery(""); }}><Search size={16} /></button>}<button type="button" className="buddy-icon-button" aria-label={onCreateGroup ? "New" : "Create Buddy"} aria-haspopup={onCreateGroup ? "menu" : undefined} aria-expanded={onCreateGroup ? !!newMenu : undefined} onClick={(event) => { if (!onCreateGroup) { onCreate(); return; } const rect = event.currentTarget.getBoundingClientRect(); setNewMenu({ x: rect.right - 176, y: rect.bottom + 6 }); }}><Plus /></button></div>
-    {searchOpen && <label className="buddy-search"><Search size={15} /><input aria-label="Search Buddies" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} /></label>}
-    {error && <p role="alert">{error}<button type="button" className="buddy-button" onClick={onRetry}>Retry</button></p>}
-    <div className="buddy-list">
+  const newButton = <button type="button" className="buddy-icon-button" aria-label={onCreateGroup ? "New" : "Create Buddy"} aria-haspopup={onCreateGroup ? "menu" : undefined} aria-expanded={onCreateGroup ? !!newMenu : undefined} onClick={(event) => { if (!onCreateGroup) { onCreate(); return; } const rect = event.currentTarget.getBoundingClientRect(); setNewMenu({ x: rect.right - 176, y: rect.bottom + 6 }); }}><Plus /></button>;
+  const currentList = <>
       {searching ? matches.map((buddy) => <div key={buddy.id}>{row(buddy)}</div>) : <>
         {pinnedIds.length > 0 && <div className="buddy-pins" role="group" aria-label="Pinned Buddies">
           {pins.order.map((id) => {
@@ -91,7 +98,28 @@ export function BuddySidebar({ items, unread, selectedId, viewingId, onSelect, o
           </motion.div>;
         })}
       </>}
-      {!(searching ? matches.length : items.length) && <p className="buddy-muted">{loading ? "Loading Buddies…" : searching ? "No matching Buddies" : "Create your first Buddy"}</p>}
+      {!(searching ? matches.length : items.length) && <p className="buddy-muted">{loading ? "Loading Buddies…" : searching ? "No matching Buddies" : machines ? "No Buddies yet" : "Create your first Buddy"}</p>}
+  </>;
+
+  return <aside className="buddy-sidebar" aria-label="Buddies">
+    {toggle && <SidebarResizer />}
+    <div className="buddy-sidebar-top" data-tauri-drag-region="deep" data-window-drag-strip>{exit}{toggle}</div>
+    <div className="buddy-sidebar-heading"><h1>Buddies</h1>{items.length > 8 && <button type="button" className="orbit-icon-button" aria-label="Search Buddies" aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setQuery(""); }}><Search size={16} /></button>}{!machines && newButton}</div>
+    {searchOpen && <label className="buddy-search"><Search size={15} /><input aria-label="Search Buddies" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} /></label>}
+    {error && <p role="alert">{error}<button type="button" className="buddy-button" onClick={onRetry}>Retry</button></p>}
+    <div className="buddy-list">
+      {machines ? machines.map((section) => <section key={section.machine.id} className="buddy-machine" aria-label={section.machine.name}>
+        <div className="buddy-machine-head">
+          <button type="button" className="buddy-machine-toggle" aria-expanded={!folded.has(section.machine.id)} onClick={() => toggleFolded(section.machine.id)}>
+            <ChevronDown size={14} className={folded.has(section.machine.id) ? "is-folded" : undefined} /><span>{section.machine.name}</span>
+          </button>
+          {section.current ? newButton : section.buddies && <button type="button" className="buddy-icon-button" aria-label={`Create Buddy on ${section.machine.name}`} onClick={() => onCreateOnMachine?.(section)}><Plus size={16} /></button>}
+        </div>
+        {folded.has(section.machine.id) ? null : section.current && !(loading && section.buddies?.length) ? currentList : section.buddies === null
+          ? <p className="buddy-muted">Not reachable</p>
+          : section.buddies.length === 0 ? <p className="buddy-muted">No Buddies yet</p>
+            : section.buddies.map((buddy) => <div key={buddy.id}><BuddyListItem buddy={buddy} selected={false} avatarSize={36} onSelect={() => onOpenMachine?.(section, buddy.group ? { groupId: buddy.id } : { buddyId: buddy.id })} onMenu={() => {}} /></div>)}
+      </section>) : currentList}
     </div>
     <ContextMenu items={menu ? menuItems(menu.id) : []} position={menu ? { x: menu.x, y: menu.y } : null} onClose={() => setMenu(null)} />
     <ContextMenu items={[{ id: "buddy", label: "New Buddy", icon: Smile, onClick: onCreate }, { id: "group", label: "New Group", icon: Users, onClick: () => onCreateGroup?.() }]} position={newMenu} onClose={() => setNewMenu(null)} />

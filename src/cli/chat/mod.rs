@@ -7,7 +7,7 @@
 mod api;
 mod ask;
 mod commands;
-mod conn;
+pub(crate) mod conn;
 mod form;
 mod input;
 mod model;

@@ -641,6 +641,7 @@ async fn handle_parsed_message(
 /// acknowledged its native event. Connection lookup, binding, commands,
 /// mapping and Grove delivery are all Core responsibilities.
 pub async fn handle_message(connection_id: &str, adapter: AdapterRef, inbound: InboundMessage) {
+    super::grove::register_adapter(connection_id, adapter.clone());
     let bound =
         connects::bind_private_chat(connection_id, &inbound.conversation_id, &inbound.sender_id)
             .unwrap_or(false);

@@ -1,6 +1,6 @@
 //! Agent Graph — agent-to-agent communication tools.
 //!
-//! Tools (`grove_agent_spawn` / `_send` / `_reply` / `_contacts` / `_capability`)
+//! Tools (`grove_agent_spawn` / `_send` / `_contacts` / `_capability`)
 //! used by ACP agents inside a Grove task to communicate with sibling sessions
 //! over the agent_graph DAG.
 //!
@@ -12,7 +12,9 @@
 //!   added in Commit 2 of this WO) wraps these functions as MCP `tools/call`
 //!   handlers exposed at `http://127.0.0.1:<mcp_port>/mcp/<token>`. The token
 //!   is the binding from HTTP request → caller chat_id.
-//! - On send / reply, messages are injected into the target session via
+//! - A send has no reply tool: `replies` follows the target's turn and returns
+//!   its final response to the sender, like a Buddy follow-up.
+//! - Messages and replies are injected into the target session via
 //!   `AcpSessionHandle::send_prompt(text, attachments, sender, terminal=false)`
 //!   when target is idle, or `AcpSessionHandle::queue_message(QueuedMessage{
 //!   text, attachments, sender })` when target is busy. Both paths surface to
@@ -28,6 +30,7 @@ pub mod ask_form;
 pub mod error;
 pub mod inject;
 pub mod node_outcome;
+pub mod replies;
 pub mod tools;
 pub mod user_ops;
 

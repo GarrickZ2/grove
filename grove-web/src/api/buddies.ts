@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, requestAt } from "./client";
 import { BUDDIES_MOCK_ENABLED, buddiesMock } from "./buddies.mock";
 import type { AgentConfigSelection } from "./agentConfig";
 
@@ -108,6 +108,19 @@ function detail(wire: BuddyWire): Buddy {
 export async function listBuddies(): Promise<BuddySummary[]> {
   if (BUDDIES_MOCK_ENABLED) return buddiesMock.list();
   return (await apiClient.get<BuddyWire[]>(BASE)).map(summary);
+}
+
+/** The Buddies on a machine other than the one this window is pointed at. */
+export async function listBuddiesAt(base: string): Promise<BuddySummary[]> {
+  return (await requestAt<BuddyWire[]>(base, BASE)).map(summary);
+}
+
+export async function createBuddyAt(base: string, input: CreateBuddyInput): Promise<Buddy> {
+  return detail(await requestAt<BuddyWire>(base, BASE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }));
 }
 
 export async function getBuddy(id: string): Promise<Buddy> {

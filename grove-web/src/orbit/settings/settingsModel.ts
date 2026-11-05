@@ -177,15 +177,16 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "system",
     title: "System",
-    description: "Devices signed in to this Grove, and the resources it uses.",
+    description: "Your machines, devices signed in to this Grove, and the resources it uses.",
     icon: MonitorCog,
     hue: { from: "#60a5fa", to: "#1d4ed8", glow: "rgba(37,99,235,.14)", strong: "rgba(29,78,216,.7)" },
     group: 4,
     subs: [
+      { id: "machines", label: "Machines" },
       { id: "devices", label: "Login devices" },
       { id: "resources", label: "Resources" },
     ],
-    keywords: ["devices", "sign in", "cpu", "memory", "storage", "resource monitor"],
+    keywords: ["machines", "servers", "multiple", "devices", "sign in", "cpu", "memory", "storage", "resource monitor"],
   },
 ];
 

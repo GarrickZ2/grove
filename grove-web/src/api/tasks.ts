@@ -653,18 +653,9 @@ export interface MentionOutgoing {
   duty?: string;
 }
 
-export interface MentionPendingReply {
-  session_id: string;
-  name: string;
-  agent: string;
-  msg_id: string;
-  body_preview: string;
-}
-
 export interface MentionCandidatesResponse {
   agents: MentionAgent[];
   outgoing: MentionOutgoing[];
-  pending_replies: MentionPendingReply[];
 }
 
 /**

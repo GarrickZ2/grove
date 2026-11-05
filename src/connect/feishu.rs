@@ -246,6 +246,7 @@ pub fn start(connect: Connect) {
             return;
         }
         let adapter = Arc::new(FeishuAdapter::new(openapi.clone(), transport));
+        super::grove::register_adapter(&connect.id, adapter.clone());
         let connector =
             OpenApiWebSocketEventConnector::new(openapi, TokioTungsteniteWebSocketTransport::new());
         let options = match event_loop_options(&connect.adapter_config) {
@@ -1249,6 +1250,11 @@ where
 
     async fn reply_text(&self, message_id: &str, text: &str) -> Result<(), String> {
         self.card_api.reply_text(message_id, text).await
+    }
+
+    async fn push_text(&self, chat_id: Option<&str>, text: &str) -> Result<(), String> {
+        let chat_id = chat_id.ok_or("No Feishu chat is bound to this connection yet")?;
+        self.card_api.send_text(chat_id, text).await
     }
 
     async fn reply_card(&self, message_id: &str, spec: &CardSpec) -> Result<(), String> {
