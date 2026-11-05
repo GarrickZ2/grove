@@ -713,6 +713,9 @@ pub async fn grove_agent_spawn(
                 Ok(AcpUpdate::Error { message }) => {
                     return Err(AgentGraphError::Internal(format!("acp error: {}", message)))
                 }
+                Ok(AcpUpdate::AuthRequired { .. }) => {
+                    return Err(AgentGraphError::Internal(acp::AUTH_REQUIRED.into()))
+                }
                 Ok(AcpUpdate::SessionEnded) => return Err(AgentGraphError::SessionTerminated),
                 Ok(_) => continue,
                 Err(_lagged_or_closed) => return Err(AgentGraphError::SessionTerminated),
@@ -1173,6 +1176,9 @@ async fn find_or_start_target_handle(
                 Ok(AcpUpdate::SessionReady { .. }) => return Ok::<(), AgentGraphError>(()),
                 Ok(AcpUpdate::Error { message }) => {
                     return Err(AgentGraphError::Internal(format!("acp error: {}", message)))
+                }
+                Ok(AcpUpdate::AuthRequired { .. }) => {
+                    return Err(AgentGraphError::Internal(acp::AUTH_REQUIRED.into()))
                 }
                 Ok(AcpUpdate::SessionEnded) => return Err(AgentGraphError::SessionTerminated),
                 Ok(_) => continue,

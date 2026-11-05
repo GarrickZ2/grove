@@ -105,6 +105,10 @@ fn is_short_memory_tool(title: &str) -> bool {
 static ACP_SESSIONS: once_cell::sync::Lazy<RwLock<HashMap<String, Arc<AcpSessionHandle>>>> =
     once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// Why a session that wants a sign-in can't take work yet.
+pub(crate) const AUTH_REQUIRED: &str =
+    "Agent authentication is required. Sign in to the agent in Grove, then retry.";
+
 #[derive(Clone)]
 enum SessionReadiness {
     Starting,
@@ -9804,10 +9808,8 @@ impl AcpSessionHandle {
                     .send_replace(SessionReadiness::Failed(message.clone()));
             }
             AcpUpdate::AuthRequired { .. } if !was_ready => {
-                self.readiness.send_replace(SessionReadiness::Failed(
-                    "Agent authentication is required. Sign in to the agent in Grove, then retry."
-                        .into(),
-                ));
+                self.readiness
+                    .send_replace(SessionReadiness::Failed(AUTH_REQUIRED.into()));
             }
             _ => {}
         }
