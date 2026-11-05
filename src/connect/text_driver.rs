@@ -226,7 +226,7 @@ async fn action<T: TextChannel>(
                     .action_completed(&name, &fields);
             }
             if let Some(card) = result.card {
-                if !matches!(&card, CardSpec::Notice(_)) {
+                if !matches!(&card, CardSpec::Notice { .. }) {
                     if let Some((_, text)) = result.notice {
                         send_plain(channel, &message.id, &text).await?;
                     }
