@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.3] - 2026-11-05
+
+### Added
+
+- **Multiple machines** — Pair with other Grove servers and switch between them from the sidebar, behind a setting that is off by default. Each machine keeps its last page and selection.
+- **Buddies across machines** — See every machine's Buddies and groups, create Buddies and groups on another machine, and reach them by @ mention or by name.
+- **Transfers dock** — Track uploads and downloads; desktop downloads stream to disk and can be opened or revealed afterwards.
+- **Terminal docking** — Dock the Orbit terminal on the left or at the bottom.
+
+### Improved
+
+- **Agent Graph replies** — A target's final response returns to the sender automatically, replacing `graph_reply`. Agents share session reading, search and queue tools with Buddies, and `graph_send` can interrupt.
+- **Message delivery** — A sender hears when a message wasn't taken, with the reason, instead of reading it as sent.
+- **Turn results** — Task Complete notifications, the Tray and Radio use the turn's final reply, and Buddy replies reach IM connections with no inbound message to answer.
+- **Radio announcements** — Say who stopped or removed something, and announce queue removals.
+- **Binary files** — Open an info page instead of reading them as text.
+- **First paint** — Use the last theme instead of the dark default.
+
+### Fixed
+
+- **Installed app icon** — Install the icon chosen in Settings, without a black border on iOS.
+- **Installed app restore** — Reopen on the page, Project and Task you left.
+- **Agent sign-in** — Ask for a sign-in inside a Buddy's conversation, and fail at once when an Agent Graph target needs one.
+- **Agent Graph dock** — Keep agent names and icons visible in a narrow dock.
+- **Image lightbox** — Follow trackpad gestures without shaking.
+- **Plugin actions** — Answer plugin `deliverAction` calls that end in a notice.
+
 ## [0.14.2] - 2026-11-03
 
 ### Added
