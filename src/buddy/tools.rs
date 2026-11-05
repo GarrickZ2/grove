@@ -417,8 +417,26 @@ pub fn prompt_with_note(
     extra: Value,
     note: Option<String>,
 ) -> crate::acp::QueuedMessage {
-    let name = buddy_name(buddy);
-    let mut data = json!({"buddy_id":buddy.id,"name":name,"avatar":buddy.avatar});
+    prompt_from(
+        &buddy.id,
+        &buddy_name(buddy),
+        buddy.avatar.as_deref(),
+        text,
+        extra,
+        note,
+    )
+}
+
+/// `prompt_with_note` for a sender that may live on another machine.
+pub fn prompt_from(
+    id: &str,
+    name: &str,
+    avatar: Option<&str>,
+    text: &str,
+    extra: Value,
+    note: Option<String>,
+) -> crate::acp::QueuedMessage {
+    let mut data = json!({"buddy_id":id,"name":name,"avatar":avatar});
     if let (Some(target), Some(extra)) = (data.as_object_mut(), extra.as_object()) {
         target.extend(extra.clone());
     }
@@ -431,7 +449,7 @@ pub fn prompt_with_note(
     crate::acp::QueuedMessage::new(
         format!("<grove-meta>{envelope}</grove-meta>\n{text}"),
         Vec::new(),
-        Some(format!("buddy:{}", buddy.id)),
+        Some(format!("buddy:{id}")),
         false,
         None,
     )

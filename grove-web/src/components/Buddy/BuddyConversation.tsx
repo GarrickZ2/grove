@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useReachableBuddies } from "./useReachableBuddies";
 import { useBuddySession } from "../../hooks/useBuddySession";
 import { useBuddyComposer } from "../../hooks/useBuddyComposer";
 import type { Buddy, BuddySummary } from "../../api/buddies";
@@ -17,6 +18,7 @@ export function BuddyConversation({ buddy, onChanged, arriving = false, others =
   /** False while kept alive out of sight (the collapsed mini window). */
   open?: boolean }) {
   const session = useBuddySession(buddy);
+  const everyone = useReachableBuddies(others);
   // A connection lost out of sight (the Mac slept) comes back when it is reopened.
   const { error, reconnect } = session;
   const wasOpen = useRef(open);
@@ -31,7 +33,7 @@ export function BuddyConversation({ buddy, onChanged, arriving = false, others =
   const handlers = requestHandlers({ sendEvent: session.sendEvent, dispatch: session.dispatch, sendText: text => composer.send(text, []) });
   return <SentPopContext.Provider value={orbit ? sentPops : null}><div className="buddy-conversation">
     {session.error && <p role="alert">{session.error}<button type="button" className="buddy-button" onClick={session.reconnect}>Reconnect</button></p>}
-    <BuddyTimeline others={others} arriving={arriving} hasEarlier={session.hasEarlier} loadingEarlier={session.loadingEarlier} onLoadEarlier={() => { void session.loadEarlier(); }} buddy={current} state={session.state} connected={session.connected} loading={session.loading}
+    <BuddyTimeline others={everyone} arriving={arriving} hasEarlier={session.hasEarlier} loadingEarlier={session.loadingEarlier} onLoadEarlier={() => { void session.loadEarlier(); }} buddy={current} state={session.state} connected={session.connected} loading={session.loading}
       onRespond={handlers.respond} onAnswer={handlers.answer} onSkip={handlers.skip} onOpenQuestion={handlers.open} />
     {session.state.auth && <AuthRequiredPanel message={session.state.auth} index={0} agentLabel={buddy.name} projectId={buddy.project_hash} taskId={LOCAL_TASK_ID} chatId={buddy.active_session_id ?? undefined}
       onAuthLogin={(_, methodId) => {
@@ -40,6 +42,6 @@ export function BuddyConversation({ buddy, onChanged, arriving = false, others =
       }}
       onAuthRetry={() => { session.dispatch({ type: "buddy_auth_progress" }); session.sendEvent({ type: "retry_authentication" }); }}
       onTerminalEnd={(_, message) => session.dispatch({ type: "buddy_auth_cancelled", message })} />}
-    <BuddyComposer buddy={current} onSent={sent} promptCaps={session.promptCaps} mentionable={others} />
+    <BuddyComposer buddy={current} onSent={sent} promptCaps={session.promptCaps} mentionable={everyone} />
   </div></SentPopContext.Provider>;
 }

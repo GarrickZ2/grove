@@ -134,6 +134,7 @@ pub fn create_api_router() -> Router {
             get(handlers::buddies::list).post(handlers::buddies::create),
         )
         .route("/buddies/order", patch(handlers::buddies::order))
+        .route("/buddies/reachable", get(handlers::buddies::reachable))
         .route(
             "/buddies/{id}",
             get(handlers::buddies::get)

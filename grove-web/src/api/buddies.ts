@@ -29,6 +29,10 @@ export interface BuddySummary {
   /** What the Buddy is for, in the user's words; empty when unset. */
   role: string;
   sort_position?: number | null;
+  /** Lives on another machine, named here; `id` is then its address from this one. */
+  machine?: string;
+  /** Its id on its own machine, which its avatar is drawn from. */
+  avatar_id?: string;
 }
 
 export interface BuddySegment {
@@ -113,6 +117,16 @@ export async function listBuddies(): Promise<BuddySummary[]> {
 /** The Buddies on a machine other than the one this window is pointed at. */
 export async function listBuddiesAt(base: string): Promise<BuddySummary[]> {
   return (await requestAt<BuddyWire[]>(base, BASE)).map(summary);
+}
+
+/** Buddies on the machines connected to this one, addressed from here. */
+export async function listReachableBuddies(): Promise<BuddySummary[]> {
+  if (BUDDIES_MOCK_ENABLED) return [];
+  const buddies = await apiClient.get<(Pick<BuddySummary, "id" | "name" | "avatar" | "machine" | "avatar_id" | "status"> & { role?: string | null })[]>(`${BASE}/reachable`);
+  return buddies.map((buddy) => ({
+    ...buddy, role: buddy.role ?? "", project_hash: "", description: "", agent: "", last_message_preview: "", last_activity_at: null,
+    active_session_id: "", running_delegations: 0, waiting_delegations: 0, pinned: false,
+  }));
 }
 
 export async function createBuddyAt(base: string, input: CreateBuddyInput): Promise<Buddy> {

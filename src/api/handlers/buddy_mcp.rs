@@ -482,14 +482,14 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "list_buddies",
-        description = "List the user's other Buddies: id, name, role and whether each is idle, running or waiting."
+        description = "List the user's other Buddies, including those on their other connected machines: id, name, role, whether each is idle, running or waiting, and the machine when it is another one."
     )]
     async fn list_buddies(
         &self,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
         let (buddy, _) = caller(&parts)?;
-        success(crate::buddy::chat::list(&buddy).map_err(internal)?)
+        success(crate::buddy::chat::all(&buddy).await.map_err(internal)?)
     }
     #[tool(
         name = "message_buddy",

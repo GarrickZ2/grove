@@ -14,7 +14,7 @@ use axum::extract::ws::{Message as ServerMessage, WebSocket};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest, Error as ClientError, Message as ClientMessage,
@@ -33,10 +33,33 @@ const LONGEST_RETRY: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Frame {
-    Hello { profile: Profile, version: String },
-    Profile { profile: Profile },
+    Hello {
+        profile: Profile,
+        version: String,
+    },
+    Profile {
+        profile: Profile,
+    },
     SetProfile(ProfilePatch),
     Unpair,
+    /// Asks the machine for something; it answers with `Answer` and this id.
+    Call {
+        id: String,
+        call: Call,
+    },
+    Answer {
+        id: String,
+        result: Result<serde_json::Value, String>,
+    },
+}
+
+/// What one machine can ask another. A machine too old to know a call ignores
+/// it, so the asker's time limit is the answer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "call", rename_all = "snake_case")]
+pub enum Call {
+    Buddies,
+    MessageBuddy(crate::buddy::chat::BuddyMessage),
 }
 
 struct Session {
@@ -47,6 +70,9 @@ struct Session {
 static GENERATIONS: AtomicU64 = AtomicU64::new(0);
 static SESSIONS: Lazy<Mutex<HashMap<String, Vec<Session>>>> = Lazy::new(Mutex::default);
 static LINKS: Lazy<Mutex<HashMap<String, JoinHandle<()>>>> = Lazy::new(Mutex::default);
+/// Calls waiting on an answer, by machine and call id.
+type Waiting = oneshot::Sender<Result<serde_json::Value, String>>;
+static CALLS: Lazy<Mutex<HashMap<(String, String), Waiting>>> = Lazy::new(Mutex::default);
 /// Why a machine refused us, until a connection succeeds.
 static REFUSED: Lazy<Mutex<HashMap<String, &'static str>>> = Lazy::new(Mutex::default);
 static VERSIONS: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(Mutex::default);
@@ -82,6 +108,39 @@ pub fn send(id: &str, frame: Frame) -> bool {
         .get(id)
         .and_then(|sessions| sessions.last())
         .is_some_and(|session| session.frames.send(frame).is_ok())
+}
+
+/// Machines before 0.15 ignore calls.
+fn answers_no_calls(version: &str) -> bool {
+    semver::Version::parse(version).is_ok_and(|version| version < semver::Version::new(0, 15, 0))
+}
+
+/// Ask a machine for something and wait for its answer.
+pub async fn ask(machine: &str, call: Call, limit: Duration) -> Result<serde_json::Value, String> {
+    if version(machine).is_some_and(|version| answers_no_calls(&version)) {
+        return Err("That machine runs an older Grove; update it first".into());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let key = (machine.to_string(), id.clone());
+    let (answer, answered) = oneshot::channel();
+    lock(&CALLS).insert(key.clone(), answer);
+    if !send(machine, Frame::Call { id, call }) {
+        lock(&CALLS).remove(&key);
+        return Err("That machine is offline".into());
+    }
+    let result = tokio::time::timeout(limit, answered).await;
+    lock(&CALLS).remove(&key);
+    match result {
+        Ok(Ok(answer)) => answer,
+        _ => Err("That machine did not answer; it may need updating".into()),
+    }
+}
+
+async fn answer(machine: &str, call: Call) -> crate::error::Result<serde_json::Value> {
+    match call {
+        Call::Buddies => crate::buddy::chat::here(None),
+        Call::MessageBuddy(message) => crate::buddy::chat::receive(machine, message).await,
+    }
 }
 
 /// Tell every connected machine about this machine's new profile.
@@ -156,6 +215,28 @@ fn receive(id: &str, frame: Frame) -> bool {
                 eprintln!("[Grove] could not unpair a machine: {error}");
             }
             return true;
+        }
+        Frame::Call { id: call_id, call } => {
+            // Answering can start an Agent, which must not hold up the heartbeat.
+            let machine = id.to_string();
+            tokio::spawn(async move {
+                let result = answer(&machine, call).await.map_err(|e| e.to_string());
+                send(
+                    &machine,
+                    Frame::Answer {
+                        id: call_id,
+                        result,
+                    },
+                );
+            });
+        }
+        Frame::Answer {
+            id: call_id,
+            result,
+        } => {
+            if let Some(waiting) = lock(&CALLS).remove(&(id.to_string(), call_id)) {
+                let _ = waiting.send(result);
+            }
         }
     }
     false
@@ -410,6 +491,49 @@ mod tests {
             Frame::Unpair
         ));
         assert!(serde_json::from_str::<Frame>(r#"{"type":"from_the_future"}"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn calls_are_answered_only_by_the_machine_asked() {
+        let (session, mut frames) = register("link-test-call");
+        let asking = tokio::spawn(ask("link-test-call", Call::Buddies, Duration::from_secs(5)));
+        let Some(Frame::Call { id, .. }) = frames.recv().await else {
+            panic!("expected a call");
+        };
+        let reply = Frame::Answer {
+            id,
+            result: Ok(serde_json::json!(["ada"])),
+        };
+        // The same id from another machine answers nothing.
+        assert!(!receive("link-test-other", reply.clone()));
+        assert!(!asking.is_finished());
+        assert!(!receive("link-test-call", reply));
+        assert_eq!(asking.await.unwrap().unwrap(), serde_json::json!(["ada"]));
+        unregister("link-test-call", session);
+    }
+
+    #[test]
+    fn older_machines_are_known_not_to_answer() {
+        assert!(answers_no_calls("0.14.2"));
+        assert!(!answers_no_calls("0.15.0"));
+        assert!(!answers_no_calls("1.0.0"));
+        assert!(!answers_no_calls("unknown"));
+    }
+
+    #[tokio::test]
+    async fn calling_an_offline_or_silent_machine_fails() {
+        assert!(ask("link-test-gone", Call::Buddies, Duration::from_secs(5))
+            .await
+            .unwrap_err()
+            .contains("offline"));
+        let (session, _frames) = register("link-test-silent");
+        assert!(
+            ask("link-test-silent", Call::Buddies, Duration::from_millis(10))
+                .await
+                .unwrap_err()
+                .contains("did not answer")
+        );
+        unregister("link-test-silent", session);
     }
 
     #[test]
