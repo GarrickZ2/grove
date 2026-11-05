@@ -124,7 +124,12 @@ pub enum CardSpec {
     Permission(PermissionCard),
     Elicitation(ElicitationCard),
     AskForm(AskFormCard),
-    Notice(String),
+    /// Outcome text. A struct variant so the internally tagged enum can
+    /// serialize it (`{"type":"notice","text":"…"}`); a newtype variant
+    /// holding a string can't be.
+    Notice {
+        text: String,
+    },
 }
 
 #[derive(serde::Serialize)]
@@ -323,6 +328,96 @@ pub fn target_card(connect: &Connect) -> CardSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn every_card() -> Vec<CardSpec> {
+        let cards = vec![
+            CardSpec::NewSession {
+                agents: vec![AgentOption {
+                    id: "claude".into(),
+                    name: "Claude".into(),
+                }],
+                current: Some("claude".into()),
+            },
+            CardSpec::Target(Box::new(TargetCard {
+                project_id: "p".into(),
+                task_id: "t".into(),
+                session_id: String::new(),
+                projects: vec![],
+                tasks: vec![],
+                sessions: vec![],
+            })),
+            CardSpec::Config(Box::new(ConfigCard {
+                selectors: vec![ConfigSelectorOption {
+                    name: "opt_0".into(),
+                    label: "Mode".into(),
+                    current: None,
+                    options: vec![("a".into(), "A".into())],
+                }],
+            })),
+            CardSpec::Permission(PermissionCard {
+                request_id: "r".into(),
+                description: "Run it?".into(),
+                options: vec![PermissionCardOption {
+                    id: "allow".into(),
+                    label: "Allow".into(),
+                    kind: "allow_once".into(),
+                }],
+            }),
+            CardSpec::Elicitation(ElicitationCard {
+                request_id: "r".into(),
+                message: "Pick".into(),
+                fields: vec![ElicitationField {
+                    name: "f".into(),
+                    label: "F".into(),
+                    description: None,
+                    required: true,
+                    kind: ElicitationFieldKind::Text,
+                    options: vec![],
+                }],
+            }),
+            CardSpec::AskForm(AskFormCard {
+                form_id: "form".into(),
+                definition: crate::agent_graph::ask_form::AskFormInput {
+                    title: "Form".into(),
+                    description: None,
+                    questions: vec![crate::agent_graph::ask_form::FormQuestion::Text {
+                        id: "q".into(),
+                        title: "Q".into(),
+                        description: None,
+                    }],
+                },
+            }),
+            CardSpec::Notice { text: "x".into() },
+        ];
+        // Exhaustive on purpose: a new variant fails to compile here until
+        // it's added to the list above.
+        for card in &cards {
+            match card {
+                CardSpec::NewSession { .. }
+                | CardSpec::Target(_)
+                | CardSpec::Config(_)
+                | CardSpec::Permission(_)
+                | CardSpec::Elicitation(_)
+                | CardSpec::AskForm(_)
+                | CardSpec::Notice { .. } => {}
+            }
+        }
+        cards
+    }
+
+    #[test]
+    fn every_card_serializes() {
+        for card in every_card() {
+            let value = serde_json::to_value(&card).expect("card serializes");
+            assert!(value.get("type").is_some_and(|t| t.is_string()), "{value}");
+        }
+    }
+
+    #[test]
+    fn notice_card_serializes_as_tagged_text() {
+        let value = serde_json::to_value(CardSpec::Notice { text: "x".into() }).unwrap();
+        assert_eq!(value, serde_json::json!({ "type": "notice", "text": "x" }));
+    }
 
     #[test]
     fn bare_commands_trigger_and_tailed_commands_fall_through() {

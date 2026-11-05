@@ -416,7 +416,7 @@ impl ActionResult {
     pub fn notice(text: impl Into<String>, level: NoticeLevel) -> Self {
         let text = text.into();
         Self {
-            card: Some(CardSpec::Notice(text.clone())),
+            card: Some(CardSpec::Notice { text: text.clone() }),
             notice: Some((level, text)),
         }
     }
