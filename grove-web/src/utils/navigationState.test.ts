@@ -8,7 +8,7 @@ const navigation: NavigationState = {
   page: "tasks", projectId: "project-b", tasksMode: "zen", hasExitedWelcome: true,
 };
 
-beforeEach(() => { sessionStorage.clear(); });
+beforeEach(() => { sessionStorage.clear(); localStorage.clear(); });
 
 describe("tab navigation restoration", () => {
   it.each(["dashboard", "settings", "projects", "work", "tasks", "plugin:sample"])("restores the current %s page after re-reading tab storage", page => {
@@ -40,6 +40,25 @@ describe("tab navigation restoration", () => {
   it("does not replay a task deep-link when refreshing a different page", () => {
     writeTaskPageLocation("zen", { projectId: "project-b", taskId: "task-b", inWorkspace: true, showDetail: true, filter: "active" });
     expect(restoredTaskNavigation({ ...navigation, page: "settings" })).toBeNull();
+  });
+
+  it("keeps a browser tab's place in that tab", () => {
+    writeNavigationState({ ...navigation, page: "new" });
+    expect(readNavigationState()).toEqual({ ...navigation, page: "new" });
+    expect(localStorage.getItem("grove:navigation")).toBeNull();
+  });
+
+  it("lets an installed app reopen where it was left after its session storage is gone", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(display-mode: standalone)" }));
+    try {
+      writeNavigationState(navigation);
+      writeTaskPageLocation("zen", { projectId: "project-b", taskId: "task-b", inWorkspace: true, showDetail: true, filter: "active" });
+      sessionStorage.clear();
+      expect(readNavigationState()).toEqual(navigation);
+      expect(restoredTaskNavigation(navigation)).toMatchObject({ taskId: "task-b", viewMode: "terminal" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("uses the startup defaults in a fresh tab and ignores invalid saved state", () => {

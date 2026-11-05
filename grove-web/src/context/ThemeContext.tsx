@@ -3,8 +3,8 @@ import { createContext, useContext, useState, useEffect, useMemo, useCallback, u
 import type { ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { ThemeConfig } from "../api/config";
-import { rememberBootTheme } from "../utils/bootTheme";
-import { APP_APPEARANCE_CHANGED_EVENT, normalizeAppIconStyle, appIconAssetUrl } from "../data/appIcons";
+import { rememberBootIcon, rememberBootTheme } from "../utils/bootTheme";
+import { APP_APPEARANCE_CHANGED_EVENT, normalizeAppIconStyle, appIconAssetUrl, pwaIconKey, pwaManifestUrl, pwaTouchIconUrl } from "../data/appIcons";
 
 const isTauri = !isIosClient && typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -504,6 +504,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         ? (iconIsLight ? "/favicon-light.svg" : "/favicon.svg")
         : appIconAssetUrl(appIcon, iconIsLight);
     }
+    // Add to Home Screen captures whatever these point at. Each icon has its
+    // own URL, so neither a browser nor a CDN can answer with a previous one.
+    const pwaIcon = pwaIconKey(appIcon, iconIsLight);
+    document.querySelector("link[rel='apple-touch-icon']")?.setAttribute("href", pwaTouchIconUrl(pwaIcon));
+    document.querySelector("link[rel='manifest']")?.setAttribute("href", pwaManifestUrl(pwaIcon));
+    rememberBootIcon(pwaIcon);
     if (isTauri) {
       import("@tauri-apps/api/core").then(({ invoke }) =>
         invoke("tray_update_theme_icons", { isLight: theme.isLight, iconStyle: appIcon }),

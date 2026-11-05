@@ -1,5 +1,5 @@
 /** SVG masters + desktop PNGs. Requires sharp; see src-tauri/icons/README.md. */
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { copyFile, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 const { default: sharp } = await import(process.env.GROVE_SHARP_MODULE || 'sharp');
@@ -133,27 +133,36 @@ function glyph(id, dark) {
       </g>`;
   }
 }
+const pwaDir = path.join(root, 'grove-web/public/app-icons/pwa');
+await mkdir(pwaDir, { recursive: true });
+const baseManifest = JSON.parse(await readFile(path.join(root, 'grove-web/public/manifest.json'), 'utf8'));
 for (const design of catalog) {
   for (const mode of ['light', 'dark']) {
     const dark = mode === 'dark';
     let svg;
+    // Home screens apply their own mask and paint transparency black (iOS), so
+    // installed icons are opaque with the tile's surface bled to every edge.
+    let bleed;
     if (design.id === 'classic') {
       const source = await readFile(path.join(root, `grove-web/public/favicon${dark ? '' : '-light'}.svg`), 'utf8');
       const body = source.replace(/^<svg\b[^>]*>/, '').replace(/<\/svg>\s*$/, '');
       svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" width="512" height="512"><g transform="translate(48 48) scale(${416 / 378}) translate(-322 -38)">${body}</g></svg>`;
+      bleed = svg.replace(/^<svg\b[^>]*>/, `$&<rect width="512" height="512" fill="${dark ? '#1a1d2e' : '#ffffff'}"/>`);
     } else {
       const [l1,l2,d1,d2] = palette[design.id];
+      const tile = `<rect x="48" y="52" width="416" height="416" rx="94" fill="#000" opacity="${dark ? '.3' : '.08'}"/>
+        <rect x="48" y="48" width="416" height="416" rx="94" fill="url(#bg)"/>
+        <rect x="49" y="49" width="414" height="414" rx="93" fill="none" stroke="${dark ? '#fff' : '#fff'}" stroke-opacity="${dark ? '.1' : '.85'}" stroke-width="2"/>`;
       svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
         <title>Grove · ${design.name} · ${mode}</title>
         <defs>
           <linearGradient id="bg" x2=".8" y2="1"><stop stop-color="${dark ? d1 : l1}"/><stop offset="1" stop-color="${dark ? d2 : l2}"/></linearGradient>
           <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${dark ? '#b4f5b0' : '#78d29b'}"/><stop offset="1" stop-color="${dark ? '#3dbfa0' : '#199b7a'}"/></linearGradient>
         </defs>
-        <rect x="48" y="52" width="416" height="416" rx="94" fill="#000" opacity="${dark ? '.3' : '.08'}"/>
-        <rect x="48" y="48" width="416" height="416" rx="94" fill="url(#bg)"/>
-        <rect x="49" y="49" width="414" height="414" rx="93" fill="none" stroke="${dark ? '#fff' : '#fff'}" stroke-opacity="${dark ? '.1' : '.85'}" stroke-width="2"/>
+        ${tile}
         ${glyph(design.id, dark)}
       </svg>`;
+      bleed = svg.replace(tile, '<rect width="512" height="512" fill="url(#bg)"/>');
     }
     await writeFile(path.join(root, `grove-web/public/app-icons/${design.id}-${mode}.svg`), svg);
     await sharp(Buffer.from(svg)).resize(1024,1024).png().toFile(path.join(root, `src-tauri/icons/variants/${design.id}-${mode}.png`));
@@ -161,8 +170,19 @@ for (const design of catalog) {
     // 32px tray asset. Desktop/Dock padding belongs only to desktop assets.
     const traySvg = svg.replace('viewBox="0 0 512 512"', 'viewBox="48 48 416 416"');
     await sharp(Buffer.from(traySvg)).resize(64,64).png().toFile(path.join(root, `src-tauri/icons/variants/${design.id}-${mode}-tray.png`));
+    // Apple touch icon: the artwork at its desktop size. Web-app icon: the
+    // full canvas, which keeps the artwork inside the maskable safe zone.
+    const pwa = `${design.id}-${mode}`;
+    const touchSvg = bleed.replace('viewBox="0 0 512 512"', 'viewBox="48 48 416 416"');
+    await sharp(Buffer.from(touchSvg)).resize(180,180).removeAlpha().png().toFile(path.join(pwaDir, `${pwa}.png`));
+    await sharp(Buffer.from(bleed)).resize(512,512).removeAlpha().png().toFile(path.join(pwaDir, `${pwa}-512.png`));
+    const src = `/app-icons/pwa/${pwa}-512.png`;
+    const icons = ['any', 'maskable'].map((purpose) => ({ src, sizes: '512x512', type: 'image/png', purpose }));
+    await writeFile(path.join(pwaDir, `${pwa}.webmanifest`), `${JSON.stringify({ ...baseManifest, icons }, null, 2)}\n`);
   }
 }
+// What a page advertises before it knows the configured icon.
+await copyFile(path.join(pwaDir, 'classic-light.png'), path.join(root, 'grove-web/public/apple-touch-icon.png'));
 // A reviewable contact sheet with both variants side by side.
 const cell=150, width=catalog.length*cell, height=390;
 const cells=[];

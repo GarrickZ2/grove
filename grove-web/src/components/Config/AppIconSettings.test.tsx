@@ -62,6 +62,20 @@ describe("application icon preferences", () => {
     expect(favicon.getAttribute("href")).toBe("/app-icons/moss-light.svg");
   });
 
+  it("points Add to Home Screen at the selected icon", async () => {
+    const touchIcon = document.head.appendChild(Object.assign(document.createElement("link"), { rel: "apple-touch-icon", href: "/apple-touch-icon.png" }));
+    const manifest = document.head.appendChild(Object.assign(document.createElement("link"), { rel: "manifest", href: "/manifest.json" }));
+    try {
+      await render();
+      await act(async () => button("Moss application icon").click());
+      expect(touchIcon.getAttribute("href")).toBe("/app-icons/pwa/moss-light.png");
+      expect(manifest.getAttribute("href")).toBe("/app-icons/pwa/moss-light.webmanifest");
+    } finally {
+      touchIcon.remove();
+      manifest.remove();
+    }
+  });
+
   it("restores saved preferences on remount", async () => {
     saved = { ...saved, mode: "dark", app_icon: "terrarium" };
     api.get.mockResolvedValue({ theme: saved });

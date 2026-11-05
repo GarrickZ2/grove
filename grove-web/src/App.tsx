@@ -74,6 +74,7 @@ import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
 import { readLastProjectView, writeLastProjectView } from "./utils/lastProjectView";
 import { readNavigationState, restoredTaskNavigation, writeNavigationState } from "./utils/navigationState";
+import { isStandaloneDisplay } from "./utils/standalone";
 import { fuzzyFindByName } from "./utils/fuzzySearch";
 import { useCommand, useContextKey, commandRegistry, useVoiceControlContext } from "./keyboard";
 import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette";
@@ -550,10 +551,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // overshoot behind the URL bar). Covers both the standard media query and
   // iOS's legacy `navigator.standalone`.
   useEffect(() => {
-    const standalone =
-      window.matchMedia?.("(display-mode: standalone)").matches ||
-      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
-    document.documentElement.classList.toggle("grove-standalone", !!standalone);
+    document.documentElement.classList.toggle("grove-standalone", isStandaloneDisplay());
   }, []);
 
   useEffect(() => {
@@ -798,12 +796,12 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   }
   // Orbit's home is the New page: a fresh launch opens there, once per app
   // load, after the project restore above has settled. A reload in the same
-  // window keeps its place (restored navigation), except on phones, which
-  // always open on New like a chat app.
+  // window keeps its place (restored navigation). A phone browser always opens
+  // on New like a chat app; an installed app reopens where it was left.
   const [orbitPhoneLandingChecked, setOrbitPhoneLandingChecked] = useState(false);
   if (!orbitPhoneLandingChecked && globalConfig && !isLoading && selectedProject) {
     setOrbitPhoneLandingChecked(true);
-    if (orbit && (orbitPhone || !restoredNavigation) && activeItem !== "new") {
+    if (orbit && ((orbitPhone && !isStandaloneDisplay()) || !restoredNavigation) && activeItem !== "new") {
       setActiveItem("new");
       setNavigationData(null);
     }

@@ -12,6 +12,11 @@ and the PNG sizes in this directory). Runtime icon choices live in `variants/`.
   with transparent margins for desktop icon sizing. Embedded into GUI builds.
 - `variants/<design>-<light|dark>-tray.png`: 64px assets for the menu bar/tray,
   cropped to the icon face so desktop padding does not shrink the status icon.
+- `grove-web/public/app-icons/pwa/<design>-<light|dark>.png` (180px, Apple touch
+  icon) and `-512.png` (web-app icon): opaque and full-bleed, because home screens
+  apply their own mask and iOS paints transparency black.
+- `grove-web/public/app-icons/pwa/<design>-<light|dark>.webmanifest`: `manifest.json`
+  with that icon. The page links the configured pair, so installing captures it.
 - `docs/app-icons/collection.png`: a contact sheet of every edition.
 
 There are twelve designs: Classic, Canopy, Orbit, Prism, Constellation, Moss,
