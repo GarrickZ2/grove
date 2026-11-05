@@ -603,7 +603,7 @@ impl<T: OpenApiBinaryTransport> FeishuAdapter<T> {
             "Feishu card callback did not include a token for asynchronous update".to_owned()
         })?;
         let mut card = render_card(&spec)?;
-        if !matches!(spec, CardSpec::Notice(_)) {
+        if !matches!(spec, CardSpec::Notice { .. }) {
             if let Some((level, text)) = notice {
                 let prefix = match level {
                     NoticeLevel::Info => "ℹ️",
@@ -696,7 +696,7 @@ impl<T: OpenApiBinaryTransport> FeishuAdapter<T> {
 /// the select elements' `name` fields.
 pub(crate) fn render_card(spec: &CardSpec) -> Result<Card, String> {
     match spec {
-        CardSpec::Notice(text) => render_notice(text),
+        CardSpec::Notice { text } => render_notice(text),
         CardSpec::NewSession { agents, current } => {
             let mut builder = Card::builder()
                 .header("New session")
@@ -1379,7 +1379,12 @@ mod recovery_tests {
         adapter.clear_status("parent", &working).await;
         adapter.reply_text("parent", "Hello").await.unwrap();
         adapter
-            .reply_card("parent", &CardSpec::Notice("Ready".into()))
+            .reply_card(
+                "parent",
+                &CardSpec::Notice {
+                    text: "Ready".into(),
+                },
+            )
             .await
             .unwrap();
         adapter

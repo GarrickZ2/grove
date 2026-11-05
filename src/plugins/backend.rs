@@ -104,6 +104,23 @@ impl Backend {
     }
 }
 
+/// Run a host-call handler so a panic inside it still yields an error result:
+/// the plugin is always answered, never left waiting.
+async fn run_host_call<F>(method: &str, handler: F) -> std::result::Result<Value, String>
+where
+    F: std::future::Future<Output = std::result::Result<Value, String>>,
+{
+    use futures::FutureExt;
+    match std::panic::AssertUnwindSafe(handler).catch_unwind().await {
+        Ok(result) => result,
+        Err(_) => {
+            // The panic hook has already printed the message; add the method.
+            eprintln!("[plugin] host call {method} panicked");
+            Err(format!("internal error handling {method}"))
+        }
+    }
+}
+
 fn key(plugin_id: &str, scope_key: &str) -> String {
     format!("{}::{}", plugin_id, scope_key)
 }
@@ -719,30 +736,36 @@ async fn reader_loop(stdout: ChildStdout, weak: Weak<Backend>, plugin_id: String
             let method = method.to_owned();
             let params = v.get("params").cloned().unwrap_or(Value::Null);
             tokio::spawn(async move {
-                let result = if method == "usage.totalTokens" {
-                    let allowed = plugin_has_permission(&plugin_id, "chat:read");
-                    let from = params.get("fromTs").and_then(Value::as_i64);
-                    let to = params.get("toTs").and_then(Value::as_i64);
-                    match (allowed, from, to) {
-                        (true, Some(from), Some(to)) if from < to => {
-                            crate::storage::token_usage::total_tokens(from, to)
-                                .map(|total| json!({ "totalTokens": total }))
-                                .map_err(|error| error.to_string())
+                let handler_method = method.clone();
+                let handler = async move {
+                    if method == "usage.totalTokens" {
+                        let allowed = plugin_has_permission(&plugin_id, "chat:read");
+                        let from = params.get("fromTs").and_then(Value::as_i64);
+                        let to = params.get("toTs").and_then(Value::as_i64);
+                        match (allowed, from, to) {
+                            (true, Some(from), Some(to)) if from < to => {
+                                crate::storage::token_usage::total_tokens(from, to)
+                                    .map(|total| json!({ "totalTokens": total }))
+                                    .map_err(|error| error.to_string())
+                            }
+                            _ => Err(
+                                "usage.totalTokens requires chat:read and a valid time range"
+                                    .to_string(),
+                            ),
                         }
-                        _ => Err(
-                            "usage.totalTokens requires chat:read and a valid time range"
-                                .to_string(),
-                        ),
+                    } else if super::host_api::handles(&method) {
+                        super::host_api::call(&plugin_id, &method, params)
+                            .await
+                            .map_err(|error| error.to_string())
+                    } else {
+                        crate::plugins::connect_provider::handle_host_call(
+                            &plugin_id, &method, params,
+                        )
+                        .await
+                        .map_err(|error| error.to_string())
                     }
-                } else if super::host_api::handles(&method) {
-                    super::host_api::call(&plugin_id, &method, params)
-                        .await
-                        .map_err(|error| error.to_string())
-                } else {
-                    crate::plugins::connect_provider::handle_host_call(&plugin_id, &method, params)
-                        .await
-                        .map_err(|error| error.to_string())
                 };
+                let result = run_host_call(&handler_method, handler).await;
                 let _ = backend.send_host_response(id, result).await;
             });
             continue;
@@ -881,5 +904,28 @@ async fn reaper_loop() {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn host_call_returns_handler_result() {
+        let result = run_host_call("ok", async { Ok(json!({ "done": true })) }).await;
+        assert_eq!(result, Ok(json!({ "done": true })));
+    }
+
+    #[tokio::test]
+    async fn host_call_that_panics_still_answers_with_an_error() {
+        let result = run_host_call("connect.deliverAction", async {
+            panic!("handler blew up");
+        })
+        .await;
+        assert_eq!(
+            result,
+            Err("internal error handling connect.deliverAction".to_string())
+        );
     }
 }

@@ -129,9 +129,6 @@ impl Ui {
 
     pub fn render(&mut self, spec: &CardSpec, source: &str, scope: &str) -> Result<String, String> {
         self.buttons.clear();
-        if let CardSpec::Notice(text) = spec {
-            return Ok(text.clone());
-        }
         let data = serde_json::to_value(spec).map_err(|error| error.to_string())?;
         let kind = string(&data["type"]);
         match kind {
@@ -872,7 +869,7 @@ mod tests {
             Response::Action { .. }
         ));
         // Rendering a notice clears stale suggestions.
-        ui.render(&CardSpec::Notice("ok".into()), "m", "scope")
+        ui.render(&CardSpec::Notice { text: "ok".into() }, "m", "scope")
             .unwrap();
         assert!(ui.take_buttons().is_empty());
         let definition = serde_json::from_value(serde_json::json!({
@@ -901,10 +898,16 @@ mod tests {
     }
 
     #[test]
-    fn notice_is_rendered_without_serializing_a_tagged_string_variant() {
+    fn notice_renders_as_its_text() {
         assert_eq!(
             Ui::default()
-                .render(&CardSpec::Notice("Saved".into()), "message", "scope")
+                .render(
+                    &CardSpec::Notice {
+                        text: "Saved".into()
+                    },
+                    "message",
+                    "scope"
+                )
                 .unwrap(),
             "Saved"
         );

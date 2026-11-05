@@ -687,9 +687,19 @@ fn owned_connection(plugin_id: &str, id: &str) -> Result<Connect> {
     Ok(connection)
 }
 
-fn action_result_value(result: ActionResult) -> Value {
-    json!({
-        "card": result.card,
+/// Plugin-facing shape of an action outcome: `card` is a card to show,
+/// `notice` the outcome text. A notice card only repeats `notice`, so it's
+/// left out of `card` to keep plugins from rendering the text twice.
+fn action_result_value(result: ActionResult) -> std::result::Result<Value, String> {
+    let card = result
+        .card
+        .filter(|card| !matches!(card, CardSpec::Notice { .. }));
+    // Serialize explicitly: `json!` unwraps, and a panic here would leave the
+    // plugin's host call unanswered.
+    let card = serde_json::to_value(card)
+        .map_err(|error| format!("failed to serialize action card: {error}"))?;
+    Ok(json!({
+        "card": card,
         "notice": result.notice.map(|(level, text)| json!({
             "level": match level {
                 NoticeLevel::Info => "info",
@@ -699,7 +709,7 @@ fn action_result_value(result: ActionResult) -> Value {
             },
             "text": text,
         })),
-    })
+    }))
 }
 
 struct PluginEventAdapter {
@@ -769,9 +779,11 @@ impl ConnectAdapter for PluginEventAdapter {
         message_id: &str,
         spec: &CardSpec,
     ) -> std::result::Result<(), String> {
+        let card = serde_json::to_value(spec)
+            .map_err(|error| format!("failed to serialize card: {error}"))?;
         self.emit(
             "message_card",
-            json!({ "messageId": message_id, "card": spec }),
+            json!({ "messageId": message_id, "card": card }),
         )
         .await
     }
@@ -905,7 +917,7 @@ pub async fn handle_host_call(plugin_id: &str, method: &str, params: Value) -> R
             )
             .await
             .map_err(GroveError::session)?;
-            Ok(action_result_value(result))
+            action_result_value(result).map_err(GroveError::session)
         }
         _ => Err(GroveError::not_found(format!(
             "unknown Grove host method: {method}"
@@ -941,5 +953,32 @@ mod tests {
         let authorized = json!({ "oauth_access_token": "granted" });
         assert!(validate_config(&provider, &authorized, false).is_err());
         assert!(validate_config(&provider, &authorized, true).is_ok());
+    }
+
+    #[test]
+    fn notice_action_result_serializes_without_a_duplicate_card() {
+        let value =
+            action_result_value(ActionResult::notice("Saved", NoticeLevel::Success)).unwrap();
+        assert_eq!(
+            value,
+            json!({ "card": null, "notice": { "level": "success", "text": "Saved" } })
+        );
+    }
+
+    #[test]
+    fn warning_card_action_result_keeps_its_card() {
+        let value = action_result_value(ActionResult::warning_card(
+            "Pick a task",
+            CardSpec::NewSession {
+                agents: vec![],
+                current: None,
+            },
+        ))
+        .unwrap();
+        assert_eq!(value["card"]["type"], "new_session");
+        assert_eq!(
+            value["notice"],
+            json!({ "level": "warning", "text": "Pick a task" })
+        );
     }
 }

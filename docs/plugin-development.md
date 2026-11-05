@@ -784,6 +784,21 @@ const result = await grove.connect.deliverAction(connectionId, {
 });
 ```
 
+`deliverAction` resolves to `{ card, notice }`:
+
+- `card` is a card to show in place of the clicked one, or `null`.
+- `notice` is the outcome, `{ level: "info" | "success" | "warning" | "error",
+  text }`, or `null`. When `card` is `null` and `notice` is set, the action is
+  finished: replace the clicked card with the notice text so its buttons can't
+  be pressed again. An `error` notice is a failure the user should see.
+- Both are `null` when the action was ignored (unknown name, or another chat or
+  user).
+
+A failed action either rejects with the error message, or resolves with a
+`warning` or `error` notice (with the card again when the user can retry).
+Handle both. Cards sent as `message_card` events carry a `type`; a plain
+notice is `{ "type": "notice", "text": "…" }`.
+
 Subscribe to Grove output through ordinary events. `grove:connect` is the
 connection-targeted stream for replying to an external conversation;
 `grove:radio` is the general task activity stream and may also drive unrelated
