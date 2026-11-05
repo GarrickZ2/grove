@@ -110,6 +110,8 @@ pub struct WebConfigDto {
     pub interface: Option<String>,
     pub buddy_motion: Option<String>,
     pub send_mode: Option<String>,
+    pub terminal_position: Option<String>,
+    pub multi_machine: bool,
     pub show_hide_window_shortcut: Option<String>,
 }
 
@@ -168,6 +170,8 @@ impl From<&Config> for ConfigResponse {
                 interface: config.web.interface.clone(),
                 buddy_motion: config.web.buddy_motion.clone(),
                 send_mode: config.web.send_mode.clone(),
+                terminal_position: config.web.terminal_position.clone(),
+                multi_machine: config.web.multi_machine,
                 show_hide_window_shortcut: config.web.show_hide_window_shortcut.clone(),
             },
             auto_link: AutoLinkConfigDto {
@@ -323,6 +327,8 @@ pub struct WebConfigPatch {
     pub workspace_layout: Option<String>,
     pub interface: Option<String>,
     pub buddy_motion: Option<String>,
+    pub terminal_position: Option<String>,
+    pub multi_machine: Option<bool>,
     pub send_mode: Option<String>,
     pub show_hide_window_shortcut: Option<String>,
 }
@@ -363,6 +369,14 @@ pub async fn patch_config(
         .as_ref()
         .and_then(|web| web.send_mode.as_deref())
         .is_some_and(|mode| !matches!(mode, "queue" | "interrupt"))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if patch
+        .web
+        .as_ref()
+        .and_then(|web| web.terminal_position.as_deref())
+        .is_some_and(|position| !matches!(position, "bottom" | "left"))
     {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -465,6 +479,12 @@ pub async fn patch_config(
         }
         if let Some(motion) = web_patch.buddy_motion {
             config.web.buddy_motion = Some(motion);
+        }
+        if let Some(multi_machine) = web_patch.multi_machine {
+            config.web.multi_machine = multi_machine;
+        }
+        if let Some(position) = web_patch.terminal_position {
+            config.web.terminal_position = Some(position);
         }
         if let Some(mode) = web_patch.send_mode {
             config.web.send_mode = Some(mode);
@@ -1038,6 +1058,22 @@ fn convert_icns_to_png(icns_path: &Path, output_path: &Path) -> Option<Vec<u8>> 
 mod tests {
     use super::*;
     use crate::storage::{buddies::test_support::Store, database};
+
+    #[tokio::test]
+    async fn terminal_position_accepts_bottom_and_left_only() {
+        let _lock = database::test_lock().lock().await;
+        let _store = Store::new();
+        let patch = |position: &str| {
+            serde_json::from_value(serde_json::json!({"web":{"terminal_position":position}}))
+                .unwrap()
+        };
+        let saved = patch_config(Json(patch("left"))).await.unwrap();
+        assert_eq!(saved.0.web.terminal_position.as_deref(), Some("left"));
+        assert_eq!(
+            patch_config(Json(patch("top"))).await.err(),
+            Some(StatusCode::BAD_REQUEST)
+        );
+    }
 
     #[tokio::test]
     async fn send_mode_accepts_its_two_modes_only() {

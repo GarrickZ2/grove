@@ -1,6 +1,7 @@
 //! ACP WebSocket handler for Grove Web
 
 use crate::api::device_auth::RevocableWebSocketUpgrade as WebSocketUpgrade;
+use crate::radio::{TurnAction, TurnActionKind};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -1590,9 +1591,20 @@ async fn handle_acp_ws(
                                 }
                             }
                             ClientMessage::Cancel => {
+                                // The composer's "send now" queues the prompt and
+                                // then cancels, so something waiting means the
+                                // Session is being redirected, not stopped.
+                                let kind = if handle_for_input.get_queue().is_empty() {
+                                    TurnActionKind::Cancel
+                                } else {
+                                    TurnActionKind::Interrupt
+                                };
+                                handle_for_input.attribute_action(TurnAction::user(kind));
                                 let _ = handle_for_input.cancel().await;
                             }
                             ClientMessage::Kill => {
+                                handle_for_input
+                                    .attribute_action(TurnAction::user(TurnActionKind::EndSession));
                                 let _ = handle_for_input.kill().await;
                                 break;
                             }
@@ -1693,6 +1705,8 @@ async fn handle_acp_ws(
                                 }
                             }
                             ClientMessage::DequeueMessage { id } => {
+                                handle_for_input
+                                    .attribute_action(TurnAction::user(TurnActionKind::Remove));
                                 let (found, messages) = handle_for_input.dequeue_message_by_id(&id);
                                 handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
                                 if !found {
@@ -1740,6 +1754,8 @@ async fn handle_acp_ws(
                                 }
                             }
                             ClientMessage::ClearQueue => {
+                                handle_for_input
+                                    .attribute_action(TurnAction::user(TurnActionKind::Remove));
                                 let messages = handle_for_input.clear_queue();
                                 handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
                             }
@@ -2175,6 +2191,7 @@ pub async fn archive_chat(
 
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
     if let Some(handle) = acp::get_session_handle(&session_key) {
+        handle.attribute_action(TurnAction::user(TurnActionKind::EndSession));
         handle
             .kill()
             .await
@@ -2468,6 +2485,7 @@ pub async fn delete_chat(
     // cannot be lost merely because the bounded command queue is temporarily
     // full, and the normal command-loop path still performs session/close.
     if let Some(handle) = acp::get_session_handle(&session_key) {
+        handle.attribute_action(TurnAction::user(TurnActionKind::EndSession));
         handle
             .kill()
             .await

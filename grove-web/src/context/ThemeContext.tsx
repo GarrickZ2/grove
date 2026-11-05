@@ -3,7 +3,8 @@ import { createContext, useContext, useState, useEffect, useMemo, useCallback, u
 import type { ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { ThemeConfig } from "../api/config";
-import { APP_APPEARANCE_CHANGED_EVENT, normalizeAppIconStyle, appIconAssetUrl } from "../data/appIcons";
+import { rememberBootIcon, rememberBootTheme } from "../utils/bootTheme";
+import { APP_APPEARANCE_CHANGED_EVENT, normalizeAppIconStyle, appIconAssetUrl, pwaIconKey, pwaManifestUrl, pwaTouchIconUrl } from "../data/appIcons";
 
 const isTauri = !isIosClient && typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -388,6 +389,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [systemIsDark, setSystemIsDark] = useState<boolean>(getSystemIsDark);
   const [appIcon, setAppIcon] = useState("classic");
   const [iconConfigLoaded, setIconConfigLoaded] = useState(false);
+  const [themeLoaded, setThemeLoaded] = useState(false);
   const themeLoadGeneration = useRef(0);
 
   const allThemes = useMemo(() => [...builtInThemes, ...customThemes], [customThemes]);
@@ -434,6 +436,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         }
       } catch (error) {
         console.error("Failed to load theme from config:", error);
+      } finally {
+        if (!disposed) setThemeLoaded(true);
       }
     };
 
@@ -467,6 +471,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Apply CSS variables when theme changes
   useEffect(() => {
     const root = document.documentElement;
+    // Until the config answers, `theme` is only a guess: keep what boot-theme.js
+    // painted, or the guess would flash over the right colors.
+    if (!themeLoaded && root.style.getPropertyValue("--color-bg")) return;
     const colors = theme.colors;
     root.style.setProperty("--color-bg", colors.bg);
     root.style.setProperty("--color-bg-secondary", colors.bgSecondary);
@@ -485,8 +492,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--color-info", colors.info);
     // Lets stylesheets tell light themes from dark ones (`:root[data-theme="dark"]`).
     root.dataset.theme = theme.isLight ? "light" : "dark";
-
-  }, [theme]);
+    if (themeLoaded) rememberBootTheme();
+  }, [theme, themeLoaded]);
 
   useEffect(() => {
     if (!iconConfigLoaded) return;
@@ -497,6 +504,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         ? (iconIsLight ? "/favicon-light.svg" : "/favicon.svg")
         : appIconAssetUrl(appIcon, iconIsLight);
     }
+    // Add to Home Screen captures whatever these point at. Each icon has its
+    // own URL, so neither a browser nor a CDN can answer with a previous one.
+    const pwaIcon = pwaIconKey(appIcon, iconIsLight);
+    document.querySelector("link[rel='apple-touch-icon']")?.setAttribute("href", pwaTouchIconUrl(pwaIcon));
+    document.querySelector("link[rel='manifest']")?.setAttribute("href", pwaManifestUrl(pwaIcon));
+    rememberBootIcon(pwaIcon);
     if (isTauri) {
       import("@tauri-apps/api/core").then(({ invoke }) =>
         invoke("tray_update_theme_icons", { isLight: theme.isLight, iconStyle: appIcon }),

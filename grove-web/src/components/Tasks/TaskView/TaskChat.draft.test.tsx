@@ -29,7 +29,7 @@ vi.mock("../../../api", () => ({
   getConfig: vi.fn(async () => ({ layout: {} })),
   getTaskFiles: vi.fn(async () => ({ files: [] })),
   listSpeakingProfiles: vi.fn(async () => []),
-  getMentionCandidates: vi.fn(async () => ({ outgoing: [], pending_replies: [] })),
+  getMentionCandidates: vi.fn(async () => ({ outgoing: [] })),
 }));
 vi.mock("../../../api/client", () => ({ getApiHost: () => "localhost", appendHmacToUrl: async (url: string) => url }));
 vi.mock("../../../api/extension", () => ({ getExtensionStatus: async () => false }));

@@ -5,7 +5,7 @@
 //! Grove starts are marked interrupted; Grove never replays a brief.
 use crate::acp::{self, QueuedConfig};
 use crate::error::{GroveError, Result};
-use crate::radio::{RadioEvent, TurnEvent};
+use crate::radio::{RadioEvent, TurnAction, TurnActionKind, TurnActor, TurnEvent};
 use crate::storage::{
     buddies::{self as db, Buddy, Delegation, DelegationStatus as Status},
     custom_agent, database, tasks,
@@ -197,6 +197,13 @@ pub async fn follow(
     // A cancelled follow-up stays closed; messaging that Session again opens a new one.
     let existing = db::find_delegation_for_session(&database::connection(), &buddy.id, session)?
         .filter(|delegation| delegation.status != Status::Cancelled);
+    if let Some(delegation) = &existing {
+        if outcome_unread(from_session, delegation)? {
+            return Err(GroveError::invalid_data(
+                "This Session's last outcome is waiting for you but cannot reach you during a turn. End your turn now to read it, then send again if still needed.",
+            ));
+        }
+    }
     let delegation = match existing {
         Some(delegation) => delegation,
         None => {
@@ -225,6 +232,22 @@ pub async fn follow(
     };
     let message_id = send_round(buddy, &delegation, text, files, None).await?;
     Ok((get(&buddy.id, &delegation.id)?, message_id))
+}
+
+/// An outcome for this follow-up sits unread in the caller's own queue. More
+/// messages to the Session would be written without having seen it.
+fn outcome_unread(from_session: &str, delegation: &Delegation) -> Result<bool> {
+    let Some((project, task, _)) = tasks::find_chat_session(from_session)? else {
+        return Ok(false);
+    };
+    let Some(handle) = acp::get_session_handle(&format!("{project}:{task}:{from_session}")) else {
+        return Ok(false);
+    };
+    let marker = format!("\"delegation_id\":\"{}\"", delegation.id);
+    let sender = format!("buddy:{}", delegation.buddy_id);
+    Ok(handle.get_queue().iter().any(|queued| {
+        queued.sender.as_deref() == Some(sender.as_str()) && queued.text.contains(&marker)
+    }))
 }
 
 pub async fn send_round(
@@ -386,7 +409,7 @@ pub(crate) fn observe(event: &RadioEvent) -> Vec<Notice> {
                 .cloned();
             let round = match (round, event) {
                 (Some(round), _) => round,
-                (None, TurnEvent::SessionEnded) if !entry.pending.is_empty() => {
+                (None, TurnEvent::SessionEnded { .. }) if !entry.pending.is_empty() => {
                     entry.latest.clone()
                 }
                 _ => continue,
@@ -432,6 +455,7 @@ pub(crate) fn observe(event: &RadioEvent) -> Vec<Notice> {
                 TurnEvent::Completed {
                     stop_reason,
                     message,
+                    action,
                     ..
                 } => {
                     entry.pending.remove(&round);
@@ -439,30 +463,38 @@ pub(crate) fn observe(event: &RadioEvent) -> Vec<Notice> {
                         // ask_form returns at once; the round waits on the user.
                         continue;
                     }
-                    let lowered = stop_reason.to_ascii_lowercase();
-                    let status = if lowered.contains("cancel") || lowered == "killed" {
+                    let status = if crate::radio::is_stop_reason(stop_reason) {
                         Status::Cancelled
                     } else {
                         Status::Done
                     };
-                    (status, message.clone(), None)
+                    (status, with_outside_action(*action, message), None)
                 }
                 TurnEvent::Failed { message } => {
                     entry.pending.remove(&round);
                     (Status::Failed, message.clone(), None)
                 }
-                TurnEvent::SessionEnded => {
+                TurnEvent::SessionEnded { action } => {
                     entry.pending.clear();
                     entry.awaiting_form = false;
-                    (
-                        Status::Failed,
-                        "The Agent Session ended before finishing.".into(),
-                        None,
-                    )
+                    let text = with_outside_action(*action, "");
+                    if text.is_empty() {
+                        (
+                            Status::Failed,
+                            "The Agent Session ended before finishing.".into(),
+                            None,
+                        )
+                    } else {
+                        (Status::Cancelled, text, None)
+                    }
                 }
-                TurnEvent::Removed => {
+                TurnEvent::Removed { action } => {
                     entry.pending.remove(&round);
-                    continue;
+                    let text = with_outside_action(*action, "");
+                    if text.is_empty() {
+                        continue;
+                    }
+                    (Status::Cancelled, text, None)
                 }
             };
             let Ok(current) = get(&entry.buddy_id, &entry.delegation_id) else {
@@ -514,6 +546,16 @@ pub(crate) fn observe(event: &RadioEvent) -> Vec<Notice> {
         untrack(chat_id, &delegation);
     }
     notices
+}
+
+/// Lead with what the user did, so a Buddy does not mistake their decision for
+/// something to recover from. A Buddy's own actions need no telling.
+fn with_outside_action(action: Option<TurnAction>, text: &str) -> String {
+    match action.filter(|action| action.by != TurnActor::Buddy) {
+        Some(action) if text.is_empty() => action.notice(),
+        Some(action) => format!("{}\n\n{text}", action.notice()),
+        None => text.to_owned(),
+    }
 }
 
 fn describe_request(request: &Request) -> String {
@@ -787,7 +829,9 @@ pub async fn cancel(buddy: &str, id: &str) -> Result<Delegation> {
         delegation.target_project, delegation.target_task, delegation.target_session
     );
     if let Some(handle) = acp::get_session_handle(&key) {
+        handle.attribute_action(TurnAction::buddy(TurnActionKind::Remove));
         handle.dequeue_messages_by_sender(&format!("buddy:{buddy}"));
+        handle.attribute_action(TurnAction::buddy(TurnActionKind::Cancel));
         handle.cancel().await?;
     }
     change(&delegation, delegation.status, Status::Cancelled, None)?;

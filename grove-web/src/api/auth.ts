@@ -1,5 +1,6 @@
 import { apiClient, clearDeviceSession, fetchWithAuthorization, extractErrorPayload, getApiBaseUrl, getDeviceId, getDeviceSigningKey, getSignedHeaders, setDeviceSession, rememberDeviceSession, forgetRememberedDeviceSession, withAuthTransition } from './client';
 import { hmacSha256Hex } from './hmac';
+import { isStandaloneDisplay } from '../utils/standalone';
 
 export interface LoginDevice {
   id: string;
@@ -105,7 +106,7 @@ export function loginDevice(secret: string, trusted: boolean, useCookie = window
   const device = await rawRequest<LoginDevice>(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Timestamp': timestamp, 'X-Nonce': nonce, 'X-Signature': signature },
-    body: JSON.stringify({ standalone: window.matchMedia('(display-mode: standalone)').matches || !!(navigator as Navigator & { standalone?: boolean }).standalone }),
+    body: JSON.stringify({ standalone: isStandaloneDisplay() }),
   });
   const key = cookie ? undefined : await hmacSha256Hex(secret, `grove-device-key-v1|${id}`);
   setDeviceSession(device.id, key);

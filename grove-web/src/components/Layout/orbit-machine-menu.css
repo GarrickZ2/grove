@@ -1,0 +1,37 @@
+.orbit-machine { position: relative; min-width: 0; }
+.orbit-machine-entry { width: 100%; color: var(--color-text-muted); }
+.orbit-machine-entry > span:nth-of-type(1) { flex: 1; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-machine-entry:hover, .orbit-machine-entry[aria-expanded="true"] { color: var(--color-text); }
+.orbit-machine-chevron { flex: none; color: var(--color-text-muted); }
+
+.orbit-machine-pop { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 60; min-width: 232px; max-height: min(60vh, 420px); padding: 5px; overflow-y: auto; border: 1px solid color-mix(in oklab, var(--color-border) 75%, transparent); border-radius: 12px; background: var(--color-bg); box-shadow: 0 12px 32px rgba(0, 0, 0, .16), 0 2px 6px rgba(0, 0, 0, .08); animation: orbit-machine-in .14s ease-out; }
+@keyframes orbit-machine-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .orbit-machine-pop { animation: none; } }
+
+.orbit-machine-item { position: relative; display: flex; min-width: 0; align-items: stretch; border-radius: 8px; }
+.orbit-machine-item:hover, .orbit-machine-item:focus-within { background: color-mix(in oklab, var(--color-text) 7%, transparent); }
+.orbit-machine-open { display: flex; flex: 1; min-width: 0; align-items: center; gap: 9px; padding: 6px 30px 6px 7px; border: 0; border-radius: 8px; background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
+.orbit-machine-open:disabled { cursor: default; }
+.orbit-machine-item.is-current .orbit-machine-open { padding-right: 52px; }
+.orbit-machine-glyph { position: relative; display: inline-flex; flex: none; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 8px; background: color-mix(in oklab, var(--color-text) 6%, transparent); color: var(--color-text-muted); }
+.orbit-machine-dot { position: absolute; right: -1px; bottom: -1px; box-shadow: 0 0 0 2px var(--color-bg); }
+.orbit-machine-text { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1px; }
+.orbit-machine-text b { overflow: hidden; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-machine-text span { overflow: hidden; color: var(--color-text-muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-machine-check { position: absolute; right: 30px; flex: none; color: var(--color-text-muted); }
+.orbit-machine-edit { position: absolute; top: 50%; right: 5px; display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-muted); cursor: pointer; opacity: 0; transform: translateY(-50%); transition: opacity .12s ease; }
+.orbit-machine-item:hover .orbit-machine-edit, .orbit-machine-edit:focus-visible { opacity: 1; }
+.orbit-machine-edit:hover { background: color-mix(in oklab, var(--color-text) 9%, transparent); color: var(--color-text); }
+.orbit-machine-sep { height: 1px; margin: 5px 7px; background: color-mix(in oklab, var(--color-border) 65%, transparent); }
+.orbit-machine-add { display: flex; width: 100%; align-items: center; gap: 9px; padding: 7px 13px; border: 0; border-radius: 8px; background: transparent; color: var(--color-text-muted); font-size: 13px; cursor: pointer; }
+.orbit-machine-add:hover { background: color-mix(in oklab, var(--color-text) 7%, transparent); color: var(--color-text); }
+
+.orbit-machine-error { margin: 0; color: var(--color-error); font-size: 12.5px; }
+.orbit-machine-failure { padding: 6px 8px 2px; }
+.orbit-machine-link { align-self: flex-start; padding: 0; border: 0; background: transparent; color: var(--color-text-muted); font-size: 12.5px; cursor: pointer; }
+.orbit-machine-link:hover { color: var(--color-text); }
+.orbit-machine-icons { display: flex; flex-wrap: wrap; gap: 6px; }
+.orbit-machine-icons button { display: inline-flex; width: 36px; height: 36px; align-items: center; justify-content: center; border: 1px solid color-mix(in oklab, var(--color-border) 70%, transparent); border-radius: 9px; background: transparent; color: var(--color-text-muted); cursor: pointer; }
+.orbit-machine-icons button:hover { color: var(--color-text); }
+.orbit-machine-icons button.is-selected { border-color: var(--color-text); color: var(--color-text); background: color-mix(in oklab, var(--color-text) 7%, transparent); }
+@media (hover: none) { .orbit-machine-edit { opacity: 1; } }

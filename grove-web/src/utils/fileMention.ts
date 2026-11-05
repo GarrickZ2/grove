@@ -9,7 +9,6 @@ export type MentionKind =
   | "file"
   | "agent_spawn"
   | "agent_send"
-  | "agent_reply"
   | "chat_history"
   | "browsertabs";
 
@@ -31,14 +30,10 @@ export interface MentionItem {
   category?: string;
   /** Mention kind. Defaults to "file" when omitted. */
   kind?: MentionKind;
-  /** Agent-graph: session id (kinds: agent_send / agent_reply). */
+  /** Agent-graph: session id (kind: agent_send). */
   sessionId?: string;
-  /** Agent-graph: pending-message id (kind: agent_reply). */
-  msgId?: string;
   /** Agent-graph: target session duty hint (kind: agent_send). */
   duty?: string;
-  /** Agent-graph: short body excerpt for pending replies. */
-  bodyPreview?: string;
   /** Agent-graph: agent id used by the spawn template (kind: agent_spawn). */
   agentName?: string;
   /** Agent-graph: agent icon id when known (kind: agent_spawn). */
@@ -264,13 +259,6 @@ export function buildAgentMentionItems(input: {
    *  persona id → base_agent + system prompt at session create time. */
   spawnPersonas?: { id: string; name: string; base_agent: string; duty?: string }[];
   outgoing: { session_id: string; name: string; agent: string; duty?: string }[];
-  pending_replies: {
-    session_id: string;
-    name: string;
-    agent: string;
-    msg_id: string;
-    body_preview: string;
-  }[];
   /** Sibling chats in the same task (current chat already excluded by caller).
    *  Surfaced as `Read History` mentions — the AI receives the absolute
    *  history.jsonl path and inspects it with its own Read tool. */
@@ -282,20 +270,6 @@ export function buildAgentMentionItems(input: {
   }[];
 }): MentionItem[] {
   const items: MentionItem[] = [];
-
-  for (const p of input.pending_replies) {
-    items.push({
-      kind: "agent_reply",
-      path: `@${p.name}`, // synthetic key for de-dup
-      isDir: false,
-      displayName: p.name,
-      category: "Pending reply",
-      sessionId: p.session_id,
-      msgId: p.msg_id,
-      bodyPreview: p.body_preview,
-      agentName: p.agent,
-    });
-  }
 
   for (const o of input.outgoing) {
     items.push({

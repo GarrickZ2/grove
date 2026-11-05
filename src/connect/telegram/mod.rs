@@ -653,6 +653,9 @@ impl ConnectAdapter for TelegramAdapter {
     async fn reply_card(&self, message_id: &str, spec: &CardSpec) -> Result<(), String> {
         text_driver::reply_card(self, message_id, spec).await
     }
+    async fn push_text(&self, _chat_id: Option<&str>, text: &str) -> Result<(), String> {
+        TextChannel::send(self, "", text, Vec::new()).await
+    }
 }
 
 async fn run(connection: Connect, cancel: CancellationToken) -> Result<(), String> {
@@ -686,6 +689,7 @@ async fn run(connection: Connect, cancel: CancellationToken) -> Result<(), Strin
         turns: TurnCards::default(),
         outgoing: tokio::sync::Mutex::new(()),
     });
+    crate::connect::grove::register_adapter(&connection.id, adapter.clone());
     // Command menu in the private chat (best effort; does not affect routing).
     let commands: Vec<Value> = crate::connect::commands::COMMANDS
         .iter()

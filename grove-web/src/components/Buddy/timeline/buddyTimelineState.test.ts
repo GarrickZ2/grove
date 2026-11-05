@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { emptyBuddyTimeline, reduceBuddyEvent, type BuddyEvent } from "./buddyTimelineState";
 import { quietTurnText, visibleRows } from "./visibleRows";
 const run = (events: BuddyEvent[]) => events.reduce((state, event, i) => reduceBuddyEvent(state, event, 1000 + i * 1000), emptyBuddyTimeline());
@@ -128,4 +128,19 @@ it("keeps a pending approval visible in a quiet turn", () => {
   const state = reduceBuddyEvent(emptyBuddyTimeline(), { type: "quiet_turn", reason: "Nothing new" });
   const pending = { ...state, rows: [...state.rows, { kind: "approval", id: "a" } as never] };
   expect(visibleRows(pending).map(row => row.id)).toEqual([state.rows[0].id, "a"]);
+});
+
+describe("sign-in", () => {
+  const required = { type: "auth_required", methods: [{ id: "login", name: "Log in" }], agent_name: "Claude" };
+
+  it("asks for it, and clears once signed in", () => {
+    const asked = run([{ type: "busy", value: true }, required]);
+    expect(asked.busy).toBe(false);
+    expect(asked.auth).toMatchObject({ status: "idle", agentName: "Claude" });
+    expect(reduceBuddyEvent(reduceBuddyEvent(asked, { type: "buddy_auth_progress", method_id: "login" }, 0), { type: "auth_succeeded" }, 0).auth).toBeNull();
+  });
+
+  it("says why a sign-in failed", () => {
+    expect(run([required, { type: "auth_failed", message: "Denied" }]).auth).toMatchObject({ status: "failed", errorMessage: "Denied" });
+  });
 });

@@ -1,4 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
+import { FileInfoPreview } from "../ui/FileInfoPreview";
+import { fileInfoCategory, looksBinary } from "../ui/filePreviewPolicy";
 import { lazy, Suspense, useEffect, useRef, useMemo, useState, useId, type ReactNode } from 'react';
 import { MarkdownRenderer, MermaidBlock, D2Block } from '../ui/MarkdownRenderer';
 import { PreviewCommentHost, type MarkdownCommentConfig, type MarkdownCommentMarker } from './PreviewCommentHost';
@@ -63,6 +65,10 @@ export interface RenderFullProps {
   /** File-relative HTML links are opened by the owning preview. */
   onNavigateFile?: (reference: string) => void;
   htmlFragment?: string;
+  /** Actions and facts for files that have nothing to render. */
+  fileSize?: number;
+  onDownload?: () => void;
+  onOpenFile?: () => void;
 }
 
 export interface PreviewRenderer {
@@ -726,6 +732,25 @@ const d2Renderer: PreviewRenderer = {
   supportsDiffSegments: false,
 };
 
+/** Files with nothing to read: says what they are and offers what to do. */
+export const fileInfoRenderer: PreviewRenderer = {
+  id: 'file-info',
+  label: 'File info',
+  match: (path) => fileInfoCategory(path) !== '',
+  contentType: 'binary',
+  layout: 'fill',
+  renderFull: ({ fileName, fileSize, onDownload, onOpenFile }) => (
+    <FileInfoPreview
+      fileName={fileName ?? ''}
+      fileSize={fileSize}
+      onDownload={onDownload}
+      onOpenFile={onOpenFile}
+    />
+  ),
+  supportsComments: false,
+  supportsDiffSegments: false,
+};
+
 const sourceCodeRenderer: PreviewRenderer = {
   id: 'source',
   label: 'Preview source code',
@@ -748,8 +773,18 @@ const renderers: PreviewRenderer[] = [
   jsonlRenderer,
   xlsxRenderer,
   pdfRenderer,
+  fileInfoRenderer,
   sourceCodeRenderer,
 ];
+
+/**
+ * The renderer for a loaded file. An extension says little for files without a
+ * known type, so the source view gives way once the content turns out binary.
+ */
+export function resolveFullRenderer(path: string, content: string): PreviewRenderer | undefined {
+  const renderer = getPreviewRenderer(path, 'full');
+  return renderer === sourceCodeRenderer && looksBinary(content) ? fileInfoRenderer : renderer;
+}
 
 /**
  * Whether a renderer still means anything in Changes (diff) mode.
@@ -766,7 +801,7 @@ const renderers: PreviewRenderer[] = [
  * honestly, with no separate list to remember to update.
  */
 function previewableInDiffMode(r: PreviewRenderer): boolean {
-  return r.supportsDiffSegments || r.contentType !== 'text';
+  return r !== fileInfoRenderer && (r.supportsDiffSegments || r.contentType !== 'text');
 }
 
 /**

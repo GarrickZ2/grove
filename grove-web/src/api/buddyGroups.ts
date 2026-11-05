@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, requestAt } from "./client";
 import { BUDDIES_MOCK_ENABLED } from "./buddies.mock";
 import type { BuddyStatus, BuddySummary } from "./buddies";
 
@@ -48,6 +48,12 @@ const BASE = "/api/v1/buddy-groups";
 const groupPath = (id: string) => `${BASE}/${encodeURIComponent(id)}`;
 
 export const listBuddyGroups = async (): Promise<BuddyGroup[]> => BUDDIES_MOCK_ENABLED ? [] : apiClient.get<BuddyGroup[]>(BASE);
+export const listBuddyGroupsAt = (base: string) => requestAt<BuddyGroup[]>(base, BASE);
+export const createBuddyGroupAt = (base: string, input: { name?: string; buddy_ids: string[] }) => requestAt<BuddyGroup>(base, BASE, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(input),
+});
 export const getBuddyGroup = (id: string) => apiClient.get<BuddyGroup>(groupPath(id));
 export const createBuddyGroup = (input: { name?: string; buddy_ids: string[] }) => apiClient.post<typeof input, BuddyGroup>(BASE, input);
 export const renameBuddyGroup = (id: string, name: string) => apiClient.patch<{ name: string }, BuddyGroup>(groupPath(id), { name });

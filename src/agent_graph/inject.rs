@@ -101,7 +101,7 @@ pub fn build_session_instruction_prompt(kind: &str, system_prompt: &str, body: &
     }
 }
 
-/// Reply variant has no msg_id field and no reply-instruction text.
+/// Reply variant has no msg_id field: it answers, nothing answers it.
 pub fn build_injected_prompt(
     sender_chat_id: &str,
     sender_name: &str,
@@ -111,14 +111,12 @@ pub fn build_injected_prompt(
     msg_id: Option<&str>,
 ) -> String {
     let system_prompt = match (kind, msg_id) {
-        (InjectKind::Send, Some(id)) => format!(
-            "From session \"{name}\" (id={sid}). IMPORTANT: your reply is delivered \
-             ONLY by calling the reply tool — a plain-text answer is NOT routed back \
-             to the sender and will be lost. Call the MCP tool `graph_reply` (your \
-             client may expose it namespaced, e.g. `grove_agent_graph_reply` or \
-             `mcp__grove_agent__graph_reply`) with msg_id=\"{id}\" and your answer in \
-             the `message` field. Do not reply by sending a new message; replies are \
-             routed by msg_id.",
+        (InjectKind::Send, Some(_)) => format!(
+            "From session \"{name}\" (id={sid}). Answer as you normally would: when your \
+             turn ends, your final response is returned to \"{name}\" automatically, so \
+             there is no reply tool to call. If you message other Sessions for this, end \
+             your turn after sending; their replies arrive as your next message, and your \
+             final response after that is what goes back.",
             name = sender_name,
             sid = sender_chat_id,
         ),
@@ -128,16 +126,14 @@ pub fn build_injected_prompt(
             sid = sender_chat_id,
         ),
         (InjectKind::Reply, _) => format!(
-            "From session \"{name}\" (id={sid}), replying to your earlier message.",
+            "From session \"{name}\" (id={sid}): this is its response to your earlier message.",
             name = sender_name,
             sid = sender_chat_id,
         ),
         (InjectKind::Remind, Some(id)) => format!(
-            "REMINDER (not a new request): the user is asking you to look at the \
-             pending message from session \"{name}\" (id={sid}, msg_id={id}). When \
-             ready, reply by calling the MCP tool `graph_reply` (may appear as \
-             `grove_agent_graph_reply` / `mcp__grove_agent__graph_reply`) with \
-             msg_id=\"{id}\" — a plain-text answer is not routed back and will be lost.",
+            "REMINDER (not a new request): the user is asking about the pending message \
+             from session \"{name}\" (id={sid}, msg_id={id}). Finish it and end your turn; \
+             your final response is returned to \"{name}\" automatically.",
             name = sender_name,
             sid = sender_chat_id,
         ),
@@ -231,8 +227,8 @@ mod tests {
         assert_eq!(env["data"]["agent"], "claude");
         assert_eq!(env["data"]["msg_id"], "msg-1");
         let system_prompt = env["system-prompt"].as_str().unwrap();
-        assert!(system_prompt.contains("grove_agent_graph_reply"));
-        assert!(system_prompt.contains("msg_id=\"msg-1\""));
+        assert!(system_prompt.contains("returned to \"Frontend\" automatically"));
+        assert!(!system_prompt.contains("graph_reply"));
         assert!(s.ends_with("\n\nhi"));
     }
 
@@ -253,7 +249,7 @@ mod tests {
         assert!(!env["system-prompt"]
             .as_str()
             .unwrap()
-            .contains("grove_agent_graph_reply"));
+            .contains("automatically"));
         assert!(s.ends_with("\n\nhi"));
     }
 

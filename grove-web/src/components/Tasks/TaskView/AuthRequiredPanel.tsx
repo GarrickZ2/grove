@@ -1,5 +1,6 @@
 import { AlertTriangle, ChevronRight, Loader2, ShieldCheck } from "lucide-react";
 import { useRef } from "react";
+import { getApiHost } from "../../../api/client";
 import { Button } from "../../ui";
 import { XTerminal } from "../TaskDetail/XTerminal";
 import { useOrbitConversation } from "./conversation/OrbitConversationContext";
@@ -63,7 +64,7 @@ export function AuthRequiredPanel({
   const terminalLogin = activeMethod?.type === "terminal" && message.status === "in_progress" && chatId;
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const terminalUrl = terminalLogin
-    ? `${protocol}//${window.location.host}/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/chats/${encodeURIComponent(chatId)}/auth-terminal/${encodeURIComponent(activeMethod.id)}`
+    ? `${protocol}//${getApiHost()}/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/chats/${encodeURIComponent(chatId)}/auth-terminal/${encodeURIComponent(activeMethod.id)}`
     : undefined;
   let title: string;
   let description: string;

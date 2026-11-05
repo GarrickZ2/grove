@@ -64,6 +64,17 @@ struct PendingAskForm {
 static ASK_FORM_PENDING: Lazy<Mutex<HashMap<String, PendingAskForm>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Live adapters by connection, for messages that answer no inbound message.
+static ADAPTERS: Lazy<Mutex<HashMap<String, AdapterRef>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub fn register_adapter(connection_id: &str, adapter: AdapterRef) {
+    ADAPTERS
+        .lock()
+        .unwrap()
+        .insert(connection_id.to_owned(), adapter);
+}
+
 fn remove_from_completed_history(message_ids: &[String]) {
     if message_ids.is_empty() {
         return;
@@ -136,6 +147,7 @@ fn retain_completed_routes(
 }
 
 pub fn shutdown(connection_id: &str) {
+    ADAPTERS.lock().unwrap().remove(connection_id);
     let ids = {
         let mappings = MESSAGE_MAPPINGS.lock().unwrap();
         mappings
@@ -990,6 +1002,48 @@ async fn clear_routes(routes: &[MessageMapping]) {
     }
 }
 
+/// The enabled connections of the Buddy this Session is the voice of. Only the
+/// active Segment speaks: group members and old Segments are other chats.
+fn buddy_connections(session_id: &str) -> Vec<Connect> {
+    connects::list_enabled()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|connect| {
+            connect.buddy_id.as_deref().is_some_and(|buddy| {
+                crate::buddy::get(buddy)
+                    .is_ok_and(|buddy| buddy.active_session_id.as_deref() == Some(session_id))
+            })
+        })
+        .collect()
+}
+
+/// A Buddy has one conversation across every surface, so whatever it says goes
+/// to its IM connections too, whether or not anyone wrote from there. `answered`
+/// is the connection already getting this as a reply.
+async fn push_buddy_reply(session_id: &str, text: &str, answered: Option<&str>) {
+    for connect in buddy_connections(session_id) {
+        if answered == Some(connect.id.as_str()) {
+            continue;
+        }
+        let live = ADAPTERS.lock().unwrap().get(&connect.id).cloned();
+        let Some(adapter) =
+            live.or_else(|| crate::plugins::connect_provider::adapter_for(&connect))
+        else {
+            eprintln!(
+                "[connect] {} is not connected; Buddy reply not sent",
+                connect.id
+            );
+            continue;
+        };
+        if let Err(error) = adapter
+            .push_text(connect.bound_chat_id.as_deref(), text)
+            .await
+        {
+            eprintln!("[connect] failed to push Buddy reply: {error}");
+        }
+    }
+}
+
 pub async fn handle_turn_event(
     project_id: String,
     task_id: String,
@@ -1110,13 +1164,17 @@ pub async fn handle_turn_event(
         TurnEvent::Completed {
             stop_reason,
             message,
+            quiet,
             ..
         } => {
             let matched_routes = routes(&message_ids);
-            let stopped = {
-                let reason = stop_reason.to_ascii_lowercase();
-                reason.contains("cancel") || reason == "killed"
-            };
+            let stopped = crate::radio::is_stop_reason(&stop_reason);
+            if !stopped && !quiet && !message.trim().is_empty() {
+                let answered = matched_routes
+                    .last()
+                    .map(|(_, route)| route.connection_id.as_str());
+                push_buddy_reply(&session_id, message.trim(), answered).await;
+            }
             if stopped {
                 let removed = take_routes(&message_ids);
                 for route in &removed {
@@ -1185,7 +1243,7 @@ pub async fn handle_turn_event(
                 }
             }
         }
-        TurnEvent::Removed => {
+        TurnEvent::Removed { .. } => {
             let routes = take_routes(&message_ids);
             for route in &routes {
                 if let Some(progress) = &route.progress {
@@ -1194,7 +1252,7 @@ pub async fn handle_turn_event(
             }
             clear_routes(&routes).await;
         }
-        TurnEvent::SessionEnded => {
+        TurnEvent::SessionEnded { .. } => {
             let ids = {
                 let mappings = MESSAGE_MAPPINGS.lock().unwrap();
                 mappings
@@ -1225,6 +1283,80 @@ mod buddy_request_tests {
         buddies::test_support::{seed_buddy, Store},
         database, tasks,
     };
+    #[derive(Default)]
+    struct PushAdapter {
+        pushed: Mutex<Vec<(Option<String>, String)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::connect::adapter::ConnectAdapter for PushAdapter {
+        async fn mark_waiting(&self, _: &str) -> Option<String> {
+            None
+        }
+        async fn mark_working(&self, _: &str, _: &Option<String>) -> Option<String> {
+            None
+        }
+        async fn clear_status(&self, _: &str, _: &Option<String>) {}
+        async fn reply_text(&self, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        async fn reply_card(&self, _: &str, _: &CardSpec) -> Result<(), String> {
+            Ok(())
+        }
+        async fn push_text(&self, chat: Option<&str>, text: &str) -> Result<(), String> {
+            self.pushed
+                .lock()
+                .unwrap()
+                .push((chat.map(str::to_owned), text.to_owned()));
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn buddy_speech_reaches_im_without_a_mapping() {
+        let _lock = database::test_lock().lock().await;
+        let _store = Store::new();
+        let buddy = seed_buddy(&database::connection(), "push");
+        let session = buddy.active_session_id.clone().unwrap();
+        let connection = connects::create(serde_json::from_value(serde_json::json!({
+            "name":"Buddy IM", "project_id":buddy.project_hash, "task_id":"_local", "session_id":session,
+            "target":{"kind":"buddy","buddy_id":buddy.id}
+        })).unwrap()).unwrap();
+        connects::bind_private_chat(&connection.id, "chat", "user").unwrap();
+        let adapter = std::sync::Arc::new(PushAdapter::default());
+        register_adapter(&connection.id, adapter.clone());
+
+        let turn = |session: &str, stop: &str, message: &str, quiet| {
+            handle_turn_event(
+                buddy.project_hash.clone(),
+                "_local".into(),
+                session.to_owned(),
+                vec!["unmapped".into()],
+                TurnEvent::Completed {
+                    stop_reason: stop.into(),
+                    message: message.into(),
+                    quiet,
+                    action: None,
+                },
+            )
+        };
+        turn(&session, "EndTurn", "from a routine", false).await;
+        assert_eq!(
+            *adapter.pushed.lock().unwrap(),
+            [(Some("chat".to_owned()), "from a routine".to_owned())]
+        );
+
+        turn(&session, "EndTurn", "kept quiet", true).await;
+        turn(&session, "Cancelled", "half", false).await;
+        turn(&session, "EndTurn", "  ", false).await;
+        turn("another-session", "EndTurn", "not the Buddy", false).await;
+        assert_eq!(adapter.pushed.lock().unwrap().len(), 1);
+
+        // The connection that asked gets the reply, not a second copy.
+        push_buddy_reply(&session, "answer", Some(&connection.id)).await;
+        assert_eq!(adapter.pushed.lock().unwrap().len(), 1);
+    }
+
     #[tokio::test]
     async fn reused_protocol_request_ids_cannot_cross_segments() {
         let _lock = database::test_lock().lock().await;

@@ -42,8 +42,9 @@
 .owl-spin{animation:owl-spin .8s linear infinite}
 @keyframes owl-spin{to{transform:rotate(360deg)}}
 .owl-version{position:fixed;left:0;right:0;bottom:16px;margin:0;display:flex;justify-content:center;align-items:center;gap:8px;font-size:12px;color:var(--o-muted);pointer-events:none}
+.owl-machine{position:fixed;left:12px;bottom:10px;z-index:5;width:220px}
 .owl-remote{padding:1px 6px;border-radius:5px;border:1px solid color-mix(in oklab,var(--o-accent) 25%,transparent);background:var(--o-accent-soft);color:var(--o-accent);font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 @media (max-width:900px){.owl-choices{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:767px){.owl-ag{height:32px}.owl-noag-row{flex-wrap:wrap;justify-content:center}}
-@media (max-width:560px){.owl h1{font-size:30px}.owl-choices{grid-template-columns:minmax(0,1fr)}.owl-version{position:static;margin-top:24px}}
+@media (max-width:560px){.owl h1{font-size:30px}.owl-choices{grid-template-columns:minmax(0,1fr)}.owl-version{position:static;margin-top:24px}.owl-machine{position:static;width:auto;margin-top:16px}}
 @media (prefers-reduced-motion:reduce){.owl *{animation:none!important;transition:none!important}}

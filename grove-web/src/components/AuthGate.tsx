@@ -3,8 +3,7 @@ import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import {
   extractSkFromUrl, extractPageFromUrl, extractRadioTokenFromUrl,
   getSecretKey, setSecretKey, clearSecretKey, getDeviceId, getDeviceSigningKey, clearDeviceSession,
-  setDeviceSession, restoreRememberedDeviceSession, setPageIntent, setRadioToken, AUTH_CHANGED_EVENT, AUTH_EXPIRED_EVENT, getApiBaseUrl, isAuthTransitionPending,
-} from '../api/client';
+  setDeviceSession, restoreRememberedDeviceSession, setPageIntent, setRadioToken, AUTH_CHANGED_EVENT, AUTH_EXPIRED_EVENT, getApiBaseUrl, isAuthTransitionPending, getMachineApiBase, setMachineApiBase } from '../api/client';
 import {
   AuthRequestError, canTrustDevice, canUseTrustedDeviceCookie, getAuthInfo,
   getAuthSession, loginDevice, logoutDevice, subscribeToLogout, type AuthInfo,
@@ -115,6 +114,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
         if (err.code === 'AUTH_REVOKED') clearDeviceSession();
         else clearSecretKey();
         setAuthState('needs_auth');
+      } else if (getMachineApiBase()) {
+        // That machine's port is gone, say after a restart. Home always answers.
+        setMachineApiBase(null);
       } else {
         // Only explicit revocation invalidates an existing device credential.
         setError('Unable to connect to Grove. Your saved sign-in has been kept.');

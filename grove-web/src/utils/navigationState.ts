@@ -1,5 +1,6 @@
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "../data/nav";
 import type { TaskFilter } from "../data/types";
+import { isStandaloneDisplay } from "./standalone";
 
 export type NavigationMode = "zen" | "blitz";
 
@@ -18,12 +19,18 @@ export interface TaskPageLocation {
   filter: TaskFilter;
 }
 
-const NAVIGATION_KEY = "grove:navigation";
-const pages = new Set<string>([...REPO_NAV_IDS, ...STUDIO_NAV_IDS, "settings", "projects"]);
+export const NAVIGATION_KEY = "grove:navigation";
+const pages = new Set<string>([...REPO_NAV_IDS, ...STUDIO_NAV_IDS, "new", "settings", "projects"]);
+
+// A tab's place belongs to that tab. An installed app has one window whose
+// session storage is gone once the OS ends it, so its place has to outlive that.
+function navigationStorage(): Storage {
+  return isStandaloneDisplay() ? localStorage : sessionStorage;
+}
 
 function read(key: string): unknown {
   try {
-    const raw = sessionStorage.getItem(key);
+    const raw = navigationStorage().getItem(key);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -32,7 +39,7 @@ function read(key: string): unknown {
 
 function write(key: string, value: unknown): void {
   try {
-    sessionStorage.setItem(key, JSON.stringify(value));
+    navigationStorage().setItem(key, JSON.stringify(value));
   } catch {
     // Navigation remains usable when browser storage is unavailable.
   }

@@ -77,7 +77,7 @@ fn forget_credential(url: &str) {
     }
 }
 
-fn hmac_hex(key: &str, message: &str) -> String {
+pub(crate) fn hmac_hex(key: &str, message: &str) -> String {
     let mut mac = HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC accepts any key length");
     mac.update(message.as_bytes());
     hex::encode(mac.finalize().into_bytes())
@@ -98,7 +98,7 @@ fn canonical(path_and_query: &str) -> String {
 
 /// Signing headers for one request. The server rejects reused nonces and
 /// timestamps outside ±60 s, so these are minted per request.
-fn signed_headers(
+pub(crate) fn signed_headers(
     key: &str,
     device_id: Option<&str>,
     method: &str,
@@ -395,7 +395,7 @@ impl Conn {
     }
 }
 
-fn device_name() -> String {
+pub(crate) fn device_name() -> String {
     let host = std::env::var("HOSTNAME")
         .ok()
         .or_else(|| {

@@ -1,3 +1,4 @@
+import { hostFileActionsAvailable } from "../../orbit/studio/studioView";
 import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
@@ -677,6 +678,8 @@ export function ResourcePage() {
             loading={previewLoading}
             onClose={() => setPreviewFile(null)}
             onDownload={() => handleDownload(previewFile.file)}
+            fileSize={previewFile.file.size}
+            onOpenFile={hostFileActionsAvailable() ? () => handleOpenInApp(previewFile.file) : undefined}
             location={projectId ? {
               projectId,
               root: { kind: "resource" },

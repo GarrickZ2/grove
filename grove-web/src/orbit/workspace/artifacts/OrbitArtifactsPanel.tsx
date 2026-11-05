@@ -133,7 +133,7 @@ export function OrbitArtifactsPanel(props: Props) {
     setKind("all");
   }, []);
 
-  const panel = useArtifactsPanel({ ...props, onRevealTarget: revealTarget, uploadProgress: true });
+  const panel = useArtifactsPanel({ ...props, onRevealTarget: revealTarget });
   const { inputFiles, outputFiles, workdirs, isLoading, error, setError, previewFile, syncConflict, editLink } = panel;
 
   const active: ArtifactSource = source ?? defaultSource({ input: inputFiles, output: outputFiles });
@@ -464,6 +464,9 @@ export function OrbitArtifactsPanel(props: Props) {
               isLive={!!props.isChatBusy}
               onClose={panel.closePreview}
               onDownload={() => panel.handleDownload(previewFile.file)}
+              unpreviewable={previewFile.unpreviewable}
+              fileSize={previewFile.file.size}
+              onOpenFile={hostFileActionsAvailable() ? () => panel.handleOpenInApp(previewFile.file) : undefined}
               onRefresh={() => panel.handlePreview(previewFile.file, true)}
               onCreatePreviewComment={(locator, comment, rendererId) =>
                 panel.handleCreatePreviewComment(previewFile.file, locator, comment, rendererId)

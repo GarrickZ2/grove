@@ -14,3 +14,14 @@ export function normalizeAppIconStyle(style: unknown): string {
 export function appIconAssetUrl(style: string, isLight: boolean): string {
   return `/app-icons/${normalizeAppIconStyle(style)}-${isLight ? 'light' : 'dark'}.svg`;
 }
+
+/** Installed-app assets for an icon; the same key is read by `public/boot-theme.js`. */
+export function pwaIconKey(style: string, isLight: boolean): string {
+  return `${normalizeAppIconStyle(style)}-${isLight ? 'light' : 'dark'}`;
+}
+export function pwaTouchIconUrl(key: string): string {
+  return `/app-icons/pwa/${key}.png`;
+}
+export function pwaManifestUrl(key: string): string {
+  return `/app-icons/pwa/${key}.webmanifest`;
+}

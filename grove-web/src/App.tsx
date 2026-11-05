@@ -5,7 +5,7 @@ import { BuddyLaunchContext } from "./components/Buddy/buddyLaunchContext";
 import { isTauriShell as inTauriShell } from "./utils/tauriShell";
 import { IosLiveActivity } from "./ios/IosLiveActivity";
 import { isIosClient } from "./utils/platform";
-import { useState, useContext, useEffect, useCallback, useRef } from "react";
+import { useState, useContext, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -21,6 +21,7 @@ import { MobileHeader } from "./components/Layout/MobileHeader";
 import { MobileDrawer } from "./components/Layout/MobileDrawer";
 import { NotificationPopover } from "./components/Layout/NotificationPopover";
 import { OrbitSidebar } from "./components/Layout/OrbitSidebar";
+import { TransferDock } from "./transfers/TransferDock";
 import { GroveSplash } from "./components/Layout/GroveSplash";
 import { OrbitPhoneHeader, ORBIT_PHONE_SHOW_CHAT_EVENT } from "./components/Layout/OrbitPhoneHeader";
 import { useOrbitDrawerSwipe } from "./components/Layout/useOrbitDrawerSwipe";
@@ -64,6 +65,7 @@ import { AuthGate } from "./components/AuthGate";
 import { OptionalPerfProfiler } from "./perf/profilerShim";
 import type { Task } from "./data/types";
 import { getConfig, patchConfig, openIDE, openTerminal } from "./api";
+import { getMachineApiBase, subscribeMachineApiBase } from "./api/client";
 import { listMarketplace } from "./api/marketplace";
 import { setMarketplaceIcons } from "./utils/agentIcon";
 import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
@@ -72,6 +74,7 @@ import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
 import { readLastProjectView, writeLastProjectView } from "./utils/lastProjectView";
 import { readNavigationState, restoredTaskNavigation, writeNavigationState } from "./utils/navigationState";
+import { isStandaloneDisplay } from "./utils/standalone";
 import { fuzzyFindByName } from "./utils/fuzzySearch";
 import { useCommand, useContextKey, commandRegistry, useVoiceControlContext } from "./keyboard";
 import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette";
@@ -548,10 +551,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // overshoot behind the URL bar). Covers both the standard media query and
   // iOS's legacy `navigator.standalone`.
   useEffect(() => {
-    const standalone =
-      window.matchMedia?.("(display-mode: standalone)").matches ||
-      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
-    document.documentElement.classList.toggle("grove-standalone", !!standalone);
+    document.documentElement.classList.toggle("grove-standalone", isStandaloneDisplay());
   }, []);
 
   useEffect(() => {
@@ -796,12 +796,12 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   }
   // Orbit's home is the New page: a fresh launch opens there, once per app
   // load, after the project restore above has settled. A reload in the same
-  // window keeps its place (restored navigation), except on phones, which
-  // always open on New like a chat app.
+  // window keeps its place (restored navigation). A phone browser always opens
+  // on New like a chat app; an installed app reopens where it was left.
   const [orbitPhoneLandingChecked, setOrbitPhoneLandingChecked] = useState(false);
   if (!orbitPhoneLandingChecked && globalConfig && !isLoading && selectedProject) {
     setOrbitPhoneLandingChecked(true);
-    if (orbit && (orbitPhone || !restoredNavigation) && activeItem !== "new") {
+    if (orbit && ((orbitPhone && !isStandaloneDisplay()) || !restoredNavigation) && activeItem !== "new") {
       setActiveItem("new");
       setNavigationData(null);
     }
@@ -1955,6 +1955,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
 
 function App() {
   const { open: buddyOpen, enter: openBuddies, exit: closeBuddies } = useBuddyOpen();
+  const machine = useSyncExternalStore(subscribeMachineApiBase, getMachineApiBase);
   // Check for /review/{projectId}/{taskId} path — render diff review directly
   const reviewMatch = window.location.pathname.match(/^\/review\/([^/]+)\/([^/]+)/);
   if (reviewMatch) {
@@ -1972,7 +1973,8 @@ function App() {
   return (
     <ThemeProvider>
       <BannerProvider>
-        <AuthGate>
+        {/* Keyed by machine: everything below holds that server's data. */}
+        <AuthGate key={machine ?? "home"}>
           <ConfigProvider>
             <OrbitInterfaceProvider>
             <TerminalThemeProvider>
@@ -1985,6 +1987,7 @@ function App() {
                         <OrbitFirstRun />
                         <BuddyOverlay open={buddyOpen} onOpen={openBuddies} onExit={closeBuddies}><AppContent pageVisible={!buddyOpen} /></BuddyOverlay>
                         {isIosClient && <IosLiveActivity />}
+                        <TransferDock />
                       </OptionalPerfProfiler>
                     </PreviewCommentProvider>
                   </CommandPaletteProvider>

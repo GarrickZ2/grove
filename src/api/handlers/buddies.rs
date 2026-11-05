@@ -21,7 +21,7 @@ pub(super) fn error(error: GroveError) -> ApiError {
         GroveError::InvalidData(_)
         | GroveError::JsonParse(_)
         | GroveError::StorageTagged {
-            tag: "unknown_base_agent" | "buddy_segment_read_only",
+            tag: "unknown_base_agent" | "buddy_segment_read_only" | crate::machines::LOGIN_REQUIRED,
             ..
         } => StatusCode::BAD_REQUEST,
         GroveError::NotFound(_) => StatusCode::NOT_FOUND,
@@ -68,6 +68,10 @@ pub async fn list(Query(query): Query<ListQuery>) -> Result<Json<Vec<Value>>, Ap
             .collect::<Result<Vec<_>, _>>()
             .map_err(error)?,
     ))
+}
+/// Buddies on the machines connected to this one.
+pub async fn reachable() -> Json<Vec<Value>> {
+    Json(buddy::chat::reachable().await)
 }
 pub async fn create(
     Json(input): Json<buddy::CreateInput>,

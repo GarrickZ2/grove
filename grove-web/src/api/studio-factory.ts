@@ -8,6 +8,7 @@ import type { StudioFileEntry, StudioWorkDirEntry } from './studio-types';
 export interface StudioFileApi<T extends StudioFileEntry = StudioFileEntry> {
   list(path?: string): Promise<{ files: T[] }>;
   upload(files: File[], path?: string): Promise<T[]>;
+  uploadWithProgress(file: File, path: string | undefined, onProgress: (fraction: number) => void, signal?: AbortSignal): Promise<T[]>;
   createFolder(path: string): Promise<void>;
   move(from: string, to: string, options?: { force?: boolean; renameTo?: string }): Promise<void>;
   delete(path: string, extraParams?: Record<string, string>): Promise<void>;
@@ -38,6 +39,15 @@ export function createStudioFileApi<T extends StudioFileEntry = StudioFileEntry>
         ? `${basePath}/upload?${new URLSearchParams({ path })}`
         : `${basePath}/upload`;
       return apiClient.postFormData<T[]>(url, formData);
+    },
+
+    uploadWithProgress(file, path, onProgress, signal) {
+      const formData = new FormData();
+      formData.append('file', file);
+      const url = path
+        ? `${basePath}/upload?${new URLSearchParams({ path })}`
+        : `${basePath}/upload`;
+      return apiClient.postFormDataWithProgress<T[]>(url, formData, onProgress, signal);
     },
 
     createFolder(path: string) {

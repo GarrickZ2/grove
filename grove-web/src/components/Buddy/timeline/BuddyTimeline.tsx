@@ -127,7 +127,7 @@ export function BuddyTimeline({ buddy, state, connected, loading = false, onResp
         const chat = row.id.startsWith("buddy-chat-");
         // A message to another Buddy shows who it went to by their avatar.
         const to = chat ? others.find(item => item.id === row.notice!.buddyId) ?? others.find(item => item.name === row.notice!.name || item.id === row.notice!.name) : undefined;
-        const icon = to ? <BuddyAvatar id={to.id} avatar={to.avatar} size={14} /> : chat ? <Send size={13} aria-hidden="true" /> : <Clock size={13} aria-hidden="true" />;
+        const icon = to ? <BuddyAvatar id={to.avatar_id ?? to.id} avatar={to.avatar} size={14} /> : chat ? <Send size={13} aria-hidden="true" /> : <Clock size={13} aria-hidden="true" />;
         return <TimelineNotice key={row.id} lead={row.notice.lead} icon={icon} name={to?.name ?? row.notice.name} detail={row.notice.detail} tone={row.notice.tone} />;
       }
       const message = state.messages[row.index];

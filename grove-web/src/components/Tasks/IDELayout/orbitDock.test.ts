@@ -6,6 +6,7 @@ import {
   migrateToOrbitSlots,
   openOrbitPanel,
   orbitSlotFor,
+  terminalPositionOf,
   toggleOrbitPanel,
   ORBIT_BOTTOM_MIN,
   ORBIT_CHAT_MIN,
@@ -45,6 +46,14 @@ describe("toggleOrbitPanel", () => {
     expect(toggleOrbitPanel(notes, "notes", "dock")).toMatchObject({ infoType: "notes", infoVisible: false });
   });
 
+  it("docks the terminal on the left when the setting says so", () => {
+    expect(orbitSlotFor("terminal", "aux", "left")).toBe("aux");
+    expect(terminalPositionOf("left")).toBe("left");
+    expect(terminalPositionOf(undefined)).toBe("bottom");
+    expect(toggleOrbitPanel({ ...base, auxType: "review", auxVisible: true }, "terminal", "aux"))
+      .toMatchObject({ auxType: "terminal", auxVisible: true, bottomVisible: false });
+  });
+
   it("toggles the bottom terminal independently of the other docks", () => {
     const open = toggleOrbitPanel({ ...base, infoType: "git", infoVisible: true }, "terminal", "bottom");
     expect(open).toMatchObject({ bottomVisible: true, infoVisible: true });
@@ -65,6 +74,15 @@ describe("toggleOrbitPanel", () => {
 });
 
 describe("migrateToOrbitSlots", () => {
+  it("carries an open terminal over when its position changes", () => {
+    expect(migrateToOrbitSlots({ ...base, bottomVisible: true }, "left"))
+      .toMatchObject({ auxType: "terminal", auxVisible: true, bottomVisible: false });
+    const left = { ...base, auxType: "terminal", auxVisible: true };
+    expect(migrateToOrbitSlots(left, "left")).toBe(left);
+    expect(migrateToOrbitSlots(left, "bottom"))
+      .toMatchObject({ auxType: null, auxVisible: false, bottomVisible: true });
+  });
+
   it("moves an open Workbench terminal to the bottom dock", () => {
     expect(migrateToOrbitSlots({ ...base, auxType: "terminal", auxVisible: true }))
       .toMatchObject({ auxType: null, auxVisible: false, bottomVisible: true });

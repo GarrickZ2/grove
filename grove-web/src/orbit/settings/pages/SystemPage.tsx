@@ -6,7 +6,8 @@ import { useResourceMonitorData } from "../../../components/Config/useResourceMo
 import { ResourceExplorer, ResourceNote, Sparkline } from "../../../components/Config/ResourceMonitor";
 import { bytes, memoryLabel, memoryValue, percent, type Metric } from "../../../components/Config/resourceFormat";
 import { useTheme } from "../../../context";
-import { Block, Button, Group, Lead, Row, Segmented } from "../../ui";
+import { useMultiMachineSetting } from "../../../components/Config/useMultiMachineSetting";
+import { Block, Button, Group, Lead, Row, Segmented, Toggle } from "../../ui";
 
 function LoginDevices() {
   const {
@@ -186,9 +187,24 @@ function Resources() {
   );
 }
 
+function Machines() {
+  const { multiMachine, setMultiMachine } = useMultiMachineSetting();
+  return (
+    <Group title="Machines" anchorId="machines">
+      <Row
+        title="Multiple machine management"
+        description="Show a machine switcher in the sidebar, to pair and reach Grove on your other machines."
+      >
+        <Toggle checked={multiMachine} onChange={setMultiMachine} label="Multiple machine management" />
+      </Row>
+    </Group>
+  );
+}
+
 export function SystemPage() {
   return (
     <>
+      <Machines />
       <LoginDevices />
       <Resources />
     </>

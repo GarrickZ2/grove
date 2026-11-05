@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import { X, FileCode, Eye, Columns2, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw, AlertCircle, ZoomIn, ZoomOut } from "lucide-react";
-import { Button, FullFilePreview, getPreviewType, ImageLightbox, isVirtualizedMarkdownPreview } from "../../ui";
+import { Button, downloadViaIframe, FullFilePreview, getPreviewType, ImageLightbox, isVirtualizedMarkdownPreview } from "../../ui";
 import { getPreviewRenderer } from "../../Review/previewRenderers";
 
 function rewriteHtmlUrls(html: string, projectId: string, taskId: string, parentDir: string): string {
@@ -1400,6 +1400,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                   fileName={selectedFile}
                   content={renderer.contentType === 'url' ? rawFileUrl(selectedFile) : ''}
                   downloadUrl={rawFileUrl(selectedFile)}
+                  onDownload={() => downloadViaIframe(rawFileUrl(selectedFile), selectedFile.split("/").pop())}
                   onImageClick={setLightboxUrl}
                   onSvgClick={setLightboxSvg}
                   location={{

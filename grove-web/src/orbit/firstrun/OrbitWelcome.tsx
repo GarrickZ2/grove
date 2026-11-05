@@ -1,3 +1,4 @@
+import { OrbitMachineMenu } from "../../components/Layout/OrbitMachineMenu";
 import { createElement, useEffect, useState, type CSSProperties } from "react";
 import { motion } from "framer-motion";
 import { Check, FolderOpen, FolderPlus, GitBranch, Palette, RotateCw, type LucideIcon } from "lucide-react";
@@ -136,6 +137,7 @@ export function OrbitWelcome({ onAction }: { onAction: (action: WelcomeAction) =
         </div>
         <AgentLine detection={detection} checking={checking} onRecheck={recheck} onInstall={() => setMarketplaceOpen(true)} />
       </div>
+      <div className="owl-machine"><OrbitMachineMenu pairedOnly /></div>
       {(version || isRemote) && (
         <p className="owl-version">
           {version && <span>v{version}</span>}

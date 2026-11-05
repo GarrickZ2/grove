@@ -83,7 +83,7 @@ export function useMentionSources(options: {
 
   const current = loaded?.target === target ? loaded : null;
   const items = useMemo(() => [
-    ...buildAgentMentionItems({ spawnAgents, spawnPersonas, outgoing: [], pending_replies: [], siblingChats: current?.chats ?? [] }),
+    ...buildAgentMentionItems({ spawnAgents, spawnPersonas, outgoing: [], siblingChats: current?.chats ?? [] }),
     ...(studio
       ? buildStudioMentionItems(current?.files ?? [], current?.sketches ?? [], current?.meta)
       : buildMentionItems(current?.files ?? [])),

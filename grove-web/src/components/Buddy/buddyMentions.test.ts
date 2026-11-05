@@ -1,4 +1,5 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import type { BuddySummary } from "../../api/buddies";
 import { createBuddiesMock } from "../../api/buddies.mock";
 import { mentionAtCaret, mentionCandidates, mentionRuns, mentionedIn, readMentions, withMentions } from "./buddyMentions";
 
@@ -27,4 +28,13 @@ it("sends who was mentioned in an envelope and shows it back as chips", () => {
   expect(text).toBe("ask @Release Captain, then @inbox.");
   expect(mentioned.map((b) => b.name)).toEqual(["Release Captain", "Inbox"]);
   expect(mentionRuns(text, mentioned).map((run) => "buddy" in run ? `[${run.buddy.name}]` : run.text).join("")).toBe("ask [Release Captain], then [Inbox].");
+});
+
+describe("mentions across machines", () => {
+  it("tells the Agent where the Buddy lives and how to address it", () => {
+    const remote = { id: "studio/ada", name: "Ada", avatar: null, role: "Design", machine: "Studio Mac" } as BuddySummary;
+    const sent = withMentions("ask @Ada", [remote]);
+    expect(sent).toContain("Buddy id studio/ada, on the machine Studio Mac, role: Design");
+    expect(readMentions(sent).buddies[0].id).toBe("studio/ada");
+  });
 });

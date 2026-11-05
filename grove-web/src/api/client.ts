@@ -1,4 +1,5 @@
 import { waitForIosTransport } from '../ios/transport';
+import { swapMachineView } from '../utils/machineView';
 // API client base configuration
 // Priority:
 //   1. window.__GROVE_API_BASE__ — injected by `grove web --remote-url` into index.html
@@ -9,7 +10,60 @@ const API_BASE_URL: string =
   import.meta.env.VITE_API_URL ||
   '';
 
-export function getApiBaseUrl(): string { return API_BASE_URL; }
+const MACHINE_BASE_KEY = 'grove:machine-api-base';
+const HOME_VIEW = 'home';
+
+function storedMachineBase(): string | null {
+  try {
+    return sessionStorage.getItem(MACHINE_BASE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** JSON from a machine other than the one this window is pointed at. */
+export async function requestAt<T>(base: string, path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${base}${path}`, init);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: string; message?: string } | null;
+    throw new Error(body?.message ?? body?.error ?? `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<T>;
+}
+
+/** The paired machine this window shows, reached through its local proxy; null at home. */
+let machineBase = storedMachineBase();
+
+export function getApiBaseUrl(): string { return machineBase ?? API_BASE_URL; }
+export function getMachineApiBase(): string | null { return machineBase; }
+export function getHomeApiBase(): string { return API_BASE_URL; }
+
+const machineListeners = new Set<() => void>();
+
+export function subscribeMachineApiBase(listener: () => void): () => void {
+  machineListeners.add(listener);
+  return () => { machineListeners.delete(listener); };
+}
+
+/**
+ * Point this window's API at a paired machine, or back home with null. The page
+ * stays: only the server behind it changes. Listeners rebuild everything that
+ * holds that server's data. Survives a reload, not a new session.
+ */
+export function setMachineApiBase(base: string | null) {
+  if (base === machineBase) return;
+  swapMachineView(machineBase ?? HOME_VIEW, base ?? HOME_VIEW);
+  machineBase = base;
+  try {
+    if (base) sessionStorage.setItem(MACHINE_BASE_KEY, base);
+    else sessionStorage.removeItem(MACHINE_BASE_KEY);
+  } catch {
+    // The switch still holds until the next reload.
+  }
+  // Each server's auth info sets this again; home is not remote.
+  delete (window as unknown as Record<string, unknown>).__GROVE_REMOTE__;
+  for (const listener of machineListeners) listener();
+}
 
 export interface ApiError {
   status: number;
@@ -379,10 +433,8 @@ export async function extractErrorPayload(response: Response): Promise<ErrorPayl
 }
 
 class ApiClient {
-  private baseUrl: string;
-
-  constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl;
+  private get baseUrl(): string {
+    return getApiBaseUrl();
   }
 
   async get<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -460,6 +512,11 @@ class ApiClient {
 
   /** Fetch binary files with the same authentication as other API requests. */
   async getBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+    return (await this.getResponse(path, signal)).blob();
+  }
+
+  /** The authenticated response itself, for callers that read its body as it arrives. */
+  async getResponse(path: string, signal?: AbortSignal): Promise<Response> {
     const response = await fetchWithAuthorization(`${this.baseUrl}${path}`, {
       method: 'GET',
       headers: await getSignedHeaders('GET', path),
@@ -470,7 +527,7 @@ class ApiClient {
       const payload = await extractErrorPayload(response);
       throw { status: response.status, message: payload.message, data: payload.data } as ApiError;
     }
-    return response.blob();
+    return response;
   }
 
   async patch<T, R>(path: string, data: T, signal?: AbortSignal): Promise<R> {
@@ -739,6 +796,7 @@ export const apiClient = new ApiClient();
 /// Get the API host for WebSocket connections.
 /// Priority: __GROVE_API_BASE__ > VITE_API_URL > window.location.host
 export function getApiHost(): string {
+  if (machineBase) return new URL(machineBase).host;
   // Remote mode: injected by grove web --remote-url
   const remoteBase = (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).__GROVE_API_BASE__) as string | undefined;
   if (remoteBase) {

@@ -362,6 +362,28 @@ impl ConnectAdapter for WeixinAdapter {
     async fn reply_card(&self, message_id: &str, spec: &CardSpec) -> Result<(), String> {
         text_driver::reply_card(self, message_id, spec).await
     }
+    /// WeChat only delivers inside a conversation context, so this continues
+    /// from the owner's newest message; none yet means nowhere to send.
+    async fn push_text(&self, _chat_id: Option<&str>, text: &str) -> Result<(), String> {
+        let latest = {
+            let store = self.store.lock().unwrap();
+            store
+                .data
+                .seen
+                .iter()
+                .rev()
+                .find(|id| {
+                    store
+                        .data
+                        .replies
+                        .get(*id)
+                        .is_some_and(|message| !message.context_token.is_empty())
+                })
+                .cloned()
+        };
+        let latest = latest.ok_or("WeChat needs a message from the owner first")?;
+        self.send(&latest, text).await
+    }
 }
 
 async fn run(connection: Connect, cancel: CancellationToken) -> Result<(), String> {
@@ -385,6 +407,7 @@ async fn run(connection: Connect, cancel: CancellationToken) -> Result<(), Strin
         ui: Mutex::new(Ui::default()),
         outgoing: tokio::sync::Mutex::new(()),
     });
+    crate::connect::grove::register_adapter(&connection.id, adapter.clone());
     let _ = api
         .post(
             "/ilink/bot/msg/notifystart",

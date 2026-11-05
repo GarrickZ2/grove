@@ -105,6 +105,10 @@ fn is_short_memory_tool(title: &str) -> bool {
 static ACP_SESSIONS: once_cell::sync::Lazy<RwLock<HashMap<String, Arc<AcpSessionHandle>>>> =
     once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// Why a session that wants a sign-in can't take work yet.
+pub(crate) const AUTH_REQUIRED: &str =
+    "Agent authentication is required. Sign in to the agent in Grove, then retry.";
+
 #[derive(Clone)]
 enum SessionReadiness {
     Starting,
@@ -208,8 +212,6 @@ pub struct AcpSessionHandle {
     terminal_kill_tx: Mutex<Option<mpsc::Sender<()>>>,
     /// Agent 是否正在处理（busy=true 从 prompt 开始，到 complete 结束）
     pub is_busy: std::sync::atomic::AtomicBool,
-    /// 最近一轮 agent 回复的累积文本（用于 Complete 通知摘要 / 菜单栏 Tray 全文）
-    last_assistant_text: Mutex<String>,
     /// Grove-owned correlation for the turn currently executed by this
     /// Session. External consumers receive it only through semantic Radio
     /// events; ACP implementation details remain private.
@@ -222,13 +224,10 @@ pub struct AcpSessionHandle {
     /// history, because ACP request payloads carry no turn token.
     recent_completed_turn_message_ids: Mutex<VecDeque<Vec<String>>>,
     /// Text produced after the most recent tool call in the active turn.
-    /// This is the canonical final reply carried by Radio on completion.
+    /// This is the canonical final reply: what Radio carries on completion and
+    /// what notifications and the Tray show. Text before a tool call is the
+    /// Agent working, not its answer.
     last_turn_reply: Mutex<String>,
-    /// 当一段 agent 文本之后出现了 tool_call 时置位（前端 ACP Chat 会据此另起
-    /// 一个 assistant 气泡）。下一段 AgentMessageChunk 写入 last_assistant_text
-    /// 前补一个段落分隔，使累积文本的分段与聊天气泡边界一致，避免被工具调用
-    /// 切开的多段文本粘成一坨。
-    pending_text_separator: std::sync::atomic::AtomicBool,
     /// Latest user prompt text for this chat. Set when an `AcpCommand::Prompt`
     /// is dispatched; surfaced on the wire via `RadioEvent::ChatStatus.prompt`
     /// when the chat transitions to `busy` so passive listeners (menubar tray)
@@ -244,6 +243,9 @@ pub struct AcpSessionHandle {
     /// reply. Drives the agent graph's settled `error` / `done` outcome
     /// (see `agent_graph::node_outcome`). Reset on every `Busy { true }`.
     turn_record: Mutex<crate::agent_graph::node_outcome::TurnRecord>,
+    /// Who is stopping this Session or editing its queue, set just before the
+    /// command and read by the Radio event that command produces.
+    pending_action: Mutex<Option<crate::radio::TurnAction>>,
     /// Latest pending permission request details (description + options),
     /// cached at `PermissionRequest` emit time so a one-shot snapshot
     /// (`GET /api/v1/tray/chats`) can render the request — the `pending_permission`
@@ -1280,6 +1282,14 @@ impl QueuedMessage {
         }
     }
 
+    /// Use a queue id the caller reserved, so it can follow this prompt's turn
+    /// from before delivery.
+    pub(crate) fn with_id(mut self, id: String) -> Self {
+        self.message_ids = vec![id.clone()];
+        self.id = id;
+        self
+    }
+
     fn with_processed_text(mut self, processed_text: String) -> Self {
         self.processed_text = Some(processed_text);
         self
@@ -1408,6 +1418,8 @@ Preserve the user's control over consequential changes. Actions that complete, m
 const WORKING_AGENT_RUNTIME_INSTRUCTION: &str = r#"Use Grove's set_title tool at most once per Session to give it a concise title reflecting the user's initial intent. Do not rename it again, even if the conversation's focus changes; a stable title helps the user find the Session.
 
 Use Grove collaboration when another Session can contribute relevant existing context or concrete, independently executable work. Understand the available Sessions before coordinating, give delegated work a clear outcome and boundary, and remain responsible for integrating the result into the current Task.
+
+Session messages only reach you between turns. After sending to another Session, finish whatever else you have and end your turn: its reply comes as your next message and cannot arrive while your turn is running. Never sleep, poll, re-check contacts, re-read a Session, or keep a turn open to wait; replies only pile up unread until you stop. Read a connected Session's conversation with read_session when you need its context, rather than asking it to repeat itself; manage_queue and graph_send's interrupt let you edit, remove or hurry what you have sent a Session you direct. When another Session messages you, answer as you normally would: your final response in that turn goes back to it automatically, and there is no reply tool. If you delegate part of that work, end your turn too; you continue when the reply arrives, and your final response after that is what goes back.
 
 Use a structured form when several related user decisions need to be collected together."#;
 
@@ -3327,20 +3339,6 @@ async fn handle_session_notification(
         }
         acp::SessionUpdate::AgentMessageChunk(chunk) => {
             if let acp::ContentBlock::Text(text) = &chunk.content {
-                if let Ok(mut buf) = state.handle.last_assistant_text.lock() {
-                    // 若上一段文本之后夹过 tool_call，则在续写新文本前补段落分隔，
-                    // 与前端「tool 边界另起气泡」的行为对齐。连续文本块（无 tool
-                    // 间隔）仍直接拼接。
-                    if state
-                        .handle
-                        .pending_text_separator
-                        .swap(false, std::sync::atomic::Ordering::Relaxed)
-                        && !buf.is_empty()
-                    {
-                        buf.push_str("\n\n");
-                    }
-                    buf.push_str(&text.text);
-                }
                 state.handle.emit(AcpUpdate::MessageChunk {
                     text: text.text.clone(),
                     message_id: chunk.message_id.map(|id| id.to_string()),
@@ -3378,11 +3376,6 @@ async fn handle_session_notification(
                     active.insert(tool_call_id.clone());
                 }
             }
-            // 标记：此处出现了 tool_call，下一段 agent 文本应另起段落。
-            state
-                .handle
-                .pending_text_separator
-                .store(true, std::sync::atomic::Ordering::Relaxed);
             let explicit_locations: Vec<(String, Option<u32>)> = tool_call
                 .locations
                 .iter()
@@ -3782,11 +3775,6 @@ async fn handle_session_notification(
         }
         acp::SessionUpdate::Notice(notice) => {
             if !notice.title.trim().is_empty() {
-                // Preserve the boundary between text before and after a notice.
-                state
-                    .handle
-                    .pending_text_separator
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 let severity = match notice.severity {
                     acp::NoticeSeverity::Info => "info".to_owned(),
                     acp::NoticeSeverity::Warning => "warning".to_owned(),
@@ -5239,15 +5227,14 @@ pub async fn get_or_start_session(
                     working_dir: config.working_dir.to_string_lossy().to_string(),
                     terminal_kill_tx: Mutex::new(None),
                     is_busy: std::sync::atomic::AtomicBool::new(false),
-                    last_assistant_text: Mutex::new(String::new()),
                     active_turn_message_ids: Mutex::new(Vec::new()),
                     quiet_turn: std::sync::atomic::AtomicBool::new(false),
                     recent_completed_turn_message_ids: Mutex::new(VecDeque::new()),
                     last_turn_reply: Mutex::new(String::new()),
-                    pending_text_separator: std::sync::atomic::AtomicBool::new(false),
                     last_user_prompt: Mutex::new(None),
                     last_plan: Mutex::new(None),
                     turn_record: Mutex::new(Default::default()),
+        pending_action: Mutex::new(None),
                     last_permission_info: Mutex::new(None),
                     active_tool_calls: Mutex::new(std::collections::HashSet::new()),
                     short_tool_watches: Mutex::new(HashMap::new()),
@@ -7635,12 +7622,6 @@ async fn drive_session(
                     *buf = Some(text.clone());
                 }
                 handle.emit(AcpUpdate::Busy { value: true });
-                if let Ok(mut buf) = handle.last_assistant_text.lock() {
-                    buf.clear();
-                }
-                handle
-                    .pending_text_separator
-                    .store(false, std::sync::atomic::Ordering::Relaxed);
 
                 let mut content_blocks: Vec<acp::ContentBlock> = Vec::new();
                 if !wire_text.is_empty() {
@@ -7879,11 +7860,8 @@ async fn drive_session(
                         // so every turn is "final" at this point. The drain-loop
                         // below picks up the next queued message if any.
                         let summary = handle
-                            .last_assistant_text
-                            .lock()
-                            .ok()
-                            .map(|buf| truncate_chars(&buf, 80))
-                            .filter(|s| !s.is_empty())
+                            .final_reply()
+                            .map(|reply| truncate_chars(&reply, 80))
                             .unwrap_or_else(|| "Agent finished responding".to_string());
                         let quiet = handle.quiet_turn.load(std::sync::atomic::Ordering::Relaxed);
                         // A cancelled turn was stopped on purpose, so there is nothing to announce.
@@ -8691,6 +8669,7 @@ impl AcpSessionHandle {
         let (message_ids, event, terminal) = match update {
             AcpUpdate::PromptStarted { message_ids } => {
                 *self.active_turn_message_ids.lock().unwrap() = message_ids.clone();
+                self.pending_action.lock().unwrap().take();
                 self.quiet_turn
                     .store(false, std::sync::atomic::Ordering::Relaxed);
                 self.last_turn_reply.lock().unwrap().clear();
@@ -8907,6 +8886,9 @@ impl AcpSessionHandle {
                         stop_reason: stop_reason.clone(),
                         message: self.last_turn_reply.lock().unwrap().trim().to_owned(),
                         quiet: self.quiet_turn.load(std::sync::atomic::Ordering::Relaxed),
+                        action: crate::radio::is_stop_reason(stop_reason)
+                            .then(|| self.take_action())
+                            .flatten(),
                     },
                     true,
                 )
@@ -8921,10 +8903,14 @@ impl AcpSessionHandle {
                 },
                 true,
             ),
-            AcpUpdate::QueueMessageGone { id } => (vec![id.clone()], TurnEvent::Removed, true),
+            AcpUpdate::QueueMessageGone { id } => {
+                (vec![id.clone()], TurnEvent::Removed { action: None }, true)
+            }
             AcpUpdate::SessionEnded => (
                 self.turn_message_ids_for_event(),
-                TurnEvent::SessionEnded,
+                TurnEvent::SessionEnded {
+                    action: self.take_action(),
+                },
                 true,
             ),
             _ => return,
@@ -9178,8 +9164,7 @@ impl AcpSessionHandle {
         self.turn_record.lock().map(|r| *r).unwrap_or_default()
     }
 
-    /// The agent delivered a graph reply (`grove_agent_graph_reply`) during
-    /// its current turn.
+    /// The current turn's final response answers a graph message.
     pub(crate) fn record_graph_reply(&self) {
         if let Ok(mut record) = self.turn_record.lock() {
             record.record_reply();
@@ -9196,6 +9181,14 @@ impl AcpSessionHandle {
     }
 
     pub(crate) fn finish_turn(&self, end: crate::agent_graph::node_outcome::TurnEnd) {
+        let turn = self.active_turn_ids().unwrap_or_default();
+        if self
+            .chat_id
+            .as_deref()
+            .is_some_and(|chat| crate::agent_graph::replies::turn_answers(chat, &turn))
+        {
+            self.record_graph_reply();
+        }
         if let Ok(mut record) = self.turn_record.lock() {
             record.finish(end);
         }
@@ -9714,11 +9707,7 @@ impl AcpSessionHandle {
                     None
                 };
                 let message = if status == "idle" {
-                    self.last_assistant_text
-                        .lock()
-                        .ok()
-                        .map(|s| s.clone())
-                        .filter(|s| !s.is_empty())
+                    self.final_reply()
                 } else {
                     None
                 };
@@ -9819,10 +9808,8 @@ impl AcpSessionHandle {
                     .send_replace(SessionReadiness::Failed(message.clone()));
             }
             AcpUpdate::AuthRequired { .. } if !was_ready => {
-                self.readiness.send_replace(SessionReadiness::Failed(
-                    "Agent authentication is required. Sign in to the agent in Grove, then retry."
-                        .into(),
-                ));
+                self.readiness
+                    .send_replace(SessionReadiness::Failed(AUTH_REQUIRED.into()));
             }
             _ => {}
         }
@@ -10508,32 +10495,80 @@ impl AcpSessionHandle {
     /// tagged `automation:<run_id>` in one call without having to track the
     /// individual `QueuedMessage.id`s. Returns the number of removed entries.
     pub fn dequeue_messages_by_sender(&self, sender: &str) -> usize {
-        let mut q = self.pending_queue.lock().unwrap();
-        let before = q.len();
-        q.retain(|m| {
-            let keep = m.sender.as_deref() != Some(sender);
-            if !keep {
-                self.discard_input_times(&m.message_ids);
-            }
-            keep
+        let (count, removed) = {
+            let mut q = self.pending_queue.lock().unwrap();
+            let mut removed = Vec::new();
+            let before = q.len();
+            q.retain(|m| {
+                let keep = m.sender.as_deref() != Some(sender);
+                if !keep {
+                    self.discard_input_times(&m.message_ids);
+                    removed.extend(m.message_ids.iter().cloned());
+                }
+                keep
+            });
+            (before - q.len(), removed)
+        };
+        self.announce_removed(removed);
+        count
+    }
+
+    /// What the Agent said after its last tool call this turn.
+    fn final_reply(&self) -> Option<String> {
+        let reply = self.last_turn_reply.lock().ok()?;
+        let reply = reply.trim();
+        (!reply.is_empty()).then(|| reply.to_owned())
+    }
+
+    /// Attribute the stop or queue edit about to be issued. It never outlives
+    /// the turn it was meant for: the next turn's start clears it, so a stop
+    /// aimed at an idle Session is not pinned on whatever stops next.
+    pub(crate) fn attribute_action(&self, action: crate::radio::TurnAction) {
+        *self.pending_action.lock().unwrap() = Some(action);
+    }
+
+    fn take_action(&self) -> Option<crate::radio::TurnAction> {
+        self.pending_action.lock().unwrap().take()
+    }
+
+    /// Tell Radio these inputs left the queue unread. Whoever waits on their
+    /// outcome would otherwise wait forever. Unlike `QueueMessageGone`, which
+    /// answers a client that acted on a message already sent, this says nothing
+    /// to the client that removed them.
+    fn announce_removed(&self, message_ids: Vec<String>) {
+        let Some(chat_id) = self.chat_id.clone().filter(|_| !message_ids.is_empty()) else {
+            return;
+        };
+        crate::radio::publish(crate::radio::RadioEvent::Turn {
+            project_id: self.project_key.clone(),
+            task_id: self.task_id.clone(),
+            chat_id,
+            message_ids,
+            event: crate::radio::TurnEvent::Removed {
+                action: self.take_action(),
+            },
         });
-        before - q.len()
     }
 
     /// 删除队列中指定 id 的消息。返回 `(found, snapshot)`:
     /// - `found = false` 时调用方应回报"消息已被发送/已不在队列"以让前端关闭编辑态。
     pub fn dequeue_message_by_id(&self, id: &str) -> (bool, Vec<QueuedMessage>) {
-        let mut q = self.pending_queue.lock().unwrap();
-        let before = q.len();
-        q.retain(|m| {
-            let keep = m.id != id;
-            if !keep {
-                self.discard_input_times(&m.message_ids);
-            }
-            keep
-        });
-        let found = q.len() != before;
-        (found, q.clone())
+        let (found, snapshot, removed) = {
+            let mut q = self.pending_queue.lock().unwrap();
+            let mut removed = Vec::new();
+            let before = q.len();
+            q.retain(|m| {
+                let keep = m.id != id;
+                if !keep {
+                    self.discard_input_times(&m.message_ids);
+                    removed.extend(m.message_ids.iter().cloned());
+                }
+                keep
+            });
+            (q.len() != before, q.clone(), removed)
+        };
+        self.announce_removed(removed);
+        (found, snapshot)
     }
 
     /// 编辑队列中指定 id 的消息文本。返回 `(found, snapshot)`。
@@ -10589,12 +10624,17 @@ impl AcpSessionHandle {
 
     /// 清空待执行队列，返回空队列
     pub fn clear_queue(&self) -> Vec<QueuedMessage> {
-        let mut q = self.pending_queue.lock().unwrap();
-        for message in q.iter() {
-            self.discard_input_times(&message.message_ids);
-        }
-        q.clear();
-        q.clone()
+        let removed: Vec<String> = {
+            let mut q = self.pending_queue.lock().unwrap();
+            for message in q.iter() {
+                self.discard_input_times(&message.message_ids);
+            }
+            q.drain(..)
+                .flat_map(|message| message.message_ids)
+                .collect()
+        };
+        self.announce_removed(removed);
+        Vec::new()
     }
 
     fn discard_input_times(&self, ids: &[String]) {
@@ -11209,15 +11249,14 @@ pub fn new_handle_for_test(
         working_dir: "/tmp".to_string(),
         terminal_kill_tx: Mutex::new(None),
         is_busy: std::sync::atomic::AtomicBool::new(false),
-        last_assistant_text: Mutex::new(String::new()),
         active_turn_message_ids: Mutex::new(Vec::new()),
         quiet_turn: std::sync::atomic::AtomicBool::new(false),
         recent_completed_turn_message_ids: Mutex::new(VecDeque::new()),
         last_turn_reply: Mutex::new(String::new()),
-        pending_text_separator: std::sync::atomic::AtomicBool::new(false),
         last_user_prompt: Mutex::new(None),
         last_plan: Mutex::new(None),
         turn_record: Mutex::new(Default::default()),
+        pending_action: Mutex::new(None),
         last_permission_info: Mutex::new(None),
         active_tool_calls: Mutex::new(std::collections::HashSet::new()),
         short_tool_watches: Mutex::new(HashMap::new()),
@@ -12342,6 +12381,111 @@ mod tests {
             matches!(&events[5], crate::radio::TurnEvent::Completed {message,..} if message=="Final answer")
         );
         assert!(handle.active_turn_ids().is_none());
+    }
+
+    #[tokio::test]
+    async fn final_reply_is_the_text_after_the_last_tool_call() {
+        let key = format!("final-reply-{}", uuid::Uuid::new_v4());
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", "task", "chat");
+        let chunk = |text: &str| AcpUpdate::MessageChunk {
+            message_id: None,
+            text: text.into(),
+        };
+        handle.emit(AcpUpdate::PromptStarted {
+            message_ids: vec!["turn".into()],
+        });
+        handle.emit(chunk("Let me check the cache first."));
+        assert_eq!(
+            handle.final_reply().as_deref(),
+            Some("Let me check the cache first.")
+        );
+        handle.emit(AcpUpdate::ToolCall {
+            id: "tool".into(),
+            title: "Search".into(),
+            locations: Vec::new(),
+            timestamp: None,
+            raw_input: None,
+        });
+        assert_eq!(
+            handle.final_reply(),
+            None,
+            "a turn ending on a tool says nothing"
+        );
+        handle.emit(chunk("All "));
+        handle.emit(chunk("cleaned."));
+        assert_eq!(handle.final_reply().as_deref(), Some("All cleaned."));
+    }
+
+    async fn next_turn_event(
+        radio: &mut crate::radio::Subscription,
+        chat: &str,
+    ) -> crate::radio::TurnEvent {
+        loop {
+            if let Some(crate::radio::RadioEvent::Turn { chat_id, event, .. }) = radio.recv().await
+            {
+                if chat_id == chat {
+                    return event;
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn user_actions_reach_radio_with_the_event_they_caused() {
+        use crate::radio::{TurnAction, TurnActionKind, TurnEvent};
+        let chat = format!("action-{}", uuid::Uuid::new_v4());
+        let key = format!("action-test-{chat}");
+        let (handle, _updates, _guard) = new_handle_for_test(&key, "project", "task", &chat);
+        let mut radio = crate::radio::subscribe();
+        // Removing a queued message tells whoever waits on it, and who did it.
+        handle
+            .is_busy
+            .store(true, std::sync::atomic::Ordering::Release);
+        let queued = QueuedMessage::new("x".into(), Vec::new(), None, false, None);
+        let id = queued.id.clone();
+        handle.queue_message(queued);
+        let user = |kind| Some(TurnAction::user(kind));
+        handle.attribute_action(TurnAction::user(TurnActionKind::Remove));
+        assert!(handle.dequeue_message_by_id(&id).0);
+        assert!(
+            matches!(next_turn_event(&mut radio, &chat).await, TurnEvent::Removed { action } if action == user(TurnActionKind::Remove))
+        );
+
+        // A stop aimed at an idle Session does not stick to a later turn.
+        handle.attribute_action(TurnAction::user(TurnActionKind::Cancel));
+        let turn = || vec!["turn".to_string()];
+        handle.emit(AcpUpdate::PromptStarted {
+            message_ids: turn(),
+        });
+        assert!(matches!(
+            next_turn_event(&mut radio, &chat).await,
+            TurnEvent::Started
+        ));
+        handle.emit(AcpUpdate::PromptCompleted {
+            message_ids: turn(),
+            stop_reason: "Cancelled".into(),
+        });
+        assert!(matches!(
+            next_turn_event(&mut radio, &chat).await,
+            TurnEvent::Completed { action: None, .. }
+        ));
+
+        // A stop issued during the turn is carried by that turn's end.
+        handle.emit(AcpUpdate::PromptStarted {
+            message_ids: turn(),
+        });
+        assert!(matches!(
+            next_turn_event(&mut radio, &chat).await,
+            TurnEvent::Started
+        ));
+        handle.attribute_action(TurnAction::user(TurnActionKind::Cancel));
+        handle.emit(AcpUpdate::PromptCompleted {
+            message_ids: turn(),
+            stop_reason: "Cancelled".into(),
+        });
+        assert!(
+            matches!(next_turn_event(&mut radio, &chat).await, TurnEvent::Completed { action, .. } if action == user(TurnActionKind::Cancel))
+        );
     }
 
     #[tokio::test]
@@ -14310,7 +14454,6 @@ mod tests {
         .await
         .unwrap();
         assert!(handle.is_busy.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(handle.last_assistant_text.lock().unwrap().is_empty());
         let live = std::iter::from_fn(|| updates.try_recv().ok()).collect::<Vec<_>>();
         assert_eq!(
             live.iter()

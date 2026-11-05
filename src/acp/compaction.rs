@@ -115,7 +115,8 @@ mod tests {
             text: "after".into(),
         });
         assert!(handle.is_busy.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(handle.last_assistant_text.lock().unwrap().is_empty());
+        // Compaction text is not the Agent's reply.
+        assert_eq!(*handle.last_turn_reply.lock().unwrap(), "beforeafter");
         let live: Vec<_> = std::iter::from_fn(|| updates.try_recv().ok()).collect();
         crate::storage::chat_history::compact_history("project", "task", "chat");
         let restored = crate::storage::chat_history::load_history("project", "task", "chat");

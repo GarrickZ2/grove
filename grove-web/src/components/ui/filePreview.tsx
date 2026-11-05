@@ -1,10 +1,12 @@
+import { getTauriInternals } from "../../utils/tauri";
 import { isIosClient } from "../../utils/platform";
+import { trackedDownload } from "../../transfers/download";
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useEffect, useId, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { Code, Download, Expand, Eye, List, Loader2, Maximize2, MessageSquarePlus, Minimize2, RefreshCw, Shrink, Trash2, X } from "lucide-react";
-import { getPreviewRenderer, type PreviewCommentMarker } from "../Review/previewRenderers";
+import { fileInfoRenderer, getPreviewRenderer, resolveFullRenderer, type PreviewCommentMarker } from "../Review/previewRenderers";
 import { highlightCode, detectLanguage } from "../Review/syntaxHighlight";
 import { PreviewSearchBar } from "../Review/PreviewSearchBar";
 import { useDomSearch } from "../Review/useDomSearch";
@@ -16,7 +18,7 @@ import {
   type VirtualizedMarkdownHeading,
 } from "./VirtualizedMarkdownRenderer";
 import { FullFilePreview } from "./FullFilePreview";
-import { apiClient, appendHmacToUrl } from "../../api/client";
+import { appendHmacToUrl } from "../../api/client";
 import { isVirtualizedMarkdownPreview } from "./filePreviewPolicy";
 import {
   previewCommentLocatorInParentViewport,
@@ -32,15 +34,6 @@ export function getExtBadge(name: string): string {
   // of the literal "JSON" extension.
   if (name.toLowerCase().endsWith(".link.json")) return "LINK";
   return name.split(".").pop()?.toUpperCase() || "";
-}
-
-type TauriInternals = {
-  invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-};
-
-function getTauriInternals(): TauriInternals | null {
-  const w = window as Window & { __TAURI_INTERNALS__?: TauriInternals };
-  return isIosClient ? null : w.__TAURI_INTERNALS__ ?? null;
 }
 
 function fallbackDownloadViaAnchor(url: string, suggestedName?: string) {
@@ -88,17 +81,16 @@ export async function saveBlobAsFile(blob: Blob, suggestedName: string): Promise
 }
 
 export function downloadViaIframe(url: string, suggestedName?: string) {
-  if (getTauriInternals()) {
-    // The save dialog can stay open past the HMAC URL's 60-second window.
-    // Fetch while authenticated, then write the bytes after the user chooses a path.
-    void apiClient.getBlob(url)
-      .then((blob) => saveBlobAsFile(blob, suggestedName ?? inferNameFromUrl(url)))
-      .catch((err) => console.error("[downloadFile] Download failed:", err));
+  const name = suggestedName ?? inferNameFromUrl(url);
+  if (isIosClient) {
+    // The iOS webview hands signed links to the system's own download sheet.
+    void appendHmacToUrl(url)
+      .then((signedUrl) => fallbackDownloadViaAnchor(signedUrl, name))
+      .catch((err) => console.error("[downloadFile] Could not sign download URL:", err));
     return;
   }
-  void appendHmacToUrl(url).then((signedUrl) => {
-    fallbackDownloadViaAnchor(signedUrl, suggestedName);
-  }).catch((err) => console.error("[downloadFile] Could not sign download URL:", err));
+  void trackedDownload(url, name, getTauriInternals()).catch((err) =>
+    console.error("[downloadFile] Download failed:", err));
 }
 
 function inferNameFromUrl(url: string): string {
@@ -151,6 +143,11 @@ interface FilePreviewDrawerProps {
   sketchContext?: { projectId: string; taskId: string };
   /** Storage namespace and path of the previewed file. */
   location?: FileLocation;
+  /** The file could not be read as text; show its info page. */
+  unpreviewable?: boolean;
+  fileSize?: number;
+  /** Open with the default app of the machine hosting Grove. */
+  onOpenFile?: () => void;
 }
 
 export function FilePreviewDrawer({
@@ -170,8 +167,11 @@ export function FilePreviewDrawer({
   previewCommentDrafts,
   sketchContext,
   location,
+  unpreviewable = false,
+  fileSize,
+  onOpenFile,
 }: FilePreviewDrawerProps) {
-  const renderer = getPreviewRenderer(fileName, 'full');
+  const renderer = unpreviewable ? fileInfoRenderer : resolveFullRenderer(fileName, content);
   const wide = renderer?.id === 'html';
   const canToggleSource = renderer?.contentType === 'text';
   const commentable = !!onCreatePreviewComment && !!renderer && renderer.supportsComments !== false;
@@ -676,6 +676,9 @@ export function FilePreviewDrawer({
               content={content}
               fileName={fileName}
               downloadUrl={downloadUrl}
+              fileSize={fileSize}
+              onDownload={onDownload}
+              onOpenFile={onOpenFile}
               onImageClick={setLightboxUrl}
               onSvgClick={setLightboxSvg}
               previewComment={commentable ? { enabled: commentMode && !pendingLocator, previewId, markers: stableMarkers } : undefined}

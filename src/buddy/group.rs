@@ -567,7 +567,7 @@ fn took_wake(message_ids: &[String]) -> bool {
 fn turn_ended(chat: &str, message_ids: &[String], event: &TurnEvent) -> Result<()> {
     if !matches!(
         event,
-        TurnEvent::Completed { .. } | TurnEvent::Failed { .. } | TurnEvent::SessionEnded
+        TurnEvent::Completed { .. } | TurnEvent::Failed { .. } | TurnEvent::SessionEnded { .. }
     ) {
         return Ok(());
     }
@@ -587,6 +587,7 @@ fn turn_ended(chat: &str, message_ids: &[String], event: &TurnEvent) -> Result<(
             stop_reason,
             message,
             quiet,
+            ..
         } => {
             let reason = stop_reason.to_ascii_lowercase();
             if reason.contains("cancel") || reason == "killed" {
@@ -602,7 +603,7 @@ fn turn_ended(chat: &str, message_ids: &[String], event: &TurnEvent) -> Result<(
         TurnEvent::Failed { message } if woken => {
             note("failed", message)?;
         }
-        TurnEvent::SessionEnded if woken => {
+        TurnEvent::SessionEnded { .. } if woken => {
             note("failed", "The Agent stopped")?;
         }
         _ => {}
@@ -1149,6 +1150,7 @@ mod tests {
             stop_reason: "EndTurn".into(),
             message: message.into(),
             quiet,
+            action: None,
         };
         WAKES.lock().unwrap().insert("m1".into());
         turn_ended(&member.session_id, &["m1".into()], &completed("", true)).unwrap();
@@ -1157,6 +1159,7 @@ mod tests {
             stop_reason: "Cancelled".into(),
             message: "half".into(),
             quiet: false,
+            action: None,
         };
         turn_ended(&member.session_id, &[], &cancelled).unwrap();
         let log = with(|conn| db::messages_after(conn, &group.id, 0)).unwrap();

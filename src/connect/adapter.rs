@@ -441,6 +441,13 @@ pub trait ConnectAdapter: Send + Sync + 'static {
     async fn clear_status(&self, message_id: &str, receipt: &Option<String>);
     async fn reply_text(&self, message_id: &str, text: &str) -> Result<(), String>;
     async fn reply_card(&self, message_id: &str, spec: &CardSpec) -> Result<(), String>;
+    /// Start a message in the connection's own conversation, in reply to
+    /// nothing. A Buddy speaks without being asked from this chat: a Routine
+    /// fired, a Session finished, the user wrote from the app. `chat_id` is the
+    /// conversation bound to this connection, for platforms that need it.
+    async fn push_text(&self, _chat_id: Option<&str>, _text: &str) -> Result<(), String> {
+        Err("This platform cannot start a conversation".into())
+    }
 
     fn supports_turn_cards(&self) -> bool {
         false

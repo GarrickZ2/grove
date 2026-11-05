@@ -133,7 +133,7 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, men
       const active = index === Math.min(mention!.index, candidates.length - 1);
       return <li key={candidate.id} role="option" aria-selected={active} className={active ? "is-active" : undefined}
         onMouseDown={(event) => { event.preventDefault(); pick(candidate); }} onMouseEnter={() => setMention((current) => current && { ...current, index })}>
-        {candidate.id === EVERYONE_ID ? <span className="buddy-mention-everyone" aria-hidden="true">@</span> : <BuddyAvatar id={candidate.id} avatar={candidate.avatar} size={22} />}<span className="buddy-mention-name">{candidate.name}</span>{candidate.role && <span className="buddy-mention-role">{candidate.role}</span>}
+        {candidate.id === EVERYONE_ID ? <span className="buddy-mention-everyone" aria-hidden="true">@</span> : <BuddyAvatar id={candidate.avatar_id ?? candidate.id} avatar={candidate.avatar} size={22} />}<span className="buddy-mention-name">{candidate.name}</span>{(candidate.machine || candidate.role) && <span className="buddy-mention-role">{[candidate.machine, candidate.role].filter(Boolean).join(" · ")}</span>}
       </li>;
     })}</ul>}
     <form className={orbit ? `buddy-composer is-orbit${buddy.status === "working" ? " is-running" : ""}` : "buddy-composer"} aria-label={`Message ${buddy.name}`} onSubmit={(event) => { event.preventDefault(); void submit(); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!sending) addFiles(Array.from(event.dataTransfer.files)); }}>
