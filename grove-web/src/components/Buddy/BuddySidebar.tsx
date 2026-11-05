@@ -11,10 +11,13 @@ import { readBuddyPreference, writeBuddyPreference } from "./buddyStorage";
 import type { BuddyTarget, MachineBuddies } from "./useMachineBuddies";
 import { SidebarResizer } from "../Layout/SidebarResizer";
 
+/** A group is made of Buddies, not of other groups. */
+const buddiesOn = (section: MachineBuddies) => section.buddies?.filter((entry) => !entry.group) ?? [];
+
 export function BuddySidebar({ machines, onOpenMachine, onCreateOnMachine, items, unread, selectedId, viewingId, onSelect, onCreate, onCreateGroup, onBuddySettings, onDelete, onPin, onMarkRead, onMarkUnread, onReorder, phone = false, error, loading = false, onRetry, exit, toggle }: {
   /** Sections per machine when this Grove spans several; the list is the current one. */
   machines?: MachineBuddies[]; onOpenMachine?: (section: MachineBuddies, target: BuddyTarget) => void;
-  onCreateOnMachine?: (section: MachineBuddies) => void;
+  onCreateOnMachine?: (section: MachineBuddies, kind: "buddy" | "group") => void;
   exit?: React.ReactNode; toggle?: React.ReactNode; items: BuddyListEntry[]; unread?: Set<string>; selectedId: string;
   /** The conversation on screen; it is always read, so it can't be marked unread. */
   viewingId: string;
@@ -28,6 +31,7 @@ export function BuddySidebar({ machines, onOpenMachine, onCreateOnMachine, items
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [machineMenu, setMachineMenu] = useState<{ section: MachineBuddies; x: number; y: number } | null>(null);
   const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null);
   const [swipeOpen, setSwipeOpen] = useState<string | null>(null);
   const [folded, setFolded] = useState(() => new Set(readBuddyPreference("machines-folded").split(",").filter(Boolean)));
@@ -113,7 +117,11 @@ export function BuddySidebar({ machines, onOpenMachine, onCreateOnMachine, items
           <button type="button" className="buddy-machine-toggle" aria-expanded={!folded.has(section.machine.id)} onClick={() => toggleFolded(section.machine.id)}>
             <ChevronDown size={14} className={folded.has(section.machine.id) ? "is-folded" : undefined} /><span>{section.machine.name}</span>
           </button>
-          {section.current ? newButton : section.buddies && <button type="button" className="buddy-icon-button" aria-label={`Create Buddy on ${section.machine.name}`} onClick={() => onCreateOnMachine?.(section)}><Plus size={16} /></button>}
+          {section.current ? newButton : section.buddies && <button type="button" className="buddy-icon-button" aria-label={`Create Buddy on ${section.machine.name}`} aria-haspopup={buddiesOn(section).length >= 2 ? "menu" : undefined} onClick={(event) => {
+            if (buddiesOn(section).length < 2) { onCreateOnMachine?.(section, "buddy"); return; }
+            const rect = event.currentTarget.getBoundingClientRect();
+            setMachineMenu({ section, x: rect.left, y: rect.bottom + 4 });
+          }}><Plus size={16} /></button>}
         </div>
         {folded.has(section.machine.id) ? null : section.current && !(loading && section.buddies?.length) ? currentList : section.buddies === null
           ? <p className="buddy-muted">Not reachable</p>
@@ -121,6 +129,10 @@ export function BuddySidebar({ machines, onOpenMachine, onCreateOnMachine, items
             : section.buddies.map((buddy) => <div key={buddy.id}><BuddyListItem buddy={buddy} selected={false} avatarSize={36} onSelect={() => onOpenMachine?.(section, buddy.group ? { groupId: buddy.id } : { buddyId: buddy.id })} onMenu={() => {}} /></div>)}
       </section>) : currentList}
     </div>
+    <ContextMenu items={machineMenu ? [
+      { id: "buddy", label: "New Buddy", icon: Smile, onClick: () => onCreateOnMachine?.(machineMenu.section, "buddy") },
+      { id: "group", label: "New Group", icon: Users, onClick: () => onCreateOnMachine?.(machineMenu.section, "group") },
+    ] : []} position={machineMenu} onClose={() => setMachineMenu(null)} />
     <ContextMenu items={menu ? menuItems(menu.id) : []} position={menu ? { x: menu.x, y: menu.y } : null} onClose={() => setMenu(null)} />
     <ContextMenu items={[{ id: "buddy", label: "New Buddy", icon: Smile, onClick: onCreate }, { id: "group", label: "New Group", icon: Users, onClick: () => onCreateGroup?.() }]} position={newMenu} onClose={() => setNewMenu(null)} />
   </aside>;

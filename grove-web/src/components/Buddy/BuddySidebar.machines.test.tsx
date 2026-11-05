@@ -7,7 +7,11 @@ import type { MachineBuddies } from "./useMachineBuddies";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock("../ui/ContextMenu", () => ({ ContextMenu: () => null }));
+const shown = vi.hoisted(() => ({ items: [] as { label: string; onClick: () => void }[] }));
+vi.mock("../ui/ContextMenu", () => ({ ContextMenu: ({ items, position }: { items: typeof shown.items; position: unknown }) => {
+  if (position) shown.items = items;
+  return null;
+} }));
 vi.mock("../Layout/SidebarResizer", () => ({ SidebarResizer: () => null }));
 vi.mock("./BuddyAvatar", () => ({ BuddyAvatar: () => null }));
 vi.mock("./group/BuddyGroupAvatar", () => ({ BuddyGroupAvatar: () => null }));
@@ -30,12 +34,16 @@ describe("BuddySidebar across machines", () => {
         onMarkRead={() => {}} onMarkUnread={() => {}} onReorder={() => {}} />,
     ));
   }
+  const menus = () => shown.items.map((item) => item.label);
+  const menu = (label: string) => shown.items.find((item) => item.label === label)!.onClick;
   const heads = () => [...host.querySelectorAll(".buddy-machine-toggle")].map((head) => head.textContent);
   const button = (name: string) => [...host.querySelectorAll("button")].find((item) => item.textContent?.includes(name) || item.getAttribute("aria-label") === name) as HTMLButtonElement;
 
   beforeEach(() => {
     localStorage.clear();
     open.mockClear();
+    create.mockClear();
+    shown.items = [];
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -58,7 +66,18 @@ describe("BuddySidebar across machines", () => {
     const dev = section("dev", false, []);
     await render([section("home", true, []), dev], []);
     await act(async () => button("Create Buddy on dev").click());
-    expect(create).toHaveBeenCalledWith(dev);
+    expect(create).toHaveBeenCalledWith(dev, "buddy");
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("offers a group on a machine with enough Buddies, without going there", async () => {
+    const dev = section("dev", false, [buddy("Atlas"), buddy("Beacon")]);
+    await render([section("home", true, []), dev], []);
+    await act(async () => button("Create Buddy on dev").click());
+    expect(create).not.toHaveBeenCalled();
+    expect(menus()).toContain("New Group");
+    await act(async () => menu("New Group")());
+    expect(create).toHaveBeenCalledWith(dev, "group");
     expect(open).not.toHaveBeenCalled();
   });
 
