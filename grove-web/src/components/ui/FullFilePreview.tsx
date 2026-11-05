@@ -115,6 +115,9 @@ function FilePreviewContent({
   location,
   onNavigateFile,
   htmlFragment,
+  fileSize,
+  onDownload,
+  onOpenFile,
   markdownRef,
   onMarkdownHeadingsChange,
   onMarkdownSearchStateChange,
@@ -172,6 +175,9 @@ function FilePreviewContent({
         location,
         onNavigateFile,
         htmlFragment,
+        fileSize,
+        onDownload,
+        onOpenFile,
       })}
     </div>
   );

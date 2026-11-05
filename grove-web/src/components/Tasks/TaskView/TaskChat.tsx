@@ -4273,7 +4273,6 @@ export function TaskChat({
             spawnAgents,
             spawnPersonas,
             outgoing: resp.outgoing,
-            pending_replies: resp.pending_replies,
             siblingChats,
           }),
         );
@@ -4284,7 +4283,6 @@ export function TaskChat({
             spawnAgents,
             spawnPersonas,
             outgoing: [],
-            pending_replies: [],
             siblingChats,
           }),
         );
@@ -9171,7 +9169,7 @@ export function TaskChat({
    * Insert a chip at the cursor position, replacing the `@partial` text.
    * Routes to the appropriate chip kind:
    *   - file mentions → file chip (existing path/displayName/category)
-   *   - agent_spawn / agent_send / agent_reply → agent-graph mention chip
+   *   - agent_spawn / agent_send → agent-graph mention chip
    * Lookups by `(path, category)` are unique within `filteredFiles` because
    * agent-graph items use synthetic path keys.
    */

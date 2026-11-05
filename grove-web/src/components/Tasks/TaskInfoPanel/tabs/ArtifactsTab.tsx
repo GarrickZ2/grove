@@ -1,3 +1,4 @@
+import { hostFileActionsAvailable } from "../../../../orbit/studio/studioView";
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -200,6 +201,9 @@ function WorkbenchArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt
             isLive={!!isChatBusy}
             onClose={closePreview}
             onDownload={() => handleDownload(previewFile.file)}
+            unpreviewable={previewFile.unpreviewable}
+            fileSize={previewFile.file.size}
+            onOpenFile={hostFileActionsAvailable() ? () => handleOpenInApp(previewFile.file) : undefined}
             onRefresh={() => handlePreview(previewFile.file, true)}
             onCreatePreviewComment={(locator, comment, rendererId) =>
               handleCreatePreviewComment(previewFile.file, locator, comment, rendererId)

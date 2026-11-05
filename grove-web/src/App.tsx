@@ -5,7 +5,7 @@ import { BuddyLaunchContext } from "./components/Buddy/buddyLaunchContext";
 import { isTauriShell as inTauriShell } from "./utils/tauriShell";
 import { IosLiveActivity } from "./ios/IosLiveActivity";
 import { isIosClient } from "./utils/platform";
-import { useState, useContext, useEffect, useCallback, useRef } from "react";
+import { useState, useContext, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -21,6 +21,7 @@ import { MobileHeader } from "./components/Layout/MobileHeader";
 import { MobileDrawer } from "./components/Layout/MobileDrawer";
 import { NotificationPopover } from "./components/Layout/NotificationPopover";
 import { OrbitSidebar } from "./components/Layout/OrbitSidebar";
+import { TransferDock } from "./transfers/TransferDock";
 import { GroveSplash } from "./components/Layout/GroveSplash";
 import { OrbitPhoneHeader, ORBIT_PHONE_SHOW_CHAT_EVENT } from "./components/Layout/OrbitPhoneHeader";
 import { useOrbitDrawerSwipe } from "./components/Layout/useOrbitDrawerSwipe";
@@ -64,6 +65,7 @@ import { AuthGate } from "./components/AuthGate";
 import { OptionalPerfProfiler } from "./perf/profilerShim";
 import type { Task } from "./data/types";
 import { getConfig, patchConfig, openIDE, openTerminal } from "./api";
+import { getMachineApiBase, subscribeMachineApiBase } from "./api/client";
 import { listMarketplace } from "./api/marketplace";
 import { setMarketplaceIcons } from "./utils/agentIcon";
 import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
@@ -1960,6 +1962,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
 
 function App() {
   const { open: buddyOpen, enter: openBuddies, exit: closeBuddies } = useBuddyOpen();
+  const machine = useSyncExternalStore(subscribeMachineApiBase, getMachineApiBase);
   // Check for /review/{projectId}/{taskId} path — render diff review directly
   const reviewMatch = window.location.pathname.match(/^\/review\/([^/]+)\/([^/]+)/);
   if (reviewMatch) {
@@ -1977,7 +1980,8 @@ function App() {
   return (
     <ThemeProvider>
       <BannerProvider>
-        <AuthGate>
+        {/* Keyed by machine: everything below holds that server's data. */}
+        <AuthGate key={machine ?? "home"}>
           <ConfigProvider>
             <OrbitInterfaceProvider>
             <TerminalThemeProvider>
@@ -1990,6 +1994,7 @@ function App() {
                         <OrbitFirstRun />
                         <BuddyOverlay open={buddyOpen} onOpen={openBuddies} onExit={closeBuddies}><AppContent pageVisible={!buddyOpen} /></BuddyOverlay>
                         {isIosClient && <IosLiveActivity />}
+                        <TransferDock />
                       </OptionalPerfProfiler>
                     </PreviewCommentProvider>
                   </CommandPaletteProvider>

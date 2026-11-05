@@ -1,3 +1,4 @@
+import type { AuthRequiredState } from "../../Tasks/TaskView/AuthRequiredPanel";
 import type { ChatMessage, ServerEvent } from "../../Tasks/TaskView/TaskChat";
 import { reduceMessageChunk } from "../../Tasks/TaskView/messageChunks";
 import { reduceV2Message } from "../../Tasks/TaskView/v2Messages";
@@ -12,7 +13,7 @@ export interface DelegationRow { kind: "delegation"; id: string; title: string; 
 export type BuddyRow = { kind: "message"; id: string; index: number } | { kind: "quiet"; id: string; reason: string } | Approval | Question | Activity | DelegationRow | { kind: "event"; id: string; text: string; notice?: { lead: string; name?: string; detail?: string; tone?: "neutral" | "error";
   /** For a message to another Buddy: who it went to (the name may be all the agent gave). */
   buddyId?: string } };
-export interface BuddyTimelineState { messages: ChatMessage[]; rows: BuddyRow[]; busy: boolean; activity: string | null; started: number; hidden: string[]; pending: Record<string, { text: string; attachments: unknown[] }>; dispatched: string[]; routineCalls?: Record<string, { verb: string; name: string }>;
+export interface BuddyTimelineState { auth?: AuthRequiredState | null; messages: ChatMessage[]; rows: BuddyRow[]; busy: boolean; activity: string | null; started: number; hidden: string[]; pending: Record<string, { text: string; attachments: unknown[] }>; dispatched: string[]; routineCalls?: Record<string, { verb: string; name: string }>;
   /** Work happened since the last assistant text, so the next text starts a new message (the answer may follow). */
   workSinceText?: boolean }
 export const emptyBuddyTimeline = (): BuddyTimelineState => ({ messages: [], rows: [], busy: false, activity: null, started: 0, hidden: [], pending: {}, dispatched: [] });
@@ -194,6 +195,12 @@ export function reduceBuddyEvent(state: BuddyTimelineState, event: BuddyEvent, n
         return { ...row, resolved: string(event.action) || "complete", error: undefined };
       }) };
     }
+    // The Agent needs a sign-in before it can answer; nothing reaches history.
+    case "auth_required": return { ...state, busy: false, auth: { methods: Array.isArray(event.methods) ? event.methods as AuthRequiredState["methods"] : [], agentName: typeof event.agent_name === "string" ? event.agent_name : null, status: "idle" } };
+    case "auth_succeeded": return { ...state, auth: null };
+    case "auth_failed": return state.auth ? { ...state, auth: { ...state.auth, status: "failed", errorMessage: typeof event.message === "string" ? event.message : "Authentication failed. Please try again." } } : state;
+    case "buddy_auth_progress": return state.auth ? { ...state, auth: { ...state.auth, status: "in_progress", activeMethodId: typeof event.method_id === "string" ? event.method_id : undefined, errorMessage: undefined } } : state;
+    case "buddy_auth_cancelled": return state.auth?.status === "in_progress" ? { ...state, auth: { ...state.auth, status: "failed", errorMessage: typeof event.message === "string" ? event.message : "Terminal sign-in cancelled" } } : state;
     case "buddy_reconcile": return { ...state, rows: state.rows.map(row => row.kind === "approval" || row.kind === "question" ? { ...row, resolved: row.resolved || "No longer pending" } : row) };
     case "busy": if (event.value !== false) return { ...state, busy: true }; return { ...state, busy: false };
     case "complete": case "turn_interrupted": case "session_ended": {

@@ -1126,8 +1126,7 @@ fn handle_update(
                 })
                 .collect::<Vec<_>>()
                 .join("");
-            *state.handle.last_turn_reply.lock().unwrap() = text.clone();
-            *state.handle.last_assistant_text.lock().unwrap() = text;
+            *state.handle.last_turn_reply.lock().unwrap() = text;
         }
         SessionUpdate::ToolCallUpdate(_) | SessionUpdate::ToolCallContentChunk(_) => {
             let id = match &update {

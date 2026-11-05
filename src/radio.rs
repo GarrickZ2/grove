@@ -218,12 +218,96 @@ pub enum TurnEvent {
         message: String,
         /// A Buddy chose to keep this turn from the user.
         quiet: bool,
+        /// Who stopped this turn on purpose, when someone did.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<TurnAction>,
     },
     Failed {
         message: String,
     },
-    Removed,
-    SessionEnded,
+    Removed {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<TurnAction>,
+    },
+    SessionEnded {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<TurnAction>,
+    },
+}
+
+/// A deliberate intervention, as opposed to a Session stopping by itself.
+/// Whoever waits on the Session reads this to tell "someone decided this"
+/// from a failure worth retrying.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct TurnAction {
+    pub by: TurnActor,
+    pub kind: TurnActionKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnActor {
+    User,
+    /// A Buddy, which acts for the user.
+    Buddy,
+    /// A Working Agent directing a Session it has an edge to.
+    Agent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnActionKind {
+    /// Stopped the turn.
+    Cancel,
+    /// Stopped the turn so a waiting prompt runs now; the Session carries on.
+    Interrupt,
+    /// Took a queued message out before it was read.
+    Remove,
+    /// Closed or deleted the Session.
+    EndSession,
+}
+
+impl TurnAction {
+    pub fn user(kind: TurnActionKind) -> Self {
+        Self {
+            by: TurnActor::User,
+            kind,
+        }
+    }
+
+    pub fn buddy(kind: TurnActionKind) -> Self {
+        Self {
+            by: TurnActor::Buddy,
+            kind,
+        }
+    }
+
+    /// What an Agent waiting on this Session should be told.
+    pub fn notice(self) -> String {
+        let who = match self.by {
+            TurnActor::User => "The user",
+            TurnActor::Buddy => "The user's Buddy",
+            TurnActor::Agent => "Another Agent in this Task",
+        };
+        let what = match self.kind {
+            TurnActionKind::Cancel => "stopped this Session",
+            TurnActionKind::Interrupt => "interrupted this Session",
+            TurnActionKind::Remove => {
+                "removed the message from this Session's queue before it was read"
+            }
+            TurnActionKind::EndSession => "closed this Session",
+        };
+        format!(
+            "{who} {what} on purpose. This was a deliberate decision, not a failure: do not \
+             retry it or work around it. Ask the user if you need direction."
+        )
+    }
+}
+
+/// Whether a stop reason means the turn was stopped rather than finished.
+pub fn is_stop_reason(stop_reason: &str) -> bool {
+    let lowered = stop_reason.to_ascii_lowercase();
+    lowered.contains("cancel") || lowered == "killed"
 }
 
 #[derive(Debug, Clone, Serialize)]

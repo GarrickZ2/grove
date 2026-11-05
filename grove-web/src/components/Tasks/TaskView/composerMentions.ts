@@ -84,7 +84,7 @@ export function filterComposerMentions(input: MentionFilterInput): FilteredMenti
   const { items, browserTabs, selectors, activeCategory, filter, deferredFilter, projects, projectContents, projectsLoading, projectsError } = input;
   const conversationItems = items.filter((item) => item.kind === "chat_history");
   const agentItems = items.filter((item) =>
-    item.kind === "agent_spawn" || item.kind === "agent_send" || item.kind === "agent_reply");
+    item.kind === "agent_spawn" || item.kind === "agent_send");
   const fileItems = items.filter((item) => !conversationItems.includes(item) && !agentItems.includes(item));
 
   if (activeCategory === "conversation") return filterMentionItems(conversationItems, deferredFilter, 20);
@@ -247,7 +247,6 @@ export function createAgentMentionChip(item: MentionItem): HTMLSpanElement {
   chip.dataset.mentionKind = item.kind ?? "file";
   // Per-kind metadata; absent fields are simply not serialized.
   if (item.sessionId) chip.dataset.sessionId = item.sessionId;
-  if (item.msgId) chip.dataset.msgId = item.msgId;
   if (item.duty != null) chip.dataset.duty = item.duty;
   if (item.agentName) chip.dataset.agentName = item.agentName;
   if (item.displayName) chip.dataset.displayName = item.displayName;
@@ -263,9 +262,6 @@ export function createAgentMentionChip(item: MentionItem): HTMLSpanElement {
     "margin:0 2px;user-select:none;vertical-align:baseline;line-height:1.5;";
   if (item.kind === "agent_send" && item.duty) {
     chip.title = `${item.displayName ?? ""} — ${item.duty}`;
-  }
-  if (item.kind === "agent_reply" && item.msgId) {
-    chip.title = `Reply to ${item.displayName ?? ""} (msg ${item.msgId})`;
   }
   if (item.kind === "chat_history" && item.historyPath) {
     chip.title = `Share history of "${item.displayName ?? ""}" — ${item.historyPath}`;
@@ -343,19 +339,6 @@ function expandAgentMentionChip(node: HTMLElement): string {
       "mention_send",
       data,
       `@[session id=${id}, name=${name}, duty="${duty}" · use grove_agent_graph_send(to="${id}") to dispatch]`,
-    );
-  }
-  if (kind === "agent_reply") {
-    const id = node.dataset.sessionId ?? "";
-    const name = node.dataset.displayName ?? "";
-    const msg = node.dataset.msgId ?? "";
-    const agent = node.dataset.agentName ?? "";
-    const data: Record<string, unknown> = { sid: id, name, msg_id: msg };
-    if (agent) data.agent = agent;
-    return buildGroveMetaTag(
-      "mention_reply",
-      data,
-      `@[session id=${id}, name=${name}, pending_msg=${msg} · use grove_agent_graph_reply(msg_id="${msg}") to respond]`,
     );
   }
   if (kind === "chat_history") {

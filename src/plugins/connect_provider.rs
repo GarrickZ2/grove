@@ -787,6 +787,28 @@ impl ConnectAdapter for PluginEventAdapter {
         )
         .await
     }
+
+    async fn push_text(
+        &self,
+        chat_id: Option<&str>,
+        text: &str,
+    ) -> std::result::Result<(), String> {
+        self.emit(
+            "conversation_text",
+            json!({ "conversationId": chat_id, "text": text }),
+        )
+        .await
+    }
+}
+
+/// Plugin connections hold no live adapter; events go through the plugin pipe.
+pub fn adapter_for(connection: &crate::storage::connects::Connect) -> Option<AdapterRef> {
+    find(&connection.platform).map(|provider| -> AdapterRef {
+        Arc::new(PluginEventAdapter {
+            plugin_id: provider.plugin_id,
+            connection_id: connection.id.clone(),
+        })
+    })
 }
 
 /// Handle backend → Grove calls made through the existing plugin backend pipe.

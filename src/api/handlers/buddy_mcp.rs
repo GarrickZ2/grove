@@ -1,4 +1,6 @@
 //! Buddy's loopback-only MCP transport. Tokens bind to a single active Segment.
+use super::session_mcp;
+use crate::session_scope::SessionScope;
 use axum::http::request::Parts;
 use once_cell::sync::Lazy;
 use rmcp::handler::server::{
@@ -212,7 +214,7 @@ mod tests {
 
 /// MCP `structuredContent` must be a JSON object; clients reject arrays and
 /// scalars. Lists therefore go out as pretty JSON text, like Agent Graph tools.
-fn success(value: impl serde::Serialize) -> Result<CallToolResult, McpError> {
+pub(super) fn success(value: impl serde::Serialize) -> Result<CallToolResult, McpError> {
     let value = serde_json::to_value(value).map_err(internal)?;
     if value.is_object() {
         return Ok(CallToolResult::structured(value));
@@ -296,6 +298,9 @@ struct SendInput {
     #[serde(flatten)]
     files: FilesInput,
 }
+/// Tool results are read at the moment an Agent decides whether to wait.
+const FOLLOWUP_NEXT: &str = "Sent. End your turn unless you have other work to finish: the outcome comes back as a message and cannot reach you while this turn is running. Do not sleep, poll or re-read the Session to wait.";
+
 fn follow_default() -> bool {
     true
 }
@@ -337,6 +342,11 @@ struct RoutineUpdate {
     id: String,
     #[serde(flatten)]
     patch: crate::buddy::routines::RoutinePatch,
+}
+
+#[cfg(test)]
+pub(super) fn tool_list() -> Vec<rmcp::model::Tool> {
+    BuddyMcpService::tool_router().list_all()
 }
 
 #[tool_router]
@@ -407,7 +417,7 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "send",
-        description = "Send work or a message to a Session and, by default, get its outcome back. Pass session to message an existing Session (any Task or Project), or new to start one: target self for light research in your Local Task, task for an existing Task, new_task to create one; code changes belong in a Task of the target Project. Results, failures and requests waiting for approval or input come back to you as messages; do not poll. A message to a busy Session waits until its current turn ends; set interrupt to stop that turn. Files the user sent you are not passed on by themselves: set forward_user_attachments to hand on their latest attachments, or list paths in attachments."
+        description = "Send work or a message to a Session and, by default, get its outcome back. Pass session to message an existing Session (any Task or Project), or new to start one: target self for light research in your Local Task, task for an existing Task, new_task to create one; code changes belong in a Task of the target Project. Results, failures and requests waiting for approval or input come back to you as messages, but only after you end your turn: they cannot reach you while it is running, so end your turn once you have sent. Never sleep, poll or re-read the Session to wait. A message to a busy Session waits until its current turn ends; set interrupt to stop that turn. Files the user sent you are not passed on by themselves: set forward_user_attachments to hand on their latest attachments, or list paths in attachments."
     )]
     async fn send(
         &self,
@@ -431,7 +441,7 @@ impl BuddyMcpService {
                 )
                 .await
                 .map_err(internal)?;
-                serde_json::json!({"message_id":message_id,"followup":followup})
+                serde_json::json!({"message_id":message_id,"followup":followup,"next":FOLLOWUP_NEXT})
             }
             (Some(target), None) => {
                 let message_id = crate::buddy::tools::send(&buddy, &target, &input.text, &files)
@@ -452,7 +462,7 @@ impl BuddyMcpService {
                 )
                 .await
                 .map_err(internal)?;
-                serde_json::json!({"message_id":followup.round_message_id,"followup":followup})
+                serde_json::json!({"message_id":followup.round_message_id,"followup":followup,"next":FOLLOWUP_NEXT})
             }
             _ => {
                 return Err(McpError::invalid_params(
@@ -463,24 +473,27 @@ impl BuddyMcpService {
         };
         // After sending, so the follow-up already waits on the new message.
         if let Some(handle) = running {
+            handle.attribute_action(crate::radio::TurnAction::buddy(
+                crate::radio::TurnActionKind::Interrupt,
+            ));
             handle.cancel().await.map_err(internal)?;
         }
         success(result)
     }
     #[tool(
         name = "list_buddies",
-        description = "List the user's other Buddies: id, name, role and whether each is idle, running or waiting."
+        description = "List the user's other Buddies, including those on their other connected machines: id, name, role, whether each is idle, running or waiting, and the machine when it is another one."
     )]
     async fn list_buddies(
         &self,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
         let (buddy, _) = caller(&parts)?;
-        success(crate::buddy::chat::list(&buddy).map_err(internal)?)
+        success(crate::buddy::chat::all(&buddy).await.map_err(internal)?)
     }
     #[tool(
         name = "message_buddy",
-        description = "Send a message to another of the user's Buddies. It arrives in their conversation, waiting until they are free; they answer with message_buddy and reply_to only if a reply is useful. Use it to ask or tell another Buddy something in their area; hand real work to Sessions with send. Don't reply just to acknowledge, and after a few messages back and forth without the user, stop and tell the user instead."
+        description = "Send a message to another of the user's Buddies. It arrives in their conversation, waiting until they are free; they answer with message_buddy and reply_to only if a reply is useful, and that answer reaches you only after you end your turn, so don't wait for it inside one. Use it to ask or tell another Buddy something in their area; hand real work to Sessions with send. Don't reply just to acknowledge, and after a few messages back and forth without the user, stop and tell the user instead."
     )]
     async fn message_buddy(
         &self,
@@ -568,11 +581,7 @@ impl BuddyMcpService {
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
         let (buddy, _) = caller(&parts)?;
-        success(
-            crate::buddy::tools::manage_queue(&buddy, input)
-                .await
-                .map_err(internal)?,
-        )
+        session_mcp::manage_queue(&SessionScope::Buddy(buddy), input).await
     }
     #[tool(
         name = "respond",
@@ -631,30 +640,27 @@ impl BuddyMcpService {
     }
     #[tool(
         name = "read_session",
-        description = "Read a Session as numbered entries (user and assistant messages; Grove envelopes removed), newest page first. Page with before/after using the returned cursors. include_tools adds one line per tool call and the files touched. Entries list their images and files with paths you can pass to send or create_task as attachments; the page's newest images are shown to you. history_path is the raw event log for grep when you need detail. status says whether the Session is idle, running or waiting; current_prompt is what it is working on; queue lists the prompts waiting behind it, next to run first."
+        description = "Read a Session you can reach as numbered entries (user and assistant messages; Grove envelopes removed), newest page first. Page with before/after using the returned cursors. include_tools adds one line per tool call and the files touched. Entries list their images and files with paths; the page's newest images are shown to you. history_path is the raw event log for grep when you need detail. status says whether the Session is idle, running or waiting; current_prompt is what it is working on; queue lists the prompts waiting behind it, next to run first. This is not a way to wait for a reply: replies come as your next message after you end your turn."
     )]
     async fn read_session(
         &self,
         Parameters(input): Parameters<crate::buddy::tools::ReadSessionInput>,
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        let page = crate::buddy::tools::read_session(input).map_err(internal)?;
-        let mut result = success(page.value)?;
-        result.content.extend(
-            page.images
-                .into_iter()
-                .map(|(data, mime_type)| Content::image(data, mime_type)),
-        );
-        Ok(result)
+        let (buddy, _) = caller(&parts)?;
+        session_mcp::read_session(&SessionScope::Buddy(buddy), input)
     }
     #[tool(
         name = "search_sessions",
-        description = "Find messages containing some words in one Session or across a Project's Sessions. Each match gives the Session and entry index; read around it with read_session (before = index + 1)."
+        description = "Find messages containing some words in one Session, or across the Sessions of a Project you can reach. Each match gives the Session and entry index; read around it with read_session (before = index + 1)."
     )]
     async fn search_sessions(
         &self,
         Parameters(input): Parameters<crate::buddy::tools::SearchSessionsInput>,
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        success(crate::buddy::tools::search_sessions(input).map_err(internal)?)
+        let (buddy, _) = caller(&parts)?;
+        session_mcp::search_sessions(&SessionScope::Buddy(buddy), input)
     }
     #[tool(
         name = "create_task",

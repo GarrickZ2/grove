@@ -32,6 +32,7 @@ import {
   openOrbitPanel,
   isOrbitPanelOpen,
   migrateToOrbitSlots,
+  terminalPositionOf,
   withAgentRule,
   visibilityToPersist,
   type SurfaceVisibility,
@@ -514,6 +515,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const orbitPhone = orbitLayout && isMobile;
     // Orbit on a desktop: Agent in the centre, a right dock, the terminal below.
     const orbitDesk = orbitLayout && !isMobile;
+    const terminalPosition = terminalPositionOf(config?.web?.terminal_position);
     const orbitSlotId = orbitPhone ? ORBIT_PHONE_ACTIONS_SLOT : "orbit-workspace-toolbar";
     // The header slot can mount after this layout (config / page transitions):
     // keep resolving it until it exists.
@@ -583,7 +585,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         bottomVisible: orbitDesk && (persisted.bottomVisible ?? false),
         visitedBottom: false,
       };
-      if (orbitDesk) initial = withAgentRule(migrateToOrbitSlots(initial));
+      if (orbitDesk) initial = withAgentRule(migrateToOrbitSlots(initial, terminalPosition));
       return {
         ...initial,
         visitedAux: initial.auxType ? [initial.auxType] : [],
@@ -740,13 +742,14 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
 
     // Entering the Orbit desktop layout (e.g. widening from a phone width):
     // terminal / graph move out of the left column into their docks.
-    const wasOrbitDeskRef = useRef(orbitDesk);
+    // So does an open terminal when its position setting changes.
+    const placedRef = useRef({ orbitDesk, terminalPosition });
     useEffect(() => {
-      const wasOrbitDesk = wasOrbitDeskRef.current;
-      wasOrbitDeskRef.current = orbitDesk;
-      if (!orbitDesk || wasOrbitDesk) return;
-      setStateTagged((prev) => migrateToOrbitSlots(prev));
-    }, [orbitDesk, setStateTagged]);
+      const placed = placedRef.current;
+      placedRef.current = { orbitDesk, terminalPosition };
+      if (!orbitDesk || (placed.orbitDesk && placed.terminalPosition === terminalPosition)) return;
+      setStateTagged((prev) => migrateToOrbitSlots(prev, terminalPosition));
+    }, [orbitDesk, terminalPosition, setStateTagged]);
 
     const handleNavigateToFile = useCallback(
       async (filePath: string, line?: number, mode?: "diff" | "full"): Promise<boolean> => {
@@ -967,7 +970,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     ]);
 
     const slotOf = useCallback((key: string): OrbitSlot =>
-      orbitSlotFor(key, getPanelDescriptor(key, panelPlugins)?.category ?? "aux"), [panelPlugins]);
+      orbitSlotFor(key, getPanelDescriptor(key, panelPlugins)?.category ?? "aux", terminalPosition), [panelPlugins, terminalPosition]);
 
     useImperativeHandle(
       ref,
@@ -1068,7 +1071,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         },
         addTerminalTab: () => {
           const current = stateRef.current;
-          if (orbitDesk) {
+          if (orbitDesk && terminalPosition === "bottom") {
             // Orbit: the terminal is the bottom dock. Reuse the first tab the
             // first time it opens; otherwise add a tab next to what's running.
             if (!current.bottomVisible && current.terminalTabs.length > 0) {
@@ -1137,7 +1140,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           });
         },
       }),
-      [isStudio, hasLinkedReview, terminalAvailable, setStateTagged, isMobile, orbitDesk, slotOf],
+      [isStudio, hasLinkedReview, terminalAvailable, setStateTagged, isMobile, orbitDesk, terminalPosition, slotOf],
     );
 
     // Shared render context (registry-driven). onClose differs per column;
@@ -1315,10 +1318,23 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           },
         };
       };
+      // The terminal draws its own tab bar in whichever dock it sits.
+      const orbitTerminal = (onClose: () => void) => (
+        <MultiTabTerminalPanel
+          orbit
+          projectId={projectId}
+          task={task}
+          side="left"
+          tabs={state.terminalTabs}
+          activeId={state.terminalActiveId}
+          onTabsChange={(tabs, activeId) => update({ terminalTabs: tabs, terminalActiveId: activeId })}
+          onClose={onClose}
+        />
+      );
       const orbitShowAux = Boolean(state.auxVisible && state.auxType && slotOf(state.auxType) === "aux");
       const orbitShowDock = Boolean(state.infoVisible && state.infoType);
       const orbitShowChat = state.chatVisible || !orbitShowAux;
-      const orbitShowBottom = state.bottomVisible && terminalAvailable;
+      const orbitShowBottom = terminalPosition === "bottom" && state.bottomVisible && terminalAvailable;
       const chatDescriptor = getPanelDescriptor("chat");
       // The Agent leads the strip. It can only be hidden behind a left panel,
       // so without one it reads as on and does nothing.
@@ -1419,7 +1435,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
                   >
                     {state.visitedAux.filter((type) => slotOf(type) === "aux").map((type) => (
                       <div key={type} className="ows-pane" style={{ display: state.auxType === type ? "flex" : "none" }}>
-                        {renderOrbitPanel(type, buildCtx(() => update({ auxVisible: false, chatVisible: true })))}
+                        {type === "terminal"
+                          ? orbitTerminal(() => update({ auxVisible: false, chatVisible: true }))
+                          : renderOrbitPanel(type, buildCtx(() => update({ auxVisible: false, chatVisible: true })))}
                       </div>
                     ))}
                   </div>
@@ -1445,17 +1463,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
                   onFocusCapture={() => { lastFocusedSideRef.current = "bottom"; }}
                   onMouseDownCapture={() => { lastFocusedSideRef.current = "bottom"; }}
                 >
-                  {state.visitedBottom && terminalAvailable && (
-                    <MultiTabTerminalPanel
-                      orbit
-                      projectId={projectId}
-                      task={task}
-                      side="left"
-                      tabs={state.terminalTabs}
-                      activeId={state.terminalActiveId}
-                      onTabsChange={(tabs, activeId) => update({ terminalTabs: tabs, terminalActiveId: activeId })}
-                      onClose={() => update({ bottomVisible: false })}
-                    />
+                  {state.visitedBottom && terminalAvailable && terminalPosition === "bottom" && (
+                    orbitTerminal(() => update({ bottomVisible: false }))
                   )}
                 </div>
               </OrbitDock>

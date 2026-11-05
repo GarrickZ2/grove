@@ -19,6 +19,12 @@ export function invokeQuiet<T>(
   return invoke<T>(command, args).catch(() => null);
 }
 
+/** Sign in to what stands in front of a machine, in a window of its own.
+ * Resolves to a `Cookie` header value; rejects if that doesn't work out. */
+export function signInToMachine(url: string): Promise<string> {
+  return invoke<string>("machine_login", { url });
+}
+
 export interface RemoteAuthorization {
   signingKey: string;
   deviceId: string | null;

@@ -72,3 +72,13 @@
     animation-duration: 3s;
   }
 }
+
+/* Fast loads, like switching machines, go straight to the app without a splash. */
+.grove-splash__reveal {
+  animation: grove-splash-reveal 200ms ease-out 300ms both;
+}
+
+@keyframes grove-splash-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

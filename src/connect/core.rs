@@ -643,6 +643,7 @@ async fn handle_parsed_message(
 pub async fn handle_message(connection_id: &str, adapter: AdapterRef, mut inbound: InboundMessage) {
     // External text must not be able to pose as a Grove envelope.
     inbound.text = crate::agent_graph::inject::neutralize_meta_tags(&inbound.text);
+    super::grove::register_adapter(connection_id, adapter.clone());
     let bound =
         connects::bind_private_chat(connection_id, &inbound.conversation_id, &inbound.sender_id)
             .unwrap_or(false);

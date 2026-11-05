@@ -735,7 +735,7 @@ mod tests {
             notify(&state, id, json!({"sessionUpdate":"tool_call_update","toolCallId":"same","status":"completed"})).await;
         }
         notify(&state, "foreign", json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"must be dropped"}})).await;
-        assert!(handle.last_assistant_text.lock().unwrap().is_empty());
+        assert!(handle.last_turn_reply.lock().unwrap().is_empty());
         assert!(handle.active_tool_calls.lock().unwrap().is_empty());
         let live: Vec<_> = std::iter::from_fn(|| updates.try_recv().ok()).collect();
         for (id, text) in [("a", "first"), ("b", "second")] {

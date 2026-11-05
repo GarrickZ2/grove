@@ -18,7 +18,7 @@ export interface TaskPageLocation {
   filter: TaskFilter;
 }
 
-const NAVIGATION_KEY = "grove:navigation";
+export const NAVIGATION_KEY = "grove:navigation";
 const pages = new Set<string>([...REPO_NAV_IDS, ...STUDIO_NAV_IDS, "settings", "projects"]);
 
 function read(key: string): unknown {

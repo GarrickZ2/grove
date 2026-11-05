@@ -511,7 +511,6 @@ fn build_mention_candidates(
 
     let conn = database::connection();
     let outgoing_edges = graph_db::outgoing_for_session(&conn, chat_id).ok()?;
-    let pending = graph_db::pending_replies_for(&conn, chat_id).ok()?;
     drop(conn);
 
     // Outgoing candidates = only sessions reachable via an existing edge.
@@ -548,26 +547,7 @@ fn build_mention_candidates(
         })
         .collect();
 
-    let make_excerpt = crate::agent_graph::pending_body_excerpt;
-    let pending_replies = pending
-        .into_iter()
-        .filter_map(|p| {
-            let (name, agent) = chat_meta.get(&p.from_session)?.clone();
-            Some(MentionPendingReply {
-                session_id: p.from_session,
-                name,
-                agent,
-                msg_id: p.msg_id,
-                body_preview: make_excerpt(&p.body),
-            })
-        })
-        .collect();
-
-    Some(MentionCandidatesResponse {
-        agents,
-        outgoing,
-        pending_replies,
-    })
+    Some(MentionCandidatesResponse { agents, outgoing })
 }
 
 #[cfg(test)]
@@ -1021,16 +1001,6 @@ mod tests {
             assert_eq!(resp.outgoing[0].agent, "codex");
             assert_eq!(resp.outgoing[0].duty.as_deref(), Some("frontend tests"));
 
-            // pending_replies: from chat-c
-            assert_eq!(resp.pending_replies.len(), 1);
-            assert_eq!(resp.pending_replies[0].session_id, "chat-c");
-            assert_eq!(resp.pending_replies[0].name, "Backend-Designer");
-            assert_eq!(resp.pending_replies[0].agent, "codex");
-            assert_eq!(resp.pending_replies[0].msg_id, "msg-789");
-            assert!(resp.pending_replies[0]
-                .body_preview
-                .contains("Need design feedback"));
-
             // agents list: at least one builtin (claude/codex) is always present
             assert!(!resp.agents.is_empty());
         });
@@ -1095,7 +1065,6 @@ mod tests {
 
             let resp = build_mention_candidates(project_id, task_id, "chat-solo").unwrap();
             assert!(resp.outgoing.is_empty());
-            assert!(resp.pending_replies.is_empty());
             assert!(!resp.agents.is_empty());
         });
     }

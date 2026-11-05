@@ -42,7 +42,7 @@ export function withMentions(text: string, buddies: BuddySummary[]): string {
   const mentioned = mentionedIn(text, buddies);
   if (!mentioned.length) return text;
   const data: { buddies: MentionedBuddy[] } = { buddies: mentioned.map(({ id, name, avatar, role }) => ({ id, name, avatar, role })) };
-  const who = mentioned.map((buddy) => `@${buddy.name} (Buddy id ${buddy.id}${buddy.role ? `, role: ${buddy.role}` : ""})`).join("; ");
+  const who = mentioned.map((buddy) => `@${buddy.name} (Buddy id ${buddy.id}${buddy.machine ? `, on the machine ${buddy.machine}` : ""}${buddy.role ? `, role: ${buddy.role}` : ""})`).join("; ");
   const note = `The user mentioned ${mentioned.length > 1 ? "other Buddies" : "another Buddy"}: ${who}. They are the user's other Buddies, each with their own area; you can reach them with message_buddy when it helps.`;
   return `${buildGroveMetaTag(BUDDY_MENTIONS, data, note)}\n${text}`;
 }

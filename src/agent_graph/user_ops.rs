@@ -230,6 +230,7 @@ pub async fn user_spawn_node(
                     Ok(AcpUpdate::Error { message }) => {
                         return Err(format!("acp_error: {}", message))
                     }
+                    Ok(AcpUpdate::AuthRequired { .. }) => return Err("auth_required".to_string()),
                     Ok(AcpUpdate::SessionEnded) => return Err("session_ended".to_string()),
                     Err(_) => return Err("session_terminated".to_string()),
                     Ok(_) => continue,

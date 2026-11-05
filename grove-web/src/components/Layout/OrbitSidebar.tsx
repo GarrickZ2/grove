@@ -14,6 +14,7 @@ import { useIsMobile } from "../../hooks/useIsMobile";
 import { useTaskReorder } from "../../hooks/useTaskReorder";
 import { refreshRadioActivity } from "../../hooks/useRadioEvents";
 import { appIconAssetUrl } from "../../data/appIcons";
+import { OrbitMachineEntry } from "./OrbitMachineMenu";
 import { DropdownMenu } from "../ui/DropdownMenu";
 import { DialogShell } from "../ui/DialogShell";
 import { ConfirmDialog } from "../Dialogs";
@@ -413,6 +414,7 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
           </div>
         </section>
         <footer className="orbit-footer has-buddies">
+          <OrbitMachineEntry />
           <button type="button" className="orbit-row orbit-nav-row orbit-buddies-entry" onClick={() => onItemClick("buddies")} aria-label="Buddies"><BuddyEntryIcon /><span>Buddies</span><BuddyWaitingCount /><ChevronRight className="orbit-buddies-chevron" size={14} strokeWidth={1.6} /></button>
           <div className="orbit-footer-actions">
           <button type="button" className={`orbit-row orbit-nav-row${activeItem === "settings" ? " is-selected" : ""}`} onClick={() => onItemClick("settings")}><Settings size={16} strokeWidth={1.6} /><span>Settings</span></button>

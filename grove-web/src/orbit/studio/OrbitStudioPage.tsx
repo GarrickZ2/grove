@@ -1,3 +1,4 @@
+import { hostFileActionsAvailable } from "./studioView";
 import { useCallback, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { ArrowRight, Brain, Layers, RefreshCw, Upload } from "lucide-react";
@@ -81,6 +82,8 @@ function ProjectStudio({ projectId, projectName }: { projectId: string; projectN
             loading={library.previewLoading}
             onClose={() => library.setPreviewFile(null)}
             onDownload={() => library.handleDownload(previewFile.file)}
+            fileSize={previewFile.file.size}
+            onOpenFile={hostFileActionsAvailable() ? () => library.handleOpenInApp(previewFile.file) : undefined}
             location={{ projectId, root: { kind: "resource" }, path: previewFile.file.path }}
           />
         ) : null}

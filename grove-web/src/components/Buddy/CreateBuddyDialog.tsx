@@ -15,9 +15,13 @@ import { configForAgent } from "../../utils/agentConfig";
 import { resolveAgentIcon } from "../../utils/agentIcon";
 import { createClientMessageId } from "../../utils/clientMessageId";
 
-export function CreateBuddyDialog({ onClose, onCreate, template }: { template?: BuddyTemplate; onClose: () => void; onCreate: (input: CreateBuddyInput) => Promise<Buddy> }) {
+export function CreateBuddyDialog({ onClose, onCreate, template, machine }: {
+  template?: BuddyTemplate; onClose: () => void; onCreate: (input: CreateBuddyInput) => Promise<Buddy>;
+  /** Creating on another machine: its Agents, shown without leaving this one. */
+  machine?: { name: string; base: string };
+}) {
   const { config: global } = useConfig();
-  const { agents, error: agentError, loading: agentsLoading, retry: retryAgents } = useBuddyAgents();
+  const { agents, error: agentError, loading: agentsLoading, retry: retryAgents } = useBuddyAgents(machine?.base);
   const [avatar, setAvatar] = useState(() => template?.avatar ?? resolveBuddyAvatar(createClientMessageId()));
   const [name, setName] = useState(template?.name ?? "");
   const [role, setRole] = useState(template?.role ?? "");
@@ -42,7 +46,7 @@ export function CreateBuddyDialog({ onClose, onCreate, template }: { template?: 
   };
   return <DialogShell isOpen onClose={() => { if (!saving) onClose(); }} maxWidth="max-w-[540px]">
     <form className="buddy-dialog buddy-form buddy-create-dialog" onSubmit={(event) => { event.preventDefault(); void submit(); }} aria-label="Create Buddy">
-      <div className="buddy-dialog-heading"><h2>Create Buddy</h2><button type="button" className="orbit-icon-button" aria-label="Close create Buddy" disabled={saving} onClick={onClose}><X size={18} /></button></div>
+      <div className="buddy-dialog-heading"><h2>{machine ? `Create Buddy on ${machine.name}` : "Create Buddy"}</h2><button type="button" className="orbit-icon-button" aria-label="Close create Buddy" disabled={saving} onClick={onClose}><X size={18} /></button></div>
       <div className="buddy-create-body"><fieldset disabled={saving || created} className="buddy-form">
         <BuddyAvatarPicker value={avatar} onChange={setAvatar} />
         <label>Name<input required value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>

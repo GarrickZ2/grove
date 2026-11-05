@@ -233,6 +233,16 @@ export function uploadResource(id: string, files: File[], path?: string) {
   return resourceApi(id).upload(files, path);
 }
 
+export function uploadResourceWithProgress(
+  id: string,
+  file: File,
+  path: string | undefined,
+  onProgress: (fraction: number) => void,
+  signal?: AbortSignal,
+) {
+  return resourceApi(id).uploadWithProgress(file, path, onProgress, signal);
+}
+
 export function deleteResource(id: string, path: string) {
   return resourceApi(id).delete(path);
 }

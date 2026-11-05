@@ -4,7 +4,9 @@
 //   aux    — left of the Agent (Review, Editor, Artifacts, Sketch, left plugins)
 //   dock   — the right dock, one panel at a time (Info, Git, Notes, Comments,
 //            Agent graph, right plugins)
-//   bottom — the terminal, docked under the Agent
+//   bottom — the terminal, docked under the Agent. A setting can move it to
+//            the left column instead, where it takes turns with the other
+//            left panels.
 //
 // Workbench (and Orbit on a phone) keep the classic three columns.
 
@@ -12,8 +14,15 @@ import type { PanelCategory } from "../PanelSystem/panelRegistry";
 
 export type OrbitSlot = "aux" | "dock" | "bottom";
 
-export function orbitSlotFor(key: string, category: PanelCategory): OrbitSlot {
-  if (key === "terminal") return "bottom";
+/** Where the terminal docks; the `web.terminal_position` setting. */
+export type TerminalPosition = "bottom" | "left";
+
+export function terminalPositionOf(value: string | undefined): TerminalPosition {
+  return value === "left" ? "left" : "bottom";
+}
+
+export function orbitSlotFor(key: string, category: PanelCategory, terminal: TerminalPosition = "bottom"): OrbitSlot {
+  if (key === "terminal") return terminal === "left" ? "aux" : "bottom";
   if (key === "graph") return "dock";
   return category === "info" ? "dock" : "aux";
 }
@@ -50,9 +59,13 @@ export function openOrbitPanel<S extends OrbitDockState>(state: S, key: string, 
   return isOrbitPanelOpen(state, key, slot) ? state : toggleOrbitPanel(state, key, slot);
 }
 
-/** Layout state saved by Workbench (terminal / graph in the left column) moved to their Orbit slots. */
-export function migrateToOrbitSlots<S extends OrbitDockState>(state: S): S {
-  if (state.auxType === "terminal") {
+/** Layout state moved to the Orbit slots: what Workbench saved (terminal / graph
+ *  in the left column), or an open terminal when its position setting changed. */
+export function migrateToOrbitSlots<S extends OrbitDockState>(state: S, terminal: TerminalPosition = "bottom"): S {
+  if (terminal === "left") {
+    if (state.bottomVisible) return { ...state, bottomVisible: false, auxType: "terminal", auxVisible: true };
+    if (state.auxType === "terminal") return state;
+  } else if (state.auxType === "terminal") {
     return { ...state, auxType: null, auxVisible: false, bottomVisible: state.bottomVisible || state.auxVisible };
   }
   if (state.auxType === "graph") {

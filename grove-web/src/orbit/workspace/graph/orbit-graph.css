@@ -49,7 +49,7 @@
 .ogr-node.is-drop-bad .ogr-av{box-shadow:0 0 0 2px var(--o-error),0 0 0 7px color-mix(in oklab,var(--o-error) 16%,transparent)}
 .ogr-icon{display:flex;align-items:center;justify-content:center;transition:filter 200ms,opacity 200ms}
 .ogr-icon svg{display:block}
-.ogr-node.is-off .ogr-icon{filter:grayscale(1);opacity:.45}
+.ogr-node.is-off .ogr-icon{opacity:.5}
 .ogr-node.is-off .ogr-av{background:color-mix(in oklab,var(--o-bg) 92%,var(--o-text))}
 
 /* Status ring around the circle. */

@@ -18,10 +18,11 @@ export function promptEvent(sender: string | undefined, content: string): Prompt
   if (!sender?.startsWith("buddy:")) return null;
   for (const segment of parseGroveMetaSegments(content)) {
     if (segment.kind !== "meta" || segment.envelope.type !== "buddy_message") continue;
-    const data = segment.envelope.data as { delegation_id?: unknown; status?: unknown; chat?: unknown; buddy_id?: unknown; name?: unknown; avatar?: unknown; reply_to?: unknown };
+    const data = segment.envelope.data as { delegation_id?: unknown; status?: unknown; chat?: unknown; buddy_id?: unknown; name?: unknown; avatar?: unknown; reply_to?: unknown; machine?: unknown };
     if (data.chat === true) {
       const text = parseGroveMetaSegments(content).filter(part => part.kind === "text").map(part => part.content).join("").trim();
-      return { kind: "chat", buddyId: String(data.buddy_id ?? ""), name: typeof data.name === "string" ? data.name : "Buddy", avatar: typeof data.avatar === "string" ? data.avatar : null, text, reply: typeof data.reply_to === "string" && !!data.reply_to };
+      const name = typeof data.name === "string" ? data.name : "Buddy";
+      return { kind: "chat", buddyId: String(data.buddy_id ?? ""), name: typeof data.machine === "string" ? `${name} · ${data.machine}` : name, avatar: typeof data.avatar === "string" ? data.avatar : null, text, reply: typeof data.reply_to === "string" && !!data.reply_to };
     }
     if (typeof data.delegation_id !== "string") return null;
     const status = STATUSES.find(item => item === data.status) ?? "running";

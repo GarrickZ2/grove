@@ -57,6 +57,7 @@ src/
 ├── tmux/                  # tmux session management
 ├── acp/                   # ACP (Agent Client Protocol) integration
 ├── agent_graph/           # Inter-agent spawn / send / reply tools
+├── machines/              # Paired Grove servers: pairing, link, per-machine proxy
 ├── storage/               # Persistence (config, tasks, notes, workspace)
 ├── model/                 # Data structures (Worktree, Task, Workspace)
 ├── theme/                 # 8 themes + dark/light detection
@@ -130,6 +131,7 @@ Production releases ship with `gui` only. `perf-monitor` is dev-only.
 ```
 ~/.grove/
 ├── config.toml                    # Theme + global settings
+├── machines.toml                  # This machine's profile + paired machines (0600, holds device keys)
 ├── grove.db                       # SQLite — projects, tasks, review comments,
 │                                  #   agent graph, custom agents, etc.
 └── projects/<path-hash>/

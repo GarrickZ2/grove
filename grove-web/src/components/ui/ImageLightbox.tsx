@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Minimize2 } from "lucide-react";
 import { useEscapeScope } from "../../keyboard/useEscapeScope";
+import { wheelZoomFactor } from "./wheelZoom";
 
 interface ImageLightboxProps {
   imageUrl?: string | null;
@@ -14,6 +15,9 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  // Only Reset eases. Dragging and wheel gestures must track the input exactly:
+  // a transition restarted by every wheel event trails behind and shudders.
+  const [easing, setEasing] = useState(false);
   const isResetVisible = zoom !== 1 || pan.x !== 0 || pan.y !== 0;
   const panningRef = useRef(false);
   const panMovedRef = useRef(false);
@@ -34,7 +38,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
     panMovedRef.current = false;
   }, [imageUrl, svgContent]);
 
-  const reset = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
+  const reset = useCallback(() => { setEasing(true); setZoom(1); setPan({ x: 0, y: 0 }); }, []);
 
   const handleClose = useCallback(() => { onClose(); reset(); }, [onClose, reset]);
 
@@ -51,9 +55,10 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
     const handler = (e: WheelEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      setEasing(false);
       if (e.metaKey || e.ctrlKey) {
-        const delta = e.deltaY > 0 ? -0.15 : 0.15;
-        setZoom((z) => Math.min(10, Math.max(0.2, z + delta * z)));
+        const factor = wheelZoomFactor(e.deltaY, e.ctrlKey);
+        setZoom((z) => Math.min(10, Math.max(0.2, z * factor)));
       } else if (zoomRef.current > 1) {
         // Only pan when zoomed in — at zoom 1 there's nothing to reveal,
         // and accidental two-finger swipes shouldn't push the image away.
@@ -90,6 +95,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
             e.preventDefault();
             panningRef.current = true;
             panMovedRef.current = false;
+            setEasing(false);
             setIsPanning(true);
             panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
           }}
@@ -126,7 +132,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
           <div
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              transition: isPanning ? "none" : "transform 0.15s ease-out",
+              transition: easing ? "transform 0.15s ease-out" : "none",
             }}
             onClick={(e) => {
               e.stopPropagation();

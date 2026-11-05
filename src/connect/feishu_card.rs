@@ -161,6 +161,19 @@ impl CardApi {
         .map(|_| ())
     }
 
+    pub async fn send_text(&self, chat_id: &str, text: &str) -> Result<(), String> {
+        self.request_with_attempts(
+            Method::POST,
+            "/open-apis/im/v1/messages?receive_id_type=chat_id",
+            json!({"receive_id":chat_id, "msg_type":"text",
+                "content":json!({"text":text}).to_string(),
+                "uuid":uuid::Uuid::new_v4().to_string()}),
+            3,
+        )
+        .await
+        .map(|_| ())
+    }
+
     pub async fn create(&self, view: &TurnView) -> Result<String, String> {
         let payload = card_data(view)?;
         let data = self

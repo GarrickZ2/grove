@@ -148,7 +148,15 @@ pub struct SessionPage {
 const HISTORY_FORMAT: &str = "history.jsonl holds one JSON event per line, tagged by \"type\" (user_message, message_chunk, tool_call, tool_call_update, permission_request, complete, ...). Search it with grep for a type or text rather than reading it whole.";
 
 /// Read a Session as numbered entries, a page at a time.
-pub fn read_session(input: ReadSessionInput) -> Result<SessionPage> {
+pub fn read_session(
+    scope: &crate::session_scope::SessionScope,
+    input: ReadSessionInput,
+) -> Result<SessionPage> {
+    scope.ensure_readable(&input.session)?;
+    read_page(input)
+}
+
+pub(crate) fn read_page(input: ReadSessionInput) -> Result<SessionPage> {
     // TODO(buddy-history-authorization): MVP permits reading every Session,
     // including private conversations. Add policy only after product agreement.
     let limit = input.limit.unwrap_or(20);
@@ -269,7 +277,20 @@ fn snippet(text: &str, at: usize, query_len: usize) -> String {
 }
 
 /// Find messages containing `query`; each match gives the index to read around.
-pub fn search_sessions(input: SearchSessionsInput) -> Result<Value> {
+pub fn search_sessions(
+    scope: &crate::session_scope::SessionScope,
+    input: SearchSessionsInput,
+) -> Result<Value> {
+    if let Some(session) = &input.session {
+        scope.ensure_readable(session)?;
+    }
+    search_where(input, |session| scope.ensure_readable(session).is_ok())
+}
+
+pub(crate) fn search_where(
+    input: SearchSessionsInput,
+    reachable: impl Fn(&str) -> bool,
+) -> Result<Value> {
     let query = input.query.trim().to_lowercase();
     if query.is_empty() {
         return Err(GroveError::invalid_data("query is required"));
@@ -285,6 +306,7 @@ pub fn search_sessions(input: SearchSessionsInput) -> Result<Value> {
             let project = resolve_project(project)?;
             tasks::list_project_sessions(&project)?
                 .into_iter()
+                .filter(|(_, chat, _)| reachable(chat))
                 .map(|(task, chat, title)| (project.clone(), task, chat, title))
                 .collect()
         }
@@ -398,8 +420,26 @@ pub fn prompt_with_note(
     extra: Value,
     note: Option<String>,
 ) -> crate::acp::QueuedMessage {
-    let name = buddy_name(buddy);
-    let mut data = json!({"buddy_id":buddy.id,"name":name,"avatar":buddy.avatar});
+    prompt_from(
+        &buddy.id,
+        &buddy_name(buddy),
+        buddy.avatar.as_deref(),
+        text,
+        extra,
+        note,
+    )
+}
+
+/// `prompt_with_note` for a sender that may live on another machine.
+pub fn prompt_from(
+    id: &str,
+    name: &str,
+    avatar: Option<&str>,
+    text: &str,
+    extra: Value,
+    note: Option<String>,
+) -> crate::acp::QueuedMessage {
+    let mut data = json!({"buddy_id":id,"name":name,"avatar":avatar});
     if let (Some(target), Some(extra)) = (data.as_object_mut(), extra.as_object()) {
         target.extend(extra.clone());
     }
@@ -412,7 +452,7 @@ pub fn prompt_with_note(
     crate::acp::QueuedMessage::new(
         format!("<grove-meta>{envelope}</grove-meta>\n{text}"),
         Vec::new(),
-        Some(format!("buddy:{}", buddy.id)),
+        Some(format!("buddy:{id}")),
         false,
         None,
     )
@@ -576,8 +616,11 @@ pub struct ManageQueueInput {
 }
 
 /// What the user can do to a Session's queue in the composer.
-pub async fn manage_queue(buddy: &Buddy, input: ManageQueueInput) -> Result<Value> {
-    ensure_not_own_segment(buddy, &input.session)?;
+pub async fn manage_queue(
+    scope: &crate::session_scope::SessionScope,
+    input: ManageQueueInput,
+) -> Result<Value> {
+    scope.ensure_manageable(&input.session)?;
     let (project, task, _) = tasks::find_chat_session(&input.session)?
         .ok_or_else(|| GroveError::not_found("Session not found"))?;
     let handle = crate::acp::get_session_handle(&format!("{project}:{task}:{}", input.session))
@@ -598,13 +641,17 @@ pub async fn manage_queue(buddy: &Buddy, input: ManageQueueInput) -> Result<Valu
             }
         }
         QueueAction::Remove { id } => {
+            handle.attribute_action(scope.action(crate::radio::TurnActionKind::Remove));
             let (found, messages) = handle.dequeue_message_by_id(&id);
             handle.emit(crate::acp::AcpUpdate::QueueUpdate { messages });
             if !found {
                 return Err(gone());
             }
         }
-        QueueAction::SendNow => handle.cancel().await?,
+        QueueAction::SendNow => {
+            handle.attribute_action(scope.action(crate::radio::TurnActionKind::Interrupt));
+            handle.cancel().await?
+        }
     }
     Ok(json!({ "queue": queue_view(&handle) }))
 }
@@ -740,7 +787,7 @@ mod tests {
         assert_eq!(queue[0].id, queued);
         assert_eq!(queue[0].sender.as_deref(), Some("buddy:sender"));
 
-        let page = read_session(ReadSessionInput {
+        let page = read_page(ReadSessionInput {
             session: "target-chat".into(),
             ..Default::default()
         })
@@ -750,9 +797,10 @@ mod tests {
         assert_eq!(page["queue"][0]["id"], queued.as_str());
         assert_eq!(page["queue"][0]["text"], "next");
 
+        let scope = crate::session_scope::SessionScope::Buddy(buddy.clone());
         let manage = |action| {
             manage_queue(
-                &buddy,
+                &scope,
                 ManageQueueInput {
                     session: "target-chat".into(),
                     action,
@@ -799,7 +847,7 @@ mod tests {
         std::fs::write(&path, format!("{chunk}\n{chunk}\n")).unwrap();
         tasks::archive_chat_session("other-project", "other-task", "history").unwrap();
         let read = |limit, before, after| {
-            read_session(ReadSessionInput {
+            read_page(ReadSessionInput {
                 session: "history".into(),
                 limit,
                 before,
@@ -844,7 +892,7 @@ mod tests {
         );
         std::fs::write(&path, lines.join("\n") + "\n").unwrap();
         let read = |include_tools, limit, before| {
-            read_session(ReadSessionInput {
+            read_page(ReadSessionInput {
                 session: "paged".into(),
                 limit,
                 before,
@@ -865,12 +913,15 @@ mod tests {
         assert_eq!(tools["before"], 1);
         let earlier = read(true, Some(2), Some(1));
         assert_eq!(earlier["entries"][0]["role"], "user");
-        let found = search_sessions(SearchSessionsInput {
-            query: "TOKEN".into(),
-            session: None,
-            project: Some("Paged".into()),
-            limit: None,
-        })
+        let found = search_where(
+            SearchSessionsInput {
+                query: "TOKEN".into(),
+                session: None,
+                project: Some("Paged".into()),
+                limit: None,
+            },
+            |_| true,
+        )
         .unwrap();
         assert_eq!(found["matches"][0]["index"], 1);
         assert!(found["matches"][0]["snippet"]
@@ -927,7 +978,7 @@ mod tests {
             crate::storage::chat_history::append_event("media-project", "task", "media", &event);
         }
         let read = || {
-            read_session(ReadSessionInput {
+            read_page(ReadSessionInput {
                 session: "media".into(),
                 ..Default::default()
             })
@@ -954,7 +1005,7 @@ mod tests {
             read().value["entries"][0]["attachments"][0]["path"],
             path.as_str()
         );
-        let hidden = read_session(ReadSessionInput {
+        let hidden = read_page(ReadSessionInput {
             session: "media".into(),
             include_images: Some(false),
             ..Default::default()
@@ -1008,12 +1059,15 @@ mod tests {
             .to_string()
             .contains("Brand refresh"));
         // Searching an unknown Project is an error, not zero matches.
-        assert!(search_sessions(SearchSessionsInput {
-            query: "x".into(),
-            session: None,
-            project: Some("Workflow Refactor".into()),
-            limit: None,
-        })
+        assert!(search_where(
+            SearchSessionsInput {
+                query: "x".into(),
+                session: None,
+                project: Some("Workflow Refactor".into()),
+                limit: None,
+            },
+            |_| true
+        )
         .is_err());
     }
 }

@@ -12,9 +12,9 @@ import "./grove-splash.css";
  */
 export function GroveSplash({ label, children }: { label: string; children?: ReactNode }) {
   const orbit = useOrbitLook();
-  if (orbit) return <OrbitSplash label={label}>{children}</OrbitSplash>;
+  if (orbit) return <div className="grove-splash__reveal"><OrbitSplash label={label}>{children}</OrbitSplash></div>;
   return (
-    <div className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-[var(--color-bg)] p-4">
+    <div className="grove-splash__reveal relative flex min-h-dvh items-center justify-center overflow-hidden bg-[var(--color-bg)] p-4">
       <GroveHeroBackground />
       <div role="status" aria-live="polite" className="relative w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">

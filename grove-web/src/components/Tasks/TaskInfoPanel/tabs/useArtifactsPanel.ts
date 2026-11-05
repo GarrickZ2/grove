@@ -1,8 +1,9 @@
+import { isAbort, startTransfer } from "../../../../transfers/store";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { Task } from "../../../../data/types";
 import {
   listArtifacts, previewArtifact, artifactDownloadUrl, deleteArtifact,
-  uploadArtifacts, uploadArtifactWithProgress, artifactsZipUrl, createArtifactLink, updateArtifactLink, syncArtifactToResource, listArtifactWorkdirs, addArtifactWorkdir, deleteArtifactWorkdir, openArtifactWorkdir, openArtifactFile, revealArtifactFile,
+  uploadArtifactWithProgress, artifactsZipUrl, createArtifactLink, updateArtifactLink, syncArtifactToResource, listArtifactWorkdirs, addArtifactWorkdir, deleteArtifactWorkdir, openArtifactWorkdir, openArtifactFile, revealArtifactFile,
   listResources,
   type ArtifactFile, type ArtifactWorkDirectoryEntry,
 } from "../../../../api";
@@ -35,7 +36,6 @@ export interface ArtifactsPanelOptions {
   onRevealTarget?: (file: ArtifactFile) => void;
   /** Upload files one request each with per-file progress (`pendingUploadItems`).
    *  Off by default so the Workbench keeps its single batch upload. */
-  uploadProgress?: boolean;
 }
 
 /** One file in the upload batch in flight. `progress` is 0..1, or null before it starts. */
@@ -48,7 +48,7 @@ export interface PendingUpload {
   failed?: boolean;
 }
 
-/** Concurrent per-file uploads when `uploadProgress` is on. */
+/** Concurrent per-file uploads. */
 const UPLOAD_CONCURRENCY = 3;
 
 interface LoadFilesOptions {
@@ -66,6 +66,8 @@ export interface ArtifactPreviewState {
   file: ArtifactFile;
   content: string;
   downloadUrl?: string;
+  /** Too large or not readable as text. */
+  unpreviewable?: boolean;
 }
 
 export interface ArtifactSyncConflict {
@@ -81,7 +83,7 @@ export interface ArtifactSyncConflict {
  * the open / reveal / sync / delete actions. Shared by the Workbench tab and
  * the Orbit body; each renders its own layout.
  */
-export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy, onRevealTarget, uploadProgress }: ArtifactsPanelOptions) {
+export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy, onRevealTarget }: ArtifactsPanelOptions) {
   const { browseFolder, folderPicker } = useBrowseFolder("Select Artifact Folder");
   const { drafts: previewCommentDrafts, addDraft, updateDraft, removeDraft } = usePreviewComments();
   const [inputFiles, setInputFiles] = useState<ArtifactFile[]>([]);
@@ -97,7 +99,7 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
   const [isUploading, setIsUploading] = useState(false);
   /** Names in the upload batch in flight. */
   const [pendingUploads, setPendingUploads] = useState<string[]>([]);
-  /** The same batch with per-file progress (only filled when `uploadProgress` is on). */
+  /** The same batch with per-file progress . */
   const [pendingUploadItems, setPendingUploadItems] = useState<PendingUpload[]>([]);
   const isUploadingRef = useRef(false);
   const [addLinkOpen, setAddLinkOpen] = useState(false);
@@ -209,47 +211,49 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     setIsUploading(true);
     setPendingUploads(list.map((file) => file.name));
     setError(null);
-    if (uploadProgress) {
-      const batch = Date.now().toString(36);
-      const items: PendingUpload[] = list.map((file, i) => ({ id: `${batch}-${i}`, name: file.name, progress: null, queued: true }));
-      setPendingUploadItems(items);
-      const update = (id: string, patch: Partial<PendingUpload>) =>
-        setPendingUploadItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-      const failures: string[] = [];
-      let next = 0;
-      const worker = async () => {
-        while (next < list.length) {
-          const at = next++;
-          const { id } = items[at];
-          update(id, { progress: 0, queued: false });
-          try {
-            await uploadArtifactWithProgress(projectId, task.id, list[at], (fraction) => update(id, { progress: fraction }));
-            update(id, { progress: 1 });
-          } catch (err) {
-            update(id, { failed: true });
-            const apiErr = err as { message?: string };
-            failures.push(`${list[at].name}${apiErr?.message ? ` (${apiErr.message})` : ""}`);
+    const batch = Date.now().toString(36);
+    const items: PendingUpload[] = list.map((file, i) => ({ id: `${batch}-${i}`, name: file.name, progress: null, queued: true }));
+    setPendingUploadItems(items);
+    const update = (id: string, patch: Partial<PendingUpload>) =>
+      setPendingUploadItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    const failures: string[] = [];
+    const transfers = list.map((file) => startTransfer("upload", file.name, file.size));
+    let next = 0;
+    const worker = async () => {
+      while (next < list.length) {
+        const at = next++;
+        const { id } = items[at];
+        const transfer = transfers[at];
+        update(id, { progress: 0, queued: false });
+        try {
+          await uploadArtifactWithProgress(projectId, task.id, list[at], (fraction) => {
+            update(id, { progress: fraction });
+            transfer.progress(fraction * list[at].size);
+          }, transfer.signal);
+          update(id, { progress: 1 });
+          transfer.finish();
+        } catch (err) {
+          if (isAbort(err)) {
+            transfer.cancelled();
+            continue;
           }
+          update(id, { failed: true });
+          const apiErr = err as { message?: string };
+          transfer.fail(apiErr?.message || "Upload failed");
+          failures.push(`${list[at].name}${apiErr?.message ? ` (${apiErr.message})` : ""}`);
         }
-      };
-      await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, list.length) }, worker));
-      await loadFiles({ silent: true });
-      if (failures.length) {
-        setError(failures.length === 1 ? `Couldn’t upload ${failures[0]}` : `Couldn’t upload ${failures.length} files: ${failures.join(", ")}`);
       }
-      setPendingUploadItems([]);
-    } else {
-      try {
-        await uploadArtifacts(projectId, task.id, list);
-        await loadFiles();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Upload failed");
-      }
+    };
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, list.length) }, worker));
+    await loadFiles({ silent: true });
+    if (failures.length) {
+      setError(failures.length === 1 ? `Couldn’t upload ${failures[0]}` : `Couldn’t upload ${failures.length} files: ${failures.join(", ")}`);
     }
+    setPendingUploadItems([]);
     isUploadingRef.current = false;
     setIsUploading(false);
     setPendingUploads([]);
-  }, [projectId, task.id, loadFiles, uploadProgress]);
+  }, [projectId, task.id, loadFiles]);
 
   const handleAddWorkdir = useCallback(async () => {
     if (!projectId) return;
@@ -342,10 +346,8 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     } else {
       const renderer = getPreviewRenderer(file.name, 'full');
       if (renderer && renderer.id === 'source') {
-        downloadViaIframe(
-          artifactDownloadUrl(projectId, task.id, file.directory, file.path),
-          file.name,
-        );
+        setPreviewFile({ file, content: "", unpreviewable: true });
+        lastGoodContentRef.current = "";
         setPreviewLoading(false);
         return;
       }

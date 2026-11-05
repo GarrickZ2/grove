@@ -459,3 +459,15 @@ textarea.oc-send-out-source+.buddy-composer-mirror{visibility:hidden}
 .buddy-mention-chip{display:inline-flex;align-items:center;gap:4px;padding:0 6px 0 3px;margin:0 1px;border-radius:999px;background:color-mix(in oklab,currentColor 14%,transparent);font-weight:500;vertical-align:baseline;white-space:nowrap}
 .buddy-mention-chip>*:first-child{transform:translateY(2px)}
 .buddy-user-via{display:inline-flex;align-items:center;gap:4px;margin:0 6px 3px;font-size:11px;line-height:1;color:var(--color-text-muted)}
+
+/* One section per machine when a Grove spans several. */
+.buddy-machine+.buddy-machine{margin-top:6px}
+.buddy-machine-head{display:flex;align-items:center;gap:4px;height:32px;padding:0 2px 0 4px}
+.buddy-machine-head .buddy-icon-button{width:26px;height:26px;opacity:.7}
+.buddy-machine-head:hover .buddy-icon-button{opacity:1}
+.buddy-machine-toggle{display:flex;flex:1;min-width:0;align-items:center;gap:5px;padding:0;border:0;background:none;color:var(--color-text-muted);font-size:12px;font-weight:500;cursor:pointer}
+.buddy-machine-toggle:hover{color:var(--color-text)}
+.buddy-machine-toggle span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.buddy-machine-toggle svg{flex:none;transition:transform .15s ease}
+.buddy-machine-toggle svg.is-folded{transform:rotate(-90deg)}
+.buddy-machine .buddy-muted{margin:0;padding:6px 10px;font-size:12px}

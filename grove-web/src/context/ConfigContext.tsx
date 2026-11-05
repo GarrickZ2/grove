@@ -86,6 +86,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** For what can render outside the provider. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useOptionalConfig() {
+  return useContext(ConfigContext);
+}
+
 // eslint-disable-next-line react-refresh/only-export-components
 export function useConfig() {
   const context = useContext(ConfigContext);

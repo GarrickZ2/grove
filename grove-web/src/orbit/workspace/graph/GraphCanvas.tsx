@@ -382,7 +382,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
           const Icon = agent.Component;
           const queued = queuedFor(node.chat_id);
           const selected = selectedNode === node.chat_id;
-          const labelled = keepsLabel(ring, compact, selected);
+          const labelled = keepsLabel(ring, compact && dense, selected);
           const drop = link?.hover?.id === node.chat_id ? (link.hover.ok ? " is-drop-ok" : " is-drop-bad") : "";
           const delay = Math.min(index, 8) * 0.04;
           return (

@@ -330,7 +330,7 @@ pub async fn call(plugin_id: &str, method: &str, params: Value) -> Result<Value>
         }
         "sessions.read" => {
             let input: ReadParams = parse(params)?;
-            tools::read_session(tools::ReadSessionInput {
+            tools::read_page(tools::ReadSessionInput {
                 session: input.session_id,
                 limit: input.limit,
                 before: input.before,
@@ -342,12 +342,15 @@ pub async fn call(plugin_id: &str, method: &str, params: Value) -> Result<Value>
         }
         "sessions.search" => {
             let input: SearchParams = parse(params)?;
-            tools::search_sessions(tools::SearchSessionsInput {
-                query: input.query,
-                session: input.session_id,
-                project: input.project_id,
-                limit: input.limit,
-            })
+            tools::search_where(
+                tools::SearchSessionsInput {
+                    query: input.query,
+                    session: input.session_id,
+                    project: input.project_id,
+                    limit: input.limit,
+                },
+                |_| true,
+            )
         }
         "sessions.send" => send_to_session(&plugin, parse(params)?).await,
         "buddies.list" => list_buddies(),

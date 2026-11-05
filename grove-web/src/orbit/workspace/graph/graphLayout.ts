@@ -366,9 +366,10 @@ export function statusRing(status: GraphNodeStatus | string): NodeRing {
   }
 }
 
-/** Agents that keep their name in a crowded dock; the rest show it on hover. */
-export function keepsLabel(ring: NodeRing, compact: boolean, selected: boolean): boolean {
-  return !compact || selected || ring === "work" || ring === "ask" || ring === "err" || ring === "connecting";
+/** Whether an agent shows its name. Only a dense team in a narrow dock runs out
+ *  of room; there, agents that need no attention show it on hover. */
+export function keepsLabel(ring: NodeRing, crowded: boolean, selected: boolean): boolean {
+  return !crowded || selected || ring === "work" || ring === "ask" || ring === "err" || ring === "connecting";
 }
 
 /**
