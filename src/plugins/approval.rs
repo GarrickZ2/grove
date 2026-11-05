@@ -1,28 +1,38 @@
 //! Plugin approval — a plugin only takes effect once the user has reviewed it.
 //!
-//! Approval records a digest of the manifest's security-relevant parts:
-//! permissions, the processes it launches (command / args / env), and what it
-//! contributes to agents (skills, MCP, prompt middleware) or exposes to the
-//! outside (connect providers). A plugin is active only while its current
-//! digest matches the approved one, so a manifest that later asks for more —
-//! say a dev folder an agent can write to — falls back to pending review.
-//! Code, UI and version changes leave the digest alone.
+//! Approval covers the plugin as it stands: for an installed copy, a digest of
+//! every file in it; for a dev folder, a digest of the manifest's
+//! security-relevant parts (permissions, processes, lifecycle, and what it
+//! contributes to agents or exposes to the outside), so code can change freely
+//! during development but a manifest that asks for more falls back to review.
+//! A plugin is active only while its current digest matches the approved one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+use std::sync::Mutex;
 
+use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::storage::plugins::Plugin;
 
 /// Permissions that read or write user data, shown together in the review.
-const DATA_PERMISSIONS: [&str; 5] = [
+const DATA_PERMISSIONS: [&str; 14] = [
+    "view:list",
+    "memory:read",
+    "memory:write",
+    "notes:read",
+    "notes:write",
+    "review:read",
     "project:read",
     "project:write",
     "chat:read",
     "storage:read",
     "storage:write",
+    "workspace:read",
+    "sessions:read",
+    "buddies:read",
 ];
 
 fn read_manifest(dir: &Path) -> Option<Value> {
@@ -53,7 +63,7 @@ fn digest_of(manifest: &Value, dir: &Path) -> String {
             |d| json!({ "command": d.get("command"), "args": d.get("args"), "env": d.get("env") }),
         )
     };
-    let material = json!({
+    let mut material = json!({
         "permissions": permissions(manifest),
         "backend": process("backend"),
         "mcp": process("mcp"),
@@ -61,6 +71,15 @@ fn digest_of(manifest: &Value, dir: &Path) -> String {
         "connectProviders": contribution(manifest, "connectProviders"),
         "skills": dir.join("skills").is_dir(),
     });
+    // Added only when declared, so plugins without them keep their approval.
+    for key in ["lifetime", "activation", "restart", "listeners"] {
+        if let Some(value) = contribution(manifest, "backend").and_then(|b| b.get(key)) {
+            material[key] = value.clone();
+        }
+    }
+    if let Some(value) = contribution(manifest, "metaTypes") {
+        material["metaTypes"] = value.clone();
+    }
     hex::encode(Sha256::digest(material.to_string().as_bytes()))
 }
 
@@ -71,12 +90,85 @@ pub fn security_digest(local_path: &str) -> Option<String> {
     read_manifest(dir).map(|manifest| digest_of(&manifest, dir))
 }
 
-/// Whether the plugin is approved for exactly what its manifest asks today.
+/// Files whose digest is reused while their size and modification time stay
+/// the same. A plugin's digest is checked on every permission lookup.
+type FileStamp = (u64, std::time::SystemTime);
+static FILE_DIGESTS: Lazy<Mutex<HashMap<std::path::PathBuf, (FileStamp, String)>>> =
+    Lazy::new(Default::default);
+
+fn file_digest(path: &Path, stamp: FileStamp) -> Option<String> {
+    if let Some((known, digest)) = FILE_DIGESTS.lock().unwrap().get(path) {
+        if *known == stamp {
+            return Some(digest.clone());
+        }
+    }
+    let digest = hex::encode(Sha256::digest(std::fs::read(path).ok()?));
+    FILE_DIGESTS
+        .lock()
+        .unwrap()
+        .insert(path.to_path_buf(), (stamp, digest.clone()));
+    Some(digest)
+}
+
+/// Every regular file under `dir` as (relative path, digest), sorted.
+pub fn package_files(dir: &Path) -> Vec<(String, String)> {
+    let mut files: Vec<(String, String)> = walkdir::WalkDir::new(dir)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != ".git")
+        .flatten()
+        .filter(|entry| entry.file_type().is_file())
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            let stamp = (metadata.len(), metadata.modified().ok()?);
+            let digest = file_digest(entry.path(), stamp)?;
+            let relative = entry.path().strip_prefix(dir).ok()?;
+            Some((relative.to_string_lossy().replace('\\', "/"), digest))
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// Digest of a plugin folder's manifest and every file in it.
+pub fn package_digest(local_path: &str) -> Option<String> {
+    let security = security_digest(local_path)?;
+    let files = package_files(Path::new(local_path));
+    let material = json!({ "security": security, "files": files });
+    Some(hex::encode(Sha256::digest(material.to_string().as_bytes())))
+}
+
+/// What approval covers for this plugin today.
+pub fn current_digest(plugin: &Plugin) -> Option<String> {
+    if plugin.source == "dev" {
+        security_digest(&plugin.local_path)
+    } else {
+        package_digest(&plugin.local_path)
+    }
+}
+
+/// Whether the plugin is approved for exactly what is on disk today.
 pub fn is_active(plugin: &Plugin) -> bool {
     plugin
         .approved_digest
         .as_deref()
-        .is_some_and(|approved| security_digest(&plugin.local_path).as_deref() == Some(approved))
+        .is_some_and(|approved| current_digest(plugin).as_deref() == Some(approved))
+}
+
+/// Carry approvals made before they covered whole packages. An installed
+/// plugin whose manifest still matches was approved for what it asks today, so
+/// it keeps running; from here on any change to its files needs a new review.
+pub fn migrate_approvals() {
+    for plugin in crate::storage::plugins::list().unwrap_or_default() {
+        let upgraded = plugin.source != "dev"
+            && plugin.approved_digest.is_some()
+            && plugin.approved_digest == security_digest(&plugin.local_path);
+        if upgraded {
+            if let Some(digest) = package_digest(&plugin.local_path) {
+                let _ = crate::storage::plugins::set_approved_digest(&plugin.id, Some(&digest));
+            }
+        }
+    }
 }
 
 /// `active`, `pending` (never approved) or `changed` (asks for something new).
@@ -97,12 +189,14 @@ pub fn active_plugins() -> crate::error::Result<Vec<Plugin>> {
 }
 
 /// What the user is asked to approve, grouped by risk for the review screen.
-pub fn review(local_path: &str) -> Value {
+pub fn review(plugin: &Plugin) -> Value {
+    let local_path = plugin.local_path.as_str();
     let dir = Path::new(local_path);
     let Some(manifest) = read_manifest(dir) else {
         return Value::Null;
     };
     let perms = permissions(&manifest);
+    let lifecycle = super::lifecycle::policy(local_path);
     let processes: Vec<Value> = ["backend", "mcp"]
         .into_iter()
         .filter_map(|kind| {
@@ -119,7 +213,7 @@ pub fn review(local_path: &str) -> Value {
         .collect();
     let full_trust = perms.contains("exec") || processes.iter().any(|p| p["sandboxed"] == false);
     json!({
-        "digest": digest_of(&manifest, dir),
+        "digest": current_digest(plugin),
         "permissions": perms,
         "full_trust": full_trust,
         "network": !processes.is_empty(),
@@ -129,9 +223,22 @@ pub fn review(local_path: &str) -> Value {
             "mcp": contribution(&manifest, "mcp").is_some(),
             "prompt_middleware": contribution(&manifest, "promptMiddleware").is_some(),
             "chat_write": perms.contains("chat:write"),
+            "sessions_write": perms.contains("sessions:write"),
+            "buddies_write": perms.contains("buddies:write"),
+            "ui_interact": perms.contains("ui:interact"),
         },
         "data": DATA_PERMISSIONS.iter().filter(|p| perms.contains(**p)).collect::<Vec<_>>(),
         "connect_provider": contribution(&manifest, "connectProviders").is_some(),
+        "service": lifecycle.service,
+        "activation": {
+            "on_startup": lifecycle.on_startup,
+            "schedules": lifecycle.schedules,
+            "unknown": lifecycle.unknown_activation,
+        },
+        "listeners": lifecycle.listeners,
+        "meta_types": contribution(&manifest, "metaTypes")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
     })
 }
 
@@ -204,7 +311,7 @@ mod tests {
             id: "pl-test".into(),
             name: "Test".into(),
             version: "1.0.0".into(),
-            source: "local".into(),
+            source: "dev".into(),
             local_path: dir.display().to_string(),
             git_url: None,
             subpath: None,
@@ -277,7 +384,7 @@ mod tests {
                 "promptMiddleware": ["submit"]
             }
         }));
-        let r = review(&dir.path().display().to_string());
+        let r = review(&plugin(dir.path(), None));
         assert_eq!(r["full_trust"], false);
         assert_eq!(r["network"], true);
         assert_eq!(r["processes"][0]["sandboxed"], true);
@@ -287,8 +394,99 @@ mod tests {
 
         let exec = plugin_dir(json!({"name": "b", "permissions": ["exec"],
             "contributes": {"mcp": {"command": "python3"}}}));
-        let r = review(&exec.path().display().to_string());
+        let r = review(&plugin(exec.path(), None));
         assert_eq!(r["full_trust"], true);
         assert_eq!(r["processes"][0]["sandboxed"], false);
+    }
+
+    fn installed(dir: &Path) -> Plugin {
+        let mut plugin = plugin(dir, None);
+        plugin.source = "local".into();
+        plugin.approved_digest = current_digest(&plugin);
+        plugin
+    }
+
+    #[test]
+    fn any_file_change_needs_a_new_review_for_an_installed_plugin() {
+        let dir = plugin_dir(json!({"name": "a"}));
+        std::fs::create_dir(dir.path().join("dist")).unwrap();
+        std::fs::write(dir.path().join("dist/index.js"), "one").unwrap();
+        let p = installed(dir.path());
+        assert!(is_active(&p));
+
+        std::fs::write(dir.path().join("dist/index.js"), "two!").unwrap();
+        assert_eq!(status(&p), "changed");
+        std::fs::write(dir.path().join("dist/index.js"), "one").unwrap();
+        assert!(is_active(&p));
+        std::fs::write(dir.path().join("dist/extra.js"), "x").unwrap();
+        assert!(!is_active(&p));
+        std::fs::remove_file(dir.path().join("dist/extra.js")).unwrap();
+        assert!(is_active(&p));
+        std::fs::remove_file(dir.path().join("dist/index.js")).unwrap();
+        assert!(!is_active(&p));
+    }
+
+    #[test]
+    fn a_same_size_edit_with_a_new_mtime_is_noticed() {
+        let dir = plugin_dir(json!({"name": "a"}));
+        let file = dir.path().join("code.js");
+        std::fs::write(&file, "aaaa").unwrap();
+        let p = installed(dir.path());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&file, "bbbb").unwrap();
+        assert!(!is_active(&p));
+    }
+
+    #[test]
+    fn git_metadata_does_not_affect_approval() {
+        let dir = plugin_dir(json!({"name": "a"}));
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        let p = installed(dir.path());
+        std::fs::write(dir.path().join(".git/HEAD"), "ref").unwrap();
+        assert!(is_active(&p));
+    }
+
+    #[test]
+    fn a_dev_plugin_keeps_its_approval_across_code_changes() {
+        let dir = plugin_dir(json!({"name": "a"}));
+        let p = plugin(
+            dir.path(),
+            security_digest(&dir.path().display().to_string()),
+        );
+        std::fs::write(dir.path().join("code.js"), "new").unwrap();
+        assert!(is_active(&p));
+    }
+
+    #[test]
+    fn lifecycle_changes_need_a_new_review() {
+        let dir = plugin_dir(json!({"name": "a", "contributes": {"backend": {"command": "node"}}}));
+        let path = dir.path().display().to_string();
+        let p = plugin(dir.path(), security_digest(&path));
+        std::fs::write(
+            dir.path().join("plugin.json"),
+            json!({"name": "a", "contributes": {"backend": {"command": "node", "lifetime": "service"}}})
+                .to_string(),
+        )
+        .unwrap();
+        assert_eq!(status(&p), "changed");
+    }
+
+    #[test]
+    fn plugins_without_lifecycle_fields_keep_older_digests() {
+        // Pinned: changing this digest would ask every user to re-approve.
+        let manifest = json!({"name": "a", "permissions": ["storage:read"]});
+        let dir = plugin_dir(manifest.clone());
+        let material = json!({
+            "permissions": ["storage:read"],
+            "backend": null,
+            "mcp": null,
+            "promptMiddleware": null,
+            "connectProviders": null,
+            "skills": false,
+        });
+        assert_eq!(
+            digest_of(&manifest, dir.path()),
+            hex::encode(Sha256::digest(material.to_string().as_bytes()))
+        );
     }
 }

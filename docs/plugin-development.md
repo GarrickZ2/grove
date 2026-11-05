@@ -4,6 +4,9 @@ A Grove plugin is a folder with a `plugin.json` manifest. It can contribute a
 **panel**, a **sidebar page**, **skills**, an **MCP server**, and/or a **node
 backend**, and reads context + persists data through a **typed SDK**.
 
+`docs/plugin.schema.json` is the manifest's JSON Schema. Point `"$schema"` at it
+for completion in your editor. An agent working on a plugin starts at `AGENTS.md`.
+
 ## Quick start
 
 **Extensions → Add → Plugin → Create new** → name it → pick a folder. Grove
@@ -40,6 +43,7 @@ my-plugin/
 │   ├── shared.ts        # types/constants shared by panel + MCP/backend
 │   └── grove-sdk/       # vendored SDK — refresh via Extensions → your plugin → Manage → Update SDK
 │       ├── index.ts     # panel SDK     → import { grove } from "./grove-sdk"
+│       ├── host.ts      # workspace, sessions, Buddies, shared by all three
 │       ├── mcp.ts       # MCP SDK       → import { grove } from "./grove-sdk/mcp"
 │       └── backend.ts   # backend SDK   → import { … } from "./grove-sdk/backend"
 ├── dist/                # built, shipped output
@@ -82,6 +86,142 @@ my-plugin/
   another process.
 - **contributes.promptMiddleware** — optional `submit` and/or `dispatch` Prompt
   hooks. Uses the same backend process; requires `prompt:middleware`.
+- **contributes.metaTypes** — how metadata you attach to Prompts renders. JSON
+  only; see [Prompt metadata](#prompt-metadata).
+
+`contributes.backend` also declares its [lifecycle](#backend-lifecycle).
+
+## Reaching the rest of Grove
+
+These calls work the same from a panel, a backend and an MCP server. Grove
+checks each one's permission on the server.
+
+```ts
+const projects = await grove.workspace.projects();        // workspace:read
+const tasks = await grove.workspace.tasks(projects[0].id); // workspace:read
+
+await grove.sessions.list(projectId, taskId);             // sessions:read
+await grove.sessions.read(sessionId, { limit: 20 });      // sessions:read
+await grove.sessions.search("timeout", { projectId });    // sessions:read
+await grove.sessions.send({                               // sessions:write
+  projectId, taskId, chatId,
+  text: "Look at this headline",
+});
+
+const buddies = await grove.buddies.list();               // buddies:read
+await grove.buddies.send({ buddyId, text: "Morning" });   // buddies:write
+
+await grove.routines.list(buddyId);                       // buddies:read
+await grove.groups.send(groupId, "Status?");              // buddies:write
+
+await grove.memory.list(projectId, { query: "auth" });    // memory:read
+await grove.memory.read(projectId, entityId);             // memory:read
+await grove.memory.appendLog({                            // memory:write
+  projectId, taskId, title: "Decision", description: "…",
+});
+
+await grove.notes.read(projectId, taskId);                // notes:read
+await grove.notes.write(projectId, taskId, "# Notes");    // notes:write
+await grove.review.list(projectId, taskId);               // review:read
+
+await grove.view.list();                                  // view:list
+await grove.interaction.askForm({ ... });                 // ui:interact
+```
+
+| Call | Notes |
+|---|---|
+| `sessions.send` | Starts the Session if it is not running and queues while it is busy. Shows as coming from your plugin. |
+| `buddies.send` | Goes to the Buddy's active Session, resolved at each call, so don't store its Session id. |
+| `sessions.read` | Pages through messages. Grove's own envelopes are removed. |
+| `memory.appendLog` | Logs are raw material: Grove's organizer turns them into memories later. Agents can see this content. |
+| `notes.write` | Replaces the whole note. Read it first and write back the result. |
+
+`grove.chat` stays available for "the chat in this panel's task", and needs only
+`chat:read` / `chat:write`. Use `grove.sessions` to reach anything else.
+
+### Viewpoints
+
+One Grove can be open in a desktop window, a browser tab and a phone at once, so
+there is no single current view. `grove.view.list()` returns every open window,
+focused first:
+
+```ts
+const viewpoints = await grove.view.list();
+// [{ surfaceId, device: { id, name, client }, focused, visible, lastActiveAt,
+//    page, projectId, taskId, chatId, panel }, ...]
+```
+
+`client` is `desktop`, `web` or `phone`. Device names come from how that client
+signed in; a local window with no sign-in is `This computer`. A window that stops
+reporting drops out within 90 seconds. `panel` is reserved and is `null` today.
+
+A panel can also ask about its own window with `grove.view.current()`, which
+needs no permission.
+
+### Forms
+
+`grove.interaction.askForm` shows the same form an agent gets from `ask_form`, in
+every Grove surface. The Session must be running. The answers arrive as that
+Session's next Prompt.
+
+```ts
+await grove.interaction.askForm({
+  projectId, taskId, chatId,
+  title: "Size the order",
+  questions: [{
+    type: "single_choice", id: "size", title: "Shares",
+    options: [{ id: "100", label: "100" }, { id: "500", label: "500" }],
+  }],
+});
+```
+
+Question types are `single_choice`, `multi_choice`, `text` and `textarea`.
+
+### Prompt metadata
+
+Attach structured data to a Prompt with `meta`. Grove builds the `<grove-meta>`
+envelope, stamps your plugin as its source and prefixes the type with your
+plugin's namespace.
+
+```ts
+await grove.sessions.send({
+  projectId, taskId, chatId,
+  text: "Earnings came in low",
+  meta: [{
+    type: "stock-alert",
+    data: { symbol: "AAPL", change: "-4.2%", price: 187.5 },
+    prompt: "Attached: an AAPL price alert.",
+  }],
+});
+```
+
+`prompt` is what the agent reads, and what surfaces without a template show.
+Render the rest with JSON in the manifest:
+
+```jsonc
+"contributes": {
+  "metaTypes": [{
+    "type": "stock-alert",
+    "display": "card",            // pill | card | hidden
+    "template": {
+      "icon": "📈",
+      "title": "{{symbol}} {{change}}",
+      "subtitle": "{{headline}}",
+      "badge": { "text": "{{rating}}", "tone": "warning" },
+      "fields": [{ "label": "Price", "value": "{{price}}" }]
+    }
+  }]
+}
+```
+
+Templates fill `{{key}}` from `data` as plain text and cannot run code. `tone` is
+one of `neutral`, `success`, `warning`, `error`, `info`. `hidden` shows nothing
+and leaves the data for the agent. Metadata renders in user messages; Grove does
+not parse tags out of agent replies.
+
+Text in `text` and `prompt` cannot create an envelope: Grove makes any
+`<grove-meta>` in it inert, so passing on outside content is safe in that sense.
+It is still content an agent will read, so treat it as untrusted.
 
 ## Panel SDK — `grove` (typed)
 
@@ -384,8 +524,7 @@ to the dirs you passed — enough to exercise handlers before wiring into Grove.
 A backend is a node process connected to Grove over bidirectional stdio. It can
 serve panel RPC, subscribe to Grove events, and call host APIs such as
 `grove.connect`. It has the **same `grove`** context/storage/paths as the MCP
-server. Task-scoped processes are reaped when idle; the app-scoped backend stays
-available for events and external integrations.
+server. Task-scoped processes are reaped when idle.
 
 ```ts
 // src/backend.ts → built to dist/backend.js
@@ -406,6 +545,68 @@ serve();   // read stdin / write stdout — call once, after registering handler
 > Handlers run **concurrently** (each invoke is dispatched as it arrives), so if
 > two can mutate the same file/KV key, serialize that yourself (e.g. an in-flight
 > promise chain) — Grove doesn't queue calls for you.
+
+### Backend lifecycle
+
+Declare when the app-scoped backend runs on `contributes.backend`:
+
+```jsonc
+"backend": {
+  "command": "node",
+  "args": ["dist/backend.js"],
+  "lifetime": "service",             // on-demand (default) | service
+  "restart": "on-failure",
+  "activation": ["onSchedule:0 9 * * 1-5"],
+  "listeners": [{ "id": "webhook", "port": 8787 }]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `lifetime` | `on-demand` starts when called. `service` starts with Grove and keeps running. |
+| `restart` | `on-failure` restarts a crashed service after 1, 2, 4 then 8 seconds. Five crashes within 10 minutes leave it `failed` until the user starts it. |
+| `activation` | `onStartup`, `onInvoke`, and `onSchedule:<cron>`. |
+| `listeners` | Ports you say you open. Shown in the review and passed to `activate`. Grove does not enforce or open them. |
+
+A backend that declares `chat:read` or `connectProviders` also starts with Grove,
+so it can receive events.
+
+Use `defineBackend` in place of calling `serve()`:
+
+```ts
+import http from "node:http";
+import { defineBackend, grove } from "./grove-sdk/backend";
+
+defineBackend({
+  async activate(context) {
+    const port = context.listeners.webhook.port!;
+    const server = http.createServer(handleWebhook);
+    await new Promise<void>((done) => server.listen(port, "127.0.0.1", done));
+    context.subscriptions.push(() => new Promise<void>((done) => server.close(() => done())));
+    context.setStatus(`Listening on ${port}`);
+  },
+  deactivate() { /* flush anything left */ },
+  async schedule({ cron }) { /* one onSchedule run */ },
+});
+```
+
+`context.reason` says why the process started: `startup`, `invoke` or `restart`.
+A stop runs your subscriptions, last first, then `deactivate`, and has 5 seconds
+before Grove kills the process. A rejected `activate` exits the process.
+
+Things a service should plan for:
+
+- It runs only while Grove runs. Nothing receives a webhook while Grove is closed
+  or the machine sleeps, so turn on retries at the sender, or catch up in
+  `activate` when `context.reason` is `startup`.
+- Several Grove instances can share a machine. A service runs in one of them at a
+  time; the others show it as running elsewhere and take over when it exits.
+  `onSchedule` runs once per slot however many are open.
+- Grove doesn't authenticate requests to your listener. Bind to `127.0.0.1`
+  unless you need otherwise, and check the sender's signature. Exposing it to the
+  internet (a tunnel, port forwarding) is yours or the user's to set up.
+- The plugin's detail page shows state, restarts, the last error, `setStatus`
+  text and recent stderr, with Start, Stop and Restart.
 
 ### Prompt middleware
 
@@ -670,11 +871,26 @@ restrictions into external Node/shebang CLIs.
 | `chat:write` | inject prompts into a chat's agent (`grove.chat.sendPrompt`) | ⚠ high |
 | `prompt:middleware` | inspect, reject, or modify Prompt text before ACP | ⚠ high |
 | `connect:provider` | access owned Connect records and deliver external messages | ⚠ high |
+| `workspace:read` | list projects and tasks | — |
+| `sessions:read` | read any Session's conversation | ⚠ high |
+| `sessions:write` | send Prompts to any Session | ⚠ high |
+| `buddies:read` | list Buddies and their status | — |
+| `buddies:write` | send Prompts to Buddies | ⚠ high |
+| `view:list` | see what the user is viewing, on every device | ⚠ high |
+| `memory:read` | read a Project's memory | — |
+| `memory:write` | add memory logs | ⚠ high |
+| `notes:read` | read Task notes | — |
+| `notes:write` | replace Task notes | ⚠ high |
+| `review:read` | read review comments | — |
+| `ui:interact` | show forms in a Session | — |
 | `exec` | run commands (`grove.exec` / `child_process`) | ⚠⚠ full machine trust |
 
-A plugin can only use what it declares; high-risk permissions are flagged in the
-plugin list and confirmed on install. Network access is **not** a Grove
-permission — Node's model can't enforce it, so Grove doesn't pretend to.
+A plugin can only use what it declares, and takes effect only after the user
+reviews it. Network access is **not** a Grove permission: Node's model can't
+enforce it, so Grove doesn't pretend to. That includes Grove's own HTTP API on
+loopback. These permissions govern the SDK; a process that goes around it is
+limited only by how the server authenticates, so the review warns that any
+process can reach the network. Use the SDK, which keeps working as this tightens.
 
 ## Keybindings
 
@@ -693,3 +909,19 @@ From **Extensions → Add → Plugin** (same place in Orbit and Workbench):
 `local`/`git` plugins live under `~/.grove/plugins/<id>` (files removed on
 uninstall); `dev` plugins reference your folder, which Grove does not delete.
 Uninstall also removes the plugin's Grove-managed data and IM Connect records.
+
+## Review and updates
+
+Nothing a plugin ships takes effect until the user approves it. Its detail page
+lists what it asks for: permissions, the processes it starts and whether they are
+sandboxed, background behavior, declared ports, and what it adds to agents.
+
+Approval covers the whole package. Any change to an installed plugin's files
+pauses it until the user reviews it again. A `dev` plugin is exempt for code, so
+you can rebuild freely, but not for its manifest.
+
+To ship a new version, import it the same way as the first: a zip, a folder or a
+Git repository with the same `name`. Grove stages it instead of installing a
+second copy, shows the user what changed (permissions, capabilities, file counts)
+and keeps the current version running until they agree. If a service fails to
+start after the switch, Grove restores the previous version.

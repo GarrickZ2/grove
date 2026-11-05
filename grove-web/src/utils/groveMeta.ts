@@ -25,6 +25,8 @@ export interface GroveMetaEnvelope {
   type: string;
   data: Record<string, unknown>;
   systemPrompt: string;
+  /** Stamped by Grove on plugin envelopes; a plugin cannot choose it. */
+  source?: { plugin_id?: string; plugin_name?: string };
 }
 
 export type GroveMetaSegment =
@@ -38,6 +40,7 @@ interface RawEnvelope {
   type?: unknown;
   data?: unknown;
   "system-prompt"?: unknown;
+  source?: unknown;
 }
 
 function tryParseEnvelope(jsonText: string): GroveMetaEnvelope | null {
@@ -69,6 +72,9 @@ function tryParseEnvelope(jsonText: string): GroveMetaEnvelope | null {
     type: raw.type,
     data: raw.data as Record<string, unknown>,
     systemPrompt: raw["system-prompt"] as string,
+    ...(raw.source && typeof raw.source === "object"
+      ? { source: raw.source as GroveMetaEnvelope["source"] }
+      : {}),
   };
 }
 

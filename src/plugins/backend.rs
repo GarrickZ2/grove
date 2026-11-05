@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -32,12 +32,21 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use tokio::sync::{oneshot, Mutex, RwLock};
 
+use super::lifecycle;
 use crate::error::{GroveError, Result};
 
 /// Per-request timeout for a backend invoke.
 const INVOKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Reap a backend process after this long with no invoke.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long a backend gets to finish `deactivate` before it is killed.
+const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often a service waiting on another instance's lease tries again.
+const LEASE_RETRY: Duration = Duration::from_secs(30);
+/// How often `onSchedule` activations are checked.
+const SCHEDULE_TICK: Duration = Duration::from_secs(20);
+/// Timeout for one scheduled backend run.
+const SCHEDULE_TIMEOUT_MS: u64 = 600_000;
 
 static BACKENDS: Lazy<RwLock<HashMap<String, Arc<Backend>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
@@ -48,6 +57,10 @@ static REAPER: Lazy<()> = Lazy::new(|| {
 });
 
 struct Backend {
+    /// Set before a deliberate stop, so its exit is not treated as a crash.
+    stopping: AtomicBool,
+    /// Machine-wide lease on a service, held for the life of the process.
+    _lease: Option<std::fs::File>,
     stdin: Mutex<ChildStdin>,
     child: Mutex<Child>,
     pending: Mutex<HashMap<u64, oneshot::Sender<std::result::Result<Value, String>>>>,
@@ -217,7 +230,8 @@ async fn start_registered_backend(plugin: &crate::storage::plugins::Plugin) {
     }
     let consumes_host_events =
         plugin_has_permission(&plugin.id, "chat:read") || manifest_has(plugin, "connectProviders");
-    if manifest_has(plugin, "backend") && consumes_host_events {
+    let on_startup = lifecycle::policy(&plugin.local_path).on_startup;
+    if manifest_has(plugin, "backend") && (consumes_host_events || on_startup) {
         if let Err(error) = ensure_global(&plugin.id).await {
             eprintln!("[plugin:{}] failed to start backend: {error}", plugin.name);
         }
@@ -234,6 +248,55 @@ pub async fn registered(plugin: &crate::storage::plugins::Plugin) {
 pub async fn start_global_backends() {
     for plugin in super::approval::active_plugins().unwrap_or_default() {
         start_registered_backend(&plugin).await;
+    }
+    tokio::spawn(schedule_loop());
+    tokio::spawn(lease_loop());
+}
+
+/// Fire `onSchedule` activations. Every Grove instance runs this loop; each
+/// due slot is claimed once, so a plugin runs once however many are open.
+async fn schedule_loop() {
+    let mut after = chrono::Local::now();
+    loop {
+        tokio::time::sleep(SCHEDULE_TICK).await;
+        let now = chrono::Local::now();
+        for plugin in super::approval::active_plugins().unwrap_or_default() {
+            let schedules = lifecycle::policy(&plugin.local_path).schedules;
+            for (cron, slot) in lifecycle::due_schedules(&schedules, after, now) {
+                if !lifecycle::claim_schedule_slot(&plugin.id, slot).unwrap_or(false) {
+                    continue;
+                }
+                let plugin = plugin.clone();
+                tokio::spawn(async move {
+                    let params = json!({ "cron": cron, "firedAt": slot });
+                    let run = invoke(
+                        &plugin.id,
+                        None,
+                        "grove.schedule",
+                        params,
+                        Some(SCHEDULE_TIMEOUT_MS),
+                    );
+                    if let Err(error) = run.await {
+                        let line = format!("scheduled run failed: {error}");
+                        lifecycle::record_log(&plugin.id, &line);
+                    }
+                });
+            }
+        }
+        after = now;
+    }
+}
+
+/// Take over services whose lease another Grove instance has released.
+async fn lease_loop() {
+    loop {
+        tokio::time::sleep(LEASE_RETRY).await;
+        for plugin in super::approval::active_plugins().unwrap_or_default() {
+            let waiting = lifecycle::snapshot(&plugin.id)["state"] == "elsewhere";
+            if waiting {
+                let _ = ensure_global(&plugin.id).await;
+            }
+        }
     }
 }
 
@@ -260,17 +323,57 @@ pub async fn publish_radio(task_id: &str, data: Value) {
 /// Kill every backend process for a plugin (called on uninstall).
 pub async fn shutdown_plugin(plugin_id: &str) {
     let prefix = format!("{}::", plugin_id);
-    let mut map = BACKENDS.write().await;
-    let keys: Vec<String> = map
-        .keys()
-        .filter(|k| k.starts_with(&prefix))
-        .cloned()
-        .collect();
-    for k in keys {
-        if let Some(b) = map.remove(&k) {
-            let _ = b.child.lock().await.start_kill();
+    let backends: Vec<Arc<Backend>> = {
+        let mut map = BACKENDS.write().await;
+        let keys: Vec<String> = map
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        keys.iter().filter_map(|k| map.remove(k)).collect()
+    };
+    let stops = backends.into_iter().map(|backend| async move {
+        backend.stopping.store(true, Ordering::SeqCst);
+        stop(&backend).await;
+    });
+    futures::future::join_all(stops).await;
+    lifecycle::record_stopped(plugin_id);
+}
+
+/// Ask a backend to finish, then kill it if it does not.
+async fn stop(backend: &Backend) {
+    let line = json!({ "type": "grove:shutdown" }).to_string() + "\n";
+    {
+        let mut stdin = backend.stdin.lock().await;
+        let _ = stdin.write_all(line.as_bytes()).await;
+        let _ = stdin.flush().await;
+    }
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    while Instant::now() < deadline {
+        if matches!(backend.child.lock().await.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let _ = backend.child.lock().await.start_kill();
+}
+
+/// Start, stop or restart a plugin's app-scoped backend at the user's request.
+pub async fn control(plugin_id: &str, action: &str) -> Result<()> {
+    match action {
+        "stop" => shutdown_plugin(plugin_id).await,
+        "start" | "restart" => {
+            shutdown_plugin(plugin_id).await;
+            lifecycle::reset_failures(plugin_id);
+            ensure_global(plugin_id).await?;
+        }
+        _ => {
+            return Err(GroveError::invalid_data(format!(
+                "unknown action: {action}"
+            )))
         }
     }
+    Ok(())
 }
 
 async fn get_or_spawn(
@@ -453,9 +556,39 @@ async fn spawn(
         cmd.env("NODE_NO_WARNINGS", "1");
     }
 
+    let global = scope_key == "global";
+    let policy = lifecycle::policy(&plugin.local_path);
+    cmd.env("GROVE_LISTENERS", json!(policy.listeners).to_string());
+    let reason = if !global {
+        "invoke"
+    } else if lifecycle::snapshot(plugin_id)["state"] == "restarting" {
+        "restart"
+    } else if policy.on_startup {
+        "startup"
+    } else {
+        "invoke"
+    };
+    cmd.env("GROVE_ACTIVATION_REASON", reason);
+    let lease = if global && policy.service {
+        let lease = lifecycle::acquire_service_lease(plugin_id)
+            .map_err(|e| GroveError::session(format!("plugin lease failed: {e}")))?;
+        if lease.is_none() {
+            lifecycle::record_elsewhere(plugin_id);
+            return Err(GroveError::session(
+                "this service is running in another Grove window".to_string(),
+            ));
+        }
+        lease
+    } else {
+        None
+    };
+
     let mut child = cmd
         .spawn()
         .map_err(|e| GroveError::session(format!("failed to spawn plugin backend: {}", e)))?;
+    if global {
+        lifecycle::record_started(plugin_id, child.id());
+    }
     let stdin = child
         .stdin
         .take()
@@ -467,6 +600,8 @@ async fn spawn(
     let stderr = child.stderr.take();
 
     let backend = Arc::new(Backend {
+        stopping: AtomicBool::new(false),
+        _lease: lease,
         stdin: Mutex::new(stdin),
         child: Mutex::new(child),
         pending: Mutex::new(HashMap::new()),
@@ -481,7 +616,11 @@ async fn spawn(
         scope_key.to_string(),
     ));
     if let Some(err) = stderr {
-        tokio::spawn(drain_stderr(err, plugin.name.clone()));
+        tokio::spawn(drain_stderr(
+            err,
+            plugin.name.clone(),
+            plugin_id.to_string(),
+        ));
     }
     Ok(backend)
 }
@@ -558,6 +697,12 @@ async fn reader_loop(stdout: ChildStdout, weak: Weak<Backend>, plugin_id: String
             }
             continue;
         }
+        // A backend reports what it is doing, for the plugin's detail page.
+        if v.get("type").and_then(|t| t.as_str()) == Some("grove:status") {
+            let detail = v.get("detail").and_then(Value::as_str).map(String::from);
+            lifecycle::record_detail(&plugin_id, detail);
+            continue;
+        }
         // Backend → Grove API call. This makes the existing plugin backend
         // transport bidirectional; Connect is one consumer, not a new runtime.
         if v.get("type").and_then(|t| t.as_str()) == Some("grove:host_call") {
@@ -589,6 +734,10 @@ async fn reader_loop(stdout: ChildStdout, weak: Weak<Backend>, plugin_id: String
                                 .to_string(),
                         ),
                     }
+                } else if super::host_api::handles(&method) {
+                    super::host_api::call(&plugin_id, &method, params)
+                        .await
+                        .map_err(|error| error.to_string())
                 } else {
                     crate::plugins::connect_provider::handle_host_call(&plugin_id, &method, params)
                         .await
@@ -624,19 +773,78 @@ async fn reader_loop(stdout: ChildStdout, weak: Weak<Backend>, plugin_id: String
             let _ = tx.send(Err("backend process exited".to_string()));
         }
     }
-    let mut backends = BACKENDS.write().await;
-    if let (Some(exited), Some(current)) = (weak.upgrade(), backends.get(&map_key)) {
-        if Arc::ptr_eq(&exited, current) {
-            backends.remove(&map_key);
+    // Hold the backend past its removal: its exit status is still to be read.
+    let exited = weak.upgrade();
+    {
+        let mut backends = BACKENDS.write().await;
+        if let (Some(exited), Some(current)) = (&exited, backends.get(&map_key)) {
+            if Arc::ptr_eq(exited, current) {
+                backends.remove(&map_key);
+            }
         }
+    }
+    if let (Some(backend), "global") = (exited, task_id.as_str()) {
+        after_global_exit(backend, &plugin_id).await;
     }
 }
 
+/// Record how an app-scoped backend ended and restart it if its policy says so.
+async fn after_global_exit(backend: Arc<Backend>, plugin_id: &str) {
+    if backend.stopping.load(Ordering::SeqCst) {
+        return;
+    }
+    let mut code = None;
+    for _ in 0..40 {
+        if let Ok(Some(status)) = backend.child.lock().await.try_wait() {
+            code = status.code();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // Release the lease before anything tries to take it again.
+    drop(backend);
+    let restart = crate::storage::plugins::get(plugin_id)
+        .ok()
+        .flatten()
+        .is_some_and(|plugin| lifecycle::policy(&plugin.local_path).restart);
+    let message = match code {
+        Some(code) => format!("process exited with code {code}"),
+        None => "process exited".to_string(),
+    };
+    if let Some(delay) = lifecycle::record_crash(plugin_id, message, restart) {
+        tokio::spawn(restart_after(plugin_id.to_owned(), delay));
+    }
+}
+
+/// Boxed because a restarted backend's reader can schedule the next restart.
+fn restart_after(
+    plugin_id: String,
+    delay: Duration,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(async move {
+        tokio::time::sleep(delay).await;
+        let active = crate::storage::plugins::get(&plugin_id)
+            .ok()
+            .flatten()
+            .is_some_and(|plugin| super::approval::is_active(&plugin));
+        // A user may have stopped it during the delay.
+        let waiting = lifecycle::snapshot(&plugin_id)["state"] == "restarting";
+        if !active {
+            lifecycle::record_stopped(&plugin_id);
+        } else if waiting {
+            if let Err(error) = ensure_global(&plugin_id).await {
+                lifecycle::record_log(&plugin_id, &format!("restart failed: {error}"));
+            }
+        }
+    })
+}
+
 /// Forward a backend's stderr to Grove's stderr, prefixed with the plugin name.
-async fn drain_stderr(stderr: ChildStderr, plugin_name: String) {
+async fn drain_stderr(stderr: ChildStderr, plugin_name: String, plugin_id: String) {
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         eprintln!("[plugin:{}] {}", plugin_name, line);
+        lifecycle::record_log(&plugin_id, &line);
     }
 }
 

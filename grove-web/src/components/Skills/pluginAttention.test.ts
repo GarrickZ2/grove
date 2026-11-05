@@ -10,7 +10,7 @@ const plugin = (status?: Plugin["status"]): Plugin => ({
 describe("pluginAttentionReasons", () => {
   it("asks for a review of pending and changed plugins", () => {
     expect(pluginAttentionReasons(plugin("pending"))).toEqual(["Review to enable"]);
-    expect(pluginAttentionReasons(plugin("changed"))).toEqual(["Permissions changed; review to re-enable"]);
+    expect(pluginAttentionReasons(plugin("changed"))).toEqual(["Changed since approval; review to re-enable"]);
   });
 
   it("is quiet for active plugins and servers without approval", () => {

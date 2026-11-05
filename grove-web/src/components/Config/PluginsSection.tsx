@@ -9,7 +9,7 @@ import { PluginIcon } from "../Plugins/PluginIcon";
 /** Permissions that let a plugin modify files, run commands, or drive the agent
  *  — shown with a warning treatment so they don't sit flush with read-only ones.
  *  `exec` is the heaviest (spawned processes are unsandboxed ≈ full trust). */
-const HIGH_RISK_PERMISSIONS = new Set(["exec", "project:write", "chat:read", "chat:write", "inject", "connect:provider", "prompt:middleware"]);
+const HIGH_RISK_PERMISSIONS = new Set(["exec", "project:write", "chat:read", "chat:write", "inject", "connect:provider", "prompt:middleware", "sessions:read", "sessions:write", "buddies:write", "view:list", "memory:write", "notes:write"]);
 
 /** Human labels for declared permission strings; unknown perms fall back to the
  *  raw string so new backend permissions still render legibly. */

@@ -363,6 +363,25 @@ pub fn create_api_router() -> Router {
             post(handlers::plugins::backend_invoke),
         )
         .route("/plugins/{id}/exec", post(handlers::plugins::exec_command))
+        .route("/plugins/{id}/host", post(handlers::plugins::host_call))
+        .route("/view", post(handlers::plugins::report_view))
+        .route("/view/{surface}", delete(handlers::plugins::remove_view))
+        .route(
+            "/plugins/{id}/update",
+            delete(handlers::plugins::discard_plugin_update),
+        )
+        .route(
+            "/plugins/{id}/update/apply",
+            post(handlers::plugins::apply_plugin_update),
+        )
+        .route(
+            "/plugins/{id}/runtime",
+            get(handlers::plugins::plugin_runtime),
+        )
+        .route(
+            "/plugins/{id}/runtime/{action}",
+            post(handlers::plugins::control_plugin_runtime),
+        )
         .route("/plugins/{id}/events", post(handlers::plugins::emit_event))
         .route(
             "/plugins/{id}/events/subscribe",
@@ -1426,6 +1445,12 @@ pub fn create_router(
             )
             .layer(DefaultBodyLimit::max(16 * 1024 * 1024));
 
+        // Host calls from plugin MCP processes carry their own per-plugin token.
+        let plugin_process_host = Router::new().route(
+            "/plugin-host/{id}",
+            post(handlers::plugins::process_host_call),
+        );
+
         // CSRF guard wraps EVERYTHING under /api/v1 — including auth_router, so
         // the sign-in endpoints can't be probed cross-origin. Sec-Fetch-Site / Origin /
         // Referer are checked for non-safe methods; safe methods (GET/HEAD/OPTIONS,
@@ -1434,6 +1459,7 @@ pub fn create_router(
             .nest("/api/v1", protected_api)
             .nest("/api/v1", plugin_asset_session)
             .nest("/api/v1", plugin_assets)
+            .nest("/api/v1", plugin_process_host)
             .nest("/api/v1", connect_provider_ingress)
             .nest("/api/v1", auth_router)
             .nest("/api/v1", device_router)
@@ -1979,6 +2005,7 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
 
     // Relay the aggregated Radio stream into plugin panels and backends holding
     // `chat:read`. Backends can consume it without a panel being open.
+    crate::plugins::approval::migrate_approvals();
     crate::plugins::radio_bridge::spawn();
     // Skills reach every agent, so only approved plugins may keep theirs.
     crate::plugins::approval::sync_all_skills();

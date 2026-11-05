@@ -3,7 +3,7 @@ import { LoaderCircle, RefreshCw } from "lucide-react";
 import { apiClient, appendHmacToUrl } from "../../api/client";
 import { useProject, useTheme } from "../../context";
 import type { Plugin } from "../../api/plugins";
-import { listPluginChats, sendPluginChat } from "../../api/plugins";
+import { listPluginChats, pluginHostCall, sendPluginChat } from "../../api/plugins";
 import {
   resolvePluginEntry,
   type PluginUiContribution,
@@ -238,6 +238,9 @@ export function PluginFrame({
               timeoutMs: typeof params.timeoutMs === "number" ? params.timeoutMs : undefined,
             });
             reply({ data: r.result });
+          } else if (method === "host.call") {
+            // The plugin id comes from this frame; the server checks permissions.
+            reply({ data: await pluginHostCall(plugin.id, String(params.method ?? ""), params.params ?? {}) });
           } else if (method === "chat.list") {
             // List the task's chat sessions. The host supplies the ids (the
             // panel's own project/task); the plugin may not override them with

@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Grove plugin manifest",
+  "type": "object",
+  "required": ["name", "version"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "icon": { "type": "string", "description": "An image in the plugin, or an emoji." },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "storage:read", "storage:write",
+          "project:read", "project:write",
+          "chat:read", "chat:write",
+          "workspace:read",
+          "sessions:read", "sessions:write",
+          "buddies:read", "buddies:write",
+          "view:list", "ui:interact",
+          "memory:read", "memory:write",
+          "notes:read", "notes:write",
+          "review:read",
+          "prompt:middleware", "connect:provider",
+          "exec"
+        ]
+      }
+    },
+    "contributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "panel": {
+          "type": "object",
+          "required": ["entry"],
+          "properties": {
+            "title": { "type": "string" },
+            "entry": { "type": "string" },
+            "side": { "enum": ["left", "right"] },
+            "shortcut": { "type": "string" }
+          }
+        },
+        "sidebar": {
+          "type": "object",
+          "required": ["entry"],
+          "properties": {
+            "title": { "type": "string" },
+            "entry": { "type": "string" },
+            "icon": { "type": "string" }
+          }
+        },
+        "mcp": { "$ref": "#/definitions/process" },
+        "backend": {
+          "allOf": [{ "$ref": "#/definitions/process" }],
+          "properties": {
+            "lifetime": { "enum": ["on-demand", "service"] },
+            "restart": { "enum": ["never", "on-failure"] },
+            "activation": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^(onStartup|onInvoke|onSchedule:.+)$" }
+            },
+            "listeners": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+                }
+              }
+            }
+          }
+        },
+        "promptMiddleware": {
+          "type": "array",
+          "items": { "enum": ["submit", "dispatch"] }
+        },
+        "connectProviders": { "type": "array", "items": { "type": "object" } },
+        "metaTypes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string", "pattern": "^[a-z0-9_-]{1,64}$" },
+              "display": { "enum": ["pill", "card", "hidden"] },
+              "template": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "icon": { "type": "string" },
+                  "title": { "type": "string" },
+                  "subtitle": { "type": "string" },
+                  "badge": {
+                    "type": "object",
+                    "properties": {
+                      "text": { "type": "string" },
+                      "tone": { "enum": ["neutral", "success", "warning", "error", "info"] }
+                    }
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "label": { "type": "string" },
+                        "value": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "process": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    }
+  }
+}

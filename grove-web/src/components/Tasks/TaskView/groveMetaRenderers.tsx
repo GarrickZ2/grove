@@ -2,6 +2,7 @@ import { createElement, type ReactNode } from "react";
 import { agentIconComponent, resolveAgentIcon } from "../../../utils/agentIcon";
 import { openExternalUrl } from "../../../utils/openExternal";
 import { parseGroveMetaSegments, type GroveMetaEnvelope } from "../../../utils/groveMeta";
+import { resolvePluginMeta, type ResolvedPluginMeta } from "../../../utils/pluginMeta";
 
 /**
  * Single-tag, type-dispatched renderer for `<grove-meta>` envelopes.
@@ -384,6 +385,69 @@ export function buddyMessageSender(content: string): { id: string; name: string;
   return null;
 }
 
+/** Shows which plugin a Prompt came from. The name is Grove-stamped. */
+function renderPluginInjectBadge(env: GroveMetaEnvelope): ReactNode {
+  const name = env.source?.plugin_name ?? (env.data as { plugin_name?: string }).plugin_name ?? "Plugin";
+  return (
+    <div
+      className="mb-2 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium"
+      style={{ borderColor: "var(--color-border)", color: "var(--color-text-muted)" }}
+      title={env.systemPrompt}
+    >
+      From plugin <span style={{ color: "var(--color-text)" }}>{name}</span>
+    </div>
+  );
+}
+
+const META_TONE: Record<NonNullable<ResolvedPluginMeta["badge"]>["tone"], string> = {
+  neutral: "var(--color-text-muted)",
+  success: "var(--color-success)",
+  warning: "var(--color-warning)",
+  error: "var(--color-error)",
+  info: "var(--color-info)",
+};
+
+function renderPluginMeta(meta: ResolvedPluginMeta, env: GroveMetaEnvelope): ReactNode {
+  if (meta.display === "hidden") return null;
+  const badge = meta.badge && (
+    <span className="text-[10px] font-semibold" style={{ color: META_TONE[meta.badge.tone] }}>{meta.badge.text}</span>
+  );
+  if (meta.display === "pill") {
+    return (
+      <span
+        className="mx-0.5 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px]"
+        style={{ borderColor: "var(--color-border)", color: "var(--color-text)" }}
+        title={`${meta.pluginName}: ${env.systemPrompt}`}
+      >
+        {meta.icon}<span>{meta.title}</span>{badge}
+      </span>
+    );
+  }
+  return (
+    <div
+      className="mb-2 max-w-md rounded-lg border px-3 py-2 text-xs"
+      style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)", color: "var(--color-text)" }}
+      title={env.systemPrompt}
+    >
+      <div className="flex items-center gap-1.5 font-medium">
+        {meta.icon && <span>{meta.icon}</span>}<span className="min-w-0 truncate">{meta.title}</span>{badge}
+      </div>
+      {meta.subtitle && <div className="mt-0.5" style={{ color: "var(--color-text-secondary)" }}>{meta.subtitle}</div>}
+      {meta.fields.length > 0 && (
+        <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+          {meta.fields.map((field) => (
+            <div key={field.label} className="contents">
+              <dt style={{ color: "var(--color-text-muted)" }}>{field.label}</dt>
+              <dd>{field.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {meta.pluginName && <div className="mt-1.5 text-[10px]" style={{ color: "var(--color-text-muted)" }}>{meta.pluginName}</div>}
+    </div>
+  );
+}
+
 export const GROVE_META_RENDERERS: Record<string, Renderer> = {
   grove_session_init: () => null,
   mention_spawn: (env) => renderMentionSpawn(env),
@@ -397,6 +461,7 @@ export const GROVE_META_RENDERERS: Record<string, Renderer> = {
   preview_comment: (env) => renderPreviewCommentCard(env),
   browser_tab: (env) => renderBrowserTab(env),
   review_comment: (env) => renderReviewCommentCard(env),
+  plugin_inject: (env) => renderPluginInjectBadge(env),
 };
 
 /** Render an envelope, falling back to `systemPrompt` text on unknown type or
@@ -406,6 +471,10 @@ export function renderGroveMetaEnvelope(
   ctx: RenderContext,
 ): ReactNode {
   if (envelope.v !== 1) return envelope.systemPrompt;
+  if (envelope.type.startsWith("plugin:")) {
+    const meta = resolvePluginMeta(envelope);
+    return meta ? renderPluginMeta(meta, envelope) : envelope.systemPrompt;
+  }
   const renderer = GROVE_META_RENDERERS[envelope.type];
   if (!renderer) return envelope.systemPrompt;
   try {

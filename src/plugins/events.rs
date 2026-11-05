@@ -32,6 +32,21 @@ static RADIO_SUBS: Lazy<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<String>>
 /// process isn't a normal authenticated Grove client). Random each run.
 static TOKEN: Lazy<String> = Lazy::new(|| uuid::Uuid::new_v4().to_string());
 
+/// Per-plugin credential for host calls from an MCP process. Derived from the
+/// process secret, so holding one plugin's token reveals nothing about another's.
+pub fn host_token(plugin_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(format!("host\0{}\0{plugin_id}", *TOKEN)))
+}
+
+/// The host API endpoint a plugin's MCP server should POST to, if a server exists.
+pub fn host_url(plugin_id: &str) -> Option<String> {
+    BASE.lock()
+        .unwrap()
+        .as_ref()
+        .map(|b| format!("{}/api/v1/plugin-host/{}", b, plugin_id))
+}
+
 /// Loopback base URL of Grove's own API, set once the server binds. None in
 /// modes with no HTTP server (e.g. pure TUI) — then MCP event emit is inert.
 static BASE: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
