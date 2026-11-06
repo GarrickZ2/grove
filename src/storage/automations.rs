@@ -1117,6 +1117,21 @@ pub fn nonterminal_run_id_for_chat(
         .optional()?)
 }
 
+pub fn run_is_memory_organization(run_id: &str) -> Result<bool> {
+    let conn = super::database::connection();
+    Ok(conn
+        .query_row(
+            "SELECT a.handler_key = ?2
+             FROM automation_runs r
+             JOIN automations a ON a.id = r.automation_id
+             WHERE r.id = ?1",
+            params![run_id, MEMORY_ORGANIZATION_HANDLER],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(false))
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum ChatRunTransition<'a> {
     InProgress,
@@ -1503,6 +1518,8 @@ mod tests {
             RunClaim::Created(run_id) => run_id,
             RunClaim::Existing(_) => panic!("unexpected existing run"),
         };
+        assert!(run_is_memory_organization(&first_run_id).unwrap());
+        assert!(!run_is_memory_organization("missing-run").unwrap());
         mark_run_failed(&first_run_id, "agent_run", "failed").unwrap();
         assert!(!has_active_run(&automation_id).unwrap());
         let failed_overview =

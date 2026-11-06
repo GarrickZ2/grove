@@ -7654,6 +7654,12 @@ async fn drive_session(
 
                 // 用 SentRequest::block_task() 得到可被 select 的 future
                 let prompt_fut = conn
+                // Memory organization is background upkeep: nobody is waiting on
+                // its turns. Requests for the user still notify, and turns the
+                // user takes in that Chat later have no Run, so they announce.
+                let background_turn = automation_run_id_owned.as_deref().is_some_and(|run_id| {
+                    crate::storage::automations::run_is_memory_organization(run_id).unwrap_or(false)
+                });
                     .send_request(acp::PromptRequest::new(
                         session_id_arc.clone(),
                         content_blocks,
@@ -7865,7 +7871,8 @@ async fn drive_session(
                             .unwrap_or_else(|| "Agent finished responding".to_string());
                         let quiet = handle.quiet_turn.load(std::sync::atomic::Ordering::Relaxed);
                         // A cancelled turn was stopped on purpose, so there is nothing to announce.
-                        if config.chat_id.is_some() && !quiet && !was_cancelled {
+                        if config.chat_id.is_some() && !quiet && !was_cancelled && !background_turn
+                        {
                             notify_acp_event(
                                 &config.project_key,
                                 &config.task_id,
