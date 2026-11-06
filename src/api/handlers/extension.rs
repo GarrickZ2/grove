@@ -10,7 +10,6 @@ use axum::{
     Json,
 };
 use futures_util::{sink::SinkExt, stream::StreamExt};
-use rust_embed::Embed;
 use serde_json::json;
 use std::collections::HashMap;
 use std::io::Write;
@@ -64,9 +63,13 @@ fn bundled_companion_version() -> &'static str {
 // `pnpm --filter grove-extension run build` is enough to refresh without
 // re-compiling Rust. The download endpoint zips the embedded files in-memory
 // once, then caches the bytes in a `OnceLock`.
-#[derive(Embed)]
-#[folder = "grove-extension/dist"]
-struct ExtensionAssets;
+#[allow(clippy::disallowed_methods)] // In rust-embed's generated debug reader.
+mod embedded {
+    #[derive(rust_embed::Embed)]
+    #[folder = "grove-extension/dist"]
+    pub(super) struct ExtensionAssets;
+}
+use embedded::ExtensionAssets;
 
 static EXTENSION_ZIP_CACHE: OnceLock<Vec<u8>> = OnceLock::new();
 
@@ -1142,7 +1145,7 @@ fn windows_browser_path(exe: &str) -> Option<std::path::PathBuf> {
     };
     ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"]
         .iter()
-        .filter_map(|name| std::env::var_os(name))
+        .filter_map(std::env::var_os)
         .map(|base| std::path::PathBuf::from(base).join(relative))
         .find(|path| path.is_file())
 }

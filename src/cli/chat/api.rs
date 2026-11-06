@@ -1,5 +1,6 @@
 //! Typed REST calls `grove cli` makes against the Grove server.
 
+use crate::platform::CanonicalPath;
 use serde::Deserialize;
 
 use super::conn::{Conn, Result};
@@ -401,12 +402,12 @@ pub async fn add_project(conn: &Conn, path: &str) -> Result<Project> {
 
 /// Resolve which registered project a directory belongs to (deepest match).
 pub fn project_for_dir<'a>(projects: &'a [Project], dir: &std::path::Path) -> Option<&'a Project> {
-    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let dir = dir.canonical().unwrap_or_else(|_| dir.to_path_buf());
     projects
         .iter()
         .filter(|project| {
             let root = std::path::Path::new(&project.path);
-            let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+            let root = root.canonical().unwrap_or_else(|_| root.to_path_buf());
             dir.starts_with(&root)
         })
         .max_by_key(|project| project.path.len())

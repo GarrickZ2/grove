@@ -29,7 +29,7 @@ export {
 export { useHelpKeyDisplay } from "./useHelpKeyDisplay";
 
 // Parsers / evaluators
-export { parseHotkey, matchesHotkey, formatKeyboardEvent, formatKeyDisplay } from "./keyParser";
+export { parseHotkey, matchesHotkey, formatKeyboardEvent, formatKeyDisplay, MOD_KEY_PREFIX, isModKeyHeld } from "./keyParser";
 export { parseWhen, validateWhen, extractContextKeys, WhenParseError } from "./whenExpression";
 
 // Conflict detection (Settings UI + catalog lint)

@@ -383,6 +383,7 @@ pub fn send_banner(
 }
 
 #[cfg(target_os = "windows")]
+#[allow(clippy::too_many_arguments)]
 pub fn send_banner(
     title: &str,
     message: &str,
@@ -410,6 +411,11 @@ pub fn send_banner(
 
     let script = format!(
         r#"
+$appId = 'HKCU:\Software\Classes\AppUserModelId\Grove'
+if (-not (Test-Path $appId)) {{
+  New-Item -Path $appId -Force | Out-Null
+  New-ItemProperty -Path $appId -Name DisplayName -Value 'Grove' -Force | Out-Null
+}}
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null
 $xml = New-Object Windows.Data.Xml.Dom.XmlDocument

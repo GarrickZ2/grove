@@ -2757,6 +2757,7 @@ dependencies = [
  "cron",
  "crossterm",
  "dirs 5.0.1",
+ "dunce",
  "encoding_rs",
  "flate2",
  "futures",

@@ -1,5 +1,6 @@
 //! Unified read-only file serving for project, task, and resource roots.
 
+use crate::platform::CanonicalPath;
 use axum::{
     body::Body,
     extract::{Path, Query},
@@ -91,7 +92,7 @@ fn task_root(
 }
 
 fn add_canonical_root(roots: &mut Vec<PathBuf>, path: &FsPath) {
-    if let Ok(path) = path.canonicalize() {
+    if let Ok(path) = path.canonical() {
         if !roots.contains(&path) {
             roots.push(path);
         }
@@ -118,7 +119,7 @@ fn add_owning_studio_task_root(roots: &mut Vec<PathBuf>, base: &FsPath) {
     let Ok(projects) = workspace::load_projects() else {
         return;
     };
-    let Ok(canonical_base) = base.canonicalize() else {
+    let Ok(canonical_base) = base.canonical() else {
         return;
     };
     for project in projects {
@@ -131,7 +132,7 @@ fn add_owning_studio_task_root(roots: &mut Vec<PathBuf>, base: &FsPath) {
         };
         for entry in entries.flatten() {
             let task_dir = entry.path();
-            let Ok(canonical_task) = task_dir.canonicalize() else {
+            let Ok(canonical_task) = task_dir.canonical() else {
                 continue;
             };
             if canonical_base.starts_with(&canonical_task) {
@@ -156,7 +157,7 @@ fn resolve_file(
         base.join(requested)
     };
     let canonical = candidate
-        .canonicalize()
+        .canonical()
         .map_err(|_| error(StatusCode::NOT_FOUND, "File not found"))?;
     if !canonical.is_file() {
         return Err(error(StatusCode::BAD_REQUEST, "Path is not a file"));
@@ -362,10 +363,7 @@ mod tests {
         std::fs::write(task.join("input/source.png"), b"png").unwrap();
 
         let resolved = resolve_file(&task, &[], "output/../input/source.png").unwrap();
-        assert_eq!(
-            resolved,
-            task.join("input/source.png").canonicalize().unwrap()
-        );
+        assert_eq!(resolved, task.join("input/source.png").canonical().unwrap());
     }
 
     #[test]
@@ -383,7 +381,7 @@ mod tests {
             "../resource/logo.svg",
         )
         .unwrap();
-        assert_eq!(resolved, resource.join("logo.svg").canonicalize().unwrap());
+        assert_eq!(resolved, resource.join("logo.svg").canonical().unwrap());
     }
 
     #[test]

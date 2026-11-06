@@ -67,11 +67,32 @@ fn open_tty() -> Option<std::fs::File> {
     if !std::io::stdin().is_terminal() {
         return None;
     }
+    #[cfg(windows)]
+    {
+        // The key screen uses escape sequences and UTF-8 block characters, and
+        // a raw console handle gets neither by default.
+        let _ = crossterm::ansi_support::supports_ansi();
+        const CP_UTF8: u32 = 65001;
+        // SAFETY: takes a code page by value and has no other inputs.
+        unsafe {
+            windows_sys::Win32::System::Console::SetConsoleOutputCP(CP_UTF8);
+        }
+    }
     std::fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .open("/dev/tty")
+        .open(if cfg!(windows) { "CONOUT$" } else { "/dev/tty" })
         .ok()
+}
+
+/// A handle to read the user's Enter from. On Windows the console's input and
+/// output are separate devices.
+fn open_tty_input(tty: &std::fs::File) -> std::io::Result<std::fs::File> {
+    if cfg!(windows) {
+        std::fs::File::open("CONIN$")
+    } else {
+        tty.try_clone()
+    }
 }
 
 /// Where stdout is redirected to, when that can be determined.
@@ -174,7 +195,7 @@ async fn show_key_once(
     // Reading the terminal blocks, so it runs on its own thread. If the screen
     // closes for another reason the thread just consumes the next Enter.
     let (enter_tx, enter_rx) = tokio::sync::oneshot::channel();
-    if let Ok(reader) = tty.try_clone() {
+    if let Ok(reader) = open_tty_input(&tty) {
         std::thread::spawn(move || {
             let mut line = String::new();
             let _ = std::io::BufReader::new(reader).read_line(&mut line);

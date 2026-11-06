@@ -1,0 +1,4 @@
+disallowed-methods = [
+    { path = "std::fs::canonicalize", reason = "returns \\\\?\\ paths on Windows; use dunce::canonicalize or crate::platform::CanonicalPath" },
+    { path = "std::path::Path::canonicalize", reason = "returns \\\\?\\ paths on Windows; use crate::platform::CanonicalPath" },
+]

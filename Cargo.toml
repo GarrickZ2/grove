@@ -74,6 +74,7 @@ cron = "0.12"
 glob = "0.3"
 globset = "0.4"
 walkdir = "2"
+dunce = "1"
 rayon = "1.10"
 encoding_rs = "0.8.35"
 
@@ -91,11 +92,11 @@ tokio = { version = "1", features = ["full"] }
 
 # Web API Server
 axum = { version = "0.8", features = ["ws", "multipart"] }
-tower-http = { version = "0.6", features = ["cors", "fs"] }
 tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
 rust-embed = "8"
 mime_guess = "2"
-open = "5"
+open = { version = "5", features = ["shellexecute-on-windows"] }
 
 # Terminal WebSocket
 portable-pty = "0.8"
@@ -161,7 +162,7 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 junction = "1.2"
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }

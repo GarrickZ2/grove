@@ -165,12 +165,13 @@ fn dispatch(routes: &RwLock<Routes>, event: Event) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::CanonicalPath;
     use std::time::Duration;
 
     #[test]
     fn forwards_changes_to_the_tasks_subscribers() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = dir.path().canonical().unwrap();
         let watcher = FileWatcher::new();
         let (tx, rx) = std::sync::mpsc::channel();
         let tx = Mutex::new(tx);

@@ -25,7 +25,6 @@ use axum::{
     routing::{any, delete, get, patch, post, put},
     Router,
 };
-use rust_embed::Embed;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::{
@@ -35,10 +34,14 @@ use tower_http::{
 
 use auth::ServerAuth;
 
-/// Embedded frontend assets (built from grove-web/dist)
-#[derive(Embed)]
-#[folder = "grove-web/dist"]
-pub(crate) struct FrontendAssets;
+#[allow(clippy::disallowed_methods)] // In rust-embed's generated debug reader.
+mod embedded {
+    /// Embedded frontend assets (built from grove-web/dist)
+    #[derive(rust_embed::Embed)]
+    #[folder = "grove-web/dist"]
+    pub(crate) struct FrontendAssets;
+}
+pub(crate) use embedded::FrontendAssets;
 
 async fn api_not_found() -> impl IntoResponse {
     (
@@ -65,10 +68,10 @@ pub fn create_api_router() -> Router {
             patch(handlers::machines::update).delete(handlers::machines::remove),
         )
         .route("/machines/{id}/open", post(handlers::machines::open))
+        .route("/machines/{id}/via/{*rest}", any(handlers::machines::via))
         .route(
             "/machines/{id}/session",
             post(handlers::machines::refresh_session),
-        .route("/machines/{id}/via/{*rest}", any(handlers::machines::via))
         )
         // Agent usage quota API (Claude Code / Codex / Gemini)
         .route(
@@ -1452,14 +1455,14 @@ pub fn create_router(
                 "/plugin-assets/{token}/{id}/{*path}",
                 get(handlers::plugins::serve_plugin_session_asset),
             )
-            .with_state(auth.clone());
-
-        // OAuth / QR registration callback. Platform message transport remains
             // Frames can't sign here either; the token is checked over there.
             .route(
                 "/machines/{id}/via/api/v1/plugin-assets/{*rest}",
                 get(handlers::machines::via),
             )
+            .with_state(auth.clone());
+
+        // OAuth / QR registration callback. Platform message transport remains
         // entirely inside the plugin backend.
         let connect_provider_ingress = Router::new()
             .route(
@@ -1621,7 +1624,7 @@ pub(crate) fn sign_ws_url(ws_url: &str, authorization: &RemoteAuthorization) -> 
 
 /// Create a router that proxies all WebSocket and HTTP requests to the remote server.
 pub fn create_proxy_router(remote: String) -> Router {
-    proxy_router(Arc::new(ProxyTarget {
+    let target = Arc::new(ProxyTarget {
         url: remote,
         signer: None,
     });
@@ -2047,6 +2050,37 @@ pub async fn bind_with_fallback(
 
 /// Get the first non-loopback IPv4 LAN address (for QR code URL).
 pub fn get_lan_ip() -> Option<String> {
+    #[cfg(windows)]
+    {
+        windows_lan_ip()
+    }
+    #[cfg(not(windows))]
+    unix_lan_ip()
+}
+
+/// The address Windows would route outward from. `connect` on a UDP socket only
+/// picks a route; nothing is sent. Windows has no `ifconfig` or `ip`, and
+/// `ipconfig` output is localized. The private targets cover a LAN with no
+/// default gateway.
+#[cfg(windows)]
+fn windows_lan_ip() -> Option<String> {
+    [
+        "8.8.8.8:80",
+        "192.168.0.1:80",
+        "10.0.0.1:80",
+        "172.16.0.1:80",
+    ]
+    .iter()
+    .find_map(|target| {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+        socket.connect(target).ok()?;
+        let ip = socket.local_addr().ok()?.ip();
+        (!ip.is_loopback() && !ip.is_unspecified()).then(|| ip.to_string())
+    })
+}
+
+#[cfg(not(windows))]
+fn unix_lan_ip() -> Option<String> {
     let output = std::process::Command::new("ifconfig")
         .output()
         .or_else(|_| {

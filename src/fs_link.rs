@@ -10,7 +10,9 @@ use std::path::Path;
 /// - **Windows**: hard link for files, junction for directories. Avoids the
 ///   Developer Mode / admin requirement of Windows symlinks. Hardlinks on
 ///   Windows are vulnerable to the same atomic-rename issue, but most Windows
-///   editors do not use atomic-rename by default.
+///   editors do not use atomic-rename by default. A hard link cannot cross
+///   drives (a repo on D:, `~/.grove` on C:), so a file then falls back to a
+///   symlink where the system allows one and otherwise to a copy.
 pub fn create_link(source: &Path, target: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -23,6 +25,8 @@ pub fn create_link(source: &Path, target: &Path) -> std::io::Result<()> {
             junction::create(source, target)
         } else {
             std::fs::hard_link(source, target)
+                .or_else(|_| std::os::windows::fs::symlink_file(source, target))
+                .or_else(|_| std::fs::copy(source, target).map(|_| ()))
         }
     }
     #[cfg(not(any(unix, windows)))]
@@ -32,6 +36,17 @@ pub fn create_link(source: &Path, target: &Path) -> std::io::Result<()> {
             "Linking not supported on this platform",
         ))
     }
+}
+
+/// Remove a link created by `create_link` without touching what it points to.
+pub fn remove_link(path: &Path) -> std::io::Result<()> {
+    // A junction is a directory to the OS, and `remove_dir` only removes the
+    // junction itself.
+    #[cfg(windows)]
+    if junction::exists(path).unwrap_or(false) {
+        return std::fs::remove_dir(path);
+    }
+    std::fs::remove_file(path)
 }
 
 /// Returns true if the path is a filesystem link created by `create_link`.

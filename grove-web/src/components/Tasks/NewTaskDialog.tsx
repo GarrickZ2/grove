@@ -9,6 +9,7 @@ import { formatKeyDisplay, useCommand, useContextKey, useKeyboardScope } from ".
 import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
 import { Button as OrbitButton } from "../../orbit/ui/Button";
 import { DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel } from "../../orbit/ui/Dialog";
+import { MOD_KEY_PREFIX } from "../../keyboard";
 
 interface NewTaskDialogProps {
   isOpen: boolean;
@@ -507,7 +508,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
               {/* Actions */}
               <div className="flex items-center justify-between px-5 py-4 bg-[var(--color-bg)] border-t border-[var(--color-border)] rounded-b-xl">
                 <p className="text-xs text-[var(--color-text-muted)]">
-                  <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">⌘</kbd>
+                  <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">{MOD_KEY_PREFIX.replace("+", "")}</kbd>
                   {" + "}
                   <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">Enter</kbd>
                   {" to create"}

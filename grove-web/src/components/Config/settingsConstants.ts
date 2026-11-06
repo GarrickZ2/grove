@@ -106,6 +106,10 @@ export const AUTOLINK_PRESETS = [
   "**/__pycache__",
 ];
 
+/** Whether the server can list installed IDEs and terminals. */
+export const hasAppDetection = (platform: string | null) =>
+  platform === "macos" || platform === "windows";
+
 /** Installed apps offered as IDEs (common IDEs/editors). */
 export const isIdeApp = (app: AppInfo) =>
   /code|studio|idea|storm|rider|cursor|zed|sublime|atom|vim|emacs|nova|bbedit|textmate|xcode/i.test(app.name) ||
@@ -113,5 +117,5 @@ export const isIdeApp = (app: AppInfo) =>
 
 /** Installed apps offered as terminals. */
 export const isTerminalApp = (app: AppInfo) =>
-  /terminal|iterm|warp|ghostty|kitty|alacritty|hyper|konsole|tilix|wezterm|cmux/i.test(app.name) ||
+  /terminal|powershell|command prompt|iterm|warp|ghostty|kitty|alacritty|hyper|konsole|tilix|wezterm|cmux/i.test(app.name) ||
   /com\.(apple\.Terminal|googlecode\.iterm|warp|kovidgoyal|wez|feh)|io\.github\.mlfwka/i.test(app.bundle_id || "");

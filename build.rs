@@ -28,7 +28,7 @@ fn ensure_frontend_dist() {
         panic!("grove-web/dist is missing from the package");
     }
 
-    let npm_check = Command::new("npm").arg("--version").output();
+    let npm_check = Command::new(npm_program()).arg("--version").output();
     if npm_check.is_err() || !npm_check.unwrap().status.success() {
         panic!("grove-web/dist is missing; run `npm run build --prefix grove-web` before building");
     }
@@ -50,8 +50,17 @@ fn ensure_frontend_dist() {
     }
 }
 
+/// npm is a `.cmd` shim on Windows, which `Command::new("npm")` does not find.
+fn npm_program() -> &'static str {
+    if cfg!(windows) {
+        "npm.cmd"
+    } else {
+        "npm"
+    }
+}
+
 fn run_npm(dir: &Path, command: &str) -> bool {
-    let mut cmd = Command::new("npm");
+    let mut cmd = Command::new(npm_program());
     cmd.current_dir(dir);
     for arg in command.split_whitespace() {
         cmd.arg(arg);
@@ -124,6 +133,7 @@ fn build_tauri() {
 }
 
 #[cfg(all(target_os = "macos", feature = "gui"))]
+#[allow(clippy::disallowed_methods)] // macOS only, so no verbatim paths.
 fn embed_info_plist() {
     let plist = Path::new("src-tauri/Info.plist");
     match std::fs::canonicalize(plist) {

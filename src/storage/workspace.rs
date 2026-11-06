@@ -116,8 +116,8 @@ fn resolve_project_path(path: &str) -> Result<String> {
     }
 
     // 非 git 目录: canonicalize 路径
-    let canonical = std::fs::canonicalize(&expanded)
-        .map(|p| p.to_string_lossy().to_string())
+    let canonical = dunce::canonicalize(&expanded)
+        .map(|p| crate::platform::normalize_project_path(&p.to_string_lossy()))
         .unwrap_or(expanded);
     Ok(canonical)
 }

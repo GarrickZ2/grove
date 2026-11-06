@@ -1,3 +1,4 @@
+use crate::platform::CanonicalPath;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -112,6 +113,12 @@ pub fn create_worktree(
     worktree_path: &Path,
     base_branch: &str,
 ) -> Result<()> {
+    // Worktrees sit deeper than the repo, under ~/.grove, so paths that fit in
+    // the repo can pass Windows' 260 limit here. Stored in the repo so that the
+    // agents' own git commands get it too.
+    if cfg!(windows) {
+        let _ = git_cmd_unit(repo_path, &["config", "--local", "core.longpaths", "true"]);
+    }
     git_cmd_unit(
         repo_path,
         &[
@@ -371,7 +378,7 @@ pub fn is_worktree(path: &str) -> bool {
         let cdir_abs = Path::new(path).join(&cdir);
 
         // 如果两个目录不同,说明是 worktree
-        match (gdir_abs.canonicalize(), cdir_abs.canonicalize()) {
+        match (gdir_abs.canonical(), cdir_abs.canonical()) {
             (Ok(g), Ok(c)) => g != c,
             _ => false,
         }
@@ -391,11 +398,11 @@ pub fn get_main_repo_path(path: &str) -> Result<String> {
         // 主 repo 的 .git 目录的父目录就是主 repo 路径
         if let Some(parent) = common_abs.parent() {
             parent
-                .canonicalize()
+                .canonical()
                 .map_err(|e| GroveError::git(format!("Failed to canonicalize path: {}", e)))
                 .and_then(|p| {
                     p.to_str()
-                        .map(|s| s.to_string())
+                        .map(crate::platform::normalize_project_path)
                         .ok_or_else(|| GroveError::git("Invalid path encoding"))
                 })
         } else {
@@ -811,7 +818,7 @@ fn logical_path_within(path: &Path, base: &Path) -> bool {
 /// 包含路径穿越保护，支持 autolink 符号链接
 pub fn read_file(repo_path: &str, file_path: &str) -> Result<String> {
     let base = Path::new(repo_path)
-        .canonicalize()
+        .canonical()
         .map_err(|e| GroveError::git(format!("Invalid repo path: {}", e)))?;
     let logical = base.join(file_path);
 
@@ -821,7 +828,7 @@ pub fn read_file(repo_path: &str, file_path: &str) -> Result<String> {
     }
 
     let full = logical
-        .canonicalize()
+        .canonical()
         .map_err(|e| GroveError::git(format!("Invalid file path: {}", e)))?;
 
     // 快速路径：解析后仍在 worktree 内
@@ -833,7 +840,7 @@ pub fn read_file(repo_path: &str, file_path: &str) -> Result<String> {
     // Fallback：autolink 符号链接可能指向主仓库
     if let Ok(main_repo) = get_main_repo_path(repo_path) {
         let main_base = Path::new(&main_repo)
-            .canonicalize()
+            .canonical()
             .map_err(|e| GroveError::git(format!("Invalid main repo path: {}", e)))?;
         if full.starts_with(&main_base) {
             return std::fs::read_to_string(&full)
@@ -848,7 +855,7 @@ pub fn read_file(repo_path: &str, file_path: &str) -> Result<String> {
 /// 包含路径穿越保护，支持 autolink 符号链接
 pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> Result<()> {
     let base = Path::new(repo_path)
-        .canonicalize()
+        .canonical()
         .map_err(|e| GroveError::git(format!("Invalid repo path: {}", e)))?;
     let logical = base.join(file_path);
 
@@ -862,7 +869,7 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> Result<()>
         .parent()
         .ok_or_else(|| GroveError::git("Invalid file path"))?;
     let parent_canonical = parent
-        .canonicalize()
+        .canonical()
         .map_err(|e| GroveError::git(format!("Invalid parent path: {}", e)))?;
     let file_name = logical
         .file_name()
@@ -878,7 +885,7 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> Result<()>
     // Fallback：autolink 符号链接可能指向主仓库
     if let Ok(main_repo) = get_main_repo_path(repo_path) {
         let main_base = Path::new(&main_repo)
-            .canonicalize()
+            .canonical()
             .map_err(|e| GroveError::git(format!("Invalid main repo path: {}", e)))?;
         if parent_canonical.starts_with(&main_base) {
             return std::fs::write(&final_path, content)

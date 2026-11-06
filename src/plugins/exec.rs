@@ -38,7 +38,7 @@ pub fn run(
 ) -> mpsc::Receiver<std::result::Result<String, std::io::Error>> {
     let (tx, rx) = mpsc::channel::<std::result::Result<String, std::io::Error>>(64);
     tokio::spawn(async move {
-        let mut cmd = tokio::process::Command::new(&command);
+        let mut cmd = tokio::process::Command::new(crate::check::program_path(&command));
         cmd.args(&args)
             .current_dir(&cwd)
             .stdin(Stdio::null())
@@ -57,6 +57,7 @@ pub fn run(
                 return;
             }
         };
+        let process_tree = crate::platform::ProcessTree::adopt(&child);
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
 
@@ -95,6 +96,7 @@ pub fn run(
             Ok(Ok(st)) => Some(st),
             Ok(Err(_)) => None,
             Err(_) => {
+                process_tree.terminate();
                 let _ = child.start_kill();
                 let _ = tx
                     .send(Ok(line(

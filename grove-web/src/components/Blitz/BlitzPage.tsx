@@ -32,6 +32,7 @@ import type { PanelType } from "../Tasks/PanelSystem/types";
 import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
 import { fuzzyFindByName } from "../../utils/fuzzySearch";
 import { writeTaskPageLocation } from "../../utils/navigationState";
+import { isModKeyHeld } from "../../keyboard";
 
 
 interface DragInfo {
@@ -621,7 +622,7 @@ export function BlitzPage({
       // Command key is held. The actual jump bindings are catalog
       // commands (blitz.task.jump.{1..10}) registered below — keeps the
       // shortcuts rebindable in Settings.
-      if (e.metaKey) {
+      if (isModKeyHeld(e)) {
         document.body.classList.add('blitz-command-pressed');
         if (safetyTimer) clearTimeout(safetyTimer);
         safetyTimer = setTimeout(clearChips, 3000);
@@ -630,7 +631,7 @@ export function BlitzPage({
 
     const handleKeyUp = (e: KeyboardEvent) => {
       // Once Meta is released, clear regardless of which key fired the keyup.
-      if (!e.metaKey) clearChips();
+      if (!isModKeyHeld(e)) clearChips();
     };
 
     // App lost focus (Cmd+Tab, switched window) — Meta keyup never arrives.

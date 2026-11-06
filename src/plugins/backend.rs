@@ -50,6 +50,8 @@ static REAPER: Lazy<()> = Lazy::new(|| {
 struct Backend {
     stdin: Mutex<ChildStdin>,
     child: Mutex<Child>,
+    /// Closing this with the backend ends whatever the backend started.
+    _process_tree: crate::platform::ProcessTree,
     pending: Mutex<HashMap<u64, oneshot::Sender<std::result::Result<Value, String>>>>,
     next_id: AtomicU64,
     last_used: Mutex<Instant>,
@@ -440,7 +442,7 @@ async fn spawn(
 
     let context = build_context(&plugin, task, task_info.as_ref(), &storage_root);
 
-    let mut cmd = tokio::process::Command::new(&command);
+    let mut cmd = tokio::process::Command::new(crate::check::program_path(&command));
     cmd.args(&args)
         .env("GROVE_CONTEXT", context.to_string())
         // The backend reaches Grove over its own stdout (we own this pipe), so
@@ -485,6 +487,7 @@ async fn spawn(
 
     let backend = Arc::new(Backend {
         stdin: Mutex::new(stdin),
+        _process_tree: crate::platform::ProcessTree::adopt(&child),
         child: Mutex::new(child),
         pending: Mutex::new(HashMap::new()),
         next_id: AtomicU64::new(1),

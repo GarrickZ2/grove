@@ -5,6 +5,12 @@ export function isAbsoluteFilesystemPath(path: string): boolean {
     /^[A-Za-z]:[\\/]/.test(value) || /^\\\\[^\\/]+[\\/][^\\/]+/.test(value);
 }
 
+/** The path in a `file://` URL. `file:///C:/x` is a drive path, not `/C:/x`. */
+export function filePathFromUrl(url: string): string {
+  const path = url.slice("file://".length);
+  return /^\/[A-Za-z]:[\\/]/.test(path) ? path.slice(1) : path;
+}
+
 export function filesystemBasename(path: string): string {
   return path.trim().replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "";
 }

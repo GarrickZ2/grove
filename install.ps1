@@ -212,6 +212,41 @@ function Update-UserPath {
     return $true
 }
 
+# Start Menu entry for the desktop app. grove.exe is a console program, so the
+# shortcut starts minimized and the app detaches from that console on launch.
+function Add-StartMenuShortcut {
+    param([string]$BinaryPath)
+
+    try {
+        $programs = [Environment]::GetFolderPath('Programs')
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut((Join-Path $programs 'Grove.lnk'))
+        $shortcut.TargetPath = $BinaryPath
+        $shortcut.Arguments = 'gui'
+        $shortcut.WindowStyle = 7
+        $shortcut.IconLocation = "$BinaryPath,0"
+        $shortcut.Description = 'Grove'
+        $shortcut.Save()
+        Write-Host 'Added Grove to the Start Menu.'
+    } catch {
+        Write-Warning "Could not add a Start Menu shortcut: $_"
+    }
+}
+
+# The desktop window needs WebView2, which older Windows 10 installs lack.
+function Test-WebView2 {
+    $client = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+    $keys = @(
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$client",
+        "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$client",
+        "HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$client"
+    )
+    foreach ($key in $keys) {
+        if (Test-Path $key) { return }
+    }
+    Write-Warning "WebView2 Runtime not found. 'grove gui' needs it: https://developer.microsoft.com/microsoft-edge/webview2/"
+}
+
 function Main {
     Write-Host 'Installing Grove...'
     Write-Host ''
@@ -223,6 +258,8 @@ function Main {
     $binaryPath = Install-Grove -Version $version -Platform $platform
 
     Update-UserPath -Dir $InstallDir | Out-Null
+    Add-StartMenuShortcut -BinaryPath $binaryPath
+    Test-WebView2
 
     Write-Host ''
     Write-Host "Run 'grove' to get started." -ForegroundColor Cyan

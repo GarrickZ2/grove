@@ -8,6 +8,7 @@ use crate::error::{GroveError, Result};
 /// so cancelling npx/uvx also terminates the MCP subprocess they launched.
 pub(crate) struct McpProbeProcess {
     pub child: tokio::process::Child,
+    process_tree: crate::platform::ProcessTree,
     cleanup_args: Option<Vec<String>>,
 }
 
@@ -20,6 +21,7 @@ impl Drop for McpProbeProcess {
                 libc::kill(-(pid as i32), libc::SIGKILL);
             }
         }
+        self.process_tree.terminate();
         let _ = self.child.start_kill();
         if let (Some(args), Ok(runtime)) = (
             self.cleanup_args.take(),
@@ -46,7 +48,9 @@ pub(crate) fn spawn_mcp_probe(
     cleanup_args: Option<Vec<String>>,
 ) -> std::io::Result<McpProbeProcess> {
     use std::process::Stdio;
-    let mut command = tokio::process::Command::new(config.command.as_deref().unwrap_or_default());
+    let mut command = tokio::process::Command::new(crate::check::program_path(
+        config.command.as_deref().unwrap_or_default(),
+    ));
     command
         .args(&config.args)
         .envs(&config.env)
@@ -57,8 +61,10 @@ pub(crate) fn spawn_mcp_probe(
         .kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);
+    let child = command.spawn()?;
     Ok(McpProbeProcess {
-        child: command.spawn()?,
+        process_tree: crate::platform::ProcessTree::adopt(&child),
+        child,
         cleanup_args,
     })
 }

@@ -26,6 +26,7 @@ import { shortenPath } from "../../utils/path";
 import { useDashboardState } from "./useDashboardState";
 import { DashboardDialogs } from "./DashboardDialogs";
 import { summarizeWeeklyTokens } from "./weeklyTokens";
+import { hasAppDetection } from "../Config/settingsConstants";
 
 interface DashboardPageProps {
   onNavigate: (page: string, data?: Record<string, unknown>) => void;
@@ -254,7 +255,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             </div>
             {!isStudio && (
               <div className="flex items-center gap-1.5 shrink-0">
-                {!isRemote && serverPlatform === "macos" && (
+                {!isRemote && hasAppDetection(serverPlatform) && (
                   <>
                     <HeroButton icon={Code2} label="Open IDE" onClick={handleOpenIDE} />
                     <HeroButton icon={TerminalSquare} label="Terminal" onClick={handleOpenTerminal} />

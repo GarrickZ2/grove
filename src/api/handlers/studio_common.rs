@@ -4,6 +4,7 @@
 //! file uploads for Studio projects.  This module keeps the shared logic in
 //! one place to avoid duplication.
 
+use crate::platform::CanonicalPath;
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::Utc;
@@ -114,12 +115,12 @@ pub fn validate_symlink_entry(dir: &std::path::Path, name: &str) -> Result<PathB
     let path = dir.join(name);
     // If the base directory doesn't exist yet, the path can't be valid.
     let canonical_base = dir
-        .canonicalize()
+        .canonical()
         .map_err(|e| format!("Base directory does not exist or is not accessible: {e}"))?;
     let canonical_parent = path
         .parent()
         .map(|p| {
-            p.canonicalize()
+            p.canonical()
                 .map_err(|e| format!("Parent path not accessible: {e}"))
         })
         .transpose()?
@@ -183,7 +184,7 @@ pub type ApiErr = (StatusCode, Json<ApiError>);
 /// Canonicalize both paths and verify `file_path` stays within `base_dir`.
 /// Returns the canonical file path on success.
 pub fn validate_path_containment(base_dir: &Path, file_path: &Path) -> Result<PathBuf, ApiErr> {
-    let canonical_base = base_dir.canonicalize().map_err(|e| {
+    let canonical_base = base_dir.canonical().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiError {
@@ -191,7 +192,7 @@ pub fn validate_path_containment(base_dir: &Path, file_path: &Path) -> Result<Pa
             }),
         )
     })?;
-    let canonical_file = file_path.canonicalize().map_err(|_| {
+    let canonical_file = file_path.canonical().map_err(|_| {
         (
             StatusCode::NOT_FOUND,
             Json(ApiError {
@@ -606,6 +607,12 @@ pub fn create_workdir_symlink(
     })
 }
 
+/// Explorer treats a path with forward slashes as a switch and opens Documents.
+#[cfg(target_os = "windows")]
+fn explorer_path(path: &Path) -> String {
+    path.to_string_lossy().replace('/', "\\")
+}
+
 /// Open a path in the system file manager (macOS `open` / Linux `xdg-open` / Windows `explorer`).
 pub fn open_in_file_manager(path: &Path) {
     #[cfg(target_os = "macos")]
@@ -618,7 +625,9 @@ pub fn open_in_file_manager(path: &Path) {
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("explorer").arg(path).spawn();
+        let _ = std::process::Command::new("explorer")
+            .arg(explorer_path(path))
+            .spawn();
     }
 }
 
@@ -636,11 +645,14 @@ pub fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
     }
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         let mut command = std::process::Command::new("explorer");
         if path.is_file() {
-            command.arg(format!("/select,{}", path.display()));
+            // Explorer needs the quotes around the path alone, not the whole
+            // argument, which is what `arg` would produce for a path with spaces.
+            command.raw_arg(format!("/select,\"{}\"", explorer_path(path)));
         } else {
-            command.arg(path);
+            command.arg(explorer_path(path));
         }
         return command.spawn().map(|_| ());
     }

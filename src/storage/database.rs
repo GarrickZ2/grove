@@ -2317,6 +2317,113 @@ pub fn migrate_installed_agents_id_remap() -> (u32, u32, u32) {
 /// needs an alias lookup.
 ///
 /// Idempotent: rewriting an already-canonical id to itself is a no-op.
+/// Columns across the schema that hold a project key.
+const PROJECT_KEY_COLUMNS: [&str; 5] = [
+    "project",
+    "project_id",
+    "project_hash",
+    "project_key",
+    "linked_project_id",
+];
+
+/// Move projects whose stored path is not in its normalized spelling onto the
+/// key that spelling hashes to. Returns the `(old, new)` keys that moved.
+///
+/// Rows whose key is not the hash of their path are left alone, as are rows
+/// whose new key already belongs to another project: merging two projects'
+/// data is not a decision a migration can make.
+fn rekey_projects(
+    conn: &Connection,
+    normalize: impl Fn(&str) -> String,
+) -> Result<Vec<(String, String)>> {
+    use crate::storage::workspace::project_hash;
+
+    let projects = conn
+        .prepare("SELECT hash, path FROM projects")?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let tables = conn
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut key_columns = Vec::new();
+    for table in tables {
+        let columns = conn
+            .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for column in columns {
+            if PROJECT_KEY_COLUMNS.contains(&column.as_str()) {
+                key_columns.push((table.clone(), column));
+            }
+        }
+    }
+
+    let mut moved = Vec::new();
+    for (old_key, old_path) in projects {
+        let new_path = normalize(&old_path);
+        if new_path == old_path || project_hash(&old_path) != old_key {
+            continue;
+        }
+        let new_key = project_hash(&new_path);
+        let taken: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE hash = ?1)",
+            [&new_key],
+            |row| row.get(0),
+        )?;
+        if taken {
+            continue;
+        }
+        let tx = conn.unchecked_transaction()?;
+        // References are rewritten table by table; they only agree at commit.
+        tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
+        for (table, column) in &key_columns {
+            tx.execute(
+                &format!("UPDATE \"{table}\" SET \"{column}\" = ?1 WHERE \"{column}\" = ?2"),
+                [&new_key, &old_key],
+            )?;
+        }
+        tx.execute(
+            "UPDATE tasks SET worktree_path = ?1 WHERE worktree_path = ?2",
+            [&new_path, &old_path],
+        )?;
+        tx.execute(
+            "UPDATE projects SET hash = ?1, path = ?2 WHERE hash = ?3",
+            [&new_key, &new_path, &old_key],
+        )?;
+        tx.commit()?;
+        moved.push((old_key, new_key));
+    }
+    Ok(moved)
+}
+
+/// Earlier Windows builds stored `\\\\?\\C:\\...` paths for projects that were
+/// not resolved through git, so one directory could be two projects. Runs at
+/// every start on Windows; once the paths are normalized it is one SELECT.
+pub fn normalize_windows_project_paths() {
+    let result = try_connection()
+        .and_then(|conn| rekey_projects(&conn, crate::platform::normalize_project_path));
+    let moved = match result {
+        Ok(moved) => moved,
+        Err(error) => {
+            eprintln!("[migrate] project path normalization failed: {error}");
+            return;
+        }
+    };
+    let projects = grove_dir().join("projects");
+    for (old_key, new_key) in moved {
+        if let Err(error) = std::fs::rename(projects.join(&old_key), projects.join(&new_key)) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("[migrate] could not move project data {old_key}: {error}");
+            }
+        }
+    }
+}
+
 pub fn migrate_config_agent_command_ids() {
     let mut config = crate::storage::config::load_config();
     let mut changed = false;
@@ -3337,6 +3444,71 @@ mod tests {
                 let _ = std::fs::copy(&src_path, &dst_path);
             }
         }
+    }
+
+    #[test]
+    fn rekey_moves_every_reference_to_the_normalized_key() {
+        use crate::storage::workspace::project_hash;
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE projects (hash TEXT PRIMARY KEY, path TEXT);
+             CREATE TABLE tasks (project TEXT, id TEXT, worktree_path TEXT,
+                                 PRIMARY KEY (project, id));
+             CREATE TABLE notes (project_key TEXT, task_id TEXT, FOREIGN KEY (project_key, task_id)
+                                 REFERENCES tasks(project, id) ON DELETE CASCADE);
+             CREATE TABLE links (project TEXT, linked_project_id TEXT);
+             PRAGMA foreign_keys = ON;",
+        )
+        .unwrap();
+        let verbatim = r"\\?\C:\repo";
+        let clean = "C:/repo";
+        let (old, new) = (project_hash(verbatim), project_hash(clean));
+        let other = project_hash("D:/other");
+        conn.execute("INSERT INTO projects VALUES (?1, ?2)", [&old, verbatim])
+            .unwrap();
+        conn.execute("INSERT INTO projects VALUES (?1, 'D:/other')", [&other])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO tasks VALUES (?1, 'local', ?2)",
+            [&old, verbatim],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO notes VALUES (?1, 'local')", [&old])
+            .unwrap();
+        conn.execute("INSERT INTO links VALUES (?1, ?2)", [&other, &old])
+            .unwrap();
+
+        let normalize = |path: &str| path.trim_start_matches(r"\\?\").replace('\\', "/");
+        let moved = rekey_projects(&conn, normalize).unwrap();
+        assert_eq!(moved, vec![(old.clone(), new.clone())]);
+
+        let path: String = conn
+            .query_row("SELECT path FROM projects WHERE hash = ?1", [&new], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(path, clean);
+        let (task_project, worktree): (String, String) = conn
+            .query_row("SELECT project, worktree_path FROM tasks", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((task_project, worktree), (new.clone(), clean.to_string()));
+        let note: String = conn
+            .query_row("SELECT project_key FROM notes", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(note, new);
+        let linked: String = conn
+            .query_row("SELECT linked_project_id FROM links", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(linked, new);
+
+        // Nothing left to do, and an occupied target is not merged.
+        assert!(rekey_projects(&conn, normalize).unwrap().is_empty());
+        conn.execute("INSERT INTO projects VALUES (?1, ?2)", [&old, verbatim])
+            .unwrap();
+        assert!(rekey_projects(&conn, normalize).unwrap().is_empty());
     }
 }
 

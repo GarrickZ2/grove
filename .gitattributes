@@ -1,0 +1,3 @@
+# Scripts run by bash on every platform, including Git Bash on Windows.
+*.sh text eol=lf
+.githooks/* text eol=lf

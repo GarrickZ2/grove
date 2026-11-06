@@ -3,6 +3,7 @@
 //! Used by both the TUI and the Web API so keybinding flows and HTTP handlers
 //! operate on identical semantics.
 
+use crate::platform::CanonicalPath;
 use std::path::Path;
 use std::process::Command;
 
@@ -130,10 +131,9 @@ pub fn create_new_project(parent_dir: &str, name: &str, init_git: bool) -> Resul
 
     // Canonicalize
     let resolved_path = target
-        .canonicalize()
-        .map_err(|e| GroveError::storage(format!("Failed to canonicalize path: {}", e)))?
-        .to_string_lossy()
-        .to_string();
+        .canonical()
+        .map_err(|e| GroveError::storage(format!("Failed to canonicalize path: {}", e)))?;
+    let resolved_path = crate::platform::normalize_project_path(&resolved_path.to_string_lossy());
 
     // Optionally init git (reuses the idempotent logic)
     if init_git {
@@ -313,13 +313,10 @@ pub async fn clone_project(url: &str, name: Option<&str>) -> Result<String> {
         )));
     }
 
-    let resolved_path = dest
-        .canonicalize()
-        .map_err(|e| {
-            crate::error::GroveError::storage(format!("Failed to canonicalize path: {}", e))
-        })?
-        .to_string_lossy()
-        .to_string();
+    let resolved_path = dest.canonical().map_err(|e| {
+        crate::error::GroveError::storage(format!("Failed to canonicalize path: {}", e))
+    })?;
+    let resolved_path = crate::platform::normalize_project_path(&resolved_path.to_string_lossy());
 
     workspace::add_project(repo_name, &resolved_path)?;
 

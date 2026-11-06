@@ -73,6 +73,12 @@ pub fn resolve_program(cmd: &str) -> Option<PathBuf> {
     None
 }
 
+/// What to hand `Command::new` for `cmd`: the resolved path when there is one,
+/// otherwise `cmd` itself so the spawn error names what the user configured.
+pub fn program_path(cmd: &str) -> PathBuf {
+    resolve_program(cmd).unwrap_or_else(|| cmd.into())
+}
+
 /// Check if a command exists on PATH. Thin wrapper around [`resolve_program`].
 pub fn command_exists(cmd: &str) -> bool {
     resolve_program(cmd).is_some()
@@ -100,6 +106,7 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 /// Check if fzf is installed (for grove fp command)
+#[cfg(not(windows))]
 pub fn check_fzf() -> bool {
     Command::new("fzf")
         .arg("--version")

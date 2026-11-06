@@ -165,7 +165,7 @@ impl From<&Config> for ConfigResponse {
             web: WebConfigDto {
                 ide: config.web.ide.clone(),
                 terminal: config.web.terminal.clone(),
-                terminal_mode: config.web.terminal_mode.clone(),
+                terminal_mode: Some(config.web.effective_terminal_mode().to_string()),
                 workspace_layout: config.web.workspace_layout.clone(),
                 interface: config.web.interface.clone(),
                 buddy_motion: config.web.buddy_motion.clone(),
@@ -688,11 +688,56 @@ fn current_platform() -> &'static str {
     }
 }
 
+/// Windows has no application directory to scan, so look for the known command
+/// of each editor and terminal. Terminals keep their command as the value:
+/// opening one has per-terminal handling keyed on it.
+fn windows_applications() -> Vec<AppInfo> {
+    const EDITORS: &[(&str, &str)] = &[
+        ("Visual Studio Code", "code"),
+        ("Cursor", "cursor"),
+        ("Windsurf", "windsurf"),
+        ("Zed", "zed"),
+        ("Sublime Text", "subl"),
+        ("RustRover", "rustrover64"),
+        ("WebStorm", "webstorm64"),
+        ("IntelliJ IDEA", "idea64"),
+        ("PyCharm", "pycharm64"),
+        ("GoLand", "goland64"),
+        ("CLion", "clion64"),
+        ("PhpStorm", "phpstorm64"),
+    ];
+    const TERMINALS: &[(&str, &str)] = &[
+        ("Windows Terminal", "wt"),
+        ("PowerShell", "powershell"),
+        ("Command Prompt", "cmd"),
+    ];
+    let app = |name: &str, path: String| AppInfo {
+        name: name.to_string(),
+        path,
+        bundle_id: None,
+    };
+    let editors = EDITORS.iter().filter_map(|(name, command)| {
+        let path = crate::check::resolve_program(command)?;
+        Some(app(name, path.to_string_lossy().into_owned()))
+    });
+    let terminals = TERMINALS
+        .iter()
+        .filter(|(_, command)| crate::check::command_exists(command))
+        .map(|(name, command)| app(name, command.to_string()));
+    editors.chain(terminals).collect()
+}
+
 /// GET /api/v1/config/applications
 /// List installed applications (for IDE/Terminal picker)
 pub async fn list_applications() -> Json<ApplicationsResponse> {
     let platform = current_platform();
 
+    if platform == "windows" {
+        return Json(ApplicationsResponse {
+            apps: windows_applications(),
+            platform,
+        });
+    }
     if platform != "macos" {
         return Json(ApplicationsResponse {
             apps: Vec::new(),

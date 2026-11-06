@@ -28,6 +28,7 @@ mod v2_state;
 mod v2_terminal;
 mod v2_tools;
 mod v2_wire;
+use crate::platform::CanonicalPath;
 pub use terminal_auth::AuthMethodKind;
 use terminal_auth::{TerminalAuthLaunch, TerminalAuthState};
 pub(crate) use tool_identity::is_grove_memory_read_name;
@@ -1852,7 +1853,7 @@ fn grove_mcp_server(env_vars: &HashMap<String, String>) -> crate::error::Result<
             e
         ))
     })?;
-    let command = exe.canonicalize().unwrap_or(exe);
+    let command = exe.canonical().unwrap_or(exe);
     let env = env_vars
         .iter()
         .map(|(name, value)| acp::EnvVariable::new(name.clone(), value.clone()))
@@ -1926,7 +1927,7 @@ async fn build_mcp_servers_filtered(
                             e
                         ))
                     })?;
-                    let command = exe.canonicalize().unwrap_or(exe);
+                    let command = exe.canonical().unwrap_or(exe);
                     let env = env_vars
                         .iter()
                         .filter(|(name, _)| {
@@ -1967,7 +1968,7 @@ async fn build_mcp_servers_filtered(
                     "Failed to resolve Grove MCP bridge executable: {error}"
                 ))
             })?;
-            let command = exe.canonicalize().unwrap_or(exe);
+            let command = exe.canonical().unwrap_or(exe);
             let env = env_vars
                 .iter()
                 .filter(|(name, _)| {
@@ -2091,6 +2092,7 @@ async fn load_standalone_mcp_servers(
             let name = sanitize_mcp_server_name(&config.name);
             if config.transport == "stdio" {
                 let command = config.command?;
+                let (command, args) = crate::platform::stdio_server_launch(&command, config.args);
                 let env = config
                     .env
                     .into_iter()
@@ -2098,7 +2100,7 @@ async fn load_standalone_mcp_servers(
                     .collect();
                 Some(acp::McpServer::Stdio(
                     acp::McpServerStdio::new(name, std::path::PathBuf::from(command))
-                        .args(config.args)
+                        .args(args)
                         .env(env),
                 ))
             } else {
@@ -2171,7 +2173,7 @@ fn resolve_linked_project_paths(
             );
             continue;
         }
-        let resolved = path.canonicalize().unwrap_or(path);
+        let resolved = path.canonical().unwrap_or(path);
         if !paths.contains(&resolved) {
             paths.push(resolved);
         }
@@ -2459,6 +2461,7 @@ fn load_plugin_mcp_servers(base_env: &HashMap<String, String>) -> Vec<acp::McpSe
                 crate::plugins::events::token().to_string(),
             ));
         }
+        let (command, args) = crate::platform::stdio_server_launch(&command, args);
         servers.push(acp::McpServer::Stdio(
             acp::McpServerStdio::new(
                 plugin_mcp_server_name(&plugin),
@@ -3177,11 +3180,10 @@ async fn handle_create_terminal(
     // `command` when args is empty. For the protocol's command+args shape,
     // quote every value as one shell word so spaces and metacharacters cannot
     // change argument boundaries.
-    let shell_cmd = build_terminal_shell_command(&args.command, &args.args);
+    let shell = crate::platform::ScriptShell::detect();
+    let shell_cmd = build_terminal_shell_command(&shell, &args.command, &args.args);
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
-    let mut cmd = tokio::process::Command::new(&shell);
-    cmd.arg("-c").arg(&shell_cmd);
+    let mut cmd = shell.command(&shell_cmd, false);
     cmd.current_dir(&cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -4839,21 +4841,15 @@ fn to_acp_content_block(block: &ContentBlockData) -> acp::ContentBlock {
     }
 }
 
-fn shell_quote_word(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
-fn build_terminal_shell_command(command: &str, args: &[String]) -> String {
+fn build_terminal_shell_command(
+    shell: &crate::platform::ScriptShell,
+    command: &str,
+    args: &[String],
+) -> String {
     if args.is_empty() {
         return command.to_string();
     }
-    std::iter::once(shell_quote_word(command))
-        .chain(args.iter().map(|arg| shell_quote_word(arg)))
-        .collect::<Vec<_>>()
-        .join(" ")
+    shell.command_line(command, args)
 }
 
 fn terminal_exit_status_data(status: &acp::TerminalExitStatus) -> TerminalExitStatusData {
@@ -5006,6 +5002,7 @@ async fn drive_terminal(
     mut child: tokio::process::Child,
     mut kill_rx: mpsc::Receiver<()>,
 ) {
+    let process_tree = crate::platform::ProcessTree::adopt(&child);
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
 
@@ -5053,6 +5050,7 @@ async fn drive_terminal(
             }
             _ = kill_rx.recv(), if !kill_requested => {
                 kill_requested = true;
+                process_tree.terminate();
                 let _ = child.start_kill();
                 // Don't break — continue reading until EOF so output is captured
             }
@@ -5582,6 +5580,8 @@ async fn run_acp_connection(
     let mut restart_rx = handle.terminal_auth_restart.subscribe();
     // 根据 agent_type 分支获取 reader/writer（使用 trait object 统一类型）
     let mut child: Option<tokio::process::Child>;
+    // Held to the end of the connection so the agent's descendants end with it.
+    let _process_tree;
     // ByteStreams 要求 Send + 'static;grove 的子进程 pipe 和 DuplexStream 都满足。
     let mut writer: Box<dyn futures::AsyncWrite + Send + Unpin>;
     let mut reader: Box<dyn futures::AsyncRead + Send + Unpin>;
@@ -5589,6 +5589,7 @@ async fn run_acp_connection(
     if config.agent_type == "remote" {
         // Remote: WebSocket 连接（通过 duplex 管道桥接为 AsyncRead/AsyncWrite）
         child = None;
+        _process_tree = crate::platform::ProcessTree::default();
         let (r, w) = connect_remote_agent(&config).await?;
         reader = Box::new(r);
         writer = Box::new(w);
@@ -5613,7 +5614,7 @@ async fn run_acp_connection(
                 .find(|a| !a.starts_with('-'))
                 .cloned()
             {
-                let prewarm = tokio::process::Command::new("npx")
+                let prewarm = tokio::process::Command::new(crate::check::program_path("npx"))
                     .args(["-y", &pkg, "--version"])
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
@@ -5678,6 +5679,8 @@ async fn run_acp_connection(
                     e
                 ))
             })?;
+
+        _process_tree = crate::platform::ProcessTree::adopt(&proc);
 
         // Redirect agent stderr to log file instead of inheriting parent's stderr
         *handle.resource_process.lock().unwrap() = proc
@@ -7651,15 +7654,15 @@ async fn drive_session(
                     .ok()
                     .flatten()
                 });
-
-                // 用 SentRequest::block_task() 得到可被 select 的 future
-                let prompt_fut = conn
                 // Memory organization is background upkeep: nobody is waiting on
                 // its turns. Requests for the user still notify, and turns the
                 // user takes in that Chat later have no Run, so they announce.
                 let background_turn = automation_run_id_owned.as_deref().is_some_and(|run_id| {
                     crate::storage::automations::run_is_memory_organization(run_id).unwrap_or(false)
                 });
+
+                // 用 SentRequest::block_task() 得到可被 select 的 future
+                let prompt_fut = conn
                     .send_request(acp::PromptRequest::new(
                         session_id_arc.clone(),
                         content_blocks,
@@ -10932,9 +10935,7 @@ impl AcpSessionHandle {
 
         tokio::spawn(async move {
             let _activity = activity;
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
-            let mut cmd = tokio::process::Command::new(&shell);
-            cmd.arg("-l").arg("-i").arg("-c").arg(&command);
+            let mut cmd = crate::platform::ScriptShell::detect().command(&command, true);
             cmd.current_dir(&cwd)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -10952,6 +10953,7 @@ impl AcpSessionHandle {
                 }
             };
 
+            let process_tree = crate::platform::ProcessTree::adopt(&child);
             let mut stdout = child.stdout.take().unwrap();
             let mut stderr = child.stderr.take().unwrap();
             let mut stdout_buf = [0u8; 4096];
@@ -10986,6 +10988,7 @@ impl AcpSessionHandle {
                         }
                     }
                     _ = kill_rx.recv() => {
+                        process_tree.terminate();
                         let _ = child.start_kill();
                         // Don't break — keep reading until EOF so we don't
                         // truncate output already queued in the pipe.
@@ -11575,6 +11578,8 @@ pub fn discover_session(
     }
 
     // Step 2: 检查 sock 文件（Unix only）
+    #[cfg(not(unix))]
+    let _ = (project_key, task_id, chat_id);
     #[cfg(unix)]
     {
         let sp = sock_path(project_key, task_id, chat_id);
@@ -13330,10 +13335,12 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn terminal_shell_command_preserves_protocol_argument_boundaries() {
         assert_eq!(
             build_terminal_shell_command(
+                &crate::platform::ScriptShell::detect(),
                 "/tmp/tool with spaces",
                 &[
                     "hello world".to_string(),
@@ -13344,7 +13351,11 @@ mod tests {
             "'/tmp/tool with spaces' 'hello world' 'a'\"'\"'b' '$HOME; touch nope'"
         );
         assert_eq!(
-            build_terminal_shell_command("printf 'compatibility command'", &[]),
+            build_terminal_shell_command(
+                &crate::platform::ScriptShell::detect(),
+                "printf 'compatibility command'",
+                &[]
+            ),
             "printf 'compatibility command'"
         );
     }

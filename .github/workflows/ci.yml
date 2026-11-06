@@ -124,6 +124,37 @@ jobs:
           path: grove-extension/dist
       - run: cargo clippy --release --target aarch64-apple-darwin --features gui -- -D warnings
 
+  windows-checks:
+    name: Windows (clippy + test)
+    needs: frontend
+    runs-on: windows-latest
+    # Nothing has run Clippy or the tests on Windows before, so this reports
+    # without blocking until the suite is known to be green there.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-windows-x64-gui
+          add-job-id-key: false
+          save-if: false
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: grove-web-dist
+          path: grove-web/dist
+      - name: Download extension dist
+        uses: actions/download-artifact@v4
+        with:
+          name: grove-extension-dist
+          path: grove-extension/dist
+      - run: cargo clippy --features gui -- -D warnings
+      - run: cargo test
+
   build:
     name: Build (${{ matrix.cache-key }})
     needs: frontend

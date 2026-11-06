@@ -198,6 +198,14 @@ pub async fn open_terminal(Path(id): Path<String>) -> Result<Json<OpenResponse>,
 
     #[cfg(windows)]
     {
+        // Console programs need their own window; they would otherwise attach
+        // to Grove's console, which the user can't type into.
+        let spawn_console = |program: &str| {
+            let mut command = Command::new(crate::check::program_path(program));
+            command.current_dir(&project.path);
+            crate::platform::open_in_new_console(&mut command);
+            command.spawn()
+        };
         let (result, display_name) = match terminal_cmd {
             None | Some("wt") | Some("Windows Terminal") => {
                 if let Some(wt) = crate::check::resolve_program("wt") {
@@ -206,32 +214,16 @@ pub async fn open_terminal(Path(id): Path<String>) -> Result<Json<OpenResponse>,
                         "Windows Terminal",
                     )
                 } else {
-                    (
-                        Command::new("powershell.exe")
-                            .current_dir(&project.path)
-                            .spawn(),
-                        "PowerShell",
-                    )
+                    (spawn_console("powershell.exe"), "PowerShell")
                 }
             }
-            Some("powershell") | Some("powershell.exe") => (
-                Command::new("powershell.exe")
-                    .current_dir(&project.path)
-                    .spawn(),
-                "PowerShell",
-            ),
-            Some("cmd") | Some("cmd.exe") => (
-                Command::new("cmd.exe").current_dir(&project.path).spawn(),
-                "Command Prompt",
-            ),
-            Some(cmd) => (
-                Command::new(crate::check::resolve_program(cmd).unwrap_or_else(|| cmd.into()))
-                    .current_dir(&project.path)
-                    .spawn(),
-                cmd,
-            ),
+            Some("powershell") | Some("powershell.exe") => {
+                (spawn_console("powershell.exe"), "PowerShell")
+            }
+            Some("cmd") | Some("cmd.exe") => (spawn_console("cmd.exe"), "Command Prompt"),
+            Some(cmd) => (spawn_console(cmd), cmd),
         };
-        return Ok(Json(match result {
+        Ok(Json(match result {
             Ok(_) => OpenResponse {
                 success: true,
                 message: format!("Opening {} in {}", project.name, display_name),
@@ -240,7 +232,7 @@ pub async fn open_terminal(Path(id): Path<String>) -> Result<Json<OpenResponse>,
                 success: false,
                 message: format!("Failed to open terminal '{}': {}", display_name, e),
             },
-        }));
+        }))
     }
 
     #[cfg(not(windows))]

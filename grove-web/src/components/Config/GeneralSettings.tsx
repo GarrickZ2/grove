@@ -2,7 +2,7 @@ import { Code, Info, Keyboard, LayoutGrid, Sparkles, Terminal, X } from "lucide-
 import { AppPicker, ideAppOptions, terminalAppOptions } from "../ui";
 import { useBuddyMotionSetting } from "./useBuddyMotionSetting";
 import { useInterfaceSetting } from "./useInterfaceSetting";
-import { isIdeApp, isTerminalApp } from "./settingsConstants";
+import { hasAppDetection, isIdeApp, isTerminalApp } from "./settingsConstants";
 import type { SettingsState } from "./useSettingsState";
 
 /** Default IDE / terminal apps, window shortcut, interface and workspace layout. */
@@ -76,7 +76,7 @@ export function GeneralSettings({ settings }: { settings: SettingsState }) {
         <div className="flex items-center gap-3 p-4 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
           <p className="text-sm text-[var(--color-text-muted)]">Detecting platform...</p>
         </div>
-      ) : serverPlatform !== "macos" ? (
+      ) : !hasAppDetection(serverPlatform) ? (
         <div className="flex items-center gap-3 p-4 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
           <Info className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
           <p className="text-sm text-[var(--color-text-muted)]">

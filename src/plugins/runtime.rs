@@ -20,6 +20,7 @@
 //! Network is intentionally absent: Node's model has no `--allow-net`, so a
 //! `network` permission could not be enforced and Grove does not pretend it can.
 
+use crate::platform::CanonicalPath;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -72,7 +73,7 @@ pub fn is_sandboxable_node(command: &str, plugin_dir: &Path) -> bool {
     if !path.is_absolute() {
         return !plugin_dir.join(path).exists();
     }
-    match (path.canonicalize(), plugin_dir.canonicalize()) {
+    match (path.canonical(), plugin_dir.canonical()) {
         (Ok(path), Ok(dir)) => !path.starts_with(dir),
         (Err(_), _) => true,
         (Ok(_), Err(_)) => !path.starts_with(plugin_dir),

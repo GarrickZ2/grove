@@ -52,7 +52,7 @@ fn list_dir_recursive(
             Err(_) => continue,
         };
         let rel_path = path.strip_prefix(base).unwrap_or(&path);
-        let rel_str = rel_path.to_string_lossy().to_string();
+        let rel_str = crate::platform::slash_path(rel_path);
         let name = entry.file_name().to_string_lossy().to_string();
 
         if meta.is_dir() {

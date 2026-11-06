@@ -53,6 +53,12 @@ pub fn grove_dir() -> PathBuf {
     if let Some(path) = GROVE_DIR_OVERRIDE.with(|o| o.borrow().clone()) {
         return path;
     }
+    // `dirs` ignores HOME on Windows, so tests that isolate storage through it
+    // would otherwise run against the developer's real ~/.grove.
+    #[cfg(all(test, windows))]
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".grove");
+    }
     dirs::home_dir()
         .expect("Cannot find home directory")
         .join(".grove")

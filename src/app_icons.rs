@@ -18,9 +18,14 @@ pub fn is_valid_style(style: &str) -> bool {
 }
 
 #[cfg(feature = "gui")]
-#[derive(rust_embed::RustEmbed)]
-#[folder = "src-tauri/icons/variants/"]
-struct IconAssets;
+#[allow(clippy::disallowed_methods)] // In rust-embed's generated debug reader.
+mod embedded {
+    #[derive(rust_embed::RustEmbed)]
+    #[folder = "src-tauri/icons/variants/"]
+    pub(super) struct IconAssets;
+}
+#[cfg(feature = "gui")]
+use embedded::IconAssets;
 
 #[cfg(feature = "gui")]
 pub fn png(style: &str, is_light: bool) -> Option<std::borrow::Cow<'static, [u8]>> {

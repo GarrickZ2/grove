@@ -129,11 +129,8 @@ fn discover_skills(
         if let Some(parsed) = parse_skill_md(&content) {
             // relative_path = parent directory path relative to base_dir
             let skill_dir = entry.path().parent().unwrap_or(entry.path());
-            let relative_path = skill_dir
-                .strip_prefix(base_dir)
-                .unwrap_or(skill_dir)
-                .to_string_lossy()
-                .to_string();
+            let relative_path = skill_dir.strip_prefix(base_dir).unwrap_or(skill_dir);
+            let relative_path = crate::platform::slash_path(relative_path);
 
             let repo_path = compute_repo_path(subpath, &relative_path);
 
@@ -223,11 +220,8 @@ fn discover_extension_artifacts(
             continue;
         }
         let dir = entry.path().parent().unwrap_or(base_dir);
-        let relative_path = dir
-            .strip_prefix(base_dir)
-            .unwrap_or(dir)
-            .to_string_lossy()
-            .to_string();
+        let relative_path = dir.strip_prefix(base_dir).unwrap_or(dir);
+        let relative_path = crate::platform::slash_path(relative_path);
         let repo_path = compute_repo_path(subpath, &relative_path);
         artifacts.push(ExtensionArtifact {
             repo_key: repo_key.to_string(),
@@ -593,7 +587,7 @@ pub fn install_skill(req: &InstallRequest) -> Result<InstallResult> {
             {
                 std::fs::remove_dir_all(&symlink_path)?;
             } else {
-                std::fs::remove_file(&symlink_path)?;
+                crate::fs_link::remove_link(&symlink_path)?;
             }
         }
 
@@ -711,7 +705,7 @@ fn remove_stale_symlinks(old_refs: &[ScopeAgentRef], new_refs: &[ScopeAgentRef])
             if let Some(path_str) = &old.symlink_path {
                 let path = PathBuf::from(path_str);
                 if path.symlink_metadata().is_ok() {
-                    let _ = std::fs::remove_file(&path);
+                    let _ = crate::fs_link::remove_link(&path);
                 }
             }
         }
@@ -734,7 +728,7 @@ fn uninstall_skill_internal(
             if let Some(path_str) = &agent_ref.symlink_path {
                 let path = PathBuf::from(path_str);
                 if path.symlink_metadata().is_ok() {
-                    let _ = std::fs::remove_file(&path);
+                    let _ = crate::fs_link::remove_link(&path);
                 }
             }
         }
@@ -743,7 +737,7 @@ fn uninstall_skill_internal(
                 if let Some(path_str) = &agent_ref.symlink_path {
                     let path = PathBuf::from(path_str);
                     if path.symlink_metadata().is_ok() {
-                        let _ = std::fs::remove_file(&path);
+                        let _ = crate::fs_link::remove_link(&path);
                     }
                 }
             }

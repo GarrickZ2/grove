@@ -50,6 +50,7 @@ import { apiClient } from "../../api/client";
 import { labelFor, orderOptions } from "../../utils/permissionOptions";
 import type { PermissionOption } from "../../utils/permissionOptions";
 import { agentIconComponent } from "../../utils/agentIcon";
+import { MOD_KEY_PREFIX } from "../../keyboard";
 
 type SidebarMode = "expanded" | "collapsed" | "island";
 
@@ -508,7 +509,7 @@ export function Sidebar({
               whileHover={{ x: isCollapsed ? 0 : 2 }}
               whileTap={{ scale: 0.98 }}
               onClick={onSearch}
-              title={isCollapsed ? "Search (⌘K)" : undefined}
+              title={isCollapsed ? `Search (${MOD_KEY_PREFIX}K)` : undefined}
               className={`flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--color-text-muted)] transition-colors duration-150 hover:bg-[var(--color-border)] hover:text-[var(--color-text)]
                 ${isCollapsed ? "justify-center" : ""}`}
             >
@@ -516,7 +517,7 @@ export function Sidebar({
               {!isCollapsed && (
                 <span className="flex items-center gap-2">
                   <span>Search</span>
-                  <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px] leading-none text-[var(--color-text-muted)]">⌘K</kbd>
+                  <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px] leading-none text-[var(--color-text-muted)]">{MOD_KEY_PREFIX}K</kbd>
                 </span>
               )}
             </motion.button>
@@ -847,11 +848,11 @@ function IslandExpanded({
       <div className="flex items-center gap-0.5 flex-shrink-0 pr-1">
         <IslandIconButton
           onClick={onOpenSearch}
-          title="Search (⌘K)"
+          title={`Search (${MOD_KEY_PREFIX}K)`}
           ariaLabel="Open search"
         >
           <Search className="w-4 h-4" />
-          <span className="island-search-shortcut text-[10px] font-mono opacity-50 ml-0.5">⌘K</span>
+          <span className="island-search-shortcut text-[10px] font-mono opacity-50 ml-0.5">{MOD_KEY_PREFIX}K</span>
         </IslandIconButton>
         <IslandIconButton
           onClick={onOpenNotifications}

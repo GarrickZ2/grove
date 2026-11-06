@@ -1,5 +1,6 @@
 //! `grove acp <agent>` — 交互式 ACP 聊天测试工具
 
+use crate::platform::CanonicalPath;
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -78,7 +79,7 @@ fn display_v2_tool_content(content: &agent_client_protocol::schema::v2::ToolCall
 /// 执行 ACP 交互式聊天
 pub async fn execute(agent: String, cwd: String) {
     let working_dir = PathBuf::from(&cwd)
-        .canonicalize()
+        .canonical()
         .unwrap_or_else(|_| PathBuf::from(&cwd));
 
     // 解析 agent 名称

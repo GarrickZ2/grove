@@ -2714,7 +2714,7 @@ pub async fn run(conn: Conn, args: CliArgs) {
             // Hand the terminal to a shell in the task's directory.
             restore_terminal();
             println!("Shell in {dir} — exit to return to Grove.");
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".into());
+            let shell = crate::platform::interactive_shell();
             let _ = std::process::Command::new(shell).current_dir(&dir).status();
             let _ = crossterm::terminal::enable_raw_mode();
             let _ = crossterm::execute!(

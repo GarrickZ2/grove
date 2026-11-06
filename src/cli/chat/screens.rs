@@ -675,14 +675,15 @@ pub fn block_row_n(row: usize, p: &Palette, index: usize, cols: usize) -> Vec<Sp
 
 /// `~/a/b/c/name` → `~/a/b/c/name` or `~/a/…/name` to fit.
 fn short_path(path: &str, max: usize) -> String {
-    let path = match std::env::var("HOME") {
-        Ok(home) if path.starts_with(&home) => format!("~{}", &path[home.len()..]),
+    let home = dirs::home_dir().map(|home| home.to_string_lossy().into_owned());
+    let path = match home {
+        Some(home) if path.starts_with(&home) => format!("~{}", &path[home.len()..]),
         _ => path.to_string(),
     };
     if width(&path) <= max {
         return path;
     }
-    let parts: Vec<&str> = path.split('/').collect();
+    let parts: Vec<&str> = path.split(['/', '\\']).collect();
     if parts.len() > 2 {
         let middle: Vec<String> = parts[1..parts.len() - 1]
             .iter()

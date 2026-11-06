@@ -445,11 +445,7 @@ fn spawn_headless_server() -> std::io::Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
+    crate::platform::detach_from_terminal(&mut command);
     command.spawn()?;
     Ok(())
 }

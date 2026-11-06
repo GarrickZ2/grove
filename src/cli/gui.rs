@@ -294,18 +294,24 @@ fn open_external_url(url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err(format!("refused non-http(s) url: {url}"));
     }
-    #[cfg(target_os = "macos")]
-    let cmd = ("open", vec![url.as_str()]);
+    // Windows must not go through `cmd /C start`: `&` in a URL ends the command
+    // there, so a link could run anything. ShellExecute takes it as one value.
     #[cfg(target_os = "windows")]
-    let cmd = ("cmd", vec!["/C", "start", "", url.as_str()]);
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let cmd = ("xdg-open", vec![url.as_str()]);
+    return open::that_detached(&url).map_err(|e| e.to_string());
 
-    std::process::Command::new(cmd.0)
-        .args(cmd.1)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    #[cfg(not(target_os = "windows"))]
+    {
+        #[cfg(target_os = "macos")]
+        let program = "open";
+        #[cfg(not(target_os = "macos"))]
+        let program = "xdg-open";
+
+        std::process::Command::new(program)
+            .arg(&url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// Resolve a task-owned file for a native OS drag operation.
@@ -460,18 +466,8 @@ pub fn try_daemonize(port: u16, remote_url: Option<&str>) -> bool {
         .stdout(stdout)
         .stderr(stderr);
 
-    // Start a new process group so the child is not killed when the terminal closes
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
-    }
+    // The child must survive the terminal closing.
+    crate::platform::detach_from_terminal(&mut cmd);
 
     let child = cmd.spawn();
 

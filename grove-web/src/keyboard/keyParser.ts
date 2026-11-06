@@ -119,6 +119,14 @@ export function matchesHotkey(
 const IS_MAC =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
+/** Prefix for a Mod-chord hint written inline, e.g. `${MOD_KEY_PREFIX}K`. */
+export const MOD_KEY_PREFIX = IS_MAC ? "⌘" : "Ctrl+";
+
+/** Whether the platform's primary modifier is held. */
+export function isModKeyHeld(e: { metaKey: boolean; ctrlKey: boolean }): boolean {
+  return IS_MAC ? e.metaKey : e.ctrlKey;
+}
+
 const KEY_DISPLAY_MAP: Record<string, string> = {
   Escape: "Esc",
   ArrowDown: "↓",

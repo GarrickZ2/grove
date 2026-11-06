@@ -43,6 +43,7 @@ import {
   PLUGIN_PANEL_PREFIX,
   type PanelRenderCtx,
 } from './panelRegistry';
+import { MOD_KEY_PREFIX } from "../../../keyboard";
 
 // Strip transient `maximized` flag from any tabset node (recursive). Defined
 // at module scope so it can be reused from both the lazy initializer and the
@@ -1193,7 +1194,7 @@ export const FlexLayoutContainer = forwardRef<
               </button>
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] opacity-60">
-              <kbd className="px-1.5 py-0.5 text-[10px] font-mono rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]">⌘K</kbd> for all actions
+              <kbd className="px-1.5 py-0.5 text-[10px] font-mono rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]">{MOD_KEY_PREFIX}K</kbd> for all actions
             </p>
           </div>
         </div>

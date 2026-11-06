@@ -180,10 +180,16 @@ fn prepare_windows_update(exe: &std::path::Path) -> Result<(), String> {
         .map(|arg| ps_literal(&format!("\"{}\"", arg.replace('"', "\\\""))))
         .collect::<Vec<_>>()
         .join(", ");
-    let restart = if args.is_empty() {
-        "Start-Process -FilePath $target".to_string()
+    // A desktop-app daemon has no terminal to come back to.
+    let window = if std::env::var_os("GROVE_GUI_DAEMON").is_some() {
+        " -WindowStyle Hidden"
     } else {
-        format!("Start-Process -FilePath $target -ArgumentList @({args})")
+        ""
+    };
+    let restart = if args.is_empty() {
+        format!("Start-Process -FilePath $target{window}")
+    } else {
+        format!("Start-Process -FilePath $target{window} -ArgumentList @({args})")
     };
     let script = format!(
         "$ErrorActionPreference = 'Stop'\n\
@@ -204,9 +210,13 @@ fn prepare_windows_update(exe: &std::path::Path) -> Result<(), String> {
         ps_literal(&update_archive_path().to_string_lossy()),
     );
     std::fs::write(&script_path, script).map_err(|e| format!("Cannot write updater: {e}"))?;
-    std::process::Command::new("powershell.exe")
+    let mut updater = std::process::Command::new("powershell.exe");
+    updater
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-        .arg(&script_path)
+        .arg(&script_path);
+    // It has to outlive this process and whatever terminal started it.
+    crate::platform::detach_from_terminal(&mut updater);
+    updater
         .spawn()
         .map_err(|e| format!("Cannot start updater: {e}"))?;
     Ok(())
@@ -459,13 +469,13 @@ pub async fn install_app_update() -> Json<serde_json::Value> {
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                     std::process::exit(0);
                 });
-                return Json(serde_json::json!({"ok": true}));
+                Json(serde_json::json!({"ok": true}))
             }
             Err(e) => {
                 let mut prog = UPDATE_PROGRESS.lock().unwrap();
                 prog.stage = AppUpdateStage::Error;
                 prog.error = Some(e.clone());
-                return Json(serde_json::json!({"ok": false, "error": e}));
+                Json(serde_json::json!({"ok": false, "error": e}))
             }
         }
     }

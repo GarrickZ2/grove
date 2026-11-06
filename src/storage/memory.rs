@@ -449,11 +449,7 @@ pub fn update_entity_metadata(
     let path = entity_absolute_path(project_id, &entity.file_path)?;
     let raw = fs::read_to_string(&path)?;
     parse_memory_file(&raw, &path)?;
-    let (yaml, body) = raw
-        .strip_prefix("---\n")
-        .unwrap()
-        .split_once("\n---\n")
-        .unwrap();
+    let (yaml, body) = split_frontmatter(&raw)?;
     let mut fields: serde_yaml::Mapping = serde_yaml::from_str(yaml)
         .map_err(|error| GroveError::invalid_data(format!("parse Memory frontmatter: {error}")))?;
     if let Some(title) = title {
@@ -1885,7 +1881,7 @@ pub fn list_recent_chat_files(
             let (new_content_start_line, total_lines) =
                 history_line_hint(&candidate.path, from.as_ref())?;
             let absolute_path =
-                fs::canonicalize(&candidate.path).unwrap_or_else(|_| candidate.path.clone());
+                dunce::canonicalize(&candidate.path).unwrap_or_else(|_| candidate.path.clone());
             Ok(RecentChatFile {
                 task_id: candidate.task_id.clone(),
                 chat_id: candidate.chat_id.clone(),
@@ -2026,13 +2022,23 @@ fn render_markdown(frontmatter: &MemoryFrontmatter) -> Result<String> {
     Ok(format!("---\n{}---\n\n", yaml))
 }
 
+/// Split a Memory file into its YAML and body. Agents on Windows may write CRLF.
+fn split_frontmatter(raw: &str) -> Result<(&str, &str)> {
+    let rest = raw
+        .strip_prefix("---\r\n")
+        .or_else(|| raw.strip_prefix("---\n"))
+        .ok_or_else(|| {
+            GroveError::invalid_data("Memory Markdown must start with YAML frontmatter")
+        })?;
+    ["\n---\n", "\r\n---\r\n", "\n---\r\n"]
+        .iter()
+        .filter_map(|closing| rest.split_once(closing))
+        .min_by_key(|(yaml, _)| yaml.len())
+        .ok_or_else(|| GroveError::invalid_data("Memory Markdown frontmatter is not closed"))
+}
+
 fn parse_markdown(raw: &str) -> Result<(MemoryFrontmatter, &str)> {
-    let rest = raw.strip_prefix("---\n").ok_or_else(|| {
-        GroveError::invalid_data("Memory Markdown must start with YAML frontmatter")
-    })?;
-    let (yaml, body) = rest
-        .split_once("\n---\n")
-        .ok_or_else(|| GroveError::invalid_data("Memory Markdown frontmatter is not closed"))?;
+    let (yaml, body) = split_frontmatter(raw)?;
     let mut frontmatter: MemoryFrontmatter = serde_yaml::from_str(yaml)
         .map_err(|e| GroveError::invalid_data(format!("parse Memory frontmatter: {e}")))?;
     frontmatter.title = required(&frontmatter.title, "title")?;
@@ -2600,5 +2606,17 @@ mod tests {
         assert_eq!(page.items[1].title, "Session History");
 
         crate::storage::set_grove_dir_override(None);
+    }
+
+    #[test]
+    fn frontmatter_splits_with_either_line_ending() {
+        assert_eq!(
+            split_frontmatter("---\ntitle: A\n---\nbody").unwrap(),
+            ("title: A", "body")
+        );
+        assert_eq!(
+            split_frontmatter("---\r\ntitle: A\r\n---\r\nbody").unwrap(),
+            ("title: A", "body")
+        );
     }
 }

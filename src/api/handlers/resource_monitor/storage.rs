@@ -1,6 +1,7 @@
 //! A single-flight, immutable inventory of ~/.grove. Scans run off the async
 //! executor; drilldown pages read the same snapshot without rewalking disk.
 use super::Inventory;
+use crate::platform::CanonicalPath;
 use axum::{extract::Query, http::StatusCode, Json};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -266,7 +267,7 @@ fn file_identity(path: &Path, meta: &Metadata) -> Option<(u64, u64)> {
 
 fn scan(root: &Path, inventory: &Inventory) -> Result<Snapshot, String> {
     let root = root
-        .canonicalize()
+        .canonical()
         .map_err(|e| format!("Cannot open Grove storage: {e}"))?;
     if !root.is_dir() {
         return Err("Grove storage is not a directory".into());

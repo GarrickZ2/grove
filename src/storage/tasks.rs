@@ -1262,14 +1262,31 @@ fn find_chat_session_filtered(
 
 /// 生成 slug (用于任务 ID 和目录名)
 pub fn to_slug(text: &str) -> String {
-    text.to_lowercase()
+    let slug = text
+        .to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
         .collect::<String>()
         .split('-')
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
-        .join("-")
+        .join("-");
+    // The slug names the task's directory.
+    if cfg!(windows) && is_windows_device_name(&slug) {
+        format!("{slug}-task")
+    } else {
+        slug
+    }
+}
+
+/// Names Windows reserves for devices, which can't be used as a directory.
+fn is_windows_device_name(name: &str) -> bool {
+    matches!(name, "con" | "prn" | "aux" | "nul")
+        || ["com", "lpt"].iter().any(|prefix| {
+            name.strip_prefix(prefix).is_some_and(|digit| {
+                matches!(digit, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+            })
+        })
 }
 
 /// 基于当前时间戳生成 6 位短哈希
@@ -1900,5 +1917,15 @@ created_at = "2025-01-01T00:00:00Z"
             .is_empty());
 
         crate::storage::set_grove_dir_override(None);
+    }
+
+    #[test]
+    fn windows_device_names_are_recognized() {
+        for name in ["con", "nul", "com1", "lpt9"] {
+            assert!(is_windows_device_name(name), "{name}");
+        }
+        for name in ["console", "com", "com10", "nullable"] {
+            assert!(!is_windows_device_name(name), "{name}");
+        }
     }
 }

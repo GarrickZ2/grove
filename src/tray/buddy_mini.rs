@@ -151,6 +151,7 @@ pub fn buddy_mini_open(app: AppHandle, buddy_id: String) -> Result<(), String> {
     if let Some((x, y)) = first_position(&app) {
         builder = builder.position(x, y);
     }
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     let window = builder.build().map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
     float_over_fullscreen(&window);

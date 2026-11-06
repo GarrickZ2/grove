@@ -1,5 +1,5 @@
 import { AppPicker, ideAppOptions, terminalAppOptions } from "../../../components/ui";
-import { isIdeApp, isTerminalApp } from "../../../components/Config/settingsConstants";
+import { hasAppDetection, isIdeApp, isTerminalApp } from "../../../components/Config/settingsConstants";
 import { useBuddyMotionSetting } from "../../../components/Config/useBuddyMotionSetting";
 import { useInterfaceSetting } from "../../../components/Config/useInterfaceSetting";
 import { Group, KeyRecorder, Row, Segmented } from "../../ui";
@@ -32,7 +32,7 @@ export function GeneralPage({ settings }: SettingsPageProps) {
       <Group title="Default apps" anchorId="apps">
         {serverPlatform === null ? (
           <Row title="Detecting platform…" description="Looking for installed editors and terminals." />
-        ) : serverPlatform !== "macos" ? (
+        ) : !hasAppDetection(serverPlatform) ? (
           <Row
             title="App detection unavailable"
             description={`IDE and terminal application detection is not yet supported on ${PLATFORM_NAMES[serverPlatform] ?? serverPlatform}.`}

@@ -41,12 +41,17 @@ pub fn current_platform_key() -> &'static str {
     {
         "windows-x86_64"
     }
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    {
+        "windows-aarch64"
+    }
     #[cfg(not(any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "macos", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64"),
         all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "aarch64"),
     )))]
     {
         "unsupported-platform"

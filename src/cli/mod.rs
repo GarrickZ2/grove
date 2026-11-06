@@ -3,6 +3,7 @@
 pub mod acp;
 pub mod chat;
 pub mod diff;
+#[cfg(not(windows))]
 pub mod fp;
 pub mod hooks;
 pub mod ios;

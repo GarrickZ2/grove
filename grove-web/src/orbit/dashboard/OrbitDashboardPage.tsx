@@ -28,6 +28,7 @@ import { useNewTaskShortcut } from "./useNewTaskShortcut";
 import { useRecentSessions } from "./useRecentSessions";
 import { RecentSessionsCard } from "./RecentSessionsCard";
 import "./orbit-dashboard.css";
+import { hasAppDetection } from "../../components/Config/settingsConstants";
 
 interface OrbitDashboardPageProps {
   onNavigate: (page: string, data?: Record<string, unknown>) => void;
@@ -96,7 +97,7 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
     strong: `color-mix(in oklab, ${projectColor.fg} 70%, transparent)`,
     glow: `color-mix(in oklab, ${projectColor.fg} 13%, transparent)`,
   };
-  const showLocalTools = !isRemote && serverPlatform === "macos";
+  const showLocalTools = !isRemote && hasAppDetection(serverPlatform);
   const linkable = projects.filter((project) => project.id !== selectedProject.id && project.exists && !project.archived);
 
   const runGit = async (op: GitOp, action: () => Promise<void>) => {

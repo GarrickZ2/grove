@@ -1,6 +1,7 @@
 //! Zip download of Studio task artifacts: a folder, or a selected set of
 //! files and folders, from one of the task's `input/` / `output/` roots.
 
+use crate::platform::CanonicalPath;
 use std::collections::HashSet;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Component, Path as FsPath, PathBuf};
@@ -114,7 +115,7 @@ pub(crate) fn collect_zip_items(
     selection: &[String],
 ) -> Result<Vec<ZipItem>, ApiErr> {
     let canonical_root = root
-        .canonicalize()
+        .canonical()
         .map_err(|_| err(StatusCode::NOT_FOUND, "Artifact folder not found"))?;
 
     let mut selections = Vec::with_capacity(selection.len());
@@ -145,7 +146,7 @@ pub(crate) fn collect_zip_items(
             }
         }
         let canonical = target
-            .canonicalize()
+            .canonical()
             .map_err(|_| err(StatusCode::NOT_FOUND, "File not found"))?;
         if !canonical.starts_with(&canonical_root) {
             return Err(err(StatusCode::FORBIDDEN, "Access denied"));

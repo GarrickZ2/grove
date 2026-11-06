@@ -580,6 +580,18 @@ impl Default for IndexingConfig {
     }
 }
 
+impl WebConfig {
+    /// How task terminals run. Windows has no tmux or zellij, so whatever is
+    /// stored there, only a direct shell can work.
+    pub fn effective_terminal_mode(&self) -> &str {
+        if cfg!(windows) {
+            "direct"
+        } else {
+            self.terminal_mode.as_deref().unwrap_or("multiplexer")
+        }
+    }
+}
+
 /// Web 专用配置（TUI 会忽略未知字段）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WebConfig {

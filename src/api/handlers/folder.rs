@@ -3,7 +3,9 @@
 use axum::{extract::Query, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::io;
-use std::process::{Command, Output};
+#[cfg(not(target_os = "windows"))]
+use std::process::Command;
+use std::process::Output;
 
 use crate::api::error::ApiError;
 
@@ -27,6 +29,7 @@ pub struct BrowseFolderResponse {
 /// at a dead X server) so the frontend can decide whether to fall back to
 /// the web picker.
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(windows, allow(dead_code))] // Windows always uses the web picker.
 pub(crate) enum PickerOutcome {
     Picked(String),
     Cancelled,
@@ -40,6 +43,7 @@ pub(crate) enum PickerOutcome {
 ///   `Failed to open display`, `Unable to init server`
 /// - Qt / kdialog: `qt.qpa.xcb: could not connect to display`,
 ///   `failed to create wl_display`
+#[cfg_attr(windows, allow(dead_code))]
 fn stderr_indicates_display_failure(stderr: &[u8]) -> bool {
     const SIGNATURES: [&str; 5] = [
         "cannot open display",
@@ -58,6 +62,7 @@ fn stderr_indicates_display_failure(stderr: &[u8]) -> bool {
 /// dialog never appeared, so the user never got a chance to cancel); `Ok`
 /// with zero exit but empty stdout is `Cancelled`; `Ok` with a non-empty
 /// path on stdout is `Picked`.
+#[cfg_attr(windows, allow(dead_code))]
 pub(crate) fn classify_picker(spawn: io::Result<Output>) -> PickerOutcome {
     let output = match spawn {
         Err(_) => return PickerOutcome::Unavailable,
@@ -110,7 +115,7 @@ pub async fn browse_folder_with_prompt(prompt: &'static str) -> Json<BrowseFolde
     #[cfg(target_os = "windows")]
     {
         let _ = prompt;
-        return response_for(PickerOutcome::Unavailable);
+        response_for(PickerOutcome::Unavailable)
     }
 
     #[cfg(not(target_os = "windows"))]

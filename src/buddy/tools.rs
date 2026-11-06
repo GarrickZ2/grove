@@ -1,5 +1,6 @@
 //! Trusted Buddy operations shared by MCP and the delegation lifecycle.
 use crate::error::{GroveError, Result};
+use crate::platform::CanonicalPath;
 use crate::storage::{buddies::Buddy, tasks, workspace};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -487,10 +488,10 @@ pub struct CreateProjectInput {
 fn ensure_user_folder(path: &str) -> Result<std::path::PathBuf> {
     let expanded = crate::storage::workspace::expand_tilde(path);
     let resolved = std::path::Path::new(&expanded)
-        .canonicalize()
+        .canonical()
         .map_err(|_| GroveError::invalid_data(format!("Folder does not exist: {expanded}")))?;
     let home = dirs::home_dir()
-        .and_then(|home| home.canonicalize().ok())
+        .and_then(|home| home.canonical().ok())
         .ok_or_else(|| GroveError::storage("Home folder not found"))?;
     if resolved == home || !resolved.starts_with(&home) {
         return Err(GroveError::invalid_data(
@@ -526,7 +527,9 @@ pub async fn create_project(input: CreateProjectInput) -> Result<Value> {
             )?
         }
         ("coding", Some(ProjectSource::Existing { path })) => {
-            let folder = ensure_user_folder(&path)?.to_string_lossy().to_string();
+            let folder = crate::platform::normalize_project_path(
+                &ensure_user_folder(&path)?.to_string_lossy(),
+            );
             let resolved = if crate::git::is_git_repo(&folder) {
                 let root = crate::git::repo_root(&folder)?;
                 crate::git::get_main_repo_path(&root).unwrap_or(root)

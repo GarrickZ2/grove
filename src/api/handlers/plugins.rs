@@ -6,6 +6,7 @@
 //! `contributes.mcp` are wired into Grove's Skill module and ACP MCP injection
 //! on (un)install.
 
+use crate::platform::CanonicalPath;
 use axum::{
     extract::{Multipart, Path, Query, State},
     http::{header, StatusCode},
@@ -1685,11 +1686,11 @@ fn serve_plugin_asset_file(
 
     let base = std::path::PathBuf::from(&plugin.local_path);
     let base_canon = base
-        .canonicalize()
+        .canonical()
         .map_err(|e| ApiError::not_found(format!("plugin folder unavailable: {}", e)))?;
     let full_canon = base
         .join(&asset)
-        .canonicalize()
+        .canonical()
         .map_err(|_| ApiError::not_found(format!("asset not found: {}", asset)))?;
     if !full_canon.starts_with(&base_canon) {
         return Err(ApiError::forbidden("asset path escapes the plugin folder"));
@@ -1762,11 +1763,11 @@ fn resolve_within(
     rel: &str,
 ) -> Result<std::path::PathBuf, (StatusCode, Json<ApiError>)> {
     let base_canon = base
-        .canonicalize()
+        .canonical()
         .map_err(|e| ApiError::not_found(format!("project dir unavailable: {}", e)))?;
     let full = base_canon
         .join(rel.trim_start_matches('/'))
-        .canonicalize()
+        .canonical()
         .map_err(|_| ApiError::not_found(format!("path not found: {}", rel)))?;
     if !full.starts_with(&base_canon) {
         return Err(ApiError::forbidden("path escapes the project directory"));

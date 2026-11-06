@@ -10,6 +10,7 @@
 //!
 //! `install_state` is derived strictly from whether/how the row exists.
 
+use crate::platform::CanonicalPath;
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
@@ -623,7 +624,7 @@ pub async fn uninstall_agent(
         );
         let agents_root = crate::storage::grove_dir().join("agents");
         if install_root.exists() {
-            match (install_root.canonicalize(), agents_root.canonicalize()) {
+            match (install_root.canonical(), agents_root.canonical()) {
                 (Ok(install_canon), Ok(agents_canon))
                     if install_canon.starts_with(&agents_canon) =>
                 {

@@ -36,7 +36,8 @@ pub struct TerminalQuery {
 pub async fn ws_handler(ws: WebSocketUpgrade, Query(query): Query<TerminalQuery>) -> Response {
     let cwd = query
         .cwd
-        .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".to_string()));
+        .or_else(|| dirs::home_dir().map(|home| home.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "/".to_string());
     let cols = query.cols.unwrap_or(80);
     let rows = query.rows.unwrap_or(24);
 
@@ -65,7 +66,7 @@ pub async fn task_terminal_handler(
 
     // 3. Check web terminal mode
     let cfg = config::load_config();
-    let web_terminal_mode = cfg.web.terminal_mode.as_deref().unwrap_or("multiplexer");
+    let web_terminal_mode = cfg.web.effective_terminal_mode();
     let working_dir = task.worktree_path.clone();
 
     if web_terminal_mode == "direct" {
@@ -134,7 +135,10 @@ fn pick_default_shell() -> (String, Vec<String>) {
         return (shell, vec![]);
     }
     if let Ok(shell) = std::env::var("SHELL") {
-        return (shell, vec![]);
+        // Windows inherits this from MSYS shells, sometimes as a path it can't run.
+        if cfg!(not(windows)) || crate::check::command_exists(&shell) {
+            return (shell, vec![]);
+        }
     }
 
     #[cfg(windows)]

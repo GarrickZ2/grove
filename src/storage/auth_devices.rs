@@ -1,5 +1,6 @@
 //! Revocable browser authorizations. Credentials are never stored in plaintext.
 
+use crate::platform::CanonicalPath;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
@@ -22,7 +23,7 @@ pub(crate) fn subscribe_to_changes(
     // FSEvents reports canonical paths; watching a /var or other symlink
     // otherwise loses events when notify compares them to its watched paths.
     let path = super::grove_dir()
-        .canonicalize()
+        .canonical()
         .map_err(|error| error.to_string())?;
     let mut watcher = WATCHER.lock().map_err(|error| error.to_string())?;
     if watcher.as_ref().is_none_or(|state| state.path != path) {

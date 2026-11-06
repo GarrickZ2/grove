@@ -21,6 +21,7 @@ mod memory;
 mod model;
 mod notification_renderer;
 mod operations;
+mod platform;
 mod plugins;
 pub(crate) mod radio;
 mod session;
@@ -189,6 +190,10 @@ fn ensure_storage_version() {
                 error
             ),
         }
+    }
+
+    if cfg!(windows) {
+        storage::database::normalize_windows_project_paths();
     }
 
     // Update version

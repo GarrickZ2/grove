@@ -58,6 +58,7 @@ src/
 ├── acp/                   # ACP (Agent Client Protocol) integration
 ├── agent_graph/           # Inter-agent spawn / send / reply tools
 ├── machines/              # Paired Grove servers: pairing, link, per-machine proxy
+├── platform.rs            # OS differences: path spelling, console detach, process trees, script shell
 ├── storage/               # Persistence (config, tasks, notes, workspace)
 ├── model/                 # Data structures (Worktree, Task, Workspace)
 ├── theme/                 # 8 themes + dark/light detection

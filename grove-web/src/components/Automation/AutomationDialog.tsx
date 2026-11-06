@@ -57,6 +57,7 @@ import type {
   TargetMode,
 } from "../../api/automations";
 import { describeAutomationSchedule, describeWindow } from "./automationFormat";
+import { MOD_KEY_PREFIX } from "../../keyboard";
 import type { ChatSessionResponse, TaskResponse } from "../../api/tasks";
 
 interface AutomationDialogProps {
@@ -1152,7 +1153,7 @@ export function AutomationDialog({
         <div className="flex items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 sm:justify-between sm:px-5">
           <p className="hidden text-xs text-[var(--color-text-muted)] sm:block">
             <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">
-              ⌘
+              {MOD_KEY_PREFIX.replace("+", "")}
             </kbd>
             {" + "}
             <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">

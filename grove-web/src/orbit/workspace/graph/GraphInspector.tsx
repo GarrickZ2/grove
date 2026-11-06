@@ -23,6 +23,7 @@ import { resolveAgentIcon } from "../../../utils/agentIcon";
 import { Button, DialogField, HoldButton, PopoverMenu, StatusDot } from "../../ui";
 import { EDGE_STATE_LABEL, statusMeta, type GraphNodeStatus } from "./graphLayout";
 import type { GraphSelection } from "./GraphCanvas";
+import { MOD_KEY_PREFIX } from "../../../keyboard";
 
 export type GraphForm =
   | { kind: "send"; chatId: string }
@@ -259,7 +260,7 @@ function submitOnMetaEnter(submit: () => void) {
   };
 }
 
-function FormPane({ title, sub, children, onCancel, submit, submitLabel, submitting, canSubmit, hint = "⌘↵ to save · Esc to cancel" }: {
+function FormPane({ title, sub, children, onCancel, submit, submitLabel, submitting, canSubmit, hint = `${MOD_KEY_PREFIX}↵ to save · Esc to cancel` }: {
   title: ReactNode;
   sub?: ReactNode;
   children: ReactNode;
@@ -358,7 +359,7 @@ function SpawnForm(props: GraphInspectorProps & { fromChatId: string | null }) {
       submitLabel="Spawn"
       submitting={busy.spawning}
       canSubmit={canSubmit}
-      hint="⌘↵ to spawn · Esc to cancel"
+      hint={`${MOD_KEY_PREFIX}↵ to spawn · Esc to cancel`}
     >
       <DialogField label="Agent" as="div">
         <AgentPicker
@@ -441,7 +442,7 @@ function ConnectForm(props: GraphInspectorProps & { fromChatId: string }) {
       submitLabel="Connect"
       submitting={busy.connecting}
       canSubmit={canSubmit}
-      hint="⌘↵ to connect · Esc to cancel"
+      hint={`${MOD_KEY_PREFIX}↵ to connect · Esc to cancel`}
     >
       <div className="ogr-pick" role="radiogroup" aria-label="Target agent">
         {candidates.map((node) => {

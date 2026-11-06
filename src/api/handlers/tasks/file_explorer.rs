@@ -45,7 +45,7 @@ fn resolve_safe_path(
         ));
     }
 
-    let base = std::fs::canonicalize(worktree_path).map_err(|e| {
+    let base = dunce::canonicalize(worktree_path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiError {
@@ -57,7 +57,7 @@ fn resolve_safe_path(
     let target = base.join(relative_path);
 
     if target.exists() {
-        let canonical = std::fs::canonicalize(&target).map_err(|e| {
+        let canonical = dunce::canonicalize(&target).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiError {
@@ -83,7 +83,7 @@ fn resolve_safe_path(
         }
     }
     if ancestor.exists() {
-        let canonical_ancestor = std::fs::canonicalize(&ancestor).map_err(|e| {
+        let canonical_ancestor = dunce::canonicalize(&ancestor).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiError {
@@ -190,7 +190,7 @@ fn list_files_fs(root: &str) -> Vec<String> {
     while let Some(Ok(entry)) = it.next() {
         if is_symlink_dir_child(&entry, root_path) {
             if let Ok(rel) = entry.path().strip_prefix(root_path) {
-                let rel_str = rel.to_string_lossy().to_string();
+                let rel_str = crate::platform::slash_path(rel);
                 symlink_dirs.push(format!("{}/", rel_str));
             }
             it.skip_current_dir();
@@ -198,7 +198,7 @@ fn list_files_fs(root: &str) -> Vec<String> {
         }
         if entry.path().is_file() {
             if let Ok(rel) = entry.path().strip_prefix(root_path) {
-                files.push(rel.to_string_lossy().to_string());
+                files.push(crate::platform::slash_path(rel));
             }
         }
     }
@@ -249,7 +249,7 @@ pub async fn dir_entries(
         ));
     }
 
-    let base = std::fs::canonicalize(&task.worktree_path).map_err(|e| {
+    let base = dunce::canonicalize(&task.worktree_path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiError {
@@ -264,7 +264,7 @@ pub async fn dir_entries(
     } else {
         let target = base.join(trimmed);
         if target.exists() {
-            let canonical = std::fs::canonicalize(&target).map_err(|e| {
+            let canonical = dunce::canonicalize(&target).map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ApiError {

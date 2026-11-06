@@ -1,5 +1,6 @@
 //! Project CRUD handlers and helpers
 
+use crate::platform::CanonicalPath;
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
@@ -125,7 +126,7 @@ pub(crate) fn list_resource_files(
         let name = entry.file_name().to_string_lossy().to_string();
         let rel_path = path
             .strip_prefix(base)
-            .map(|p| p.to_string_lossy().to_string())
+            .map(crate::platform::slash_path)
             .unwrap_or_else(|_| name.clone());
 
         let mut url_val = None;
@@ -477,11 +478,10 @@ pub async fn add_project(
         })?;
         git::get_main_repo_path(&repo_root).unwrap_or(repo_root)
     } else {
-        std::path::Path::new(&expanded_path)
-            .canonicalize()
-            .map_err(|e| ApiError::bad_request(format!("Failed to resolve path: {}", e)))?
-            .to_string_lossy()
-            .to_string()
+        let canonical = std::path::Path::new(&expanded_path)
+            .canonical()
+            .map_err(|e| ApiError::bad_request(format!("Failed to resolve path: {}", e)))?;
+        crate::platform::normalize_project_path(&canonical.to_string_lossy())
     };
 
     let name = req.name.unwrap_or_else(|| {
