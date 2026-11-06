@@ -78,6 +78,13 @@ export function ConfirmDialog({
     // keep the hold button so the footer doesn't jump.
     const hold = variant === "danger" && DESTRUCTIVE_LABEL.test(confirmLabel);
     const stringMessage = typeof message === "string";
+    const cancel = (
+      <OrbitButton variant="ghost" size={size} onClick={onCancel} disabled={actionsDisabled}>
+        {cancelLabel}
+      </OrbitButton>
+    );
+    // Two ways forward sit together, with Cancel set apart from both.
+    const secondary = Boolean(secondaryActionLabel && onSecondaryAction);
     return (
       <DialogShell isOpen={isOpen} onClose={onCancel} maxWidth="max-w-[420px]">
         {isOpen && (
@@ -96,15 +103,13 @@ export function ConfirmDialog({
             </DialogBody>
           )}
           <DialogFoot
-            lead={secondaryActionLabel && onSecondaryAction ? (
-              <OrbitButton variant="ghost" size={size} onClick={onSecondaryAction} disabled={actionsDisabled}>
+            lead={secondary ? cancel : undefined}
+          >
+            {secondary ? (
+              <OrbitButton variant="secondary" size={size} onClick={onSecondaryAction} disabled={actionsDisabled}>
                 {secondaryActionLabel}
               </OrbitButton>
-            ) : undefined}
-          >
-            <OrbitButton variant="ghost" size={size} onClick={onCancel} disabled={actionsDisabled}>
-              {cancelLabel}
-            </OrbitButton>
+            ) : cancel}
             {hold ? (
               <HoldButton onConfirm={onConfirm} disabled={actionsDisabled} size={size}>
                 {actionsDisabled ? confirmLabel : holdLabel(confirmLabel)}

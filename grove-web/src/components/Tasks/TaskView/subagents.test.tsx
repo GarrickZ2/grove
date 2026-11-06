@@ -5,7 +5,8 @@ import { SubagentAvatar } from "./SubagentAvatar";
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SubagentCard } from "./SubagentCard";
-import { flattenSubagentMessages, reduceSubagentEvent, resetSubagentActivity, subagentPreview, subagentStatus, type SubagentMessage } from "./subagents";
+import { SessionExchangeCard } from "./SessionExchangeCard";
+import { flattenSubagentMessages, reduceSubagentEvent, resetSubagentActivity, sessionExchangeLabel, sessionExchangePreview, subagentPreview, subagentStatus, type SessionExchangeMessage, type SubagentMessage } from "./subagents";
 import type { ChatMessage, ServerEvent } from "./TaskChat";
 
 const announce = (id: string, fields = {}, parent = "root"): ServerEvent => ({ type: "subagent_update", session_id: id, parent_session_id: parent, ...fields });
@@ -147,9 +148,34 @@ describe("subagent timeline", () => {
     expect(messages[0]).toMatchObject({ blocks: [] });
   });
 
+  it("names the subagent on either side of an exchange", () => {
+    let messages = reduce([], announce("a", { title: "Read paper" }));
+    messages = reduce(messages, { type: "session_message", id: "out", sender: "root", recipient: "a", content: [{ type: "text", text: "Read it" }] });
+    messages = reduce(messages, { type: "session_message", id: "in", sender: "a", recipient: "root", content: [{ type: "text", text: "Done" }] });
+    const [, out, back] = messages as SessionExchangeMessage[];
+    expect(sessionExchangeLabel(out)).toBe("To Read paper");
+    expect(sessionExchangeLabel(back)).toBe("From Read paper");
+    expect(sessionExchangeLabel({ type: "session_exchange", id: "x", blocks: [] })).toBe("Agent communication");
+  });
+
   it("does not attach unknown-session activity to the parent transcript", () => {
     const messages = reduce([], scoped("foreign", { type: "message_chunk", text: "Wrong session" }));
     expect(messages).toEqual([]);
+  });
+});
+
+describe("session exchange presentation", () => {
+  const message: SessionExchangeMessage = { type: "session_exchange", id: "m", senderTitle: "Reader", blocks: [{ type: "text", text: "**Sources:** [paper](https://example.com)\n\n- first point" }] };
+
+  it("shows one plain summary line and leaves the body out until expanded", () => {
+    expect(sessionExchangePreview(message)).toBe("Sources: paper - first point");
+    const collapsed = renderToStaticMarkup(<SessionExchangeCard message={message} expanded={false}><p>full body</p></SessionExchangeCard>);
+    expect(collapsed).toContain("From Reader");
+    expect(collapsed).toContain("Sources: paper - first point");
+    expect(collapsed).not.toContain("full body");
+    const expanded = renderToStaticMarkup(<SessionExchangeCard message={message} expanded><p>full body</p></SessionExchangeCard>);
+    expect(expanded).toContain("full body");
+    expect(expanded).not.toContain("Sources: paper");
   });
 });
 

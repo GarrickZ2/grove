@@ -92,6 +92,15 @@ describe("ConfirmDialog", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  it("sets Cancel apart from a dialog's two ways forward in Orbit", () => {
+    render(
+      <ConfirmDialog isOpen title="Delete session" message="Where from?" confirmLabel="Delete from Agent" secondaryActionLabel="Remove from Grove" onSecondaryAction={() => {}} onConfirm={() => {}} onCancel={() => {}} />,
+      true,
+    );
+    const labels = [...document.body.querySelectorAll(".oui-dlg-foot button")].map((button) => button.textContent);
+    expect(labels).toEqual(["Cancel", "Remove from Grove", "Hold to delete from Agent"]);
+  });
+
   it("confirms at once from the keyboard in Orbit", () => {
     const onConfirm = confirm(true);
     act(() => buttonByText("Hold to delete")!.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));

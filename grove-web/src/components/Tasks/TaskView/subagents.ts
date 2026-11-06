@@ -18,6 +18,8 @@ export interface SessionExchangeMessage {
   id: string;
   sender?: string;
   recipient?: string;
+  senderTitle?: string;
+  recipientTitle?: string;
   blocks: AgentContentBlock[];
 }
 
@@ -98,9 +100,12 @@ export function reduceSubagentEvent(messages: ChatMessage[], event: ServerEvent,
     const previous = messages.find((message): message is SessionExchangeMessage => message.type === "session_exchange" && message.id === event.id);
     const blocks = Object.prototype.hasOwnProperty.call(event, "content")
       ? (Array.isArray(event.content) ? event.content as AgentContentBlock[] : []) : undefined;
+    const sender = event.sender ?? previous?.sender;
+    const recipient = event.recipient ?? previous?.recipient;
+    const titleOf = (sessionId: string | undefined) => flattenSubagentMessages(messages).find((message): message is SubagentMessage => message.type === "subagent" && message.sessionId === sessionId)?.title;
     const next: SessionExchangeMessage = {
-      type: "session_exchange", id: event.id,
-      sender: event.sender ?? previous?.sender, recipient: event.recipient ?? previous?.recipient,
+      type: "session_exchange", id: event.id, sender, recipient,
+      senderTitle: titleOf(sender) ?? previous?.senderTitle, recipientTitle: titleOf(recipient) ?? previous?.recipientTitle,
       blocks: blocks === undefined ? previous?.blocks ?? [] : event.append ? blocks.reduce((content, block) => block.type === "text" ? appendTextContentBlock(content, "", block.text) : [...content, block], previous?.blocks ?? []) : blocks,
     };
     return previous ? messages.map((message) => message === previous ? next : message) : [...messages.map((message) => message.type === "assistant" || message.type === "thinking" ? { ...message, complete: true } : message), next];
@@ -131,5 +136,28 @@ export function subagentPreview(child: SubagentMessage): string {
   const latest = [...child.messages].reverse().find((message) => (message.type === "assistant" && message.content.trim()) || message.type === "tool");
   const text = latest?.type === "assistant" ? latest.content
     : latest?.type === "tool" ? latest.name || latest.title : child.description?.startsWith("Delegated task for ") ? "Waiting for activity" : child.description || "Waiting for activity";
+  return plainPreview(text);
+}
+
+function plainPreview(text: string): string {
   return text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[`*~]/g, "").replace(/(^|\s)#{1,6}\s+/g, "$1").replace(/\s+/g, " ").trim().slice(0, 180);
 }
+
+export function sessionExchangeText(message: SessionExchangeMessage): string {
+  return message.blocks.map((block) => block.type === "text" ? block.text : "").join("\n");
+}
+
+export function sessionExchangePreview(message: SessionExchangeMessage): string {
+  return plainPreview(sessionExchangeText(message));
+}
+
+/** Names the other side of the exchange; session ids mean nothing to a reader. */
+export function sessionExchangeLabel(message: SessionExchangeMessage): string {
+  const { senderTitle, recipientTitle } = message;
+  if (senderTitle && recipientTitle) return `${senderTitle} → ${recipientTitle}`;
+  if (senderTitle) return `From ${senderTitle}`;
+  if (recipientTitle) return `To ${recipientTitle}`;
+  return "Agent communication";
+}
+
+export const sessionExchangeExpansionKey = (id: string) => `exchange:${id}`;

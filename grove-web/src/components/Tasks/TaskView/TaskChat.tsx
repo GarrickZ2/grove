@@ -15,7 +15,8 @@ import { buildRenderItems, buildSequentialRenderItems, buildToolTimelineRows, ba
 import { SubagentsPanel } from "./SubagentsPanel";
 import { SubagentAvatar } from "./SubagentAvatar";
 import { SubagentCard } from "./SubagentCard";
-import { flattenSubagentMessages, mapSubagentMessages, reduceSubagentEvent, resetSubagentActivity, subagentStatus, type SubagentMessage, type SessionExchangeMessage } from "./subagents";
+import { SessionExchangeCard } from "./SessionExchangeCard";
+import { flattenSubagentMessages, mapSubagentMessages, reduceSubagentEvent, resetSubagentActivity, sessionExchangeExpansionKey, sessionExchangeLabel, sessionExchangePreview, sessionExchangeText, subagentStatus, type SubagentMessage, type SessionExchangeMessage } from "./subagents";
 import { CompactionDivider } from "./CompactionDivider";
 import { applyCompactionEvent, compactionSearchText, interruptCompactions, reconcileCompactionActivity, type CompactionMessage } from "./compactionReducer";
 import { SessionNotice } from "./SessionNotice";
@@ -298,7 +299,7 @@ import { createAgentMentionChip, createMentionChip, filterComposerMentions, getP
 import { dragCarriesGroveFiles, endGroveFileDrag, groveDragCount, groveDropPaths } from "../../../utils/groveFileDrag";
 import { nextMentionIndex } from "../../../utils/fileMention";
 import { openExternalUrl } from "../../../utils/openExternal";
-import { ansiToHtml } from "../../../utils/ansi";
+import { ansiToHtml, stripAnsi } from "../../../utils/ansi";
 import { fuzzyFindByName } from "../../../utils/fuzzySearch";
 import { useCommand, useContextKey, useVoiceControlContext } from "../../../keyboard";
 import { ORBIT_PHONE_TITLE_SLOT } from "../../Layout/OrbitPhoneHeader";
@@ -314,6 +315,8 @@ import { isStalePermissionError, resolveStalePermission, stalePermissionId } fro
 import { liveGroupTail, summarizeLiveWork } from "./conversation/liveWork";
 import { SentPopContext, sentPops, useSentPop } from "./conversation/sentPop";
 import { playComposerSendOut } from "./composer/sendOut";
+import { MOD_KEY_PREFIX } from "../../../keyboard";
+import { filePathFromUrl } from "../../../utils/filesystemPath";
 
 // ─── Queue send mode persistence (localStorage) ───────────────────────────
 // Flat, global key (not per-project/per-chat) — the user picks one mode and
@@ -1634,7 +1637,10 @@ function extractRenderItemText(item: RenderItem, expandedSections: Set<string>):
       case "subagent":
         return [m.title, m.description].filter(Boolean).join("\n");
       case "session_exchange":
-        return m.blocks.map((block) => block.type === "text" ? block.text : "").join("\n");
+        // Search highlights the DOM, so a collapsed exchange offers only its summary line.
+        return expandedSections.has(sessionExchangeExpansionKey(m.id))
+          ? sessionExchangeText(m)
+          : [sessionExchangeLabel(m), sessionExchangePreview(m)].join("\n");
       case "plan_document":
         return m.plan.type === "markdown" ? m.plan.content : m.plan.type === "file" ? m.plan.uri : m.plan.entries.map((entry) => entry.content).join("\n");
       case "child_plan":
@@ -2442,6 +2448,17 @@ type ToolTimelineExpansion = {
 };
 
 const ToolTimelineExpansionContext = createContext<ToolTimelineExpansion | null>(null);
+
+// Expansion lives above the row: the virtualized list unmounts rows on scroll.
+function ExpandableSessionExchange({ message, children }: { message: SessionExchangeMessage; children: ReactNode }) {
+  const expansion = useContext(ToolTimelineExpansionContext);
+  const key = sessionExchangeExpansionKey(message.id);
+  return (
+    <SessionExchangeCard message={message} expanded={expansion?.expandedSections.has(key) ?? false} onToggle={() => expansion?.toggleSection(key)}>
+      {children}
+    </SessionExchangeCard>
+  );
+}
 
 export function TaskChat({
   projectId,
@@ -4169,7 +4186,8 @@ export function TaskChat({
       // resolveAgentIcon returns `cmd` itself as label only when truly
       // unknown, matching the old "show raw id as fallback" behaviour.
       const info = resolveAgentIcon(cmd);
-      setAgentLabel(info.label || cmd);
+      // The registry's name wins, so a chat reads the same as the picker that started it.
+      setAgentLabel(baseAgents.find((agent) => agent.id === cmd)?.display_name || info.label || cmd);
       setAgentIcon(() => info.Component);
     };
 
@@ -4191,7 +4209,7 @@ export function TaskChat({
     return () => {
       cancelled = true;
     };
-  }, [activeChat, customAgents, customAgentPersonas]);
+  }, [activeChat, baseAgents, customAgents, customAgentPersonas]);
 
   // ─── @ mention file list with TTL cache (5s) ──────────────────────
   const TASK_FILES_TTL_MS = 10_000;
@@ -11394,7 +11412,7 @@ export function TaskChat({
   ) : null;
   // Only while typing; the permanent "Enter send" label is gone.
   const orbitComposerHint = hasContent && isInputFocused && !activePermissionMessage
-    ? isInputExpanded ? "⌘⏎ send · ⏎ newline" : `⏎ ${isBusy && !editingPendingId && !interruptOnSend ? "queue" : "send"} · ⇧⏎ newline`
+    ? isInputExpanded ? `${MOD_KEY_PREFIX}⏎ send · ⏎ newline` : `⏎ ${isBusy && !editingPendingId && !interruptOnSend ? "queue" : "send"} · ⇧⏎ newline`
     : null;
   // One button for send and stop — same cases as the Workbench buttons.
   const orbitOrbAction = resolveOrbAction({ editing: !!editingPendingId, permissionPending: !!activePermissionMessage, busy: isBusy, hasContent, pendingCount: pendingMessages.length, interrupt: interruptOnSend });
@@ -13069,18 +13087,17 @@ export function TaskChat({
       <ConfirmDialog
         isOpen={deleteConfirmChatId !== null}
         title="Delete Session"
-        message={
-          <div className="space-y-2">
-            <p>
-              {deleteConfirmTargetCapable
-                ? "Remove this session from Grove only, or delete it from the Agent as well."
-                : "This removes the session and its local history from Grove. The Agent-owned session is kept."}
-            </p>
-            {deleteError && (
+        message={(() => {
+          const summary = deleteConfirmTargetCapable
+            ? "Remove this session from Grove only, or delete it from the Agent as well."
+            : "This removes the session and its local history from Grove. The Agent-owned session is kept.";
+          return deleteError ? (
+            <div className="space-y-2">
+              <p>{summary}</p>
               <p className="text-[var(--color-error)]">{deleteError}</p>
-            )}
-          </div>
-        }
+            </div>
+          ) : summary;
+        })()}
         confirmLabel={
           isDeletingChat
             ? "Deleting…"
@@ -13670,7 +13687,7 @@ const MessageItem = memo(function MessageItem({
   const resolveImageUrl = useCallback((src: string) => {
     if (/^https?:\/\//.test(src) || src.startsWith("data:")) return src;
     // Strip `file://` so the backend gets a plain absolute path.
-    const stripped = src.startsWith("file://") ? src.slice("file://".length) : src;
+    const stripped = src.startsWith("file://") ? filePathFromUrl(src) : src;
     // Markdown sources arrive already percent-encoded (e.g. `%20` for
     // spaces). Decode first so we don't double-encode when re-encoding
     // for the query string. decodeURIComponent throws on malformed
@@ -13938,7 +13955,7 @@ const MessageItem = memo(function MessageItem({
         )} />
       ) : <SubagentCard message={message} connected={subagentConnected} onOpen={onOpenSubagent} />;
     case "session_exchange":
-      return <div className="space-y-2 border-l-2 border-[var(--color-border)] pl-3 text-sm"><p className="text-xs text-[var(--color-text-muted)]">Agent communication</p><AgentContentBlocks blocks={message.blocks} onImageClick={onImageClick} renderText={(text) => <MarkdownRenderer content={text} onFileClick={onFileClick} resolveImageUrl={resolveImageUrl} />} /></div>;
+      return <ExpandableSessionExchange message={message}><AgentContentBlocks blocks={message.blocks} onImageClick={onImageClick} renderText={(text) => <MarkdownRenderer content={text} onFileClick={onFileClick} resolveImageUrl={resolveImageUrl} />} /></ExpandableSessionExchange>;
     case "plan_document":
       return null;
     case "child_plan":
@@ -14384,7 +14401,8 @@ function ToolContentBlocks({ content }: { content: ToolCallContentData[] }) {
               blocks={[item.content]}
               renderText={(text) => (
                 <div className="text-[12px] leading-[1.45]">
-                  <MarkdownRenderer content={text} />
+                  {/* Agents can wrap raw terminal output in Markdown, escape codes included. */}
+                  <MarkdownRenderer content={stripAnsi(text)} />
                 </div>
               )}
             />
