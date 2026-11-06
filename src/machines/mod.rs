@@ -33,10 +33,6 @@ pub(crate) fn home_port() -> u16 {
     HOME_PORT.load(Ordering::Relaxed)
 }
 
-fn home_url() -> String {
-    format!("http://localhost:{}", home_port())
-}
-
 fn hostname() -> String {
     std::process::Command::new("hostname")
         .output()
@@ -154,15 +150,13 @@ pub fn overview(current: Option<&str>) -> Result<Value> {
         .collect();
     Ok(json!({
         "current": current.unwrap_or(&this.id),
-        "home_url": switchable().then(home_url),
         "this": this,
         "machines": machines,
     }))
 }
 
-/// Switching relies on a loopback proxy, so it works for the person sitting
-/// at this machine. Someone reaching it remotely opens the other machine's
-/// own address instead.
+/// Whether a loopback proxy can serve the window. Someone reaching this server
+/// remotely has no loopback here, and switches through `/machines/{id}/via`.
 fn switchable() -> bool {
     home_port() != 0 && !crate::hooks::os_render_disabled()
 }

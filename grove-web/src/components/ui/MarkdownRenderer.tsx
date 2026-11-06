@@ -42,7 +42,9 @@ import { VSCodeIcon } from "./VSCodeIcon";
 import { SketchChip } from "./SketchChip";
 import { sketchThumbnailUrl } from "../../api/sketches";
 import { useAuthenticatedFileUrl } from "../../hooks/useAuthenticatedFileUrl";
-import { apiClient, appendHmacToUrl } from "../../api/client";
+import { apiClient, appendHmacToUrl, getMachineApiBase } from "../../api/client";
+import { trackedDownload } from "../../transfers/download";
+import { getTauriInternals } from "../../utils/tauri";
 import { highlightLines, normalizeLanguage } from "../Review/syntaxHighlight";
 import { createSlugger } from "./headingSlug";
 import { useTheme } from "../../context/ThemeContext";
@@ -52,6 +54,7 @@ import { normalizeStrongEmphasis } from "./markdownPreprocess";
 import { MarkdownCommentHost, type MarkdownCommentConfig } from "../Review/PreviewCommentHost";
 import { selectedMarkdownForRange } from "./markdownClipboard";
 import { previewCommentTaskLabel, useOptionalPreviewComments, type PreviewCommentLocator } from "../../context";
+import { filePathFromUrl } from "../../utils/filesystemPath";
 
 /** Languages whose code blocks may be executed in the terminal. */
 const RUNNABLE_SHELL_LANGS = new Set(["bash", "sh", "shell", "zsh"]);
@@ -961,6 +964,13 @@ function MarkdownFileLink({ href, children }: { href: string; children: React.Re
       onClick={(event) => {
         if (!href.startsWith('/api/v1/')) return;
         event.preventDefault();
+        if (getMachineApiBase()) {
+          // A paired machine's port refuses new-tab navigation, and a blob tab
+          // would run its HTML as Grove. The file downloads instead.
+          const name = new URL(href, window.location.origin).searchParams.get('path')?.split('/').pop() || 'download';
+          void trackedDownload(href, name, getTauriInternals());
+          return;
+        }
         // Open synchronously so popup blockers allow the tab; sign immediately
         // before navigation so the one-use HMAC nonce has not expired.
         const tab = window.open('about:blank', '_blank');
@@ -1009,7 +1019,7 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
   }
 
   if (decodedHref.startsWith("file://")) {
-    decodedHref = decodedHref.slice("file://".length);
+    decodedHref = filePathFromUrl(decodedHref);
   }
 
   const hrefMatch = decodedHref.match(FILE_HREF_RE);
@@ -1091,20 +1101,23 @@ function EmbeddedHtmlIframe({ src, fitLocalHtml, className, height, ...props }: 
   const [signedSource, setSignedSource] = useState<{ src: string; url: string } | null>(null);
   const [loadedDocument, setLoadedDocument] = useState<{ src: string; html: string } | null>(null);
   const [reportedHeight, setReportedHeight] = useState<{ src: string; height: number } | null>(null);
-  const srcDoc = fitLocalHtml && loadedDocument?.src === src ? loadedDocument.html : undefined;
+  // A paired machine's port won't serve a frame, so its documents load through the API.
+  const machineDocument = Boolean(internalPath && getMachineApiBase());
+  const inlineDocument = fitLocalHtml || machineDocument;
+  const srcDoc = inlineDocument && loadedDocument?.src === src ? loadedDocument.html : undefined;
   const fittedHeight = reportedHeight?.src === src ? reportedHeight.height : undefined;
 
   useEffect(() => {
-    if (!internalPath) return;
+    if (!internalPath || machineDocument) return;
     let cancelled = false;
     void appendHmacToUrl(internalPath).then((url) => {
       if (!cancelled) setSignedSource({ src: internalPath, url });
     });
     return () => { cancelled = true; };
-  }, [internalPath]);
+  }, [internalPath, machineDocument]);
 
   useEffect(() => {
-    if (!fitLocalHtml) return;
+    if (!inlineDocument) return;
     const controller = new AbortController();
     const content = internalPath
       ? apiClient.getText(internalPath)
@@ -1119,7 +1132,7 @@ function EmbeddedHtmlIframe({ src, fitLocalHtml, className, height, ...props }: 
         // and documents that are not readable through the raw-file endpoint.
       });
     return () => controller.abort();
-  }, [fitLocalHtml, frameId, src, internalPath]);
+  }, [inlineDocument, frameId, src, internalPath]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {

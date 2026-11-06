@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import { X, FileCode, Eye, Columns2, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw, AlertCircle, ZoomIn, ZoomOut } from "lucide-react";
 import { Button, downloadViaIframe, FullFilePreview, getPreviewType, ImageLightbox, isVirtualizedMarkdownPreview } from "../../ui";
 import { getPreviewRenderer } from "../../Review/previewRenderers";
+import { useMachineHtmlAssets } from "./machineHtmlAssets";
 
 function rewriteHtmlUrls(html: string, projectId: string, taskId: string, parentDir: string): string {
   const apiBase = `/api/v1/projects/${projectId}/tasks/${taskId}/file/raw?path=`;
@@ -1146,6 +1147,11 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const parentDirPath = selectedFile && selectedFile.includes('/')
     ? selectedFile.substring(0, selectedFile.lastIndexOf('/')) + '/'
     : '';
+  const rewrittenHtml = useMemo(
+    () => renderer?.id === 'html' ? rewriteHtmlUrls(fileContent, projectId, taskId, parentDirPath) : '',
+    [renderer?.id, fileContent, projectId, taskId, parentDirPath],
+  );
+  const previewHtml = useMachineHtmlAssets(rewrittenHtml);
 
   return (
     <div className={`h-full min-h-0 flex-1 flex flex-col bg-[var(--color-bg-secondary)] overflow-hidden ${fullscreen ? '' : 'rounded-lg border border-[var(--color-border)]'}`}>
@@ -1414,7 +1420,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               <div className={`flex-1 min-h-0 bg-[var(--color-bg)] editor-scroll-container ${isLargeMarkdownPreview ? 'overflow-hidden' : 'overflow-auto'}`}>
                 <FullFilePreview
                   renderer={renderer}
-                  content={renderer.id === 'html' ? rewriteHtmlUrls(fileContent, projectId, taskId, parentDirPath) : fileContent}
+                  content={renderer.id === 'html' ? previewHtml : fileContent}
                   fileName={selectedFile}
                   sketchContext={{ projectId, taskId }}
                   location={{
@@ -1494,7 +1500,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                 <div className={`flex-1 min-w-0 h-full min-h-0 bg-[var(--color-bg)] editor-scroll-container ${isLargeMarkdownPreview ? 'overflow-hidden' : 'overflow-auto'}`}>
                   <FullFilePreview
                     renderer={renderer}
-                    content={renderer.id === 'html' ? rewriteHtmlUrls(fileContent, projectId, taskId, parentDirPath) : fileContent}
+                    content={renderer.id === 'html' ? previewHtml : fileContent}
                     fileName={selectedFile}
                     sketchContext={{ projectId, taskId }}
                     location={{

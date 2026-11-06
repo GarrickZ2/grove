@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, getHomeApiBase } from "./client";
 
 export type MachineIcon = "laptop" | "desktop" | "server" | "gpu" | "cloud" | "home";
 export type MachineStatus = "online" | "offline" | "signed_out" | "needs_login";
@@ -21,7 +21,6 @@ export interface MachinesOverview {
   /** The machine this window is showing. */
   current: string;
   /** This machine's own address; null when it isn't being used locally. */
-  home_url: string | null;
   this: MachineProfile;
   machines: PairedMachine[];
 }
@@ -58,5 +57,6 @@ export function removeMachine(id: string): Promise<void> {
 
 export async function openMachine(id: string): Promise<string> {
   const { url } = await apiClient.post<undefined, { url: string }>(`/api/v1/machines/${encodeURIComponent(id)}/open`);
-  return url;
+  // A server without a local port answers with a path of its own.
+  return url.startsWith("/") ? new URL(url, getHomeApiBase() || window.location.origin).href : url;
 }

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listBuddyGroups, type BuddyGroup } from "../api/buddyGroups";
+import { getApiBaseUrl } from "../api/client";
+import { readBuddySnapshot } from "../components/Buddy/buddyMachineSnapshot";
 import { errorMessage } from "../utils/errorMessage";
 import { useRadioEvents } from "./useRadioEvents";
 
 /** The user's groups, kept current from Radio. */
 export function useBuddyGroups() {
-  const [items, setItems] = useState<BuddyGroup[]>([]);
+  const [items, setItems] = useState<BuddyGroup[]>(() => readBuddySnapshot(getApiBaseUrl())?.groups ?? []);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
   const refresh = useCallback(async () => {

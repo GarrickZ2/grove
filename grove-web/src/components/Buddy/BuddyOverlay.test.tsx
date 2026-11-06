@@ -7,7 +7,7 @@ import { useBuddyOpen } from "../../hooks/useBuddyOpen";
 import { useCommand } from "../../keyboard/useCommand";
 import { commandRegistry } from "../../keyboard/CommandRegistry";
 import { buildCommands } from "../../hooks/useCommands";
-import { OrbitInterfaceContext } from "../../orbit/ui/interfaceContext";
+import { OrbitInterfaceContext, OrbitInterfaceKnownContext } from "../../orbit/ui/interfaceContext";
 vi.mock("../../context", () => ({ useConfig: () => ({ config: { web: { interface: "orbit" } } }), useProject: () => ({ applySelectedProject: vi.fn() }) }));
 vi.mock("../../hooks/useBuddies", () => ({ useBuddies: () => ({ items: [], refresh: vi.fn() }) }));
 vi.mock("../../hooks/useRadioEvents", () => ({ useRadioEvents: () => {} }));
@@ -61,8 +61,8 @@ it("provides open, leave, new and individual Buddy commands", () => {
 });
 it("carries the Orbit tokens only under the Orbit interface", async () => {
   localStorage.setItem("grove-buddy-open", "true");
-  await act(async () => root.render(<Harness />));
+  await act(async () => root.render(<OrbitInterfaceKnownContext.Provider value><Harness /></OrbitInterfaceKnownContext.Provider>));
   expect(host.querySelector(".buddy-overlay")?.classList.contains("orbit-ui")).toBe(false);
-  await act(async () => root.render(<OrbitInterfaceContext.Provider value><Harness /></OrbitInterfaceContext.Provider>));
+  await act(async () => root.render(<OrbitInterfaceKnownContext.Provider value><OrbitInterfaceContext.Provider value><Harness /></OrbitInterfaceContext.Provider></OrbitInterfaceKnownContext.Provider>));
   expect(host.querySelector(".buddy-overlay")?.classList.contains("orbit-ui")).toBe(true);
 });

@@ -8,7 +8,14 @@ import { signInToMachine } from "../../utils/tauriShell";
 import { setMachineApiBase } from "../../api/client";
 
 const shell = vi.hoisted(() => ({ desktop: true }));
-vi.mock("../../api/client", () => ({ setMachineApiBase: vi.fn() }));
+vi.mock("../../api/client", () => ({
+  setMachineApiBase: vi.fn(),
+  requestAt: async (base: string, path: string) => {
+    const response = await fetch(`${base}${path}`);
+    if (!response.ok) throw new Error("failed");
+    return response.json();
+  },
+}));
 vi.mock("../../api/machines", () => ({
   getMachines: vi.fn(), openMachine: vi.fn(), pairMachine: vi.fn(), refreshMachineSession: vi.fn(), removeMachine: vi.fn(), updateMachine: vi.fn(),
   needsMachineLogin: (error: { data?: { error?: string } }) => error?.data?.error === "machine_login_required",
@@ -18,7 +25,7 @@ vi.mock("../../keyboard/useEscapeScope", () => ({ useEscapeScope: () => {} }));
 
 const home = { id: "home", name: "MacBook", description: "", icon: "laptop" } as const;
 const devbox: PairedMachine = { id: "dev", name: "Dev box", description: "Backend", icon: "server", url: "http://dev:3900", status: "online", version: "0.14.2" };
-const overview = (patch: Partial<MachinesOverview> = {}): MachinesOverview => ({ current: "home", home_url: "http://localhost:3001", this: home, machines: [devbox], ...patch });
+const overview = (patch: Partial<MachinesOverview> = {}): MachinesOverview => ({ current: "home", this: home, machines: [devbox], ...patch });
 
 describe("Orbit machine menu", () => {
   let container: HTMLDivElement;

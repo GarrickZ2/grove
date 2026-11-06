@@ -1,6 +1,6 @@
 //! The machines this one is paired with.
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::Path;
+use axum::extract::{Path, Request};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::{Extension, Json};
@@ -57,6 +57,14 @@ pub async fn open(Path(id): Path<String>) -> Result<Json<Value>, ApiError> {
     Ok(Json(
         json!({"url": machines::proxy::open(&id).await.map_err(error)?}),
     ))
+}
+
+/// A window that can't use a local port reaches the machine through here.
+pub async fn via(
+    Path((id, _)): Path<(String, String)>,
+    request: Request,
+) -> Result<Response, ApiError> {
+    machines::proxy::via(&id, request).await.map_err(error)
 }
 
 /// A paired machine keeping its connection to this one.

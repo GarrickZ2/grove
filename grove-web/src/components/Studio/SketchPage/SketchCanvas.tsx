@@ -4,7 +4,7 @@ import type {
   LibraryItems,
 } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
-import { apiClient } from "../../../api/client";
+import { apiClient, getMachineApiBase } from "../../../api/client";
 import { getLibraryBroadcastTabNonce } from "../../../hooks/useAddLibraryHashHandler";
 
 /** Server response from `GET /api/v1/library`. Mirrors the on-disk
@@ -224,7 +224,8 @@ const LIBRARY_BROADCAST_DEBOUNCE_MS = 1000;
  * while this one was frozen.
  */
 const initialLibraryCache = new Map<string, Promise<unknown[]>>();
-const INITIAL_LIBRARY_CACHE_KEY = "default";
+/** Each machine keeps its own library. */
+const initialLibraryCacheKey = () => getMachineApiBase() ?? "home";
 
 /** Module-level singleton BroadcastChannel for library mutations. Reused
  * across every PUT/DELETE flush so we don't churn a new channel + close per
@@ -242,7 +243,7 @@ const libraryBroadcast: BroadcastChannel | null = (() => {
   }
 })();
 function fetchInitialLibrary(): Promise<unknown[]> {
-  const cached = initialLibraryCache.get(INITIAL_LIBRARY_CACHE_KEY);
+  const cached = initialLibraryCache.get(initialLibraryCacheKey());
   if (cached) return cached;
   const p = apiClient
     .get<LibraryFile>("/api/v1/library")
@@ -250,10 +251,10 @@ function fetchInitialLibrary(): Promise<unknown[]> {
     .catch((err) => {
       // Drop the failed promise from the cache so a later mount can retry,
       // rather than every subsequent mount inheriting the same rejection.
-      initialLibraryCache.delete(INITIAL_LIBRARY_CACHE_KEY);
+      initialLibraryCache.delete(initialLibraryCacheKey());
       throw err;
     });
-  initialLibraryCache.set(INITIAL_LIBRARY_CACHE_KEY, p);
+  initialLibraryCache.set(initialLibraryCacheKey(), p);
   return p;
 }
 
@@ -439,7 +440,7 @@ export function SketchCanvas({
         timerRef.current = null;
       }
       // Bust the module-level cache and re-fetch from the server.
-      initialLibraryCache.delete(INITIAL_LIBRARY_CACHE_KEY);
+      initialLibraryCache.delete(initialLibraryCacheKey());
       fetchInitialLibrary()
         .then((items) => {
           const api = apiRef.current;

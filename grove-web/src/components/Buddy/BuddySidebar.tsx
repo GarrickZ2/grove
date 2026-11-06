@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { ChevronDown, Mail, MailOpen, Pin, PinOff, Plus, Search, SlidersHorizontal, Smile, Trash2, Users } from "lucide-react";
 import type { BuddyListEntry } from "../../api/buddyGroups";
@@ -13,6 +13,9 @@ import { SidebarResizer } from "../Layout/SidebarResizer";
 
 /** A group is made of Buddies, not of other groups. */
 const buddiesOn = (section: MachineBuddies) => section.buddies?.filter((entry) => !entry.group) ?? [];
+
+/** The list's scroll, kept across the rebuild that a machine switch causes. */
+let listScroll = 0;
 
 export function BuddySidebar({ machines, onOpenMachine, onCreateOnMachine, items, unread, selectedId, viewingId, onSelect, onCreate, onCreateGroup, onBuddySettings, onDelete, onPin, onMarkRead, onMarkUnread, onReorder, phone = false, error, loading = false, onRetry, exit, toggle }: {
   /** Sections per machine when this Grove spans several; the list is the current one. */
@@ -42,6 +45,8 @@ export function BuddySidebar({ machines, onOpenMachine, onCreateOnMachine, items
     writeBuddyPreference("machines-folded", [...next].join(","));
   };
   const reduceMotion = useReducedMotion();
+  const listRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { if (listRef.current) listRef.current.scrollTop = listScroll; }, []);
   const byId = new Map(items.map((item) => [item.id, item]));
   const pinnedIds = items.filter((item) => item.pinned).map((item) => item.id);
   const listIds = items.filter((item) => !item.pinned).map((item) => item.id);
@@ -111,7 +116,7 @@ export function BuddySidebar({ machines, onOpenMachine, onCreateOnMachine, items
     <div className="buddy-sidebar-heading"><h1>Buddies</h1>{items.length > 8 && <button type="button" className="orbit-icon-button" aria-label="Search Buddies" aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setQuery(""); }}><Search size={16} /></button>}{!machines && newButton}</div>
     {searchOpen && <label className="buddy-search"><Search size={15} /><input aria-label="Search Buddies" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} /></label>}
     {error && <p role="alert">{error}<button type="button" className="buddy-button" onClick={onRetry}>Retry</button></p>}
-    <div className="buddy-list">
+    <div ref={listRef} className="buddy-list" onScroll={(event) => { listScroll = event.currentTarget.scrollTop; }}>
       {machines ? machines.map((section) => <section key={section.machine.id} className="buddy-machine" aria-label={section.machine.name}>
         <div className="buddy-machine-head">
           <button type="button" className="buddy-machine-toggle" aria-expanded={!folded.has(section.machine.id)} onClick={() => toggleFolded(section.machine.id)}>
@@ -126,7 +131,7 @@ export function BuddySidebar({ machines, onOpenMachine, onCreateOnMachine, items
         {folded.has(section.machine.id) ? null : section.current && !(loading && section.buddies?.length) ? currentList : section.buddies === null
           ? <p className="buddy-muted">Not reachable</p>
           : section.buddies.length === 0 ? <p className="buddy-muted">No Buddies yet</p>
-            : section.buddies.map((buddy) => <div key={buddy.id}><BuddyListItem buddy={buddy} selected={false} avatarSize={36} onSelect={() => onOpenMachine?.(section, buddy.group ? { groupId: buddy.id } : { buddyId: buddy.id })} onMenu={() => {}} /></div>)}
+            : section.buddies.map((buddy) => <div key={buddy.id}><BuddyListItem buddy={buddy} selected={section.current && buddy.id === selectedId} avatarSize={36} onSelect={() => onOpenMachine?.(section, buddy.group ? { groupId: buddy.id } : { buddyId: buddy.id })} onMenu={() => {}} /></div>)}
       </section>) : currentList}
     </div>
     <ContextMenu items={machineMenu ? [

@@ -4,9 +4,27 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useBuddies } from "./useBuddies";
 import { createBuddiesMock } from "../api/buddies.mock";
 import { getBuddy, listBuddies } from "../api/buddies";
+import { getApiBaseUrl } from "../api/client";
+import { clearBuddySnapshots, writeBuddySnapshot } from "../components/Buddy/buddyMachineSnapshot";
 vi.mock("../api/buddies", () => ({ listBuddies: vi.fn(), getBuddy: vi.fn() }));
-afterEach(() => { localStorage.clear(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { localStorage.clear(); clearBuddySnapshots(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 describe("useBuddies selection", () => {
+  it("starts from what the machine last showed", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const mock = createBuddiesMock();
+    const items = mock.list();
+    localStorage.setItem("grove-buddy-selected", items[0].id);
+    writeBuddySnapshot(getApiBaseUrl(), { items, groups: [], detail: mock.get(items[0].id) });
+    vi.mocked(listBuddies).mockReturnValue(new Promise(() => {}));
+    vi.mocked(getBuddy).mockReturnValue(new Promise(() => {}));
+    const seen: ReturnType<typeof useBuddies>[] = [];
+    function Harness() { seen.push(useBuddies()); return null; }
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(<Harness />));
+    expect(seen[0]).toMatchObject({ loading: false, items, selectedId: items[0].id });
+    expect(seen[0].buddy?.id).toBe(items[0].id);
+    act(() => root.unmount());
+  });
   it("does not let a pending detail read overwrite a saved change", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const mock = createBuddiesMock();

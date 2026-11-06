@@ -5,6 +5,10 @@
 //! port and stays where it is, so switching machines reloads nothing, signs
 //! nothing and asks for no second sign-in.
 //!
+//! A window reached through `grove remote` has no such loopback: it goes
+//! through this server's own `/api/v1/machines/{id}/via` instead, under the
+//! sign-in it already holds. Same forwarding, same stay-where-you-are.
+//!
 //! The person stays the same across machines, so what follows them (theme,
 //! keymap, notifications, the machine list) stays on this machine, while
 //! what belongs to a machine (Agents, MCP, indexing) is that machine's.
@@ -23,6 +27,7 @@ use once_cell::sync::Lazy;
 use serde_json::{json, Map, Value};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tower::ServiceExt;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::api::{self, ProxySigner, ProxyTarget};
@@ -56,8 +61,29 @@ static RUNNING: Lazy<Mutex<HashMap<String, Running>>> = Lazy::new(Mutex::default
 #[derive(Clone)]
 struct Machine {
     id: String,
-    home: Arc<ProxyTarget>,
     peer: Arc<ProxyTarget>,
+}
+
+/// This machine's own API, called in-process: it needs no sign-in here, and the
+/// server may not be listening on loopback at all.
+static HOME_API: Lazy<Router> =
+    Lazy::new(|| Router::new().nest("/api/v1", api::create_api_router()));
+
+async fn to_home(request: Request) -> Response {
+    let (parts, body) = request.into_parts();
+    // Without the extensions: they hold the route params of the way here.
+    let mut fresh = Request::new(body);
+    *fresh.method_mut() = parts.method;
+    *fresh.uri_mut() = parts.uri;
+    *fresh.headers_mut() = parts.headers;
+    match HOME_API.clone().oneshot(fresh).await {
+        Ok(response) => response,
+        Err(never) => match never {},
+    }
+}
+
+async fn to_peer(machine: &Machine, request: Request) -> Response {
+    api::http_proxy_handler(State(machine.peer.clone()), request).await
 }
 
 /// Overlay the personal parts of `personal` on `machine`.
@@ -117,9 +143,7 @@ fn config_request(method: Method, body: Option<Value>) -> Request {
     builder.body(body).expect("config request")
 }
 
-async fn config_json(target: &Arc<ProxyTarget>) -> std::result::Result<Value, Box<Response>> {
-    let response =
-        api::http_proxy_handler(State(target.clone()), config_request(Method::GET, None)).await;
+async fn config_json(response: Response) -> std::result::Result<Value, Box<Response>> {
     if !response.status().is_success() {
         return Err(Box::new(response));
     }
@@ -131,22 +155,21 @@ async fn config_json(target: &Arc<ProxyTarget>) -> std::result::Result<Value, Bo
 }
 
 async fn merged(machine: &Machine) -> Response {
-    let personal = match config_json(&machine.home).await {
+    let personal = match config_json(to_home(config_request(Method::GET, None)).await).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
-    match config_json(&machine.peer).await {
+    match config_json(to_peer(machine, config_request(Method::GET, None)).await).await {
         Ok(theirs) => Json(merge_config(&personal, theirs)).into_response(),
         Err(response) => *response,
     }
 }
 
-async fn patch_part(target: &Arc<ProxyTarget>, part: Map<String, Value>) -> Option<Response> {
-    if part.is_empty() {
-        return None;
-    }
-    let request = config_request(Method::PATCH, Some(Value::Object(part)));
-    let response = api::http_proxy_handler(State(target.clone()), request).await;
+fn patch_request(part: Map<String, Value>) -> Option<Request> {
+    (!part.is_empty()).then(|| config_request(Method::PATCH, Some(Value::Object(part))))
+}
+
+fn failed(response: Response) -> Option<Response> {
     (!response.status().is_success()).then_some(response)
 }
 
@@ -164,11 +187,15 @@ async fn config(State(machine): State<Machine>, request: Request) -> Response {
         return StatusCode::BAD_REQUEST.into_response();
     };
     let (personal, theirs) = split_patch(patch);
-    if let Some(failed) = patch_part(&machine.home, personal).await {
-        return failed;
+    if let Some(request) = patch_request(personal) {
+        if let Some(response) = failed(to_home(request).await) {
+            return response;
+        }
     }
-    if let Some(failed) = patch_part(&machine.peer, theirs).await {
-        return failed;
+    if let Some(request) = patch_request(theirs) {
+        if let Some(response) = failed(to_peer(&machine, request).await) {
+            return response;
+        }
     }
     merged(&machine).await
 }
@@ -192,11 +219,11 @@ async fn machines(State(machine): State<Machine>, request: Request) -> Response 
             Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
         };
     }
-    api::http_proxy_handler(State(machine.home.clone()), request).await
+    to_home(request).await
 }
 
-async fn at_home(State(machine): State<Machine>, request: Request) -> Response {
-    api::http_proxy_handler(State(machine.home.clone()), request).await
+async fn at_home(request: Request) -> Response {
+    to_home(request).await
 }
 
 fn is_loopback(host: &HeaderValue) -> bool {
@@ -240,11 +267,35 @@ async fn only_this_origin(mut request: Request, next: Next) -> Response {
     }
 }
 
+/// Plugin panels are framed by the home window, which is another origin to this
+/// port. Their sandbox stays; only the frame's parent changes.
+async fn frame_plugin_assets_at_home(request: Request, next: Next) -> Response {
+    let assets = request.uri().path().starts_with("/api/v1/plugin-assets/");
+    let mut response = next.run(request).await;
+    if assets {
+        allow_home_framing(response.headers_mut(), super::home_port());
+    }
+    response
+}
+
+fn allow_home_framing(headers: &mut header::HeaderMap, home_port: u16) {
+    let ancestors = HOME_ORIGINS.map(|host| format!("http://{host}:{home_port}"));
+    let policy = format!(
+        "sandbox allow-scripts; frame-ancestors {}",
+        ancestors.join(" ")
+    );
+    if let Ok(policy) = HeaderValue::from_str(&policy) {
+        headers.remove(header::X_FRAME_OPTIONS);
+        headers.insert(header::CONTENT_SECURITY_POLICY, policy);
+    }
+}
+
 fn guarded(path: &str) -> bool {
     (path.starts_with("/api/") || path == "/ws") && !path.starts_with("/api/v1/plugin-assets/")
 }
 
-fn router(machine: Machine) -> Router {
+/// What a machine's API looks like from here, wherever a window reaches it from.
+fn forwarding(machine: Machine) -> Router {
     let peer = machine.peer.clone();
     let personal = Router::new()
         .route("/api/v1/auth/info", get(auth_info))
@@ -254,7 +305,10 @@ fn router(machine: Machine) -> Router {
         .route("/api/v1/keymap", any(at_home))
         .route("/api/v1/keymap/{*rest}", any(at_home))
         .with_state(machine);
-    let forwarded = api::proxy_router(peer);
+    personal.merge(api::proxy_router(peer))
+}
+
+fn router(machine: Machine) -> Router {
     let static_dir = (!api::has_embedded_assets())
         .then(api::find_static_dir)
         .flatten();
@@ -267,8 +321,9 @@ fn router(machine: Machine) -> Router {
         .allow_methods(Any)
         .allow_headers(Any)
         .expose_headers(Any);
-    api::with_frontend(personal.merge(forwarded), static_dir)
+    api::with_frontend(forwarding(machine), static_dir)
         .layer(middleware::from_fn(only_this_origin))
+        .layer(middleware::from_fn(frame_plugin_assets_at_home))
         .layer(cors)
 }
 
@@ -290,8 +345,50 @@ fn target_for(peer: &store::Peer) -> Result<Arc<ProxyTarget>> {
     }))
 }
 
-/// The address to open a window on this machine, starting its port if needed.
+/// What `/machines/{id}/via` forwards to, kept until the machine changes.
+static VIA: Lazy<std::sync::Mutex<HashMap<String, Router>>> = Lazy::new(Default::default);
+
+fn via_router(id: &str) -> Result<Router> {
+    let mut routers = VIA.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(router) = routers.get(id) {
+        return Ok(router.clone());
+    }
+    let peer = store::peer(id)?.ok_or_else(|| GroveError::not_found("Machine not found"))?;
+    let router = forwarding(Machine {
+        id: id.to_string(),
+        peer: target_for(&peer)?,
+    });
+    routers.insert(id.to_string(), router.clone());
+    Ok(router)
+}
+
+/// The request as the machine should see it, without the `via` prefix.
+fn forwarded_uri(uri: &axum::http::Uri, id: &str) -> Option<axum::http::Uri> {
+    uri.path_and_query()?
+        .as_str()
+        .strip_prefix(&format!("/machines/{id}/via"))?
+        .parse()
+        .ok()
+}
+
+/// Forward a request that came in through `/machines/{id}/via`.
+pub async fn via(id: &str, mut request: Request) -> Result<Response> {
+    let router = via_router(id)?;
+    let uri = forwarded_uri(request.uri(), id)
+        .ok_or_else(|| GroveError::invalid_data("Bad machine path"))?;
+    *request.uri_mut() = uri;
+    match router.oneshot(request).await {
+        Ok(response) => Ok(response),
+        Err(never) => match never {},
+    }
+}
+
+/// The API base for a window on this machine, starting its port if needed.
 pub async fn open(id: &str) -> Result<String> {
+    if !super::switchable() {
+        let _ = via_router(id)?;
+        return Ok(format!("/api/v1/machines/{id}/via"));
+    }
     let mut running = RUNNING.lock().await;
     if let Some(existing) = running.get(id).filter(|proxy| !proxy.server.is_finished()) {
         return Ok(format!("http://localhost:{}", existing.port));
@@ -300,10 +397,6 @@ pub async fn open(id: &str) -> Result<String> {
     let machine = Machine {
         id: id.to_string(),
         peer: target_for(&peer)?,
-        home: Arc::new(ProxyTarget {
-            url: format!("http://127.0.0.1:{}", super::home_port()),
-            signer: None,
-        }),
     };
     let listener = match peer.proxy_port {
         Some(port) => match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
@@ -328,6 +421,7 @@ pub async fn open(id: &str) -> Result<String> {
 
 /// Stop serving a machine: it was unpaired, or its credentials changed.
 pub async fn close(id: &str) {
+    VIA.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     if let Some(proxy) = RUNNING.lock().await.remove(id) {
         proxy.server.abort();
         // Its port is free once the task is gone, so reopening can reuse it.
@@ -338,6 +432,38 @@ pub async fn close(id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn via_keeps_the_path_and_query_as_sent() {
+        let uri = "/machines/abc/via/api/v1/files%2Fa?ts=1&sig=x"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            forwarded_uri(&uri, "abc").unwrap().to_string(),
+            "/api/v1/files%2Fa?ts=1&sig=x"
+        );
+        let other = "/machines/other/via/ws".parse().unwrap();
+        assert!(forwarded_uri(&other, "abc").is_none());
+    }
+
+    #[test]
+    fn plugin_panels_frame_at_home_and_stay_sandboxed() {
+        let mut headers = header::HeaderMap::new();
+        headers.insert(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("SAMEORIGIN"),
+        );
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("sandbox allow-scripts; frame-ancestors 'self'"),
+        );
+        allow_home_framing(&mut headers, 3001);
+        assert!(headers.get(header::X_FRAME_OPTIONS).is_none());
+        assert_eq!(
+            headers[header::CONTENT_SECURITY_POLICY],
+            "sandbox allow-scripts; frame-ancestors http://localhost:3001 http://127.0.0.1:3001"
+        );
+    }
 
     #[test]
     fn personal_settings_win_and_machine_settings_stay() {

@@ -3,7 +3,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUTH_EXPIRED_EVENT, apiClient, clearDeviceSession, getDeviceId, getSecretKey, setDeviceSession } from '../api/client';
+import { AUTH_EXPIRED_EVENT, apiClient, clearDeviceSession, getDeviceId, getSecretKey, setDeviceSession, setMachineApiBase } from '../api/client';
 import { AuthRequestError, getAuthInfo, getAuthSession, loginDevice } from '../api/auth';
 import { AuthGate } from './AuthGate';
 import { handRemoteAuthToShell } from '../utils/tauriShell';
@@ -43,9 +43,22 @@ describe('AuthGate sign-in screen', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    setMachineApiBase(null);
     clearDeviceSession();
     vi.resetAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('keeps the app on screen while switching machines', async () => {
+    vi.mocked(getAuthInfo).mockResolvedValue({ required: false, device_sessions: true, trusted_devices: false, trusted_device_cookies: false });
+    await act(async () => root.render(<AuthGate key="home"><p>the app</p></AuthGate>));
+    expect(container.textContent).toContain('the app');
+
+    vi.mocked(getAuthInfo).mockReturnValue(new Promise(() => {}));
+    setMachineApiBase('http://localhost:4555');
+    await act(async () => root.render(<AuthGate key="other"><p>the app</p></AuthGate>));
+    expect(container.textContent).toContain('the app');
+    expect(container.textContent).not.toContain('Connecting');
   });
 
   it('shows an enabled unchecked trust option even without HTTPS cookies, without an expiry alert', async () => {

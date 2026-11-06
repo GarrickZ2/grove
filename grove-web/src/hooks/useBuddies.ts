@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { archiveBuddy, createBuddy, deleteBuddy, getBuddy, listBuddies, pinBuddy, reorderBuddies, type Buddy, type BuddySummary, type CreateBuddyInput } from "../api/buddies";
 import { errorMessage } from "../utils/errorMessage";
+import { getApiBaseUrl } from "../api/client";
+import { readBuddySnapshot } from "../components/Buddy/buddyMachineSnapshot";
 import { readBuddyPreference, writeBuddyPreference } from "../components/Buddy/buddyStorage";
 const BUDDIES_CHANGED = "grove-buddies-changed";
 
 export function useBuddies() {
-  const [items, setItems] = useState<BuddySummary[]>([]);
+  const [snapshot] = useState(() => readBuddySnapshot(getApiBaseUrl()));
+  const [items, setItems] = useState<BuddySummary[]>(snapshot?.items ?? []);
   const [selectedId, setSelectedId] = useState(() => readBuddyPreference("selected"));
-  const [detail, setDetail] = useState<Buddy | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [detail, setDetail] = useState<Buddy | null>(snapshot?.detail ?? null);
+  const [loading, setLoading] = useState(!snapshot);
   const [error, setError] = useState<string | null>(null);
   const revision = useRef(0);
   const selection = useRef(selectedId);

@@ -22,6 +22,7 @@ import type { Task } from "../../../data/types";
 import { TaskGitActionsContext, type TaskGitActions } from "./taskGitActions";
 import type { PanelType } from "../PanelSystem/types";
 import { sendInputToTerminal, pasteToTerminal } from "../TaskDetail/terminalCache";
+import { taskTerminalKey } from "../TaskDetail/terminalEndpoint";
 import { activateTask } from "../../../api";
 import { patchConfig } from "../../../api/config";
 import { useConfig } from "../../../context";
@@ -229,8 +230,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   const handleEnsurePanel = useCallback((type: PanelType) => routePanelCommand(type, "ensure"), [routePanelCommand]);
 
   const handleSendTerminalInput = useCallback((text: string): boolean => {
-    // Terminal cache key prefix: "task:{projectId}:{taskId}|"
-    const prefix = `task:${projectId}:${task.id}|`;
+    const prefix = `${taskTerminalKey(projectId, task.id)}|`;
     return sendInputToTerminal(prefix, text);
   }, [projectId, task.id]);
 
@@ -247,13 +247,13 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
       if (layoutMode === "ide") {
         const newTabId = ideLayoutRef.current?.addTerminalTab();
         if (!newTabId) return;
-        const cacheKey = `task:${projectId}:${task.id}|${newTabId}`;
+        const cacheKey = `${taskTerminalKey(projectId, task.id)}|${newTabId}`;
         void pasteToTerminal(cacheKey, detail.command);
       } else {
         // Flex layout: add a fresh terminal panel; paste via task prefix —
         // the newest-mounted terminal becomes "active" and wins the match.
         layoutRef.current?.addPanel("terminal");
-        const prefix = `task:${projectId}:${task.id}|`;
+        const prefix = `${taskTerminalKey(projectId, task.id)}|`;
         void pasteToTerminal(prefix, detail.command);
       }
     };

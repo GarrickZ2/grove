@@ -6,8 +6,9 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { useTerminalTheme } from "../../../context";
-import { appendHmacToUrl } from "../../../api/client";
+import { appendHmacToUrl, getApiHost } from "../../../api/client";
 import { openExternalUrl } from "../../../utils/openExternal";
+import { taskTerminalKey, terminalEndpoint } from "./terminalEndpoint";
 import { PreviewSearchBar } from "../../Review/PreviewSearchBar";
 import { useDefineCommand, useContextKey } from "../../../keyboard";
 import {
@@ -163,11 +164,12 @@ export function XTerminal({
   }, [onConnectionError]);
 
   // Memoize connection key to detect when we need to reconnect
+  const apiHost = getApiHost();
   const connectionKey = useMemo(() => {
     if (wsUrl) return `url:${wsUrl}`;
-    if (projectId && taskId) return `task:${projectId}:${taskId}`;
-    return `shell:${cwd || "home"}`;
-  }, [wsUrl, projectId, taskId, cwd]);
+    if (projectId && taskId) return taskTerminalKey(projectId, taskId);
+    return `shell:${apiHost}:${cwd || "home"}`;
+  }, [apiHost, wsUrl, projectId, taskId, cwd]);
 
   const cacheKey = useMemo(
     () => (instanceId ? makeTerminalCacheKey(connectionKey, instanceId) : null),
@@ -436,23 +438,14 @@ export function XTerminal({
     );
 
     // Build WebSocket URL
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
     const cols = terminal.cols;
     const rows = terminal.rows;
     const params = new URLSearchParams();
     params.set("cols", cols.toString());
     params.set("rows", rows.toString());
 
-    let baseUrl: string;
-    if (wsUrl) {
-      baseUrl = wsUrl;
-    } else if (projectId && taskId) {
-      baseUrl = `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${taskId}/terminal`;
-    } else {
-      baseUrl = `${protocol}//${host}/api/v1/terminal`;
-      if (cwd) params.set("cwd", cwd);
-    }
+    const baseUrl = wsUrl ?? terminalEndpoint(projectId, taskId);
+    if (!wsUrl && !(projectId && taskId) && cwd) params.set("cwd", cwd);
 
     // Sign URL and connect WebSocket
     const connect = async () => {

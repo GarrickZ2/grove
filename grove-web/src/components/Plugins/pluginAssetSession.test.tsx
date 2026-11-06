@@ -8,6 +8,7 @@ import { PluginIcon } from "./PluginIcon";
 import type { Plugin } from "../../api/plugins";
 
 vi.mock("../../api/client", () => ({
+  machineUrl: (path: string) => path,
   apiClient: { post: vi.fn(), get: vi.fn() },
   appendHmacToUrl: vi.fn(async (url: string) => url),
   AUTH_CHANGED_EVENT: "grove-auth-changed",

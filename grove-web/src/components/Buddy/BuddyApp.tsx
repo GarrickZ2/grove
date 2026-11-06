@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ChevronLeft, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { TabletAsDesktopContext, useIsMobile } from "../../hooks/useIsMobile";
@@ -27,7 +27,7 @@ import { BuddyGroupConversation, BuddyGroupHeader } from "./group/BuddyGroupConv
 import { BuddyGroupPanel } from "./group/BuddyGroupPanel";
 import { CreateBuddyGroupDialog } from "./group/CreateBuddyGroupDialog";
 import { readBuddyPreference, writeBuddyPreference } from "./buddyStorage";
-import { useMachineBuddies, type MachineBuddies } from "./useMachineBuddies";
+import { takeBuddyArrival, useMachineBuddies, type MachineBuddies } from "./useMachineBuddies";
 import { BuddySidePanel, type BuddyPanelTab } from "./BuddySidePanel/BuddySidePanel";
 import "./buddy.css";
 
@@ -48,11 +48,13 @@ export function BuddyApp({ onExit = () => {}, request }: { onExit?: () => void; 
   const showGroup = (id: string) => { setGroupId(id); writeBuddyPreference("selected-group", id); };
   const [order, setOrder] = useState<string[] | null>(null);
   const listed = mergeBuddyList(data.items, groups.items, order);
-  const { sections: machines, openOn } = useMachineBuddies(listed);
+  const shown = useRef({ items: data.items, groups: groups.items, detail: data.buddy });
+  useEffect(() => { shown.current = { items: data.items, groups: groups.items, detail: data.buddy }; });
+  const { sections: machines, openOn } = useMachineBuddies(listed, useCallback(() => shown.current, []));
   const device = useIsMobile();
   const phone = device.isMobile && !device.isTablet;
   const hasMacControls = ("__TAURI__" in window || "__TAURI_INTERNALS__" in window) && /Mac/i.test(navigator.platform);
-  const [conversationOpen, setConversationOpen] = useState(false);
+  const [conversationOpen, setConversationOpen] = useState(takeBuddyArrival);
   const [sheetOpen, setSheetOpen] = useState(false);
   const pageRef = useRef<HTMLElement>(null);
   const back = () => { setConversationOpen(false); setSheetOpen(false); };
@@ -160,7 +162,7 @@ export function BuddyApp({ onExit = () => {}, request }: { onExit?: () => void; 
     {!BUDDIES_MOCK_ENABLED && <BuddyEvents data={data} />}
     {listShown && <BuddySidebar machines={multiMachine ? machines : undefined} onOpenMachine={openOn} onCreateOnMachine={(section, kind) => (kind === "group" ? setGroupingOn : setCreatingOn)(section)} exit={exit} toggle={phone ? undefined : sidebarToggle(true)} loading={data.loading} error={phone && !conversationOpen ? error || data.error : null} onRetry={() => { setError(null); void data.refresh(); }} items={listed} unread={unread} selectedId={selectedId} viewingId={viewingId} phone={phone} onSelect={select} onCreate={() => createFrom()} onCreateGroup={data.items.length >= 2 ? () => setCreatingGroup(true) : undefined} onBuddySettings={openSettings} onDelete={(id) => { setError(null); if (isGroup(id)) setDisbandId(id); else setDeleteId(id); }} onPin={pin} onMarkRead={markRead} onMarkUnread={markUnread} onReorder={(ids) => { setOrder(ids); void data.reorder(ids).then(groupsChanged).catch((reason) => { setOrder(null); setError(errorMessage(reason)); }); }} />}
     <main ref={pageRef} className="buddy-main">{(error || data.error) && <div role="alert">{error || data.error}<button type="button" onClick={() => { setError(null); void data.refresh(); }}>Retry</button></div>}
-      {empty ? <div className="buddy-zero"><div className="buddy-zero-backdrop" aria-hidden="true"><span /><span /><span /></div><header className="buddy-zero-header" data-tauri-drag-region="deep" data-window-drag-strip>{listShown ? null : exit}</header><BuddyOnboarding onCreate={createFrom} /></div> : group ? <><BuddyGroupHeader group={group} leading={collapsed ? <>{exit}{sidebarToggle(false)}</> : undefined} phone={phone} onBack={back} panelOpen={shownPanel} onPanel={togglePanel} /><BuddyGroupConversation key={group.id} group={group} buddies={data.items} onChanged={groupsChanged} arriving={group.id === arrivedGroupId} /></> : data.buddy ? <><BuddyConversationHeader buddy={data.buddy} leading={single ? exit : collapsed ? <>{exit}{sidebarToggle(false)}</> : undefined} switcher={single ? <BuddySwitcher buddy={data.buddy} onCreate={() => createFrom()} onTemplates={() => setTemplatesOpen(true)} /> : undefined} phone={phone && !single} onBack={back} panelOpen={shownPanel} onPanel={togglePanel} /><BuddyConversation key={`${data.buddy.id}-${data.buddy.active_session_id}`} buddy={data.buddy} others={data.items.filter((item) => item.id !== data.buddy?.id)} arriving={data.buddy.id === arrivedId} onChanged={() => { void data.refreshItem(data.selectedId); }} /></> : <div className="buddy-empty"><h2>{data.loading ? "Loading Buddies…" : "Choose a Buddy"}</h2></div>}
+      {empty ? <div className="buddy-zero"><div className="buddy-zero-backdrop" aria-hidden="true"><span /><span /><span /></div><header className="buddy-zero-header" data-tauri-drag-region="deep" data-window-drag-strip>{listShown ? null : exit}</header><BuddyOnboarding onCreate={createFrom} /></div> : group ? <><BuddyGroupHeader group={group} leading={collapsed ? <>{exit}{sidebarToggle(false)}</> : undefined} phone={phone} onBack={back} panelOpen={shownPanel} onPanel={togglePanel} /><BuddyGroupConversation key={group.id} group={group} buddies={data.items} onChanged={groupsChanged} arriving={group.id === arrivedGroupId} /></> : data.buddy ? <><BuddyConversationHeader buddy={data.buddy} leading={single ? exit : collapsed ? <>{exit}{sidebarToggle(false)}</> : undefined} switcher={single ? <BuddySwitcher buddy={data.buddy} onCreate={() => createFrom()} onTemplates={() => setTemplatesOpen(true)} /> : undefined} phone={phone && !single} onBack={back} panelOpen={shownPanel} onPanel={togglePanel} /><BuddyConversation key={`${data.buddy.id}-${data.buddy.active_session_id}`} buddy={data.buddy} others={data.items.filter((item) => item.id !== data.buddy?.id)} arriving={data.buddy.id === arrivedId} onChanged={() => { void data.refreshItem(data.selectedId); }} /></> : <div className="buddy-empty">{!data.loading && !data.selectedId && <h2>Choose a Buddy</h2>}</div>}
     </main>
     {/* The shell animates its width so the conversation eases aside while the panel slides in from the right. */}
     <AnimatePresence initial={false}>{!phone && panelOpen && (group || data.buddy) && <motion.div key="buddy-side-panel" className="buddy-side-panel-shell" initial={{ width: 0 }} animate={{ width: "auto" }} exit={{ width: 0 }} transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.2, 0.7, 0.3, 1] }}>{group ? groupPanel(false, togglePanel) : data.buddy && <BuddySidePanel buddy={data.buddy} tab={panelTab} onTab={setPanelTab} onChanged={data.accept} onArchive={() => setArchiveId(data.selectedId)} onClose={togglePanel} />}</motion.div>}</AnimatePresence>

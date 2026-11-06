@@ -15,6 +15,7 @@ vi.mock("../../context", () => ({
   useTheme: () => ({ theme: theme.current }),
 }));
 vi.mock("../../api/client", () => ({
+  machineUrl: (path: string) => path,
   apiClient: { get: vi.fn(async () => ({ contributes: { panel: { entry: "dist/index.html" } } })) },
   appendHmacToUrl: vi.fn(async (url: string) => url),
 }));

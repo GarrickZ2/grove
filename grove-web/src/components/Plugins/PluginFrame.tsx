@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
-import { apiClient, appendHmacToUrl } from "../../api/client";
+import { apiClient, appendHmacToUrl, machineUrl } from "../../api/client";
 import { useProject, useTheme } from "../../context";
 import type { Plugin } from "../../api/plugins";
 import { listPluginChats, sendPluginChat } from "../../api/plugins";
@@ -386,7 +386,7 @@ export function PluginFrame({
   const src =
     entry === null || !sessionReady || !assetSession?.token
       ? undefined
-      : `/api/v1/plugin-assets/${assetSession.token}/${plugin.id}/${entry}?v=${reloadKey}`;
+      : machineUrl(`/api/v1/plugin-assets/${assetSession.token}/${plugin.id}/${entry}?v=${reloadKey}`);
 
   const failed = sessionReady && !assetSession?.token;
 

@@ -23,7 +23,9 @@ function storedMachineBase(): string | null {
 
 /** JSON from a machine other than the one this window is pointed at. */
 export async function requestAt<T>(base: string, path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${base}${path}`, init);
+  const url = new URL(`${base}${path}`, window.location.origin).href;
+  const signed = await getSignedHeaders(init?.method ?? 'GET', url);
+  const response = await fetch(url, { ...init, headers: { ...signed, ...init?.headers } });
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: string; message?: string } | null;
     throw new Error(body?.message ?? body?.error ?? `Request failed (${response.status})`);
@@ -38,7 +40,17 @@ export function getApiBaseUrl(): string { return machineBase ?? API_BASE_URL; }
 export function getMachineApiBase(): string | null { return machineBase; }
 export function getHomeApiBase(): string { return API_BASE_URL; }
 
+/**
+ * A root-relative path on the selected machine; unchanged at home. For URLs the
+ * browser loads itself. `<img>`, frames and new tabs send no Origin, so the
+ * machine's port refuses `/api/` ones: load those through `apiClient`.
+ */
+export function machineUrl(path: string): string {
+  return machineBase && path.startsWith('/') ? `${machineBase}${path}` : path;
+}
+
 const machineListeners = new Set<() => void>();
+let homeIsRemote = false;
 
 export function subscribeMachineApiBase(listener: () => void): () => void {
   machineListeners.add(listener);
@@ -52,6 +64,7 @@ export function subscribeMachineApiBase(listener: () => void): () => void {
  */
 export function setMachineApiBase(base: string | null) {
   if (base === machineBase) return;
+  const leavingHome = machineBase === null;
   swapMachineView(machineBase ?? HOME_VIEW, base ?? HOME_VIEW);
   machineBase = base;
   try {
@@ -60,8 +73,11 @@ export function setMachineApiBase(base: string | null) {
   } catch {
     // The switch still holds until the next reload.
   }
-  // Each server's auth info sets this again; home is not remote.
-  delete (window as unknown as Record<string, unknown>).__GROVE_REMOTE__;
+  // A paired machine is always remote; home goes back to what it was.
+  const flags = window as unknown as Record<string, unknown>;
+  if (leavingHome) homeIsRemote = flags.__GROVE_REMOTE__ === true;
+  if (base || homeIsRemote) flags.__GROVE_REMOTE__ = true;
+  else delete flags.__GROVE_REMOTE__;
   for (const listener of machineListeners) listener();
 }
 
@@ -284,7 +300,7 @@ async function signRequest(
   // Match fetch's URL serialization before signing: Unicode and spaces are
   // percent-encoded on the wire, while existing escapes remain unchanged.
   // Keep query bytes intact (URLSearchParams would re-encode them).
-  const url = new URL(path, window.location.origin);
+  const url = new URL(machineUrl(path), window.location.origin);
   const canonical = canonicalPath(url.pathname + url.search);
   const message = `${timestamp}|${nonce}|${method}|${canonical}`;
   const signature = await hmacSha256Hex(sk, message);
@@ -346,6 +362,7 @@ async function getAuthOnlyHeaders(
 /** Append HMAC signature as query params to a WebSocket URL (async). */
 export async function appendHmacToUrl(url: string): Promise<string> {
   await waitForIosTransport();
+  url = machineUrl(url);
   // Radio server mode (phone pages): there is no HMAC secret — auth is a
   // session Bearer token. WebSocket connections can't set headers, so the
   // token rides as a `?token=` query param (the radio_server auth middleware
@@ -796,7 +813,11 @@ export const apiClient = new ApiClient();
 /// Get the API host for WebSocket connections.
 /// Priority: __GROVE_API_BASE__ > VITE_API_URL > window.location.host
 export function getApiHost(): string {
-  if (machineBase) return new URL(machineBase).host;
+  // With its path: a machine reached through this server sits under one.
+  if (machineBase) {
+    const url = new URL(machineBase);
+    return `${url.host}${url.pathname.replace(/\/$/, '')}`;
+  }
   // Remote mode: injected by grove web --remote-url
   const remoteBase = (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).__GROVE_API_BASE__) as string | undefined;
   if (remoteBase) {

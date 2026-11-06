@@ -68,6 +68,7 @@ pub fn create_api_router() -> Router {
         .route(
             "/machines/{id}/session",
             post(handlers::machines::refresh_session),
+        .route("/machines/{id}/via/{*rest}", any(handlers::machines::via))
         )
         // Agent usage quota API (Claude Code / Codex / Gemini)
         .route(
@@ -1454,6 +1455,11 @@ pub fn create_router(
             .with_state(auth.clone());
 
         // OAuth / QR registration callback. Platform message transport remains
+            // Frames can't sign here either; the token is checked over there.
+            .route(
+                "/machines/{id}/via/api/v1/plugin-assets/{*rest}",
+                get(handlers::machines::via),
+            )
         // entirely inside the plugin backend.
         let connect_provider_ingress = Router::new()
             .route(
@@ -1618,7 +1624,34 @@ pub fn create_proxy_router(remote: String) -> Router {
     proxy_router(Arc::new(ProxyTarget {
         url: remote,
         signer: None,
-    }))
+    });
+    proxy_router(target.clone()).merge(
+        Router::new()
+            .route("/api/v1/machines/{id}/via/{*rest}", any(via_proxy_handler))
+            .with_state(target),
+    )
+}
+
+/// `via` paths carry both HTTP and every WebSocket route.
+async fn via_proxy_handler(
+    state: State<Arc<ProxyTarget>>,
+    request: axum::extract::Request,
+) -> axum::response::Response {
+    use axum::extract::{FromRequestParts, Request};
+    use axum::response::IntoResponse;
+
+    let upgrading = request
+        .headers()
+        .get(axum::http::header::UPGRADE)
+        .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
+    if !upgrading {
+        return http_proxy_handler(state, request).await;
+    }
+    let (mut parts, body) = request.into_parts();
+    match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+        Ok(ws) => ws_proxy_handler(state, ws, Request::from_parts(parts, body)).await,
+        Err(rejection) => rejection.into_response(),
+    }
 }
 
 pub(crate) fn proxy_router(target: Arc<ProxyTarget>) -> Router {

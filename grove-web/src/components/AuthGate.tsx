@@ -21,8 +21,15 @@ const ORBIT_SUCCESS_MS = 650;
 
 type AuthState = 'loading' | 'authenticated' | 'needs_auth' | 'connection_error';
 
+/** The server this window last signed in to. Switching machines rebuilds this
+ *  gate: the app stays on screen while it checks again, without the splash. */
+let signedInAt: string | null = null;
+
 export function AuthGate({ children }: { children: ReactNode }) {
-  const [authState, setAuthState] = useState<AuthState>('loading');
+  const [switching] = useState(() => signedInAt !== null && signedInAt !== getApiBaseUrl());
+  const [authState, setAuthState] = useState<AuthState>(switching ? 'authenticated' : 'loading');
+  useEffect(() => { if (authState !== 'loading') signedInAt = authState === 'authenticated' ? getApiBaseUrl() : null; }, [authState]);
+  const checkQuietly = useRef(switching);
   const [info, setInfo] = useState<AuthInfo | null>(null);
   const [skInput, setSkInput] = useState('');
   const [trusted, setTrusted] = useState(isIosClient);
@@ -50,7 +57,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const initialize = useCallback(async () => {
     if (initializing.current) return;
     initializing.current = true;
-    setAuthState('loading');
+    if (!checkQuietly.current) setAuthState('loading');
+    checkQuietly.current = false;
     setError(null);
     try {
       if (isIosClient && new URLSearchParams(window.location.search).has('ios-sign-out')) {
@@ -128,7 +136,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => { void Promise.resolve().then(initialize); }, [initialize]);
 
   useEffect(() => {
-    if (authState === 'loading' || authState === 'connection_error') return;
+    // Without `info` a switch is still checking: the shell keeps what it has.
+    if (authState === 'loading' || authState === 'connection_error' || !info) return;
     const sync = () => {
       if (isAuthTransitionPending()) return;
       const deviceId = info?.device_sessions ? getDeviceId() : null;
@@ -139,7 +148,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     sync();
     window.addEventListener(AUTH_CHANGED_EVENT, sync);
     return () => window.removeEventListener(AUTH_CHANGED_EVENT, sync);
-  }, [authState, info?.device_sessions]);
+  }, [authState, info]);
 
   useEffect(() => {
     const expired = () => {

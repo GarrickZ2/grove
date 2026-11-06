@@ -14,7 +14,7 @@ import { DialogLayerContext } from "../ui/dialogLayerContext";
 import { BuddyLaunchContext } from "./buddyLaunchContext";
 import { BuddyApp } from "./BuddyApp";
 import { writeBuddyPreference } from "./buddyStorage";
-import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import { OrbitInterfaceContext, useOrbitLook } from "../../orbit/ui/interfaceContext";
 import "../../orbit/tokens.css";
 
 function BuddyCommands({ onExit, open, items }: { onExit: () => void; open: (id?: string, create?: boolean) => void; items: ReturnType<typeof useBuddies>["items"] }) {
@@ -27,7 +27,8 @@ function BuddyCommands({ onExit, open, items }: { onExit: () => void; open: (id?
 export function BuddyOverlay({ open, onOpen, onExit, children }: { open: boolean; onOpen: () => void; onExit: () => void; children: ReactNode }) {
   const data = useBuddies();
   // Under Orbit the overlay carries .orbit-ui so Buddy reads the Orbit tokens (see the end of buddy.css).
-  const orbit = useOrbitInterface();
+  // The remembered look, so a machine switch doesn't redraw it while the config reloads.
+  const orbit = useOrbitLook();
   const overlay = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -52,7 +53,7 @@ export function BuddyOverlay({ open, onOpen, onExit, children }: { open: boolean
   return <BuddyLaunchContext.Provider value={{ items: data.items, open: launch }}>
     <InteractionContext.Provider value={!open}><div inert={open || undefined} aria-hidden={open || undefined} style={{ height: "100%" }}>{children}</div></InteractionContext.Provider>
     <AnimatePresence initial={false}>{open && <motion.div ref={overlay} tabIndex={-1} role="dialog" aria-label="Buddies" aria-modal="true" className={orbit ? "buddy-overlay orbit-ui" : "buddy-overlay"} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-      <DialogLayerContext.Provider value={80}><BuddyNavigationContext.Provider value={{ interfaceName, navigate }}><CommandPaletteProvider><BuddyApp onExit={onExit} request={request} /><BuddyCommands onExit={onExit} open={launch} items={data.items} /></CommandPaletteProvider></BuddyNavigationContext.Provider></DialogLayerContext.Provider>
+      <OrbitInterfaceContext.Provider value={orbit}><DialogLayerContext.Provider value={80}><BuddyNavigationContext.Provider value={{ interfaceName, navigate }}><CommandPaletteProvider><BuddyApp onExit={onExit} request={request} /><BuddyCommands onExit={onExit} open={launch} items={data.items} /></CommandPaletteProvider></BuddyNavigationContext.Provider></DialogLayerContext.Provider></OrbitInterfaceContext.Provider>
     </motion.div>}</AnimatePresence>
   </BuddyLaunchContext.Provider>;
 }

@@ -27,9 +27,9 @@ describe("BuddySidebar across machines", () => {
   const open = vi.fn();
   const create = vi.fn();
 
-  async function render(machines: MachineBuddies[], items: BuddySummary[], loading = false) {
+  async function render(machines: MachineBuddies[], items: BuddySummary[], loading = false, selectedId = "") {
     await act(async () => root.render(
-      <BuddySidebar machines={machines} onOpenMachine={open} onCreateOnMachine={create} loading={loading} items={items} selectedId="" viewingId=""
+      <BuddySidebar machines={machines} onOpenMachine={open} onCreateOnMachine={create} loading={loading} items={items} selectedId={selectedId} viewingId=""
         onSelect={() => {}} onCreate={() => {}} onBuddySettings={() => {}} onDelete={() => {}} onPin={() => {}}
         onMarkRead={() => {}} onMarkUnread={() => {}} onReorder={() => {}} />,
     ));
@@ -51,6 +51,13 @@ describe("BuddySidebar across machines", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+  });
+
+  it("marks the opened Buddy while this machine's list loads", async () => {
+    await render([section("here", true, [buddy("a"), buddy("b")]), section("there", false, [])], [], true, "b");
+    const selected = [...host.querySelectorAll(".buddy-list-item.is-selected")].map((row) => row.textContent);
+    expect(selected).toHaveLength(1);
+    expect(selected[0]).toContain("b");
   });
 
   it("lists each machine with its Buddies and goes there on select", async () => {

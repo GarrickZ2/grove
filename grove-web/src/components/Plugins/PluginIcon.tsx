@@ -1,3 +1,4 @@
+import { machineUrl } from "../../api/client";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Puzzle } from "lucide-react";
 import type { Plugin } from "../../api/plugins";
@@ -45,10 +46,10 @@ export function PluginIcon({
 
   if (icon && (IMG_RE.test(icon) || icon.includes("/"))) {
     if (assetSession?.pluginId !== plugin.id || assetSession.generation !== generation || assetSession.token === failedToken) return <Puzzle className={className} />;
-    const src = `/api/v1/plugin-assets/${assetSession.token}/${plugin.id}/${icon
+    const src = machineUrl(`/api/v1/plugin-assets/${assetSession.token}/${plugin.id}/${icon
       .split("/")
       .map(encodeURIComponent)
-      .join("/")}`;
+      .join("/")}`);
     return <img src={src} alt="" className={`${className} object-contain`} onError={() => setFailedToken(assetSession.token)} />;
   }
   if (icon) {

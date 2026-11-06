@@ -6,7 +6,7 @@ import {
 } from "../../api/machines";
 import { Button, DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel, HoldButton, OrbitDialogLayer, StatusDot, usePopover, type StatusTone } from "../../orbit/ui";
 import { useConfig } from "../../context";
-import { setMachineApiBase } from "../../api/client";
+import { requestAt, setMachineApiBase } from "../../api/client";
 import { isTauriShell, signInToMachine } from "../../utils/tauriShell";
 import { homeNote, MACHINE_ICONS, machineAddress, machineNote, parseHeaders } from "./orbitMachines";
 import "./orbit-machine-menu.css";
@@ -188,27 +188,20 @@ export function OrbitMachineMenu({ pairedOnly = false }: {
   }, [refresh]);
 
   if (!overview || (pairedOnly && overview.machines.length === 0)) return null;
-  const { current, home_url: homeUrl, this: home, machines } = overview;
+  const { current, this: home, machines } = overview;
   const shown = current === home.id ? home : machines.find((machine) => machine.id === current) ?? home;
   const shownStatus = current === home.id ? "online" : machines.find((machine) => machine.id === current)?.status ?? "offline";
 
-  const goHome = () => { if (homeUrl) setMachineApiBase(null); };
+  const goHome = () => setMachineApiBase(null);
   const switchTo = async (machine: PairedMachine) => {
     setFailure(null);
     try {
-      // Reached remotely there is no local port: that machine's own address opens it.
-      if (homeUrl) {
-        const url = await openMachine(machine.id);
-        // Stay where we are unless it answers. /config goes all the way to the
-        // machine; /auth/info is answered by the local proxy even when it's down.
-        const reached = await fetch(`${url}/api/v1/config`).catch(() => null);
-        if (!reached?.ok) throw new Error(`Can't reach ${machine.name}`);
-        close();
-        setMachineApiBase(url);
-      } else if (machine.url) {
-        close();
-        window.open(machine.url, "_blank", "noopener");
-      }
+      const url = await openMachine(machine.id);
+      // Stay where we are unless it answers. /config goes all the way to the
+      // machine; /auth/info is answered by the local proxy even when it's down.
+      await requestAt(url, "/api/v1/config").catch(() => { throw new Error(`Can't reach ${machine.name}`); });
+      close();
+      setMachineApiBase(url);
     } catch (reason) {
       setFailure(message(reason));
     }
@@ -235,7 +228,7 @@ export function OrbitMachineMenu({ pairedOnly = false }: {
     <div ref={rootRef} className="orbit-machine">
       {open ? (
         <div className="orbit-machine-pop" role="menu" aria-label="Machines">
-          <MachineRow machine={home} tone="ok" note={homeNote(home)} current={current === home.id} disabled={current === home.id || !homeUrl} onOpen={goHome} onEdit={() => { close(); setDialog({ mode: "edit", machine: home, isThis: true }); }} />
+          <MachineRow machine={home} tone="ok" note={homeNote(home)} current={current === home.id} disabled={current === home.id} onOpen={goHome} onEdit={() => { close(); setDialog({ mode: "edit", machine: home, isThis: true }); }} />
           {machines.map((machine) => (
             <MachineRow
               key={machine.id}
