@@ -9,7 +9,7 @@ import { useIsMobile } from "../../hooks";
 import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 import { MarketplaceModal } from "../Config/MarketplaceModal";
 import { agentOptions, type AgentOption } from "../../data/agents";
-import { configForAgent } from "../../utils/agentConfig";
+import { configForAgent, reconcileAgentConfig } from "../../utils/agentConfig";
 import { agentIconComponent } from "../../utils/agentIcon";
 import { getProjectStyle } from "../../utils/projectStyle";
 import { formatTimeAgo } from "../../utils/notificationFormat";
@@ -19,7 +19,7 @@ import type { ChatDropdownOption } from "../Tasks/TaskView/ChatConfigMenus";
 import { configDropdownValues, quickConfigOptions } from "../Tasks/TaskView/sessionConfigOptions";
 import { buildDefaultSessionTitle } from "../Tasks/TaskView/useInitialChatLoad";
 import { AttachmentError, attachmentLabel, prepareFileAttachment, type Attachment } from "../Tasks/TaskView/chatAttachments";
-import { promptConfigFromSelection } from "./orbitDraftConfig";
+import { promptConfigFromSelection, readSavedSelection, saveSelection } from "./orbitDraftConfig";
 import { setOrbitFirstMessage } from "./orbitFirstMessage";
 import { hasSeen, markSeen, STARTERS_DONE_KEY } from "../../orbit/firstrun/storage";
 import { useRecentSessions } from "../../orbit/dashboard/useRecentSessions";
@@ -56,6 +56,13 @@ const STARTERS: Record<"code" | "studio", { label: string; icon: LucideIcon }[]>
 /** Desktop "Continue" row: the project's most recently active Sessions. */
 const CONTINUE_LIMIT = 3;
 const CLOCK_MS = 30_000;
+
+/** An Agent's choice from the last visit, checked against what it offers now. */
+function restoredSelection(agentId: string, agent: InstalledAgentConfig | undefined): AgentConfigSelection {
+  const saved = readSavedSelection(agentId);
+  if (!agent) return saved ?? { source: "default", agent_id: agentId };
+  return saved ? reconcileAgentConfig(saved, agent) : configForAgent(agent);
+}
 
 type RecentSession = { taskId: string; taskName?: string; chatId: string; title: string; agent: string; createdAt: string };
 
@@ -213,7 +220,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
         setSelection((current) => {
           const gone = known.some((agent) => agent.id === current.agent_id) && !installed.some((agent) => agent.id === current.agent_id);
           if (current.agent_id && !gone) return current;
-          if (preferred) return configForAgent(preferred);
+          if (preferred) return restoredSelection(preferred.id, preferred);
           return gone ? { source: "default" } : current;
         });
       })
@@ -229,6 +236,14 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     // A restored draft continues where it left off (focus puts the caret at the end).
     if (!phone) inputRef.current?.focus();
   }, [phone]);
+
+  // Custom Agents load apart from the installed list, so the last one used is restored once they arrive.
+  const [lastAgent] = useState(readLastAgent);
+  const [customAgentSettled, setCustomAgentSettled] = useState(false);
+  if (!customAgentSettled && [...customAgentPersonas, ...customAgents].some((item) => item.id === lastAgent)) {
+    setCustomAgentSettled(true);
+    setSelection(restoredSelection(lastAgent!, undefined));
+  }
 
   const agentId = selection.agent_id ?? "";
   // Only built-in Agents have a capability snapshot; Custom Agents carry their own config.
@@ -257,10 +272,15 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   ];
   const noAgents = !phone && acpAvailabilityLoaded && agentItems.length === 0 && !agentId;
   const chooseAgent = (id: string) => {
-    const installed = agents.find((candidate) => candidate.id === id);
-    setSelection(installed ? configForAgent(installed) : { source: "default", agent_id: id });
+    writeLastAgent(id);
+    setCustomAgentSettled(true);
+    setSelection(restoredSelection(id, agents.find((candidate) => candidate.id === id)));
   };
 
+  const changeSelection = (next: AgentConfigSelection) => {
+    setSelection(next);
+    saveSelection(next);
+  };
   const configOptions = selection.source === "config_options" ? snapshot?.config_options ?? [] : [];
   const quick = quickConfigOptions(configOptions);
   const quickIds = new Set([quick.model, quick.mode, quick.thinking].flatMap((option) => option ? [option.id] : []));
@@ -269,7 +289,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     return String(selection.values[option.id] ?? option.currentValue);
   };
   const setOption = (option: SessionConfigOption, value: string | boolean) => {
-    if (selection.source === "config_options") setSelection({ ...selection, values: { ...selection.values, [option.id]: value } });
+    if (selection.source === "config_options") changeSelection({ ...selection, values: { ...selection.values, [option.id]: value } });
   };
   const modes = selection.source === "modes" ? snapshot?.modes?.available ?? [] : [];
   // Desktop: every setting lives in the composer's one setup chip.
@@ -283,7 +303,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     }] : []),
     ...(modes.length > 0 && selection.source === "modes" ? [{
       id: "mode", kind: "mode" as const, label: "Mode", options: modes.map(([id, name]) => ({ label: name, value: id })), value: selection.mode_id,
-      onSelect: (modeId: string) => { setSelection({ ...selection, mode_id: modeId }); },
+      onSelect: (modeId: string) => { changeSelection({ ...selection, mode_id: modeId }); },
     }] : []),
     ...configOptions.filter((option) => !quickIds.has(option.id) && option.type === "select").map((option): SetupField => ({
       id: option.id, kind: "option", label: option.name, options: dropdownValues(option), value: valueOf(option), onSelect: (value) => setOption(option, value),
@@ -352,7 +372,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
         createChat(selectedProject.id, effectiveTaskId, buildDefaultSessionTitle(), agentId),
         new Promise((resolve) => window.setTimeout(resolve, HANDOFF_MS)),
       ]);
-      setOrbitFirstMessage(chat.id, { text: text.trim(), config: promptConfigFromSelection(selection), chat, attachments });
+      setOrbitFirstMessage(chat.id, { text: text.trim(), config: promptConfigFromSelection(selection, configOptions), chat, attachments });
       writeLastAgent(agentId);
       writeDraftHtml("");
       markSeen(STARTERS_DONE_KEY);
