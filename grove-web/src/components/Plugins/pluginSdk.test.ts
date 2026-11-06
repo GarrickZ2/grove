@@ -25,10 +25,15 @@ interface Sdk {
   };
 }
 
+function transpile(name: string): string {
+  return ts.transpileModule(scaffold(name), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+}
+
 function loadSdk(): Sdk {
-  const js = ts.transpileModule(scaffold("SCAFFOLD_GROVE_TS"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+  const host: Record<string, unknown> = {};
+  new Function("exports", transpile("SCAFFOLD_GROVE_HOST_TS"))(host);
   const exports: { grove?: Sdk } = {};
-  new Function("exports", js)(exports);
+  new Function("exports", "require", transpile("SCAFFOLD_GROVE_TS"))(exports, () => host);
   return exports.grove!;
 }
 

@@ -25,6 +25,7 @@ include = [
     "/docs/favicon.svg",
     "/docs/logo.png",
     "/docs/plugin-development.md",
+    "/docs/plugin.schema.json",
     "/gen/**",
     "/grove-web/dist/**",
     "!/grove-web/dist/**/*.map",

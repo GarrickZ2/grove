@@ -65,6 +65,24 @@ pub struct ScaffoldPluginRequest {
 /// scaffold can drop a copy into every new plugin's `docs/`. Editing
 /// `docs/plugin-development.md` keeps the two in sync automatically.
 const PLUGIN_DEV_GUIDE: &str = include_str!("../../../docs/plugin-development.md");
+const PLUGIN_SCHEMA: &str = include_str!("../../../docs/plugin.schema.json");
+const SCAFFOLD_AGENTS_MD: &str = r#"# Working on this Grove plugin
+
+Read `docs/plugin-development.md` before changing how the plugin talks to Grove.
+`docs/plugin.schema.json` describes `plugin.json`. Both are refreshed by
+Extensions → this plugin → Manage → Update SDK; so is `src/grove-sdk/`, so do
+not edit those files.
+
+- `npm run build` builds everything; `npm run publish` packages a zip.
+- Declare every permission the code needs in `plugin.json`. Grove refuses calls
+  the manifest does not declare.
+- In a backend, stdout is the protocol: log with `console.error`.
+- Prefer `defineBackend` over calling `serve()`, so stops run your cleanups.
+- A listener must bind to `127.0.0.1` unless the user asks otherwise, and must
+  check the sender itself. Grove does not authenticate requests to it.
+- Text from outside belongs in `text`, never in a hand-built `<grove-meta>` tag.
+  Attach metadata through the `meta` option.
+"#;
 
 // ─── Scaffold templates ──────────────────────────────────────────────────────
 // A scaffolded plugin is a real vite + TypeScript project. Grove never compiles
@@ -225,7 +243,112 @@ const SCAFFOLD_INDEX_HTML: &str = r#"<!doctype html>
 // Inlined SDK. A published plugin would depend on the `grove-plugin-sdk` npm
 // package; this self-contained copy keeps the scaffold buildable with zero
 // extra deps. Talks to the Grove host over postMessage.
-const SCAFFOLD_GROVE_TS: &str = r#"/** A structured SDK error — `code` lets you branch (e.g. "not_found",
+const SCAFFOLD_GROVE_HOST_TS: &str = r#"// Host API shared by panels, MCP servers and backends. Each side supplies its
+// own transport; Grove checks the plugin's permissions on the server.
+export type HostCall = <T>(method: string, params?: unknown) => Promise<T>;
+
+export interface ProjectInfo { id: string; name: string; path: string; project_type: string; archived: boolean; }
+export interface TaskInfo { id: string; name: string; branch: string; target: string; status: string; updatedAt: string; }
+/** One open window: who is looking at what. */
+export interface Viewpoint {
+  surfaceId: string;
+  device: { id: string | null; name: string; client: string };
+  focused: boolean;
+  visible: boolean;
+  lastActiveAt: number;
+  page: string | null;
+  projectId: string | null;
+  taskId: string | null;
+  chatId: string | null;
+  panel: string | null;
+}
+export type FormQuestion =
+  | { type: "single_choice" | "multi_choice"; id: string; title: string; description?: string; options: { id: string; label: string; description?: string }[] }
+  | { type: "text" | "textarea"; id: string; title: string; description?: string };
+export interface BuddyInfo { id: string; name: string; role: string | null; description: string; status: string; sessionId: string | null; }
+/** Metadata attached to a Prompt. `prompt` is what the agent reads. */
+export interface PromptMeta { type: string; data?: Record<string, unknown>; prompt?: string; }
+export interface SessionTarget { projectId: string; taskId: string; chatId: string; }
+
+export function createHostApi(call: HostCall) {
+  return {
+    view: {
+      /** Every open window, focused first. Needs view:list. */
+      list: () => call<Viewpoint[]>("view.list"),
+    },
+    memory: {
+      /** Find a Project's memories. Needs memory:read. */
+      list: (projectId: string, options?: { query?: string; cursor?: string; limit?: number }) =>
+        call<Record<string, unknown>>("memory.list", { projectId, ...options }),
+      /** One memory with what relates to it. Needs memory:read. */
+      read: (projectId: string, entityId: string) =>
+        call<Record<string, unknown>>("memory.read", { projectId, entityId }),
+      /** Add raw material for Grove's memory organizer. Needs memory:write. */
+      appendLog: (log: { projectId: string; taskId: string; chatId?: string; title: string; description: string; tags?: string[] }) =>
+        call<Record<string, unknown>>("memory.appendLog", log),
+    },
+    notes: {
+      /** A Task's notes. Needs notes:read. */
+      read: (projectId: string, taskId: string) =>
+        call<{ content: string }>("notes.read", { projectId, taskId }),
+      /** Replace a Task's notes. Needs notes:write. */
+      write: (projectId: string, taskId: string, content: string) =>
+        call<{ ok: true }>("notes.write", { projectId, taskId, content }),
+    },
+    review: {
+      /** A Task's review comments. Needs review:read. */
+      list: (projectId: string, taskId: string) =>
+        call<Record<string, unknown>>("review.list", { projectId, taskId }),
+    },
+    routines: {
+      /** A Buddy's routines. Needs buddies:read. */
+      list: (buddyId: string) => call<unknown[]>("routines.list", { buddyId }),
+    },
+    groups: {
+      /** Post to a Buddy group. Needs buddies:write. */
+      send: (groupId: string, text: string) =>
+        call<Record<string, unknown>>("groups.send", { groupId, text }),
+    },
+    interaction: {
+      /** Show a form in a live Session. The answers arrive as its next Prompt.
+       *  Needs ui:interact. */
+      askForm: (form: SessionTarget & { title: string; description?: string; questions: FormQuestion[] }) =>
+        call<{ formId: string }>("interaction.askForm", form),
+    },
+    workspace: {
+      /** Needs workspace:read. */
+      projects: () => call<ProjectInfo[]>("workspace.projects"),
+      /** Needs workspace:read. */
+      tasks: (projectId: string) => call<TaskInfo[]>("workspace.tasks", { projectId }),
+    },
+    sessions: {
+      /** A Task's Sessions and their status. Needs sessions:read. */
+      list: (projectId: string, taskId: string) => call<unknown[]>("sessions.list", { projectId, taskId }),
+      /** Read a Session a page at a time. Needs sessions:read. */
+      read: (sessionId: string, page?: { limit?: number; before?: number; after?: number; includeTools?: boolean }) =>
+        call<Record<string, unknown>>("sessions.read", { sessionId, ...page }),
+      /** Needs sessions:read. */
+      search: (query: string, scope?: { sessionId?: string; projectId?: string; limit?: number }) =>
+        call<unknown>("sessions.search", { query, ...scope }),
+      /** Send a Prompt to any Session, starting it if needed. Needs sessions:write. */
+      send: (target: SessionTarget & { text: string; meta?: PromptMeta[] }) =>
+        call<{ ok: true }>("sessions.send", target),
+    },
+    buddies: {
+      /** Needs buddies:read. */
+      list: () => call<BuddyInfo[]>("buddies.list"),
+      /** Send a Prompt to a Buddy's active Session. Needs buddies:write. */
+      send: (target: { buddyId: string; text: string; meta?: PromptMeta[] }) =>
+        call<{ ok: true; sessionId: string }>("buddies.send", target),
+    },
+  };
+}
+"#;
+
+const SCAFFOLD_GROVE_TS: &str = r#"import { createHostApi } from "./host";
+export * from "./host";
+
+/** A structured SDK error — `code` lets you branch (e.g. "not_found",
  *  "forbidden", "timeout") instead of string-matching the message. */
 export class GroveError extends Error {
   code: string;
@@ -528,6 +651,8 @@ export interface ChatInfo {
   agent: string;
 }
 
+const hostApi = createHostApi((method, params) => call("host.call", { method, params: params ?? {} }));
+
 export const grove = {
   // Project + task context. `taskId`/project read are only meaningful in a
   // workspace panel; a sidebar page is app-scoped (taskId is null).
@@ -568,6 +693,13 @@ export const grove = {
     //   grove.chat.sendPrompt({ chatId: grove.chat.activeChatId()!, text: "..." })
     sendPrompt: (opts: { chatId: string; text: string }): Promise<{ ok: true }> =>
       call<{ ok: true }>("chat.send", { chatId: opts.chatId, text: opts.text }),
+  },
+  // Workspace, Session and Buddy access. Grove checks each call's permission.
+  ...hostApi,
+  view: {
+    ...hostApi.view,
+    /** This window's own project, task and focused chat. */
+    current: async () => ({ ...(await call<HostInfo>("host.getInfo")), chatId: currentActiveChatId }),
   },
   // Call the plugin's node backend (contributes.backend). Requires a backend.
   backend: {
@@ -638,6 +770,8 @@ call<Partial<GroveTheme>>("theme.get").then(applyTheme).catch(() => { /* host ma
 // `grove.host.getInfo()` / `grove.project.*` / `grove.storage.*` and never touch
 // env, JSON, or any "context" object.
 const SCAFFOLD_GROVE_MCP_TS: &str = r#"import { readFile, readdir, writeFile, rm, mkdir } from "node:fs/promises";
+import { createHostApi } from "./host";
+export * from "./host";
 import { dirname, join, resolve, relative, isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -738,7 +872,22 @@ function makeScope(scope: "global" | "project" | "task"): StorageScope {
   return s;
 }
 
+// An MCP server's stdio belongs to the agent, so host calls go over loopback.
+async function httpHostCall<T>(method: string, params?: unknown): Promise<T> {
+  const url = process.env.GROVE_HOST_URL;
+  if (!url) throw new Error("[grove] host API is not available in this process");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-grove-host-token": process.env.GROVE_HOST_TOKEN ?? "" },
+    body: JSON.stringify({ method, params: params ?? {} }),
+  });
+  const body = await response.json().catch(() => null) as { error?: string } | null;
+  if (!response.ok) throw new Error(body?.error ?? `host call failed: ${response.status}`);
+  return body as T;
+}
+
 export const grove = {
+  ...createHostApi(httpHostCall),
   host: {
     /** Current project + task — same shape as the panel's grove.host.getInfo(). */
     getInfo(): Promise<HostInfo> {
@@ -816,6 +965,8 @@ export const grove = {
 // the small set of host APIs exposed under `grove.connect`.
 const SCAFFOLD_GROVE_BACKEND_TS: &str = r#"import { createInterface } from "node:readline";
 import { grove as baseGrove } from "./mcp";
+import { createHostApi } from "./host";
+export * from "./host";
 
 type Handler = (params: unknown) => unknown | Promise<unknown>;
 type EventHandler = (data: unknown) => void;
@@ -866,6 +1017,7 @@ function hostCall<T>(method: string, params: unknown = {}): Promise<T> {
 
 export const grove = {
   ...baseGrove,
+  ...createHostApi(hostCall),
   events: {
     ...baseGrove.events,
     on<T = unknown>(name: string, callback: (data: T) => void): () => void {
@@ -917,9 +1069,65 @@ export function registerPromptMiddleware(hooks: PromptMiddlewareHandlers): void 
   if (hooks.dispatch) registerHandler("prompt.dispatch", hooks.dispatch as Handler);
 }
 
+export interface ListenerInfo { id?: string; port?: number; [key: string]: unknown; }
+export interface BackendContext {
+  /** Why this process started: startup, invoke or restart. */
+  reason: string;
+  /** Declared in contributes.backend.listeners, keyed by id. */
+  listeners: Record<string, ListenerInfo>;
+  /** Cleanups run on stop, last added first. */
+  subscriptions: Array<() => void | Promise<void>>;
+  /** A short line for the plugin's detail page. */
+  setStatus(detail: string): void;
+}
+export interface BackendDefinition {
+  activate?(context: BackendContext): void | Promise<void>;
+  deactivate?(): void | Promise<void>;
+  /** Runs for each onSchedule activation. */
+  schedule?(event: { cron: string; firedAt: number }): void | Promise<void>;
+}
+
+let definition: BackendDefinition | undefined;
+const subscriptions: BackendContext["subscriptions"] = [];
+let stopping = false;
+
+async function stop(): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  try {
+    for (const cleanup of subscriptions.reverse()) await cleanup();
+    await definition?.deactivate?.();
+  } catch (error) { console.error("[grove] deactivate failed:", error); }
+  process.exit(0);
+}
+
+/** Declare a backend's lifecycle. Replaces calling serve() yourself. */
+export function defineBackend(backend: BackendDefinition): void {
+  definition = backend;
+  if (backend.schedule) registerHandler("grove.schedule", backend.schedule as Handler);
+  serve();
+  const listeners: Record<string, ListenerInfo> = {};
+  try {
+    const declared = JSON.parse(process.env.GROVE_LISTENERS ?? "[]") as ListenerInfo[];
+    for (const listener of declared) if (listener.id) listeners[listener.id] = listener;
+  } catch { /* no listeners */ }
+  const context: BackendContext = {
+    reason: process.env.GROVE_ACTIVATION_REASON ?? "startup",
+    listeners,
+    subscriptions,
+    setStatus: (detail) => { process.stdout.write(JSON.stringify({ type: "grove:status", detail }) + "\n"); },
+  };
+  Promise.resolve(backend.activate?.(context)).catch((error) => {
+    console.error("[grove] activate failed:", error);
+    process.exit(1);
+  });
+}
+
 /** Start the backend protocol after registering handlers and event listeners. */
 export function serve(): void {
   const rl = createInterface({ input: process.stdin });
+  // Grove going away closes stdin; a listener must not outlive it.
+  rl.on("close", () => { void stop(); });
   rl.on("line", (line) => {
     const text = line.trim();
     if (!text) return;
@@ -927,6 +1135,7 @@ export function serve(): void {
     try { value = JSON.parse(text); } catch { return; }
     if (typeof value !== "object" || value === null || Array.isArray(value)) return;
     const message = value as { type?: string; id?: number; method?: string; params?: unknown; name?: string; data?: unknown; result?: unknown; error?: { message?: string } };
+    if (message.type === "grove:shutdown") { void stop(); return; }
     if (message.type === "grove:event" && typeof message.name === "string") {
       for (const callback of eventHandlers[message.name] ?? []) callback(message.data);
       return;
@@ -1139,14 +1348,31 @@ See `docs/plugin-development.md` for the full reference.
 
 /// Write the vendored SDK into `<dir>/src/grove-sdk/`, isolated from the user's
 /// own `src/` code. Shared by scaffold and the dev-only "Update SDK" action so
-/// the two never drift. Overwrites only these three files, nothing else.
-fn write_sdk_files(dir: &std::path::Path) -> std::io::Result<()> {
+/// the two never drift. Overwrites only these files and the two docs beside them.
+pub(crate) fn write_sdk_files(dir: &std::path::Path) -> std::io::Result<()> {
     let sdk = dir.join("src").join("grove-sdk");
     std::fs::create_dir_all(&sdk)?;
     std::fs::write(sdk.join("index.ts"), SCAFFOLD_GROVE_TS)?; // panel SDK
+    std::fs::write(sdk.join("host.ts"), SCAFFOLD_GROVE_HOST_TS)?;
     std::fs::write(sdk.join("mcp.ts"), SCAFFOLD_GROVE_MCP_TS)?;
     std::fs::write(sdk.join("backend.ts"), SCAFFOLD_GROVE_BACKEND_TS)?;
+    // The guide describes this SDK, so it moves with it.
+    let docs = dir.join("docs");
+    std::fs::create_dir_all(&docs)?;
+    std::fs::write(docs.join("plugin-development.md"), PLUGIN_DEV_GUIDE)?;
+    std::fs::write(docs.join("plugin.schema.json"), PLUGIN_SCHEMA)?;
     Ok(())
+}
+
+/// Every SDK file this build ships.
+#[cfg(test)]
+pub(crate) fn sdk_sources() -> [&'static str; 4] {
+    [
+        SCAFFOLD_GROVE_TS,
+        SCAFFOLD_GROVE_HOST_TS,
+        SCAFFOLD_GROVE_MCP_TS,
+        SCAFFOLD_GROVE_BACKEND_TS,
+    ]
 }
 
 /// Compare the vendored SDK with the exact SDK shipped by this Grove build.
@@ -1158,6 +1384,7 @@ fn plugin_sdk_status(local_path: &str) -> &'static str {
         .join("grove-sdk");
     let expected = [
         ("index.ts", SCAFFOLD_GROVE_TS.as_bytes()),
+        ("host.ts", SCAFFOLD_GROVE_HOST_TS.as_bytes()),
         ("mcp.ts", SCAFFOLD_GROVE_MCP_TS.as_bytes()),
         ("backend.ts", SCAFFOLD_GROVE_BACKEND_TS.as_bytes()),
     ];
@@ -1172,7 +1399,7 @@ fn plugin_sdk_status(local_path: &str) -> &'static str {
     }
     if found == 0 {
         "missing"
-    } else if found < 3 {
+    } else if found < 4 {
         "outdated"
     } else {
         "current"
@@ -1219,7 +1446,14 @@ pub async fn update_plugin_sdk(
     }
     Ok(Json(json!({
         "ok": true,
-        "files": ["src/grove-sdk/index.ts", "src/grove-sdk/mcp.ts", "src/grove-sdk/backend.ts"],
+        "files": [
+            "src/grove-sdk/index.ts",
+            "src/grove-sdk/host.ts",
+            "src/grove-sdk/mcp.ts",
+            "src/grove-sdk/backend.ts",
+            "docs/plugin-development.md",
+            "docs/plugin.schema.json",
+        ],
         "removedLegacy": removed_legacy,
     })))
 }
@@ -1360,7 +1594,7 @@ pub async fn scaffold_plugin(
     write("src/main.ts", &SCAFFOLD_MAIN_TS.replace("__NAME__", name))?;
     write("README.md", &SCAFFOLD_README.replace("__NAME__", name))?;
     write(&format!("skills/{skill_name}/SKILL.md"), &skill_md)?;
-    write("docs/plugin-development.md", PLUGIN_DEV_GUIDE)?;
+    write("AGENTS.md", SCAFFOLD_AGENTS_MD)?;
 
     // Auto-register the freshly scaffolded plugin so it shows up in the list
     // immediately (dev plugin = referenced by this folder path, not copied).
@@ -1450,7 +1684,9 @@ pub async fn list_plugins() -> Result<Json<serde_json::Value>, (StatusCode, Json
             v["permissions"] = json!(read_permissions_at(&p.local_path));
             v["contributes"] = read_contributes_at(&p.local_path);
             v["status"] = json!(crate::plugins::approval::status(p));
-            v["review"] = crate::plugins::approval::review(&p.local_path);
+            v["review"] = crate::plugins::approval::review(p);
+            v["pending_update"] = json!(crate::plugins::update::pending(p));
+            v["lifecycle"] = crate::plugins::lifecycle::summary(&p.id);
             // Folder still on disk? A user may delete the source folder without
             // uninstalling — surface it as "missing" so the row can be cleaned up.
             v["exists"] = json!(std::path::Path::new(&p.local_path).is_dir());
@@ -1488,7 +1724,7 @@ pub async fn approve_plugin(
     let plugin = crate::storage::plugins::get(&id)
         .map_err(|e| ApiError::internal(format!("registry error: {}", e)))?
         .ok_or_else(|| ApiError::not_found(format!("plugin not found: {}", id)))?;
-    let current = crate::plugins::approval::security_digest(&plugin.local_path)
+    let current = crate::plugins::approval::current_digest(&plugin)
         .ok_or_else(|| ApiError::bad_request("plugin.json is missing or invalid"))?;
     if current != req.digest {
         return Err(ApiError::with_status(
@@ -1607,6 +1843,8 @@ pub async fn delete_plugin(
         );
     }
     let _ = crate::operations::skills::remove_local_source(&format!("plugin:{}", id));
+    crate::plugins::lifecycle::forget(&id);
+    let _ = crate::plugins::update::discard(&id);
     let removed = crate::storage::plugins::delete(&id)
         .map_err(|e| ApiError::internal(format!("registry error: {}", e)))?;
     Ok(Json(json!({ "ok": removed })))
@@ -2254,6 +2492,22 @@ pub async fn install_local(
     Ok(Json(json!({ "ok": true, "plugin": plugin })))
 }
 
+/// Importing a plugin that is already installed stages an update for review
+/// rather than installing a second copy. Returns the installed plugin if so.
+fn stage_update(
+    name: &str,
+    source: &std::path::Path,
+) -> Result<Option<crate::storage::plugins::Plugin>, (StatusCode, Json<ApiError>)> {
+    let installed = crate::plugins::update::installed_named(name)
+        .map_err(|e| ApiError::internal(format!("registry error: {}", e)))?;
+    let Some(plugin) = installed else {
+        return Ok(None);
+    };
+    crate::plugins::update::stage(&plugin, source)
+        .map_err(|e| ApiError::internal(format!("failed to stage update: {}", e)))?;
+    Ok(Some(plugin))
+}
+
 /// Install a discovered Plugin artifact from an already materialized Source.
 /// The Source remains the catalog authority; the Plugin runtime receives an
 /// owned snapshot under ~/.grove/plugins so source sync cannot execute changed
@@ -2266,6 +2520,9 @@ pub(crate) async fn install_plugin_from_source(
 ) -> Result<crate::storage::plugins::Plugin, (StatusCode, Json<ApiError>)> {
     let (name, version) = read_manifest(src)?;
     verify_entries_built(src)?;
+    if let Some(plugin) = stage_update(&name, src)? {
+        return Ok(plugin);
+    }
 
     let id = crate::storage::plugins::new_id();
     let dest = plugins_dir().join(&id);
@@ -2358,14 +2615,20 @@ pub async fn install_zip(
         })?;
         let (name, version) = read_manifest(&plugin_root)?;
         verify_entries_built(&plugin_root)?;
+        if let Some(plugin) = stage_update(&name, &plugin_root)? {
+            return Ok(Err(plugin));
+        }
         let dest = plugins_dir().join(&id);
         copy_dir_recursive(&plugin_root, &dest)
             .map_err(|e| ApiError::internal(format!("failed to copy plugin: {}", e)))?;
-        Ok::<_, (StatusCode, Json<ApiError>)>((name, version, dest))
+        Ok::<_, (StatusCode, Json<ApiError>)>(Ok((name, version, dest)))
     })();
 
     let _ = std::fs::remove_dir_all(&staging);
-    let (name, version, dest) = result?;
+    let (name, version, dest) = match result? {
+        Ok(installed) => installed,
+        Err(plugin) => return Ok(Json(json!({ "ok": true, "plugin": plugin }))),
+    };
 
     let plugin = crate::storage::plugins::upsert(
         &id,
@@ -2423,6 +2686,17 @@ pub async fn install_git(
         let _ = std::fs::remove_dir_all(&clone_dir);
         return Err(e);
     }
+    match stage_update(&name, &plugin_dir) {
+        Ok(None) => {}
+        Ok(Some(plugin)) => {
+            let _ = std::fs::remove_dir_all(&clone_dir);
+            return Ok(Json(json!({ "ok": true, "plugin": plugin })));
+        }
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&clone_dir);
+            return Err(e);
+        }
+    }
 
     let plugin = crate::storage::plugins::upsert(
         &id,
@@ -2475,7 +2749,12 @@ fn read_contributes_at(local_path: &str) -> serde_json::Value {
         .and_then(|value| value.as_array())
         .map(|providers| providers.len())
         .unwrap_or_default();
+    let meta_types = c
+        .and_then(|c| c.get("metaTypes"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
     json!({
+        "metaTypes": meta_types,
         "panel": panel.map(|p| json!({
             "title": p.get("title").and_then(|v| v.as_str()),
             "side": p.get("side").and_then(|v| v.as_str()),
@@ -2799,6 +3078,120 @@ pub async fn emit_event(
     Ok(Json(json!({ "ok": true })))
 }
 
+// ─── host API (grove.workspace / sessions / buddies) ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct HostCallRequest {
+    pub method: String,
+    #[serde(default)]
+    pub params: serde_json::Value,
+}
+
+fn host_error(error: crate::error::GroveError) -> (StatusCode, Json<ApiError>) {
+    let message = error.to_string();
+    if message.contains("not found") {
+        ApiError::not_found(message)
+    } else if message.contains("permission") || message.contains("awaiting approval") {
+        ApiError::forbidden(message)
+    } else {
+        ApiError::bad_request(message)
+    }
+}
+
+/// POST /api/v1/view — a window reports what it is showing. Its device comes
+/// from how the request authenticated, not from the report.
+pub async fn report_view(
+    axum::Extension(identity): axum::Extension<crate::api::device_auth::RequestAuth>,
+    Json(report): Json<crate::plugins::view::ViewReport>,
+) -> Json<serde_json::Value> {
+    let device = identity.id().map(str::to_owned);
+    let name = device.as_deref().and_then(|id| {
+        crate::storage::auth_devices::list_all()
+            .ok()?
+            .into_iter()
+            .find(|(_, known)| known.id == id)
+            .map(|(_, known)| known.name)
+    });
+    Json(crate::plugins::view::record(
+        report,
+        device.as_deref(),
+        name,
+    ))
+}
+
+/// DELETE /api/v1/view/{surface} — a window closed.
+pub async fn remove_view(Path(surface): Path<String>) -> Json<serde_json::Value> {
+    crate::plugins::view::remove(&surface);
+    Json(json!({ "ok": true }))
+}
+
+/// POST /api/v1/plugins/{id}/update/apply — replace the plugin with the staged
+/// version the user reviewed as `digest`.
+pub async fn apply_plugin_update(
+    Path(id): Path<String>,
+    Json(req): Json<ApprovePluginRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let plugin = crate::plugins::update::apply(&id, &req.digest)
+        .await
+        .map_err(host_error)?;
+    Ok(Json(json!({ "ok": true, "plugin": plugin })))
+}
+
+/// DELETE /api/v1/plugins/{id}/update — drop the staged version.
+pub async fn discard_plugin_update(
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    crate::plugins::update::discard(&id).map_err(host_error)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// GET /api/v1/plugins/{id}/runtime — state and recent logs of its backend.
+pub async fn plugin_runtime(Path(id): Path<String>) -> Json<serde_json::Value> {
+    Json(crate::plugins::lifecycle::snapshot(&id))
+}
+
+/// POST /api/v1/plugins/{id}/runtime/{action} — `start`, `stop` or `restart`.
+pub async fn control_plugin_runtime(
+    Path((id, action)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    plugin_permissions(&id)?;
+    crate::plugins::backend::control(&id, &action)
+        .await
+        .map_err(host_error)?;
+    Ok(Json(crate::plugins::lifecycle::snapshot(&id)))
+}
+
+/// POST /api/v1/plugins/{id}/host — a panel's host call, relayed by PluginFrame.
+pub async fn host_call(
+    Path(id): Path<String>,
+    Json(req): Json<HostCallRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    crate::plugins::host_api::call(&id, &req.method, req.params)
+        .await
+        .map(Json)
+        .map_err(host_error)
+}
+
+/// POST /api/v1/plugin-host/{id} — the same call from a plugin's MCP process,
+/// whose stdio belongs to the agent. Authenticated by its per-plugin token.
+pub async fn process_host_call(
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<HostCallRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let token = headers
+        .get("x-grove-host-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !ct_eq(token, &crate::plugins::events::host_token(&id)) {
+        return Err(ApiError::forbidden("invalid host token".to_string()));
+    }
+    crate::plugins::host_api::call(&id, &req.method, req.params)
+        .await
+        .map(Json)
+        .map_err(host_error)
+}
+
 // ─── chat (grove.chat — list sessions, inject prompts) ───────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -2862,7 +3255,9 @@ pub async fn chat_send(
         .flatten()
         .map(|p| p.name)
         .unwrap_or_else(|| id.clone());
-    let body = crate::agent_graph::inject::build_plugin_inject_prompt(&id, &plugin_name, &req.text);
+    let body =
+        crate::agent_graph::inject::build_plugin_inject_prompt(&id, &plugin_name, &req.text, &[])
+            .map_err(ApiError::bad_request)?;
     crate::agent_graph::user_ops::user_send_message(
         &req.project_id,
         &req.task_id,

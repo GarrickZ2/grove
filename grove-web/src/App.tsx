@@ -75,6 +75,7 @@ import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
 import { readLastProjectView, writeLastProjectView } from "./utils/lastProjectView";
 import { readNavigationState, restoredTaskNavigation, writeNavigationState } from "./utils/navigationState";
 import { isStandaloneDisplay } from "./utils/standalone";
+import { updateView } from "./utils/viewReporter";
 import { fuzzyFindByName } from "./utils/fuzzySearch";
 import { useCommand, useContextKey, commandRegistry, useVoiceControlContext } from "./keyboard";
 import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette";
@@ -634,6 +635,10 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
     if (!selectedProject) return;
     writeLastProjectView(selectedProject.id, activeItem);
   }, [selectedProject, activeItem]);
+
+  useEffect(() => {
+    updateView({ page: activeItem, projectId: selectedProject?.id ?? null });
+  }, [activeItem, selectedProject?.id]);
 
   useEffect(() => {
     if (isLoading || (projects.length > 0 && !selectedProject)) return;

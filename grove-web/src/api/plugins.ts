@@ -1,6 +1,7 @@
 // Plugin development & management API: scaffold/develop, install (local copy /
 // git clone), register dev folders, list, delete, and per-plugin file storage.
 import { apiClient } from './client';
+import { registerPluginMetaTypes, type PluginMetaType } from '../utils/pluginMeta';
 
 export const PLUGINS_CHANGED_EVENT = 'grove:plugins-changed';
 
@@ -42,9 +43,9 @@ export async function scaffoldPlugin(
   );
 }
 
-/** Whether a plugin takes effect. `pending`: never approved; `changed`: its
- *  manifest now asks for more than the user approved. Only `active` plugins
- *  run processes, reach agents, or show their UI. */
+/** Whether a plugin takes effect. `pending`: never approved; `changed`: it no
+ *  longer matches what the user approved. Only `active` plugins run processes,
+ *  reach agents, or show their UI. */
 export type PluginStatus = 'active' | 'pending' | 'changed';
 
 /** What approving a plugin grants, grouped by risk (see plugins::approval). */
@@ -57,10 +58,52 @@ export interface PluginReview {
   /** Runs a process, which can always reach the network. */
   network: boolean;
   processes: { kind: 'backend' | 'mcp'; command: string; args: string[]; sandboxed: boolean }[];
-  agent: { skills: boolean; mcp: boolean; prompt_middleware: boolean; chat_write: boolean };
+  agent: {
+    skills: boolean;
+    mcp: boolean;
+    prompt_middleware: boolean;
+    chat_write: boolean;
+    sessions_write?: boolean;
+    buddies_write?: boolean;
+    ui_interact?: boolean;
+  };
   /** Data permissions among project/chat/storage read & write. */
   data: string[];
   connect_provider: boolean;
+  /** Keeps a process running while Grove is open. */
+  service?: boolean;
+  activation?: { on_startup: boolean; schedules: string[]; unknown: string[] };
+  /** Ports it says it opens. Declared by the plugin, not enforced by Grove. */
+  listeners?: { id?: string; port?: number }[];
+  /** How many Prompt metadata types it renders. */
+  meta_types?: number;
+}
+
+/** State of a plugin's app-scoped background process. */
+export interface PluginRuntime {
+  state: 'stopped' | 'running' | 'restarting' | 'failed' | 'elsewhere';
+  detail: string | null;
+  pid: number | null;
+  restarts: number;
+  startedAt: number | null;
+  lastError: string | null;
+  logs: string[];
+}
+
+/** A staged version waiting for the user's agreement. */
+export interface PluginUpdate {
+  from: string;
+  to: string;
+  digest: string;
+  review: PluginReview | null;
+  changes: {
+    permissions_added: string[];
+    permissions_removed: string[];
+    contributions_added: string[];
+    contributions_changed: string[];
+    contributions_removed: string[];
+    files: { added: number; removed: number; changed: number };
+  };
 }
 
 /** A registered plugin. `source` decides where the files live + delete behavior. */
@@ -79,6 +122,8 @@ export interface Plugin {
   status?: PluginStatus;
   /** Null when the manifest cannot be read. */
   review?: PluginReview | null;
+  /** A new version imported over this one, not yet agreed to. */
+  pending_update?: PluginUpdate | null;
   /** Present when the plugin contributes an MCP server. `available` is whether
    *  its `command` resolves on PATH. */
   runtime?: { command: string; available: boolean };
@@ -101,6 +146,8 @@ export interface Plugin {
   icon?: string | null;
   /** Which contribution points the plugin declares — decides where it can open. */
   contributes?: {
+    /** Prompt metadata this plugin renders from JSON templates. */
+    metaTypes?: PluginMetaType[];
     /** Workspace panel (task-scoped). `side` picks the IDE Layout column the
      *  panel mounts in ("left"=aux, "right"=info; default "left"). `shortcut`
      *  is an optional default keybinding (e.g. "Mod+Alt+p") registered into the
@@ -120,7 +167,33 @@ export interface Plugin {
 /** List all registered plugins. */
 export async function listPlugins(): Promise<Plugin[]> {
   const r = await apiClient.get<{ plugins: Plugin[] }>('/api/v1/plugins');
+  registerPluginMetaTypes(r.plugins);
   return r.plugins;
+}
+
+export async function getPluginRuntime(id: string): Promise<PluginRuntime> {
+  return apiClient.get<PluginRuntime>(`/api/v1/plugins/${id}/runtime`);
+}
+
+export async function controlPluginRuntime(
+  id: string,
+  action: 'start' | 'stop' | 'restart',
+): Promise<PluginRuntime> {
+  return apiClient.post<Record<string, never>, PluginRuntime>(`/api/v1/plugins/${id}/runtime/${action}`, {});
+}
+
+/** Switch to the staged version the user reviewed as `digest`. */
+export async function applyPluginUpdate(id: string, digest: string): Promise<{ ok: boolean }> {
+  return apiClient.post<{ digest: string }, { ok: boolean }>(`/api/v1/plugins/${id}/update/apply`, { digest });
+}
+
+export async function discardPluginUpdate(id: string): Promise<{ ok: boolean }> {
+  return apiClient.delete<{ ok: boolean }>(`/api/v1/plugins/${id}/update`);
+}
+
+/** Relay a panel's host call. The server checks the plugin's permission. */
+export async function pluginHostCall(id: string, method: string, params: unknown): Promise<unknown> {
+  return apiClient.post<{ method: string; params: unknown }, unknown>(`/api/v1/plugins/${id}/host`, { method, params });
 }
 
 export function isPluginActive(plugin: Plugin): boolean {

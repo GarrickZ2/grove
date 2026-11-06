@@ -127,6 +127,7 @@ import {
   parseGroveMetaSegments,
 } from "../../../utils/groveMeta";
 import { buddyMessageSender, renderGroveMetaEnvelope } from "./groveMetaRenderers";
+import { updateView } from "../../../utils/viewReporter";
 import { buildReviewCommentMessage, buildReviewCommentsMessage, isReviewCommentBatch, publishActiveChatAgent } from "./reviewCommentPrompt";
 import { BuddyAvatar } from "../../Buddy/BuddyAvatar";
 import { composerPresenceUpdate } from "./composerPresence";
@@ -3052,6 +3053,10 @@ export function TaskChat({
       // Corrupt or unavailable tab storage should not block Chat startup.
     }
   }, [projectId, taskId, getActiveChatId]);
+  useEffect(() => {
+    updateView({ taskId, chatId: activeChatId ?? null });
+    return () => updateView({ taskId: null, chatId: null });
+  }, [taskId, activeChatId]);
   useEffect(() => {
     const inputs = pendingInputsRef.current.get(activeChatId ?? "") ?? [];
     setPendingInputs(inputs);
@@ -13232,6 +13237,7 @@ function UserMessageBody({ content }: { content: string }) {
     }
     const isBlockMeta =
       seg.envelope.type.startsWith("agent_inject_") ||
+      seg.envelope.type.startsWith("plugin") ||
       seg.envelope.type === "preview_comment";
     const node = renderGroveMetaEnvelope(seg.envelope, {
       layout: isBlockMeta ? "block" : "inline",

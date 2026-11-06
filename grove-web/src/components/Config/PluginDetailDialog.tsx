@@ -16,10 +16,12 @@ import {
 import { Button, DrawerShell } from "../ui";
 import { approvePlugin, deletePlugin, revokePlugin, updatePluginSdk, type Plugin, type PluginStatus } from "../../api/plugins";
 import { PluginReviewSection } from "./PluginReview";
+import { PluginRuntimeSection } from "./PluginRuntime";
+import { PluginUpdateSection } from "./PluginUpdate";
 import { ExtensionIdentityIcon } from "../Skills/ExtensionIdentityIcon";
 import { ConfirmDialog } from "../Dialogs";
 
-const HIGH_RISK_PERMISSIONS = new Set(["exec", "project:write", "chat:read", "chat:write", "inject", "connect:provider", "prompt:middleware"]);
+const HIGH_RISK_PERMISSIONS = new Set(["exec", "project:write", "chat:read", "chat:write", "inject", "connect:provider", "prompt:middleware", "sessions:read", "sessions:write", "buddies:write", "view:list", "memory:write", "notes:write"]);
 
 const PERMISSION_LABELS: Record<string, string> = {
   "chat:read": "Read chat & AI events",
@@ -46,6 +48,7 @@ export function PluginDetailDialog({ plugin, onClose, onDeleted }: { plugin: Plu
   const [status, setStatus] = useState<PluginStatus>(plugin.status ?? "active");
   const [approvalState, setApprovalState] = useState<"idle" | "running">("idle");
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [update, setUpdate] = useState(plugin.pending_update ?? null);
 
   const setEnabled = async (enabled: boolean) => {
     setApprovalState("running");
@@ -159,6 +162,13 @@ export function PluginDetailDialog({ plugin, onClose, onDeleted }: { plugin: Plu
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          {update && (
+            <PluginUpdateSection
+              pluginId={plugin.id}
+              update={update}
+              onDone={async () => { setUpdate(null); await onClose(); }}
+            />
+          )}
           {plugin.status !== undefined && (
             <section className="mb-6">
               <h3 className="text-sm font-semibold text-[var(--color-text)]">What enabling allows</h3>
@@ -209,6 +219,10 @@ export function PluginDetailDialog({ plugin, onClose, onDeleted }: { plugin: Plu
               <div><div className="text-sm font-medium text-[var(--color-text)]">{runtimeIssue || "Ready"}</div>{plugin.runtime && <div className="mt-1 text-xs text-[var(--color-text-muted)]">Command: <code className="text-[var(--color-text-secondary)]">{plugin.runtime.command}</code></div>}</div>
             </div>
           </section>
+
+          {status === "active" && plugin.contributes?.backend && (
+            <PluginRuntimeSection pluginId={plugin.id} service={plugin.review?.service ?? false} />
+          )}
 
           {plugin.source === "dev" && (
             <section className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 p-4">

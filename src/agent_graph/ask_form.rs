@@ -140,6 +140,16 @@ pub async fn grove_ask_form(
     cx: &ToolContext,
     input: AskFormInput,
 ) -> Result<AskFormOutput, AgentGraphError> {
+    validate(&input)?;
+    // Resolve the caller chat (project, task) via the public storage API.
+    // (`ToolContext::caller_context` is module-private to `tools.rs`.)
+    let (project_key, task_id, _caller_chat) = tasks::find_chat_session(&cx.caller_chat_id)
+        .map_err(AgentGraphError::from)?
+        .ok_or(AgentGraphError::CallerUnknown)?;
+    show_form(&project_key, &task_id, &cx.caller_chat_id, input)
+}
+
+fn validate(input: &AskFormInput) -> Result<(), AgentGraphError> {
     if input.title.trim().is_empty() {
         return Err(AgentGraphError::Internal(
             "ask_form: `title` must not be empty".into(),
@@ -174,17 +184,23 @@ pub async fn grove_ask_form(
         }
     }
 
-    // Resolve the caller chat (project, task) via the public storage API.
-    // (`ToolContext::caller_context` is module-private to `tools.rs`.)
-    let (project_key, task_id, _caller_chat) = tasks::find_chat_session(&cx.caller_chat_id)
-        .map_err(AgentGraphError::from)?
-        .ok_or(AgentGraphError::CallerUnknown)?;
+    Ok(())
+}
 
-    let session_key = format!("{}:{}:{}", project_key, task_id, cx.caller_chat_id);
+/// Validate a form and show it in a live Session. Answers arrive as that
+/// Session's next user prompt.
+pub fn show_form(
+    project_key: &str,
+    task_id: &str,
+    chat_id: &str,
+    input: AskFormInput,
+) -> Result<AskFormOutput, AgentGraphError> {
+    validate(&input)?;
+    let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
     let handle = crate::acp::get_session_handle(&session_key).ok_or_else(|| {
         AgentGraphError::Internal(format!(
             "ask_form: no live ACP handle for caller chat {}",
-            cx.caller_chat_id
+            chat_id
         ))
     })?;
 

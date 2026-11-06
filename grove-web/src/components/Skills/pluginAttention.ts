@@ -8,7 +8,8 @@ export function pluginAttentionReasons(plugin?: Plugin): string[] {
 
   const reasons: string[] = [];
   if (plugin.status === "pending") reasons.push("Review to enable");
-  if (plugin.status === "changed") reasons.push("Permissions changed; review to re-enable");
+  if (plugin.status === "changed") reasons.push("Changed since approval; review to re-enable");
+  if (plugin.pending_update) reasons.push(`Update to v${plugin.pending_update.to} ready`);
   if (plugin.built === false) reasons.push("Build required");
   if (plugin.runtime?.available === false) reasons.push(`${plugin.runtime.command} unavailable`);
   if (plugin.sdk_status === "outdated") reasons.push("SDK outdated");

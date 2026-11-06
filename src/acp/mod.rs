@@ -2461,6 +2461,13 @@ fn load_plugin_mcp_servers(base_env: &HashMap<String, String>) -> Vec<acp::McpSe
                 crate::plugins::events::token().to_string(),
             ));
         }
+        if let Some(url) = crate::plugins::events::host_url(&plugin.id) {
+            env.push(acp::EnvVariable::new("GROVE_HOST_URL".to_string(), url));
+            env.push(acp::EnvVariable::new(
+                "GROVE_HOST_TOKEN".to_string(),
+                crate::plugins::events::host_token(&plugin.id),
+            ));
+        }
         let (command, args) = crate::platform::stdio_server_launch(&command, args);
         servers.push(acp::McpServer::Stdio(
             acp::McpServerStdio::new(

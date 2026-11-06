@@ -1,4 +1,4 @@
-import { Bot, Database, Globe, PlugZap, ShieldAlert } from "lucide-react";
+import { Bot, Clock, Database, Globe, PlugZap, ShieldAlert } from "lucide-react";
 import type { PluginReview as Review } from "../../api/plugins";
 
 export type Tone = "danger" | "warning" | "neutral";
@@ -9,6 +9,15 @@ const DATA_LABELS: Record<string, string> = {
   "chat:read": "Read chats and AI activity",
   "storage:read": "Read its own storage",
   "storage:write": "Write its own storage",
+  "workspace:read": "List your projects and tasks",
+  "sessions:read": "Read every Session's conversation",
+  "buddies:read": "List your Buddies and their status",
+  "view:list": "See what you are viewing, on every device",
+  "memory:read": "Read project memory",
+  "memory:write": "Add to project memory",
+  "notes:read": "Read task notes",
+  "notes:write": "Change task notes",
+  "review:read": "Read review comments",
 };
 
 export interface Risk {
@@ -26,6 +35,9 @@ export function reviewRisks(review: Review): Risk[] {
     review.agent.mcp && "Gives agents its MCP tools",
     review.agent.prompt_middleware && "Can inspect, block or rewrite your prompts",
     review.agent.chat_write && "Can send prompts to agents on your behalf",
+    review.agent.sessions_write && "Can send prompts to any Session",
+    review.agent.buddies_write && "Can send prompts to your Buddies",
+    review.agent.ui_interact && "Can show you forms inside a Session",
   ].filter((item): item is string => Boolean(item));
   const risks: Array<Risk | false> = [
     review.full_trust && {
@@ -47,7 +59,23 @@ export function reviewRisks(review: Review): Risk[] {
       tone: "warning",
       icon: Globe,
       title: "Can reach the network",
-      details: ["Its processes can send anything they can read to the internet."],
+      details: [
+        "Its processes can send anything they can read to the internet.",
+        "Grove cannot limit this, and it includes Grove's own local API.",
+        ...(review.listeners ?? []).map((listener) =>
+          `Says it opens ${listener.port ? `port ${listener.port}` : "a port"} (not enforced)`),
+      ],
+    },
+    (review.service || review.activation?.on_startup || (review.activation?.schedules.length ?? 0) > 0) && {
+      id: "background",
+      tone: "neutral",
+      icon: Clock,
+      title: "Runs in the background",
+      details: [
+        ...(review.service ? ["Stays running while Grove is open"] : []),
+        ...(review.activation?.on_startup && !review.service ? ["Starts with Grove"] : []),
+        ...(review.activation?.schedules ?? []).map((cron) => `Runs on a schedule: ${cron}`),
+      ],
     },
     review.data.length > 0 && {
       id: "data",

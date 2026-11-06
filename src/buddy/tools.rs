@@ -157,7 +157,7 @@ pub fn read_session(
     read_page(input)
 }
 
-fn read_page(input: ReadSessionInput) -> Result<SessionPage> {
+pub(crate) fn read_page(input: ReadSessionInput) -> Result<SessionPage> {
     // TODO(buddy-history-authorization): MVP permits reading every Session,
     // including private conversations. Add policy only after product agreement.
     let limit = input.limit.unwrap_or(20);
@@ -288,7 +288,10 @@ pub fn search_sessions(
     search_where(input, |session| scope.ensure_readable(session).is_ok())
 }
 
-fn search_where(input: SearchSessionsInput, reachable: impl Fn(&str) -> bool) -> Result<Value> {
+pub(crate) fn search_where(
+    input: SearchSessionsInput,
+    reachable: impl Fn(&str) -> bool,
+) -> Result<Value> {
     let query = input.query.trim().to_lowercase();
     if query.is_empty() {
         return Err(GroveError::invalid_data("query is required"));

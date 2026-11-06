@@ -307,6 +307,14 @@ Style::default().fg(Color::Yellow)      // ❌
 
 A client of the Grove server like the GUI: REST + the chat WebSocket, never local storage. Keep it to talking with agents and managing projects, tasks and sessions — GUI-only features (resources, automation, memory, git operations) stay in the GUI.
 
+### Plugins
+
+A change to the plugin API ships with its docs in the same commit:
+`docs/plugin-development.md`, `docs/plugin.schema.json` for manifest fields,
+and the SDK in `src/api/handlers/plugins.rs`. New host calls go in
+`src/plugins/host_api.rs` with a permission; `src/plugins/e2e_tests.rs` runs real
+sandboxed node processes against them.
+
 ### Git / tmux
 
 All shell-out wrappers live in `src/git/mod.rs` and `src/tmux/mod.rs` — don't call `Command` from elsewhere.

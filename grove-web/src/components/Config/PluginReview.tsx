@@ -10,7 +10,7 @@ const TONE_CLASS: Record<Tone, string> = {
 
 const STATUS_NOTICE: Record<Exclude<PluginStatus, "active">, string> = {
   pending: "This plugin is not running. Nothing below takes effect until you enable it.",
-  changed: "This plugin now asks for more than you approved, so it has been paused until you review it again.",
+  changed: "This plugin no longer matches what you approved, so it has been paused until you review it again.",
 };
 
 export function PluginReviewSection({ review, status }: { review: Review | null | undefined; status: PluginStatus }) {
