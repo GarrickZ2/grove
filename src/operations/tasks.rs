@@ -753,6 +753,38 @@ fn create_task_inner(
     })
 }
 
+/// Working directories every Studio task starts with.
+const STUDIO_TASK_DIRS: &[&str] = &["input", "output", "internal", "scripts"];
+
+/// Create a Studio task's working directories and whichever of its links are
+/// missing: `resource/` and `instructions.md` to the project's shared copies,
+/// and `CLAUDE.md` / `GEMINI.md` to the task's `AGENTS.md` once that exists.
+/// Existing files and links are left alone.
+pub(crate) fn link_studio_task_dir(
+    studio_dir: &std::path::Path,
+    task_dir: &std::path::Path,
+) -> Result<()> {
+    for dir in STUDIO_TASK_DIRS {
+        std::fs::create_dir_all(task_dir.join(dir))?;
+    }
+    let agents = task_dir.join("AGENTS.md");
+    let mut links = vec![
+        ("resource", studio_dir.join("resource")),
+        ("instructions.md", studio_dir.join("instructions.md")),
+    ];
+    if std::fs::symlink_metadata(&agents).is_ok() {
+        links.push(("CLAUDE.md", agents.clone()));
+        links.push(("GEMINI.md", agents));
+    }
+    for (link, source) in links {
+        let destination = task_dir.join(link);
+        if std::fs::symlink_metadata(&destination).is_err() && source.exists() {
+            crate::fs_link::create_link(&source, &destination)?;
+        }
+    }
+    Ok(())
+}
+
 /// Prepare a Studio workspace without overwriting an existing contract or files.
 fn prepare_studio_task_directory(
     project_path: &str,
@@ -761,19 +793,7 @@ fn prepare_studio_task_directory(
 ) -> Result<std::path::PathBuf> {
     let studio_dir = workspace::studio_project_dir(project_path);
     let task_dir = studio_dir.join("tasks").join(task_id);
-    for dir in ["input", "output", "internal", "scripts"] {
-        std::fs::create_dir_all(task_dir.join(dir))?;
-    }
-    for (link, target) in [
-        ("resource", "resource"),
-        ("instructions.md", "instructions.md"),
-    ] {
-        let destination = task_dir.join(link);
-        let source = studio_dir.join(target);
-        if std::fs::symlink_metadata(&destination).is_err() && source.exists() {
-            crate::fs_link::create_link(&source, &destination)?;
-        }
-    }
+    link_studio_task_dir(&studio_dir, &task_dir)?;
     if std::fs::symlink_metadata(task_dir.join("AGENTS.md")).is_err() {
         // Contract generation replaces aliases; avoid overwriting any existing
         // files when a legacy or partially initialized directory is present.

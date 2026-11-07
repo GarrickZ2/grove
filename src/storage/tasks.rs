@@ -33,7 +33,6 @@ pub struct ChatSession {
 
 /// `session.readonly_reason`: restored from an export; the Agent's own session
 /// stayed on the source machine.
-#[allow(dead_code)] // written by the importer
 pub const READONLY_IMPORTED: &str = "imported";
 /// `session.readonly_reason`: the Agent pruned its local session.
 pub const READONLY_AGENT_EXPIRED: &str = "agent_expired";

@@ -106,7 +106,7 @@ pub fn project_hash(path: &str) -> String {
 ///
 /// - Git repo / worktree → 返回主 repo 的规范化路径
 /// - 非 git 目录 → canonicalize 后直接返回
-fn resolve_project_path(path: &str) -> Result<String> {
+pub(crate) fn resolve_project_path(path: &str) -> Result<String> {
     let expanded = expand_tilde(path);
 
     // 尝试 git 路径解析
@@ -290,6 +290,22 @@ pub fn auto_register_cwd_if_git_repo() {
     }
 }
 
+/// Insert the `projects` row for a new registration (no side effects).
+pub(crate) fn insert_project_row(
+    conn: &rusqlite::Connection,
+    hash: &str,
+    name: &str,
+    path: &str,
+    is_git_repo: bool,
+    project_type: &ProjectType,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO projects (hash, name, path, is_git_repo, added_at, project_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![hash, name, path, is_git_repo, Utc::now().to_rfc3339(), project_type.as_str()],
+    )?;
+    Ok(())
+}
+
 /// 添加指定类型的项目
 pub fn add_project_with_type(name: &str, path: &str, project_type: ProjectType) -> Result<()> {
     // Buddy creation must atomically include its persona, Segment and Memory.
@@ -330,29 +346,30 @@ pub fn add_project_with_type(name: &str, path: &str, project_type: ProjectType) 
     } else {
         git::repo_root(&resolved_path).is_ok()
     };
-    let now = Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO projects (hash, name, path, is_git_repo, added_at, project_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![&hash, name, &resolved_path, is_git, &now, project_type.as_str()],
-    )?;
+    insert_project_row(&conn, &hash, name, &resolved_path, is_git, &project_type)?;
     drop(conn);
 
-    if project_type == ProjectType::Repo {
-        crate::storage::tasks::ensure_local_task(&hash, &resolved_path, name)?;
-        crate::storage::taskgroups::ensure_task_assignment(
-            &hash,
-            crate::storage::tasks::LOCAL_TASK_ID,
-            true,
-        )?;
-    } else {
-        crate::operations::tasks::ensure_studio_local_task(&resolved_path, &hash, name)?;
-        crate::storage::taskgroups::ensure_task_assignment(
-            &hash,
-            crate::storage::tasks::LOCAL_TASK_ID,
-            true,
-        )?;
-    }
+    finish_project_registration(&hash, &resolved_path, name, &project_type)
+}
 
+/// What a project registration does after inserting its `projects` row:
+/// create the Local Task and put it in its task group. Idempotent.
+pub(crate) fn finish_project_registration(
+    hash: &str,
+    path: &str,
+    name: &str,
+    project_type: &ProjectType,
+) -> Result<()> {
+    if *project_type == ProjectType::Repo {
+        crate::storage::tasks::ensure_local_task(hash, path, name)?;
+    } else {
+        crate::operations::tasks::ensure_studio_local_task(path, hash, name)?;
+    }
+    crate::storage::taskgroups::ensure_task_assignment(
+        hash,
+        crate::storage::tasks::LOCAL_TASK_ID,
+        true,
+    )?;
     Ok(())
 }
 

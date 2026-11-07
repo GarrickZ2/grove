@@ -10,6 +10,7 @@ pub mod launcher;
 pub mod mcp;
 pub mod mcp_bridge;
 pub mod migrate;
+pub mod project_archive;
 pub mod web;
 
 #[cfg(feature = "gui")]
@@ -20,6 +21,8 @@ pub mod gui_launch;
 pub mod gui_machine_login;
 #[cfg(feature = "gui")]
 pub mod gui_save;
+
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
@@ -160,6 +163,33 @@ pub enum Commands {
         #[arg(long)]
         prune: bool,
     },
+    /// Export one project's data to a tar.gz archive
+    Export {
+        /// Project path, hash or name (defaults to the current directory)
+        #[arg(long)]
+        project: Option<String>,
+        /// Output file (defaults to ./<slug>-grove-export-YYYYMMDD.tar.gz)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Import a project exported with `grove export`
+    Import {
+        /// Archive produced by `grove export`
+        archive: PathBuf,
+        /// Local directory for a repo project (defaults to the current directory; not valid for Studio archives)
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Project name (defaults to the archived name)
+        #[arg(long)]
+        name: Option<String>,
+        /// Show what would be imported without importing anything (on a
+        /// fresh install this may still initialise this Grove's database)
+        #[arg(long)]
+        dry_run: bool,
+        /// Add the archived data to a project that is already registered here
+        #[arg(long)]
+        merge: bool,
+    },
     /// Register a project in Grove
     Register {
         /// Path to the project (defaults to current directory)
@@ -180,6 +210,8 @@ impl Commands {
             Self::Tui { remote: None }
                 | Self::Serve { .. }
                 | Self::Mobile { .. }
+                | Self::Export { .. }
+                | Self::Import { .. }
                 | Self::Web {
                     remote_url: None,
                     ..
@@ -189,6 +221,12 @@ impl Commands {
                     ..
                 }
         )
+    }
+
+    /// Scripted data commands must not register the cwd or prompt for a
+    /// self-update at startup; they only need migrated storage.
+    pub fn skips_startup_side_effects(&self) -> bool {
+        matches!(self, Self::Export { .. } | Self::Import { .. })
     }
 
     /// 将启动模式命令转换为 `LastLaunch`（非启动模式命令返回 None）
