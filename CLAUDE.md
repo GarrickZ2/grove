@@ -247,6 +247,8 @@ Reset the histogram before measuring an isolated operation; otherwise the cold-s
 - `grove hooks <level>` — Send notification (`notice` / `warn` / `critical`)
 - `grove register` / `grove remove` — Manage registered projects
 - `grove migrate` — Legacy storage migration
+- `grove export [--project <path|hash|name>] [-o <file>]` — Export one project's data (tasks, notes, review, memory, ...) to a tar.gz
+- `grove import <archive> [--path <dir>] [--name <name>] [--dry-run] [--merge]` — Import a project exported from another Grove install; `--merge` is required when the target project is already registered
 
 ## AI Integration Flow (per-task)
 

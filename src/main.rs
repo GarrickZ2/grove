@@ -329,14 +329,19 @@ fn main() -> io::Result<()> {
         }
 
         // A background `grove serve` has no one to answer the prompt.
-        if update_info.has_update() && !matches!(command, Commands::Serve { .. }) {
+        if update_info.has_update()
+            && !matches!(command, Commands::Serve { .. })
+            && !command.skips_startup_side_effects()
+        {
             update::prompt_and_execute_update(&update_info);
         }
 
         ensure_storage_version();
         // 一次性地把当前工作目录(若为 git 仓库)登记成 project。
         // 旧逻辑放在 GET /projects handler 里,每次请求要 80ms+,纯属浪费。
-        storage::workspace::auto_register_cwd_if_git_repo();
+        if !command.skips_startup_side_effects() {
+            storage::workspace::auto_register_cwd_if_git_repo();
+        }
     }
 
     // 统一调度
@@ -476,6 +481,24 @@ fn main() -> io::Result<()> {
                 // directly is the only way to keep manual `grove migrate` and
                 // automatic startup migration in sync.
                 ensure_storage_version();
+            }
+        }
+        Commands::Export { project, output } => {
+            if let Err(e) = cli::project_archive::run_export(project, output) {
+                eprintln!("Export failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Import {
+            archive,
+            path,
+            name,
+            dry_run,
+            merge,
+        } => {
+            if let Err(e) = cli::project_archive::run_import(archive, path, name, dry_run, merge) {
+                eprintln!("Import failed: {}", e);
+                std::process::exit(1);
             }
         }
         Commands::Register { path } => {
