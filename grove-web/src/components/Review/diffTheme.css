@@ -3019,6 +3019,34 @@ tr.diff-line-nav-highlight td {
   background: var(--color-bg-tertiary);
 }
 
+.review-project-link {
+  color: var(--color-text-muted);
+}
+
+.review-project-link svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0 3px;
+}
+
+.review-project-link:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.review-project-error {
+  padding: 2px 8px 4px;
+  color: var(--color-error);
+  font-size: 11px;
+}
+
+.review-project-footer {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+
 .review-project-check {
   flex-shrink: 0;
   width: 14px;

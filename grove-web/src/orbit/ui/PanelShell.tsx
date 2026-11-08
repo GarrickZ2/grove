@@ -43,6 +43,10 @@ import "./panel-shell.css";
  *   <PanelHeaderContext>3 agents</PanelHeaderContext>
  *       Replaces the registry's default context text (muted, after the title).
  *
+ *   <PanelHeaderLeading>…</PanelHeaderLeading>
+ *       A control that belongs with the title, right after it (the Project a
+ *       panel is showing). At most one, 180px wide.
+ *
  *   <PanelHeaderActions><Button variant="ghost" size="sm" iconOnly …/></PanelHeaderActions>
  *       Extra header buttons, placed before ⋯. Keep them to one or two
  *       28px ghost icon buttons (`Button size="sm" variant="ghost" iconOnly`).
@@ -61,6 +65,12 @@ import "./panel-shell.css";
  *   <PanelLoading />                       skeleton boxes
  *   <PanelError title onRetry actions>the cause, in a sentence</PanelError>
  */
+
+/** A control beside the title. */
+export function PanelHeaderLeading({ children }: { children: ReactNode }) {
+  const slots = useContext(PanelSlotsContext);
+  return slots?.leading ? createPortal(children, slots.leading) : null;
+}
 
 /** Extra header buttons from the body, placed before ⋯. */
 export function PanelHeaderActions({ children }: { children: ReactNode }) {
@@ -98,11 +108,12 @@ export interface PanelShellProps {
 }
 
 export function PanelShell({ glyph: Glyph, hue, title, context, onClose, body = "scroll", actionsTarget, headless = false, className, style, children }: PanelShellProps) {
+  const [leading, setLeading] = useState<HTMLElement | null>(null);
   const [actions, setActions] = useState<HTMLElement | null>(null);
   const [contextSlot, setContextSlot] = useState<HTMLElement | null>(null);
   const [bodyMenu, setBodyMenuState] = useState<PanelMenuItem[]>([]);
   const setBodyMenu = useCallback((items: PanelMenuItem[]) => setBodyMenuState(items), []);
-  const slots = useMemo<PanelSlots>(() => ({ actions, context: contextSlot, setBodyMenu }), [actions, contextSlot, setBodyMenu]);
+  const slots = useMemo<PanelSlots>(() => ({ leading, actions, context: contextSlot, setBodyMenu }), [leading, actions, contextSlot, setBodyMenu]);
   const tileStyle = { "--oui-panel-a": hue.from, "--oui-panel-b": hue.to } as CSSProperties;
   // A panel's ⋯ holds only its own rows; with none, there is no ⋯.
   // In a tab strip the menu is portaled so the strip's overflow can't clip it.
@@ -116,6 +127,7 @@ export function PanelShell({ glyph: Glyph, hue, title, context, onClose, body = 
           <small ref={setContextSlot} hidden />
           {actionsTarget && createPortal(
             <span className="oui-panel-inline orbit-ui">
+              <span ref={setLeading} className="oui-panel-leading" />
               <span ref={setActions} className="oui-panel-actions" />
               {menuButton}
             </span>,
@@ -127,6 +139,7 @@ export function PanelShell({ glyph: Glyph, hue, title, context, onClose, body = 
           <span className="oui-panel-tile" style={tileStyle} aria-hidden="true"><Glyph className="oui-panel-glyph" size={12} /></span>
           <h2 className="oui-panel-title">
             <span className="oui-panel-name">{title}</span>
+            <span ref={setLeading} className="oui-panel-leading" />
             {context ? <small className="oui-panel-ctx-default" title={typeof context === "string" ? context : undefined}>{context}</small> : null}
             <small ref={setContextSlot} className="oui-panel-ctx-slot" />
           </h2>

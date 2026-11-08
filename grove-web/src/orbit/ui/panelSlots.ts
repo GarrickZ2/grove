@@ -37,6 +37,7 @@ export interface PanelMenuItem {
 }
 
 export interface PanelSlots {
+  leading: HTMLElement | null;
   actions: HTMLElement | null;
   context: HTMLElement | null;
   setBodyMenu: (items: PanelMenuItem[]) => void;

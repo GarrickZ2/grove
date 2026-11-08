@@ -10,7 +10,7 @@ const SWITCH_RATIO = 0.35;
 const FLING_PX_PER_MS = 0.45;
 
 /** Whether something under the finger can still scroll the way the finger moves; it keeps the swipe. */
-function scrollsHorizontally(from: Element | null, deltaX: number): boolean {
+export function scrollsHorizontally(from: Element | null, deltaX: number): boolean {
   for (let node = from; node && node !== document.body; node = node.parentElement) {
     if (!(node instanceof HTMLElement) || node.scrollWidth <= node.clientWidth + 1) continue;
     const overflow = getComputedStyle(node).overflowX;

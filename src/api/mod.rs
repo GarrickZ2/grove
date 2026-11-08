@@ -288,10 +288,43 @@ pub fn create_api_router() -> Router {
             "/extension/status",
             get(handlers::extension::get_extension_status),
         )
-        // Browser Extension Proxy Command integration
+        // Browser panel: live view, handing control to the user, and the
+        // decision to let a Task reach the personal browser.
+        .route("/browser/{project}/{task}", get(handlers::browser::status))
         .route(
-            "/extension/command",
-            post(handlers::extension::handle_extension_command),
+            "/browser/{project}/{task}/stream",
+            get(handlers::browser::stream),
+        )
+        .route(
+            "/browser/{project}/{task}/tab",
+            post(handlers::browser::tab),
+        )
+        // A chat Session asking to use the user's browser or computer.
+        .route(
+            "/approvals/{project}/{task}",
+            get(handlers::approvals::pending).post(handlers::approvals::decide),
+        )
+        // The latest screenshot an agent took of the user's computer.
+        .route(
+            "/computer/{project}/{task}",
+            get(handlers::computer::status),
+        )
+        .route(
+            "/computer/{project}/{task}/screenshot",
+            get(handlers::computer::screenshot),
+        )
+        .route(
+            "/computer/{project}/{task}/close",
+            post(handlers::computer::close),
+        )
+        // What macOS lets Computer Use do, for Settings.
+        .route(
+            "/computer-permissions",
+            get(handlers::computer::permissions),
+        )
+        .route(
+            "/computer-permissions/request",
+            post(handlers::computer::request_permission),
         )
         // Companion package download (zip of grove-extension/dist)
         .route(
@@ -1661,7 +1694,7 @@ pub fn create_proxy_router(remote: String) -> Router {
     )
 }
 
-/// `via` paths carry both HTTP and every WebSocket route.
+/// Proxied paths carry both HTTP and every WebSocket route.
 async fn via_proxy_handler(
     state: State<Arc<ProxyTarget>>,
     request: axum::extract::Request,
@@ -1686,36 +1719,11 @@ async fn via_proxy_handler(
 pub(crate) fn proxy_router(target: Arc<ProxyTarget>) -> Router {
     use axum::routing::any;
 
-    Router::new() // Map all known WebSocket routes
+    // Every API path carries both HTTP and WebSockets, so a new WebSocket
+    // route needs no entry here.
+    Router::new()
         .route("/ws", any(ws_proxy_handler))
-        .route("/api/v1/terminal", any(ws_proxy_handler))
-        .route("/api/v1/extension/ws", any(ws_proxy_handler))
-        .route("/api/v1/walkie-talkie/ws", any(ws_proxy_handler))
-        .route("/api/v1/radio/events/ws", any(ws_proxy_handler))
-        .route("/api/v1/ai/transcribe-stream", any(ws_proxy_handler))
-        .route("/api/v1/ai/agent-voice/runtime/ws", any(ws_proxy_handler))
-        .route(
-            "/api/v1/projects/{id}/tasks/{taskId}/terminal",
-            any(ws_proxy_handler),
-        )
-        .route(
-            "/api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/ws",
-            any(ws_proxy_handler),
-        )
-        .route(
-            "/api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/auth-terminal/{methodId}",
-            any(ws_proxy_handler),
-        )
-        .route(
-            "/api/v1/projects/{id}/tasks/{taskId}/sketches/ws",
-            any(ws_proxy_handler),
-        )
-        .route(
-            "/api/v1/projects/{id}/automation-runs/ws",
-            any(ws_proxy_handler),
-        )
-        // Map all other HTTP requests
-        .route("/api/v1/{*path}", any(http_proxy_handler))
+        .route("/api/v1/{*path}", any(via_proxy_handler))
         .with_state(target)
 }
 

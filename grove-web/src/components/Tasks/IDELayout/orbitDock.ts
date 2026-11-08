@@ -63,7 +63,7 @@ export function openOrbitPanel<S extends OrbitDockState>(state: S, key: string, 
  *  in the left column), or an open terminal when its position setting changed. */
 export function migrateToOrbitSlots<S extends OrbitDockState>(state: S, terminal: TerminalPosition = "bottom"): S {
   if (terminal === "left") {
-    if (state.bottomVisible) return { ...state, bottomVisible: false, auxType: "terminal", auxVisible: true };
+    if (state.bottomVisible && !(state.auxVisible && state.auxType)) return { ...state, bottomVisible: false, auxType: "terminal", auxVisible: true };
     if (state.auxType === "terminal") return state;
   } else if (state.auxType === "terminal") {
     return { ...state, auxType: null, auxVisible: false, bottomVisible: state.bottomVisible || state.auxVisible };

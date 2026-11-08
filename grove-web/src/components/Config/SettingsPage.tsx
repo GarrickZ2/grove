@@ -676,13 +676,13 @@ export function SettingsPage() {
               </div>
             </div>
 
-            {/* Chrome Companion — independent capability: a runtime status card
+            {/* Grove Companion — independent capability: a runtime status card
                 + install entry point, unrelated to the AI Browser Action group. */}
             <div className="p-4 bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border)] space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-sm font-semibold text-[var(--color-text)] select-none block">
-                    Chrome Companion (Extension)
+                    Grove Companion (Extension)
                   </span>
                   <span className="text-xs text-[var(--color-text-muted)] select-none">
                     Control active browser sessions via the companion extension, inheriting all SSO login states, cookies, and active forms.

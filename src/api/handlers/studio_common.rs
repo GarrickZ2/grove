@@ -631,6 +631,40 @@ pub fn open_in_file_manager(path: &Path) {
     }
 }
 
+/// Show a file or folder selected in its parent folder, so it can be dragged
+/// somewhere else.
+pub fn select_in_file_manager(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        return std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn()
+            .map(|_| ());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        return std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", explorer_path(path)))
+            .spawn()
+            .map(|_| ());
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        return std::process::Command::new("xdg-open")
+            .arg(path.parent().unwrap_or(path))
+            .spawn()
+            .map(|_| ());
+    }
+
+    #[allow(unreachable_code)]
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "revealing files is not supported on this platform",
+    ))
+}
+
 /// Reveal a file or directory in the OS file manager (selects files in Finder/Explorer).
 pub fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]

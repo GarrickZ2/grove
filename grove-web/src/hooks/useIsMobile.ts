@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from "react";
+import { onFoldChange, readLaptopFold } from "./useBookFold";
 
 /**
  * Orbit keeps its desktop layout on tablets: only phones get the mobile
@@ -22,7 +23,10 @@ function getDeviceState(): DeviceState {
   return {
     // isMobile includes tablet — anything below desktop breakpoint uses mobile layout
     isMobile: width < TABLET_BREAKPOINT,
-    isTablet: width >= MOBILE_BREAKPOINT && width < TABLET_BREAKPOINT,
+    // The inner screen folded like a laptop is phone-narrow, but Orbit gives it
+    // the desktop layout: that has the panel headers and toolbar it spreads
+    // over the two screens.
+    isTablet: width < TABLET_BREAKPOINT && (width >= MOBILE_BREAKPOINT || !!readLaptopFold()),
     isDesktop: width >= TABLET_BREAKPOINT,
     isTouchDevice:
       "ontouchstart" in window || navigator.maxTouchPoints > 0,
@@ -40,14 +44,19 @@ export function useIsMobile(): DeviceState {
       `(min-width: ${MOBILE_BREAKPOINT}px) and (max-width: ${TABLET_BREAKPOINT - 1}px)`
     );
 
-    const update = () => setState(getDeviceState());
+    const update = () => setState((prev) => {
+      const next = getDeviceState();
+      return prev.isMobile === next.isMobile && prev.isTablet === next.isTablet && prev.isDesktop === next.isDesktop && prev.isTouchDevice === next.isTouchDevice ? prev : next;
+    });
 
     mobileQuery.addEventListener("change", update);
     tabletQuery.addEventListener("change", update);
+    const stopFold = onFoldChange(update);
 
     return () => {
       mobileQuery.removeEventListener("change", update);
       tabletQuery.removeEventListener("change", update);
+      stopFold();
     };
   }, []);
 

@@ -419,6 +419,22 @@ pub struct BrowserControlConfig {
     /// Enable project/task-specific Chrome Tab Group isolation management
     #[serde(default = "default_true")]
     pub auto_groups: bool,
+    /// Let agents use the user's own browser. They start in the isolated test
+    /// browser either way.
+    #[serde(default = "default_true")]
+    pub personal_browser: bool,
+    /// Use the user's own browser without asking each chat Session first.
+    #[serde(default)]
+    pub personal_browser_bypass: bool,
+    /// Let agents use tools that read login data in the user's own browser
+    #[serde(default)]
+    pub sensitive_tools: bool,
+    /// Let agents use the user's computer through agent-desktop.
+    #[serde(default = "default_true")]
+    pub computer_use: bool,
+    /// Use the computer without asking each chat Session first.
+    #[serde(default)]
+    pub computer_use_bypass: bool,
 }
 
 impl Default for BrowserControlConfig {
@@ -426,6 +442,11 @@ impl Default for BrowserControlConfig {
         Self {
             enabled: true,
             auto_groups: true,
+            personal_browser: true,
+            personal_browser_bypass: false,
+            sensitive_tools: false,
+            computer_use: true,
+            computer_use_bypass: false,
         }
     }
 }

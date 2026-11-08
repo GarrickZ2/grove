@@ -168,7 +168,7 @@ mod tests {
             "memory_append_log",
             "ask_form",
             "speak",
-            "browser_open"
+            "browser"
         ]
         .iter()
         .all(|name| !router.has_route(name)));

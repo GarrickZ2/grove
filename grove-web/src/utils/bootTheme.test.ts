@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { rememberBootIcon, rememberBootTheme, withBootTheme } from "./bootTheme";
+import { rememberBootIcon, rememberBootTheme, syncThemeColor, withBootTheme } from "./bootTheme";
 
 const script = readFileSync(resolve(process.cwd(), "public/boot-theme.js"), "utf8");
 const boot = () => new Function(script)();
@@ -24,6 +24,25 @@ describe("boot theme", () => {
     root.style.setProperty("--color-bg", "#fafafa");
     root.dataset.theme = "light";
   }
+
+  it("paints the browser's chrome with the theme, from first paint on", () => {
+    const meta = document.createElement("meta");
+    meta.name = "theme-color";
+    meta.content = "#0a0a0b";
+    document.head.append(meta);
+    try {
+      syncThemeColor("#fafafa");
+      expect(meta.content).toBe("#fafafa");
+
+      applyLight();
+      rememberBootTheme();
+      meta.content = "#0a0a0b";
+      boot();
+      expect(meta.content).toBe("#fafafa");
+    } finally {
+      meta.remove();
+    }
+  });
 
   it("repaints the remembered theme on the next load", () => {
     applyLight();

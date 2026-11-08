@@ -1,0 +1,47 @@
+/*
+ * Orbit's desktop layout on a touch screen (a tablet, a foldable's inner
+ * screen). The layout stays, but its controls were sized for a pointer: this
+ * is where they become fingertip sized, in one place. 40px is the floor for
+ * anything that does one thing; `html` outranks the component stylesheets,
+ * which load later from lazy chunks.
+ */
+@media (hover: none) and (pointer: coarse) {
+  /* App.tsx's desktop-window drag strip: nothing to drag here, and it sits
+     over the top 24px of whatever is below it, buttons included. */
+  html .fixed[data-window-drag-strip] { display: none; }
+
+  /* Sidebar */
+  html .orbit-row { min-height: 44px; }
+  html .orbit-section-add,
+  html .orbit-more-button { width: 40px; height: 40px; }
+  html .orbit-task-section-toggle { min-height: 40px; }
+  html .orbit-task-section-heading { min-height: 44px; }
+  /* Revealed on hover elsewhere, and there is no hover here. */
+  html .orbit-section-archive,
+  html .orbit-row-menu { opacity: 1; pointer-events: auto; }
+
+  /* Panels */
+  html .oui-panel-ib { width: 40px; height: 40px; }
+  html .oui-panel-ib svg { width: 18px; height: 18px; }
+  html .oui-btn { min-height: 36px; }
+
+  /* Review */
+  html .diff-sidebar-item { min-height: 40px; }
+  html .diff-sidebar-hide-viewed-btn,
+  html .diff-file-collapse-btn,
+  html .diff-file-preview-btn,
+  html .diff-file-copy-btn,
+  html .diff-file-expand-all-btn { min-width: 36px; min-height: 36px; opacity: 1; }
+  html .diff-version-trigger { min-height: 36px; }
+
+  /* Composer: the tools keep their width, the setup chip gives way. */
+  html .oc-tool,
+  html .oc-ring,
+  html .oc-orb { width: 40px; height: 40px; }
+  html .oc-tool svg { width: 19px; height: 19px; }
+  html .oc-setup-chip { height: 36px; }
+  html .oc-tools { flex: none; }
+  html .oc-who { min-width: 0; flex: 1; justify-content: flex-end; }
+  html .oc-setup { flex: 1 1 0; justify-content: flex-end; }
+  html .oc-setup-chip { max-width: 100%; }
+}

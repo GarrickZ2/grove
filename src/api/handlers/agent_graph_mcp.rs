@@ -46,7 +46,7 @@ use std::sync::RwLock;
 
 use rmcp::schemars;
 use rmcp::schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::agent_graph::ask_form;
 use crate::agent_graph::error::AgentGraphError;
@@ -272,9 +272,7 @@ impl ServerHandler for AgentGraphMcpService {
     ) -> Result<ListToolsResult, McpError> {
         let mut tools = self.tool_router.list_all();
         // Hide browser tools when the user has disabled browser control in Settings.
-        if !config::load_config().browser_control.enabled {
-            tools.retain(|tool| !tool.name.starts_with("browser_"));
-        }
+        retain_enabled_control_tools(&mut tools);
         // Memory is project-configured. Keep the advertised tool surface and
         // server-side permission check driven by the same durable flag.
         let memory_enabled = context
@@ -299,13 +297,28 @@ impl ServerHandler for AgentGraphMcpService {
 /// rest. Mirrors the filtering in `list_tools`.
 pub fn advertised_tools(memory_enabled: bool) -> (Vec<rmcp::model::Tool>, Vec<rmcp::model::Tool>) {
     let mut tools = AgentGraphMcpService::new().tool_router.list_all();
-    if !config::load_config().browser_control.enabled {
-        tools.retain(|tool| !tool.name.starts_with("browser_"));
-    }
+    retain_enabled_control_tools(&mut tools);
     let (memory, general): (Vec<_>, Vec<_>) = tools
         .into_iter()
         .partition(|tool| WORKING_MEMORY_TOOLS.contains(&tool.name.as_ref()));
     (general, if memory_enabled { memory } else { Vec::new() })
+}
+
+fn is_browser_tool(name: &str) -> bool {
+    matches!(name, "browser" | "browser_help")
+}
+
+fn is_computer_tool(name: &str) -> bool {
+    matches!(name, "computer" | "computer_help")
+}
+
+/// Browser and computer tools are offered only while Settings allow them.
+fn retain_enabled_control_tools(tools: &mut Vec<rmcp::model::Tool>) {
+    let settings = config::load_config().browser_control;
+    tools.retain(|tool| {
+        (settings.enabled || !is_browser_tool(&tool.name))
+            && (settings.computer_use || !is_computer_tool(&tool.name))
+    });
 }
 
 const WORKING_MEMORY_TOOLS: &[&str] = &[
@@ -537,127 +550,64 @@ impl AgentGraphMcpService {
 
     // ── Browser tools ────────────────────────────────────────────────────────
     //
-    // 寻址模型：grove_browser_open 返回 tab_id；后续 snapshot/interact/extract/
-    // screenshot 必须带上该 tab_id，否则报错。group_name 不暴露给 caller —— 后端
-    // 用 caller chat_id 反查 task name 自动注入，作为 Chrome Tab Group 标题。
+    // Pass-through to agent-browser: tool names and arguments belong to the
+    // installed driver version, so its upgrades need no change here.
     //
     // 仅当 browser_control.enabled = true 时这些工具可见（参见 list_tools）。
 
-    /// Open a URL in the user's Chrome browser
+    /// Run a browser tool
     #[tool(
-        name = "browser_open",
-        description = "Open a URL in the user's Chrome browser and return the new tab_id. When browser_control.auto_groups is enabled, the new tab is auto-organized into a Chrome Tab Group named after the current task. Use the returned tab_id with browser_snapshot / _interact / _extract / _screenshot. Requires the Chrome Companion Extension to be connected."
+        name = "browser",
+        description = "Run an agent-browser tool. `tool` is the tool name (open, snapshot, click, ...) and `args` its arguments, exactly as agent-browser defines them; the result is agent-browser's own. Call browser_help for the tool list, a tool's definition, or agent-browser's guide."
     )]
-    async fn grove_browser_open_tool(
+    async fn grove_browser_tool(
         &self,
-        Parameters(input): Parameters<BrowserOpenInput>,
+        Parameters(input): Parameters<BrowserInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        shared_grove_browser_open_tool(caller_session_from_parts(&parts)?, input).await
+        shared_grove_browser_tool(caller_session_from_parts(&parts)?, input).await
     }
 
-    /// Reload an existing tab instead of opening a duplicate tab.
+    /// Explain the browser tools
     #[tool(
-        name = "browser_reload",
-        description = "Reload an existing Chrome tab in place and wait for completion. Reuses the same tab_id, preserves login state and tab grouping, and invalidates element refs from earlier browser_snapshot calls. Use this instead of browser_open when retesting a page after a code change."
+        name = "browser_help",
+        description = "List the tools `browser` accepts. Pass `topic` as a tool name for its arguments, or \"guide\" for the full workflow."
     )]
-    async fn grove_browser_reload_tool(
+    async fn grove_browser_help_tool(
         &self,
-        Parameters(input): Parameters<BrowserReloadInput>,
-        Extension(parts): Extension<Parts>,
+        Parameters(input): Parameters<BrowserHelpInput>,
     ) -> Result<CallToolResult, McpError> {
-        shared_grove_browser_reload_tool(caller_session_from_parts(&parts)?, input).await
+        shared_grove_browser_help_tool(input).await
     }
 
-    /// Navigate an existing tab without creating a duplicate.
+    // ── Computer tools ───────────────────────────────────────────────────────
+    //
+    // Pass-through to agent-desktop, like the browser tools. Visible only
+    // while browser_control.computer_use is on.
+
+    /// Run a computer tool
     #[tool(
-        name = "browser_navigate",
-        description = "Navigate an existing Chrome tab in place. action=goto requires url; back and forward use the tab's history. Waits for page load by default, preserves the tab_id, and invalidates prior browser_snapshot element refs."
+        name = "computer",
+        description = "Run an agent-desktop tool on the user's computer. `tool` is the tool name (snapshot, click, screenshot, ...) and `args` its arguments, exactly as agent-desktop defines them; the result is agent-desktop's own. The user approves this chat session before its first call. Call computer_help for the tool list, a tool's definition, or agent-desktop's guide."
     )]
-    async fn grove_browser_navigate_tool(
+    async fn grove_computer_tool(
         &self,
-        Parameters(input): Parameters<BrowserNavigateInput>,
+        Parameters(input): Parameters<ComputerInput>,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, McpError> {
-        shared_grove_browser_navigate_tool(caller_session_from_parts(&parts)?, input).await
+        shared_grove_computer_tool(caller_session_from_parts(&parts)?, input).await
     }
 
-    /// Close a browser tab.
+    /// Explain the computer tools
     #[tool(
-        name = "browser_close",
-        description = "Close a specific Chrome tab and return only after Chrome confirms the tab no longer exists."
+        name = "computer_help",
+        description = "List the tools `computer` accepts. Pass `topic` as a tool name for its arguments, or \"guide\" for the full workflow."
     )]
-    async fn grove_browser_close_tool(
+    async fn grove_computer_help_tool(
         &self,
-        Parameters(input): Parameters<BrowserTabInput>,
-        Extension(parts): Extension<Parts>,
+        Parameters(input): Parameters<BrowserHelpInput>,
     ) -> Result<CallToolResult, McpError> {
-        shared_grove_browser_close_tool(caller_session_from_parts(&parts)?, input).await
-    }
-
-    /// Wait for a browser/page condition without performing another action.
-    #[tool(
-        name = "browser_wait",
-        description = "Wait for an explicit condition in a Chrome tab: page load, URL match, selector state, text state, or a fixed delay. Returns as soon as the condition is satisfied; timeout is a bound, not a sleep duration. Prefer selector/url/text conditions over delay."
-    )]
-    async fn grove_browser_wait_tool(
-        &self,
-        Parameters(input): Parameters<BrowserWaitInput>,
-        Extension(parts): Extension<Parts>,
-    ) -> Result<CallToolResult, McpError> {
-        shared_grove_browser_wait_tool(caller_session_from_parts(&parts)?, input).await
-    }
-
-    /// Take an accessibility-tree snapshot of a specific browser tab
-    #[tool(
-        name = "browser_snapshot",
-        description = "Snapshot a specific browser tab and return a simplified Accessibility Tree. Interactive elements receive snapshot-scoped refs such as @s12ab34cde1 for browser_interact. A new snapshot invalidates refs from the previous snapshot; stale refs are rejected explicitly."
-    )]
-    async fn grove_browser_snapshot_tool(
-        &self,
-        Parameters(input): Parameters<BrowserSnapshotInput>,
-        Extension(parts): Extension<Parts>,
-    ) -> Result<CallToolResult, McpError> {
-        shared_grove_browser_snapshot_tool(caller_session_from_parts(&parts)?, input).await
-    }
-
-    /// Perform a DOM interaction on a specific browser tab
-    #[tool(
-        name = "browser_interact",
-        description = "Perform a DOM gesture in a specific browser tab. Target elements via snapshot-scoped refs such as @s12ab34cde1 or CSS selectors. Actions: click, dblclick, fill, type, clear, select, scroll, focus, hover, check, uncheck, press. An optional wait_for post-condition makes action + verification atomic."
-    )]
-    async fn grove_browser_interact_tool(
-        &self,
-        Parameters(input): Parameters<BrowserInteractInput>,
-        Extension(parts): Extension<Parts>,
-    ) -> Result<CallToolResult, McpError> {
-        shared_grove_browser_interact_tool(caller_session_from_parts(&parts)?, input).await
-    }
-
-    /// Extract text or HTML content from a specific browser tab
-    #[tool(
-        name = "browser_extract",
-        description = "Extract structured content from a specific browser tab (identified by tab_id from browser_open). extract_type: text (innerText), html (outerHTML), value (input value), url, title. Optionally target a specific element via @e ref or CSS selector."
-    )]
-    async fn grove_browser_extract_tool(
-        &self,
-        Parameters(input): Parameters<BrowserExtractInput>,
-        Extension(parts): Extension<Parts>,
-    ) -> Result<CallToolResult, McpError> {
-        shared_grove_browser_extract_tool(caller_session_from_parts(&parts)?, input).await
-    }
-
-    /// Capture a screenshot of a specific browser tab
-    #[tool(
-        name = "browser_screenshot",
-        description = "Capture the visible viewport of a Chrome tab as an MCP image. The target tab is activated before capture. Supports an optional wait_for condition."
-    )]
-    async fn grove_browser_screenshot_tool(
-        &self,
-        Parameters(input): Parameters<BrowserScreenshotInput>,
-        Extension(parts): Extension<Parts>,
-    ) -> Result<CallToolResult, McpError> {
-        shared_grove_browser_screenshot_tool(caller_session_from_parts(&parts)?, input).await
+        shared_grove_computer_help_tool(input).await
     }
 }
 
@@ -835,141 +785,36 @@ pub struct MemoryRecentLogsInput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct BrowserOpenInput {
-    /// The URL to open in the user's Chrome browser
-    pub url: String,
-    /// Optional condition applied after the default page-load wait.
-    pub wait_for: Option<BrowserWaitCondition>,
-    #[schemars(range(min = 100, max = 60000))]
-    pub timeout_ms: Option<u64>,
+#[serde(deny_unknown_fields)]
+pub struct BrowserInput {
+    /// Browser tool name, such as open, snapshot or click.
+    pub tool: String,
+    /// Arguments for the tool, as listed by browser_help.
+    #[serde(default)]
+    pub args: Option<serde_json::Value>,
+    /// Which browser this call uses. Leave unset for the test browser. Pass
+    /// "personal" on every call meant for the user's own logged-in browser; it
+    /// does not carry over, and the user approves it first.
+    #[serde(default)]
+    pub target: Option<crate::browser::Target>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct BrowserTabInput {
-    /// Chrome tab id returned by browser_open or shared through @ Browser Tabs.
-    pub tab_id: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BrowserWaitKind {
-    Load,
-    Url,
-    Selector,
-    Text,
-    Delay,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BrowserWaitCondition {
-    /// Condition type: load, url, selector, text, or delay.
-    pub condition: BrowserWaitKind,
-    /// CSS selector or @e reference for selector/text waits.
-    pub target: Option<String>,
-    /// Expected state: visible, hidden, attached, detached, equals, contains, or matches.
-    pub state: Option<String>,
-    /// Expected URL/text value, or delay duration in milliseconds for condition=delay.
-    pub value: Option<String>,
+pub struct ComputerInput {
+    /// agent-desktop tool name, such as snapshot, click or screenshot.
+    pub tool: String,
+    /// Arguments for the tool, as listed by computer_help.
+    #[serde(default)]
+    pub args: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BrowserReloadInput {
-    pub tab_id: u32,
-    /// Ask Chrome to bypass its cache while reloading. Defaults to false.
-    pub bypass_cache: Option<bool>,
-    /// Optional condition applied after the default page-load wait.
-    pub wait_for: Option<BrowserWaitCondition>,
-    /// Maximum wait in milliseconds. Defaults to 15000 and is capped at 60000.
-    #[schemars(range(min = 100, max = 60000))]
-    pub timeout_ms: Option<u64>,
+pub struct BrowserHelpInput {
+    /// A browser tool name, or "guide". Leave unset for the tool list.
+    #[serde(default)]
+    pub topic: Option<String>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BrowserNavigateAction {
-    Goto,
-    Back,
-    Forward,
-}
-
-impl BrowserNavigateAction {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Goto => "goto",
-            Self::Back => "back",
-            Self::Forward => "forward",
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BrowserNavigateInput {
-    pub tab_id: u32,
-    pub action: BrowserNavigateAction,
-    /// Destination URL. Required only for action=goto.
-    pub url: Option<String>,
-    /// Optional condition applied after the default page-load wait.
-    pub wait_for: Option<BrowserWaitCondition>,
-    #[schemars(range(min = 100, max = 60000))]
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BrowserWaitInput {
-    pub tab_id: u32,
-    pub wait_for: BrowserWaitCondition,
-    #[schemars(range(min = 100, max = 60000))]
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct BrowserSnapshotInput {
-    /// Chrome tab id returned by grove_browser_open
-    pub tab_id: u32,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct BrowserInteractInput {
-    /// Chrome tab id returned by grove_browser_open
-    pub tab_id: u32,
-    /// DOM action: click, dblclick, fill, type, clear, select, scroll, focus, hover, check, uncheck, press
-    pub action: String,
-    /// Target element — snapshot-scoped reference from browser_snapshot, or a CSS selector
-    pub target: String,
-    /// Text to fill/type or key name to press (required for fill, type, press)
-    pub value: Option<String>,
-    /// Optional post-condition. The interaction and wait execute as one command.
-    pub wait_for: Option<BrowserWaitCondition>,
-    #[schemars(range(min = 100, max = 60000))]
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct BrowserExtractInput {
-    /// Chrome tab id returned by grove_browser_open
-    pub tab_id: u32,
-    /// What to extract: text (innerText), html (outerHTML), value (input value), url, title
-    pub extract_type: String,
-    /// Optional element reference (@e1) or CSS selector; omit to target the whole tab
-    pub target: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BrowserScreenshotInput {
-    /// Chrome tab id returned by grove_browser_open
-    pub tab_id: u32,
-    pub wait_for: Option<BrowserWaitCondition>,
-    #[schemars(range(min = 100, max = 60000))]
-    pub timeout_ms: Option<u64>,
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn ensure_browser_control_enabled() -> Result<(), McpError> {
     if config::load_config().browser_control.enabled {
@@ -980,10 +825,6 @@ fn ensure_browser_control_enabled() -> Result<(), McpError> {
             None,
         ))
     }
-}
-
-fn browser_timeout_ms(value: Option<u64>) -> u64 {
-    value.unwrap_or(15_000).clamp(100, 60_000)
 }
 
 /// Resolve the token-bound caller to its trusted project/task/chat identity.
@@ -1252,6 +1093,10 @@ pub fn build_router() -> Router {
         .route_service("/buddy-mcp/{token}/", buddy_svc)
         .route_service("/memory-mcp/{token}", memory_svc)
         .route_service("/memory-mcp/{token}/", memory_svc_clone)
+        .route(
+            "/browser-relay/{token}",
+            axum::routing::get(crate::browser::relay::ws_handler),
+        )
 }
 
 #[cfg(test)]
@@ -1581,49 +1426,13 @@ mod tests {
         assert!(!names.contains(&"graph_reply".to_string()));
         assert!(names.contains(&"graph_contacts".to_string()));
         assert!(names.contains(&"graph_capability".to_string()));
-        assert!(names.contains(&"browser_open".to_string()));
-        assert!(names.contains(&"browser_reload".to_string()));
-        assert!(names.contains(&"browser_navigate".to_string()));
-        assert!(names.contains(&"browser_close".to_string()));
-        assert!(names.contains(&"browser_wait".to_string()));
-        assert!(names.contains(&"browser_snapshot".to_string()));
-        assert!(names.contains(&"browser_interact".to_string()));
-        assert!(names.contains(&"browser_extract".to_string()));
-        assert!(names.contains(&"browser_screenshot".to_string()));
+        assert!(names.contains(&"browser".to_string()));
+        assert!(names.contains(&"browser_help".to_string()));
         assert!(names.contains(&"set_title".to_string()));
         assert!(names.contains(&"ask_form".to_string()));
-        assert_eq!(names.len(), 24);
-    }
-
-    #[test]
-    fn browser_tool_schemas_expose_wait_and_viewport_screenshot_contracts() {
-        let tools = AgentGraphMcpService::new().tool_router.list_all();
-        let schema = |name: &str| {
-            let tool = tools
-                .iter()
-                .find(|tool| tool.name == name)
-                .unwrap_or_else(|| panic!("missing {name}"));
-            serde_json::to_string(tool.input_schema.as_ref()).expect("schema")
-        };
-
-        let reload = schema("browser_reload");
-        for expected in ["bypass_cache", "wait_for", "timeout_ms"] {
-            assert!(reload.contains(expected), "{reload}");
-        }
-
-        let interact = schema("browser_interact");
-        assert!(interact.contains("wait_for"), "{interact}");
-
-        let screenshot = schema("browser_screenshot");
-        assert!(screenshot.contains("wait_for"), "{screenshot}");
-        let screenshot_schema: serde_json::Value =
-            serde_json::from_str(&screenshot).expect("screenshot schema json");
-        let properties = screenshot_schema["properties"]
-            .as_object()
-            .expect("screenshot properties");
-        for removed in ["mode", "target", "format", "quality", "padding"] {
-            assert!(!properties.contains_key(removed), "{screenshot}");
-        }
+        assert!(names.contains(&"computer".to_string()));
+        assert!(names.contains(&"computer_help".to_string()));
+        assert_eq!(names.len(), 19);
     }
 
     /// End-to-end test of the HTTP transport: real axum listener bound on a
@@ -1880,17 +1689,19 @@ pub(crate) type TrustedSession = (String, String, tasks::ChatSession);
 
 pub(crate) fn shared_tools(project: &str) -> Vec<Tool> {
     let memory_enabled = memory::project_memory_enabled(project).unwrap_or(false);
-    let browser_enabled = config::load_config().browser_control.enabled;
-    AgentGraphMcpService::tool_router()
+    let mut tools: Vec<Tool> = AgentGraphMcpService::tool_router()
         .list_all()
         .into_iter()
         .filter(|tool| {
             let name = tool.name.as_ref();
             (memory_enabled && WORKING_MEMORY_TOOLS.contains(&name))
-                || (browser_enabled && name.starts_with("browser_"))
+                || is_browser_tool(name)
+                || is_computer_tool(name)
                 || matches!(name, "ask_form" | "speak")
         })
-        .collect()
+        .collect();
+    retain_enabled_control_tools(&mut tools);
+    tools
 }
 
 pub(crate) async fn call_shared_tool(
@@ -1955,72 +1766,26 @@ pub(crate) async fn call_shared_tool(
             )
             .await
         }
-        "browser_open" => {
-            shared_grove_browser_open_tool(
+        "browser_help" => {
+            let input: BrowserHelpInput = serde_json::from_value(arguments)
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            shared_grove_browser_help_tool(input).await
+        }
+        "browser" => {
+            shared_grove_browser_tool(
                 caller,
                 serde_json::from_value(arguments)
                     .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
             )
             .await
         }
-        "browser_reload" => {
-            shared_grove_browser_reload_tool(
-                caller,
-                serde_json::from_value(arguments)
-                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
-            )
-            .await
+        "computer_help" => {
+            let input: BrowserHelpInput = serde_json::from_value(arguments)
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            shared_grove_computer_help_tool(input).await
         }
-        "browser_navigate" => {
-            shared_grove_browser_navigate_tool(
-                caller,
-                serde_json::from_value(arguments)
-                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
-            )
-            .await
-        }
-        "browser_close" => {
-            shared_grove_browser_close_tool(
-                caller,
-                serde_json::from_value(arguments)
-                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
-            )
-            .await
-        }
-        "browser_wait" => {
-            shared_grove_browser_wait_tool(
-                caller,
-                serde_json::from_value(arguments)
-                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
-            )
-            .await
-        }
-        "browser_snapshot" => {
-            shared_grove_browser_snapshot_tool(
-                caller,
-                serde_json::from_value(arguments)
-                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
-            )
-            .await
-        }
-        "browser_interact" => {
-            shared_grove_browser_interact_tool(
-                caller,
-                serde_json::from_value(arguments)
-                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
-            )
-            .await
-        }
-        "browser_extract" => {
-            shared_grove_browser_extract_tool(
-                caller,
-                serde_json::from_value(arguments)
-                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
-            )
-            .await
-        }
-        "browser_screenshot" => {
-            shared_grove_browser_screenshot_tool(
+        "computer" => {
+            shared_grove_computer_tool(
                 caller,
                 serde_json::from_value(arguments)
                     .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
@@ -2149,268 +1914,107 @@ async fn shared_grove_ask_form_tool(
     }
 }
 
-async fn shared_grove_browser_open_tool(
+async fn shared_grove_browser_help_tool(
+    input: BrowserHelpInput,
+) -> Result<CallToolResult, McpError> {
+    ensure_browser_control_enabled()?;
+    crate::browser::help(input.topic.as_deref())
+        .await
+        .map(|text| CallToolResult::success(vec![Content::text(text)]))
+        .map_err(|error| McpError::internal_error(error, None))
+}
+
+async fn shared_grove_browser_tool(
     caller: TrustedSession,
-    input: BrowserOpenInput,
+    input: BrowserInput,
 ) -> Result<CallToolResult, McpError> {
-    let cfg = config::load_config();
-    if !cfg.browser_control.enabled {
-        return Err(McpError::invalid_request(
-            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-            None,
-        ));
-    }
-    let group_name = if cfg.browser_control.auto_groups {
-        Some(shared_task_name(&caller)?)
+    ensure_browser_control_enabled()?;
+    let task_name = shared_task_name(&caller)?;
+    let (project, task, chat) = caller;
+    let cwd = task_cwd(&project, &task);
+    let scope = crate::browser::Scope {
+        project,
+        task,
+        chat: chat.id,
+        task_name,
+        cwd,
+    };
+    let result = crate::browser::invoke(
+        &scope,
+        &input.tool,
+        input.args.unwrap_or(serde_json::Value::Null),
+        input.target,
+    )
+    .await
+    .map_err(|error| McpError::invalid_request(error, None))?;
+    Ok(browser_tool_result(result))
+}
+
+fn task_cwd(project: &str, task: &str) -> std::path::PathBuf {
+    tasks::get_task(project, task)
+        .ok()
+        .flatten()
+        .map(|task| std::path::PathBuf::from(task.worktree_path))
+        .filter(|path| path.is_dir())
+        .unwrap_or_else(crate::storage::grove_dir)
+}
+
+fn ensure_computer_use_enabled() -> Result<(), McpError> {
+    if config::load_config().browser_control.computer_use {
+        Ok(())
     } else {
-        None
+        Err(McpError::invalid_request(
+            "Computer use is disabled. Enable it in Grove Settings.",
+            None,
+        ))
+    }
+}
+
+async fn shared_grove_computer_help_tool(
+    input: BrowserHelpInput,
+) -> Result<CallToolResult, McpError> {
+    ensure_computer_use_enabled()?;
+    crate::computer::help(input.topic.as_deref())
+        .await
+        .map(|text| CallToolResult::success(vec![Content::text(text)]))
+        .map_err(|error| McpError::internal_error(error, None))
+}
+
+async fn shared_grove_computer_tool(
+    caller: TrustedSession,
+    input: ComputerInput,
+) -> Result<CallToolResult, McpError> {
+    ensure_computer_use_enabled()?;
+    let (project, task, chat) = caller;
+    let cwd = task_cwd(&project, &task);
+    let scope = crate::computer::Scope {
+        project,
+        task,
+        chat: chat.id,
+        chat_title: chat.title,
+        cwd,
     };
-    let timeout_ms = browser_timeout_ms(input.timeout_ms);
-    let wait_for = input
-        .wait_for
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-    crate::api::handlers::extension::browser_open(
-        &input.url,
-        group_name.as_deref(),
-        wait_for,
-        timeout_ms,
+    let result = crate::computer::invoke(
+        &scope,
+        &input.tool,
+        input.args.unwrap_or(serde_json::Value::Null),
     )
     .await
-    .map_err(|e| McpError::internal_error(e, None))
-    .and_then(|mut res| {
-        if let Some(obj) = res.as_object_mut() {
-            obj.remove("groupId");
-        }
-        json_success(&res)
-    })
+    .map_err(|error| McpError::invalid_request(error, None))?;
+    Ok(browser_tool_result(result))
 }
 
-async fn shared_grove_browser_reload_tool(
-    _caller: TrustedSession,
-    input: BrowserReloadInput,
-) -> Result<CallToolResult, McpError> {
-    ensure_browser_control_enabled()?;
-    let timeout_ms = browser_timeout_ms(input.timeout_ms);
-    let wait_for = input
-        .wait_for
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-    crate::api::handlers::extension::browser_reload(
-        input.tab_id,
-        input.bypass_cache.unwrap_or(false),
-        wait_for,
-        timeout_ms,
-    )
-    .await
-    .map_err(|e| McpError::internal_error(e, None))
-    .and_then(|res| json_success(&res))
-}
-
-async fn shared_grove_browser_navigate_tool(
-    _caller: TrustedSession,
-    input: BrowserNavigateInput,
-) -> Result<CallToolResult, McpError> {
-    ensure_browser_control_enabled()?;
-    if matches!(input.action, BrowserNavigateAction::Goto) && input.url.is_none() {
-        return Err(McpError::invalid_params(
-            "url is required when action is goto".to_string(),
-            None,
-        ));
+/// The driver's result as it came, except a protocol error, which has no
+/// result to pass on.
+fn browser_tool_result(result: serde_json::Value) -> CallToolResult {
+    if let Some(error) = result.get("error") {
+        let message = error.get("message").unwrap_or(error);
+        let text = message
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| message.to_string());
+        return CallToolResult::error(vec![Content::text(text)]);
     }
-    let timeout_ms = browser_timeout_ms(input.timeout_ms);
-    let wait_for = input
-        .wait_for
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-    crate::api::handlers::extension::browser_navigate(
-        input.tab_id,
-        input.action.as_str(),
-        input.url.as_deref(),
-        wait_for,
-        timeout_ms,
-    )
-    .await
-    .map_err(|e| McpError::internal_error(e, None))
-    .and_then(|res| json_success(&res))
-}
-
-async fn shared_grove_browser_close_tool(
-    _caller: TrustedSession,
-    input: BrowserTabInput,
-) -> Result<CallToolResult, McpError> {
-    ensure_browser_control_enabled()?;
-    crate::api::handlers::extension::browser_close(input.tab_id)
-        .await
-        .map_err(|e| McpError::internal_error(e, None))
-        .and_then(|res| json_success(&res))
-}
-
-async fn shared_grove_browser_wait_tool(
-    _caller: TrustedSession,
-    input: BrowserWaitInput,
-) -> Result<CallToolResult, McpError> {
-    ensure_browser_control_enabled()?;
-    let timeout_ms = browser_timeout_ms(input.timeout_ms);
-    let wait_for = serde_json::to_value(input.wait_for)
-        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-    crate::api::handlers::extension::browser_wait(input.tab_id, wait_for, timeout_ms)
-        .await
-        .map_err(|e| McpError::internal_error(e, None))
-        .and_then(|res| json_success(&res))
-}
-
-async fn shared_grove_browser_snapshot_tool(
-    _caller: TrustedSession,
-    input: BrowserSnapshotInput,
-) -> Result<CallToolResult, McpError> {
-    let cfg = config::load_config();
-    if !cfg.browser_control.enabled {
-        return Err(McpError::invalid_request(
-            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-            None,
-        ));
-    }
-    crate::api::handlers::extension::browser_snapshot(input.tab_id)
-        .await
-        .map_err(|e| McpError::internal_error(e, None))
-        .and_then(|res| json_success(&res))
-}
-
-async fn shared_grove_browser_interact_tool(
-    _caller: TrustedSession,
-    input: BrowserInteractInput,
-) -> Result<CallToolResult, McpError> {
-    let cfg = config::load_config();
-    if !cfg.browser_control.enabled {
-        return Err(McpError::invalid_request(
-            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-            None,
-        ));
-    }
-    crate::api::handlers::extension::browser_interact(
-        input.tab_id,
-        &input.action,
-        &input.target,
-        input.value.as_deref(),
-        input
-            .wait_for
-            .map(serde_json::to_value)
-            .transpose()
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
-        browser_timeout_ms(input.timeout_ms),
-    )
-    .await
-    .map_err(|e| McpError::internal_error(e, None))
-    .and_then(|res| json_success(&res))
-}
-
-async fn shared_grove_browser_extract_tool(
-    _caller: TrustedSession,
-    input: BrowserExtractInput,
-) -> Result<CallToolResult, McpError> {
-    let cfg = config::load_config();
-    if !cfg.browser_control.enabled {
-        return Err(McpError::invalid_request(
-            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-            None,
-        ));
-    }
-    crate::api::handlers::extension::browser_extract(
-        input.tab_id,
-        &input.extract_type,
-        input.target.as_deref(),
-    )
-    .await
-    .map_err(|e| McpError::internal_error(e, None))
-    .and_then(|res| json_success(&res))
-}
-
-async fn shared_grove_browser_screenshot_tool(
-    _caller: TrustedSession,
-    input: BrowserScreenshotInput,
-) -> Result<CallToolResult, McpError> {
-    let cfg = config::load_config();
-    if !cfg.browser_control.enabled {
-        return Err(McpError::invalid_request(
-            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-            None,
-        ));
-    }
-    let timeout_ms = browser_timeout_ms(input.timeout_ms);
-    let wait_for = input
-        .wait_for
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-    let res = crate::api::handlers::extension::browser_screenshot(
-        crate::api::handlers::extension::BrowserScreenshotRequest {
-            tab_id: input.tab_id,
-            wait_for,
-            timeout_ms,
-        },
-    )
-    .await
-    .map_err(|e| McpError::internal_error(e, None))?;
-    // 扩展返回 { success, screenshot: "data:image/png;base64,...." } 或
-    // { success: false, error: "..." }。MCP image content 要求纯 base64 + mime
-    // type 分开，不能把 dataUrl 整段塞进 text —— 那样客户端按 token 计字数,
-    // 一张 PNG 几十万字符直接顶爆上下文窗口。
-    if res.get("success").and_then(|v| v.as_bool()) == Some(false) {
-        let err = res
-            .get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("screenshot failed")
-            .to_string();
-        return Err(McpError::internal_error(err, None));
-    }
-    let data_url = res
-        .get("screenshot")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            McpError::internal_error("extension returned no `screenshot` field".to_string(), None)
-        })?;
-    // Strip "data:<mime>;base64," prefix to get raw base64 payload.
-    // Refusing malformed data URLs avoids silently shipping a base64
-    // string that doesn't actually decode to a valid image — the client
-    // would render garbage.
-    let (mime, b64) = match data_url.split_once(",") {
-        Some((header, body)) if header.starts_with("data:") && header.contains(";base64") => {
-            // Extract just the media type (drop any `;param=...` and the
-            // `;base64` suffix). `data:;base64,...` is legal — fall
-            // back to image/png in that case rather than emitting an
-            // empty mime that confuses the MCP client.
-            let after_data = header.trim_start_matches("data:");
-            let mime = after_data
-                .split(';')
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            let mime = if mime.is_empty() {
-                "image/png".to_string()
-            } else {
-                mime
-            };
-            (mime, body.to_string())
-        }
-        _ => {
-            return Err(McpError::internal_error(
-                    "extension returned malformed screenshot payload (expected data:<mime>;base64,<...>)"
-                        .to_string(),
-                    None,
-                ));
-        }
-    };
-    let mut metadata = res.clone();
-    if let Some(object) = metadata.as_object_mut() {
-        object.remove("screenshot");
-    }
-    Ok(CallToolResult::success(vec![
-        Content::text(metadata.to_string()),
-        Content::image(b64, mime),
-    ]))
+    serde_json::from_value(result.clone())
+        .unwrap_or_else(|_| CallToolResult::error(vec![Content::text(result.to_string())]))
 }

@@ -1524,7 +1524,9 @@ When continuing or reviewing an existing change, inspect the available Grove rev
 
 const WORKING_STUDIO_INSTRUCTION: &str = r#"This is a Studio Task. Follow the workspace contract in `AGENTS.md` and the Project guidance in `instructions.md` when present. Use visual collaboration capabilities when a visual artifact would communicate or validate the result better than prose alone."#;
 
-const WORKING_BROWSER_INSTRUCTION: &str = r#"Use browser control when the work depends on the user's current browser state, authenticated Session, or visible interaction with a page."#;
+const WORKING_COMPUTER_INSTRUCTION: &str = r#"Use the `computer` tool only when a task needs a desktop app on the user's computer; call `computer_help` first for its tools. It acts on the user's real apps and screen, so the user approves it in the chat before your first call in this session. Prefer the browser tool for websites."#;
+
+const WORKING_BROWSER_INSTRUCTION: &str = r#"Use the `browser` tool to verify pages, reproduce UI behavior, or work on websites; call `browser_help` first for its tools. It runs in an isolated test browser that keeps its logins per Project. When a task needs the user's own logged-in browser, pass `target: "personal"` on every call that should use it; the user approves this in the chat, once per session. Use the test browser for debugging, and treat the personal browser as the user's real accounts. If a page needs a login or verification only the user can complete, tell them; they can do it in the Browser panel while you wait."#;
 
 const WORKING_MEMORY_INSTRUCTION: &str = r#"Project Memory preserves long-term knowledge about both the Project and its working context.
 
@@ -1626,6 +1628,12 @@ fn working_grove_sections(
             .enabled
         {
             grove_sections.push(WORKING_BROWSER_INSTRUCTION);
+        }
+        if crate::storage::config::load_config()
+            .browser_control
+            .computer_use
+        {
+            grove_sections.push(WORKING_COMPUTER_INSTRUCTION);
         }
     }
     grove_sections

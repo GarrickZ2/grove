@@ -30,6 +30,9 @@
       }
     });
     root.dataset.theme = theme.light ? "light" : "dark";
+    var bg = theme.vars["--color-bg"];
+    var themeColor = document.querySelector("meta[name='theme-color']");
+    if (themeColor && COLOR.test(bg)) themeColor.setAttribute("content", bg);
   } catch (error) {
     // Storage can be unavailable; the stylesheet's default still works.
   }

@@ -372,19 +372,17 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
             keywords: ["file", "edit", "code"],
           }, { contexts: { default: 0, tasks: 8, workspace: 34 } }),
         );
-        if (!studioMode) {
-          commands.push(
-            withRanking({
-              id: "panel-review",
-              name: "Open Review",
-              category: "Action Panel",
-              icon: FileSearch,
-              shortcut: "d",
-              handler: () => onOpenPanel("review"),
-              keywords: ["diff", "code review"],
-            }, { contexts: { default: 0, tasks: 8, workspace: 30 } }),
-          );
-        }
+        commands.push(
+          withRanking({
+            id: "panel-review",
+            name: "Open Review",
+            category: "Action Panel",
+            icon: FileSearch,
+            shortcut: "d",
+            handler: () => onOpenPanel("review"),
+            keywords: ["diff", "code review"],
+          }, { contexts: { default: 0, tasks: 8, workspace: 30 } }),
+        );
         if (studioMode) {
           commands.push(
             withRanking({

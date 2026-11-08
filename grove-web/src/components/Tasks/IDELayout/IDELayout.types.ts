@@ -6,9 +6,9 @@ import type { PanelMenuItem } from "../../../orbit/ui";
 export type LayoutMode = "flex" | "ide";
 
 // ── Panel Categories ──
-export type AuxPanelType = "terminal" | "editor" | "review" | "graph" | "artifacts" | "sketch";
+export type AuxPanelType = "terminal" | "editor" | "review" | "graph" | "artifacts" | "sketch" | "browser";
 export type InfoTabType = "stats" | "git" | "notes" | "comments";
-export const AUX_PANEL_TYPES: AuxPanelType[] = ["terminal", "editor", "review", "graph", "artifacts", "sketch"];
+export const AUX_PANEL_TYPES: AuxPanelType[] = ["terminal", "editor", "review", "graph", "artifacts", "sketch", "browser"];
 export const INFO_PANEL_TYPES: InfoTabType[] = ["stats", "git", "notes", "comments"];
 
 export interface ArtifactPreviewRequest {

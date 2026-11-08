@@ -76,7 +76,7 @@ export function useMentionSources(options: {
         category: "Browser Tab",
         kind: "browsertabs",
         isDir: false,
-        sessionId: tab.id?.toString(),
+        sessionId: tab.targetId,
         favIconUrl: tab.favIconUrl,
       }))));
   }, []);

@@ -12,6 +12,11 @@ vi.mock("../../../context", () => ({
 vi.mock("../../../utils/projectStyle", () => ({ getProjectStyle: () => ({ color: { bg: "", fg: "" }, Icon: () => null }) }));
 vi.mock("../../../orbit/ui/interfaceContext", () => ({ useOrbitInterface: () => false }));
 vi.mock("../../../orbit/ui/panelSlots", () => ({ useInPanelShell: () => false }));
+const linker = vi.hoisted(() => ({ projects: [{ id: "more", name: "More", project_type: "repo", task_count: 0 }], link: vi.fn() }));
+vi.mock("./useProjectLinker", () => ({
+  NO_LINKABLE_PROJECTS: "None",
+  useProjectLinker: () => ({ ...linker, disabled: false, error: null, loading: false, hasReviewable: false }),
+}));
 vi.mock("./TaskEditor", async () => {
   const { useState } = await import("react");
   return {
@@ -55,6 +60,18 @@ it("switches to a linked Project's Local Task in a fresh editor and remembers it
   expect(host.querySelector(".files")?.textContent).toBe("other/_local");
   expect(mounts.count).toBe(2);
   expect(sessionStorage.getItem("grove:editor-target:own:task")).toBe("other");
+});
+
+it("links another Project from the switcher menu", () => {
+  render(linked);
+  act(() => host.querySelector<HTMLButtonElement>(".review-project-trigger")!.click());
+  act(() => document.body.querySelector<HTMLButtonElement>(".review-project-link")!.click());
+  // The menu gave way to the picker.
+  expect(document.body.querySelector(".review-project-menu")).toBeNull();
+  const option = [...document.body.querySelectorAll<HTMLButtonElement>("[aria-label='Link Project'] [role=option]")].find((item) => item.textContent?.includes("More"))!;
+  act(() => option.click());
+  expect(linker.link).toHaveBeenCalledWith(linker.projects[0]);
+  expect(document.body.querySelector("[aria-label='Link Project']")).toBeNull();
 });
 
 it("falls back to the task's own files when the linked Project goes away", () => {

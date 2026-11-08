@@ -40,6 +40,11 @@ pub struct ConfigResponse {
 pub struct BrowserControlConfigDto {
     pub enabled: bool,
     pub auto_groups: bool,
+    pub personal_browser: bool,
+    pub personal_browser_bypass: bool,
+    pub sensitive_tools: bool,
+    pub computer_use: bool,
+    pub computer_use_bypass: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,6 +238,11 @@ impl From<&Config> for ConfigResponse {
             browser_control: BrowserControlConfigDto {
                 enabled: config.browser_control.enabled,
                 auto_groups: config.browser_control.auto_groups,
+                personal_browser: config.browser_control.personal_browser,
+                personal_browser_bypass: config.browser_control.personal_browser_bypass,
+                sensitive_tools: config.browser_control.sensitive_tools,
+                computer_use: config.browser_control.computer_use,
+                computer_use_bypass: config.browser_control.computer_use_bypass,
             },
         }
     }
@@ -258,6 +268,11 @@ pub struct ConfigPatchRequest {
 pub struct BrowserControlConfigPatch {
     pub enabled: Option<bool>,
     pub auto_groups: Option<bool>,
+    pub personal_browser: Option<bool>,
+    pub personal_browser_bypass: Option<bool>,
+    pub sensitive_tools: Option<bool>,
+    pub computer_use: Option<bool>,
+    pub computer_use_bypass: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -631,6 +646,21 @@ pub async fn patch_config(
         }
         if let Some(v) = bc_patch.auto_groups {
             config.browser_control.auto_groups = v;
+        }
+        if let Some(v) = bc_patch.personal_browser {
+            config.browser_control.personal_browser = v;
+        }
+        if let Some(v) = bc_patch.sensitive_tools {
+            config.browser_control.sensitive_tools = v;
+        }
+        if let Some(v) = bc_patch.personal_browser_bypass {
+            config.browser_control.personal_browser_bypass = v;
+        }
+        if let Some(v) = bc_patch.computer_use_bypass {
+            config.browser_control.computer_use_bypass = v;
+        }
+        if let Some(v) = bc_patch.computer_use {
+            config.browser_control.computer_use = v;
         }
     }
 

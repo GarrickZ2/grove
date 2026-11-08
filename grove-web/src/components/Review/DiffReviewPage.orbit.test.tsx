@@ -105,7 +105,8 @@ describe('Review in an Orbit panel', () => {
     expect(reviewHeaderDensity(null)).toBe('wide');
     expect(reviewHeaderDensity(1100)).toBe('wide');
     expect(reviewHeaderDensity(800)).toBe('medium');
-    expect(reviewHeaderDensity(500)).toBe('narrow');
+    expect(reviewHeaderDensity(720)).toBe('narrow');
+    expect(reviewHeaderDensity(500)).toBe('compact');
   });
 
   it('keeps the legacy header outside Orbit', async () => {

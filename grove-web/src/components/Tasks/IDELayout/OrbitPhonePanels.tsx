@@ -84,3 +84,23 @@ export function OrbitPhonePanels({ panels, openPanel, onOpen, onShowChat, action
     </>
   );
 }
+
+/** The left screen of a book fold while no panel is open: pick one to sit beside the Agent. */
+export function OrbitFoldPanelPicker({ panels, onOpen }: { panels: OrbitPhonePanel[]; onOpen: (panel: OrbitPhonePanel) => void }) {
+  return (
+    <div className="orbit-fold-picker">
+      <p className="orbit-fold-picker__hint">Open a panel beside the Agent</p>
+      <div className="orbit-fold-picker__grid">
+        {panels.map((panel) => {
+          const Icon = panel.d.icon;
+          return (
+            <button key={panel.d.key} type="button" className="orbit-phone-sheet__tile" onClick={() => onOpen(panel)}>
+              <span className="orbit-phone-sheet__tile-icon"><Icon size={18} /></span>
+              <span className="orbit-phone-sheet__tile-label">{panel.d.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

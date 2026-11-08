@@ -2,6 +2,7 @@ import { useMemo, type ComponentProps } from "react";
 import { useProject } from "../../../context";
 import type { LinkedReviewProject } from "../../../hooks/useLinkedReviewProjects";
 import { ProjectSwitcher } from "./ProjectSwitcher";
+import { useProjectLinker } from "./useProjectLinker";
 import { useProjectTarget, type ProjectTarget } from "./useProjectTarget";
 import { TaskEditor } from "./TaskEditor";
 
@@ -22,6 +23,7 @@ export function LinkedTaskEditor({ linkedProjects, ...editor }: ComponentProps<t
     ...(linkedProjects ?? []).map((p) => ({ ...p, linked: true })),
   ], [projectId, taskId, ownName, linkedProjects]);
   const { active, select } = useProjectTarget(`grove:editor-target:${projectId}:${taskId}`, targets);
+  const linker = useProjectLinker(projectId, taskId, select);
   return (
     <TaskEditor
       {...editor}
@@ -29,7 +31,7 @@ export function LinkedTaskEditor({ linkedProjects, ...editor }: ComponentProps<t
       projectId={active.projectId}
       taskId={active.taskId}
       treeTitle={targets.length > 1 ? (
-        <ProjectSwitcher targets={targets} active={active} onSelect={select} verb="Editing" portal />
+        <ProjectSwitcher targets={targets} active={active} onSelect={select} verb="Editing" portal linker={linker} />
       ) : undefined}
     />
   );

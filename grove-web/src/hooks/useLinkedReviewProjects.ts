@@ -29,11 +29,6 @@ function toReviewProjects(items: LinkedProjectItem[]): LinkedReviewProject[] {
 
 /** Linked Projects of a Task that have a reviewable Local Task, in link order. */
 export function useLinkedReviewProjects(projectId: string, taskId: string): LinkedReviewProject[] {
-  return useLinkedReviewProjectsState(projectId, taskId).projects;
-}
-
-/** Same, plus whether this task's list has loaded (it starts empty while fetching). */
-export function useLinkedReviewProjectsState(projectId: string, taskId: string): { projects: LinkedReviewProject[]; loaded: boolean } {
   const [state, setState] = useState<{ key: string; projects: LinkedReviewProject[] }>({
     key: "",
     projects: [],
@@ -62,8 +57,7 @@ export function useLinkedReviewProjectsState(projectId: string, taskId: string):
   }, [projectId, taskId, key]);
 
   // Never leak the previous task's links while the new fetch is in flight.
-  const loaded = state.key === key;
-  return { projects: loaded ? state.projects : EMPTY, loaded };
+  return state.key === key ? state.projects : EMPTY;
 }
 
 const EMPTY: LinkedReviewProject[] = [];

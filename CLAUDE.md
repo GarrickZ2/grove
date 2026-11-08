@@ -33,6 +33,21 @@ The Web IDE is the main event (FlexLayout, 10 panel types, IDE Layout mode, ⌘K
 
 **Positioning**: Grove serves three audiences on the same project — power devs (10 agents in parallel + Agent Graph), visual thinkers (Studio + sketch-driven workflow), non-technical collaborators (no terminal, no git, ship via Studio + Radio).
 
+## Browser Control
+
+Agents drive browsers through the `browser` tool, a thin pass-through to the [agent-browser](https://github.com/vercel-labs/agent-browser) npm package, always its latest release, run with `npx` (`src/browser/`). Grove passes the tool name and arguments through and returns the result as it came. Don't add wrappers, rewrite arguments or results, retry, or add tools of Grove's own. Grove owns only what is around the call:
+
+- **Which browser** — each Task's test browser (logins kept per Project), or the user's own when a call names `target: "personal"`. A call that tries to choose another browser itself (`session`, `--cdp`, `connect` and the like) or to get the bound browser's connection (`get_cdp_url`) is refused, since that would get around the approval and the sensitive-tool switch. Results come back as agent-browser returns them, minus its `data.lifecycle` launch bookkeeping and `structuredContent.stdout` (a string copy of `structuredContent.response`).
+- **Approval** — the user's own browser needs the user's approval, once per chat session, asked in that session's chat (`src/session_approval.rs`), unless the user set it to Allow. The test browser needs none.
+- **Sensitive tools** — tools that read login data stay off in the user's own browser until the user turns on `sensitive_tools` (a denylist in `src/browser/mod.rs`).
+- **Settings** — `enabled`; the user's own browser as Off / Ask / Allow (`personal_browser`, `personal_browser_bypass`); `sensitive_tools`.
+
+The user's own browser is reached by CDP over the Companion extension (`grove-extension/src/background/cdpRelay.ts`), which only forwards: the driver sees every tab the extension can attach to (pages a browser or policy closes to extensions are left out), with Chrome's own target ids, and `Browser.close`, `Target.activateTarget` and `Page.bringToFront` are never carried out, so the agent never takes the user's screen. The driver reports the size of a browser it would launch, not the user's page, so screencast frames are made the page's size and the panel maps clicks by the frame. Bump the Companion's manifest version once per release, not on every change.
+
+The Browser panel is for watching the agent and taking over: it lists the test browser's tabs and the tabs in the user's browser the agent has been on, with the live page. × closes a tab in the panel and nothing else; approval is never changed from the panel.
+
+**Computer use** works the same way: the `computer` tool passes calls to the [agent-desktop](https://www.npmjs.com/package/agent-desktop) MCP server, latest release, unchanged (`src/computer.rs`). Each chat session gets its own agent-desktop session and asks the user in its chat before its first call; Settings sets it to Off / Ask / Allow (`computer_use`, `computer_use_bypass`). The panel shows each session's latest screenshot in a Computer tab ahead of the browser tabs; × closes the tab until the next screenshot.
+
 ## Tech Stack
 
 - **Backend**: Rust 2021, axum (HTTP/WS), tokio, ratatui (TUI), Tauri 2 (desktop shell)
@@ -57,6 +72,7 @@ src/
 ├── tmux/                  # tmux session management
 ├── acp/                   # ACP (Agent Client Protocol) integration
 ├── agent_graph/           # Inter-agent spawn / send / reply tools
+├── browser/               # Browser control: agent-browser driver, per-Task sessions, Companion relay
 ├── machines/              # Paired Grove servers: pairing, link, per-machine proxy
 ├── platform.rs            # OS differences: path spelling, console detach, process trees, script shell
 ├── storage/               # Persistence (config, tasks, notes, workspace)

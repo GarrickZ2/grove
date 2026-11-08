@@ -18,7 +18,7 @@
 /* ── The one header row (portalled into the PanelShell header, or the free
       layout's tab strip). Outside `.diff-review-page`, so scoped by `.orv-head`. */
 .orv-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.orv-head-leading { display: flex; align-items: center; min-width: 0; max-width: 200px; }
+.orv-head-leading { display: flex; align-items: center; width: 100%; min-width: 0; }
 .orv-head-group { display: inline-flex; align-items: center; gap: 1px; }
 .orv-range { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .orv-range-arrow { color: var(--o-muted); font-size: 12px; user-select: none; }
@@ -85,7 +85,8 @@
   animation: orv-pop var(--o-dur-pop) var(--o-ease-pop) both;
 }
 .orv-head .diff-version-trigger { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
-.orv-head.is-narrow .diff-version-trigger { max-width: 96px; padding: 0 6px 0 8px; }
+.orv-head.is-narrow .diff-version-trigger,
+.orv-head.is-compact .diff-version-trigger { max-width: 96px; padding: 0 6px 0 8px; }
 
 /* Version selectors: Orbit field + popover */
 .orv-head .diff-version-trigger {
@@ -127,9 +128,13 @@
 .orv-version-pop .diff-version-footer { padding: 6px 9px 2px; border-top-color: var(--o-border); color: var(--o-muted); }
 
 /* Linked-project switcher, when the task links Projects */
-.orv-head .review-project-switcher { flex: 0 1 180px; }
+.orv-head-leading .review-project-switcher { flex: 1 1 auto; }
+.oui-panel-leading:has(.orv-head-leading.is-narrow) { width: 132px; }
+.oui-panel-leading:has(.orv-head-leading.is-compact) { width: auto; }
+.orv-head-leading.is-compact .review-project-trigger { width: auto; }
+.orv-head-leading.is-compact .review-project-name { display: none; }
 /* Same field as the version selectors beside it: 28px, hairline border. */
-.orv-head .review-project-trigger {
+.orv-head-leading .review-project-trigger {
   height: 28px;
   gap: 6px;
   padding: 0 8px 0 5px;
@@ -141,11 +146,11 @@
   font-weight: 400;
   transition: border-color var(--o-dur-fast), box-shadow var(--o-dur-fast);
 }
-.orv-head .review-project-trigger:hover { border-color: var(--o-border-strong); background: var(--o-bg); }
-.orv-head .review-project-trigger[aria-expanded="true"] { border-color: var(--o-border-strong); background: var(--o-bg); box-shadow: var(--o-ring-selected); }
-.orv-head .review-project-glyph { width: 18px; height: 18px; border-radius: 4px; }
-.orv-head .review-project-glyph svg { width: 11px; height: 11px; }
-.orv-head .review-project-chevron { width: 13px; height: 13px; }
+.orv-head-leading .review-project-trigger:hover { border-color: var(--o-border-strong); background: var(--o-bg); }
+.orv-head-leading .review-project-trigger[aria-expanded="true"] { border-color: var(--o-border-strong); background: var(--o-bg); box-shadow: var(--o-ring-selected); }
+.orv-head-leading .review-project-glyph { width: 18px; height: 18px; border-radius: 4px; }
+.orv-head-leading .review-project-glyph svg { width: 11px; height: 11px; }
+.orv-head-leading .review-project-chevron { width: 13px; height: 13px; }
 .orv-project-pop { position: fixed; z-index: 1000; }
 .orv-project-pop .review-project-menu { position: static; width: 240px; max-width: calc(100vw - 16px); }
 .orv-project-pop .review-project-menu { border-color: var(--o-border); border-radius: var(--o-radius-md); background: var(--o-bg); box-shadow: var(--o-shadow-2); }

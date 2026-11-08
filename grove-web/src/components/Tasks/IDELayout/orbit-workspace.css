@@ -39,6 +39,60 @@
 /* ── Shell: [ [aux | Agent] / terminal ] | dock ── */
 .ide-workbench.is-orbit-desk{--ows-term-bg:#1a1917;--ows-term-fg:#e7e5e4}
 .ows-shell{position:relative;display:flex;flex:1;min-height:0;min-width:0;overflow:hidden}
+/* Book fold: a dock panel sits on the left screen, the Agent on the right. */
+.ows-shell.is-fold-dock-left{flex-direction:row-reverse}
+/* The crease can't be tapped: the title stays on the left screen and the tools
+   take the right one, scrolling sideways when they don't all fit. */
+/* The Agent's screen is narrow: its setup chip is the Agent's icon alone, and
+   opening it still shows the model and permissions. */
+.ows-shell.is-fold .oc-setup{flex:none}
+.ows-shell.is-fold .oc-setup-chip{width:36px;padding:0;justify-content:center}
+.ows-shell.is-fold .oc-setup-chip>:not(.oc-setup-ag){display:none}
+/* Laptop fold: the Agent's surface fills both screens. A panel covers the part
+   above the crease; below it are the deck and the Composer. */
+/* Above the Agent's header, so the panel's own header is the top bar. */
+.ows-shell.is-fold-laptop .ows-dock.is-x{position:absolute;inset:0 0 auto;z-index:40}
+.ows-shell.is-fold-laptop .ows-dock.is-x.is-open{width:100%!important;height:var(--fold-top)!important;background:var(--o-bg)}
+.ows-shell.is-fold-laptop .ows-dock-inner{left:0;right:0;width:100%!important}
+.ows-deck{position:absolute;z-index:41;top:var(--fold-top);left:0;right:0;padding:6px 14px 10px;background:var(--o-bg);color:var(--o-text);-webkit-font-smoothing:antialiased;user-select:none}
+.ows-deck-head{display:flex;align-items:center;gap:8px;height:48px}
+.ows-deck-icon{width:44px;height:44px;margin-left:-6px;flex:none;display:grid;place-items:center;border:0;border-radius:12px;background:none;color:var(--o-text)}
+.ows-deck-icon:active{background:var(--o-hover)}
+.ows-deck-title{flex:1 1 auto;min-width:0;display:flex;align-items:baseline;gap:8px;white-space:nowrap;overflow:hidden}
+.ows-deck-title span{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:16px;font-weight:600}
+.ows-deck-title small{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--o-font-mono);font-size:12.5px;color:var(--o-muted)}
+.ows-deck-action{flex:none;display:inline-flex;align-items:center;gap:6px;height:38px;padding:0 14px;border:1px solid var(--o-border);border-radius:19px;background:var(--o-bg);color:var(--o-text);font:inherit;font-size:14px;font-weight:500}
+.ows-deck-action:active:not(:disabled){background:var(--o-hover)}
+.ows-deck-action:disabled{opacity:.45}
+.ows-deck-head .oui-panel-ib{flex:none;width:44px;height:44px}
+.ows-deck-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:6px;max-height:144px;overflow-y:auto;scrollbar-width:none}
+.ows-deck-grid::-webkit-scrollbar{display:none}
+.ows-deck-tile{height:64px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:0 4px;border:1px solid var(--o-border);border-radius:14px;background:var(--o-group,var(--o-bg));color:var(--o-muted);font:inherit;font-size:12px;font-weight:500;transition:background-color var(--o-dur-fast),color var(--o-dur-fast),transform 140ms var(--o-ease-toggle)}
+.ows-deck-tile span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ows-deck-tile-icon{width:20px;height:20px;stroke-width:1.7;color:var(--o-text)}
+.ows-deck-tile:active:not(:disabled){transform:scale(.96)}
+.ows-deck-tile.is-on{background:var(--o-accent-soft);border-color:color-mix(in oklab,var(--o-accent) 30%,transparent);color:color-mix(in oklab,var(--o-accent) 82%,var(--o-text))}
+.ows-deck-tile.is-on .ows-deck-tile-icon{color:var(--o-accent)}
+.ows-deck-tile:not(.is-on)>:first-child{filter:grayscale(1)}
+/* The Composer takes what's left of the lower screen, measured from below the Agent's 40px header. */
+.ows-shell.is-fold-laptop .task-chat-input-area{top:calc(var(--fold-top) + var(--fold-deck,180px) - 40px);display:flex;flex-direction:column;padding-top:0}
+.ows-shell.is-fold-laptop .task-chat-input-area .chatbox-cq-root{display:flex;flex:1;min-height:0;flex-direction:column}
+.ows-shell.is-fold-laptop .task-chat-input-area>.ocv-fade{display:none}
+.ows-shell.is-fold-laptop .task-chat-input-area .oc-shell{display:flex;flex:1;min-height:0;flex-direction:column}
+.ows-shell.is-fold-laptop .task-chat-input-area .oc-body{flex:1;min-height:0;overflow-y:auto}
+/* Any tap in the Composer lands in the editor. */
+.ows-shell.is-fold-laptop .task-chat-input-area .oc-body>*{min-height:100%}
+.ows-shell.is-fold-laptop .task-chat-input-area .oc-body [contenteditable]{min-height:100%}
+/* The keyboard takes the lower screen: the deck makes way and the Composer
+   shrinks to sit on the keyboard, below the crease, leaving the upper screen alone. */
+html.grove-keyboard-open .ows-deck{display:none}
+html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area{top:auto}
+html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area .oc-shell{flex:none}
+html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area .oc-body{flex:none;max-height:max(24px,calc(var(--grove-app-height,100dvh) - var(--fold-top) - var(--grove-kb-inset,0px) - var(--fold-chrome,72px)))}
+html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area .oc-body>*,
+html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area .oc-body [contenteditable]{min-height:0}
+.ows-bar.is-fold .ows-tools{flex:none;width:calc(var(--fold-right) - 84px);margin-left:auto}
+.ows-bar.is-fold .ows-tools-group{flex-shrink:0}
 .ows-main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}
 .ows-row{display:flex;flex:1;min-height:0;min-width:0}
 .ows-row>.ide-chat-surface{flex:1;min-width:0;height:auto}
@@ -72,6 +126,29 @@
 .ows-grip.is-y::after{top:2.5px;left:50%;width:32px;height:2px;margin-left:-16px}
 .ows-grip:hover::after{opacity:1}
 .ows-grip:active::after{opacity:1;background:var(--o-accent)}
+/* Touch: no hover to reveal the pill and 7px is narrower than a fingertip, so
+   the pill stays visible over a 24px hit area. The x grip starts below the
+   40px panel header so it doesn't sit on the header's edge buttons. */
+@media (hover:none) and (pointer:coarse){
+  .ows-grip.is-x{top:40px;left:-12px;width:24px}
+  .ows-grip.is-y{top:-12px;height:24px}
+  .ows-grip::after{opacity:1}
+  .ows-grip.is-x::after{left:10px;width:4px;height:40px;margin-top:-20px}
+  .ows-grip.is-y::after{top:10px;width:40px;height:4px;margin-left:-20px}
+  /* A fingertip's worth of toolbar. Commit and Merge move to the ⋯ menu
+     (TaskView), which leaves the width to the title and the tools. */
+  .ows-bar-title{flex:1 1 auto;min-width:96px}
+  /* The task's name first; its branch gets what's left. */
+  .ows-bar-name{flex:0 1 auto;min-width:min(100%,88px)}
+  .ows-bar-branch{flex:0 100 auto}
+  .ows-bar-spacer{display:none}
+  .ows-tb{width:40px;height:34px}
+  .ows-tb-icon{width:18px;height:18px}
+  .ows-tb.is-primary{padding:0 12px 0 10px;font-size:13px}
+  /* The home bar needs clearance, not its full inset plus padding. */
+  .ide-workbench.is-orbit .task-chat-input-area:not(:has(.mobile-composer-pill)),
+  .orbit-free-layout .task-chat-input-area{bottom:max(var(--grove-kb-inset,0px),calc(env(safe-area-inset-bottom,0px) * .5))!important;padding-bottom:4px}
+}
 
 /* ── One header height ── The Agent's header matches the PanelShell header
    (40px, border-box, same hairline) so bottom borders line up across the

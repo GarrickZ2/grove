@@ -3,7 +3,7 @@ import { createContext, useContext, useState, useEffect, useMemo, useCallback, u
 import type { ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { ThemeConfig } from "../api/config";
-import { rememberBootIcon, rememberBootTheme } from "../utils/bootTheme";
+import { rememberBootIcon, rememberBootTheme, syncThemeColor } from "../utils/bootTheme";
 import { APP_APPEARANCE_CHANGED_EVENT, normalizeAppIconStyle, appIconAssetUrl, pwaIconKey, pwaManifestUrl, pwaTouchIconUrl } from "../data/appIcons";
 
 const isTauri = !isIosClient && typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -492,6 +492,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--color-info", colors.info);
     // Lets stylesheets tell light themes from dark ones (`:root[data-theme="dark"]`).
     root.dataset.theme = theme.isLight ? "light" : "dark";
+    syncThemeColor(colors.bg);
     if (themeLoaded) rememberBootTheme();
   }, [theme, themeLoaded]);
 

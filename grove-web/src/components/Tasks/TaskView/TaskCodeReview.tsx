@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   X,
   Code,
+  Eye,
   Maximize2,
   Minimize2,
 } from "lucide-react";
@@ -12,8 +13,11 @@ import type { FileNavRequest } from "../../Review";
 import { useProject } from "../../../context";
 import type { LinkedReviewProject } from "../../../hooks/useLinkedReviewProjects";
 import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
+import { PanelEmpty } from "../../../orbit/ui/PanelShell";
 import { useInPanelShell } from "../../../orbit/ui/panelSlots";
+import { LinkedProjectPicker } from "../TaskDetail/tabs/LinkedProjectPicker";
 import { ProjectSwitcher } from "./ProjectSwitcher";
+import { NO_LINKABLE_PROJECTS, useProjectLinker, type ProjectLinker } from "./useProjectLinker";
 import { useProjectTarget, type ProjectTarget } from "./useProjectTarget";
 
 interface TaskCodeReviewProps {
@@ -41,6 +45,33 @@ interface TaskCodeReviewProps {
   linkedProjects?: LinkedReviewProject[];
 }
 
+/** A Studio task with nothing to review yet: the way to get something here. */
+function LinkProjectGuide({ linker, orbit }: { linker: ProjectLinker; orbit: boolean }) {
+  const picker = (
+    <LinkedProjectPicker
+      projects={linker.projects}
+      disabled={linker.disabled}
+      onSelect={linker.link}
+      triggerClassName={orbit ? "oui-btn oui-btn-primary" : undefined}
+      emptyLabel={NO_LINKABLE_PROJECTS}
+    />
+  );
+  const body = linker.error ?? "Studio tasks have no code of their own. Link a coding project to review its changes here.";
+  if (orbit) {
+    return (
+      <div className="flex h-full flex-col">
+        <PanelEmpty icon={Eye} title="Review a coding project" action={picker}>{body}</PanelEmpty>
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-[var(--color-text-muted)]">
+      <p>{body}</p>
+      {picker}
+    </div>
+  );
+}
+
 export function TaskCodeReview({
   projectId,
   taskId,
@@ -62,6 +93,7 @@ export function TaskCodeReview({
   ], [hasOwnReview, projectId, taskId, ownName, isGitRepo, linkedProjects]);
 
   const { active, select } = useProjectTarget(`grove:review-target:${projectId}:${taskId}`, targets);
+  const linker = useProjectLinker(projectId, taskId, select);
   const showSwitcher = (linkedProjects?.length ?? 0) > 0;
   // In an Orbit panel shell the shell header is the title (and owns close);
   // Review puts its controls in that header (see Review/OrbitReviewChrome).
@@ -118,13 +150,11 @@ export function TaskCodeReview({
             isGitRepo={active.isGitRepo}
             isChatBusy={isChatBusy}
             title={showSwitcher ? (
-              <ProjectSwitcher targets={targets} active={active} onSelect={select} verb="Reviewing" />
+              <ProjectSwitcher targets={targets} active={active} onSelect={select} verb="Reviewing" linker={linker} />
             ) : undefined}
           />
-        ) : (
-          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-[var(--color-text-muted)]">
-            Link a coding project in Info to review its changes here.
-          </div>
+        ) : linker.loading || linker.hasReviewable ? null : (
+          <LinkProjectGuide linker={linker} orbit={shellOwnsHeader} />
         )}
       </div>
     </motion.div>

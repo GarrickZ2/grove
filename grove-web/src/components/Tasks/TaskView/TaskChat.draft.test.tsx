@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   virtualizationListeners: new Set<() => void>(),
 }));
 
+vi.mock("./conversation/SessionApprovalRequest", () => ({ SessionApprovalRequest: () => null }));
+
 vi.mock("../../../api", () => ({
   listChats: vi.fn(),
   createChat: vi.fn(),

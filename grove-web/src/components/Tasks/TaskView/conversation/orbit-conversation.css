@@ -24,7 +24,9 @@
   position: absolute;
   inset-inline: 0;
   top: calc(-1 * var(--ocv-fade));
-  bottom: 0;
+  /* The input area floats above the home bar: reach past it to the screen's
+     edge, or the transcript shows below the composer. */
+  bottom: calc(-1 * max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom, 0px)));
   pointer-events: none;
   background: linear-gradient(
     to bottom,

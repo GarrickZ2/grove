@@ -170,6 +170,14 @@
 .orbit-free-layout .flexlayout__splitter { background: var(--ofl-border); opacity: 1; transition: background-color 150ms; }
 .orbit-free-layout .flexlayout__splitter:hover { background: color-mix(in oklab, var(--color-text) 25%, transparent); opacity: 1; }
 .orbit-free-layout .flexlayout__splitter_drag { background: var(--color-highlight); opacity: 1; border-radius: 0; }
+/* Touch: FlexLayout already widens the hit area to 20px, but a 1px hairline
+   gives no hint that it can be dragged, so show a grab pill on it. */
+@media (hover: none) and (pointer: coarse) {
+  .orbit-free-layout .flexlayout__splitter_extra { position: relative; }
+  .orbit-free-layout .flexlayout__splitter_extra::after { content: ""; position: absolute; border-radius: 2px; background: color-mix(in oklab, var(--color-text) 25%, transparent); pointer-events: none; }
+  .orbit-free-layout .flexlayout__splitter_horz .flexlayout__splitter_extra::after { left: -1.5px; top: 50%; width: 4px; height: 40px; margin-top: -20px; }
+  .orbit-free-layout .flexlayout__splitter_vert .flexlayout__splitter_extra::after { top: -1.5px; left: 50%; width: 40px; height: 4px; margin-left: -20px; }
+}
 /* 40px: the same column-header height as the docked layout. */
 .orbit-free-layout .flexlayout__tabset_tabbar_outer {
   height: 40px;

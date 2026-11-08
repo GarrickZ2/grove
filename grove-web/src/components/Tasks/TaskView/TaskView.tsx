@@ -189,6 +189,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   const ideLayoutRef = useRef<IDELayoutHandle>(null);
   const { config, refresh: refreshConfig } = useConfig();
   const { isMobile } = useIsMobile();
+  const coarseTouch = typeof window.matchMedia === "function" && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
   // Orbit reaches TaskView on phones too; App keeps tablets on the desktop layout.
   const orbit = config?.web?.interface === "orbit";
   // Docking panels has no room on a phone: Orbit there shows one panel at a time.
@@ -461,6 +462,16 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     danger: item.variant === "danger",
     shortcut: item.shortcut,
   })), [overflowItems]);
+  // On touch the header needs its width for the title and the tools, so Commit
+  // and Merge join the ⋯ menu, as they do in the phone sheet.
+  const orbitTouchMenu = useMemo<PanelMenuItem[]>(() => phoneActions.map((item) => ({
+    id: item.id,
+    label: item.label,
+    icon: item.icon,
+    onSelect: item.onClick,
+    disabled: item.disabled,
+    danger: item.variant === "danger",
+  })), [phoneActions]);
   const orbitWorkspaceActions = useMemo(() => (
     <>
       {onCommit && (
@@ -626,11 +637,11 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             task={task}
             projectId={projectId}
             toolbarLeading={workspaceLeading}
-            toolbarTrailing={orbit && !isMobile ? orbitWorkspaceActions : workspaceActions}
+            toolbarTrailing={orbit && !isMobile ? (coarseTouch ? undefined : orbitWorkspaceActions) : workspaceActions}
             phoneActions={phoneActions}
             isActive={isActive}
             onToggleLayoutMode={toggleLayoutMode}
-            toolbarMenu={orbit && !isMobile ? orbitOverflow : undefined}
+            toolbarMenu={orbit && !isMobile ? (coarseTouch ? orbitTouchMenu : orbitOverflow) : undefined}
           />
         ) : (
           <FlexLayoutContainer
@@ -642,8 +653,8 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             fullscreen={fullscreen}
             onToggleFullscreen={toggleFullscreen}
             toolbarLeading={orbit ? workspaceLeading : undefined}
-            toolbarTrailing={orbit ? orbitWorkspaceActions : undefined}
-            toolbarMenu={orbit ? orbitOverflow : undefined}
+            toolbarTrailing={orbit && !coarseTouch ? orbitWorkspaceActions : undefined}
+            toolbarMenu={orbit ? (coarseTouch ? orbitTouchMenu : orbitOverflow) : undefined}
             onToggleLayoutMode={toggleLayoutMode}
           />
         )}

@@ -1,5 +1,5 @@
 /**
- * Install Chrome Companion — 2-step wizard.
+ * Install Grove Companion — 2-step wizard.
  *
  * Step 1: "Choose Folder & Install" — user picks a directory, then the
  *         backend unpacks the embedded companion into
@@ -151,7 +151,7 @@ export function InstallExtensionDialog({ onClose }: Props) {
           <Puzzle className="h-5 w-5 text-[var(--color-highlight)]" />
           <div className="flex-1">
             <div className="text-base font-semibold text-[var(--color-text)]">
-              Install Chrome Companion
+              Install Grove Companion
             </div>
             <div className="text-xs text-[var(--color-text-muted)]">
               {step === 1 ? "One-click install — about 30 seconds" : "Last step: Load Unpacked in Chrome"}
@@ -376,14 +376,14 @@ function Step2LoadUnpacked({
           )}
         </div>
         <div className="flex items-stretch gap-2">
-          <div className="flex flex-1 items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 font-mono text-xs text-[var(--color-text)]">
-            <span className="truncate">{path}</span>
+          <div className="flex min-w-0 flex-1 items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 font-mono text-xs text-[var(--color-text)]">
+            <span className="truncate" title={path}>{path}</span>
           </div>
           <button
             type="button"
             onClick={onCopy}
             title="Copy path"
-            className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+            className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
           >
             {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
             {copied ? "Copied" : "Copy"}
@@ -392,7 +392,7 @@ function Step2LoadUnpacked({
             type="button"
             onClick={onReveal}
             title="Reveal in file manager"
-            className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+            className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
           >
             <FolderOpen className="h-3.5 w-3.5" />
             Reveal

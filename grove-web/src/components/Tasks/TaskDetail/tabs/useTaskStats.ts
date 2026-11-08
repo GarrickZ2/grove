@@ -97,8 +97,18 @@ export function useTaskLinkedProjects(projectId: string, taskId: string) {
     };
   }, [projectId, taskId]);
 
-  const saveLinkedProjects = async (projectIds: string[]) => {
-    if (linksSaving) return;
+  // Several surfaces edit the same set: a stale copy here would drop their links on save.
+  useEffect(() => {
+    const onChanged = (e: Event) => {
+      const detail = (e as CustomEvent<LinkedProjectsChangedDetail>).detail;
+      if (detail?.projectId === projectId && detail.taskId === taskId) setLinkedProjects(detail.linkedProjects);
+    };
+    window.addEventListener(LINKED_PROJECTS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(LINKED_PROJECTS_CHANGED_EVENT, onChanged);
+  }, [projectId, taskId]);
+
+  const saveLinkedProjects = async (projectIds: string[]): Promise<boolean> => {
+    if (linksSaving) return false;
     setLinksSaving(true);
     setLinksError(null);
     try {
@@ -107,9 +117,11 @@ export function useTaskLinkedProjects(projectId: string, taskId: string) {
       window.dispatchEvent(new CustomEvent<LinkedProjectsChangedDetail>(LINKED_PROJECTS_CHANGED_EVENT, {
         detail: { projectId, taskId, linkedProjects: result.linked_projects },
       }));
+      return true;
     } catch (err) {
       console.error("Failed to update linked projects:", err);
       setLinksError("Failed to update linked projects");
+      return false;
     } finally {
       setLinksSaving(false);
     }

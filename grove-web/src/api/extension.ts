@@ -1,4 +1,4 @@
-// Grove Chrome Companion extension API — proxies tab queries through the
+// Grove Companion extension API — proxies tab queries through the
 // connected extension over the backend WebSocket bridge. Going through
 // apiClient (not raw fetch) keeps mobile-mode HMAC signing intact.
 import { apiClient, appendHmacToUrl } from './client';
@@ -7,6 +7,8 @@ import { apiClient, appendHmacToUrl } from './client';
 export interface ExtensionTab {
   /** Chrome's internal tab id. May be missing if the tab is being discarded. */
   id?: number;
+  /** Chrome's CDP target id for the tab: what an agent passes to `tab_switch`. */
+  targetId?: string;
   /** Page <title> or url fallback. */
   title: string;
   /** Full URL of the tab. */

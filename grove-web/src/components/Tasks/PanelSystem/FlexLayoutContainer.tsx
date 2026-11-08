@@ -20,12 +20,13 @@ import type { FileNavRequest } from '../../Review';
 import { TaskTerminal } from '../TaskView/TaskTerminal';
 import type { ArtifactPreviewRequest } from '../TaskInfoPanel/tabs';
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from '../../ui/sketchChipCache';
+import { OPEN_BROWSER_EVENT, type OpenBrowserDetail } from '../../../api/browser';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { useConfig, useProject } from '../../../context';
 import { useIsMobile } from '../../../hooks';
 import { apiClient } from '../../../api/client';
 import { listActivePlugins, type Plugin } from '../../../api/plugins';
-import { useLinkedReviewProjectsState } from '../../../hooks/useLinkedReviewProjects';
+import { useLinkedReviewProjects } from '../../../hooks/useLinkedReviewProjects';
 import { useOpenReviewRequests, type OpenReviewRequest } from '../../../orbit/workspace/openReview';
 import {
   OPEN_PLUGIN_PANEL_EVENT,
@@ -274,8 +275,7 @@ export const FlexLayoutContainer = forwardRef<
   const taskProject = projects.find((p) => p.id === projectId) ?? selectedProject;
   const isStudio = taskProject?.projectType === 'studio';
   const taskIsGitRepo = taskProject?.isGitRepo;
-  const { projects: linkedReviewProjects, loaded: linkedReviewLoaded } = useLinkedReviewProjectsState(projectId, task.id);
-  const hasLinkedReview = linkedReviewProjects.length > 0;
+  const linkedReviewProjects = useLinkedReviewProjects(projectId, task.id);
 
   const layoutStorageKey = `grove-flexlayout-${projectId}-${task.id}`;
 
@@ -514,6 +514,18 @@ export const FlexLayoutContainer = forwardRef<
     return () => window.removeEventListener(OPEN_SKETCH_EVENT, handler);
   }, [isStudio, projectId, task.id, model, getAllTabs, addPanel]);
 
+  // An agent started using the browser: show it, without pulling focus from a
+  // panel the user already opened it in.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<OpenBrowserDetail>).detail;
+      if (detail?.projectId !== projectId || detail.taskId !== task.id) return;
+      if (!getAllTabs().some((tab) => tab.getId().startsWith('browser-'))) addPanel('browser');
+    };
+    window.addEventListener(OPEN_BROWSER_EVENT, handler);
+    return () => window.removeEventListener(OPEN_BROWSER_EVENT, handler);
+  }, [projectId, task.id, getAllTabs, addPanel]);
+
   // Ensure a panel of the given type exists. If one already exists, select it.
   // Otherwise, create a new one.
   const ensurePanel = useCallback((type: PanelType) => {
@@ -683,10 +695,8 @@ export const FlexLayoutContainer = forwardRef<
   }, [model, getAllTabs, addPanel, isStudio, projectId, task.id]);
 
   // "Open in Review" from elsewhere (Orbit Dashboard, Comments panel): see
-  // orbit/workspace/openReview.ts. Same rules as the IDE layout: a Studio
-  // task waits for its linked Projects before deciding it has a Review.
+  // orbit/workspace/openReview.ts.
   const openReviewPanel = useCallback((request: OpenReviewRequest) => {
-    if (isStudio && linkedReviewProjects.length === 0) return;
     const showPanel = () => {
       const reviewTab = getAllTabs().find((t) => t.getComponent() === 'review');
       if (reviewTab) model.doAction(Actions.selectTab(reviewTab.getId()));
@@ -698,8 +708,8 @@ export const FlexLayoutContainer = forwardRef<
     }
     const mode = taskIsGitRepo === false ? 'full' : request.mode;
     void navigateToFile(request.file, request.line, mode).then((opened) => { if (!opened) showPanel(); });
-  }, [isStudio, linkedReviewProjects.length, getAllTabs, model, addPanel, taskIsGitRepo, navigateToFile]);
-  useOpenReviewRequests(projectId, task.id, !isStudio || linkedReviewLoaded, openReviewPanel);
+  }, [isStudio, getAllTabs, model, addPanel, taskIsGitRepo, navigateToFile]);
+  useOpenReviewRequests(projectId, task.id, true, openReviewPanel);
 
   // Expose API via ref
   useImperativeHandle(ref, () => ({
@@ -885,7 +895,7 @@ export const FlexLayoutContainer = forwardRef<
   // Derived entirely from the shared panel catalog — adding a panel/plugin in
   // the registry makes it appear here automatically (no per-layout list).
   const addPanelItems = useCallback((): DropdownItem[] => {
-    const catalog = buildPanelCatalog(plugins, { isStudio, terminalAvailable, hasLinkedReview });
+    const catalog = buildPanelCatalog(plugins, { isStudio, terminalAvailable });
     let prevCategory: string | null = null;
     return catalog.map((d) => {
       const isPlugin = d.key.startsWith(PLUGIN_PANEL_PREFIX);
@@ -907,7 +917,7 @@ export const FlexLayoutContainer = forwardRef<
         },
       };
     });
-  }, [plugins, isStudio, terminalAvailable, hasLinkedReview, addPanel, addPluginPanel]);
+  }, [plugins, isStudio, terminalAvailable, addPanel, addPluginPanel]);
 
   // Custom TabSet rendering ([+] add panel + maximize button)
   // Orbit: one element per tab in its tabset's strip, where that tab's
@@ -1077,7 +1087,7 @@ export const FlexLayoutContainer = forwardRef<
       return t.getComponent() === 'plugin' ? `${PLUGIN_PANEL_PREFIX}${cfg?.pluginId ?? ''}` : t.getComponent() ?? '';
     };
     const selected = new Set(tabs.filter((t) => t.isVisible()).map((t) => t.getId()));
-    const catalog = buildPanelCatalog(plugins, { isStudio, terminalAvailable, hasLinkedReview });
+    const catalog = buildPanelCatalog(plugins, { isStudio, terminalAvailable });
     const toolFor = (d: (typeof catalog)[number]): OrbitToolItem => {
       const open = tabs.filter((t) => keyOf(t) === d.key);
       const shown = open.find((t) => selected.has(t.getId()));
@@ -1118,8 +1128,8 @@ export const FlexLayoutContainer = forwardRef<
             const item = toolFor(d);
             return { ...item, label: 'Agent', primary: true, tip: item.active ? 'Agent · click to show or close' : 'Open Agent' };
           }),
-          info.map(toolFor),
           rest.map(toolFor),
+          info.map(toolFor),
         ]}
         trailing={toolbarTrailing}
         menu={[
@@ -1184,11 +1194,9 @@ export const FlexLayoutContainer = forwardRef<
                   <Terminal size={13} /> Terminal
                 </button>
               )}
-              {(!isStudio || hasLinkedReview) && (
-                <button onClick={() => addPanel('review')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
-                  <Code size={13} /> Review
-                </button>
-              )}
+              <button onClick={() => addPanel('review')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
+                <Code size={13} /> Review
+              </button>
               <button onClick={() => addPanel('editor')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
                 <FileCode size={13} /> Editor
               </button>

@@ -170,6 +170,7 @@ import {
   quickConfigOptions,
 } from "./sessionConfigOptions";
 import { listExtensionTabs, getExtensionStatus } from "../../../api/extension";
+import { OPEN_BROWSER_EVENT, isBrowserToolCall, type OpenBrowserDetail } from "../../../api/browser";
 import { useProject } from "../../../context/ProjectContext";
 import { useConfig } from "../../../context/ConfigContext";
 import { useTheme } from "../../../context/ThemeContext";
@@ -310,6 +311,7 @@ import { OrbitConversationContext, useOrbitConversation } from "./conversation/O
 import { OrbitTurnRail } from "./conversation/OrbitTurnRail";
 import { OrbitLiveWorkHeader, OrbitSettledWorkHeader } from "./conversation/OrbitLiveWork";
 import { OrbitPermissionRecord, OrbitPermissionRequest } from "./conversation/OrbitPermissionCard";
+import { SessionApprovalRequest } from "./conversation/SessionApprovalRequest";
 import { OrbitReadOnlyCard } from "./conversation/OrbitReadOnlyCard";
 import { readOnlyCopy } from "./conversation/readOnlyCopy";
 import { isStalePermissionError, resolveStalePermission, stalePermissionId } from "./conversation/permissionCard";
@@ -3304,7 +3306,7 @@ export function TaskChat({
         category: "Browser Tab",
         kind: "browsertabs",
         isDir: false,
-        sessionId: tab.id?.toString(),
+        sessionId: tab.targetId,
         favIconUrl: tab.favIconUrl,
       }));
       setBrowserTabs(items);
@@ -6692,6 +6694,11 @@ export function TaskChat({
           break;
         case "tool_call":
           setMessages((prev) => reduceHistoryMessages(prev, msg));
+          if (isBrowserToolCall(msg.title)) {
+            window.dispatchEvent(new CustomEvent<OpenBrowserDetail>(OPEN_BROWSER_EVENT, {
+              detail: { projectId, taskId },
+            }));
+          }
           // Legacy bare section IDs are harmless: timeline disclosures only
           // read namespaced keys and remain collapsed until explicitly opened.
           setAutoExpandSectionId((prev) => {
@@ -7074,7 +7081,7 @@ export function TaskChat({
           break;
       }
     },
-    [agentLabel, onConnectedProp, scheduleBottomScroll, getActiveChatId, onChatBecameIdle, updateBusy, pruneActiveChatMessages, setAutoExpandSectionId, applyConfigOptionsSnapshot],
+    [agentLabel, projectId, taskId, onConnectedProp, scheduleBottomScroll, getActiveChatId, onChatBecameIdle, updateBusy, pruneActiveChatMessages, setAutoExpandSectionId, applyConfigOptionsSnapshot],
   );
 
   /** Buffer a server message into the per-chat cache (for non-active chats) */
@@ -12507,6 +12514,7 @@ export function TaskChat({
                   onDrop={handleDrop}
                   statusBar={<OrbitStatusBar status={orbitComposerStatus} activeTray={orbitActiveTray} onTrayChange={setOrbitTray} />}
                   tray={orbitPhoneShell ? null : orbitTrayBody}
+                  sessionApproval={<SessionApprovalRequest projectId={projectId} taskId={taskId} chatId={activeChatId ?? null} />}
                   ask={orbitActiveTray === "ask" ? composerPanelBody : null}
                   tools={orbitComposerTools}
                   hint={orbitPhoneShell ? null : orbitComposerHint}

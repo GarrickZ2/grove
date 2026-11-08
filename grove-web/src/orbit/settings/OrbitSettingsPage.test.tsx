@@ -171,7 +171,7 @@ describe("OrbitSettingsPage", () => {
   it("shows the Agents sections and flags the missing chat agent", async () => {
     await render();
     expect(container.querySelector("h1")?.textContent).toBe("Agents");
-    expect(groupLabels()).toEqual(["Default agent", "Manage", "Browser control", "Sending", "Chat history", "Render window"]);
+    expect(groupLabels()).toEqual(["Default agent", "Manage", "Browser control", "Computer use", "Sending", "Chat history", "Render window"]);
     expect(navItem("Agents")?.querySelector('[aria-label="Needs setup"]')).not.toBeNull();
   });
 
@@ -230,7 +230,7 @@ describe("OrbitSettingsPage", () => {
     resizeContent(803);
     expect(openSubs()).toEqual([]);
     resizeContent(1400);
-    expect(openSubs()).toEqual(["Default agent", "Manage", "Browser control", "Sending", "Chat history", "Render window"]);
+    expect(openSubs()).toEqual(["Default agent", "Manage", "Browser control", "Computer use", "Sending", "Chat history", "Render window"]);
     resizeContent(700);
     expect(openSubs()).toEqual([]);
   });

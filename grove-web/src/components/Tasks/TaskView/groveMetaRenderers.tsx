@@ -57,7 +57,7 @@ interface AgentInjectData {
 interface BrowserTabData {
   url: string;
   title?: string;
-  tab_id?: number;
+  target_id?: string;
 }
 
 interface PreviewCommentData {
@@ -203,7 +203,7 @@ function renderBrowserTab(env: GroveMetaEnvelope): ReactNode {
     faviconUrl = "";
   }
   const tooltip = `${rawTitle} (${url})${
-    typeof data.tab_id === "number" ? ` · tab_id=${data.tab_id}` : ""
+    data.target_id ? ` · ${data.target_id}` : ""
   }`;
   return (
     <button

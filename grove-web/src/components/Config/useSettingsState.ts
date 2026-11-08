@@ -150,6 +150,11 @@ export function useSettingsState() {
   // Browser Control state
   const [browserControlEnabled, setBrowserControlEnabled] = useState(true);
   const [browserControlAutoGroups, setBrowserControlAutoGroups] = useState(true);
+  const [browserPersonalAllowed, setBrowserPersonalAllowed] = useState(true);
+  const [browserSensitiveTools, setBrowserSensitiveTools] = useState(false);
+  const [computerUseAllowed, setComputerUseAllowed] = useState(true);
+  const [browserPersonalBypass, setBrowserPersonalBypass] = useState(false);
+  const [computerUseBypass, setComputerUseBypass] = useState(false);
   // Status polling is deliberately limited to the cheap in-process status
   // endpoint. It never queries Chrome tabs, and lets update/reload state change
   // while the installation dialog is open.
@@ -306,6 +311,11 @@ export function useSettingsState() {
     if (cfg.browser_control) {
       setBrowserControlEnabled(cfg.browser_control.enabled ?? true);
       setBrowserControlAutoGroups(cfg.browser_control.auto_groups ?? true);
+      setBrowserPersonalAllowed(cfg.browser_control.personal_browser ?? true);
+      setBrowserSensitiveTools(cfg.browser_control.sensitive_tools ?? false);
+      setComputerUseAllowed(cfg.browser_control.computer_use ?? true);
+      setBrowserPersonalBypass(cfg.browser_control.personal_browser_bypass ?? false);
+      setComputerUseBypass(cfg.browser_control.computer_use_bypass ?? false);
     }
 
     setIsLoaded(true);
@@ -480,6 +490,11 @@ export function useSettingsState() {
       browser_control: {
         enabled: browserControlEnabled,
         auto_groups: browserControlAutoGroups,
+        personal_browser: browserPersonalAllowed,
+        sensitive_tools: browserSensitiveTools,
+        computer_use: computerUseAllowed,
+        personal_browser_bypass: browserPersonalBypass,
+        computer_use_bypass: computerUseBypass,
       },
     };
     // The first save after load only echoes what was loaded; it isn't a change.
@@ -494,7 +509,7 @@ export function useSettingsState() {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, selectedLayout, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, trayDoneRetentionMode, trayDoneRetentionUnit, trayDoneRetentionValue, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, trayDoneRetentionMode, trayDoneRetentionUnit, trayDoneRetentionValue, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, browserPersonalAllowed, browserSensitiveTools, computerUseAllowed, browserPersonalBypass, computerUseBypass, refreshGlobalConfig]);
 
   // These preferences belong to this browser, never to the shared Grove server.
   useEffect(() => {
@@ -523,7 +538,7 @@ export function useSettingsState() {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [selectedLayout, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, isLoaded, saveConfig]);
+  }, [selectedLayout, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowElicitation, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, browserPersonalAllowed, browserSensitiveTools, computerUseAllowed, browserPersonalBypass, computerUseBypass, isLoaded, saveConfig]);
 
   useEffect(() => {
     if (!isRecordingWindowShortcut) return;
@@ -909,6 +924,16 @@ export function useSettingsState() {
     setBrowserControlEnabled,
     browserControlAutoGroups,
     setBrowserControlAutoGroups,
+    browserPersonalAllowed,
+    setBrowserPersonalAllowed,
+    browserSensitiveTools,
+    setBrowserSensitiveTools,
+    computerUseAllowed,
+    setComputerUseAllowed,
+    browserPersonalBypass,
+    setBrowserPersonalBypass,
+    computerUseBypass,
+    setComputerUseBypass,
     extensionStatus,
     extensionConnected,
     extensionCurrent,

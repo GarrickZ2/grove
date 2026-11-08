@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* No double-tap zoom: a quick second tap is just a tap. */
+html { touch-action: manipulation; }
+
 /* Native iOS fills the viewport. The shell and bottom controls apply their
    own safe-area padding once; never subtract safe areas from root height. */
 html[data-grove-ios="true"],
@@ -118,6 +121,14 @@ html.grove-standalone #root {
 }
 html.grove-standalone .grove-app-shell {
   height: var(--grove-app-height, 100%);
+}
+
+/* While typing, iOS pans the page up to show the focused field, taking the
+   header with it. The body moves back down by that pan so the page stays put
+   and only the Composer rises with the keyboard. As the containing block for
+   fixed elements it carries the menus and sheets along too. */
+html.grove-keyboard-open body {
+  transform: translateY(var(--grove-vv-offset, 0px));
 }
 
 /* Prevent iOS Safari from auto-zooming when focusing an input/textarea

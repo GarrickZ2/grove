@@ -137,6 +137,16 @@ export interface BrowserControlConfig {
   enabled?: boolean;
   /** Auto-organize AI-opened tabs into per-task Chrome Tab Groups. */
   auto_groups?: boolean;
+  /** Let agents use the user's own browser. */
+  personal_browser?: boolean;
+  /** Use the user's own browser without asking each chat session first. */
+  personal_browser_bypass?: boolean;
+  /** Let agents use tools that read login data in the user's own browser. */
+  sensitive_tools?: boolean;
+  /** Let agents use the user's computer. */
+  computer_use?: boolean;
+  /** Use the computer without asking each chat session first. */
+  computer_use_bypass?: boolean;
 }
 
 export interface Config {

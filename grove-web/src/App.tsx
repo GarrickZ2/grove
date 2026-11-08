@@ -5,7 +5,7 @@ import { BuddyLaunchContext } from "./components/Buddy/buddyLaunchContext";
 import { isTauriShell as inTauriShell } from "./utils/tauriShell";
 import { IosLiveActivity } from "./ios/IosLiveActivity";
 import { isIosClient } from "./utils/platform";
-import { useState, useContext, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
+import { useState, useContext, useEffect, useCallback, useRef, useSyncExternalStore, type CSSProperties } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -25,6 +25,8 @@ import { TransferDock } from "./transfers/TransferDock";
 import { GroveSplash } from "./components/Layout/GroveSplash";
 import { OrbitPhoneHeader, ORBIT_PHONE_SHOW_CHAT_EVENT } from "./components/Layout/OrbitPhoneHeader";
 import { useOrbitDrawerSwipe } from "./components/Layout/useOrbitDrawerSwipe";
+import { useOrbitSidebarSwipe } from "./components/Layout/useOrbitSidebarSwipe";
+import { ORBIT_FOLD_MENU_EVENT, useBookFold, useLaptopFold } from "./hooks/useBookFold";
 import { OrbitNewChat } from "./components/Orbit/OrbitNewChat";
 import { OrbitSettingsPage } from "./orbit/settings/OrbitSettingsPage";
 import { OrbitDashboardPage } from "./orbit/dashboard/OrbitDashboardPage";
@@ -211,6 +213,9 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // Orbit keeps its desktop layout on tablets; only phones get the mobile one.
   const isMobile = viewportMobile && !(orbit && isTablet);
   const orbitPhone = orbit && isMobile;
+  const laptopFold = useLaptopFold();
+  const laptopFolded = !!laptopFold && orbit && !isMobile;
+  const foldGrabY = useRef(0);
   const [preferredTasksMode, setTasksMode] = useState<TasksMode>(restoredNavigation?.tasksMode ?? "zen");
   const tasksMode: TasksMode = isMobile || orbit ? "zen" : preferredTasksMode;
   // Ref mirror of tasksMode for use inside stable callbacks (e.g. the
@@ -315,6 +320,25 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
     setSidebarIsland(next === "island");
     setSidebarCollapsed(next === "collapsed");
   }, []);
+  // A book fold gives each screen to the workspace; flattening brings the sidebar back.
+  const folded = (!!useBookFold() && orbit && !isMobile) || laptopFolded;
+  const sidebarBeforeFoldRef = useRef<typeof effectiveSidebarMode | null>(null);
+  useEffect(() => {
+    if (folded && !sidebarBeforeFoldRef.current) {
+      sidebarBeforeFoldRef.current = effectiveSidebarMode;
+      setSidebarMode("collapsed");
+    } else if (!folded && sidebarBeforeFoldRef.current) {
+      setSidebarMode(sidebarBeforeFoldRef.current);
+      sidebarBeforeFoldRef.current = null;
+    }
+  }, [folded, effectiveSidebarMode, setSidebarMode]);
+  useEffect(() => {
+    const open = () => setSidebarMode("expanded");
+    window.addEventListener(ORBIT_FOLD_MENU_EVENT, open);
+    return () => window.removeEventListener(ORBIT_FOLD_MENU_EVENT, open);
+  }, [setSidebarMode]);
+  const setSidebarCollapsedBySwipe = useCallback((next: boolean) => setSidebarMode(next ? "collapsed" : "expanded"), [setSidebarMode]);
+  useOrbitSidebarSwipe({ enabled: orbit && !isMobile, collapsed: effectiveSidebarMode === "collapsed", onCollapsedChange: setSidebarCollapsedBySwipe });
   const [hasExitedWelcome, setHasExitedWelcome] = useState(restoredNavigation?.hasExitedWelcome ?? false);
   const [navigationData, setNavigationData] = useState(() => restoredTaskNavigation(restoredNavigation));
 
@@ -455,7 +479,8 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // when the keyboard is genuinely up at resize time, while still
   // letting orientation changes update the value.
   useEffect(() => {
-    if (!isMobile || typeof window === "undefined" || !window.visualViewport) return;
+    // The laptop fold has the desktop layout, but its keyboard still rises over the lower screen.
+    if ((!isMobile && !laptopFolded) || typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
     const root = document.documentElement;
     let focusOutFrame: number | null = null;
@@ -477,6 +502,11 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
     // the keyboard has fully left the visual viewport.
     let stableAppHeight = window.innerHeight;
     root.style.setProperty("--grove-app-height", `${stableAppHeight}px`);
+    // A keyboard never changes the width, so a new width means the phone turned
+    // or folded, and a shorter viewport is real rather than a keyboard. Without
+    // this the app stays at its portrait height and the Composer ends up
+    // below the landscape screen.
+    let stableWidth = window.innerWidth;
     const recompute = () => {
       // The keyboard can only be up if a text field is focused. In a
       // standalone PWA (viewport-fit=cover) `innerHeight - vv.height` is a
@@ -487,17 +517,29 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       const ae = document.activeElement as HTMLElement | null;
       const editing =
         !!ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
+      if (window.innerWidth !== stableWidth) {
+        stableWidth = window.innerWidth;
+        stableAppHeight = window.innerHeight;
+        root.style.setProperty("--grove-app-height", `${stableAppHeight}px`);
+      }
       // iOS Safari may shrink both innerHeight and visualViewport.height to
       // the same value, making their difference zero while the keyboard is
       // visibly open. Compare against the pre-keyboard application height
       // instead; that remains stable for the whole editing session.
-      const viewportKeyboardHeight = stableAppHeight - vv.height - vv.offsetTop;
+      // iOS pans the whole page up to reveal a focused field, which pushes the
+      // header and the conversation off the screen. The page stays put
+      // instead: the pan (offsetTop) is undone by moving the body back down,
+      // and the Composer sits on the keyboard's real height. Only the
+      // Composer moves, and what's above it can still be read and scrolled.
+      const viewportKeyboardHeight = stableAppHeight - vv.height;
       const overlayKeyboardHeight = virtualKeyboard?.boundingRect.height ?? 0;
       const keyboardHeight = Math.max(viewportKeyboardHeight, overlayKeyboardHeight);
       const keyboardOpen = editing && keyboardHeight > 50;
 
       root.classList.toggle("grove-keyboard-open", keyboardOpen);
       root.style.setProperty("--grove-kb-inset", `${keyboardOpen ? keyboardHeight : 0}px`);
+      if (keyboardOpen && window.scrollY !== 0) window.scrollTo(0, 0);
+      root.style.setProperty("--grove-vv-offset", `${keyboardOpen ? Math.max(0, Math.round(vv.offsetTop)) : 0}px`);
 
       // focusout precedes the keyboard closing animation on iOS. Do not adopt
       // that transient short viewport as the new application height.
@@ -540,9 +582,10 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       }
       root.classList.remove("grove-keyboard-open");
       root.style.removeProperty("--grove-kb-inset");
+      root.style.removeProperty("--grove-vv-offset");
       root.style.removeProperty("--grove-app-height");
     };
-  }, [isMobile]);
+  }, [isMobile, laptopFolded]);
 
   // Tag the document when running as an installed/standalone PWA so the app
   // shell can use `100vh` instead of `100dvh`. On iOS standalone (viewport-fit
@@ -1620,7 +1663,9 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // Orbit's window header only hosts the workspace toolbar. Other pages drop it,
   // except when the collapsed sidebar's controls need a bar to sit on.
   // Both workspace layouts put their Orbit toolbar (panel toggles, git actions) in this header.
-  const orbitHeaderVisible = activeItem === "tasks" || activeItem === "work" || effectiveSidebarMode === "collapsed";
+  // The laptop fold's workspace has no window header: its toolbar is on the lower screen.
+  const laptopWorkspace = laptopFolded && inWorkspace && (activeItem === "tasks" || activeItem === "work");
+  const orbitHeaderVisible = !laptopWorkspace && (activeItem === "tasks" || activeItem === "work" || effectiveSidebarMode === "collapsed");
   // Orbit pages that own their whole surface (own scroll, no outer padding).
   const isOrbitEdgeToEdgePage = orbit && (activeItem === "settings" || activeItem === "dashboard" || activeItem === "skills" || activeItem === "memory" || activeItem === "automation" || activeItem === "statistics" || activeItem === "resource" || activeItem === "projects" || activeItem.startsWith("plugin:"));
   const isFullWidthPage =
@@ -1847,7 +1892,21 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
                 <div id="orbit-workspace-toolbar" className="orbit-toolbar-slot" />
               </div>
             </div>}
-            <div data-grove-sidebar className={isMobile ? "hidden" : undefined}>{!isMobile && (orbit ? <OrbitSidebar activeItem={activeItem} collapsed={effectiveSidebarMode === "collapsed"} onCollapse={() => {
+            <div
+              data-grove-sidebar
+              className={isMobile ? "hidden" : laptopFolded ? `is-fold-sheet${laptopWorkspace ? " is-fold-laptop" : ""}` : undefined}
+              style={laptopFold && laptopFolded ? ({ "--fold-top": `${laptopFold.top + laptopFold.gap}px` } as CSSProperties) : undefined}
+              onClickCapture={laptopFolded ? (event) => {
+                // On the lower screen the sidebar is a sheet: picking a page or a session closes it.
+                const row = (event.target as HTMLElement).closest(".orbit-row");
+                if (row && !row.hasAttribute("aria-expanded")) setSidebarMode("collapsed");
+              } : undefined}
+            >
+              {laptopFolded && effectiveSidebarMode !== "collapsed" && <>
+                <div className="orbit-fold-scrim" aria-hidden="true" onClick={() => setSidebarMode("collapsed")} />
+                <button type="button" className="orbit-fold-grab" aria-label="Close sidebar" onClick={() => setSidebarMode("collapsed")} onTouchStart={(event) => { foldGrabY.current = event.touches[0].clientY; }} onTouchMove={(event) => { if (event.touches[0].clientY - foldGrabY.current > 40) setSidebarMode("collapsed"); }} />
+              </>}
+              {!isMobile && (orbit ? <OrbitSidebar activeItem={activeItem} collapsed={effectiveSidebarMode === "collapsed"} onCollapse={() => {
                 setSidebarMode(effectiveSidebarMode === "collapsed" ? "expanded" : "collapsed");
               }} onItemClick={handleItemClick} onNavigate={handleNavigate} onSearch={openCommandPalette} onProjectSwitch={handleProjectSwitch} onManageProjects={sidebarProps.onManageProjects} onAddProject={sidebarProps.onAddProject} plugins={sidebarPlugins} /> : <Sidebar {...sidebarProps} />)}</div>
             {/* Floating main card — mirrors the sidebar's "floating panel"
@@ -1863,12 +1922,12 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
                 // collapsed → 96px; expanded → 280px. Matches the visual gap of the
                 // sidebar's left:12 in both expanded/collapsed modes, so the
                 // floating-panel language stays consistent.
-                left: orbit ? (effectiveSidebarMode === "collapsed" ? "0px" : "var(--orbit-sidebar-width, 256px)") : effectiveSidebarMode === "island"
+                left: orbit ? (effectiveSidebarMode === "collapsed" || laptopFolded ? "0px" : "var(--orbit-sidebar-width, 256px)") : effectiveSidebarMode === "island"
                   ? "12px"
                   : (effectiveSidebarMode === "collapsed" ? "96px" : "280px"),
                 boxShadow: orbit ? "none" :
                   "0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06), 0 0 0 1px color-mix(in oklab, var(--color-border) 35%, transparent)",
-                top: orbit ? (orbitHeaderVisible ? (shouldAvoidTrafficLightsInIsland ? "54px" : "40px") : "0px") : undefined,
+                top: orbit ? (orbitHeaderVisible ? (shouldAvoidTrafficLightsInIsland ? "54px" : "var(--orbit-header-height, 40px)") : "0px") : undefined,
               }}
             >
               {/* TasksPage always mounted to preserve workspace state across tab switches.

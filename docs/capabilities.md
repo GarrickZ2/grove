@@ -86,6 +86,19 @@ Claude Code · Codex · Gemini CLI · GitHub Copilot · Cursor Agent · Junie ·
 - `grove_complete_task` — commit → rebase → merge → archive
 - `grove_sketch_read_me` / `grove_sketch_list` / `grove_sketch_read` / `grove_sketch_draw` — checkpoint-driven sketch control
 
+**Browser tools** (in a Working Session):
+- `browser` — run any [agent-browser](https://github.com/vercel-labs/agent-browser) tool, passed through unchanged, in the Task's test browser; `target: "personal"` uses the user's own logged-in browser
+- `browser_help` — agent-browser's tool list, one tool's definition, or its guide
+- Agents use the test browser unless a call asks for the personal one. Settings sets the personal browser to Off, Ask (the user approves in the chat, once per chat session) or Allow (no asking)
+- The Browser panel shows the live page so the user can watch the agent and take over, alongside it or full size. It lists the test browser's tabs and the tabs in the user's browser the agent has been on; × closes a tab in the panel
+- In the personal browser, tools that read login data (cookies, storage, network traffic, console logs, page scripts) stay off unless the user allows them in Settings. Settings can also keep agents out of the personal browser entirely
+
+**Computer tools** (in a Working Session):
+- `computer` — run any [agent-desktop](https://www.npmjs.com/package/agent-desktop) tool on the user's computer, passed through unchanged
+- `computer_help` — agent-desktop's tool list, one tool's definition, or its guides
+- Settings sets computer use to Off, Ask (each chat session asks the user in its chat before its first call) or Allow (no asking)
+- The Browser panel gives each chat session at most one Computer tab, ahead of the browser tabs, with the latest screenshot that session took, however it took it. × closes the tab until the next screenshot
+
 ### 3.2 Orchestrator / Worker hierarchy
 - Orchestrator agent creates tasks and spawns worker agents
 - Worker agents receive injected Grove MCP for self-management

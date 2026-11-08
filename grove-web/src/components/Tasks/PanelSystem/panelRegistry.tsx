@@ -13,7 +13,7 @@
 import type { CSSProperties, ElementType, ReactNode } from "react";
 import {
   Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText,
-  MessageCircle, FolderOpen, Pencil, Network, Info, Eye, Puzzle, Sparkle,
+  MessageCircle, FolderOpen, Pencil, Network, Info, Eye, Puzzle, Sparkle, Globe,
 } from "lucide-react";
 import { PanelShell, PanelEmpty, PANEL_HUES, type PanelHue } from "../../../orbit/ui";
 import type { Task } from "../../../data/types";
@@ -29,6 +29,7 @@ import { StatsTab, GitTab, NotesTab, CommentsTab, ArtifactsTab } from "../TaskIn
 import type { ArtifactPreviewRequest } from "../TaskInfoPanel/tabs";
 import { SketchPage } from "../../Studio/SketchPage";
 import { PluginFrame } from "../../Plugins/PluginFrame";
+import { BrowserPanel } from "../BrowserPanel/BrowserPanel";
 import { commandRegistry, userKeymapStore, effectiveBindings, formatKeyDisplay } from "../../../keyboard";
 import type { LinkedReviewProject } from "../../../hooks/useLinkedReviewProjects";
 
@@ -84,8 +85,6 @@ export interface PanelRenderCtx {
 export interface PanelAvailabilityCtx {
   isStudio: boolean;
   terminalAvailable: boolean;
-  /** The task links at least one Project with a reviewable Code Review. */
-  hasLinkedReview?: boolean;
 }
 
 /** How FlexLayout wraps the panel's content inside its tab: `fill` (flex,
@@ -121,7 +120,7 @@ export interface PanelDescriptor {
 
 // FlexLayout tab content wrapping (IDE Layout uses PanelSlot + CSS instead).
 const FLEX_SCROLL = new Set(["stats", "git", "notes", "comments"]);
-const FLEX_HIDDEN = new Set(["graph", "artifacts", "sketch"]);
+const FLEX_HIDDEN = new Set(["graph", "artifacts", "sketch", "browser"]);
 
 /** The FlexLayout tab content wrapper style for a panel key. */
 export function flexWrapStyle(key: string): CSSProperties {
@@ -178,8 +177,8 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     icon: Code,
     color: "var(--color-highlight)",
     category: "aux",
-    // Studio tasks have no Review of their own, but can review linked Projects.
-    available: (c) => !c.isStudio || !!c.hasLinkedReview,
+    // Studio tasks have no Review of their own: theirs guides to linking a Project.
+    available: () => true,
     orbit: {
       hue: PANEL_HUES.violet,
       glyph: Eye,
@@ -218,6 +217,16 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
         onClose={ctx.onClose}
       />
     ),
+  },
+  {
+    key: "browser",
+    label: "Browser",
+    icon: Globe,
+    color: "var(--color-accent)",
+    category: "aux",
+    available: always,
+    orbit: { hue: PANEL_HUES.blue, body: "fill" },
+    render: (ctx) => <BrowserPanel projectId={ctx.projectId} taskId={ctx.task.id} />,
   },
   {
     key: "graph",

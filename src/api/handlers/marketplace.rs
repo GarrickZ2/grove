@@ -2,7 +2,8 @@
 //!
 //! Single source of truth for the agent UX:
 //!   * Catalog (Explore) = registry CDN + two synthetic entries (`traecli`,
-//!     `traex`) injected by `agent_registry::get()`.
+//!     `traex`) injected by `agent_registry::get()`; those two are listed
+//!     only when their CLI is installed.
 //!   * Installed = rows in the `installed_agents` SQLite table, kept in sync
 //!     by `installed_agents::auto_scan_path_binaries()` which walks every
 //!     registry agent and registers / deregisters External installations
@@ -234,6 +235,11 @@ pub async fn list_marketplace() -> Result<Json<MarketplaceResponse>, Marketplace
     let mut agents: Vec<MarketplaceAgent> = registry
         .agents
         .iter()
+        .filter(|reg| {
+            listed_in_marketplace(reg, installed_by_id.get(&reg.id), |cmd| {
+                crate::check::command_exists(cmd)
+            })
+        })
         .map(|reg| build_marketplace_agent(reg, installed_by_id.get(&reg.id)))
         .collect();
 
@@ -279,6 +285,18 @@ pub async fn refresh_registry() -> Result<Json<MarketplaceResponse>, Marketplace
     })
     .await;
     list_marketplace().await
+}
+
+/// Trae and TraeX appear only when their CLI is installed.
+fn listed_in_marketplace(
+    reg: &RegistryAgent,
+    installed: Option<&InstalledAgent>,
+    on_path: impl Fn(&str) -> bool,
+) -> bool {
+    if reg.id != installed_agents::TRAE_ID && reg.id != installed_agents::TRAEX_ID {
+        return true;
+    }
+    installed.is_some() || reg.distribution.binary.values().any(|b| on_path(&b.cmd))
 }
 
 fn build_marketplace_agent(
@@ -789,6 +807,24 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[test]
+    fn trae_and_traex_listed_only_when_installed() {
+        let registry = agent_registry::get();
+        for id in [installed_agents::TRAE_ID, installed_agents::TRAEX_ID] {
+            let reg = registry.agents.iter().find(|a| a.id == id).unwrap();
+            assert!(!listed_in_marketplace(reg, None, |_| false));
+            assert!(listed_in_marketplace(reg, None, |_| true));
+            let mut installed = agent_with(
+                vec![external_install("/usr/local/bin/x")],
+                InstallMethod::External,
+            );
+            installed.id = id.into();
+            assert!(listed_in_marketplace(reg, Some(&installed), |_| false));
+        }
+        let hermes = registry.agents.iter().find(|a| a.id == "hermes").unwrap();
+        assert!(listed_in_marketplace(hermes, None, |_| false));
     }
 
     #[test]

@@ -11,6 +11,15 @@ function currentBootTheme(): string {
   return JSON.stringify({ light: root.dataset.theme === "light", vars });
 }
 
+/**
+ * The browser paints its own chrome from this: Safari's bars and the column
+ * iPhone Duo's outer screen keeps beside the page, Android's title bar.
+ * `public/boot-theme.js` does the same before first paint.
+ */
+export function syncThemeColor(color: string) {
+  document.querySelector("meta[name='theme-color']")?.setAttribute("content", color);
+}
+
 /** Keep the applied theme for `public/boot-theme.js` to paint with next load. */
 export function rememberBootTheme() {
   try {

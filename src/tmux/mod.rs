@@ -69,6 +69,59 @@ pub(crate) fn spawn_mcp_probe(
     })
 }
 
+fn npx_command(args: Vec<String>) -> tokio::process::Command {
+    let (program, args) = crate::platform::stdio_server_launch("npx", args);
+    let mut command = tokio::process::Command::new(crate::check::program_path(&program));
+    command.args(args);
+    command
+}
+
+/// Run an npx package to completion. Anything it daemonizes outlives this call.
+pub(crate) async fn run_npx(
+    args: Vec<String>,
+    env: &std::collections::HashMap<String, String>,
+    cwd: &std::path::Path,
+    stdin: Option<String>,
+    timeout: std::time::Duration,
+) -> std::io::Result<std::process::Output> {
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+    let mut child = npx_command(args)
+        .envs(env)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    let input = child.stdin.take();
+    let finished = async move {
+        if let (Some(mut input), Some(stdin)) = (input, stdin) {
+            input.write_all(stdin.as_bytes()).await?;
+        }
+        child.wait_with_output().await
+    };
+    tokio::time::timeout(timeout, finished)
+        .await
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::TimedOut))
+        .and_then(|output| output)
+}
+
+/// Start an npx package that talks over stdio.
+pub(crate) fn spawn_npx_stdio(
+    args: Vec<String>,
+    cwd: &std::path::Path,
+) -> std::io::Result<tokio::process::Child> {
+    use std::process::Stdio;
+    npx_command(args)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+}
+
 /// Session 环境变量
 #[derive(Debug, Clone, Default)]
 pub struct SessionEnv {

@@ -1,5 +1,5 @@
 import { useEscapeScope } from "../../../../keyboard/useEscapeScope";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Search, Link2 } from "lucide-react";
 import type { ProjectListItem } from "../../../../api";
@@ -16,6 +16,10 @@ interface LinkedProjectPickerProps {
   triggerLabel?: string;
   /** Icon-only trigger; the label becomes its accessible name and tooltip. */
   triggerIconOnly?: boolean;
+  /** Shown when nothing matches. */
+  emptyLabel?: string;
+  /** No trigger of its own: the host opens it (from a menu row) and it hangs off `anchor`. */
+  controlled?: { open: boolean; onClose: () => void; anchor: RefObject<HTMLElement | null> };
 }
 
 interface PickerPosition {
@@ -32,9 +36,14 @@ export function LinkedProjectPicker({
   triggerClassName,
   triggerLabel = "Link Project",
   triggerIconOnly = false,
+  emptyLabel = "No projects found",
+  controlled,
 }: LinkedProjectPickerProps) {
   const { theme } = useTheme();
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlled?.open ?? ownOpen;
+  const onControlledClose = controlled?.onClose;
+  const controlledAnchor = controlled?.anchor;
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [position, setPosition] = useState<PickerPosition | null>(null);
@@ -52,7 +61,7 @@ export function LinkedProjectPicker({
   }, [projects, query]);
 
   const updatePosition = useCallback(() => {
-    const trigger = triggerRef.current;
+    const trigger = controlledAnchor?.current ?? triggerRef.current;
     if (!trigger) return;
 
     const rect = trigger.getBoundingClientRect();
@@ -71,7 +80,7 @@ export function LinkedProjectPicker({
     );
     const totalHeight = headerHeight + maxListHeight;
     const left = Math.min(
-      Math.max(viewportPadding, rect.right - width),
+      Math.max(viewportPadding, controlledAnchor ? rect.left : rect.right - width),
       window.innerWidth - width - viewportPadding,
     );
 
@@ -84,13 +93,14 @@ export function LinkedProjectPicker({
       width,
       maxListHeight,
     });
-  }, []);
+  }, [controlledAnchor]);
 
   const close = useCallback(() => {
-    setOpen(false);
+    setOwnOpen(false);
+    onControlledClose?.();
     setQuery("");
     setHighlightedIndex(0);
-  }, []);
+  }, [onControlledClose]);
 
   useEscapeScope(open, close);
 
@@ -169,14 +179,14 @@ export function LinkedProjectPicker({
 
   return (
     <>
-      <button
+      {!controlled && <button
         ref={triggerRef}
         type="button"
         disabled={disabled}
         onClick={() => {
           if (open) close();
           else {
-            setOpen(true);
+            setOwnOpen(true);
             setQuery("");
             setHighlightedIndex(0);
           }
@@ -189,7 +199,7 @@ export function LinkedProjectPicker({
       >
         <Link2 className="h-3.5 w-3.5" aria-hidden={triggerIconOnly || undefined} />
         {triggerIconOnly ? null : <span>{triggerLabel}</span>}
-      </button>
+      </button>}
 
       {open && position && typeof document !== "undefined" &&
         createPortal(
@@ -231,7 +241,7 @@ export function LinkedProjectPicker({
             >
               {filteredProjects.length === 0 ? (
                 <div className="px-3 py-6 text-center text-xs text-[var(--color-text-muted)]">
-                  No projects found
+                  {emptyLabel}
                 </div>
               ) : (
                 filteredProjects.map((project, index) => {

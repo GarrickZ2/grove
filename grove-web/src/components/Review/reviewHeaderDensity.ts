@@ -2,15 +2,17 @@ import { useEffect, useState } from 'react';
 
 /* How much of the Orbit Review toolbar fits inline in the panel header. */
 
-/** `wide`: everything inline. `medium`: no arrow, no Unified/Split. `narrow`: also fold ↑↓ and comments. */
-export type ReviewHeaderDensity = 'wide' | 'medium' | 'narrow';
+/** `wide`: everything inline. `medium`: no arrow, no Unified/Split. `narrow`: also fold ↑↓ and comments. `compact`: also fold Changes/All files, Project icon only. */
+export type ReviewHeaderDensity = 'wide' | 'medium' | 'narrow' | 'compact';
 
 export const REVIEW_HEADER_WIDE_PX = 980;
 export const REVIEW_HEADER_MEDIUM_PX = 760;
+export const REVIEW_HEADER_NARROW_PX = 700;
 
 export function reviewHeaderDensity(width: number | null): ReviewHeaderDensity {
   if (width === null || width >= REVIEW_HEADER_WIDE_PX) return 'wide';
-  return width >= REVIEW_HEADER_MEDIUM_PX ? 'medium' : 'narrow';
+  if (width >= REVIEW_HEADER_MEDIUM_PX) return 'medium';
+  return width >= REVIEW_HEADER_NARROW_PX ? 'narrow' : 'compact';
 }
 
 /** Width of an element, tracked with ResizeObserver (null until measured / unsupported). */

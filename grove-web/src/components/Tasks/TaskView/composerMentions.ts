@@ -148,7 +148,7 @@ export function createMentionChip(
   accentPalette?: string[],
 ): HTMLSpanElement {
   if (matched?.kind === "browsertabs") {
-    return createBrowserTabChip(path, displayLabel || path, matched.sessionId ? Number(matched.sessionId) : undefined);
+    return createBrowserTabChip(path, displayLabel || path, matched.sessionId);
   }
   if (matched?.kind && matched.kind !== "file") return createAgentMentionChip(matched);
   return createFileChip(
@@ -170,20 +170,17 @@ export function isComposerChip(node: Node | null | undefined): node is HTMLEleme
 
 /** Create a dynamic browser tab mention pill DOM element.
  *
- * `tabId` is the Chrome tab id (when known); stored on the chip so that
- * `getPromptFromEditable` can serialize it into a `<grove-meta>` envelope —
- * giving downstream agents enough info to drive the tab via the
- * `grove_browser_*` MCP tools.
+ * `targetId` is Chrome's CDP target id for the tab (when known); stored on the
+ * chip so that `getPromptFromEditable` can put it in the `<grove-meta>`
+ * envelope, where an agent can pass it to the browser's `tab_switch`.
  */
-export function createBrowserTabChip(url: string, title: string, tabId?: number): HTMLSpanElement {
+export function createBrowserTabChip(url: string, title: string, targetId?: string): HTMLSpanElement {
   const chip = document.createElement("span");
   chip.contentEditable = "false";
   chip.dataset.mentionKind = "browsertabs";
   chip.dataset.tabUrl = url;
   chip.dataset.tabTitle = title;
-  if (typeof tabId === "number" && Number.isFinite(tabId)) {
-    chip.dataset.tabId = String(tabId);
-  }
+  if (targetId) chip.dataset.targetId = targetId;
   chip.title = `${title} (${url})`;
 
   chip.style.cssText =
@@ -396,25 +393,21 @@ export function getPromptFromEditable(el: HTMLElement): string {
       } else if (node.dataset.mentionKind === "browsertabs") {
         const url = node.dataset.tabUrl || "";
         const title = node.dataset.tabTitle || "";
-        const tabIdRaw = node.dataset.tabId;
-        const tabId = tabIdRaw ? Number(tabIdRaw) : undefined;
+        const targetId = node.dataset.targetId;
         if (url) {
           // Standard <grove-meta v=1> envelope:
           // - `type` dispatches to a frontend renderer (browser_tab → pill chip)
           // - `data` carries the machine-readable payload
           // - `system-prompt` is the human-readable fallback used by the agent
           //   AND by the UI when the renderer is missing / errors
-          const data: { url: string; title: string; tab_id?: number } = {
+          const data: { url: string; title: string; target_id?: string } = {
             url,
             title,
           };
-          if (typeof tabId === "number" && Number.isFinite(tabId)) {
-            data.tab_id = tabId;
-          }
-          const tabIdHint =
-            typeof tabId === "number" && Number.isFinite(tabId)
-              ? ` Use this tab_id (${tabId}) with the grove_browser_* MCP tools to drive the tab.`
-              : "";
+          if (targetId) data.target_id = targetId;
+          const tabIdHint = targetId
+            ? ` It is open in the user's own browser: use the browser tool with target "personal", and tool "tab_switch" with args {"tab": "${targetId}"} to work in it.`
+            : "";
           const envelope = {
             v: 1,
             type: "browser_tab",

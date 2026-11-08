@@ -11,6 +11,7 @@ import ChannelGrid from "./ChannelGrid";
 import InfoDisplay from "./InfoDisplay";
 import TranscriptDialog from "./TranscriptDialog";
 import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
+import { syncThemeColor } from "../../utils/bootTheme";
 
 type TargetModeType = "chat" | "terminal";
 
@@ -67,6 +68,7 @@ export function RadioPage() {
       const root = document.documentElement;
       const c = resolved.colors;
       root.style.setProperty("--color-bg", c.bg);
+      syncThemeColor(c.bg);
       root.style.setProperty("--color-bg-secondary", c.bgSecondary);
       root.style.setProperty("--color-bg-tertiary", c.bgTertiary);
       root.style.setProperty("--color-border", c.border);

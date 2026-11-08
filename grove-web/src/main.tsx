@@ -19,6 +19,15 @@ if (isIosClient) {
 
 }
 
+// On a touch screen the layout already fits the screen (and each half of a
+// fold), so a pinch only scrambles it. iOS ignores user-scalable=no in the
+// viewport tag; its gesture events are what start the zoom.
+if (window.matchMedia?.('(pointer: coarse)').matches) {
+  for (const type of ['gesturestart', 'gesturechange']) {
+    document.addEventListener(type, (event) => event.preventDefault(), { passive: false })
+  }
+}
+
 installGlobalErrorHandlers()
 void getVersion()
   .then(({ version }) => setClientAppVersion(version))

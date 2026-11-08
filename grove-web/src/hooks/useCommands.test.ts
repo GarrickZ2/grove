@@ -25,7 +25,7 @@ describe("Studio Work commands", () => {
     expect(ids).not.toContain("task-archive");
     expect(ids).not.toContain("task-clean");
     expect(ids).not.toContain("task-commit");
-    expect(ids).not.toContain("panel-review");
+    expect(ids).toContain("panel-review");
     commands.find((command) => command.id === "nav-work")?.handler();
     expect(navigate).toHaveBeenCalledWith("work");
   });

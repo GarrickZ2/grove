@@ -23,21 +23,13 @@ use crate::api::state::{CompanionInfo, ExtensionSession, EXTENSION_SESSION};
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-const COMPANION_PROTOCOL_VERSION: u32 = 2;
+const COMPANION_PROTOCOL_VERSION: u32 = 3;
 const COMPANION_HANDSHAKE_GRACE: Duration = Duration::from_secs(1);
 const BUNDLED_COMPANION_MANIFEST: &str =
     include_str!("../../../grove-extension/public/manifest.json");
-const REQUIRED_COMPANION_CAPABILITIES: &[&str] = &[
-    "browser.open.wait",
-    "browser.snapshot.scoped_refs",
-    "browser.interact.wait",
-    "browser.extract",
-    "browser.screenshot.viewport",
-    "browser.reload",
-    "browser.navigate",
-    "browser.close",
-    "browser.wait",
-];
+const REQUIRED_COMPANION_CAPABILITIES: &[&str] = &["browser.cdp_relay"];
+const COMPANION_OFFLINE: &str =
+    "The Grove Companion is not connected. Install it from Settings > Browser Control, or keep using the test browser.";
 
 fn bundled_companion_version() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
@@ -347,17 +339,10 @@ async fn handle_ws(socket: WebSocket) {
                     if let Some(msg_type) = parsed.get("type").and_then(|v| v.as_str()) {
                         match msg_type {
                             "COMPANION_HELLO" => update_companion_info(&parsed),
+                            "CDP_OUT" => crate::browser::relay::deliver(&parsed),
+                            "CDP_CLOSED" => crate::browser::relay::close_socket(&parsed),
                             "ALL_TABS_RESPONSE"
                             | "PROXY_FETCH_RESPONSE"
-                            | "BROWSER_OPEN_RESPONSE"
-                            | "BROWSER_SNAPSHOT_RESPONSE"
-                            | "BROWSER_INTERACT_RESPONSE"
-                            | "BROWSER_EXTRACT_RESPONSE"
-                            | "BROWSER_SCREENSHOT_RESPONSE"
-                            | "BROWSER_RELOAD_RESPONSE"
-                            | "BROWSER_NAVIGATE_RESPONSE"
-                            | "BROWSER_CLOSE_RESPONSE"
-                            | "BROWSER_WAIT_RESPONSE"
                             | "UNSUPPORTED_COMMAND_RESPONSE" => {
                                 if let Some(req_id) = parsed.get("id").and_then(|v| v.as_str()) {
                                     resolve_pending_request(
@@ -400,6 +385,7 @@ async fn handle_ws(socket: WebSocket) {
     //    has to time out independently (1.5s–5s each) when the extension
     //    disconnects.
     drop(_connection_guard);
+    crate::browser::relay::close_all();
     ws_write_task.abort();
     ws_read_task.abort();
 }
@@ -521,83 +507,27 @@ pub async fn proxy_fetch_title(url: &str) -> Option<String> {
     }
 }
 
-/// Dispatch a browser command to the connected Chrome Companion Extension
-/// over WebSocket. All MCP browser tools + the REST /extension/command
-/// endpoint funnel through here. Single critical section per call: we
-/// grab the sender and register the pending oneshot under one `read()`
-/// guard, then release before awaiting the response.
-async fn send_extension_command(
-    cmd_type: &str,
-    payload: serde_json::Value,
-    timeout_ms: u64,
-) -> Result<serde_json::Value, String> {
-    ensure_companion_command_supported(cmd_type)?;
-
-    let req_id = format!("req-{}", REQUEST_COUNTER.fetch_add(1, Ordering::SeqCst));
-    let (tx, rx) = oneshot::channel();
-
-    // Single guard scope: clone sender + insert pending entry atomically.
-    let session_tx = {
-        let session_guard = EXTENSION_SESSION.read().map_err(|_| "Server lock error")?;
-        let Some(session) = &*session_guard else {
-            return Err("Browser Companion Extension is offline or not connected".to_string());
-        };
-        let mut pending = session
-            .pending_requests
-            .lock()
-            .map_err(|_| "Pending requests registry lock error")?;
-        pending.insert(req_id.clone(), tx);
-        session.sender.clone()
-    };
-
-    let mut request_payload = payload;
-    if let Some(obj) = request_payload.as_object_mut() {
-        obj.insert("type".to_string(), json!(cmd_type));
-        obj.insert("id".to_string(), json!(req_id));
-    } else {
-        cleanup_request(&req_id);
-        return Err("Payload must be a JSON object".to_string());
-    }
-
-    if session_tx.send(request_payload).is_err() {
-        cleanup_request(&req_id);
-        return Err("Failed to send command to Browser Companion Extension".to_string());
-    }
-
-    match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
-        Ok(Ok(response_data)) => Ok(response_data),
-        Ok(Err(_)) => Err("Extension connection severed while awaiting response".to_string()),
-        Err(_) => {
-            cleanup_request(&req_id);
-            Err("Command query to Browser Companion Extension timed out".to_string())
-        }
-    }
-}
-
-fn required_capability(cmd_type: &str) -> Option<&'static str> {
-    match cmd_type {
-        "BROWSER_OPEN" => Some("browser.open.wait"),
-        "BROWSER_SNAPSHOT" => Some("browser.snapshot.scoped_refs"),
-        "BROWSER_INTERACT" => Some("browser.interact.wait"),
-        "BROWSER_EXTRACT" => Some("browser.extract"),
-        "BROWSER_SCREENSHOT" => Some("browser.screenshot.viewport"),
-        "BROWSER_RELOAD" => Some("browser.reload"),
-        "BROWSER_NAVIGATE" => Some("browser.navigate"),
-        "BROWSER_CLOSE" => Some("browser.close"),
-        "BROWSER_WAIT" => Some("browser.wait"),
-        _ => None,
-    }
-}
-
-fn ensure_companion_command_supported(cmd_type: &str) -> Result<(), String> {
-    let Some(required_capability) = required_capability(cmd_type) else {
-        return Ok(());
-    };
+/// Hand one message to the connected Companion.
+pub fn send_to_companion(message: serde_json::Value) -> Result<(), String> {
     let session_guard = EXTENSION_SESSION
         .read()
         .map_err(|_| "Server lock error".to_string())?;
     let Some(session) = &*session_guard else {
-        return Err("Browser Companion Extension is offline or not connected".to_string());
+        return Err(COMPANION_OFFLINE.to_string());
+    };
+    session
+        .sender
+        .send(message)
+        .map_err(|_| COMPANION_OFFLINE.to_string())
+}
+
+/// Whether the connected Companion can carry a driver connection.
+pub fn ensure_cdp_relay() -> Result<(), String> {
+    let session_guard = EXTENSION_SESSION
+        .read()
+        .map_err(|_| "Server lock error".to_string())?;
+    let Some(session) = &*session_guard else {
+        return Err(COMPANION_OFFLINE.to_string());
     };
     let info = match session.companion_info.lock() {
         Ok(info) => info,
@@ -606,12 +536,12 @@ fn ensure_companion_command_supported(cmd_type: &str) -> Result<(), String> {
     let Some(protocol_version) = info.protocol_version else {
         if session.connected_at.elapsed() < COMPANION_HANDSHAKE_GRACE {
             return Err(
-                "COMPANION_HANDSHAKE_PENDING: Browser Companion is connected but still reporting its capabilities; retry the MCP call"
+                "COMPANION_HANDSHAKE_PENDING: Browser Companion is connected but still reporting its capabilities; retry the call"
                     .to_string(),
             );
         }
         return Err(format!(
-            "COMPANION_UPDATE_REQUIRED: connected Companion does not support the Grove browser protocol; install the bundled Companion v{} from Settings > Browser Control and reload it in Chrome",
+            "COMPANION_UPDATE_REQUIRED: connected Companion does not support the Grove browser protocol; install the bundled Companion v{} from Settings > Browser Control and reload it in the browser",
             bundled_companion_version()
         ));
     };
@@ -621,206 +551,16 @@ fn ensure_companion_command_supported(cmd_type: &str) -> Result<(), String> {
             bundled_companion_version()
         ));
     }
-    if !info.capabilities.contains(required_capability) {
+    if let Some(missing) = REQUIRED_COMPANION_CAPABILITIES
+        .iter()
+        .find(|capability| !info.capabilities.contains(**capability))
+    {
         return Err(format!(
-            "COMPANION_UPDATE_REQUIRED: connected Companion is missing capability {required_capability}; install the bundled Companion v{} from Settings > Browser Control",
+            "COMPANION_UPDATE_REQUIRED: connected Companion is missing capability {missing}; install the bundled Companion v{} from Settings > Browser Control",
             bundled_companion_version()
         ));
     }
     Ok(())
-}
-
-/// REST endpoint POST /api/v1/extension/command
-#[derive(Debug, serde::Deserialize)]
-pub struct ExtensionCommandRequest {
-    pub cmd_type: String,
-    pub payload: serde_json::Value,
-}
-
-pub async fn handle_extension_command(
-    Json(req): Json<ExtensionCommandRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    // Respect the master `browser_control.enabled` switch — without this gate
-    // a REST caller can still drive the user's browser via the connected
-    // extension even after the user has disabled "Allow AI Browser Action".
-    if !crate::storage::config::load_config()
-        .browser_control
-        .enabled
-    {
-        return Err(ApiError::bad_request(
-            "Browser control is disabled. Enable 'Allow AI Browser Action' in Grove Settings.",
-        ));
-    }
-    // Route through the same dispatcher the MCP tools use.
-    match send_extension_command(&req.cmd_type, req.payload, 5000).await {
-        Ok(res) => Ok(Json(res)),
-        Err(e) => Err(ApiError::internal(e)),
-    }
-}
-
-/// Opens a URL in the browser and automatically moves the tab into a project-scoped Chrome Tab Group
-pub async fn browser_open(
-    url: &str,
-    group_name: Option<&str>,
-    wait_for: Option<serde_json::Value>,
-    timeout_ms: u64,
-) -> Result<serde_json::Value, String> {
-    send_extension_command(
-        "BROWSER_OPEN",
-        json!({
-            "url": url,
-            "groupName": group_name,
-            "waitFor": wait_for,
-            "timeoutMs": timeout_ms
-        }),
-        timeout_ms.saturating_add(1_000),
-    )
-    .await
-}
-
-/// Takes a snapshot of a specific tab, generating an A11y Tree with unique reference tags (@e1, @e2).
-/// `tab_id` is the Chrome tab id returned by `browser_open`.
-pub async fn browser_snapshot(tab_id: u32) -> Result<serde_json::Value, String> {
-    send_extension_command(
-        "BROWSER_SNAPSHOT",
-        json!({
-            "tabId": tab_id,
-        }),
-        4000,
-    )
-    .await
-}
-
-/// Simulates interactive DOM gestures (click, fill, focus, check, etc.) via element reference tags (@e) or CSS selectors.
-/// `tab_id` is the Chrome tab id returned by `browser_open`.
-pub async fn browser_interact(
-    tab_id: u32,
-    action: &str,
-    target: &str,
-    value: Option<&str>,
-    wait_for: Option<serde_json::Value>,
-    timeout_ms: u64,
-) -> Result<serde_json::Value, String> {
-    send_extension_command(
-        "BROWSER_INTERACT",
-        json!({
-            "tabId": tab_id,
-            "action": action,
-            "target": target,
-            "value": value,
-            "waitFor": wait_for,
-            "timeoutMs": timeout_ms
-        }),
-        timeout_ms.saturating_add(1_000),
-    )
-    .await
-}
-
-/// Reload an existing tab and wait for the requested browser/page condition.
-pub async fn browser_reload(
-    tab_id: u32,
-    bypass_cache: bool,
-    wait_for: Option<serde_json::Value>,
-    timeout_ms: u64,
-) -> Result<serde_json::Value, String> {
-    send_extension_command(
-        "BROWSER_RELOAD",
-        json!({
-            "tabId": tab_id,
-            "bypassCache": bypass_cache,
-            "waitFor": wait_for,
-            "timeoutMs": timeout_ms,
-        }),
-        timeout_ms.saturating_add(1_000),
-    )
-    .await
-}
-
-/// Navigate an existing tab without creating a duplicate tab.
-pub async fn browser_navigate(
-    tab_id: u32,
-    action: &str,
-    url: Option<&str>,
-    wait_for: Option<serde_json::Value>,
-    timeout_ms: u64,
-) -> Result<serde_json::Value, String> {
-    send_extension_command(
-        "BROWSER_NAVIGATE",
-        json!({
-            "tabId": tab_id,
-            "action": action,
-            "url": url,
-            "waitFor": wait_for,
-            "timeoutMs": timeout_ms,
-        }),
-        timeout_ms.saturating_add(1_000),
-    )
-    .await
-}
-
-/// Close an existing browser tab.
-pub async fn browser_close(tab_id: u32) -> Result<serde_json::Value, String> {
-    send_extension_command("BROWSER_CLOSE", json!({ "tabId": tab_id }), 3_000).await
-}
-
-/// Wait for a condition in an existing browser tab without performing an action.
-pub async fn browser_wait(
-    tab_id: u32,
-    wait_for: serde_json::Value,
-    timeout_ms: u64,
-) -> Result<serde_json::Value, String> {
-    send_extension_command(
-        "BROWSER_WAIT",
-        json!({
-            "tabId": tab_id,
-            "waitFor": wait_for,
-            "timeoutMs": timeout_ms,
-        }),
-        timeout_ms.saturating_add(1_000),
-    )
-    .await
-}
-
-/// Extracts structured elements (innerText, outerHTML, value, URL, document title) from a specific tab.
-/// `tab_id` is the Chrome tab id returned by `browser_open`.
-pub async fn browser_extract(
-    tab_id: u32,
-    extract_type: &str,
-    target: Option<&str>,
-) -> Result<serde_json::Value, String> {
-    send_extension_command(
-        "BROWSER_EXTRACT",
-        json!({
-            "tabId": tab_id,
-            "extractType": extract_type,
-            "target": target
-        }),
-        3000,
-    )
-    .await
-}
-
-/// Screenshot command forwarded to the Chrome Companion.
-pub struct BrowserScreenshotRequest {
-    pub tab_id: u32,
-    pub wait_for: Option<serde_json::Value>,
-    pub timeout_ms: u64,
-}
-
-/// Capture the visible viewport of a specific tab.
-pub async fn browser_screenshot(
-    request: BrowserScreenshotRequest,
-) -> Result<serde_json::Value, String> {
-    send_extension_command(
-        "BROWSER_SCREENSHOT",
-        json!({
-            "tabId": request.tab_id,
-            "waitFor": request.wait_for,
-            "timeoutMs": request.timeout_ms,
-        }),
-        request.timeout_ms.saturating_add(5_000),
-    )
-    .await
 }
 
 /// Build the companion zip in memory from the embedded `grove-extension/dist`
@@ -973,8 +713,8 @@ pub struct RevealPathRequest {
     pub path: String,
 }
 
-/// POST /api/v1/extension/reveal-path — open the install directory in the
-/// OS file manager so the user can drag-paste the path into Chrome.
+/// POST /api/v1/extension/reveal-path — show the install folder selected in
+/// its parent, so the user can drag it onto Chrome's extensions page.
 pub async fn reveal_install_path(
     Json(req): Json<RevealPathRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
@@ -986,17 +726,7 @@ pub async fn reveal_install_path(
         )));
     }
     let path_str = dir.display().to_string();
-    let spawned = if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(&path_str).spawn()
-    } else if cfg!(target_os = "windows") {
-        std::process::Command::new("explorer")
-            .arg(&path_str)
-            .spawn()
-    } else {
-        std::process::Command::new("xdg-open")
-            .arg(&path_str)
-            .spawn()
-    };
+    let spawned = crate::api::handlers::studio_common::select_in_file_manager(&dir);
     match spawned {
         Ok(_) => Ok(Json(json!({ "ok": true, "path": path_str }))),
         Err(e) => Err(ApiError::internal(format!(

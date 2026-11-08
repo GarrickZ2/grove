@@ -23,6 +23,8 @@ interface OrbitComposerProps {
   tray?: ReactNode;
   /** A docked agent request (permission, survey, sign-in). */
   ask?: ReactNode;
+  /** Renders nothing until this session's agent is waiting to use the user's browser or computer. */
+  sessionApproval?: ReactNode;
   /** Attachments, the input itself and anything inline with it. */
   children: ReactNode;
   tools?: ReactNode;
@@ -39,7 +41,7 @@ interface OrbitComposerProps {
  * live pieces it's given (status bar, setup chip, usage ring, orb) are
  * memoized on their own so a streamed chunk re-renders none of them.
  */
-export function OrbitComposer({ shellRef, className = "", running, phone = false, dragging = false, onDragOver, onDragLeave, onDrop, statusBar, tray, ask, children, tools, hint, setup, usage, orb }: OrbitComposerProps) {
+export function OrbitComposer({ shellRef, className = "", running, phone = false, dragging = false, onDragOver, onDragLeave, onDrop, statusBar, tray, ask, sessionApproval, children, tools, hint, setup, usage, orb }: OrbitComposerProps) {
   return (
     <div
       ref={shellRef}
@@ -52,6 +54,7 @@ export function OrbitComposer({ shellRef, className = "", running, phone = false
       {running && <span className="oc-orbit" aria-hidden="true"><i /></span>}
       {statusBar}
       {tray && <div className="oc-tray">{tray}</div>}
+      {sessionApproval}
       {ask && <div className="oc-ask">{ask}</div>}
       <div className="oc-body">{children}</div>
       <div className="oc-bar">

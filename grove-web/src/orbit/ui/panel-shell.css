@@ -13,6 +13,9 @@
 /* Zero basis: the context fills what is left and adds nothing to min-content, so it truncates and never pushes the buttons out. */
 .oui-panel-title small{flex:1 1 0;width:0;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;font-weight:400;color:var(--o-muted)}
 .oui-panel-ctx-slot:empty{display:none}
+/* Fixed width: the control sits with the title and doesn't shift as its value changes. */
+.oui-panel-leading{flex:0 0 auto;width:180px;align-self:center;display:flex;align-items:center;font-weight:400}
+.oui-panel-leading:empty{display:none}
 .oui-panel-title:has(.oui-panel-ctx-slot:not(:empty)) .oui-panel-ctx-default{display:none}
 .oui-panel-actions{display:flex;align-items:center;gap:2px}
 .oui-panel-actions:empty{display:none}

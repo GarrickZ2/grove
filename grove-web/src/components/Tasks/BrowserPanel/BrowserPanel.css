@@ -1,0 +1,252 @@
+.browser-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  /* Panels get resized independently of the window. */
+  container-type: inline-size;
+}
+
+.browser-panel.is-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: var(--color-bg);
+}
+
+.browser-expanded-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* The window's traffic lights sit over this corner; see gui.rs. */
+.browser-expanded-bar.has-mac-controls {
+  min-height: 54px;
+  padding-left: 92px;
+}
+
+.browser-expanded-bar > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-tabs {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.browser-tab-list {
+  display: flex;
+  flex: 1 1 200px;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.browser-tab {
+  display: flex;
+  flex: 0 1 200px;
+  align-items: center;
+  min-width: 96px;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+}
+
+.browser-tab.is-shown {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.browser-tab button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.browser-tab button:not(:disabled) {
+  cursor: pointer;
+}
+
+.browser-tab button:first-child {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 3px 4px 3px 10px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.browser-tab button:first-child > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-tab button:first-child > em {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  font-size: 11px;
+  font-style: normal;
+  color: var(--color-text);
+}
+
+/* The computer is one view, not a page: it leads the row, apart from the tabs. */
+.browser-tab.is-computer {
+  flex: none;
+  min-width: 0;
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.browser-tab.is-computer.is-shown {
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-secondary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+.browser-tab-divider {
+  flex: none;
+  align-self: center;
+  width: 1px;
+  height: 16px;
+  margin: 0 6px;
+  background: var(--color-border);
+}
+
+.browser-tab-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+}
+
+.browser-tab button:first-child > small {
+  flex: none;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.browser-tab-agent {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
+.browser-tab button:last-child {
+  display: flex;
+  flex: none;
+  padding: 4px;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+
+.browser-tab button:last-child:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  opacity: 1;
+}
+
+.browser-tab button:last-child svg {
+  width: 12px;
+  height: 12px;
+}
+
+.browser-stage {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-bg-secondary);
+}
+
+.browser-stage img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+
+.browser-stage img[hidden] {
+  display: none;
+}
+
+.browser-waiting {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* Takes keyboard and input-method focus for the page. Input methods anchor
+   their candidate window to it, so it stays in the layout, invisibly. */
+.browser-keyboard {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+}
+
+.browser-activity {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  max-width: min(420px, calc(100% - 20px));
+  margin: 0;
+  padding: 4px 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg) 88%, transparent);
+  box-shadow: 0 0 0 1px var(--color-border), 0 2px 8px rgb(0 0 0 / 12%);
+  font-size: 12px;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.browser-activity.is-done {
+  color: var(--color-text-muted);
+}
+
+.browser-activity.is-failed {
+  color: var(--color-error);
+}
+
+.browser-error {
+  margin: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 13px;
+  color: var(--color-error);
+}
