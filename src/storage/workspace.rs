@@ -445,6 +445,7 @@ pub fn remove_project(path: &str) -> Result<()> {
             "DELETE FROM tasks WHERE project = ?1",
             rusqlite::params![&hash],
         )?;
+        crate::storage::shares::delete_project_shares(&tx, &hash)?;
         tx.execute(
             "DELETE FROM project_linked_projects WHERE project = ?1",
             rusqlite::params![&hash],

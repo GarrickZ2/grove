@@ -103,6 +103,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
       <div className="diff-comment-header">
         <AgentAvatar agent={comment.agent || '?'} size={24} className="diff-comment-avatar" />
         <span className="diff-comment-author"><AgentDisplay agent={comment.agent} role={comment.role} model={comment.model} /></span>
+        {comment.via_share && <span className="diff-comment-id" title="Written by someone you shared this task with">via share link</span>}
         <span className="diff-comment-id">#{comment.id}</span>
         <span className="diff-comment-time">{formatTime(comment.timestamp)}</span>
         {lineRange && (

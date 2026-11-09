@@ -2,7 +2,9 @@ import { AppPicker, ideAppOptions, terminalAppOptions } from "../../../component
 import { hasAppDetection, isIdeApp, isTerminalApp } from "../../../components/Config/settingsConstants";
 import { useBuddyMotionSetting } from "../../../components/Config/useBuddyMotionSetting";
 import { useInterfaceSetting } from "../../../components/Config/useInterfaceSetting";
-import { Group, KeyRecorder, Row, Segmented } from "../../ui";
+import { useEffect, useState } from "react";
+import { Group, KeyRecorder, Row, SavedChip, Segmented } from "../../ui";
+import { getShareProfile, shareErrorMessage, updateShareProfile } from "../../../api/shares";
 import type { SettingsPageProps } from "./types";
 
 const PLATFORM_NAMES: Record<string, string> = { windows: "Windows", linux: "Linux" };
@@ -129,6 +131,56 @@ export function GeneralPage({ settings }: SettingsPageProps) {
           />
         </Row>
       </Group>
+
+      <SharingGroup />
     </>
+  );
+}
+
+/** The name people see when this Grove shares a task or comments on theirs. */
+function SharingGroup() {
+  const [name, setName] = useState("");
+  // What the field showed last: saving only happens when the person changed it.
+  const [saved, setSaved] = useState("");
+  const [savedCount, setSavedCount] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getShareProfile()
+      .then((profile) => {
+        const value = profile.name ?? profile.suggestedName;
+        setName(value);
+        setSaved(value);
+      })
+      .catch(() => {});
+  }, []);
+
+  const save = () => {
+    const value = name.trim();
+    if (!value || value === saved) return;
+    setError(null);
+    updateShareProfile({ name: value })
+      .then(() => {
+        setSaved(value);
+        setSavedCount((count) => count + 1);
+      })
+      .catch((err) => setError(shareErrorMessage(err)));
+  };
+
+  return (
+    <Group title="Sharing" anchorId="sharing" actions={<SavedChip count={savedCount} />}>
+      <Row title="Your name" description={error ?? "People see this name on tasks you share and on comments you leave on theirs."}>
+        <input
+          className="oui-field"
+          style={{ width: 220 }}
+          value={name}
+          maxLength={40}
+          aria-label="Your name"
+          onChange={(event) => setName(event.target.value)}
+          onBlur={save}
+          onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+        />
+      </Row>
+    </Group>
   );
 }

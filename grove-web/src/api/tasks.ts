@@ -117,6 +117,7 @@ export interface ReviewCommentEntry {
   timestamp: string;
   status: string; // "open" | "resolved" | "outdated"
   replies: CommentReply[];
+  via_share?: boolean; // written by someone the task was shared with
 }
 
 export interface ReviewCommentsResponse {

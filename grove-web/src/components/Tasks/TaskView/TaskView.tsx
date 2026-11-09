@@ -30,6 +30,7 @@ import { useIsMobile } from "../../../hooks";
 import { useCommand, useKeyboardScope, useContextKey, useVoiceControlContext } from "../../../keyboard";
 import { usePluginPanelCommands } from "../../Plugins/pluginPanelCommands";
 import { Button, type PanelMenuItem } from "../../../orbit/ui";
+import { ShareButton } from "../../Share/SharePopover";
 
 // --- Workspace Bar Dropdown (for overflow actions) ---
 function OverflowDropdown({ items }: { items: OverflowItem[] }) {
@@ -463,6 +464,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   })), [overflowItems]);
   const orbitWorkspaceActions = useMemo(() => (
     <>
+      {!isLocal && <ShareButton projectId={projectId} taskId={task.id} />}
       {onCommit && (
         <Button variant="ghost" size="sm" onClick={onCommit} disabled={isArchived} title="Commit (c)">
           <GitCommit aria-hidden="true" />Commit
@@ -479,7 +481,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
         </Button>
       )}
     </>
-  ), [onCommit, onMerge, onSync, canOperate, isLocal, isArchived]);
+  ), [onCommit, onMerge, onSync, canOperate, isLocal, isArchived, projectId, task.id]);
 
   const workspaceActions = useMemo(() => (
     <div className="flex items-center gap-1 shrink-0">

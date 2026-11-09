@@ -625,6 +625,36 @@ pub fn add_comment(
     Ok(comment)
 }
 
+/// Mark a comment as written by a share visitor (see `storage::shares`).
+pub fn set_share_visitor(
+    project: &str,
+    task_id: &str,
+    comment_id: u32,
+    visitor_id: &str,
+) -> Result<()> {
+    database::connection().execute(
+        "UPDATE review_comments SET share_visitor = ?1 WHERE project_key = ?2 AND task_id = ?3 AND id = ?4",
+        rusqlite::params![visitor_id, project, task_id, comment_id],
+    )?;
+    Ok(())
+}
+
+/// Comment id → share visitor id, for the comments written through share links.
+pub fn share_comment_visitors(
+    project: &str,
+    task_id: &str,
+) -> Result<std::collections::HashMap<u32, String>> {
+    let conn = database::connection();
+    let mut stmt = conn.prepare(
+        "SELECT id, share_visitor FROM review_comments
+         WHERE project_key = ?1 AND task_id = ?2 AND share_visitor IS NOT NULL",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![project, task_id], |row| {
+        Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 /// 保存 comments（供 outdated detection 后持久化行号和状态变更）
 pub fn save_comments(project: &str, task_id: &str, data: &CommentsData) -> Result<()> {
     let conn = database::connection();
