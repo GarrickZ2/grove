@@ -347,6 +347,7 @@ pub fn remove_task(project: &str, task_id: &str) -> Result<()> {
     let conn = crate::storage::database::connection();
     let tx = conn.unchecked_transaction()?;
     crate::storage::agent_graph::cascade_delete_for_task(&tx, project, task_id)?;
+    crate::storage::shares::delete_task_shares(&tx, project, task_id)?;
     tx.execute(
         "DELETE FROM task_linked_projects WHERE project = ?1 AND task_id = ?2",
         params![project, task_id],
@@ -364,6 +365,7 @@ pub fn remove_archived_task(project: &str, task_id: &str) -> Result<()> {
     let conn = crate::storage::database::connection();
     let tx = conn.unchecked_transaction()?;
     crate::storage::agent_graph::cascade_delete_for_task(&tx, project, task_id)?;
+    crate::storage::shares::delete_task_shares(&tx, project, task_id)?;
     tx.execute(
         "DELETE FROM task_linked_projects WHERE project = ?1 AND task_id = ?2",
         params![project, task_id],

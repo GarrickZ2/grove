@@ -41,7 +41,8 @@ commandRegistry.setStaticCatalog(COMMAND_CATALOG)
 // Fetch user keymap from server in the background. The dispatcher
 // already works against catalog defaults; the override layer takes
 // effect as soon as the bundle lands.
-void initUserKeymap()
+// A share link opened in a browser has no Grove session to read a keymap from.
+if (!/^\/s\//.test(window.location.pathname)) void initUserKeymap()
 
 // devtools toggle is now wired via the keyboard catalog (debug.devtools.toggle)
 // — see useCommand("debug.devtools.toggle") in App.tsx.

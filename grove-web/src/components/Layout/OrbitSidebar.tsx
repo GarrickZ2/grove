@@ -15,6 +15,7 @@ import { useTaskReorder } from "../../hooks/useTaskReorder";
 import { refreshRadioActivity } from "../../hooks/useRadioEvents";
 import { appIconAssetUrl } from "../../data/appIcons";
 import { OrbitMachineEntry } from "./OrbitMachineMenu";
+import { OrbitSharedSection } from "../Share/OrbitSharedSection";
 import { DropdownMenu } from "../ui/DropdownMenu";
 import { DialogShell } from "../ui/DialogShell";
 import { ConfirmDialog } from "../Dialogs";
@@ -412,6 +413,7 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
             </div>;
           })}
           </div>
+          <OrbitSharedSection activeItem={activeItem} onOpen={onItemClick} />
         </section>
         <footer className="orbit-footer has-buddies">
           <OrbitMachineEntry />

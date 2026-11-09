@@ -33,6 +33,7 @@ pub async fn get_review_comments(
     }
 
     let (open, resolved, outdated) = data.count_by_status();
+    let shared = comments::share_comment_visitors(&project_key, &task_id).unwrap_or_default();
 
     let comment_entries: Vec<ReviewCommentEntry> = data
         .comments
@@ -74,6 +75,7 @@ pub async fn get_review_comments(
                 model: c.model,
                 role: c.role,
                 timestamp: c.timestamp,
+                via_share: shared.contains_key(&c.id),
                 status,
                 replies,
             }

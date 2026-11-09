@@ -966,11 +966,61 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             ON automation_runs(automation_id, triggered_at DESC);
         CREATE INDEX IF NOT EXISTS ix_automation_runs_queued
             ON automation_runs(status, triggered_at) WHERE status = 'queued';
+
+        -- Task share links this machine hands out (see storage::shares).
+        CREATE TABLE IF NOT EXISTS task_shares (
+            token        TEXT PRIMARY KEY,
+            project_key  TEXT NOT NULL,
+            task_id      TEXT NOT NULL,
+            can_comment  INTEGER NOT NULL DEFAULT 0,
+            expires_at   TEXT,
+            max_opens    INTEGER,
+            opens        INTEGER NOT NULL DEFAULT 0,
+            created_at   TEXT NOT NULL,
+            revoked_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ix_task_shares_task
+            ON task_shares(project_key, task_id);
+
+        -- People who opened a share link. The key is what they hold; only its
+        -- hash is kept. The name is theirs to choose.
+        CREATE TABLE IF NOT EXISTS share_visitors (
+            id           TEXT PRIMARY KEY,
+            token        TEXT NOT NULL,
+            kind         TEXT NOT NULL,
+            name         TEXT NOT NULL,
+            device       TEXT NOT NULL DEFAULT '',
+            client       TEXT NOT NULL DEFAULT '',
+            key_hash     TEXT NOT NULL,
+            created_at   TEXT NOT NULL,
+            last_open_at TEXT,
+            removed_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ix_share_visitors_token
+            ON share_visitors(token);
+
+        -- Shares other people's Groves handed to this one.
+        CREATE TABLE IF NOT EXISTS received_shares (
+            id           TEXT PRIMARY KEY,
+            url          TEXT NOT NULL UNIQUE,
+            base_url     TEXT NOT NULL,
+            token        TEXT NOT NULL,
+            visitor_id   TEXT NOT NULL,
+            visitor_key  TEXT NOT NULL,
+            title        TEXT NOT NULL DEFAULT '',
+            owner        TEXT NOT NULL DEFAULT '',
+            project      TEXT NOT NULL DEFAULT '',
+            can_comment  INTEGER NOT NULL DEFAULT 0,
+            added_at     TEXT NOT NULL,
+            seen_at      TEXT
+        );
     ",
     )?;
 
     // Column migrations for existing databases
     add_column_if_missing(conn, "connects", "buddy_id", "TEXT")?;
+    // The share visitor who wrote a comment through a share link.
+    add_column_if_missing(conn, "review_comments", "share_visitor", "TEXT")?;
     // The latest Buddy message a follow-up waits on; lets startup reconcile it.
     add_column_if_missing(conn, "buddy_delegations", "round_message_id", "TEXT")?;
     // ALTER TABLE ADD COLUMN is not idempotent in SQLite, so we ignore errors

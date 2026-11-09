@@ -25,6 +25,7 @@ pub mod migrate_chats;
 pub mod notes;
 pub mod plugin_data;
 pub mod plugins;
+pub mod shares;
 pub mod sketch_checkpoints;
 pub mod sketches;
 pub mod skills;

@@ -50,6 +50,9 @@ import type { WelcomeAction } from "./components/Welcome/WelcomePage";
 import type { CodingTab } from "./components/Projects/AddProjectDialog";
 import { InterfaceChoiceDialog } from "./components/Orbit/InterfaceChoiceDialog";
 import { StandaloneReviewPage } from "./components/Review";
+import { PublicSharePage } from "./components/Share/PublicSharePage";
+import { SharedTaskPage } from "./components/Share/SharedTaskPage";
+import { ShareOpener } from "./components/Share/ShareOpener";
 import { HelpOverlay } from "./components/Tasks/HelpOverlay";
 import { SkillsPage } from "./components/Skills";
 import { AIPage, GlobalAgentVoiceRuntime, GlobalAudioRecorder, GlobalVoiceControlRecorder } from "./components/AI";
@@ -1628,6 +1631,10 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       case "new":
         return <OrbitNewChat key={(navigationData?.taskId as string | undefined) ?? "_local"} initialTaskId={navigationData?.taskId as string | undefined} onNavigate={handleNavigate} />;
       default: {
+        // A Task someone shared with this Grove.
+        if (activeItem.startsWith("shared:")) {
+          return <SharedTaskPage id={activeItem.slice("shared:".length)} />;
+        }
         // Plugin sidebar page (`contributes.sidebar`) — app-scoped full page.
         if (activeItem.startsWith("plugin:")) {
           const pluginId = activeItem.slice("plugin:".length);
@@ -1667,7 +1674,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   const laptopWorkspace = laptopFolded && inWorkspace && (activeItem === "tasks" || activeItem === "work");
   const orbitHeaderVisible = !laptopWorkspace && (activeItem === "tasks" || activeItem === "work" || effectiveSidebarMode === "collapsed");
   // Orbit pages that own their whole surface (own scroll, no outer padding).
-  const isOrbitEdgeToEdgePage = orbit && (activeItem === "settings" || activeItem === "dashboard" || activeItem === "skills" || activeItem === "memory" || activeItem === "automation" || activeItem === "statistics" || activeItem === "resource" || activeItem === "projects" || activeItem.startsWith("plugin:"));
+  const isOrbitEdgeToEdgePage = orbit && (activeItem === "settings" || activeItem === "dashboard" || activeItem === "skills" || activeItem === "memory" || activeItem === "automation" || activeItem === "statistics" || activeItem === "resource" || activeItem === "projects" || activeItem.startsWith("plugin:") || activeItem.startsWith("shared:"));
   const isFullWidthPage =
     isOrbitEdgeToEdgePage ||
     isDashboardPage ||
@@ -1680,7 +1687,8 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
     activeItem === "automation" ||
     activeItem === "statistics" ||
     activeItem === "new" ||
-    activeItem.startsWith("plugin:");
+    activeItem.startsWith("plugin:") ||
+    activeItem.startsWith("shared:");
 
   const sidebarProps = {
     activeItem,
@@ -1993,6 +2001,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       </div>
       {addProjectDialog}
       <ConnectDialog isOpen={connectOpen} onClose={() => setConnectOpen(false)} />
+      <ShareOpener onOpened={(id) => setActiveItem(`shared:${id}`)} />
       {pageVisible && <CommandPalette />}
       {pageVisible && <ActionCommandPalette />}
       <ProjectCommandPalette
@@ -2020,6 +2029,19 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
 function App() {
   const { open: buddyOpen, enter: openBuddies, exit: closeBuddies } = useBuddyOpen();
   const machine = useSyncExternalStore(subscribeMachineApiBase, getMachineApiBase);
+  // A share link opened in a browser: no sign-in, read only.
+  const shareMatch = window.location.pathname.match(/^\/s\/([A-Za-z0-9]+)\/?$/);
+  if (shareMatch) {
+    return (
+      <ThemeProvider>
+        <BannerProvider>
+          <PreviewCommentProvider>
+            <PublicSharePage token={shareMatch[1]} />
+          </PreviewCommentProvider>
+        </BannerProvider>
+      </ThemeProvider>
+    );
+  }
   // Check for /review/{projectId}/{taskId} path — render diff review directly
   const reviewMatch = window.location.pathname.match(/^\/review\/([^/]+)\/([^/]+)/);
   if (reviewMatch) {

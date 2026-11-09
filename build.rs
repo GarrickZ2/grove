@@ -97,6 +97,7 @@ fn build_tauri() {
                 "tray_open_settings",
                 "tray_open_task",
                 "tray_take_pending_navigate",
+                "take_pending_share_link",
                 "toggle_tray_popover_visibility",
                 "tray_set_pinned",
                 "tray_is_pinned",

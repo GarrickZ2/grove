@@ -252,6 +252,9 @@ pub struct ReviewCommentEntry {
     pub timestamp: String,
     pub status: String,
     pub replies: Vec<ReviewCommentReplyEntry>,
+    /// Written by someone the Task was shared with.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub via_share: bool,
 }
 
 /// Review comments response

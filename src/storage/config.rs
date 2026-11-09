@@ -284,6 +284,8 @@ pub struct Config {
     pub indexing: IndexingConfig,
     #[serde(default)]
     pub browser_control: BrowserControlConfig,
+    #[serde(default)]
+    pub share: ShareConfig,
 
     #[serde(default)]
     pub audio: AudioConfig,
@@ -408,6 +410,18 @@ impl Default for NotificationsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpConfig {
     // Reserved field, currently only used to show config explanation
+}
+
+/// Task sharing (see `storage::shares`).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ShareConfig {
+    /// The name other people see: on links handed out here and in comments
+    /// written on their shares. Unset until the person picks one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The address other people reach this Grove at, when Grove can't tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
 }
 
 /// AI Browser Control Config

@@ -79,6 +79,27 @@ pub fn create_api_router() -> Router {
             get(handlers::agent_usage::get_agent_usage),
         )
         // Update check API
+        .route(
+            "/share-profile",
+            get(handlers::shares::get_profile).put(handlers::shares::put_profile),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/shares",
+            get(handlers::shares::list_links).post(handlers::shares::create_link),
+        )
+        .route("/shares/{token}", delete(handlers::shares::revoke_link))
+        .route(
+            "/shares/{token}/visitors/{visitorId}",
+            delete(handlers::shares::remove_visitor),
+        )
+        .route(
+            "/shared",
+            get(handlers::shares::list_received).post(handlers::shares::add_link),
+        )
+        .route("/shared/preview", post(handlers::shares::preview_link))
+        .route("/shared/{id}", delete(handlers::shares::remove_received))
+        .route("/shared/{id}/seen", post(handlers::shares::mark_seen))
+        .route("/shared/{id}/host/{*rest}", any(handlers::shares::via_host))
         .route("/update-check", get(handlers::update::check_update))
         // In-app update API (AppBundle mode)
         .route(
@@ -1514,6 +1535,33 @@ pub fn create_router(
             )
             .with_state(auth.clone());
 
+        // What a share link opens. The token picks the Task and a visitor key
+        // says who is looking, so these sit outside the auth layer.
+        let share_links = Router::new()
+            .route("/share/{token}", get(handlers::shares::public_info))
+            .route("/share/{token}/join", post(handlers::shares::public_join))
+            .route("/share/{token}/open", post(handlers::shares::public_open))
+            .route("/share/{token}/diff", get(handlers::shares::public_diff))
+            .route(
+                "/share/{token}/diff/file",
+                get(handlers::shares::public_file_diff),
+            )
+            .route("/share/{token}/files", get(handlers::shares::public_files))
+            .route(
+                "/share/{token}/files/preview",
+                get(handlers::shares::public_file_preview),
+            )
+            .route(
+                "/share/{token}/files/download",
+                get(handlers::shares::public_file_download),
+            )
+            .route(
+                "/share/{token}/comments",
+                get(handlers::shares::public_comments).post(handlers::shares::public_add_comment),
+            )
+            .layer(DefaultBodyLimit::max(256 * 1024))
+            .layer(middleware::from_fn(device_auth::no_store));
+
         // OAuth / QR registration callback. Platform message transport remains
         // entirely inside the plugin backend.
         let connect_provider_ingress = Router::new()
@@ -1539,6 +1587,7 @@ pub fn create_router(
             .nest("/api/v1", plugin_assets)
             .nest("/api/v1", plugin_process_host)
             .nest("/api/v1", connect_provider_ingress)
+            .nest("/api/v1", share_links)
             .nest("/api/v1", auth_router)
             .nest("/api/v1", device_router)
             // Same-machine attention-fact intake (grove hooks CLI). Sits
@@ -2379,6 +2428,7 @@ pub async fn start_server(
 
         let display_host = display_host_for(host, lan_ip.as_deref());
         let base_url = format!("https://{}:{}", display_host, port);
+        handlers::shares::record_remote_address(&base_url);
         mobile_banner::present(auth.clone(), base_url, Some(tls_label));
 
         // Set env vars so handlers (e.g. connect_info) can discover port & protocol
@@ -2414,6 +2464,7 @@ pub async fn start_server(
         let lan_ip = get_lan_ip();
         let display_host = display_host_for(host, lan_ip.as_deref());
         let base_url = format!("http://{}:{}", display_host, actual_port);
+        handlers::shares::record_remote_address(&base_url);
         mobile_banner::present(auth.clone(), base_url, None);
     } else if has_ui {
         println!("Grove Web UI: http://localhost:{}", actual_port);

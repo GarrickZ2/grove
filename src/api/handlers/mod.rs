@@ -35,6 +35,7 @@ pub mod projects;
 pub mod render;
 pub mod resource_monitor;
 pub mod session_mcp;
+pub mod shares;
 pub mod skills;
 pub mod statistics;
 pub mod studio_common;

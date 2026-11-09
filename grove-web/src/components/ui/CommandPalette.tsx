@@ -1,7 +1,9 @@
 import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { Fragment, useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search } from "lucide-react";
+import { Link2, Search } from "lucide-react";
+import { isShareLink } from "../../api/shares";
+import { openShareLink } from "../Share/shareEvents";
 import { useCommandPalette } from "../../context/CommandPaletteContext";
 import type { Command } from "../../context/CommandPaletteContext";
 import { KeyBadge } from "./KeyBadge";
@@ -31,10 +33,14 @@ export function CommandPalette() {
   // Build commands lazily — only when palette is open
   const allCommands = useMemo(() => isOpen ? getCommands() : [], [isOpen, getCommands]);
 
-  const filteredCommands = useMemo(
-    () => rankCommands(allCommands, searchQuery, pageContext, usageStats),
-    [allCommands, searchQuery, pageContext, usageStats]
-  );
+  const filteredCommands = useMemo(() => {
+    // A pasted share link opens that shared Task.
+    if (isShareLink(searchQuery)) {
+      const link = searchQuery.trim();
+      return [{ id: "share.open-link", name: "Open shared task", category: "Shared with me", icon: Link2, handler: () => openShareLink(link) }];
+    }
+    return rankCommands(allCommands, searchQuery, pageContext, usageStats);
+  }, [allCommands, searchQuery, pageContext, usageStats]);
 
   // Keep ranked order intact; only group contiguous runs for headers
   const groups = useMemo(() => {
