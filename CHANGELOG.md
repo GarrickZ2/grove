@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-11-10
+
+### Added
+
+- **Design (Studio)** — Agents design UI as HTML pages on a board you can play, edit, annotate and comment on, with one design system per Project. Import and export as a zip of plain files, or a page as a single HTML file or an image.
+- **Share a Task** — Share a Task by link, read-only or with comments. People on the link see the changes, files and designs, read every comment thread and reply.
+- **Browser control and computer use** — Agents drive a test browser per Task or, with your approval, your own browser, and can use the computer.
+- **Plugins** — Grove opens to plugins through a host API.
+- **Windows** — Grove runs on Windows.
+- **First-run setup** — A new install checks for Node.js and Git and helps install them.
+- **Grok Build** — Added as a built-in agent in place of Qwen Code.
+
+### Improved
+
+- **Comments** — Comments on an Artifacts preview are kept with the Task as threads, like design and review comments, and go to the agent when you send them. A comment follows its element when the content around it changes, and is marked when the element is rewritten or gone.
+- **Startup** — Shows the step it is on, and no longer waits for the notification bundle to build.
+- **Orbit** — Redundant subtitles are gone and subagents fold into live work.
+
+### Fixed
+
+- **Send to agent** — Stays available after switching sessions and while the chat is put away.
+- **Machines** — Switching works everywhere and stays in place.
+- **Chat** — Agent messages collapse and tool output is cleaner.
+- **Orbit New page** — Keeps its agent config.
+- **Memory** — No notification when memory organization finishes.
+- **Computer use** — `computer_help` has its own input schema.
+
 ## [0.14.3] - 2026-11-05
 
 ### Added
