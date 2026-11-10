@@ -272,6 +272,8 @@ interface DiffFileViewProps {
   onExpandComment?: (id: number) => void;
   projectId?: string;
   taskId?: string;
+  /** Reads the file as the Task has it now; the owner's Task when left out. */
+  readFile?: (path: string) => Promise<string>;
   viewMode?: 'diff' | 'full';
   fullFileContent?: string;
   isLoadingFullFile?: boolean;
@@ -327,6 +329,7 @@ export function DiffFileView({
   onDeleteReply,
   projectId,
   taskId,
+  readFile,
   viewMode = 'diff',
   fullFileContent,
   isLoadingFullFile,
@@ -1133,8 +1136,9 @@ export function DiffFileView({
   const ensureFileLines = useCallback(() => {
     if (fileLines || fileLinesLoadingRef.current) return;
     fileLinesLoadingRef.current = true;
-    if (projectId && taskId) {
-      getFileContent(projectId, taskId, file.new_path)
+    const read = readFile ?? (projectId && taskId ? (path: string) => getFileContent(projectId, taskId, path) : null);
+    if (read) {
+      read(file.new_path)
         .then((content) => setFileLines(content.split('\n')))
         .catch(() => {
           const maxLine = gaps.length > 0 ? Math.max(...gaps.map((g) => g.endLine)) : 0;
@@ -1145,7 +1149,7 @@ export function DiffFileView({
           setFileLines(lines);
         });
     }
-  }, [fileLines, projectId, taskId, file.new_path, gaps]);
+  }, [fileLines, projectId, taskId, readFile, file.new_path, gaps]);
 
   // Pre-load fileLines when file is expanded so trailing gap can be computed immediately
   useEffect(() => {

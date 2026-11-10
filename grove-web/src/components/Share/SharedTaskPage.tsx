@@ -11,13 +11,7 @@ export function SharedTaskPage({ id }: { id: string }) {
   }, [id]);
   return (
     <div className="orbit-ui" style={{ height: "100%" }}>
-      <SharedTaskView
-        key={id}
-        source={source}
-        viewerCanComment
-        showComments
-        onInfo={onInfo}
-      />
+      <SharedTaskView key={id} source={source} shareKey={`received-${id}`} onInfo={onInfo} />
     </div>
   );
 }

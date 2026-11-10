@@ -38,7 +38,6 @@
     "allow-notify-banner",
     "allow-is-remote-mode-command",
     "allow-tray-take-pending-navigate",
-    "allow-take-pending-share-link",
     "allow-buddy-mini-open"
   ]
 }

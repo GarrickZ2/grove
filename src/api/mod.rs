@@ -1546,6 +1546,10 @@ pub fn create_router(
                 "/share/{token}/diff/file",
                 get(handlers::shares::public_file_diff),
             )
+            .route(
+                "/share/{token}/diff/content",
+                get(handlers::shares::public_file_content),
+            )
             .route("/share/{token}/files", get(handlers::shares::public_files))
             .route(
                 "/share/{token}/files/preview",

@@ -719,7 +719,6 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             crate::tray::tray_open_settings,
             crate::tray::tray_open_task,
             crate::tray::tray_take_pending_navigate,
-            take_pending_share_link,
             crate::tray::toggle_tray_popover_visibility,
             crate::tray::tray_set_pinned,
             crate::tray::tray_is_pinned,
@@ -1028,18 +1027,6 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
     }
 }
 
-/// A share link from `grove://open-share`, kept until the window takes it
-/// (the window may still be loading when Grove is launched by the link).
-static PENDING_SHARE_LINK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
-#[tauri::command]
-fn take_pending_share_link() -> Option<String> {
-    PENDING_SHARE_LINK
-        .lock()
-        .ok()
-        .and_then(|mut slot| slot.take())
-}
-
 fn handle_grove_deep_link(app: &tauri::AppHandle, url_str: &str) {
     let Ok(parsed_url) = url::Url::parse(url_str) else {
         return;
@@ -1054,16 +1041,6 @@ fn handle_grove_deep_link(app: &tauri::AppHandle, url_str: &str) {
     if parsed_url.host_str() == Some("open-task") {
         if let Err(e) = crate::tray::tray_open_task(app.clone(), project_id, task_id, chat_id) {
             eprintln!("[DeepLink] Open task navigation failed: {}", e);
-        }
-    } else if parsed_url.host_str() == Some("open-share") {
-        // `grove://open-share?url=<share link>` from a share's web page.
-        if let Some(link) = query.get("url").filter(|link| link.starts_with("http")) {
-            if let Ok(mut slot) = PENDING_SHARE_LINK.lock() {
-                *slot = Some(link.clone());
-            }
-            use tauri::Emitter;
-            let _ = crate::tray::surface_main(app);
-            let _ = app.emit_to("main", "grove:open-share", link.clone());
         }
     } else if parsed_url.host_str() == Some("resolve-permission") {
         let option_id = query.get("optionId").cloned().unwrap_or_default();

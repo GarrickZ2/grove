@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
 import { Button, DialogBody, DialogField, DialogFoot, DialogHead, DialogPanel, OrbitDialogLayer } from "../../orbit/ui";
 import {
   addReceivedShare,
@@ -12,8 +10,7 @@ import {
   updateShareProfile,
   type ShareInfo,
 } from "../../api/shares";
-import { isTauriShell } from "../../utils/tauriShell";
-import { stateMessage, untilText } from "./shareFormat";
+import { stateMessage } from "./shareFormat";
 import { sharedListChanged } from "./shareEvents";
 
 type Step =
@@ -73,21 +70,6 @@ export function ShareOpener({ onOpened }: { onOpened: (receivedId: string) => vo
     return () => window.removeEventListener("grove:open-share", onEvent);
   }, [begin]);
 
-  // `grove://open-share?url=…` lands in the desktop shell.
-  useEffect(() => {
-    if (!isTauriShell) return;
-    const take = () => {
-      void invoke<string | null>("take_pending_share_link").then((url) => { if (url) void begin(url); }).catch(() => {});
-    };
-    take();
-    let stop: (() => void) | undefined;
-    let cancelled = false;
-    void listen<string>("grove:open-share", () => take())
-      .then((unlisten) => { if (cancelled) unlisten(); else stop = unlisten; })
-      .catch(() => {});
-    return () => { cancelled = true; stop?.(); };
-  }, [begin]);
-
   if (!step) return null;
   const close = () => { setStep(null); setError(null); };
 
@@ -116,24 +98,16 @@ export function ShareOpener({ onOpened }: { onOpened: (receivedId: string) => vo
       setBusy(false);
     }
   };
-  const facts = [
-    info.project,
-    info.canComment ? "Can comment" : "View only",
-    info.expiresAt ? `Expires ${untilText(info.expiresAt)}` : null,
-  ].filter(Boolean).join(" · ");
 
   return (
     <OrbitDialogLayer open onClose={close} label={`Open ${info.owner}'s share`}>
       <DialogPanel onSubmit={(event) => { event.preventDefault(); void submit(); }}>
         <DialogHead
           title={`Open ${info.owner}'s share`}
-          description={<><b>{info.title}</b>{facts ? ` · ${facts}` : ""}<br />From {step.host}. It's the first link you open from this Grove.</>}
+          description={<><b>{info.title}</b> · {info.project ? `${info.project} · ` : ""}{step.host}</>}
         />
         <DialogBody>
-          <DialogField
-            label="Your name"
-            note={`${info.owner} will see “${name.trim() || step.suggested}${step.device ? ` · ${step.device}` : ""}”. Other shares you open use this name too; change it in Settings › General.`}
-          >
+          <DialogField label="Your name">
             <input className="oui-field" value={name} onChange={(event) => setName(event.target.value)} maxLength={40} autoFocus autoComplete="off" />
           </DialogField>
           {error && <p className="share-notice is-error" role="alert">{error}</p>}

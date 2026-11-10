@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
-import { getDiffStats, getSingleFileDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent, editComment as apiEditComment, editReply as apiEditReply, deleteReply as apiDeleteReply, bulkDeleteComments as apiBulkDeleteComments } from '../../api/review';
 import type { DiffFile, DiffStatsResult } from '../../api/review';
-import { getReviewComments, getCommits, getTaskFiles, getTaskDirEntries, getTask, openTaskFile, revealTaskFile } from '../../api/tasks';
+import { ownerBackend, type ReviewBackend } from './reviewBackend';
 import type { ReviewCommentEntry, ReviewCommentsResponse, DirEntry, CommitsResponse } from '../../api/tasks';
 import { buildMentionItems } from '../../utils/fileMention';
 import { taskRelativeFilePath } from './fileNavigation';
@@ -101,6 +100,8 @@ interface DiffReviewPageProps {
   isChatBusy?: boolean;
   /** Replaces the "Code Review" heading (e.g. with a project switcher). */
   title?: ReactNode;
+  /** Where the Task comes from; the owner's own Task when left out. */
+  backend?: ReviewBackend;
 }
 
 interface RefetchDiffOptions {
@@ -121,7 +122,8 @@ function diffLoadErrorMessage(error: unknown): string {
 import { getPreviewRenderer } from './previewRenderers';
 
 
-export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, isGitRepo, isChatBusy, title }: DiffReviewPageProps) {
+export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, isGitRepo, isChatBusy, title, backend: givenBackend }: DiffReviewPageProps) {
+  const backend = useMemo(() => givenBackend ?? ownerBackend(projectId, taskId), [givenBackend, projectId, taskId]);
   // Host-side file actions would open the remote Grove server's desktop, not
   // the reviewing user's machine. Local web and Desktop remain eligible.
   const canUseHostFileActions =
@@ -137,16 +139,16 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     // Fetch by id rather than scanning the task list: `listTasks` omits the
     // Local Task (`_local`), which left `taskPath` null and greyed out "Copy
     // Full Path". `getTask` resolves both worktree-backed and local tasks.
-    getTask(projectId, taskId, ac.signal)
-      .then((task) => {
-        if (!ac.signal.aborted) setTaskPath(task.path);
+    backend.taskPath(ac.signal)
+      .then((path) => {
+        if (!ac.signal.aborted) setTaskPath(path);
       })
       .catch(() => {
         // Aborted requests / transient errors — fine to swallow.
         // "Copy Full Path" briefly unavailable; next render will retry.
       });
     return () => ac.abort();
-  }, [projectId, taskId]);
+  }, [backend]);
   const [allFiles, setAllFiles] = useState<string[]>([]); // All git-tracked files for File Mode
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const selectedFileRef = useRef<string | null>(selectedFile);
@@ -180,6 +182,8 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     if (navigateToFile?.mode) return navigateToFile.mode;
     // Non-git projects always use full mode.
     if (isGitRepo === false) return 'full';
+    // A shared Task shows only its changes.
+    if (!backend.canBrowse) return 'diff';
     // Restore last-used mode so reopening the panel keeps the user's context.
     const stored = sessionStorage.getItem(viewModeStorageKey);
     if (stored === 'full' || stored === 'diff') return stored;
@@ -721,7 +725,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       for (const dirPath of parentPaths) {
         if (!expandedForNavRef.current.has(dirPath)) {
           expandedForNavRef.current.add(dirPath);
-          getTaskDirEntries(projectId, taskId, dirPath)
+          backend.dirEntries(dirPath)
             .then((result) => appendLazyFiles(result.entries))
             .catch(console.error);
         }
@@ -754,7 +758,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         requestAnimationFrame(() => scrollToFile(resolvedPath));
       }
     }
-  }, [displayFiles, navigateToFile, viewMode, focusMode, projectId, taskId, taskPath, appendLazyFiles, scrollToFile]);
+  }, [displayFiles, navigateToFile, viewMode, focusMode, backend, taskPath, appendLazyFiles, scrollToFile]);
 
   // Load full file content with concurrency control
   const loadFullFileContent = useCallback(async (filePath: string, forceReload = false) => {
@@ -775,7 +779,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         setLoadingFiles(prev => new Set(prev).add(path));
 
         try {
-          const content = await getFileContent(projectId, taskId, path);
+          const content = await backend.fileContent(path);
           setFullFileContents(prev => new Map(prev).set(path, content));
         } catch (error) {
           console.error(`Failed to load ${path}:`, error);
@@ -792,7 +796,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     };
 
     processQueue();
-  }, [projectId, taskId, fullFileContents, loadingFiles]);
+  }, [backend, fullFileContents, loadingFiles]);
 
   // true after initial load completes — prevents double-fetch on mount
   const modeSwitchReadyRef = useRef(false);
@@ -819,7 +823,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     let count = allFiles.length;
     if (count === 0) {
       try {
-        const result = await getTaskFiles(projectId, taskId);
+        const result = await backend.taskFiles();
         count = result.files.length;
       } catch {
         setFocusMode(false);
@@ -832,14 +836,14 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     }
     setFocusModeWarn(null);
     setFocusMode(false);
-  }, [focusMode, allFiles, projectId, taskId]);
+  }, [focusMode, allFiles, backend]);
 
   const loadFileDiff = useCallback(async (filePath: string, fromRef?: string, toRef?: string, forceReload = false) => {
     if ((!forceReload && fileDiffCacheRef.current.has(filePath)) || loadingDiffsRef.current.has(filePath)) return;
     loadingDiffsRef.current = new Set(loadingDiffsRef.current).add(filePath);
     let caught: unknown = null;
     try {
-      const result = await getSingleFileDiff(projectId, taskId, filePath, fromRef, toRef, diffDataRef.current?.files.find(f => f.path === filePath)?.old_path ?? undefined);
+      const result = await backend.fileDiff(filePath, fromRef, toRef, diffDataRef.current?.files.find(f => f.path === filePath)?.old_path ?? undefined);
       setFileDiffCache(prev => new Map(prev).set(filePath, result));
     } catch (e: unknown) {
       caught = e;
@@ -855,15 +859,15 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       next.delete(filePath);
       loadingDiffsRef.current = next;
     }
-  }, [projectId, taskId]);
+  }, [backend]);
 
 
 
   const handleExpandDir = useCallback(async (dirPath: string): Promise<DirEntry[]> => {
-    const result = await getTaskDirEntries(projectId, taskId, dirPath);
+    const result = await backend.dirEntries(dirPath);
     appendLazyFiles(result.entries);
     return result.entries;
-  }, [projectId, taskId, appendLazyFiles]);
+  }, [backend, appendLazyFiles]);
 
   // Compute per-file comment counts
   const fileCommentCounts = useMemo(() => {
@@ -1034,10 +1038,10 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       loadingDiffsRef.current = new Set();
     }
 
-    let data: Awaited<ReturnType<typeof getDiffStats>> | null = null;
+    let data: Awaited<ReturnType<ReviewBackend["diffStats"]>> | null = null;
     let caught: unknown = null;
     try {
-      data = await getDiffStats(projectId, taskId, fromRef, toRef);
+      data = await backend.diffStats(fromRef, toRef);
     } catch (e) {
       caught = e;
     }
@@ -1063,7 +1067,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       }
     }
     if (fetchGenRef.current === gen && !silent) setLoading(false);
-  }, [projectId, taskId, loadFileDiff, clearFileDiffCache]);
+  }, [backend, loadFileDiff, clearFileDiffCache]);
 
   useEffect(() => {
     if (!modeSwitchReadyRef.current) return;
@@ -1076,19 +1080,19 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     // Reset scroll position so the new mode starts at the top
     if (contentRef.current) contentRef.current.scrollTop = 0;
     if (viewMode === 'full' && focusMode) {
-      getTaskDirEntries(projectId, taskId, '').then((result) => {
+      backend.dirEntries('').then((result) => {
         if (fetchGenRef.current !== gen) return;
         lazyRootDirEntriesRef.current = result.entries;
         appendLazyFiles(result.entries);
       }).catch(console.error).finally(() => {
         if (fetchGenRef.current === gen) setLoading(false);
       });
-      getTaskFiles(projectId, taskId).then((result) => {
+      backend.taskFiles().then((result) => {
         if (fetchGenRef.current !== gen) return;
         setAllFiles(result.files);
       }).catch(() => null);
     } else if (viewMode === 'full' && !focusMode) {
-      getTaskFiles(projectId, taskId).then((result) => {
+      backend.taskFiles().then((result) => {
         if (fetchGenRef.current !== gen) return;
         setAllFiles(result.files);
       }).catch(() => null).finally(() => {
@@ -1098,8 +1102,8 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       // Changes mode: fetch commits first to ensure the version dropdown is up-to-date.
       // Parallel-fetch task files so allFiles is populated for file autocomplete (@) support!
       Promise.all([
-        getCommits(projectId, taskId),
-        getTaskFiles(projectId, taskId).catch(() => ({ files: [] as string[] }))
+        backend.commits(),
+        backend.taskFiles().catch(() => ({ files: [] as string[] }))
       ])
         .then(([commitsData, filesData]) => {
           if (fetchGenRef.current !== gen) return;
@@ -1135,7 +1139,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
           refetchDiff({ ...currentDiffRefsRef.current, gen });
         });
     }
-  }, [viewMode, focusMode, projectId, taskId, appendLazyFiles, refetchDiff]);
+  }, [viewMode, focusMode, backend, appendLazyFiles, refetchDiff]);
 
   // Version change handlers — directly trigger refetch
   const handleFromVersionChange = useCallback((id: string) => {
@@ -1173,7 +1177,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
     const selected = selectedFileRef.current;
 
-    const commentsPromise = getReviewComments(projectId, taskId).then((result) => {
+    const commentsPromise = backend.comments().then((result) => {
       if (fetchGenRef.current !== gen) return;
       setComments(result.comments);
       if (result.git_user_name) gitUserNameRef.current = result.git_user_name;
@@ -1182,7 +1186,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     let caught: unknown = null;
     try {
       if (viewMode === 'diff') {
-        const commitsData = await getCommits(projectId, taskId).catch(() => null);
+        const commitsData = await backend.commits().catch(() => null);
         if (fetchGenRef.current !== gen) return;
         const opts = buildVersionOpts(commitsData);
         setVersions(opts);
@@ -1204,7 +1208,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         const fromOpt = opts.find((v) => v.id === from);
         const toOpt = opts.find((v) => v.id === to);
 
-        const filesPromise = getTaskFiles(projectId, taskId)
+        const filesPromise = backend.taskFiles()
           .then((result) => {
             if (fetchGenRef.current !== gen) return;
             setAllFiles(result.files);
@@ -1221,7 +1225,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         await Promise.all([
           commentsPromise,
           fullContentPromise,
-          getTaskDirEntries(projectId, taskId, '').then((result) => {
+          backend.dirEntries('').then((result) => {
             if (fetchGenRef.current !== gen) return;
             lazyRootDirEntriesRef.current = result.entries;
             appendLazyFiles(result.entries);
@@ -1232,7 +1236,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         await Promise.all([
           commentsPromise,
           fullContentPromise,
-          getTaskFiles(projectId, taskId).then((result) => {
+          backend.taskFiles().then((result) => {
             if (fetchGenRef.current !== gen) return;
             setAllFiles(result.files);
           }).catch(() => null),
@@ -1247,7 +1251,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     if (caught !== null) {
       throw caught;
     }
-  }, [refetchDiff, projectId, taskId, viewMode, focusMode, appendLazyFiles, loadFullFileContent, clearFileDiffCache]);
+  }, [refetchDiff, backend, viewMode, focusMode, appendLazyFiles, loadFullFileContent, clearFileDiffCache]);
 
   // Two callers: the manual refresh button / hotkey-r path (loud, shows
   // spinner) and the agent-turn-finished auto-refresh path (silent). Splitting
@@ -1294,9 +1298,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       // Build per-mode promises BEFORE the try so the conditional
       // expressions don't sit inside a try/catch (React Compiler bails on
       // value blocks within try/catch).
-      let commitsPromise: Promise<Awaited<ReturnType<typeof getCommits>> | null>;
+      let commitsPromise: Promise<Awaited<ReturnType<ReviewBackend["commits"]>> | null>;
       if (viewMode === 'diff') {
-        commitsPromise = getCommits(projectId, taskId).catch(() => null);
+        commitsPromise = backend.commits().catch(() => null);
       } else {
         commitsPromise = Promise.resolve(null);
       }
@@ -1305,7 +1309,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       if (viewMode === 'diff') {
         const isDefaultVersion = fromVersion === 'target' && toVersion === 'latest';
         if (isDefaultVersion) {
-          diffPromise = getDiffStats(projectId, taskId);
+          diffPromise = backend.diffStats();
         } else {
           // Resolve custom version hashes from commits list
           diffPromise = commitsPromise.then(async (commitsData) => {
@@ -1339,27 +1343,27 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                 // header options" effect — no need to mirror writes here.
               }
             }
-            return getDiffStats(projectId, taskId, resolvedFromRef, resolvedToRef);
+            return backend.diffStats(resolvedFromRef, resolvedToRef);
           }).catch(() => {
-            return getDiffStats(projectId, taskId);
+            return backend.diffStats();
           });
         }
       } else {
         diffPromise = Promise.resolve({ files: [], total_additions: 0, total_deletions: 0 } as DiffStatsResult);
       }
-      let filesPromise: Promise<Awaited<ReturnType<typeof getTaskFiles>> | null>;
+      let filesPromise: Promise<Awaited<ReturnType<ReviewBackend["taskFiles"]>> | null>;
       if (viewMode === 'full' && !focusMode) {
-        filesPromise = getTaskFiles(projectId, taskId).catch(() => null);
+        filesPromise = backend.taskFiles().catch(() => null);
       } else {
         filesPromise = Promise.resolve(null);
       }
-      let dirEntriesPromise: Promise<Awaited<ReturnType<typeof getTaskDirEntries>> | null>;
+      let dirEntriesPromise: Promise<Awaited<ReturnType<ReviewBackend["dirEntries"]>> | null>;
       if (viewMode === 'full' && focusMode) {
-        dirEntriesPromise = getTaskDirEntries(projectId, taskId, '').catch(() => null);
+        dirEntriesPromise = backend.dirEntries('').catch(() => null);
       } else {
         dirEntriesPromise = Promise.resolve(null);
       }
-      const reviewPromise = getReviewComments(projectId, taskId).catch(() => null);
+      const reviewPromise = backend.comments().catch(() => null);
 
       type LoadResult = [
         DiffStatsResult,
@@ -1453,11 +1457,11 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
           // Now that we're ready, trigger the All Files fetch manually.
           if (viewMode === 'diff' && viewModeRef.current === 'full') {
             if (!focusModeRef.current) {
-              getTaskFiles(projectId, taskId)
+              backend.taskFiles()
                 .then((result) => { if (!cancelled) setAllFiles(result.files); })
                 .catch(() => null);
             } else {
-              getTaskDirEntries(projectId, taskId, '')
+              backend.dirEntries('')
                 .then((result) => {
                   if (!cancelled) {
                     lazyRootDirEntriesRef.current = result.entries;
@@ -1475,7 +1479,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
     load();
     return () => { cancelled = true; };
-  }, [projectId, taskId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [backend]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Unfocus mode: batch load diffs for all files after initial load
   useEffect(() => {
@@ -1492,7 +1496,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       Promise.all(batch.map(f => {
         if (fileDiffCacheRef.current.has(f.path) || loadingDiffsRef.current.has(f.path)) return Promise.resolve();
         loadingDiffsRef.current = new Set(loadingDiffsRef.current).add(f.path);
-        return getSingleFileDiff(projectId, taskId, f.path, fromOpt?.ref, toOpt?.ref, f.old_path ?? undefined)
+        return backend.fileDiff(f.path, fromOpt?.ref, toOpt?.ref, f.old_path ?? undefined)
           .then(result => {
             setFileDiffCache(prev => new Map(prev).set(f.path, result));
           })
@@ -1511,7 +1515,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       });
     };
     loadBatch();
-  }, [viewMode, focusMode, diffData, projectId, taskId, versions, fromVersion, toVersion]);
+  }, [viewMode, focusMode, diffData, backend, versions, fromVersion, toVersion]);
 
 
   // ── Keyboard scopes & commands ─────────────────────────────────────────
@@ -1819,23 +1823,23 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   // Add comment
   const handleAddComment = useCallback(async (anchor: CommentAnchor, content: string) => {
     try {
-      const result = await createInlineComment(projectId, taskId, anchor, content, gitUserNameRef.current);
+      const result = await backend.addInline(anchor, content, gitUserNameRef.current);
       applyReviewResponse(result);
       setCommentFormAnchor(null);
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Delete comment
   const handleDeleteComment = useCallback(async (id: number) => {
     try {
-      const result = await apiDeleteComment(projectId, taskId, id);
+      const result = await backend.deleteComment(id);
       applyReviewResponse(result);
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Cancel comment form
   const handleCancelComment = useCallback(() => {
@@ -1853,23 +1857,23 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
   const handleSubmitFileComment = useCallback(async (filePath: string, content: string) => {
     try {
-      const result = await createFileComment(projectId, taskId, filePath, content, gitUserNameRef.current);
+      const result = await backend.addFileComment(filePath, content, gitUserNameRef.current);
       applyReviewResponse(result);
       setFileCommentFormPath(null);
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Add project comment
   const handleAddProjectComment = useCallback(async (content: string) => {
     try {
-      const result = await createProjectComment(projectId, taskId, content, gitUserNameRef.current);
+      const result = await backend.addProjectComment(content, gitUserNameRef.current);
       applyReviewResponse(result);
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Open reply form
   const handleOpenReplyForm = useCallback((commentId: number) => {
@@ -1885,29 +1889,29 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   // Reply to comment (no status change)
   const handleReplyComment = useCallback(async (commentId: number, _status: string, message: string) => {
     try {
-      const result = await apiReplyComment(projectId, taskId, commentId, message, gitUserNameRef.current);
+      const result = await backend.reply(commentId, message, gitUserNameRef.current);
       applyReviewResponse(result);
       setReplyFormCommentId(null);
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Resolve comment (mark as resolved + auto-collapse)
   const handleResolveComment = useCallback(async (id: number) => {
     try {
-      const result = await apiUpdateCommentStatus(projectId, taskId, id, 'resolved');
+      const result = await backend.setStatus(id, 'resolved');
       applyReviewResponse(result);
       setCollapsedCommentIds((prev) => new Set([...prev, id]));
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Reopen comment (mark resolved → open + auto-expand)
   const handleReopenComment = useCallback(async (id: number) => {
     try {
-      const result = await apiUpdateCommentStatus(projectId, taskId, id, 'open');
+      const result = await backend.setStatus(id, 'open');
       applyReviewResponse(result);
       setCollapsedCommentIds((prev) => {
         const next = new Set(prev);
@@ -1917,47 +1921,47 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Edit comment content
   const handleEditComment = useCallback(async (id: number, content: string) => {
     try {
-      const result = await apiEditComment(projectId, taskId, id, content);
+      const result = await backend.editComment(id, content);
       applyReviewResponse(result);
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Edit reply content
   const handleEditReply = useCallback(async (commentId: number, replyId: number, content: string) => {
     try {
-      const result = await apiEditReply(projectId, taskId, commentId, replyId, content);
+      const result = await backend.editReply(commentId, replyId, content);
       applyReviewResponse(result);
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Delete reply
   const handleDeleteReply = useCallback(async (commentId: number, replyId: number) => {
     try {
-      const result = await apiDeleteReply(projectId, taskId, commentId, replyId);
+      const result = await backend.deleteReply(commentId, replyId);
       applyReviewResponse(result);
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Bulk delete comments
   const handleBulkDelete = useCallback(async (statuses?: string[], authors?: string[]) => {
     try {
-      const result = await apiBulkDeleteComments(projectId, taskId, statuses, authors);
+      const result = await backend.bulkDelete(statuses, authors);
       applyReviewResponse(result);
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, applyReviewResponse]);
+  }, [backend, applyReviewResponse]);
 
   // Navigate to a comment (from conversation sidebar)
   const handleNavigateToComment = useCallback((filePath: string, line: number, commentId?: number) => {
@@ -2060,7 +2064,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     : openCommentCount === 0
       ? 'No open comments'
       : `Send ${openCommentCount} open ${openCommentCount === 1 ? 'comment' : 'comments'} to ${chatTarget.agent || 'the agent'}`;
-  const hasVersionRange = !error && viewMode === 'diff' && fromOptions.length > 0 && toOptions.length > 0;
+  const hasVersionRange = backend.canBrowse && !error && viewMode === 'diff' && fromOptions.length > 0 && toOptions.length > 0;
   const activeRenderer = orbit && activeFilePath ? getPreviewRenderer(activeFilePath, viewMode) : null;
 
   const orbitHeader = orbit ? (
@@ -2070,6 +2074,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       rangeFrom={hasVersionRange ? <VersionSelector options={fromOptions} selected={fromVersion} onChange={handleFromVersionChange} footer={versionFooter} /> : undefined}
       rangeTo={hasVersionRange ? <VersionSelector options={toOptions} selected={toVersion} onChange={handleToVersionChange} footer={versionFooter} /> : undefined}
       isGitRepo={isGitRepo}
+      onlyChanges={!backend.canBrowse}
       viewMode={viewMode}
       onSetViewMode={handleSetViewMode}
       viewType={viewType}
@@ -2094,7 +2099,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       onOpenSearch={handleOpenSearch}
       canSendAll={canSendAll}
       sendAllTitle={sendAllTitle}
-      onSendAll={handleRequestSendAll}
+      onSendAll={backend.owner ? handleRequestSendAll : undefined}
     />
   ) : null;
 
@@ -2399,11 +2404,11 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
               taskPath={taskPath}
               projectId={projectId}
               taskId={taskId}
-              onOpenInApp={canUseHostFileActions
-                ? (path) => { void openTaskFile(projectId, taskId, path); }
+              onOpenInApp={canUseHostFileActions && backend.canBrowse
+                ? (path) => { void backend.openFile(path); }
                 : undefined}
-              onRevealInFileManager={canUseHostFileActions
-                ? (path) => { void revealTaskFile(projectId, taskId, path); }
+              onRevealInFileManager={canUseHostFileActions && backend.canBrowse
+                ? (path) => { void backend.revealFile(path); }
                 : undefined}
               autoViewedRules={autoViewedRules}
               onUpdateAutoViewedRules={setAutoViewedRules}
@@ -2458,13 +2463,14 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                       onTogglePreview={renderer && !isImage ? handleTogglePreview : undefined}
                       previewRenderer={renderer}
                       defaultExpanded={displayMode === 'preview'}
-                      projectId={projectId}
-                      taskId={taskId}
+                      projectId={backend.owner ? projectId : undefined}
+                      taskId={backend.owner ? taskId : undefined}
+                      readFile={backend.fileContent}
                       comments={getFileComments(file.new_path)}
                       commentFormAnchor={commentFormAnchor}
-                      onGutterClick={handleGutterClick}
-                      onAddComment={handleAddComment}
-                      onDeleteComment={handleDeleteComment}
+                      onGutterClick={backend.canComment ? handleGutterClick : undefined}
+                      onAddComment={backend.canComment ? handleAddComment : undefined}
+                      onDeleteComment={backend.owner ? handleDeleteComment : undefined}
                       onCancelComment={handleCancelComment}
                       isCollapsed={collapsedFiles.has(file.new_path)}
                       onToggleCollapse={handleToggleCollapse}
@@ -2472,11 +2478,11 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                       onToggleViewed={handleToggleViewed}
                       commentCount={fileCommentCounts.get(file.new_path)}
                       replyFormCommentId={replyFormCommentId}
-                      onOpenReplyForm={handleOpenReplyForm}
-                      onReplyComment={handleReplyComment}
+                      onOpenReplyForm={backend.owner ? handleOpenReplyForm : undefined}
+                      onReplyComment={backend.owner ? handleReplyComment : undefined}
                       onCancelReply={handleCancelReply}
-                      onResolveComment={handleResolveComment}
-                      onReopenComment={handleReopenComment}
+                      onResolveComment={backend.owner ? handleResolveComment : undefined}
+                      onReopenComment={backend.owner ? handleReopenComment : undefined}
                       collapsedCommentIds={collapsedCommentIds}
                       onCollapseComment={handleCollapseComment}
                       onExpandComment={handleExpandComment}
@@ -2484,13 +2490,13 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                       fullFileContent={fullFileContents.get(file.new_path)}
                       isLoadingFullFile={loadingFiles.has(file.new_path)}
                       onRequestFullFile={loadFullFileContent}
-                      onAddFileComment={handleAddFileComment}
+                      onAddFileComment={backend.canComment ? handleAddFileComment : undefined}
                       fileCommentFormPath={fileCommentFormPath}
                       onCancelFileComment={handleCancelFileComment}
                       onSubmitFileComment={handleSubmitFileComment}
-                      onEditComment={handleEditComment}
-                      onEditReply={handleEditReply}
-                      onDeleteReply={handleDeleteReply}
+                      onEditComment={backend.owner ? handleEditComment : undefined}
+                      onEditReply={backend.owner ? handleEditReply : undefined}
+                      onDeleteReply={backend.owner ? handleDeleteReply : undefined}
                       codeSearchQuery={codeSearchQuery}
                       codeSearchCaseSensitive={codeSearchCaseSensitive}
                       scrollToLine={scrollToLine?.file === file.new_path ? { line: scrollToLine.line, seq: scrollToLine.seq } : undefined}
@@ -2536,21 +2542,21 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                 : comments
               }
               visible={convSidebarVisible}
-              onAddProjectComment={handleAddProjectComment}
+              onAddProjectComment={backend.canComment ? handleAddProjectComment : undefined}
               onNavigateToComment={handleNavigateToComment}
-              onResolveComment={handleResolveComment}
-              onReopenComment={handleReopenComment}
-              onReplyComment={handleReplyComment}
-              onDeleteComment={handleDeleteComment}
-              onEditComment={handleEditComment}
-              onEditReply={handleEditReply}
-              onDeleteReply={handleDeleteReply}
-              onBulkDelete={handleBulkDelete}
+              onResolveComment={backend.owner ? handleResolveComment : undefined}
+              onReopenComment={backend.owner ? handleReopenComment : undefined}
+              onReplyComment={backend.owner ? handleReplyComment : undefined}
+              onDeleteComment={backend.owner ? handleDeleteComment : undefined}
+              onEditComment={backend.owner ? handleEditComment : undefined}
+              onEditReply={backend.owner ? handleEditReply : undefined}
+              onDeleteReply={backend.owner ? handleDeleteReply : undefined}
+              onBulkDelete={backend.owner ? handleBulkDelete : undefined}
               mentionItems={mentionItems}
-              onSendAllOpen={orbit ? handleRequestSendAll : undefined}
+              onSendAllOpen={orbit && backend.owner ? handleRequestSendAll : undefined}
               sendAllDisabled={!canSendAll}
               sendAllTitle={sendAllTitle}
-              footer={orbit ? (
+              footer={orbit && backend.owner ? (
                 <OrbitMergeFooter
                   projectId={projectId}
                   taskId={taskId}

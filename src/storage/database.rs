@@ -1165,6 +1165,8 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch(
         "ALTER TABLE skill_sources ADD COLUMN management_mode TEXT NOT NULL DEFAULT 'referenced';",
     );
+    let _ = conn
+        .execute_batch("ALTER TABLE share_visitors ADD COLUMN client TEXT NOT NULL DEFAULT '';");
     let _ = conn.execute_batch(
         "ALTER TABLE automations ADD COLUMN handler_key TEXT NOT NULL DEFAULT 'builtin.task_prompt';",
     );

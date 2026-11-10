@@ -475,7 +475,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   })), [phoneActions]);
   const orbitWorkspaceActions = useMemo(() => (
     <>
-      {!isLocal && <ShareButton projectId={projectId} taskId={task.id} />}
+      <ShareButton projectId={projectId} taskId={task.id} />
       {onCommit && (
         <Button variant="ghost" size="sm" onClick={onCommit} disabled={isArchived} title="Commit (c)">
           <GitCommit aria-hidden="true" />Commit

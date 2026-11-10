@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, Link2, MoreHorizontal, Share2, X } from "lucide-react";
-import { Button, Segmented, usePopover } from "../../orbit/ui";
+import { Check, CircleStop, Copy, Link2, Share2, X } from "lucide-react";
+import { Button, PanelMenuButton, Segmented, usePopover } from "../../orbit/ui";
 import {
   createShareLink,
   listShareLinks,
   removeShareVisitor,
   revokeShareLink,
-  shareErrorCode,
   shareErrorMessage,
   updateShareProfile,
   type ShareLink,
@@ -15,21 +14,11 @@ import {
 import { copyText, initials, untilText } from "./shareFormat";
 import "./share.css";
 
-const EXPIRY = [
-  { value: "1", label: "1 day" },
-  { value: "7", label: "7 days" },
-  { value: "30", label: "30 days" },
-  { value: "never", label: "Never" },
-] as const;
-const OPENS = [
-  { value: "any", label: "Any number of opens" },
-  { value: "10", label: "10 opens" },
-  { value: "50", label: "50 opens" },
-  { value: "100", label: "100 opens" },
-] as const;
+type Expiry = "1" | "7" | "30" | "never";
+type Who = "one" | "anyone";
 
-/** Title-bar "Share" for one Task: pick who may comment and for how long, copy
- *  a link, see who opened each link, stop one. */
+/** Title-bar "Share" for one Task: make a link (what people can do, for whom,
+ *  for how long), see who opened each link, stop one. */
 export function ShareButton({ projectId, taskId }: { projectId: string; taskId: string }) {
   const { open, toggle, rootRef } = usePopover();
   const [data, setData] = useState<(ShareLinks & { openComments?: number }) | null>(null);
@@ -64,36 +53,34 @@ function SharePanel({ projectId, taskId, data, onChanged }: {
   onChanged: () => void;
 }) {
   const [canComment, setCanComment] = useState<"view" | "comment">("comment");
-  const [expiry, setExpiry] = useState<string>("7");
-  const [opens, setOpens] = useState<string>("any");
+  const [who, setWho] = useState<Who>("one");
+  const [expiry, setExpiry] = useState<Expiry>("7");
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [editingAddress, setEditingAddress] = useState(false);
 
-  const noAddress = data !== null && !data.address;
-
-  const copyLink = async () => {
+  const createLink = async () => {
     setBusy(true);
-    setNotice(null);
-    const comment = canComment === "comment";
+    setError(null);
     const created = createShareLink(projectId, taskId, {
-      canComment: comment,
+      canComment: canComment === "comment",
       expiresInDays: expiry === "never" ? null : Number(expiry),
-      maxOpens: opens === "any" ? null : Number(opens),
+      maxPeople: who === "one" ? 1 : null,
     });
     // Claim the clipboard during the click; the link arrives a moment later.
-    const copied = copyText(created.then((link) => link.url ?? Promise.reject(new Error("no link"))));
+    const clipboard = copyText(created.then((link) => link.url));
     try {
       await created;
-      const ok = await copied;
-      const what = comment
-        ? "Anyone with it can view; people who open it in Grove can also comment."
-        : "Anyone with it can view.";
-      setNotice({ tone: "ok", text: ok ? `Link copied. ${what}` : `Link created, but it couldn't be copied. Copy it from the list below. ${what}` });
       onChanged();
-    } catch (error) {
-      if (shareErrorCode(error) === "no_address") setEditingAddress(true);
-      setNotice({ tone: "error", text: shareErrorMessage(error) });
+      if (await clipboard) {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1400);
+      } else {
+        setError("Couldn't copy. Copy it from the list below.");
+      }
+    } catch (err) {
+      setError(shareErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -104,11 +91,10 @@ function SharePanel({ projectId, taskId, data, onChanged }: {
     <div className="oui-pop share-pop" role="dialog" aria-label="Share this task">
       <div className="share-head">
         <b>Share this task</b>
-        <span>Changes + output files</span>
       </div>
       <div className="share-form">
-        <label className="share-row">
-          <span>People can</span>
+        <div className="share-row">
+          <span>Can</span>
           <Segmented
             size="sm"
             ariaLabel="What people can do"
@@ -116,34 +102,48 @@ function SharePanel({ projectId, taskId, data, onChanged }: {
             onChange={setCanComment}
             options={[{ value: "view", label: "View" }, { value: "comment", label: "Comment" }]}
           />
-        </label>
+        </div>
+        <div className="share-row">
+          <span>Who</span>
+          <Segmented
+            size="sm"
+            ariaLabel="Who can open it"
+            value={who}
+            onChange={setWho}
+            options={[{ value: "one", label: "One person" }, { value: "anyone", label: "Anyone" }]}
+          />
+        </div>
         <div className="share-row">
           <span>Expires</span>
-          <div className="share-selects">
-            <select className="oui-field share-select" value={expiry} onChange={(event) => setExpiry(event.target.value)} aria-label="Expires after">
-              {EXPIRY.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-            <select className="oui-field share-select" value={opens} onChange={(event) => setOpens(event.target.value)} aria-label="How many opens">
-              {OPENS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </div>
+          <Segmented
+            size="sm"
+            ariaLabel="Expires after"
+            value={expiry}
+            onChange={setExpiry}
+            options={[
+              { value: "1", label: "1 day" },
+              { value: "7", label: "7 days" },
+              { value: "30", label: "30 days" },
+              { value: "never", label: "Never" },
+            ]}
+          />
         </div>
-        <Button variant="primary" onClick={copyLink} disabled={busy || noAddress} className="share-copy">
-          <Link2 aria-hidden="true" />{busy ? "Creating…" : "Copy link"}
+        <Button variant="primary" onClick={createLink} disabled={busy} className="share-copy" title="Makes a new link and copies it">
+          {copied ? <Check aria-hidden="true" /> : <Link2 aria-hidden="true" />}{busy ? "Creating…" : copied ? "Link copied" : "Create link"}
         </Button>
-        {notice && <p className={`share-notice is-${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>{notice.text}</p>}
+        {error && <p className="share-notice is-error" role="alert">{error}</p>}
       </div>
 
       {links.length > 0 && (
         <div className="share-links">
-          <div className="share-links-title">Shared links · {links.length}</div>
+          <div className="share-links-title">Links · {links.length}</div>
           <div className="share-links-list">
             {links.map((link) => <LinkRow key={link.token} link={link} onChanged={onChanged} />)}
           </div>
         </div>
       )}
 
-      <AddressFooter data={data} editing={editingAddress || noAddress} onEdit={setEditingAddress} onSaved={onChanged} />
+      <AddressFooter data={data} editing={editingAddress} onEdit={setEditingAddress} onSaved={onChanged} />
     </div>
   );
 }
@@ -151,7 +151,6 @@ function SharePanel({ projectId, taskId, data, onChanged }: {
 function stateText(link: ShareLink): string | null {
   switch (link.state) {
     case "expired": return "Expired";
-    case "exhausted": return "Opens used up";
     case "revoked": return "Stopped";
     default: return null;
   }
@@ -159,22 +158,20 @@ function stateText(link: ShareLink): string | null {
 
 function LinkRow({ link, onChanged }: { link: ShareLink; onChanged: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [menu, setMenu] = useState(false);
   const [copied, setCopied] = useState(false);
   const ended = stateText(link);
   // Used-up links still serve people who opened them in the last 30 minutes.
   const stoppable = link.state === "active" || link.state === "exhausted";
   const names = link.visitors.map((visitor) => visitor.name);
-  const who = names.length === 0 ? "No one has opened it" : names.join(", ");
-  const opens = link.maxOpens ? `${link.opens} / ${link.maxOpens} opens` : `Opened ${link.opens} ${link.opens === 1 ? "time" : "times"}`;
+  const who = names.length === 0 ? "Not opened yet" : names.join(", ");
   const facts = [
-    opens,
+    link.canComment ? "Can comment" : "Can view",
+    link.maxPeople === 1 ? "One person" : null,
     link.comments > 0 ? `${link.comments} ${link.comments === 1 ? "comment" : "comments"}` : null,
     ended ?? (link.expiresAt ? `Expires ${untilText(link.expiresAt)}` : "Never expires"),
   ].filter(Boolean).join(" · ");
 
   const copy = async () => {
-    if (!link.url) return;
     if (!(await copyText(link.url))) return;
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1400);
@@ -183,39 +180,31 @@ function LinkRow({ link, onChanged }: { link: ShareLink; onChanged: () => void }
   return (
     <div className={`share-link${ended ? " is-ended" : ""}`}>
       <div className="share-link-main">
-        <button type="button" className="share-link-body" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+        <button type="button" className="share-link-body" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} disabled={link.visitors.length === 0}>
           <span className="share-avatars" aria-hidden="true">
             {link.visitors.slice(0, 3).map((visitor) => <span key={visitor.id} className="share-avatar">{initials(visitor.name)}</span>)}
             {link.visitors.length === 0 && <span className="share-avatar is-empty">?</span>}
           </span>
           <span className="share-link-text">
-            <b>{link.canComment ? "Can comment" : "Can view"} · {who}</b>
+            <b>{who}</b>
             <span>{facts}</span>
           </span>
         </button>
-        {!ended && link.url && (
+        {!ended && (
           <button type="button" className="share-icon" onClick={copy} title="Copy link" aria-label="Copy link">
             {copied ? <Check size={14} /> : <Copy size={14} />}
           </button>
         )}
         {stoppable && (
-          <span className="share-menu-anchor">
-            <button type="button" className="share-icon" onClick={() => setMenu((value) => !value)} title="More" aria-label="More" aria-expanded={menu}>
-              <MoreHorizontal size={14} />
-            </button>
-            {menu && (
-              <div className="share-menu" role="menu">
-                <button type="button" role="menuitem" className="is-danger" onClick={() => { setMenu(false); void revokeShareLink(link.token).then(onChanged); }}>
-                  Stop sharing
-                </button>
-              </div>
-            )}
-          </span>
+          <PanelMenuButton
+            portal
+            label="Link actions"
+            items={[{ id: "stop", label: "Stop sharing", icon: CircleStop, danger: true, onSelect: () => { void revokeShareLink(link.token).then(onChanged); } }]}
+          />
         )}
       </div>
-      {expanded && (
+      {expanded && link.visitors.length > 0 && (
         <ul className="share-visitors">
-          {link.visitors.length === 0 && <li className="share-visitor is-empty">No one has opened this link yet.</li>}
           {link.visitors.map((visitor) => (
             <li key={visitor.id} className="share-visitor">
               <span className="share-avatar">{initials(visitor.name)}</span>
@@ -248,7 +237,7 @@ function AddressFooter({ data, editing, onEdit, onSaved }: {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   if (!data) return null;
-  const host = data.address?.replace(/^https?:\/\//, "");
+  const host = data.address.replace(/^https?:\/\//, "");
 
   const save = async () => {
     setError(null);
@@ -261,21 +250,20 @@ function AddressFooter({ data, editing, onEdit, onSaved }: {
     }
   };
 
-  if (!editing && host) {
+  if (!editing) {
     return (
       <div className="share-foot">
-        <span>People reach you at <b>{host}</b></span>
-        <button type="button" className="share-link-button" onClick={() => { setValue(data.address ?? ""); onEdit(true); }}>Change</button>
+        <span>Links use <b>{host}</b></span>
+        <button type="button" className="share-link-button" onClick={() => { setValue(data.address); onEdit(true); }}>Change</button>
       </div>
     );
   }
   return (
     <form className="share-foot is-editing" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-      {!host && <p>Other people can't reach this Grove yet. Run <code>grove remote</code> on this machine, or enter the address they use.</p>}
       <div className="share-address">
         <input className="oui-field" value={value} onChange={(event) => setValue(event.target.value)} placeholder="https://grove.example.com" aria-label="Address other people use" autoComplete="off" spellCheck={false} />
-        <Button variant="secondary" size="sm" type="submit" disabled={!value.trim() && !data.address}>Save</Button>
-        {host && <Button variant="ghost" size="sm" onClick={() => onEdit(false)}>Cancel</Button>}
+        <Button variant="secondary" size="sm" type="submit" disabled={!value.trim() && data.addressSource !== "custom"}>Save</Button>
+        <Button variant="ghost" size="sm" onClick={() => onEdit(false)}>Cancel</Button>
       </div>
       {error && <p className="share-notice is-error" role="alert">{error}</p>}
     </form>

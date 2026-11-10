@@ -62,6 +62,8 @@ interface OrbitReviewHeaderProps {
   rangeFrom?: ReactNode;
   rangeTo?: ReactNode;
   isGitRepo?: boolean;
+  /** Only the Task's changes exist (a shared Task): no "All files". */
+  onlyChanges?: boolean;
   viewMode: ReviewViewMode;
   onSetViewMode: (mode: ReviewViewMode) => void;
   viewType: 'unified' | 'split';
@@ -89,13 +91,14 @@ interface OrbitReviewHeaderProps {
   /** Send all open comments to the active chat's agent (asks first). */
   canSendAll: boolean;
   sendAllTitle: string;
-  onSendAll: () => void;
+  /** Left out where comments can't go to an agent (a shared Task). */
+  onSendAll?: () => void;
 }
 
 /** The whole Review toolbar, portalled into the PanelShell header, plus its ⋯ rows. */
 export function OrbitReviewHeader(props: OrbitReviewHeaderProps) {
   const {
-    density, leading, rangeFrom, rangeTo, isGitRepo, viewMode, onSetViewMode,
+    density, leading, rangeFrom, rangeTo, isGitRepo, onlyChanges, viewMode, onSetViewMode,
     viewType, onSetViewType, allowSplit, canPrev, canNext, onPrev, onNext,
     convSidebarVisible, onToggleConvSidebar, openComments, refreshing, onRefresh,
     sidebarVisible, onToggleSidebar, focusMode, onToggleFocusMode,
@@ -110,17 +113,18 @@ export function OrbitReviewHeader(props: OrbitReviewHeaderProps) {
   const showLayoutInline = density === 'wide' && viewMode === 'diff' && allowSplit;
   const foldLayout = density !== 'wide' && viewMode === 'diff' && allowSplit;
   const foldNav = density === 'narrow' || density === 'compact';
-  const foldFiles = density === 'compact' && isGitRepo !== false;
+  const filesToggle = isGitRepo !== false && !onlyChanges;
+  const foldFiles = density === 'compact' && filesToggle;
   const commentsLabel = convSidebarVisible ? 'Hide comments' : 'Show comments';
 
   const menu = useMemo<PanelMenuItem[]>(() => [
-    {
+    ...(onSendAll ? [{
       id: 'review-send-all',
       label: openComments > 0 ? `Send ${openComments} to agent` : 'Send comments to agent',
       icon: Send,
       disabled: !canSendAll,
       onSelect: onSendAll,
-    },
+    }] : []),
     { id: 'review-find', label: 'Find in review', icon: Search, shortcut: findKeys, onSelect: onOpenSearch },
     {
       id: 'review-tree',
@@ -190,7 +194,7 @@ export function OrbitReviewHeader(props: OrbitReviewHeaderProps) {
               {rangeTo}
             </span>
           ) : null}
-          {isGitRepo !== false && !foldFiles ? (
+          {filesToggle && !foldFiles ? (
             <Segmented
               size="sm"
               ariaLabel="Files to review"

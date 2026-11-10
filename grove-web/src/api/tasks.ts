@@ -452,7 +452,7 @@ export interface DirEntry {
   is_dir: boolean;
 }
 
-interface DirEntriesResponse {
+export interface DirEntriesResponse {
   entries: DirEntry[];
 }
 

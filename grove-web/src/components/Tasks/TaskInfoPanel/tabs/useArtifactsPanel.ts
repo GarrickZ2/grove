@@ -36,6 +36,16 @@ export interface ArtifactsPanelOptions {
   onRevealTarget?: (file: ArtifactFile) => void;
   /** Upload files one request each with per-file progress (`pendingUploadItems`).
    *  Off by default so the Workbench keeps its single batch upload. */
+  /** A Task someone shared: only its output files, read only. Leave
+   *  `projectId` out with it, so nothing that changes files is offered. */
+  shared?: SharedArtifacts;
+}
+
+/** Output files of a Task someone shared. */
+export interface SharedArtifacts {
+  list(): Promise<ArtifactFile[]>;
+  preview(path: string): Promise<string>;
+  downloadUrl(path: string): string;
 }
 
 /** One file in the upload batch in flight. `progress` is 0..1, or null before it starts. */
@@ -83,7 +93,14 @@ export interface ArtifactSyncConflict {
  * the open / reveal / sync / delete actions. Shared by the Workbench tab and
  * the Orbit body; each renders its own layout.
  */
-export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy, onRevealTarget }: ArtifactsPanelOptions) {
+export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy, onRevealTarget, shared }: ArtifactsPanelOptions) {
+  const readable = !!projectId || !!shared;
+  const readArtifact = useCallback((file: ArtifactFile) =>
+    shared ? shared.preview(file.path) : previewArtifact(projectId ?? "", task.id, file.directory, file.path),
+  [shared, projectId, task.id]);
+  const fileUrl = useCallback((file: ArtifactFile) =>
+    shared ? shared.downloadUrl(file.path) : artifactDownloadUrl(projectId ?? "", task.id, file.directory, file.path),
+  [shared, projectId, task.id]);
   const { browseFolder, folderPicker } = useBrowseFolder("Select Artifact Folder");
   const { drafts: previewCommentDrafts, addDraft, updateDraft, removeDraft } = usePreviewComments();
   const [inputFiles, setInputFiles] = useState<ArtifactFile[]>([]);
@@ -122,12 +139,12 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   const refreshPreviewContent = useCallback((file: ArtifactFile, seq: number) => {
-    if (!projectId) return;
+    if (!readable) return;
     const t = getPreviewType(file.name);
     // Image and binary previews load their own bytes; neither can be
     // re-polled via the text endpoint.
     if (t === "image" || t === "binary") return;
-    previewArtifact(projectId, task.id, file.directory, file.path)
+    readArtifact(file)
       .then((content) => {
         if (seq !== liveRefreshSeqRef.current) return;
         lastGoodContentRef.current = content;
@@ -144,17 +161,17 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
         setPreviewError(null);
       })
       .catch(() => {});
-  }, [projectId, task.id]);
+  }, [readable, readArtifact]);
 
   useEffect(() => {
-    if (!isChatBusy || !previewFile || !projectId) return;
+    if (!isChatBusy || !previewFile || !readable) return;
     const seq = ++liveRefreshSeqRef.current;
     const file = previewFile.file;
     const timer = setInterval(() => {
       refreshPreviewContent(file, seq);
     }, 10_000);
     return () => clearInterval(timer);
-  }, [isChatBusy, previewFile, projectId, refreshPreviewContent]);
+  }, [isChatBusy, previewFile, readable, refreshPreviewContent]);
 
   // Auto-dismiss toast after 3 seconds
   useEffect(() => {
@@ -164,22 +181,30 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
   }, [toastMessage]);
 
   const loadFiles = useCallback(async (options?: LoadFilesOptions) => {
-    if (!projectId) return;
+    if (!readable) return;
     const silent = options?.silent === true;
     if (!silent) setIsLoading(true);
     setError(null);
     try {
-      const data = await listArtifacts(projectId, task.id);
-      setInputFiles(data.input);
-      setOutputFiles(data.output);
+      if (shared) {
+        setInputFiles([]);
+        setOutputFiles(await shared.list());
+      } else {
+        const data = await listArtifacts(projectId ?? "", task.id);
+        setInputFiles(data.input);
+        setOutputFiles(data.output);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load files");
     }
     if (!silent) setIsLoading(false);
-  }, [projectId, task.id]);
+  }, [readable, shared, projectId, task.id]);
 
   const loadWorkdirs = useCallback(async () => {
-    if (!projectId) return;
+    if (!projectId) {
+      setIsLoadingWorkdirs(false);
+      return;
+    }
     setIsLoadingWorkdirs(true);
     try {
       const data = await listArtifactWorkdirs(projectId, task.id);
@@ -300,10 +325,10 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
   }, [projectId, task.id]);
 
   const handlePreview = useCallback(async (file: ArtifactFile, force?: boolean) => {
-    if (!projectId || file.is_dir) return;
+    if (!readable || file.is_dir) return;
     const previewType = getPreviewType(file.name);
     if (previewType === "image") {
-      const url = artifactDownloadUrl(projectId, task.id, file.directory, file.path);
+      const url = fileUrl(file);
       setPreviewFile({ file, content: url });
       lastGoodContentRef.current = url;
       setPreviewError(null);
@@ -312,7 +337,7 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     if (previewType === "binary") {
       // Renderer fetches the URL itself (e.g. xlsx via SheetJS). We just
       // hand it the download URL; content is unused.
-      const url = artifactDownloadUrl(projectId, task.id, file.directory, file.path);
+      const url = fileUrl(file);
       setPreviewFile({ file, content: "", downloadUrl: url });
       lastGoodContentRef.current = "";
       setPreviewError(null);
@@ -324,7 +349,7 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     let err: unknown = null;
     let succeeded = false;
     try {
-      content = await previewArtifact(projectId, task.id, file.directory, file.path);
+      content = await readArtifact(file);
       succeeded = true;
     } catch (e) {
       err = e;
@@ -364,7 +389,7 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
       }
     }
     setPreviewLoading(false);
-  }, [projectId, task.id]);
+  }, [readable, fileUrl, readArtifact]);
 
   const closePreview = useCallback(() => {
     setPreviewFile(null);
@@ -419,12 +444,9 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
   }, [isLoading, pendingPreview, inputFiles, outputFiles, handlePreview]);
 
   const handleDownload = useCallback((file: ArtifactFile) => {
-    if (!projectId || file.is_dir) return;
-    downloadViaIframe(
-      artifactDownloadUrl(projectId, task.id, file.directory, file.path),
-      file.name,
-    );
-  }, [projectId, task.id]);
+    if (!readable || file.is_dir) return;
+    downloadViaIframe(fileUrl(file), file.name);
+  }, [readable, fileUrl]);
 
   /** Download a .zip of `paths` (relative to `dir`; none = the whole root). */
   const handleDownloadZip = useCallback((dir: string, paths: string[], name?: string) => {
@@ -484,9 +506,9 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     [updateDraft],
   );
   const handleOpenLink = useCallback(async (file: ArtifactFile) => {
-    if (!projectId) return;
+    if (!readable) return;
     try {
-      const raw = await previewArtifact(projectId, task.id, file.directory, file.path);
+      const raw = await readArtifact(file);
       const parsed = parseLinkFile(raw);
       if (!parsed) {
         setError("Malformed link file");
@@ -496,7 +518,7 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to open link");
     }
-  }, [projectId, task.id]);
+  }, [readable, readArtifact]);
 
   const handleEditLink = useCallback(async (file: ArtifactFile) => {
     if (!projectId) return;
@@ -624,6 +646,10 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
   return {
     projectId,
     taskId: task.id,
+    /** A shared Task: look and download, nothing else. */
+    readOnly: !!shared,
+    /** Where a file's bytes are, or null when nothing can be read. */
+    fileUrl: readable ? fileUrl : null,
     inputFiles,
     outputFiles,
     isLoading,

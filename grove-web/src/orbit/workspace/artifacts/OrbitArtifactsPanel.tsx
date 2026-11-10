@@ -6,11 +6,11 @@ import {
   RefreshCw, Search, SquareArrowOutUpRight, Trash2, Upload, X,
 } from "lucide-react";
 import type { Task } from "../../../data/types";
-import { artifactDownloadUrl, type ArtifactFile, type ArtifactWorkDirectoryEntry } from "../../../api";
+import { type ArtifactFile, type ArtifactWorkDirectoryEntry } from "../../../api";
 import {
   AddLinkDialog, FileConflictDialog, FilePreviewDrawer, VSCodeIcon, formatSize, isLinkFile, linkDisplayName, hostnameOf,
 } from "../../../components/ui";
-import { useArtifactsPanel, type ArtifactPreviewRequest, type ArtifactsPanel, type PendingUpload } from "../../../components/Tasks/TaskInfoPanel/tabs/useArtifactsPanel";
+import { useArtifactsPanel, type ArtifactPreviewRequest, type ArtifactsPanel, type PendingUpload, type SharedArtifacts } from "../../../components/Tasks/TaskInfoPanel/tabs/useArtifactsPanel";
 import {
   dragCarriesGrovePath, dropContainsDirectory, parentPath,
 } from "../../../components/Tasks/TaskInfoPanel/tabs/artifactsModel";
@@ -53,6 +53,8 @@ interface Props {
   previewRequest?: ArtifactPreviewRequest | null;
   lastChatIdleAt?: number;
   isChatBusy?: boolean;
+  /** A Task someone shared: its output files, read only. */
+  shared?: SharedArtifacts;
 }
 
 interface Prefs { view: ArtifactView; sort: ArtifactSort }
@@ -136,7 +138,8 @@ export function OrbitArtifactsPanel(props: Props) {
   const panel = useArtifactsPanel({ ...props, onRevealTarget: revealTarget });
   const { inputFiles, outputFiles, workdirs, isLoading, error, setError, previewFile, syncConflict, editLink } = panel;
 
-  const active: ArtifactSource = source ?? defaultSource({ input: inputFiles, output: outputFiles });
+  const readOnly = panel.readOnly;
+  const active: ArtifactSource = readOnly ? "output" : source ?? defaultSource({ input: inputFiles, output: outputFiles });
   const files = active === "input" ? inputFiles : outputFiles;
   const index = useMemo(() => indexFolders(files), [files]);
   const folder = active === "linked" ? "" : existingFolder(paths[active], index);
@@ -243,7 +246,7 @@ export function OrbitArtifactsPanel(props: Props) {
   const { setAddLinkOpen, handleAddWorkdir, handleOpenFolder, handleDownloadZip } = panel;
   const revealDir = active === "linked" ? null : active;
   const folderHasFiles = revealDir !== null && totalsFor(index, folder).files > 0;
-  const menuItems = useMemo<PanelMenuItem[]>(() => [
+  const menuItems = useMemo<PanelMenuItem[]>(() => readOnly ? [] : [
     { id: "artifacts-add-link", label: "Add link to uploads…", icon: LinkIcon, onSelect: () => setAddLinkOpen(true) },
     { id: "artifacts-link-folder", label: "Link a folder…", icon: FolderOpen, onSelect: () => void handleAddWorkdir() },
     ...(revealDir ? [{
@@ -258,7 +261,7 @@ export function OrbitArtifactsPanel(props: Props) {
       icon: FileArchive,
       onSelect: () => handleDownloadZip(revealDir, folder ? [folder] : []),
     }] : []),
-  ], [setAddLinkOpen, handleAddWorkdir, handleOpenFolder, handleDownloadZip, revealDir, folder, folderHasFiles]);
+  ], [readOnly, setAddLinkOpen, handleAddWorkdir, handleOpenFolder, handleDownloadZip, revealDir, folder, folderHasFiles]);
   usePanelMenuItems(menuItems);
   const nothingLoaded = inputFiles.length === 0 && outputFiles.length === 0;
   const loadFailed = Boolean(error) && nothingLoaded && !isLoading;
@@ -303,7 +306,7 @@ export function OrbitArtifactsPanel(props: Props) {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="orbit-ui oar" style={{ overflow: previewFile ? "hidden" : undefined }} {...dropProps}>
+      <div className="orbit-ui oar" style={{ overflow: previewFile ? "hidden" : undefined }} {...(readOnly ? {} : dropProps)}>
         <input
           ref={fileInputRef}
           type="file"
@@ -322,22 +325,24 @@ export function OrbitArtifactsPanel(props: Props) {
             : plural(workdirs.length, "linked folder")}
         </PanelHeaderContext>
         <PanelHeaderActions>
-          <Button variant="ghost" size="sm" iconOnly aria-label="Upload files" title="Upload to input/" disabled={panel.isUploading} onClick={openFilePicker}>
-            {panel.isUploading ? <Loader2 className="oui-spin" /> : <Upload />}
-          </Button>
+          {readOnly ? null : (
+            <Button variant="ghost" size="sm" iconOnly aria-label="Upload files" title="Upload to input/" disabled={panel.isUploading} onClick={openFilePicker}>
+              {panel.isUploading ? <Loader2 className="oui-spin" /> : <Upload />}
+            </Button>
+          )}
           <Button variant="ghost" size="sm" iconOnly aria-label="Refresh" title="Refresh" disabled={refreshing} onClick={refresh}>
             <RefreshCw className={refreshing ? "oui-spin" : undefined} />
           </Button>
         </PanelHeaderActions>
 
-        <div className="oar-src">
+        {readOnly ? null : <div className="oar-src">
           <SourceSwitch
             value={active}
             onChange={pickSource}
             counts={{ output: fileCount(outputFiles), input: fileCount(inputFiles), linked: workdirs.length }}
             loading={isLoading}
           />
-        </div>
+        </div>}
 
         {active !== "linked" ? (
           <div className="oar-bar">
@@ -379,7 +384,7 @@ export function OrbitArtifactsPanel(props: Props) {
               </Button>
             ) : null}
             {/* In the workspace shell these live in the header's ⋯ menu and refresh button. */}
-            {inShell ? null : <SourceMenu panel={panel} source={active} folder={folder} canZip={folderHasFiles} onRefresh={refresh} />}
+            {inShell || readOnly ? null : <SourceMenu panel={panel} source={active} folder={folder} canZip={folderHasFiles} onRefresh={refresh} />}
           </div>
         ) : (
           <div className="oar-bar">
@@ -419,7 +424,7 @@ export function OrbitArtifactsPanel(props: Props) {
           </div>
         ) : null}
 
-        {active !== "linked" && selectedEntries.length > 0 && !isLoading && !loadFailed ? (
+        {!readOnly && active !== "linked" && selectedEntries.length > 0 && !isLoading && !loadFailed ? (
           <BatchBar
             panel={panel}
             source={active}
@@ -466,9 +471,9 @@ export function OrbitArtifactsPanel(props: Props) {
               onDownload={() => panel.handleDownload(previewFile.file)}
               unpreviewable={previewFile.unpreviewable}
               fileSize={previewFile.file.size}
-              onOpenFile={hostFileActionsAvailable() ? () => panel.handleOpenInApp(previewFile.file) : undefined}
+              onOpenFile={!readOnly && hostFileActionsAvailable() ? () => panel.handleOpenInApp(previewFile.file) : undefined}
               onRefresh={() => panel.handlePreview(previewFile.file, true)}
-              onCreatePreviewComment={(locator, comment, rendererId) =>
+              onCreatePreviewComment={readOnly ? undefined : (locator, comment, rendererId) =>
                 panel.handleCreatePreviewComment(previewFile.file, locator, comment, rendererId)
               }
               onUpdatePreviewComment={panel.handleUpdatePreviewComment}
@@ -744,14 +749,11 @@ function FolderView({
   const now = useNow(CLOCK_MS);
   const pending = source === "input" && folder === "" && !query ? pendingItems(panel) : [];
   const previewKey = panel.previewFile ? `${panel.previewFile.file.directory}/${panel.previewFile.file.path}` : null;
-  const folderName = folder ? folder.split("/").pop()! : SOURCE_ROOT[source];
 
   if (entries.length === 0 && pending.length === 0) {
     if (query) {
       return (
-        <PanelEmpty icon={Search} title={`Nothing matches “${query.trim()}”`} action={<Button variant="secondary" size="sm" onClick={() => setQuery("")}>Clear search</Button>}>
-          Searched every file in {folder ? <b>{folderName}</b> : "this list"} and its subfolders.
-        </PanelEmpty>
+        <PanelEmpty icon={Search} title={`Nothing matches “${query.trim()}”`} action={<Button variant="secondary" size="sm" onClick={() => setQuery("")}>Clear search</Button>} />
       );
     }
     if (scopeSize > 0 && kind !== "all") {
@@ -761,9 +763,7 @@ function FolderView({
       return <PanelEmpty icon={Folder} title="This folder is empty" />;
     }
     return source === "output" ? (
-      <PanelEmpty icon={Download} title="Nothing from the agent yet">
-        Files the agent writes to <span className="oui-mono">output/</span> show up here as it works.
-      </PanelEmpty>
+      <PanelEmpty icon={Download} title="Nothing from the agent yet" />
     ) : (
       <PanelEmpty
         icon={Upload}
@@ -774,9 +774,7 @@ function FolderView({
             <Button variant="secondary" size="sm" onClick={() => panel.setAddLinkOpen(true)}><LinkIcon />Add link</Button>
           </>
         )}
-      >
-        Drop files here or upload from disk. They land in <span className="oui-mono">input/</span> for every agent in this task.
-      </PanelEmpty>
+      />
     );
   }
 
@@ -954,7 +952,17 @@ function useEntryActions({ entry, panel, source, onOpenFolder, selection }: { en
     else void panel.handlePreview(file);
   };
   let items: ActionItem[];
-  if (file.is_dir) {
+  if (panel.readOnly) {
+    // A shared Task: look at it and take a copy.
+    items = file.is_dir
+      ? [{ id: "open", icon: FolderOpen, label: "Open", onSelect: () => onOpenFolder(file.path) }]
+      : isLink
+        ? [{ id: "open", icon: SquareArrowOutUpRight, label: "Open in browser", onSelect: () => void panel.handleOpenLink(file) }]
+        : [
+            { id: "preview", icon: Eye, label: "Preview", onSelect: () => void panel.handlePreview(file) },
+            { id: "download", icon: Download, label: "Download", onSelect: () => panel.handleDownload(file) },
+          ];
+  } else if (file.is_dir) {
     items = [
       { id: "open", icon: FolderOpen, label: "Open", onSelect: () => onOpenFolder(file.path) },
       { id: "reveal", icon: FolderSearch, label: revealLabel(), onSelect: () => panel.handleOpenFolder(source, file.path) },
@@ -978,10 +986,10 @@ function useEntryActions({ entry, panel, source, onOpenFolder, selection }: { en
     ];
   }
   // Only your uploads can be deleted; the agent's output stays as written.
-  if (source === "input" && !file.is_dir) {
+  if (!panel.readOnly && source === "input" && !file.is_dir) {
     items.push({ id: "delete", icon: Trash2, label: "Delete", danger: true, separated: true, onSelect: () => void panel.handleDelete(file) });
   }
-  const dragProps = file.is_dir ? {} : {
+  const dragProps = file.is_dir || panel.readOnly ? {} : {
     draggable: true,
     onDragStart: (event: DragEvent) => {
       // Same protocol as FileTree, so the chat composer turns it into file
@@ -1057,7 +1065,7 @@ function EntryRow({ entry, indexAt, style, ...shared }: RowShared & { entry: Art
       {...dragProps}
     >
       <span className="oar-lead">
-        <FileGlyph file={file} projectId={shared.panel.projectId} taskId={shared.panel.taskId} />
+        <FileGlyph file={file} fileUrl={shared.panel.fileUrl} />
         <SelectBox name={name} path={file.path} selection={shared.selection} />
       </span>
       <span className="oar-name">
@@ -1114,7 +1122,7 @@ function EntryTile({ entry, indexAt, style, ...shared }: RowShared & { entry: Ar
       onContextMenu={menu.fromPoint}
       {...dragProps}
     >
-      <TileThumb file={file} projectId={shared.panel.projectId} taskId={shared.panel.taskId} />
+      <TileThumb file={file} fileUrl={shared.panel.fileUrl} />
       <SelectBox name={name} path={file.path} selection={shared.selection} tile />
       <button
         type="button"
@@ -1207,13 +1215,15 @@ function SelectBox({ name, path, selection, tile = false }: { name: string; path
   );
 }
 
-function useThumbUrl(file: ArtifactFile, projectId: string | undefined, taskId: string): string | null {
+type FileUrl = ((file: ArtifactFile) => string) | null;
+
+function useThumbUrl(file: ArtifactFile, fileUrl: FileUrl): string | null {
   const raster = !file.is_dir && !isLinkFile(file.name) && RASTER.test(file.name);
-  return useSignedUrl(raster && projectId ? artifactDownloadUrl(projectId, taskId, file.directory, file.path) : null);
+  return useSignedUrl(raster && fileUrl ? fileUrl(file) : null);
 }
 
-function FileGlyph({ file, projectId, taskId }: { file: ArtifactFile; projectId: string | undefined; taskId: string }) {
-  const src = useThumbUrl(file, projectId, taskId);
+function FileGlyph({ file, fileUrl }: { file: ArtifactFile; fileUrl: FileUrl }) {
+  const src = useThumbUrl(file, fileUrl);
   const [broken, setBroken] = useState(false);
   if (file.is_dir) return <span className="oar-glyph is-dir"><Folder /></span>;
   if (isLinkFile(file.name)) {
@@ -1229,8 +1239,8 @@ function FileGlyph({ file, projectId, taskId }: { file: ArtifactFile; projectId:
   return <span className="oar-glyph"><VSCodeIcon filename={file.name} size={16} /></span>;
 }
 
-function TileThumb({ file, projectId, taskId }: { file: ArtifactFile; projectId: string | undefined; taskId: string }) {
-  const src = useThumbUrl(file, projectId, taskId);
+function TileThumb({ file, fileUrl }: { file: ArtifactFile; fileUrl: FileUrl }) {
+  const src = useThumbUrl(file, fileUrl);
   const [broken, setBroken] = useState(false);
   const [loaded, setLoaded] = useState(false);
   if (file.is_dir) {
@@ -1265,9 +1275,7 @@ function LinkedFolders({ panel }: { panel: ArtifactsPanel }) {
         icon={FolderOpen}
         title="No linked folders"
         action={<Button variant="secondary" size="sm" disabled={panel.isAddingWorkdir} onClick={() => void panel.handleAddWorkdir()}><FolderOpen />Link a folder</Button>}
-      >
-        Link a folder on this computer so the agent can read it in place, without copying files in.
-      </PanelEmpty>
+      />
     );
   }
   return (

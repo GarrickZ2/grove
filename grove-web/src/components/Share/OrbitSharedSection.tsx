@@ -53,7 +53,7 @@ export function OrbitSharedSection({ activeItem, onOpen }: { activeItem: string;
         const status = receivedStatus(share);
         const tag = status === "dead" ? "Ended" : !share.canComment ? "View only" : null;
         return (
-          <div key={share.id} className="orbit-task">
+          <div key={share.id} className="orbit-task orbit-shared-item">
             <div className="orbit-task-row">
               <button
                 type="button"

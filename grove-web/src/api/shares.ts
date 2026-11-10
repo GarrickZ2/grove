@@ -18,11 +18,12 @@ export interface ShareVisitor {
 
 export interface ShareLink {
   token: string;
-  url: string | null;
+  url: string;
   canComment: boolean;
   expiresAt: string | null;
-  maxOpens: number | null;
-  opens: number;
+  /** How many people may open it; null for anyone with the link. */
+  maxPeople: number | null;
+  people: number;
   state: ShareState;
   createdAt: string;
   visitors: ShareVisitor[];
@@ -30,8 +31,8 @@ export interface ShareLink {
 }
 
 export interface ShareLinks {
-  address: string | null;
-  addressSource: 'custom' | 'window' | 'remote' | 'none';
+  address: string;
+  addressSource: 'custom' | 'window' | 'remote';
   links: ShareLink[];
 }
 
@@ -39,7 +40,7 @@ export interface ShareProfile {
   name: string | null;
   suggestedName: string;
   device: string;
-  address: string | null;
+  address: string;
   addressSource: ShareLinks['addressSource'];
   customAddress: string | null;
 }
@@ -52,8 +53,9 @@ export interface ShareInfo {
   project: string;
   canComment: boolean;
   expiresAt: string | null;
-  maxOpens: number | null;
-  opens: number;
+  /** How many people may open it; null for anyone with the link. */
+  maxPeople: number | null;
+  people: number;
   state: ShareState;
   activityAt: string | null;
   you: { id: string; name: string; kind: 'grove' | 'browser' } | null;
@@ -144,7 +146,7 @@ export function listShareLinks(projectId: string, taskId: string): Promise<Share
 export function createShareLink(
   projectId: string,
   taskId: string,
-  options: { canComment: boolean; expiresInDays: number | null; maxOpens: number | null },
+  options: { canComment: boolean; expiresInDays: number | null; maxPeople: number | null },
 ): Promise<ShareLink> {
   return apiClient.post<typeof options, ShareLink>(
     `/api/v1/projects/${projectId}/tasks/${encodeURIComponent(taskId)}/shares`,
@@ -200,9 +202,13 @@ export interface ShareSource {
   open(): Promise<ShareInfo>;
   diff(): Promise<DiffStatsResult>;
   fileDiff(path: string, oldPath?: string | null): Promise<DiffFile>;
+  /** A changed file as the Task has it now. */
+  fileContent(path: string): Promise<string>;
   files(): Promise<{ files: SharedFile[] }>;
   fileText(path: string): Promise<string>;
   fileBlob(path: string): Promise<Blob>;
+  /** Where an output file's bytes are, for downloads and images. */
+  fileUrl(path: string): string;
   comments(): Promise<{ comments: SharedComment[] }>;
   addComment(comment: NewSharedComment): Promise<{ comments: SharedComment[] }>;
 }
@@ -215,9 +221,11 @@ export function receivedShareSource(id: string): ShareSource {
     diff: () => apiClient.get<DiffStatsResult>(`${base}/diff`),
     fileDiff: (path, oldPath) =>
       apiClient.get<DiffFile>(`${base}/diff/file?${q(path)}${oldPath ? `&old_path=${encodeURIComponent(oldPath)}` : ''}`),
+    fileContent: async (path) => (await apiClient.get<{ content: string }>(`${base}/diff/content?${q(path)}`)).content,
     files: () => apiClient.get<{ files: SharedFile[] }>(`${base}/files`),
     fileText: (path) => apiClient.getText(`${base}/files/preview?${q(path)}`),
     fileBlob: (path) => apiClient.getBlob(`${base}/files/download?${q(path)}`),
+    fileUrl: (path) => `${base}/files/download?${q(path)}`,
     comments: () => apiClient.get<{ comments: SharedComment[] }>(`${base}/comments`),
     addComment: (comment) => apiClient.post<NewSharedComment, { comments: SharedComment[] }>(`${base}/comments`, comment),
   };
@@ -259,9 +267,11 @@ export function publicShareSource(token: string): ShareSource {
     diff: () => publicJson<DiffStatsResult>(`${base}/diff`),
     fileDiff: (path, oldPath) =>
       publicJson<DiffFile>(`${base}/diff/file?${q(path)}${oldPath ? `&old_path=${encodeURIComponent(oldPath)}` : ''}`),
+    fileContent: async (path) => (await publicJson<{ content: string }>(`${base}/diff/content?${q(path)}`)).content,
     files: () => publicJson<{ files: SharedFile[] }>(`${base}/files`),
     fileText: async (path) => (await publicRequest(`${base}/files/preview?${q(path)}`)).text(),
     fileBlob: async (path) => (await publicRequest(`${base}/files/download?${q(path)}`)).blob(),
+    fileUrl: (path) => `${base}/files/download?${q(path)}`,
     comments: () => publicJson<{ comments: SharedComment[] }>(`${base}/comments`),
     addComment: (comment) => publicJson<{ comments: SharedComment[] }>(`${base}/comments`, jsonBody(comment)),
   };

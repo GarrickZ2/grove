@@ -2,9 +2,8 @@
 //!
 //! The owner hands out links to one Task: its code changes and output files,
 //! always as they are now. Whoever opens a link gives a name and gets a key;
-//! the key only counts opens and lets the owner remove that person. Opening
-//! the link in Grove may comment, when the link allows it; a browser only
-//! looks. Recipients keep the links they opened in `received_shares`, never
+//! the key holds their place and lets the owner remove that person. They may
+//! comment when the link allows it, in Grove or in a browser. Recipients keep the links they opened in `received_shares`, never
 //! the content.
 
 use chrono::{DateTime, Duration, Utc};
@@ -15,8 +14,6 @@ use sha2::{Digest, Sha256};
 use super::database;
 use crate::error::{GroveError, Result};
 
-/// Opening a link again within this window counts once.
-const REOPEN_WINDOW_MINUTES: i64 = 30;
 pub const NAME_LIMIT: usize = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -375,6 +372,45 @@ pub fn add_visitor(
     Ok((visitor, format!("{id}.{key}")))
 }
 
+/// The same Grove joining a link again (say, under another address of the
+/// owner's Grove): it stays one visitor, with a fresh key.
+pub fn rejoin_visitor(
+    token: &str,
+    client: &str,
+    name: &str,
+    device: &str,
+) -> Result<Option<(Visitor, String)>> {
+    if client.is_empty() {
+        return Ok(None);
+    }
+    let name = clean_name(name)?;
+    let device: String = device.chars().take(80).collect();
+    let conn = database::connection();
+    let existing: Option<Visitor> = conn
+        .query_row(
+            &format!(
+                "SELECT {VISITOR_COLUMNS} FROM share_visitors
+                 WHERE token = ?1 AND client = ?2 AND removed_at IS NULL LIMIT 1"
+            ),
+            params![token, client],
+            visitor_from_row,
+        )
+        .optional()?;
+    let Some(mut visitor) = existing else {
+        return Ok(None);
+    };
+    let key = random_hex(24);
+    visitor.name = name;
+    visitor.device = device.trim().to_string();
+    visitor.key_hash = hash_key(&key);
+    conn.execute(
+        "UPDATE share_visitors SET name = ?1, device = ?2, key_hash = ?3 WHERE id = ?4",
+        params![visitor.name, visitor.device, visitor.key_hash, visitor.id],
+    )?;
+    let credential = format!("{}.{key}", visitor.id);
+    Ok(Some((visitor, credential)))
+}
+
 /// Whether this Grove was removed from the link before.
 pub fn client_removed(token: &str, client: &str) -> Result<bool> {
     if client.is_empty() {
@@ -417,8 +453,9 @@ pub fn remove_visitor(token: &str, id: &str) -> Result<bool> {
     Ok(updated > 0)
 }
 
-/// Count an open. Opening again within half an hour counts once; a link
-/// whose opens are used up still lets someone finish what they started.
+/// Record an open. A link counts people, not opens (`max_opens` and `opens`
+/// hold the limit and the count): someone's first open takes a place, and
+/// whoever has one keeps opening the link even once it is full.
 /// Returns the link's state after the open.
 pub fn record_open(share: &Share, visitor: &Visitor) -> Result<ShareState> {
     let state = share.state();
@@ -426,13 +463,8 @@ pub fn record_open(share: &Share, visitor: &Visitor) -> Result<ShareState> {
         return Ok(state);
     }
     let now = Utc::now();
-    let recent = visitor
-        .last_open_at
-        .as_deref()
-        .and_then(parse_time)
-        .is_some_and(|last| now - last < Duration::minutes(REOPEN_WINDOW_MINUTES));
     let conn = database::connection();
-    if recent {
+    if has_opened(visitor) {
         conn.execute(
             "UPDATE share_visitors SET last_open_at = ?1 WHERE id = ?2",
             params![now.to_rfc3339(), visitor.id],
@@ -442,7 +474,7 @@ pub fn record_open(share: &Share, visitor: &Visitor) -> Result<ShareState> {
     if state == ShareState::Exhausted {
         return Ok(state);
     }
-    // Guarded so two opens racing for the last one can't both get it.
+    // Guarded so two people racing for the last place can't both get it.
     let counted = conn.execute(
         "UPDATE task_shares SET opens = opens + 1
          WHERE token = ?1 AND (max_opens IS NULL OR opens < max_opens)",
@@ -458,14 +490,10 @@ pub fn record_open(share: &Share, visitor: &Visitor) -> Result<ShareState> {
     Ok(ShareState::Active)
 }
 
-/// Whether this visitor opened the link within the reopen window, so a
-/// used-up link still serves them.
-pub fn opened_recently(visitor: &Visitor) -> bool {
-    visitor
-        .last_open_at
-        .as_deref()
-        .and_then(parse_time)
-        .is_some_and(|last| Utc::now() - last < Duration::minutes(REOPEN_WINDOW_MINUTES))
+/// Whether this visitor has a place on the link, so a full link still
+/// serves them.
+pub fn has_opened(visitor: &Visitor) -> bool {
+    visitor.last_open_at.is_some()
 }
 
 /// Comments written through each link of this Task: (token, all, still open).
@@ -572,15 +600,26 @@ pub fn get_received(id: &str) -> Result<Option<Received>> {
         .optional()?)
 }
 
-pub fn find_received_by_url(url: &str) -> Result<Option<Received>> {
+/// A link opened here before. Found by its token, since the same link can
+/// arrive under another address of the owner's Grove.
+pub fn find_received_by_token(token: &str) -> Result<Option<Received>> {
     let conn = database::connection();
     Ok(conn
         .query_row(
-            &format!("SELECT {RECEIVED_COLUMNS} FROM received_shares WHERE url = ?1"),
-            params![url],
+            &format!("SELECT {RECEIVED_COLUMNS} FROM received_shares WHERE token = ?1"),
+            params![token],
             received_from_row,
         )
         .optional()?)
+}
+
+/// The owner's Grove now answers at another address.
+pub fn update_received_address(id: &str, url: &str, base_url: &str) -> Result<()> {
+    database::connection().execute(
+        "UPDATE received_shares SET url = ?1, base_url = ?2 WHERE id = ?3",
+        params![url, base_url, id],
+    )?;
+    Ok(())
 }
 
 pub struct NewReceived<'a> {
@@ -623,7 +662,7 @@ pub fn save_received(new: NewReceived) -> Result<Received> {
             now,
         ],
     )?;
-    find_received_by_url(new.url)?
+    find_received_by_token(new.token)?
         .ok_or_else(|| GroveError::storage("The share was not saved".to_string()))
 }
 

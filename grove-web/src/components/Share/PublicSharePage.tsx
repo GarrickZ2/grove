@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, ExternalLink } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import {
   joinPublicShare,
   publicShareInfo,
@@ -46,7 +46,6 @@ export function PublicSharePage({ token }: { token: string }) {
   }, [info]);
 
   const link = `${window.location.origin}/s/${token}`;
-  const groveLink = `grove://open-share?url=${encodeURIComponent(link)}`;
   const source = useMemo(() => publicShareSource(token), [token]);
 
   let content;
@@ -66,40 +65,51 @@ export function PublicSharePage({ token }: { token: string }) {
     content = (
       <SharedTaskView
         source={source}
-        viewerCanComment={false}
-        showComments={false}
+        shareKey={token}
         onInfo={setInfo}
-        headerNote={info.you ? <span className="share-public-you">Viewing as {info.you.name}</span> : null}
-        headerAside={
-          <a className="oui-btn oui-btn-secondary oui-btn-sm" href={groveLink}>
-            <ExternalLink aria-hidden="true" />Open in Grove
-          </a>
-        }
-        footer={<div className="share-public-foot">Want to comment? Open this same link in Grove.</div>}
+        headerAside={<CopyForGrove link={link} />}
       />
     );
   } else {
-    content = <Landing info={info} token={token} link={link} groveLink={groveLink} onJoined={(value) => { setInfo(value); setViewing(true); }} />;
+    content = <Landing info={info} token={token} link={link} onJoined={(value) => { setInfo(value); setViewing(true); }} />;
   }
 
   return <div className="orbit-ui share-public">{content}</div>;
 }
 
-function Landing({ info, token, link, groveLink, onJoined }: {
+/** Grove opens a link pasted into ⌘K; there is no way to hand it over from
+ *  a browser page. */
+function CopyForGrove({ link, wide = false }: { link: string; wide?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    if (!(await copyText(link))) return;
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  };
+  return (
+    <button
+      type="button"
+      className={`oui-btn oui-btn-sm ${wide ? "oui-btn-primary" : "oui-btn-secondary"}`}
+      title="Paste it into ⌘K in Grove"
+      onClick={() => void copy()}
+    >
+      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copied ? "Copied" : "Copy link for Grove"}
+    </button>
+  );
+}
+
+function Landing({ info, token, link, onJoined }: {
   info: ShareInfo;
   token: string;
   link: string;
-  groveLink: string;
   onJoined: (info: ShareInfo) => void;
 }) {
   const [name, setName] = useState(rememberedName);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const facts = [
     info.project,
-    info.canComment ? "Can comment in Grove" : "View only",
     info.expiresAt ? `Expires ${untilText(info.expiresAt)}` : null,
   ].filter(Boolean).join(" · ");
 
@@ -127,22 +137,16 @@ function Landing({ info, token, link, groveLink, onJoined }: {
             <span>{facts}</span>
           </div>
         </div>
-        <a className="oui-btn oui-btn-primary" href={groveLink}>Open in Grove</a>
-        <p className="share-landing-hint">
-          Nothing happened? Copy the link and paste it into ⌘K in Grove.{" "}
-          <button type="button" className="share-link-button" onClick={() => { void copyText(link); setCopied(true); }}>
-            <Copy size={11} />{copied ? "Copied" : "Copy"}
-          </button>
-        </p>
-        <div className="share-landing-divider">No Grove? View it in this browser</div>
+        <CopyForGrove link={link} wide />
+        <p className="share-landing-hint">Then paste it into ⌘K in Grove.</p>
+        <div className="share-landing-divider">or</div>
         <form onSubmit={(event) => { event.preventDefault(); void join(); }} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <label>
             Your name
             <input className="oui-field" value={name} onChange={(event) => setName(event.target.value)} maxLength={40} autoComplete="name" required />
           </label>
-          <p className="share-landing-note">{info.owner} sees this name. This browser remembers it.</p>
           {error && <p className="share-notice is-error" role="alert">{error}</p>}
-          <button type="submit" className="oui-btn oui-btn-secondary" disabled={busy || !name.trim()}>{busy ? "Opening…" : "View (read only)"}</button>
+          <button type="submit" className="oui-btn oui-btn-secondary" disabled={busy || !name.trim()}>{busy ? "Opening…" : "View in browser"}</button>
         </form>
       </div>
     </div>

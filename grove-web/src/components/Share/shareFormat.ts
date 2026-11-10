@@ -73,7 +73,7 @@ export function stateMessage(state: string | undefined, owner: string): { title:
     case "expired":
       return { title: "This link has expired", body: `Ask ${owner || "the owner"} to share it again.` };
     case "exhausted":
-      return { title: "This link has been used up", body: `It has been opened as many times as it allows. Ask ${owner || "the owner"} for a new one.` };
+      return { title: "This link was for someone else", body: `Ask ${owner || "the owner"} for your own link.` };
     case "revoked":
       return { title: `${owner || "The owner"} stopped sharing`, body: "Comments you already sent stay with them." };
     case "removed":

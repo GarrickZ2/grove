@@ -263,7 +263,7 @@ pub fn toggle_tray_popover_visibility(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn surface_main(app: &AppHandle) -> Result<(), String> {
+fn surface_main(app: &AppHandle) -> Result<(), String> {
     let win = app
         .get_webview_window("main")
         .ok_or_else(|| "Grove main window is unavailable".to_string())?;

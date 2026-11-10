@@ -44,12 +44,24 @@ fn grove_error(error: GroveError) -> ShareError {
     match error {
         GroveError::InvalidData(message) => fail(StatusCode::BAD_REQUEST, "invalid", message),
         GroveError::NotFound(message) => fail(StatusCode::NOT_FOUND, "not_found", message),
-        other => fail(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            other.to_string(),
-        ),
+        // The details stay in this Grove's log: share routes answer people
+        // outside it, and SQL or paths mean nothing to them anyway.
+        other => {
+            eprintln!("[share] {other}");
+            fail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "Something went wrong on this Grove. Try again later.",
+            )
+        }
     }
+}
+
+/// An error from Grove's own handlers, put for someone outside this Grove:
+/// a fixed message, with the original kept in the log.
+fn outside(status: StatusCode, code: &str, detail: &str, shown: &str) -> ShareError {
+    eprintln!("[share] {code}: {detail}");
+    fail(status, code, shown)
 }
 
 fn state_error(state: ShareState) -> ShareError {
@@ -58,7 +70,7 @@ fn state_error(state: ShareState) -> ShareError {
         ShareState::Exhausted => ended(
             StatusCode::GONE,
             "exhausted",
-            "This link has been opened as many times as it allows",
+            "This link was for someone else",
         ),
         ShareState::Revoked => ended(StatusCode::GONE, "revoked", "The owner stopped sharing"),
         ShareState::Active => fail(StatusCode::OK, "active", ""),
@@ -103,8 +115,6 @@ impl<T: Clone> Remembered<T> {
 }
 
 static SUGGESTED_NAME: Remembered<String> = Remembered::new();
-/// The `grove remote` address last probed, and whether it answered.
-static REMOTE_PROBE: Remembered<(String, bool)> = Remembered::new();
 
 /// The name to offer the first time: git's user.name, else the machine's.
 fn suggested_name() -> String {
@@ -142,9 +152,10 @@ fn machine_name() -> String {
         .unwrap_or_default()
 }
 
-/// What this Grove goes by on one owner's Grove: steady, so a removal
-/// sticks, and different for each owner, so owners can't match it up.
-fn client_for(base: &str) -> String {
+/// What this Grove goes by on one link: steady, so a removal sticks and a
+/// second open stays one visitor, whatever address the link came by; and
+/// different for each link, so owners can't match it up.
+fn client_for(token: &str) -> String {
     use sha2::{Digest, Sha256};
     let id = crate::machines::this()
         .map(|profile| profile.id)
@@ -153,7 +164,7 @@ fn client_for(base: &str) -> String {
         return String::new();
     }
     hex::encode(Sha256::digest(
-        format!("grove-share:{id}:{base}").as_bytes(),
+        format!("grove-share:{id}:{token}").as_bytes(),
     ))
 }
 
@@ -221,76 +232,41 @@ fn normalize_address(value: &str) -> Option<String> {
     Some(format!("{}://{}", url.scheme(), url.authority()))
 }
 
-/// Where other people reach this Grove, and how Grove knows: the person
-/// said so, this window already uses such an address, or `grove remote` runs.
-async fn resolve_address(headers: &HeaderMap) -> (Option<String>, &'static str) {
+/// The address links carry: the one the person entered, else this window's
+/// own address when it isn't loopback, else where `grove remote` last ran,
+/// else this window's address as it is. Whether others can reach it is up
+/// to whoever holds the link.
+fn resolve_address(headers: &HeaderMap) -> (String, &'static str) {
     if let Some(address) = config::load_config()
         .share
         .address
         .as_deref()
         .and_then(normalize_address)
     {
-        return (Some(address), "custom");
+        return (address, "custom");
     }
-    if let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) {
-        if !is_loopback_host(host) {
-            let scheme = headers
-                .get("x-forwarded-proto")
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string)
-                .unwrap_or_else(|| {
-                    std::env::var("GROVE_PROTOCOL").unwrap_or_else(|_| "http".into())
-                });
-            return (Some(format!("{scheme}://{host}")), "window");
-        }
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost:3001");
+    let window = || {
+        let scheme = headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .unwrap_or_else(|| std::env::var("GROVE_PROTOCOL").unwrap_or_else(|_| "http".into()));
+        format!("{scheme}://{host}")
+    };
+    if !is_loopback_host(host) {
+        return (window(), "window");
     }
     if let Some(address) = std::fs::read_to_string(remote_address_file())
         .ok()
         .and_then(|value| normalize_address(&value))
-        // `grove remote --private`, or no LAN address found: nobody else
-        // can use it.
-        .filter(|address| {
-            !is_loopback_host(
-                address
-                    .split_once("://")
-                    .map_or(address.as_str(), |(_, a)| a),
-            )
-        })
     {
-        // Answer from the last probe and refresh it in the background; only
-        // the very first look waits for one.
-        let same = |(probed, _): &(String, bool)| *probed == address;
-        let alive = match REMOTE_PROBE.get(Duration::MAX, same) {
-            Some((_, alive)) => {
-                if REMOTE_PROBE.get(Duration::from_secs(60), same).is_none() {
-                    let address = address.clone();
-                    tokio::spawn(async move {
-                        let alive = probe_remote(&address).await;
-                        REMOTE_PROBE.set((address, alive));
-                    });
-                }
-                alive
-            }
-            None => {
-                let alive = probe_remote(&address).await;
-                REMOTE_PROBE.set((address.clone(), alive));
-                alive
-            }
-        };
-        if alive {
-            return (Some(address), "remote");
-        }
+        return (address, "remote");
     }
-    (None, "none")
-}
-
-async fn probe_remote(address: &str) -> bool {
-    share_client()
-        .get(format!("{address}/api/v1/auth/info"))
-        .timeout(Duration::from_millis(1200))
-        .send()
-        .await
-        .is_ok()
+    (window(), "window")
 }
 
 #[derive(Deserialize)]
@@ -304,7 +280,7 @@ pub struct ProfileInput {
 /// GET /api/v1/share-profile
 pub async fn get_profile(headers: HeaderMap) -> Json<Value> {
     let config = config::load_config();
-    let (address, source) = resolve_address(&headers).await;
+    let (address, source) = resolve_address(&headers);
     Json(json!({
         "name": chosen_name(),
         "suggestedName": suggested_name(),
@@ -345,7 +321,7 @@ pub async fn put_profile(
 // The owner's links
 // ============================================================================
 
-fn link_json(share: &Share, address: Option<&str>, comments: u32) -> Value {
+fn link_json(share: &Share, address: &str, comments: u32) -> Value {
     let everyone = shares::list_visitors(&share.token).unwrap_or_default();
     let visitors: Vec<Value> = everyone
         .iter()
@@ -363,11 +339,11 @@ fn link_json(share: &Share, address: Option<&str>, comments: u32) -> Value {
         .collect();
     json!({
         "token": share.token,
-        "url": address.map(|address| format!("{address}/s/{}", share.token)),
+        "url": format!("{address}/s/{}", share.token),
         "canComment": share.can_comment,
         "expiresAt": share.expires_at,
-        "maxOpens": share.max_opens,
-        "opens": share.opens,
+        "maxPeople": share.max_opens,
+        "people": share.opens,
         "state": share.state(),
         "createdAt": share.created_at,
         "visitors": visitors,
@@ -387,7 +363,7 @@ pub async fn list_links(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ShareError> {
     let key = task_key(&id)?;
-    let (address, source) = resolve_address(&headers).await;
+    let (address, source) = resolve_address(&headers);
     let all_counts = shares::comment_counts(&key, &task_id).map_err(grove_error)?;
     let open_comments: u32 = all_counts.iter().map(|(_, _, open)| open).sum();
     let counts: HashMap<String, u32> = all_counts
@@ -402,7 +378,7 @@ pub async fn list_links(
         .map(|share| {
             link_json(
                 share,
-                address.as_deref(),
+                &address,
                 counts.get(&share.token).copied().unwrap_or(0),
             )
         })
@@ -416,20 +392,14 @@ pub async fn list_links(
 }
 
 /// Links that ended within the last week stay visible, so the owner can see
-/// what happened to them. A used-up link ends with its last open.
+/// what happened to them.
 fn recently_ended(share: &Share) -> bool {
-    let last_open = || {
-        shares::list_visitors(&share.token)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|visitor| visitor.last_open_at)
-            .max()
-    };
     let ended = match share.state() {
         ShareState::Active => return true,
         ShareState::Revoked => share.revoked_at.clone(),
         ShareState::Expired => share.expires_at.clone(),
-        ShareState::Exhausted => last_open().or_else(|| Some(share.created_at.clone())),
+        // Full, but the people on it still use it.
+        ShareState::Exhausted => return true,
     };
     ended
         .as_deref()
@@ -446,8 +416,9 @@ pub struct CreateLinkInput {
     can_comment: bool,
     #[serde(default)]
     expires_in_days: Option<u32>,
+    /// How many people may open it; none for anyone with the link.
     #[serde(default)]
-    max_opens: Option<u32>,
+    max_people: Option<u32>,
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/shares
@@ -463,23 +434,16 @@ pub async fn create_link(
     {
         return Err(fail(StatusCode::NOT_FOUND, "not_found", "Task not found"));
     }
-    let (address, _) = resolve_address(&headers).await;
-    if address.is_none() {
-        return Err(fail(
-            StatusCode::CONFLICT,
-            "no_address",
-            "Other people can't reach this Grove yet",
-        ));
-    }
+    let (address, _) = resolve_address(&headers);
     let share = shares::create_share(
         &key,
         &task_id,
         input.can_comment,
         input.expires_in_days,
-        input.max_opens,
+        input.max_people,
     )
     .map_err(grove_error)?;
-    Ok(Json(link_json(&share, address.as_deref(), 0)))
+    Ok(Json(link_json(&share, &address, 0)))
 }
 
 /// DELETE /api/v1/shares/{token}
@@ -568,7 +532,7 @@ fn visitor_for(headers: &HeaderMap, token: &str) -> Result<(Share, Visitor), Sha
     }
     match share.state() {
         ShareState::Active => Ok((share, visitor)),
-        ShareState::Exhausted if shares::opened_recently(&visitor) => Ok((share, visitor)),
+        ShareState::Exhausted if shares::has_opened(&visitor) => Ok((share, visitor)),
         state => Err(state_error(state)),
     }
 }
@@ -602,13 +566,25 @@ fn share_info(share: &Share, visitor: Option<&Visitor>) -> Value {
     json!({
         "owner": my_name(),
         "ownerDevice": machine_name(),
-        "title": task.as_ref().map(|task| task.name.clone()).unwrap_or_default(),
+        // The local task is named after its project; its branch says more.
+        "title": task
+            .as_ref()
+            .map(|task| if task.is_local { task.branch.clone() } else { task.name.clone() })
+            .unwrap_or_default(),
         "project": project.map(|project| project.name).unwrap_or_default(),
         "canComment": share.can_comment,
         "expiresAt": share.expires_at,
-        "maxOpens": share.max_opens,
-        "opens": share.opens,
-        "state": if task.is_none() { "missing".into() } else { json!(share.state()) },
+        "maxPeople": share.max_opens,
+        "people": share.opens,
+        "state": if task.is_none() {
+            "missing".into()
+        } else {
+            match share.state() {
+                // Full for new people; whoever is on it keeps it.
+                ShareState::Exhausted if visitor.is_some_and(shares::has_opened) => json!("active"),
+                state => json!(state),
+            }
+        },
         "activityAt": activity,
         "you": visitor.map(|visitor| json!({
             "id": visitor.id,
@@ -636,8 +612,8 @@ pub async fn public_info(
     } else {
         match share.state() {
             ShareState::Active => json!("active"),
-            // Someone who opened it within the last 30 minutes still can.
-            ShareState::Exhausted if visitor.as_ref().is_some_and(shares::opened_recently) => {
+            // Full for new people; those already on it keep it.
+            ShareState::Exhausted if visitor.as_ref().is_some_and(shares::has_opened) => {
                 json!("active")
             }
             state => json!(state),
@@ -712,21 +688,31 @@ pub async fn public_join(
         Some("grove") => VisitorKind::Grove,
         _ => VisitorKind::Browser,
     };
-    let (visitor, credential) = shares::add_visitor(
-        &token,
-        kind,
-        &input.name,
-        input.device.as_deref().unwrap_or(""),
-        client,
-    )
-    .map_err(grove_error)?;
+    let device = input.device.as_deref().unwrap_or("");
+    let again = if kind == VisitorKind::Grove {
+        shares::rejoin_visitor(&token, client, &input.name, device).map_err(grove_error)?
+    } else {
+        None
+    };
+    let rejoined = again.is_some();
+    let (visitor, credential) = match again {
+        Some(found) => found,
+        None => {
+            shares::add_visitor(&token, kind, &input.name, device, client).map_err(grove_error)?
+        }
+    };
     let state = shares::record_open(&share, &visitor).map_err(grove_error)?;
     if state != ShareState::Active {
         // Lost the race for the last open: as if they never joined.
-        let _ = shares::delete_visitor(&visitor.id);
+        if !rejoined {
+            let _ = shares::delete_visitor(&visitor.id);
+        }
         return Err(state_error(state));
     }
     let share = load_share(&token)?;
+    let visitor = shares::get_visitor(&visitor.id)
+        .map_err(grove_error)?
+        .unwrap_or(visitor);
     let mut body = share_info(&share, Some(&visitor));
     if kind == VisitorKind::Grove {
         body["credential"] = json!(credential);
@@ -800,7 +786,12 @@ pub async fn public_diff(
     .await
     {
         Ok(json) => Ok(json.into_response()),
-        Err((status, Json(error))) => Err(fail(status, "diff", error.error)),
+        Err((status, Json(error))) => Err(outside(
+            status,
+            "diff",
+            &error.error,
+            "Couldn't load the changes",
+        )),
     }
 }
 
@@ -837,6 +828,39 @@ pub async fn public_file_diff(
     )
     .await
     .map_err(|status| fail(status, "diff", "Couldn't load this file's changes"))
+}
+
+/// GET /api/v1/share/{token}/diff/content?path=… — a changed file as the
+/// Task has it now, so the review can show the lines around a change.
+pub async fn public_file_content(
+    Path(token): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<SharedFileQuery>,
+) -> Result<Json<Value>, ShareError> {
+    use crate::platform::CanonicalPath;
+    let (share, _) = visitor_for(&headers, &token)?;
+    let not_found = || fail(StatusCode::NOT_FOUND, "not_found", "File not found");
+    if studio_or_repo(&share) == ProjectKind::Studio || !shared_path(&share, &query.path).await {
+        return Err(not_found());
+    }
+    let task = tasks::get_task(&share.project_key, &share.task_id)
+        .ok()
+        .flatten()
+        .ok_or_else(task_gone)?;
+    let root = std::path::Path::new(&task.worktree_path)
+        .canonical()
+        .map_err(|_| not_found())?;
+    // A changed file may be a link to somewhere else; only read what is
+    // really inside the Task.
+    let file = root
+        .join(&query.path)
+        .canonical()
+        .map_err(|_| not_found())?;
+    if !file.starts_with(&root) || !file.is_file() {
+        return Err(not_found());
+    }
+    let content = std::fs::read_to_string(&file).map_err(|_| not_found())?;
+    Ok(Json(json!({ "content": content, "path": query.path })))
 }
 
 #[derive(PartialEq)]
@@ -935,7 +959,9 @@ pub async fn public_file_preview(
     )
     .await
     .map(IntoResponse::into_response)
-    .map_err(|(status, Json(error))| fail(status, "file", error.error))
+    .map_err(|(status, Json(error))| {
+        outside(status, "file", &error.error, "Couldn't open this file")
+    })
 }
 
 /// GET /api/v1/share/{token}/files/download?path=…
@@ -959,7 +985,9 @@ pub async fn public_file_download(
         headers,
     )
     .await
-    .map_err(|(status, Json(error))| fail(status, "file", error.error))
+    .map_err(|(status, Json(error))| {
+        outside(status, "file", &error.error, "Couldn't open this file")
+    })
 }
 
 /// GET /api/v1/share/{token}/comments — what everyone the Task was shared
@@ -1031,7 +1059,7 @@ pub async fn public_add_comment(
     Json(input): Json<NewSharedComment>,
 ) -> Result<Json<Value>, ShareError> {
     let (share, visitor) = visitor_for(&headers, &token)?;
-    if !share.can_comment || visitor.kind != VisitorKind::Grove {
+    if !share.can_comment {
         return Err(fail(
             StatusCode::FORBIDDEN,
             "read_only",
@@ -1243,7 +1271,12 @@ pub struct LinkInput {
 pub async fn preview_link(Json(input): Json<LinkInput>) -> Result<Json<Value>, ShareError> {
     let (url, base, token) = parse_link(&input.url)?;
     let mut info = host_json(share_client().get(format!("{base}/api/v1/share/{token}"))).await?;
-    if let Some(existing) = shares::find_received_by_url(&url).map_err(grove_error)? {
+    if let Some(existing) = shares::find_received_by_token(&token).map_err(grove_error)? {
+        // Opened here before, maybe under another address: keep the one
+        // that just answered.
+        if existing.url != url {
+            shares::update_received_address(&existing.id, &url, &base).map_err(grove_error)?;
+        }
         info["receivedId"] = json!(existing.id);
     }
     // Links from a Grove opened here before go straight in; others ask first.
@@ -1258,7 +1291,10 @@ pub async fn preview_link(Json(input): Json<LinkInput>) -> Result<Json<Value>, S
 /// POST /api/v1/shared — open a link here, under this Grove's name.
 pub async fn add_link(Json(input): Json<LinkInput>) -> Result<Json<Value>, ShareError> {
     let (url, base, token) = parse_link(&input.url)?;
-    if let Some(existing) = shares::find_received_by_url(&url).map_err(grove_error)? {
+    if let Some(existing) = shares::find_received_by_token(&token).map_err(grove_error)? {
+        if existing.url != url {
+            shares::update_received_address(&existing.id, &url, &base).map_err(grove_error)?;
+        }
         return Ok(Json(received_json(&existing, None)));
     }
     let Some(name) = chosen_name() else {
@@ -1275,7 +1311,7 @@ pub async fn add_link(Json(input): Json<LinkInput>) -> Result<Json<Value>, Share
                 "name": name,
                 "kind": "grove",
                 "device": machine_name(),
-                "client": client_for(&base),
+                "client": client_for(&token),
             })),
     )
     .await?;
@@ -1413,7 +1449,13 @@ pub async fn via_host(
         (method.as_str(), rest.as_str()),
         (
             "GET",
-            "diff" | "diff/file" | "files" | "files/preview" | "files/download" | "comments"
+            "diff"
+                | "diff/file"
+                | "diff/content"
+                | "files"
+                | "files/preview"
+                | "files/download"
+                | "comments"
         ) | ("POST", "open" | "comments")
     );
     if !allowed {
