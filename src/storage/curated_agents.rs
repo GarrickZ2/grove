@@ -26,8 +26,12 @@ const CURATED_JSON: &str = include_str!("curated_agents.json");
 ///
 /// Keep this separate from the operator-editable on-disk curated file: a stale
 /// or customized recommendation list must never disable one-time auto install.
-pub const ONBOARDING_AGENT_IDS: &[&str] =
-    &["claude-acp", "codex-acp", "github-copilot-cli", "qwen-code"];
+pub const ONBOARDING_AGENT_IDS: &[&str] = &[
+    "claude-acp",
+    "codex-acp",
+    "github-copilot-cli",
+    "grok-build",
+];
 
 pub fn onboarding_agent_ids() -> &'static [&'static str] {
     ONBOARDING_AGENT_IDS

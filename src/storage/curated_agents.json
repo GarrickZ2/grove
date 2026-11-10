@@ -5,6 +5,6 @@
     "claude-acp",
     "codex-acp",
     "github-copilot-cli",
-    "qwen-code"
+    "grok-build"
   ]
 }

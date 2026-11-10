@@ -1600,9 +1600,9 @@ mod tests {
         crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
 
         let mut registry = onboarding_registry();
-        registry.agents.retain(|agent| agent.id != "qwen-code");
+        registry.agents.retain(|agent| agent.id != "grok-build");
         let err = reconcile_onboarding_agents(&registry).unwrap_err();
-        assert!(err.to_string().contains("qwen-code"));
+        assert!(err.to_string().contains("grok-build"));
         assert!(list().unwrap().is_empty());
         assert!(!onboarding_completed().unwrap());
         assert_eq!(
@@ -1627,7 +1627,7 @@ mod tests {
         assert_eq!(reconcile_registry_state(&registry).unwrap(), 4);
         assert!(onboarding_completed().unwrap());
 
-        for id in ["github-copilot-cli", "qwen-code"] {
+        for id in ["github-copilot-cli", "grok-build"] {
             remove_installation(id, InstallMethod::Npx).unwrap();
         }
         // Reopen the DB, as a new server process would do.
@@ -1637,7 +1637,7 @@ mod tests {
         assert!(onboarding_completed().unwrap());
         assert_eq!(reconcile_registry_state(&registry).unwrap(), 0);
         assert!(get("github-copilot-cli").unwrap().is_none());
-        assert!(get("qwen-code").unwrap().is_none());
+        assert!(get("grok-build").unwrap().is_none());
 
         // Even an empty install table must not be treated as a new user.
         for agent in list().unwrap() {
@@ -1665,7 +1665,7 @@ mod tests {
         crate::storage::database::connection()
             .execute_batch(
                 "CREATE TRIGGER fail_onboarding BEFORE INSERT ON installed_agents
-             WHEN NEW.id = 'qwen-code' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;",
+             WHEN NEW.id = 'grok-build' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;",
             )
             .unwrap();
         assert!(reconcile_onboarding_agents(&onboarding_registry()).is_err());
