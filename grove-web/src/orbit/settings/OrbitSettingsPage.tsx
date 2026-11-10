@@ -266,7 +266,6 @@ export function OrbitSettingsPage() {
             icon={page.icon}
             hue={page.hue}
             title={page.title}
-            description={page.description}
             condensed={condensed}
             aside={(
               <>

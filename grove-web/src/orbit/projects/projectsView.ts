@@ -40,7 +40,7 @@ function plural(n: number, word: string): string {
 /** Header line: "6 projects · 14 tasks across them". */
 export function projectsSummary(active: Project[], archived: Project[]): string {
   if (active.length === 0) {
-    return archived.length > 0 ? `No active projects · ${archived.length} archived` : "Add a Git repo or start a Studio to begin.";
+    return archived.length > 0 ? `No active projects · ${archived.length} archived` : "";
   }
   const tasks = active.reduce((sum, project) => sum + taskCountOf(project), 0);
   const missing = active.filter((project) => !project.exists).length;

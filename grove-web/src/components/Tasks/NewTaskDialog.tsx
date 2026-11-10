@@ -208,7 +208,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                 }}
               />
             </DialogField>
-            <DialogField label={<>Notes <span className="oui-dlg-optional">(optional)</span></>} as="div">
+            <DialogField label="Notes" as="div">
               <div
                 className={`oui-dlg-dropzone${isDragging ? " is-dragging" : ""}`}
                 onDragOver={handleDragOver}
@@ -219,7 +219,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                   aria-label="Notes"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Describe the task, requirements, or any relevant context...  (or drop a .md / .txt file)"
+                  placeholder="Describe the task, or drop a .md file"
                   rows={4}
                   className="oui-dlg-textarea"
                 />
@@ -231,7 +231,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
               </div>
             </DialogField>
             {!isStudio && (
-              <DialogField label="Target branch" as="div" note={hasValidBranch ? "New branch will be created from this branch" : undefined}>
+              <DialogField label="Target branch" as="div">
                 {hasValidBranch ? (
                   <div ref={dropdownRef} className="oui-dlg-anchor">
                     <button
@@ -275,18 +275,9 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                     )}
                   </div>
                 ) : (
-                  <p className="oui-dlg-error">No valid branch found</p>
+                  <p className="oui-dlg-error">This repository has no commits yet. Please create an initial commit before creating tasks.</p>
                 )}
               </DialogField>
-            )}
-            {isStudio ? (
-              <p className="oui-dlg-callout">A new task workspace will be created with input, output, and scripts folders.</p>
-            ) : hasValidBranch ? (
-              <p className="oui-dlg-callout">
-                A new worktree will be created with branch <code>{branchPreview}</code> based on <code>{targetBranch}</code>.
-              </p>
-            ) : (
-              <p className="oui-dlg-error">This repository has no commits yet. Please create an initial commit before creating tasks.</p>
             )}
           </DialogBody>
           <DialogFoot>

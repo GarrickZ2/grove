@@ -1693,12 +1693,7 @@ function extractRenderItemText(item: RenderItem, expandedSections: Set<string>):
   }
   if (!expandedSections.has(item.sectionId)) return "";
   return item.items
-    .filter(({ message }) => message.type === "assistant")
-    .map(({ message }) =>
-      message.type === "tool"
-        ? [message.title, message.name, message.content ?? ""].filter(Boolean).join("\n")
-        : message.content,
-    )
+    .flatMap(({ message }) => (message.type === "assistant" ? [message.content] : []))
     .join("\n");
 }
 
@@ -3634,11 +3629,13 @@ export function TaskChat({
   const isReadOnlyHistory = finished || isViewingArchived || activeReadOnly !== undefined;
   const connectionStatus = isRemoteSession || activeReadOnly ? "read_only" : activeChatId ? chatConnectionStatuses[activeChatId] ?? "disconnected" : "disconnected";
   const connectionPending = connectionStatus === "connecting" || connectionStatus === "reconnecting";
-  const connectionLabel = connectionPending && activeChatId && connectionStages[activeChatId]
-    ? `${chatConnectionLabels[connectionStatus]} · ${connectionStages[activeChatId]}`
+  const connectionLabel = chatConnectionLabels[connectionStatus];
+  // The startup stage and protocol version are for whoever goes looking: a tooltip, not the label.
+  const connectionTitle = connectionPending && activeChatId && connectionStages[activeChatId]
+    ? connectionStages[activeChatId]
     : connectionStatus === "connected" && activeChatId && !isTerminalMode && chatProtocolVersions[activeChatId]
-      ? `${chatConnectionLabels[connectionStatus]} · v${chatProtocolVersions[activeChatId]}`
-      : chatConnectionLabels[connectionStatus];
+      ? `Protocol v${chatProtocolVersions[activeChatId]}`
+      : undefined;
   const connectionDotClass = isViewingArchived || connectionStatus === "disconnected" || connectionStatus === "read_only"
     ? "bg-[var(--color-text-muted)]"
     : connectionStatus === "connected"
@@ -10532,6 +10529,10 @@ export function TaskChat({
           live={item.live}
           startedAt={item.startedAt}
           awaitingApproval={item.awaitingApproval}
+          previewText={item.previewText}
+          textFollows={item.textFollows}
+          subagentConnected={isConnected}
+          onOpenSubagent={openSubagentPanel}
           atTail={idx === liveTail.index && liveTail.atTail}
         />
       </MeasuredTaskChatRow>
@@ -11288,7 +11289,7 @@ export function TaskChat({
                           : activePermissionMessage
                             ? "Handle permission above to continue"
                             : !isConnected
-                              ? "Waiting for connection..."
+                              ? "" // The header already says it's connecting.
                               : isTerminalMode
                                 ? "Enter shell command\u2026"
                                 : isBusy
@@ -11764,7 +11765,7 @@ export function TaskChat({
               <div
                 className={`w-2.5 h-2.5 rounded-full ${connectionDotClass} ${!isViewingArchived && connectionStatus === "connected" ? "animate-pulse" : ""}`}
               />
-              <span className="text-xs text-[var(--color-text-muted)]">
+              <span className="text-xs text-[var(--color-text-muted)]" title={connectionTitle}>
                 {isViewingArchived
                   ? "Archived"
                   : connectionPending && connectPhase === "downloading" && connectPhaseStartedAt
@@ -11860,7 +11861,7 @@ export function TaskChat({
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${connectionDotClass}`}
                   />
-                  <span>
+                  <span title={connectionTitle}>
                     {isViewingArchived
                       ? "Archived"
                       : connectionPending && connectPhase === "downloading" && connectPhaseStartedAt
@@ -14923,6 +14924,10 @@ const WorkSummaryView = memo(function WorkSummaryView({
   startedAt,
   awaitingApproval,
   atTail = false,
+  previewText,
+  textFollows = false,
+  subagentConnected = false,
+  onOpenSubagent,
 }: {
   sectionId: string;
   items: WorkSummaryItem[];
@@ -14936,6 +14941,13 @@ const WorkSummaryView = memo(function WorkSummaryView({
   awaitingApproval?: string[];
   /** Nothing follows the group, so the agent is between steps. */
   atTail?: boolean;
+  /** Orbit: the agent's latest text, shown while the group is folded. */
+  previewText?: string;
+  /** Live: agent text follows the group, which then shows no line of its own. */
+  textFollows?: boolean;
+  /** Orbit folds subagents into the group; their cards open the Subagents panel. */
+  subagentConnected?: boolean;
+  onOpenSubagent?: (sessionId: string) => void;
   onFileClick?: (
     filePath: string,
     line?: number,
@@ -14954,9 +14966,14 @@ const WorkSummaryView = memo(function WorkSummaryView({
     const result: Array<
       | { kind: "text"; item: WorkSummaryItem }
       | { kind: "tools"; tools: ToolSectionItem[] }
+      | { kind: "subagent"; message: SubagentMessage; index: number }
     > = [];
     for (const item of items) {
       if (item.message.type === "thinking") continue;
+      if (item.message.type === "subagent") {
+        result.push({ kind: "subagent", message: item.message, index: item.index });
+        continue;
+      }
       if (item.message.type !== "tool") {
         result.push({ kind: "text", item });
         continue;
@@ -14987,6 +15004,7 @@ const WorkSummaryView = memo(function WorkSummaryView({
       summary={liveSummary}
       startedAt={startedAt}
       expanded={expanded}
+      showStep={!previewText && !textFollows}
       onToggle={onToggleSection}
     />
   ) : orbitConversation ? (
@@ -15021,6 +15039,12 @@ const WorkSummaryView = memo(function WorkSummaryView({
         />
       </button>}
 
+      {orbitConversation && !expanded && previewText && (
+        <div className="ocv-work-preview text-sm ocv-prose">
+          <MarkdownRenderer content={previewText} onFileClick={onFileClick} />
+        </div>
+      )}
+
       <AnimatePresence initial={false}>
         {expanded && (
           <motion.div
@@ -15043,11 +15067,21 @@ const WorkSummaryView = memo(function WorkSummaryView({
                   />
                   );
                 }
+                if (detailItem.kind === "subagent") {
+                  return (
+                    <SubagentCard
+                      key={`work-subagent-${detailItem.message.sessionId}`}
+                      message={detailItem.message}
+                      connected={subagentConnected}
+                      onOpen={onOpenSubagent}
+                    />
+                  );
+                }
                 const { message, index } = detailItem.item;
                 return (
                   <div key={`work-commentary-${index}`} className={orbitConversation ? "text-sm ocv-prose" : "text-sm"}>
                     <MarkdownRenderer
-                      content={message.content ?? ""}
+                      content={message.type === "subagent" ? "" : message.content ?? ""}
                       onFileClick={onFileClick}
                     />
                   </div>

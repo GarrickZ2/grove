@@ -22,10 +22,11 @@ export interface NeedsYouItem {
   at: number;
 }
 
-const LOCAL_TASK_ID = "_local";
+export const LOCAL_TASK_ID = "_local";
 
+/** The Task a row comes from; empty for the main checkout, where it says nothing. */
 export function taskLabel(taskId: string, taskName: string | null | undefined) {
-  return taskId === LOCAL_TASK_ID ? "Main checkout" : taskName || taskId;
+  return taskId === LOCAL_TASK_ID ? "" : taskName || taskId;
 }
 
 function oneLine(text: string, max: number) {

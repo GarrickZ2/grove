@@ -6,7 +6,7 @@ import { formatCost, formatNumber, formatTokens } from "../../components/Stats/f
 import { valueModels, valueTop, type MetricType, type Unit, type ValuedRow } from "../../components/Stats/statsModel";
 import { resolveAgentIcon } from "../../utils/agentIcon";
 import { Card } from "../ui";
-import { METRIC_LABEL, chartAgentColor, topRowTarget, type TopTarget } from "./statisticsView";
+import { chartAgentColor, topRowTarget, type TopTarget } from "./statisticsView";
 
 const turnsText = (n: number) => `${formatNumber(n)} ${n === 1 ? "turn" : "turns"}`;
 const fmtFor = (unit: Unit) => (unit === "cost" ? formatCost : formatTokens);
@@ -36,7 +36,7 @@ export function AgentsCard({ agents, models, metric, unit, averageRates, dark }:
   const modelMax = Math.max(0, ...modelRows.map((row) => row.displayValue));
 
   return (
-    <Card className="oui-rise" style={{ animationDelay: "160ms" }} aria-label="By agent" title="By agent" hint={`share of ${unit === "cost" ? "cost" : "tokens"}`}>
+    <Card className="oui-rise" style={{ animationDelay: "160ms" }} aria-label="By agent" title="By agent">
       {total > 0 ? (
         <div className="ostat-stack" aria-hidden="true">
           {rows.map(({ item, value }, index) => (
@@ -65,7 +65,7 @@ export function AgentsCard({ agents, models, metric, unit, averageRates, dark }:
           );
         }) : <p className="ostat-empty">No agent turns in this range</p>}
 
-        <div className="ostat-subhead">Models<small>{METRIC_LABEL[metric].toLowerCase()} {unit === "cost" ? "cost" : "tokens"}</small></div>
+        <div className="ostat-subhead">Models</div>
         {modelRows.length ? modelRows.map((row, index) => (
           <div key={`${row.model}-${row.agent}`} className="ostat-model" title={splitTitle(row, unit)} style={{ animationDelay: `${280 + index * 40}ms` }}>
             <div className="ostat-model-top">
@@ -109,7 +109,6 @@ export function TopCard({ scope, items, metric, unit, averageRates, dark, projec
       style={{ animationDelay: "240ms" }}
       aria-label={`By ${noun}`}
       title={`By ${noun}`}
-      hint={`top spenders · ${METRIC_LABEL[metric].toLowerCase()} ${unit === "cost" ? "cost" : "tokens"}`}
     >
       <ol className="ostat-list oui-scroll ostat-top">
         {rows.length ? rows.map((row, index) => {

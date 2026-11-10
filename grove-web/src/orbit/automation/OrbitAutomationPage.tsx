@@ -153,7 +153,6 @@ export function OrbitAutomationPage({ onOpenChat, onOpenManagedAutomation }: Orb
       <OrbitPageHeader
         icon={Repeat}
         title="Automation"
-        subtitle="Prompts that run on their own — on a schedule or when something happens."
         actions={(
           <>
             <SavedChip count={savedCount} />
@@ -219,7 +218,7 @@ export function OrbitAutomationPage({ onOpenChat, onOpenManagedAutomation }: Orb
                             <small>{last ? <StatusDot className="oau-sdot" size="sm" tone={RUN_DOT[last]} title={`Last run: ${a.last_run_status}`} /> : null}{scheduleText(a, now)}</small>
                           </span>
                           {badge ? (
-                            <span className="oau-count"><b>{badge.value}</b><span>{badge.caption}</span></span>
+                            <span className="oau-count"><b>{badge.value}</b>{badge.caption ? <span>{badge.caption}</span> : null}</span>
                           ) : null}
                         </button>
                       </div>

@@ -183,7 +183,7 @@ export function ProjectDetail({ project, isCurrent, busy, now, onOpen, onSwitch,
             </div>
           ) : (
             <EmptyState icon={ListTodo} title="No tasks">
-              {data?.full ? "Tasks you start in this project show up here." : "Couldn’t load this project’s tasks."}
+              {data?.full ? null : "Couldn’t load this project’s tasks."}
             </EmptyState>
           )}
         </div>

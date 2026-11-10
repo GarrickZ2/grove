@@ -92,6 +92,7 @@
   flex-direction: column;
   width: var(--orbit-sidebar-width, 256px);
   color: var(--color-text);
+  --orbit-section-heading-h: 34px;
   --orbit-surface: color-mix(in oklab, var(--color-bg) 94.5%, var(--color-text) 5.5%);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--color-highlight) 3%, transparent), transparent 155px),
@@ -181,7 +182,10 @@
 .orbit-task.is-drop-after::after { content: ""; position: absolute; left: 6px; right: 6px; height: 2px; border-radius: 1px; background: var(--color-highlight); pointer-events: none; }
 .orbit-task.is-drop-before::before { top: calc(-1px - var(--orbit-list-row-gap) / 2); }
 .orbit-task.is-drop-after::after { bottom: calc(-1px - var(--orbit-list-row-gap) / 2); }
-.orbit-task-row { position: relative; display: flex; min-width: 0; align-items: center; border-radius: 6px; }
+/* The open folder stays under the sticky Tasks heading while its sessions scroll; its own .orbit-task bounds it,
+   so the next folder pushes it out. Opaque, since the sessions slide beneath it. */
+.orbit-task-row { position: sticky; top: var(--orbit-section-heading-h); z-index: 1; display: flex; min-width: 0; align-items: center; border-radius: 6px; background: var(--orbit-surface); }
+.orbit-task-row:hover { background: color-mix(in oklab, var(--color-text) 9%, var(--orbit-surface)); }
 .orbit-task-toggle { display: flex; align-items: center; gap: 7px; min-width: 0; height: 34px; flex: 1; padding: 0 8px; color: inherit; background: transparent; border: 0; font-size: 14px; text-align: left; cursor: pointer; }
 .orbit-task-toggle svg { flex: none; }
 .orbit-task-new { position: absolute; right: 2px; top: 2px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; color: var(--color-text-muted); background: transparent; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
@@ -267,7 +271,7 @@
 .orbit-action-menu button > .dropdown-item-icon svg { width: 15px; height: 15px; stroke-width: 1.7; }
 .orbit-menu-divider { height: 1px; margin: 4px 5px; background: color-mix(in srgb, var(--color-border) 75%, transparent); }
 /* Each section bounds its sticky heading, so the next heading pushes it out. */
-.orbit-task-section-heading { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; min-height: 34px; margin-top: 12px; padding-left: 10px; background: var(--orbit-surface); }
+.orbit-task-section-heading { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; height: var(--orbit-section-heading-h); margin-top: 12px; padding-left: 10px; background: var(--orbit-surface); }
 /* Sessions is the first section: same toggle as Tasks, spaced like the old plain label. */
 .orbit-sessions-heading { margin-top: 11px; }
 .orbit-task-section-toggle { display: flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--color-text-muted); font-size: 12px; font-weight: 500; cursor: pointer; }

@@ -9,10 +9,7 @@ import { Block, Button, Group, Row, SavedChip, Sheet, Toggle } from "../ui";
 import { draftProblem } from "./memoryView";
 import type { useMemoryAutosave } from "./useMemoryAutosave";
 
-const SETUP_STEPS = [
-  { title: "Organizer", body: "The agent that merges notes into memories" },
-  { title: "When to organize", body: "A schedule, and optional early triggers" },
-] as const;
+const SETUP_STEPS = ["Organizer", "When to organize"] as const;
 
 interface MemorySettingsSheetProps {
   open: boolean;
@@ -160,8 +157,8 @@ export function MemorySettingsSheet({ open, onClose, projectName, editor, autosa
           <>
             <ol className="oms-steps" aria-label="Setup steps">
               {SETUP_STEPS.map((item, index) => (
-                <li key={item.title} className={index === step ? "is-on" : index < step ? "is-done" : undefined} aria-current={index === step ? "step" : undefined}>
-                  <em>{index + 1}</em><span><b>{item.title}</b><small>{item.body}</small></span>
+                <li key={item} className={index === step ? "is-on" : index < step ? "is-done" : undefined} aria-current={index === step ? "step" : undefined}>
+                  <em>{index + 1}</em><span><b>{item}</b></span>
                 </li>
               ))}
             </ol>

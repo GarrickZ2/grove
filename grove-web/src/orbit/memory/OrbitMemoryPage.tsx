@@ -26,12 +26,6 @@ const HUE: PageHue = {
   glow: "color-mix(in oklab, #7c3aed 13%, transparent)",
 };
 
-const STEPS = [
-  { title: "Agents leave notes", body: "While they work, agents log short observations from each chat." },
-  { title: "Grove organizes", body: "On a schedule, an agent merges notes into durable memories." },
-  { title: "Sessions recall", body: "New sessions search Memory before they start work." },
-];
-
 /**
  * Memories that appear while the page is open (after organizing) get a New
  * badge and a settle-in glow. Searches are ignored: they surface older
@@ -194,7 +188,6 @@ function ProjectMemory({ projectId, projectName, initialRunChatId }: { projectId
       <OrbitPageHeader
         icon={Brain}
         title="Memory"
-        subtitle={`What agents have learned in ${projectName} — and what they’ll recall next session.`}
         actions={(
           <>
             <Button variant="ghost" iconOnly aria-label="Refresh Memory" title="Refresh" disabled={project.loading} onClick={refresh}>
@@ -224,14 +217,7 @@ function ProjectMemory({ projectId, projectName, initialRunChatId }: { projectId
           <div className="om-off-in">
             <div className="om-orb" aria-hidden="true"><Brain /></div>
             <h2>Let {projectName} remember</h2>
-            <p>Agents forget everything between sessions. With Memory on, Grove keeps what they learn here — conventions, decisions, gotchas — so the next agent can recall it.</p>
-            <ol className="om-steps">
-              {STEPS.map((step, index) => (
-                <li key={step.title} style={{ animationDelay: `${140 + index * 80}ms` }}>
-                  <em>{index + 1}</em><b>{step.title}</b><span>{step.body}</span>
-                </li>
-              ))}
-            </ol>
+            <p>Keep what agents learn here so the next one can recall it.</p>
             <div className="om-off-acts">
               <Button variant="primary" disabled={project.agentsLoading} onClick={turnOn}>Set up Memory</Button>
             </div>
@@ -244,7 +230,7 @@ function ProjectMemory({ projectId, projectName, initialRunChatId }: { projectId
               <span className={`om-stage-ic${overview.log_count > 0 ? " is-on" : ""}`}><FileText /></span>
               <span className="om-stage-copy">
                 <b key={`n${overview.log_count}`} className="om-bump">{firstLoad ? "—" : countLabel(overview.log_count, "new note", "new notes")}</b>
-                <span>{overview.log_count > 0 ? "waiting to be organized" : "Agents add notes as they work"}</span>
+                {overview.log_count > 0 ? <span>waiting to be organized</span> : null}
               </span>
             </button>
             <div className={`om-flow${stage.busy ? " is-on" : ""}`} aria-hidden="true" />
@@ -306,9 +292,7 @@ function ProjectMemory({ projectId, projectName, initialRunChatId }: { projectId
                 onBack={phone ? () => setPhoneView(phoneDocFrom) : undefined}
                 entities={entities}
                 pendingNotes={overview.log_count}
-                emptyHint={overview.log_count > 0
-                  ? `${countLabel(overview.log_count, "note is", "notes are")} waiting. Organize them to form the first memories.`
-                  : "As agents work here they leave notes; organizing turns them into memories every new session can recall."}
+                emptyHint={overview.log_count > 0 ? `${countLabel(overview.log_count, "note is", "notes are")} waiting` : undefined}
               />
             </div>
           </div>

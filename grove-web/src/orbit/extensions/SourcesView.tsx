@@ -111,7 +111,7 @@ export function SourcesView({ sources, records, recordsLoading, now, onRefresh, 
             onOpenRecord={onOpenRecord}
           />
         ) : (
-          <EmptyState>{sources.length ? "Nothing matches the search." : "Sources you add show up here, with everything Grove found inside them."}</EmptyState>
+          sources.length ? <EmptyState>Nothing matches the search.</EmptyState> : null
         )}
       </div>
 

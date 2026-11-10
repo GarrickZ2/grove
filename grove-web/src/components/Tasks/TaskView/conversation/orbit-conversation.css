@@ -265,6 +265,8 @@
 .ocv-live-now-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ocv-live-now-subject.is-mono { font-family: var(--ocv-mono); font-size: 12px; }
 .ocv-work-body { margin-top: 4px; }
+/* Folded: the agent's latest text reads as the turn's text, under the header. */
+.ocv-work-preview { margin-top: 4px; }
 
 /* ── 4. Decision cards ──────────────────────────────────────────────────
    Pending requests dock in the composer (.oc-ask); resolved ones are a

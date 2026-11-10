@@ -131,30 +131,27 @@ function McpDetail({ record, context }: { record: CatalogRecord; context: Detail
   const targets: MarkTarget[] = buddyScope
     ? context.buddies.map((buddy) => ({ id: buddy.id, name: buddy.name, buddy: { buddyId: buddy.buddyId, avatar: buddy.avatar } }))
     : context.agentOptions.map((agent) => ({ id: agent.id, name: agent.name }));
-  const onCount = targets.filter((target) => access.selected.includes(target.id)).length;
   const scopes: McpScope[] = context.buddies.length ? ["global", "project", "buddy"] : ["global", "project"];
-  const kindLine = `MCP server · ${endpoint?.kind === "remote" ? "remote URL" : endpoint ? "local command" : "no runtime"} · from ${context.sourcesByName.get(item.source) ? sourceDisplayName(context.sourcesByName.get(item.source)!) : item.source}`;
+  const kindLine = `MCP server · ${endpoint?.kind === "remote" ? "remote URL" : endpoint ? "local command" : "no runtime"}`;
   const failing = connection && ["auth_required", "expired", "error"].includes(connection.status) ? connectionPresentation(connection) : null;
 
   return (
     <>
       <div className="oex-dbody oui-scroll">
         <Ident record={record} kindLine={kindLine} />
-        <div className="oex-dsec">
+        {failing || attention || connection || item.description ? <div className="oex-dsec">
           {failing ? (
             <Alert title={failing.label} detail={failing.detail} action={<Button variant="primary" size="sm" onClick={() => context.onOpenMcpSetup(item)}>Open setup</Button>} />
           ) : attention ? (
             <Alert title="Not available to any agent yet" detail="Pick who can use it below. Agents get it on their next session." />
           ) : connection ? (
             <OkLine>{connectionPresentation(connection).label}{connection.checked_at ? ` · checked ${agoText(connection.checked_at * 1000, context.now)}` : ""}</OkLine>
-          ) : (
-            <OkLine>Runs as a local command when an agent connects</OkLine>
-          )}
+          ) : null}
           {item.description ? <p className="oex-desc">{item.description}</p> : null}
-        </div>
+        </div> : null}
 
         <Section
-          title={<>Available to · {onCount} of {targets.length} {buddyScope ? "Buddies" : targets.length === 1 ? "agent" : "agents"}</>}
+          title="Available to"
           aside={<Segmented size="sm" ariaLabel="Scope" value={access.scope} onChange={access.setScope} options={scopes.map((scope) => ({ value: scope, label: SCOPE_LABEL[scope], disabled: !access.loaded || (scope === "project" && !context.projectPath) }))} />}
         >
           {!access.loaded && !access.error ? (
@@ -229,7 +226,7 @@ function UsedBy({ rows, context }: { rows: BindingRow[]; context: DetailContext 
   const agents = new Map(context.agentOptions.map((agent) => [agent.id, agent.name]));
   const buddies = new Map(context.buddies.map((buddy) => [buddy.id, buddy]));
   return (
-    <Section title={<>Used by · {rows.length}</>}>
+    <Section title="Used by">
       {rows.length === 0 ? (
         <p className="oex-hint">No agent or Buddy has this server yet.</p>
       ) : (
@@ -300,7 +297,6 @@ function SkillDetailPane({ record, context }: { record: CatalogRecord; context: 
   const scoped = useMemo(() => scopedInstallRecord(context.installed, item.repo_key, item.repo_path, context.projectPath), [context.installed, context.projectPath, item.repo_key, item.repo_path]);
   const installedIds = useMemo(() => new Set(scoped?.agents.map((binding) => binding.agent_id) ?? []), [scoped]);
   const installedCount = installedIds.size;
-  const source = context.sourcesByName.get(item.source);
   const tools = detail?.metadata.allowed_tools ? parseAllowedTools(detail.metadata.allowed_tools) : [];
   const author = detail?.metadata.fields.author;
   const extraFields = Object.entries(detail?.metadata.fields ?? {}).filter(([key]) => key !== "author");
@@ -312,7 +308,7 @@ function SkillDetailPane({ record, context }: { record: CatalogRecord; context: 
   return (
     <>
       <div className="oex-dbody oui-scroll">
-        <Ident record={record} kindLine={`Skill · from ${source ? sourceDisplayName(source) : item.source}`} />
+        <Ident record={record} kindLine="Skill" />
         <div className="oex-dsec">
           {installedCount > 0
             ? <OkLine>Installed for {installedCount} {installedCount === 1 ? "agent" : "agents"}{scoped?.agents.some((binding) => binding.scope === "project") ? " · includes this project" : ""}</OkLine>

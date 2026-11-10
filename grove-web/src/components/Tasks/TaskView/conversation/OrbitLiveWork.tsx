@@ -52,12 +52,15 @@ export const OrbitLiveWorkHeader = memo(function OrbitLiveWorkHeader({
   summary,
   startedAt,
   expanded,
+  showStep = true,
   onToggle,
 }: {
   sectionId: string;
   summary: LiveWorkSummary;
   startedAt?: number;
   expanded: boolean;
+  /** Off once the agent has text to show in the step's place. */
+  showStep?: boolean;
   onToggle: (sectionId: string) => void;
 }) {
   const { steps, failedSteps, current } = summary;
@@ -76,7 +79,7 @@ export const OrbitLiveWorkHeader = memo(function OrbitLiveWorkHeader({
         {failedSteps > 0 && <span className="ocv-live-meta is-failed">{failedSteps} failed</span>}
         <ChevronRight className={`ocv-work-chev${expanded ? " is-open" : ""}`} aria-hidden="true" />
       </button>
-      {!expanded && current && <LiveStepLine step={current} />}
+      {!expanded && showStep && current && <LiveStepLine step={current} />}
     </div>
   );
 });

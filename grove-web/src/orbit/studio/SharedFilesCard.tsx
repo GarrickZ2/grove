@@ -131,25 +131,19 @@ export function SharedFilesCard({ library, openFilePicker }: SharedFilesCardProp
             <Button variant="secondary" size="sm" disabled={library.isAddingWorkdir} onClick={() => void library.handleAddWorkdir()}><FolderOpen />Link a folder</Button>
           </>
         )}
-      >
-        Drop files here or upload from disk. Every task in this Studio sees them in <span className="oui-mono">resource/</span>; linked folders are shared read-only.
-      </EmptyState>
+      />
     ) : (
-      <EmptyState icon={Folder} title="This folder is empty" action={<Button variant="secondary" size="sm" onClick={openFilePicker}><Upload />Upload here</Button>}>
-        Drop files here, or drag files from another folder onto its name above.
-      </EmptyState>
+      <EmptyState icon={Folder} title="This folder is empty" action={<Button variant="secondary" size="sm" onClick={openFilePicker}><Upload />Upload here</Button>} />
     );
   } else if (tiles.length === 0 && pendingUploads.length === 0 && searchQuery) {
     body = folders.length > 0 || linked.length > 0 ? (
-      <EmptyState icon={Search} title="Only folders match">Open one above, or clear the search.</EmptyState>
+      <EmptyState icon={Search} title="Only folders match" />
     ) : (
       <EmptyState icon={Search} title={`No files match “${searchQuery}”`} action={<Button variant="secondary" size="sm" onClick={() => setSearchQuery("")}>Clear search</Button>} />
     );
   } else if (tiles.length === 0 && pendingUploads.length === 0) {
     body = (
-      <EmptyState icon={Upload} title="No files here yet" action={<Button variant="secondary" size="sm" onClick={openFilePicker}><Upload />Upload here</Button>}>
-        Only folders at this level. Drop files to add them here.
-      </EmptyState>
+      <EmptyState icon={Upload} title="No files here yet" action={<Button variant="secondary" size="sm" onClick={openFilePicker}><Upload />Upload here</Button>} />
     );
   } else {
     body = (

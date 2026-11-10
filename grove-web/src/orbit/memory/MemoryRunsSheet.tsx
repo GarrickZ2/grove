@@ -109,7 +109,7 @@ export function MemoryRunsSheet({ open, onClose, projectId, overview, runs }: Me
           {runs.loading && runs.runs.length === 0 ? (
             <div className="omr-loading" aria-hidden="true"><span className="oui-skel" /><span className="oui-skel" /><span className="oui-skel" /></div>
           ) : runs.runs.length === 0 ? (
-            <EmptyState title="No organization runs yet">Runs appear here when Grove organizes notes on schedule, after a task is archived, or when you organize by hand.</EmptyState>
+            <EmptyState title="No organization runs yet" />
           ) : runs.runs.map((run, index) => {
             const changes = runChanges(run.result);
             return (

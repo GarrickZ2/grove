@@ -13,8 +13,6 @@
 .oui-hdr-copy{flex:1;min-width:0}
 .oui-hdr h1{margin:0;font-size:24px;font-weight:650;letter-spacing:-.025em;line-height:1.2;color:var(--o-text);transition:font-size var(--o-dur-condense) var(--o-ease-out)}
 .oui-hdr.is-condensed h1{font-size:15px}
-.oui-hdr p{margin:4px 0 0;font-size:13px;line-height:1.5;color:var(--o-muted);max-height:40px;overflow:hidden;transition:opacity 200ms,max-height var(--o-dur-condense),margin var(--o-dur-condense)}
-.oui-hdr.is-condensed p{opacity:0;max-height:0;margin:0}
 .oui-hdr-aside{display:flex;align-items:center;gap:8px;flex-shrink:0}
 
 /* Chip note + Saved confirmation (pops in, draws its check, fades out) */

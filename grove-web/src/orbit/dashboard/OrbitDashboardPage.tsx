@@ -199,9 +199,6 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
 
       {isGitRepo && !isStudio ? (
         <section className="odb-repo oui-rise" style={{ animationDelay: "50ms" }} aria-label="Main checkout">
-          <div className="odb-repo-l">
-            <GitBranch aria-hidden="true" />Main checkout <span className="oui-mono oui-truncate">{currentStatus.currentBranch}</span>
-          </div>
           <div className="odb-stats">
             <span className="odb-stat" title={currentStatus.hasOrigin ? undefined : "No upstream on origin"}><ArrowUp aria-hidden="true" /><b key={`a${ahead}`} className="odb-bump">{ahead}</b> ahead</span>
             <span className="odb-stat"><ArrowDown aria-hidden="true" /><b key={`b${behind}`} className="odb-bump">{behind}</b> behind</span>
@@ -229,8 +226,7 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
       ) : !isGitRepo && !isStudio ? (
         <section className="odb-repo oui-rise is-warn" style={{ animationDelay: "50ms" }} aria-label="Repository">
           <div className="odb-repo-l"><GitBranch aria-hidden="true" />Not a Git repository</div>
-          <span className="odb-repo-note">Sessions and notes work here. Initialize Git to unlock tasks, review and commits.</span>
-          <Button variant="primary" size="sm" disabled={isInitializingGit} onClick={() => void handleInitGit()}>
+          <Button className="odb-repo-end" variant="primary" size="sm" disabled={isInitializingGit} onClick={() => void handleInitGit()}>
             {isInitializingGit ? "Initializing…" : "Initialize Git"}
           </Button>
         </section>
@@ -287,7 +283,6 @@ export function OrbitDashboardPage({ onNavigate }: OrbitDashboardPageProps) {
             style={{ animationDelay: "200ms" }}
             aria-label="Usage"
             title="Usage"
-            hint="last 7 days"
             actions={<Button variant="ghost" iconOnly size="sm" aria-label="Open statistics" title="Statistics" onClick={() => onNavigate("statistics")}><BarChart2 /></Button>}
           >
             <WeeklyUsage stats={tokenStats} />

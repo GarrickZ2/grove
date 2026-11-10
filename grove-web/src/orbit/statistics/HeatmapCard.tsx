@@ -15,7 +15,7 @@ export function HeatmapCard({ cells }: { cells: HeatmapCell[] }) {
   const summary = peak ? `${turnsText(grid.total)}; busiest ${peak.day} ${pad(peak.hour)}:00 UTC with ${turnsText(peak.turns)}` : "No turns in this range";
 
   return (
-    <Card className="ostat-heat-card oui-rise" style={{ animationDelay: "200ms" }} aria-label="Activity by weekday and hour" title="When agents work" hint="turns by weekday and hour · UTC">
+    <Card className="ostat-heat-card oui-rise" style={{ animationDelay: "200ms" }} aria-label="Activity by weekday and hour" title="When agents work" hint="UTC">
       <div className="ostat-heat" role="img" aria-label={summary}>
         <div className="ostat-heat-days" aria-hidden="true">
           {HEAT_DAYS.map((day) => <span key={day}>{day}</span>)}

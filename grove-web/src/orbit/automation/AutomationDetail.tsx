@@ -93,7 +93,7 @@ export function AutomationDetail({
         {managedBy ? (
           <div className="oau-sec oau-managed">
             <Brain aria-hidden="true" />
-            <span><b>Managed by {managedBy}.</b> Grove runs this on its own. Its schedule and settings live in {managedBy}.</span>
+            <span><b>Managed by {managedBy}</b></span>
             {onOpenOwner ? <Button variant="secondary" size="sm" onClick={onOpenOwner}><Settings2 />Open {managedBy}</Button> : null}
           </div>
         ) : (
@@ -116,10 +116,9 @@ export function AutomationDetail({
 
         <div className="oau-sec">
           <span className="oau-lbl">When</span>
-          <button type="button" className="oau-sentence" onClick={editable ? onEdit : undefined} disabled={!editable}>
+          <button type="button" className="oau-sentence" onClick={editable ? onEdit : undefined} disabled={!editable} title={!a.run_once_at && a.schedule_cron ? a.schedule_cron : undefined}>
             <Clock4 aria-hidden="true" />
             <span className="oui-truncate">{scheduleText(a, now)}</span>
-            {!a.run_once_at && a.schedule_cron ? <code>{a.schedule_cron}</code> : null}
           </button>
           {triggers.length ? (
             <div className="oau-chips">
@@ -149,7 +148,7 @@ export function AutomationDetail({
           ) : runs === null ? (
             <div className="oau-runs" aria-busy="true">{[0, 1, 2].map((i) => <div key={i} className="oau-run is-skel"><span className="oui-skel" /></div>)}</div>
           ) : runs.length === 0 ? (
-            <p className="oau-note">{editable ? "No runs yet. Run it now to see the result here." : "No runs have been recorded yet."}</p>
+            <p className="oau-note">No runs yet</p>
           ) : (
             <div className="oau-runs">
               {runs.map((run, index) => (

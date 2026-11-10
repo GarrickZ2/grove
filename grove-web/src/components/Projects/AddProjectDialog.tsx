@@ -366,22 +366,15 @@ export function AddProjectDialog({
             <FormArea mode={mode} codingTab={codingTab}>
               <DialogBody>
                 {mode === "studio" ? (
-                  <>
-                    <DialogField label="Studio name">
-                      <input
-                        type="text"
-                        value={studioName}
-                        onChange={(e) => { setStudioName(e.target.value); setError(""); }}
-                        placeholder="My AI Workspace"
-                        className={`oui-field${error ? " is-invalid" : ""}`}
-                      />
-                    </DialogField>
-                    <p className="oui-dlg-callout">
-                      <Sparkles aria-hidden="true" />
-                      Upload files, chat with AI agents, and get results — perfect for data
-                      analysis, document processing, and report generation.
-                    </p>
-                  </>
+                  <DialogField label="Studio name">
+                    <input
+                      type="text"
+                      value={studioName}
+                      onChange={(e) => { setStudioName(e.target.value); setError(""); }}
+                      placeholder="My AI Workspace"
+                      className={`oui-field${error ? " is-invalid" : ""}`}
+                    />
+                  </DialogField>
                 ) : (
                   <>
                     <Segmented
@@ -424,11 +417,8 @@ export function AddProjectDialog({
                         <p className="oui-dlg-callout">
                           <Globe aria-hidden="true" />
                           <span>
-                            Clones into <code>~/.grove/cloned/</code> and registers
-                            it as a Grove project. HTTPS works with public repos; SSH URLs
-                            require an active <code>ssh-agent</code> with the
-                            key loaded (interactive prompts are disabled and will fail fast).
-                            Times out after 5 minutes.
+                            Clones into <code>~/.grove/cloned/</code>. SSH URLs need the key
+                            loaded in <code>ssh-agent</code>.
                           </span>
                         </p>
                       </>
@@ -461,10 +451,6 @@ export function AddProjectDialog({
                             className="oui-field"
                           />
                         </DialogField>
-                        <p className="oui-dlg-callout">
-                          Register an existing folder as a Grove project. Git repositories get full
-                          task support; non-git folders can be initialized later.
-                        </p>
                       </>
                     ) : (
                       <>
@@ -482,7 +468,7 @@ export function AddProjectDialog({
                             {browse(handleBrowseParent)}
                           </span>
                         </DialogField>
-                        <DialogField label="Project name" note="Used as both the directory name and the Grove project name.">
+                        <DialogField label="Project name">
                           <input
                             type="text"
                             value={name}

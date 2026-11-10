@@ -99,9 +99,7 @@ export function InstructionsCard({ state }: { state: WorkspaceInstructions }) {
         icon={FileText}
         title="No instructions yet"
         action={<Button variant="secondary" size="sm" onClick={() => setIsEditingInstructions(true)}><Edit3 />Write instructions</Button>}
-      >
-        Tell every agent in this Studio how to work: tone, rules, where new files go. Start from a section above.
-      </EmptyState>
+      />
     );
   }
 

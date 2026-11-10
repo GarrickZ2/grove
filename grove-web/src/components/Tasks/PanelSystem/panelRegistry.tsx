@@ -280,7 +280,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-accent)",
     category: "info",
     available: always,
-    orbit: { hue: PANEL_HUES.stone, glyph: Info, context: () => "This task at a glance", body: "scroll" },
+    orbit: { hue: PANEL_HUES.stone, glyph: Info, body: "scroll" },
     render: (ctx) => <StatsTab projectId={ctx.projectId} task={ctx.task} variant={ctx.orbitHeader ? "orbit" : "default"} />,
   },
   {
@@ -310,7 +310,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-error)",
     category: "info",
     available: (c) => !c.isStudio,
-    orbit: { hue: PANEL_HUES.amber, context: () => "From code review", body: "scroll" },
+    orbit: { hue: PANEL_HUES.amber, body: "scroll" },
     render: (ctx) => <CommentsTab projectId={ctx.projectId} task={ctx.task} />,
   },
 ];

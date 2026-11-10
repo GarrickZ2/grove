@@ -34,7 +34,7 @@ export function scheduleText(a: Pick<Automation, "schedule_cron" | "run_once_at"
 /** Right-hand column of a list row: a compact countdown plus its caption. */
 export function nextRunBadge(a: Automation, now: number): { value: string; caption: string } | null {
   if (scheduleEnded(a)) return { value: "Ended", caption: a.run_once_at ? "ran once" : "window over" };
-  if (!a.enabled) return { value: "Off", caption: "paused" };
+  if (!a.enabled) return { value: "Off", caption: "" };
   if (!a.next_run_at) return null;
   const at = a.next_run_at * 1000;
   const diff = Math.max(0, at - now);
@@ -44,14 +44,12 @@ export function nextRunBadge(a: Automation, now: number): { value: string; capti
   return { value, caption };
 }
 
-/** Footer status sentence next to the enable toggle. */
+/** Footer status next to the enable toggle; the toggle (or chip) already says on / off. */
 export function footLine(a: Automation, managedBy: string | null): string {
-  if (scheduleEnded(a)) return a.run_once_at ? "Done · this one-time run has finished" : "Ended · its schedule window is over";
-  if (!a.enabled) return managedBy ? `Paused · turn it on in ${managedBy}` : "Off · it won’t run until you turn it on";
-  // A managed row shows its on/off state in a chip beside this line.
-  const on = managedBy ? "" : "On · ";
-  if (a.next_run_at) return `${on}${managedBy ? "Next" : "next"} run ${relativeText(a.next_run_at * 1000)}`;
-  return a.event_triggers?.length ? `${on}${managedBy ? "Runs" : "runs"} when its event fires` : managedBy ? `Scheduled by ${managedBy}` : "On";
+  if (scheduleEnded(a)) return a.run_once_at ? "Done" : "Ended";
+  if (!a.enabled) return "";
+  if (a.next_run_at) return `Next run ${relativeText(a.next_run_at * 1000)}`;
+  return a.event_triggers?.length ? "Runs when its event fires" : managedBy ? `Scheduled by ${managedBy}` : "";
 }
 
 export function taskTargetText(a: Automation, taskName: (id: string) => string | undefined): string {
@@ -191,9 +189,10 @@ export function buildDayTimeline(
 
 export function dayLine(t: DayTimeline): string {
   const parts: string[] = [];
-  parts.push(t.ran === 0 ? `No runs in the last ${TIMELINE_HALF_HOURS}h` : `${t.ran} ${t.ran === 1 ? "run" : "runs"} in the last ${TIMELINE_HALF_HOURS}h`);
+  // An empty lane says "nothing ran, nothing coming" by itself.
+  if (t.ran) parts.push(`${t.ran} ${t.ran === 1 ? "run" : "runs"} in the last ${TIMELINE_HALF_HOURS}h`);
   if (t.live) parts.push(`${t.live} running`);
   if (t.failed) parts.push(`${t.failed} failed`);
-  parts.push(t.nextAt ? `next at ${clock(t.nextAt)}` : `nothing scheduled in the next ${TIMELINE_HALF_HOURS}h`);
+  if (t.nextAt) parts.push(`next at ${clock(t.nextAt)}`);
   return parts.join(" · ");
 }

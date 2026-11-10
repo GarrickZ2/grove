@@ -14,7 +14,7 @@ interface MemoryDetailCardProps {
   onPaneChange: (pane: DetailPane) => void;
   entities: MemoryEntitiesState;
   /** Shown when the project has no memories yet. */
-  emptyHint: string;
+  emptyHint?: string;
   /** Phone: the page switches panes itself, so the card drops its switch and offers Back from a memory. */
   onBack?: () => void;
   /** Notes waiting to be organized; the mind map shows them as faint glimmers. */
@@ -119,8 +119,8 @@ export function MemoryDetailCard({ pane, onPaneChange, entities, emptyHint, onBa
       )}
     >
       {empty ? (
-        <EmptyState title={entities.submitted ? "Nothing to show" : "Nothing remembered yet"}>
-          {entities.submitted ? "No memories match this search." : emptyHint}
+        <EmptyState title={entities.submitted ? "No memories match" : "Nothing remembered yet"}>
+          {entities.submitted ? null : emptyHint}
         </EmptyState>
       ) : pane === "graph" ? (
         <div className="omd-graph">
@@ -137,7 +137,7 @@ export function MemoryDetailCard({ pane, onPaneChange, entities, emptyHint, onBa
       ) : entities.selectedId ? (
         <DocumentPane entities={entities} />
       ) : (
-        <EmptyState title="Pick a memory">Choose one on the left to read it.</EmptyState>
+        <EmptyState title="Pick a memory" />
       )}
     </Card>
   );

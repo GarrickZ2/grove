@@ -89,8 +89,8 @@ export function CatalogView({ records, loading, error, onRetry, agents, buddies,
       >
         <ExtIcon kind={item.kind} name={item.name} manifest={item.manifest} plugin={plugin} />
         <span className="oex-ecopy">
-          <b><span className="oui-truncate">{plugin?.name || item.name}</span><span className="oex-type">{KIND_LABEL[item.kind]}</span></b>
-          <small>{attention ? attentionText(record) : [version, accessText(record)].filter(Boolean).join(" · ")}</small>
+          <b><span className="oui-truncate">{plugin?.name || item.name}</span>{kind === "all" ? <span className="oex-type">{KIND_LABEL[item.kind]}</span> : null}</b>
+          <small>{attention ? attentionText(record) : [version, marks.length === 0 ? accessText(record) : item.install_status === "partial" ? "partial" : null].filter(Boolean).join(" · ")}</small>
         </span>
         {attention ? <StatusDot tone="warn" ring label="Needs attention" /> : marks.length ? (
           <span className="oex-stack" aria-label={marks.map((mark) => mark.name).join(", ")}>

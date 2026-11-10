@@ -13,10 +13,10 @@ import type { SettingsPageProps } from "./types";
 
 type Access = "off" | "ask" | "allow";
 
-const ACCESS_OPTIONS: { value: Access; label: string }[] = [
+const ACCESS_OPTIONS: { value: Access; label: string; title?: string }[] = [
   { value: "off", label: "Off" },
-  { value: "ask", label: "Ask" },
-  { value: "allow", label: "Allow" },
+  { value: "ask", label: "Ask", title: "Each chat session asks you once first" },
+  { value: "allow", label: "Allow", title: "No asking" },
 ];
 
 function access(allowed: boolean, bypass: boolean): Access {
@@ -132,24 +132,21 @@ export function BrowserControlGroup({ settings }: SettingsPageProps) {
     : extensionStatus?.updateAvailable
       ? `Companion v${extensionStatus.installedVersion ?? "unknown"} is connected; v${extensionStatus.requiredVersion} is bundled with Grove. Update and reload it in your browser.`
       : extensionStatus?.compatible
-        ? `Companion v${extensionStatus.installedVersion} is installed, compatible, and connected.`
+        ? undefined
         : extensionConnected
-          ? "Companion connected; checking protocol compatibility…"
-          : "Connects Grove to your browser. The bundled installer walks you through it.";
+          ? "Checking compatibility…"
+          : undefined;
 
   return (
     <>
-      <Group title="Browser control" hint="Agents can open, read, and work on web pages." anchorId="browser">
-        <Row
-          title="Allow AI browser action"
-          description="Let agents open, read, and interact with web pages."
-        >
+      <Group title="Browser control" anchorId="browser">
+        <Row title="Allow AI browser action">
           <Toggle checked={browserControlEnabled} onChange={setBrowserControlEnabled} label="Allow AI browser action" />
         </Row>
         <Row
           dim={!browserControlEnabled}
           title="Your browser"
-          description="Agents start in an isolated test browser. Ask: each chat session asks you once before using your browser. Allow: no asking. Either way, an agent there can act as you on any site you're logged in to."
+          description="An agent here can act as you on any site you're logged in to."
         >
           <Segmented
             value={access(browserPersonalAllowed, browserPersonalBypass)}
@@ -163,7 +160,7 @@ export function BrowserControlGroup({ settings }: SettingsPageProps) {
           <>
             <Row
               title="Sensitive tools in your browser"
-              description="Off by default. Reading cookies, storage, network traffic and console logs, and running page scripts, stay limited to the test browser."
+              description="Cookies, storage, network traffic, console logs and page scripts."
             >
               <Toggle
                 checked={browserSensitiveTools}
@@ -204,10 +201,10 @@ export function BrowserControlGroup({ settings }: SettingsPageProps) {
         ) : null}
       </Group>
 
-      <Group title="Computer use" hint="Agents can see and operate apps on this computer." anchorId="computer">
+      <Group title="Computer use" anchorId="computer">
         <Row
           title="Your computer"
-          description="Ask: each chat session asks you once before using your computer. Allow: no asking. An agent here can see your screen and operate any app, as you can."
+          description="An agent here can see your screen and operate any app, as you can."
         >
           <Segmented
             value={access(computerUseAllowed, computerUseBypass)}

@@ -76,16 +76,12 @@ export function OrbitProjectsPage({ onNavigate, initialTab }: OrbitProjectsPageP
   const empty = (() => {
     if (searching && inTab.length > 0) {
       return (
-        <EmptyState icon={SearchX} title={`No projects match “${query.trim()}”`} action={<Button size="sm" onClick={() => setQuery("")}>Clear search</Button>}>
-          Search looks at project names and paths.
-        </EmptyState>
+        <EmptyState icon={SearchX} title={`No projects match “${query.trim()}”`} action={<Button size="sm" onClick={() => setQuery("")}>Clear search</Button>} />
       );
     }
     if (tab === "archived") {
       return (
-        <EmptyState icon={Archive} size="lg" title="No archived projects">
-          Archive a project from its ⋯ menu to hide it here without losing its tasks or history.
-        </EmptyState>
+        <EmptyState icon={Archive} size="lg" title="No archived projects" />
       );
     }
     if (projects.length === 0) {
@@ -101,9 +97,7 @@ export function OrbitProjectsPage({ onNavigate, initialTab }: OrbitProjectsPageP
               <Button onClick={() => openAddDialog("studio")}><Sparkles />New Studio project</Button>
             </>
           )}
-        >
-          Add a Git repo for coding agents, or start a Studio for design, docs and assets.
-        </EmptyState>
+        />
       );
     }
     return (
@@ -112,9 +106,7 @@ export function OrbitProjectsPage({ onNavigate, initialTab }: OrbitProjectsPageP
         size="lg"
         title={tab === "studio" ? "No Studio projects" : "No coding projects"}
         action={<Button variant="primary" onClick={() => openAddDialog(addMode)}><Plus />{tab === "studio" ? "New Studio project" : "Add a project"}</Button>}
-      >
-        {tab === "studio" ? "Studios hold design, docs and assets for agents — no Git needed." : "Add a Git repo so agents can work on it in their own worktrees."}
-      </EmptyState>
+      />
     );
   })();
 

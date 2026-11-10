@@ -26,6 +26,17 @@ describe("completed work grouping", () => {
     expect(buildRenderItems(JSON.parse(JSON.stringify(messages)))).toEqual(result);
   });
 
+  it("folds subagents into the work group for Orbit, live and settled", () => {
+    const messages: ChatMessage[] = [user, assistant("Investigating"), tool("read"), child, notice, assistant("Final answer")];
+    const settled = buildRenderItems(messages, false, { groupLiveWork: true });
+    expect(settled.map(label)).toEqual(["user", "work-summary", "session_notice", "Final answer"]);
+    const summary = settled[1];
+    if (summary.kind !== "work-summary") throw new Error("Missing summary");
+    expect(summary.items.map((item) => item.message.type)).toEqual(["assistant", "tool", "subagent"]);
+    const live = buildRenderItems([user, tool("read"), child], true, { groupLiveWork: true });
+    expect(live.map(label)).toEqual(["user", "work-summary"]);
+  });
+
   it("keeps a live turn chronological and applies folding only after it finishes", () => {
     const messages = [user, assistant("Working"), tool("read"), notice, child, tool("wait")];
     expect(buildRenderItems(messages, true).map(label)).toEqual(["user", "Working", "tool-section", "session_notice", "subagent", "tool-section"]);
@@ -37,7 +48,7 @@ describe("completed work grouping", () => {
     const rich: ChatMessage = { type: "assistant", content: "Image", complete: true, blocks: [{ type: "image", data: "base64", mime_type: "image/png" }] };
     const result = buildRenderItems([user, tool("before"), divider, tool("middle"), rich, tool("after"), assistant("Answer")]);
     expect(result.map(label)).toEqual(["user", "work-summary", "compaction", "work-summary", "Image", "work-summary", "Answer"]);
-    expect(result.filter((item) => item.kind === "work-summary").map((item) => item.sectionId)).toEqual(["work-1-1", "work-3-3", "work-5-5"]);
+    expect(result.filter((item) => item.kind === "work-summary").map((item) => item.sectionId)).toEqual(["work-1", "work-3", "work-5"]);
   });
 
   it("groups a live turn's process for Orbit and settles it into a collapsed summary", () => {
@@ -47,14 +58,21 @@ describe("completed work grouping", () => {
     expect(live.map(label)).toEqual(["user", "work-summary", "session_notice", "So far"]);
     const group = live[1];
     if (group.kind !== "work-summary") throw new Error("Missing live group");
-    expect(group).toMatchObject({ sectionId: "live-1", live: true, startedAt: 1000 });
+    expect(group).toMatchObject({ sectionId: "work-1", live: true, startedAt: 1000 });
     expect(group.items.map((item) => item.index)).toEqual([1, 2, 4]);
     // New steps keep the group's id (and so its disclosure).
     const more = buildRenderItems([sent, assistant("Looking"), tool("read"), notice, tool("wait"), assistant("Next"), tool("edit")], true, { groupLiveWork: true });
-    expect(more[1]).toMatchObject({ kind: "work-summary", sectionId: "live-1" });
+    expect(more[1]).toMatchObject({ kind: "work-summary", sectionId: "work-1" });
     const settled = buildRenderItems([sent, assistant("Looking"), tool("read"), tool("wait"), assistant("Answer")], false, { groupLiveWork: true });
-    expect(settled.find((item) => item.kind === "work-summary")).toMatchObject({ sectionId: "work-1-3" });
+    expect(settled.find((item) => item.kind === "work-summary")).toMatchObject({ sectionId: "work-1" });
     expect(settled.some((item) => item.kind === "work-summary" && item.live)).toBe(false);
+    // Folded, the group shows the agent's latest text unless more text follows it.
+    expect(more[1]).toMatchObject({ previewText: "Next", textFollows: false });
+    expect(group).toMatchObject({ textFollows: true });
+    expect(group).not.toHaveProperty("previewText", expect.anything());
+    expect(settled.find((item) => item.kind === "work-summary")).not.toHaveProperty("previewText", expect.anything());
+    const cancelled = buildRenderItems([sent, assistant("Looking"), tool("read"), tool("wait", { status: "failed" })], false, { groupLiveWork: true });
+    expect(cancelled.find((item) => item.kind === "work-summary")).toMatchObject({ previewText: "Looking" });
   });
 
   it("does not group a live turn before its first tool, and keeps thinking in the group", () => {

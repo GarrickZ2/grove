@@ -36,7 +36,7 @@ export function UsageCard({ model, dataBucket, bucket, allowedBuckets, onBucket,
       style={{ animationDelay: "120ms" }}
       aria-label="Usage over time"
       title={`${METRIC_LABEL[metric]} ${noun}`}
-      hint={`per ${BUCKET_NOUN[dataBucket]}${solo ? ` · all of it ${dataBucket === "hourly" ? "at" : "on"} ${slotLabel(solo.start, dataBucket, false)}` : ""}`}
+      hint={solo ? `all of it ${dataBucket === "hourly" ? "at" : "on"} ${slotLabel(solo.start, dataBucket, false)}` : null}
       actions={(
         <>
           <Segmented

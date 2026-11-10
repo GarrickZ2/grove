@@ -23,7 +23,7 @@ describe("nextRunBadge", () => {
     expect(nextRunBadge(auto({ next_run_at: sec(9, 0, 15) }), NOW)?.caption).toBe("Sat");
   });
   it("shows paused and finished rows instead of a countdown", () => {
-    expect(nextRunBadge(auto({ enabled: false, next_run_at: sec(23) }), NOW)).toEqual({ value: "Off", caption: "paused" });
+    expect(nextRunBadge(auto({ enabled: false, next_run_at: sec(23) }), NOW)).toEqual({ value: "Off", caption: "" });
     expect(nextRunBadge(auto({ enabled: false, run_once_at: 1_577_836_800 }), NOW)?.value).toBe("Ended");
     expect(nextRunBadge(auto(), NOW)).toBeNull();
   });
@@ -31,9 +31,9 @@ describe("nextRunBadge", () => {
 
 describe("footLine", () => {
   it("explains whether and when the row runs", () => {
-    expect(footLine(auto({ enabled: false }), null)).toMatch(/^Off/);
-    expect(footLine(auto({ enabled: false }), "Memory")).toBe("Paused · turn it on in Memory");
-    expect(footLine(auto({ event_triggers: ["task.merged"] }), null)).toBe("On · runs when its event fires");
+    expect(footLine(auto({ enabled: false }), null)).toBe("");
+    expect(footLine(auto({ enabled: false }), "Memory")).toBe("");
+    expect(footLine(auto({ event_triggers: ["task.merged"] }), null)).toBe("Runs when its event fires");
     expect(footLine(auto({ next_run_at: Math.floor(Date.now() / 1000) + 7200 }), "Memory")).toBe("Next run in 2h");
   });
 });
@@ -77,10 +77,10 @@ describe("buildDayTimeline", () => {
     expect([t.ran, t.failed, t.live, t.upcoming]).toEqual([3, 1, 1, 2]);
     expect(dayLine(t)).toMatch(/^3 runs in the last 12h · 1 running · 1 failed · next at 23:00$/);
   });
-  it("reads plainly when nothing happened or is coming", () => {
+  it("stays empty when nothing happened or is coming", () => {
     const t = buildDayTimeline([auto({ enabled: false, next_run_at: sec(23) })], new Map(), () => false, NOW);
     expect(t.marks).toEqual([]);
-    expect(dayLine(t)).toBe("No runs in the last 12h · nothing scheduled in the next 12h");
+    expect(dayLine(t)).toBe("");
   });
 });
 

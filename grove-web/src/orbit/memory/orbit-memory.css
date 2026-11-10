@@ -121,11 +121,6 @@
 .om-orb{width:88px;height:88px;margin:0 auto;border-radius:28px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(150deg,#c4b5fd,#6d28d9);box-shadow:inset 0 1px 0 rgb(255 255 255 / 40%),0 24px 50px -20px rgb(109 40 217 / 80%);animation:om-breathe 3.2s ease-in-out infinite}
 .om-orb svg{width:40px;height:40px;stroke-width:1.6}
 @keyframes om-breathe{50%{transform:translateY(-4px);box-shadow:inset 0 1px 0 rgb(255 255 255 / 40%),0 30px 60px -20px rgb(109 40 217 / 90%)}}
-.om-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0 0 24px;padding:0;list-style:none;text-align:left}
-.om-steps li{padding:14px;border-radius:var(--o-radius-lg);border:1px solid var(--o-border);background:var(--o-bg);animation:oui-rise 500ms var(--o-ease-out) both}
-.om-steps em{display:inline-flex;width:22px;height:22px;border-radius:7px;align-items:center;justify-content:center;font-style:normal;font-size:11.5px;font-weight:700;background:var(--om-mem-soft);color:var(--om-mem)}
-.om-steps b{display:block;margin-top:10px;font-size:13px;font-weight:600}
-.om-steps span{display:block;margin-top:3px;font-size:12px;line-height:1.45;color:var(--o-muted)}
 .om-off-acts{display:flex;justify-content:center;gap:8px}
 
 /* Sheet content (the sheet itself: ../ui) */

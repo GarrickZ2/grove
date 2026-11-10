@@ -42,7 +42,6 @@ export function OrbitStatisticsPage({ onNavigate }: OrbitStatisticsPageProps) {
   const chart = buildChart(slots, metricType, unit, averageRates, dark, (agent) => resolveAgentIcon(agent).label);
 
   const needsProject = scope === "project" && !projectId;
-  const where = effectiveScope === "project" && selectedProject ? <> in <b title={selectedProject.name}>{selectedProject.name}</b></> : " across every project";
 
   return (
     <OrbitPage className={`ostat${dark ? " is-dark" : ""}`} hue={HUE}>
@@ -50,7 +49,6 @@ export function OrbitStatisticsPage({ onNavigate }: OrbitStatisticsPageProps) {
         raised
         icon={BarChart3}
         title="Statistics"
-        subtitle={<>Agent time and tokens{where}</>}
         actions={(
           <>
             <Segmented

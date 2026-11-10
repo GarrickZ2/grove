@@ -63,6 +63,7 @@ describe("AgentContextCard", () => {
     // Off sources keep their glyph colour; the Off pill shows and the estimate dims.
     expect(rows[1].classList.contains("is-off")).toBe(true);
     expect(rows[1].querySelector(".odb-off")?.textContent).toBe("Off");
+    expect(rows[1].querySelector(".odb-src-copy > span")).toBeNull();
     expect(rows[1].querySelector(".odb-tok")?.classList.contains("is-dim")).toBe(true);
     // Repo instruction files have no Grove page: no chevron, not a button.
     expect(rows[0].tagName).toBe("DIV");

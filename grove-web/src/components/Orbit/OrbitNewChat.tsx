@@ -25,7 +25,7 @@ import { hasSeen, markSeen, STARTERS_DONE_KEY } from "../../orbit/firstrun/stora
 import { useRecentSessions } from "../../orbit/dashboard/useRecentSessions";
 import { useLiveChats } from "../../orbit/dashboard/useLiveChats";
 import { liveChatKey } from "../../orbit/dashboard/liveChats";
-import { taskLabel } from "../../orbit/dashboard/dashboardModel";
+import { LOCAL_TASK_ID, taskLabel } from "../../orbit/dashboard/dashboardModel";
 import { shortAgo } from "../../orbit/ui/format";
 import { useNow } from "../../orbit/ui/useNow";
 import { OrbitComposer, OrbitSendOrb } from "../Tasks/TaskView/composer/OrbitComposer";
@@ -562,7 +562,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
                       {createElement(agentIconComponent(chat.agent), { size: 15, className: "orbit-new__continue-icon" })}
                       <span className="orbit-new__continue-copy">
                         <b title={chat.title}>{chat.title || "Untitled session"}</b>
-                        <span>{taskLabel(taskId, taskNames.get(taskId))}</span>
+                        {taskId !== LOCAL_TASK_ID ? <span>{taskLabel(taskId, taskNames.get(taskId))}</span> : null}
                       </span>
                       {running && <i className="orbit-new__live" role="img" aria-label="Running" />}
                       <span className="orbit-new__continue-ago">{activeAt ? shortAgo(activeAt, now) : ""}</span>

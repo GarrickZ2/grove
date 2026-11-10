@@ -65,7 +65,7 @@ export function AgentsPage({ settings }: SettingsPageProps) {
   return (
     <>
       <Group title="Default agent" anchorId="default">
-        <Row title="Coding agent" description="Used for new chats.">
+        <Row title="Coding agent">
           <div className="ost-picker">
             {baseAgentsLoading ? (
               <div className="ost-picker-loading" aria-label="Loading agents"><span className="oui-skel" /></div>
@@ -88,7 +88,6 @@ export function AgentsPage({ settings }: SettingsPageProps) {
         <Row
           leading={<Lead><Package /></Lead>}
           title="Agent Marketplace"
-          description="Browse, install, and configure ACP agents"
           onClick={() => setShowMarketplace(true)}
         />
         <Row
@@ -108,13 +107,13 @@ export function AgentsPage({ settings }: SettingsPageProps) {
       <BrowserControlGroup settings={settings} />
 
       <Group title="Sending" anchorId="sending">
-        <Row title="While the agent is working" description={sendMode === "interrupt" ? "Your message stops the current turn and goes out right away." : "Your message waits in the queue until the turn ends."}>
+        <Row title="While the agent is working">
           <Segmented<SendMode>
             ariaLabel="While the agent is working"
             value={sendMode}
             options={[
-              { value: "queue", label: "Queue" },
-              { value: "interrupt", label: "Interrupt" },
+              { value: "queue", label: "Queue", title: "Your message waits until the turn ends" },
+              { value: "interrupt", label: "Interrupt", title: "Your message stops the current turn" },
             ]}
             onChange={setSendMode}
           />
@@ -122,7 +121,7 @@ export function AgentsPage({ settings }: SettingsPageProps) {
       </Group>
 
       <Group title="Chat history" anchorId="history">
-        <Row title="Messages to load" description="How much history this browser downloads.">
+        <Row title="Messages to load">
           <Segmented
             ariaLabel="Messages to load"
             value={chatHistoryRecentTurns > 0 ? "recent" : "all"}
@@ -142,7 +141,7 @@ export function AgentsPage({ settings }: SettingsPageProps) {
           />
         </Row>
         {chatHistoryRecentTurns > 0 ? (
-          <Row title="Recent turns" description="How many of the latest turns to download.">
+          <Row title="Recent turns">
             <input
               type="number"
               min={1}

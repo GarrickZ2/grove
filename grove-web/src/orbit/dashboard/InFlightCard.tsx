@@ -39,9 +39,7 @@ export function InFlightCard(props: InFlightCardProps) {
           <EmptyState
             title="No tasks in flight"
             action={<Button variant="secondary" size="sm" onClick={onNewTask}><Plus />New task</Button>}
-          >
-            Each task gets its own worktree and agent session.
-          </EmptyState>
+          />
         ) : null}
         {tasks.map((task, index) => (
           <TaskRow

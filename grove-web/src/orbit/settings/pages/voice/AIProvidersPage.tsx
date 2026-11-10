@@ -33,7 +33,6 @@ export function AIProvidersPage() {
   return (
     <Group
       title="Provider profiles"
-      hint="Shared credentials and model defaults used by AI features."
       anchorId="profiles"
       actions={(
         empty ? undefined : (

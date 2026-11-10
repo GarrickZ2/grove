@@ -82,7 +82,7 @@ describe("Orbit New starter prompts", () => {
     expect(rows.length).toBe(2);
     expect(rows[0].textContent).toContain("Fix login");
     expect(rows[0].querySelector('[aria-label="Running"]')).not.toBeNull();
-    expect(rows[1].textContent).toContain("Main checkout");
+    expect(rows[1].querySelector(".orbit-new__continue-copy > span")).toBeNull();
     expect(rows[1].querySelector('[aria-label="Running"]')).toBeNull();
     act(() => rows[0].click());
     expect(onNavigate).toHaveBeenCalledWith("tasks", { taskId: "t1", chatId: "c1", viewMode: "terminal" });

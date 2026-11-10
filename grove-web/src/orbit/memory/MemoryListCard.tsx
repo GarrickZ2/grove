@@ -98,9 +98,7 @@ export function MemoryListCard({ mode, onModeChange, entities, logs, noteCount, 
             {logs.loading && logs.items.length === 0 ? (
               <div className="oml-skel" aria-hidden="true"><span className="oui-skel" /><span className="oui-skel" /><span className="oui-skel" /></div>
             ) : logs.items.length === 0 ? (
-              <EmptyState title={logs.submitted ? "No notes match" : "No notes waiting"}>
-                {logs.submitted ? "Try a different search." : "Agents leave short notes here while they work. Organizing turns them into memories."}
-              </EmptyState>
+              <EmptyState title={logs.submitted ? "No notes match" : "No notes waiting"} />
             ) : (
               <>
                 {logs.items.map((log, index) => (
@@ -143,9 +141,7 @@ export function MemoryListCard({ mode, onModeChange, entities, logs, noteCount, 
               <EmptyState
                 title={entities.submitted ? "No memories match" : "No memories yet"}
                 action={!entities.submitted && emptyAction ? <Button variant="secondary" size="sm" disabled={emptyAction.disabled} onClick={emptyAction.onClick}>{emptyAction.label}</Button> : null}
-              >
-                {entities.submitted ? "Try a different search." : "Organizing turns agents’ notes into durable memories that future sessions can recall."}
-              </EmptyState>
+              />
             ) : (
               <>
                 {entities.visibleItems.map((entity, index) => {

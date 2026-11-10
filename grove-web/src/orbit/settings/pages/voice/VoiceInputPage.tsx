@@ -121,7 +121,7 @@ function VoiceInputSettings({ settings, providers, onSave, projectId, projectNam
         </Row>
       </Group>
 
-      <Group title="Guardrails" hint="Keep accidental or runaway recordings out." anchorId="guardrails">
+      <Group title="Guardrails" anchorId="guardrails">
         <Row title="Ignore recordings shorter than" description="Avoids accidental taps." dim={off}>
           <NumberInput
             label="Minimum recording length in seconds"
@@ -278,7 +278,7 @@ function VocabularyGroup({ editor, dim }: { editor: AudioSettingsEditor; dim: bo
     if (event.key === "Enter" && !event.nativeEvent.isComposing && vocabulary.canAdd) vocabulary.add();
   };
   return (
-    <Group title="Vocabulary" hint="Preserve names, block unwanted terms, or define replacements." anchorId="vocabulary">
+    <Group title="Vocabulary" anchorId="vocabulary">
       <Block dim={dim}>
         <div className="ost-v-toolbar">
           <Segmented

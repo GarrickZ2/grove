@@ -60,7 +60,7 @@ function SpeakingProfileSettings({ speaking, providers }: { speaking: SpeakingPr
     <>
       {messages.map((message) => <Notice key={message} standalone>{message}</Notice>)}
 
-      <Group title="Speaking profiles" hint="Each session speaks with a distinct voice from your profiles." anchorId="profiles">
+      <Group title="Speaking profiles" anchorId="profiles">
         <Row title="Profile" description={draft.id ? "Editing a saved profile." : "New profile, not saved yet."}>
           <div className="ost-picker">
             <Combobox
@@ -108,7 +108,7 @@ function SpeakingProfileSettings({ speaking, providers }: { speaking: SpeakingPr
         ) : null}
       </Group>
 
-      <Group title="Voice and model" hint="Listen first, then choose the synthesis model." anchorId="voice">
+      <Group title="Voice and model" anchorId="voice">
         <Block>
           <VoicePreview
             voice={activeVoice}
@@ -152,7 +152,7 @@ function SpeakingProfileSettings({ speaking, providers }: { speaking: SpeakingPr
       </Group>
 
       {editor.visibleTuningFields.length > 0 ? (
-        <Group title="Voice character" hint="Tune how the selected voice is delivered." anchorId="character">
+        <Group title="Voice character" anchorId="character">
           {editor.visibleTuningFields.map((field) => (
             <FieldRow key={field.key} field={field} value={draft.config[field.key]} onChange={(value) => editor.patchConfig(field.key, value)} />
           ))}

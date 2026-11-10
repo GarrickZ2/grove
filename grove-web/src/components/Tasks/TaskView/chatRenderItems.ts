@@ -5,7 +5,8 @@ import { extractDiffForEditPath, extractEditToolPaths } from "./editToolPaths";
 
 export type ToolSectionItem = { message: ToolMessage; index: number };
 export type WorkSummaryItem = {
-  message: Extract<ChatMessage, { type: "assistant" | "thinking" | "tool" }>;
+  /** Subagents fold in only for Orbit. */
+  message: Extract<ChatMessage, { type: "assistant" | "thinking" | "tool" | "subagent" }>;
   index: number;
 };
 export type RenderItem =
@@ -23,6 +24,11 @@ export type RenderItem =
       startedAt?: number;
       /** Live only: ids of this turn's permission requests still awaiting an answer. */
       awaitingApproval?: string[];
+      /** The agent's latest text inside the group, shown while it is folded,
+       *  when no text of the agent's follows the group. */
+      previewText?: string;
+      /** Live only: agent text follows the group, so its own lines stay hidden. */
+      textFollows?: boolean;
     };
 
 export type BuildRenderItemsOptions = {
@@ -142,18 +148,19 @@ export function buildRenderItems(messages: ChatMessage[], isBusy = false, option
     }
 
     // Compaction dividers and rich assistant content are hard boundaries.
-    // Notices and subagent anchors remain outside the work summary, but must
-    // not disable compaction of the rest of this turn.
+    // Notices (and, outside Orbit, subagent anchors) remain outside the work
+    // summary, but must not disable compaction of the rest of this turn.
+    const foldSubagents = !!options.groupLiveWork;
     let segmentStart = 0;
     turnEntries.forEach((message, offset) => {
       const boundary = message.type === "compaction" ||
         (message.type === "assistant" && message.blocks?.some((block) => block.type !== "text"));
       if (!boundary) return;
-      items.push(...compactCompletedSegment(turnEntries.slice(segmentStart, offset), userIndex + 1 + segmentStart, lastToolId));
+      items.push(...compactCompletedSegment(turnEntries.slice(segmentStart, offset), userIndex + 1 + segmentStart, lastToolId, foldSubagents));
       items.push({ kind: "single", message, index: userIndex + 1 + offset });
       segmentStart = offset + 1;
     });
-    items.push(...compactCompletedSegment(turnEntries.slice(segmentStart), userIndex + 1 + segmentStart, lastToolId));
+    items.push(...compactCompletedSegment(turnEntries.slice(segmentStart), userIndex + 1 + segmentStart, lastToolId, foldSubagents));
     cursor = nextUserIndex;
   }
   return items;
@@ -176,7 +183,7 @@ function buildLiveTurnItems(turnEntries: ChatMessage[], startIndex: number, star
       (message.type === "assistant" && message.blocks?.some((block) => block.type !== "text"));
     if (!boundary) return;
     const segment = turnEntries.slice(segmentStart, offset);
-    items.push(...compactCompletedSegment(segment, startIndex + segmentStart, lastToolCallId(segment)));
+    items.push(...compactCompletedSegment(segment, startIndex + segmentStart, lastToolCallId(segment), true));
     items.push({ kind: "single", message, index: startIndex + offset });
     segmentStart = offset + 1;
   });
@@ -188,7 +195,7 @@ function liveSegment(entries: ChatMessage[], startIndex: number, startedAt?: num
   let lastToolOffset = -1;
   let lastThinkingOffset = -1;
   entries.forEach((message, offset) => {
-    if (message.type === "tool" && message.kind !== "think") lastToolOffset = offset;
+    if ((message.type === "tool" && message.kind !== "think") || message.type === "subagent") lastToolOffset = offset;
     if (message.type === "thinking" && !message.complete) lastThinkingOffset = offset;
   });
   // A turn that has only streamed text or thinking so far needs no group.
@@ -201,7 +208,7 @@ function liveSegment(entries: ChatMessage[], startIndex: number, startedAt?: num
   for (let offset = 0; offset <= processEnd; offset += 1) {
     const message = entries[offset];
     const index = startIndex + offset;
-    if (message.type === "assistant" || message.type === "thinking") {
+    if (message.type === "assistant" || message.type === "thinking" || message.type === "subagent") {
       processItems.push({ message, index });
     } else if (message.type === "tool") {
       if (shouldRenderTimelineTool(message)) processItems.push({ message, index });
@@ -212,10 +219,13 @@ function liveSegment(entries: ChatMessage[], startIndex: number, startedAt?: num
   return [
     {
       kind: "work-summary",
-      sectionId: `live-${startIndex}`,
+      // Same id the settled summary gets, so a group the user opened stays open.
+      sectionId: `work-${startIndex}`,
       items: processItems,
       live: true,
       startedAt,
+      previewText: groupPreview(processItems, entries.slice(processEnd + 1)),
+      textFollows: entries.slice(processEnd + 1).some(hasAgentText),
       ...(awaitingApproval.length > 0 ? { awaitingApproval } : {}),
     },
     ...passthrough,
@@ -224,12 +234,12 @@ function liveSegment(entries: ChatMessage[], startIndex: number, startedAt?: num
 }
 
 /** Fold ordinary process content together; keep operational entries outside in order. */
-function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number, lastToolId?: string): RenderItem[] {
+function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number, lastToolId?: string, foldSubagents = false): RenderItem[] {
   const items: RenderItem[] = [];
     let processEndOffset = -1;
     for (let i = turnEntries.length - 1; i >= 0; i -= 1) {
       const message = turnEntries[i];
-      if (message.type === "tool" && message.kind !== "think") {
+      if ((message.type === "tool" && message.kind !== "think") || (foldSubagents && message.type === "subagent")) {
         processEndOffset = i;
         break;
       }
@@ -241,7 +251,8 @@ function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number,
         if (
           (message.type === "assistant" && i <= processEndOffset) ||
           message.type === "thinking" ||
-          (message.type === "tool" && i <= processEndOffset && shouldRenderTimelineTool(message))
+          (message.type === "tool" && i <= processEndOffset && shouldRenderTimelineTool(message)) ||
+          (foldSubagents && message.type === "subagent" && i <= processEndOffset)
         ) {
           processItems.push({ message, index: startIndex + i });
         }
@@ -259,9 +270,10 @@ function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number,
           .filter((value): value is number => typeof value === "number");
         items.push({
           kind: "work-summary",
-          sectionId: `work-${startIndex}-${processItems.at(-1)!.index}`,
+          sectionId: `work-${startIndex}`,
           items: processItems,
           lastToolId,
+          previewText: groupPreview(processItems, turnEntries.slice(processEndOffset + 1)),
           durationSeconds:
             starts.length > 0 && ends.length > 0
               ? Math.max(0, Math.max(...ends) - Math.min(...starts))
@@ -278,6 +290,7 @@ function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number,
             message.type !== "assistant" &&
             message.type !== "thinking" &&
             message.type !== "tool" &&
+            !(foldSubagents && message.type === "subagent") &&
             message.type !== "plan_document",
         );
       passthrough.forEach(({ message, index }) =>
@@ -298,6 +311,21 @@ function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number,
       items.push(...buildSequentialRenderItems(turnEntries, startIndex, lastToolId));
     }
   return items;
+}
+
+function hasAgentText(message: ChatMessage): boolean {
+  return message.type === "assistant" && !!message.content?.trim();
+}
+
+/** The group's latest text, unless the agent has said more after the group. */
+function groupPreview(items: readonly WorkSummaryItem[], after: readonly ChatMessage[]): string | undefined {
+  if (after.some(hasAgentText)) return undefined;
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const { message } = items[i];
+    const text = message.type === "assistant" ? message.content?.trim() : "";
+    if (text) return text;
+  }
+  return undefined;
 }
 
 function lastToolCallId(messages: ChatMessage[]): string | undefined {

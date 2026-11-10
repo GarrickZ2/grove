@@ -38,7 +38,6 @@ export function ProjectLinksCard({ view, linkable }: ProjectLinksCardProps) {
       style={{ animationDelay: "180ms" }}
       aria-label="Linked projects"
       title="Linked projects"
-      hint="default for new tasks"
       actions={(
         <LinkedProjectPicker
           projects={candidates}
@@ -68,7 +67,6 @@ export function ProjectLinksCard({ view, linkable }: ProjectLinksCardProps) {
             </button>
           </div>
         ))}
-        <div className="odb-plinks-hint">New tasks copy these links when created (archived ones are skipped). Existing tasks keep their own.</div>
         {error && !saving ? <div className="odb-tl-error" role="alert">{error}</div> : null}
       </div>
     </Card>

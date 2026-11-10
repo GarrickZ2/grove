@@ -104,9 +104,7 @@ export function OrbitCommentsPanel({ projectId, task }: { projectId?: string; ta
   if (comments.length === 0) {
     return (
       <PanelBody label="Comments">
-        <PanelEmpty icon={MessageSquare} title="No review comments">
-          Comments left in Code Review, by you or an agent, show up here with their replies.
-        </PanelEmpty>
+        <PanelEmpty icon={MessageSquare} title="No review comments" />
       </PanelBody>
     );
   }
@@ -115,7 +113,7 @@ export function OrbitCommentsPanel({ projectId, task }: { projectId?: string; ta
 
   return (
     <PanelBody label="Comments">
-      <PanelHeaderContext>{actualOpen > 0 ? `${actualOpen} open` : comments.length > 0 ? "All resolved" : "From code review"}</PanelHeaderContext>
+      <PanelHeaderContext>{actualOpen > 0 ? `${actualOpen} open` : "All resolved"}</PanelHeaderContext>
       <div className="owp-filter">
         <Segmented
           size="sm"

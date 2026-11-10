@@ -4,7 +4,6 @@ export type VoicePageId = "voice" | "vcontrol" | "avoice" | "providers";
 
 export interface VoicePageMeta {
   title: string;
-  description: string;
   icon: LucideIcon;
   /** Scroll anchors rendered by the page (`anchorId` on its Groups). */
   subs: { id: string; label: string }[];
@@ -15,7 +14,6 @@ export interface VoicePageMeta {
 export const VOICE_PAGE_META: Record<VoicePageId, VoicePageMeta> = {
   voice: {
     title: "Voice input",
-    description: "Talk instead of type. Grove turns speech into clean prompt text.",
     icon: AudioLines,
     subs: [
       { id: "try", label: "Try it" },
@@ -29,7 +27,6 @@ export const VOICE_PAGE_META: Record<VoicePageId, VoicePageMeta> = {
   },
   vcontrol: {
     title: "Voice control",
-    description: "Drive Grove with spoken commands.",
     icon: Mic,
     subs: [
       { id: "pipeline", label: "Pipeline" },
@@ -41,7 +38,6 @@ export const VOICE_PAGE_META: Record<VoicePageId, VoicePageMeta> = {
   },
   avoice: {
     title: "Agent voice",
-    description: "How agents sound when they speak updates aloud.",
     icon: Volume2,
     subs: [
       { id: "profiles", label: "Speaking profiles" },
@@ -54,7 +50,6 @@ export const VOICE_PAGE_META: Record<VoicePageId, VoicePageMeta> = {
   },
   providers: {
     title: "AI providers",
-    description: "Model and speech providers shared across Grove.",
     icon: Cpu,
     subs: [],
     keywords: ["openai", "openrouter", "groq", "together", "fireworks", "elevenlabs", "models", "api key", "base url", "llm", "connection"],

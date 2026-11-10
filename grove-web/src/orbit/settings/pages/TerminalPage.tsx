@@ -204,7 +204,7 @@ export function TerminalPage({ settings }: SettingsPageProps) {
       </Group>
 
       {multiplexer ? (
-        <Group title="Terminal layout" hint="New task sessions open with this layout." anchorId="layout">
+        <Group title="Terminal layout" anchorId="layout">
           <Block>
             <div className="ost-layouts" role="radiogroup" aria-label="Default task layout">
               {layoutPresets.map((preset) => {

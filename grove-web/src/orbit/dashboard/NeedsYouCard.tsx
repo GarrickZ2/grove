@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, ArrowUpRight, Bell, CheckCircle2, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { Button, Card, shortAgo } from "../ui";
@@ -57,9 +57,11 @@ export function NeedsYouCard({ items, now, onAnswer, onOpen, onDismiss, formFor,
                   <span className="odb-item-copy">
                     <b title={title}>{title}</b>
                     <span>
-                      {item.source}
-                      {item.code ? <> · <code className="oui-mono" title={item.code}>{item.code}</code></> : null}
-                      {item.kind !== "permission" && item.kind !== "input" && item.at ? <> · {shortAgo(item.at, now)}</> : null}
+                      {[
+                        item.source || null,
+                        item.code ? <code key="code" className="oui-mono" title={item.code}>{item.code}</code> : null,
+                        item.kind !== "permission" && item.kind !== "input" && item.at ? shortAgo(item.at, now) : null,
+                      ].filter((part) => part !== null).map((part, index) => <Fragment key={index}>{index ? " · " : null}{part}</Fragment>)}
                     </span>
                   </span>
                   <span className="odb-acts">

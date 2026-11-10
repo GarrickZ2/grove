@@ -1,5 +1,5 @@
 import type { KeyboardEvent } from "react";
-import { Eye, FileText, Loader2, Pencil } from "lucide-react";
+import { FileText, Loader2, Pencil } from "lucide-react";
 import type { Task } from "../../../data/types";
 import { MarkdownRenderer, FileMentionDropdown } from "../../../components/ui";
 import { useTaskNotes } from "../../../components/Tasks/TaskInfoPanel/tabs/useTaskNotes";
@@ -9,7 +9,6 @@ import { PanelEmpty, PanelError, PanelLoading } from "../../ui/PanelShell";
 import { HeaderActions, PanelBody } from "./PanelStates";
 
 const SAVE_KEY = formatKeyDisplay("Mod+S");
-const SHARED_COPY = "Agents in this task can read these notes.";
 
 /** Notes panel body: the task's Markdown notes, read or edited in place. */
 export function OrbitNotesPanel({ projectId, task }: { projectId?: string; task: Task }) {
@@ -45,9 +44,7 @@ export function OrbitNotesPanel({ projectId, task }: { projectId?: string; task:
           icon={FileText}
           title="No notes yet"
           action={<Button variant="primary" size="sm" onClick={() => setIsEditing(true)}>Start a note</Button>}
-        >
-          Write the goal, constraints or a checklist. {SHARED_COPY}
-        </PanelEmpty>
+        />
       </PanelBody>
     );
   }
@@ -68,7 +65,8 @@ export function OrbitNotesPanel({ projectId, task }: { projectId?: string; task:
     <PanelBody label="Notes">
       <div className="owp-notes">
         <div className="owp-notebar">
-          <span className="owp-notebar-copy"><Eye aria-hidden="true" /><span title={SHARED_COPY}>{SHARED_COPY}</span></span>
+          {/* The panel head already says these notes are shared with agents. */}
+          <span className="owp-notebar-copy" aria-hidden="true" />
           {!isEditing ? (
             <HeaderActions
               fallback={<Button size="sm" variant="ghost" onClick={() => setIsEditing(true)}><Pencil aria-hidden="true" />Edit</Button>}

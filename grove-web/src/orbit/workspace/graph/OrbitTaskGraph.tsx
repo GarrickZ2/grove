@@ -183,9 +183,7 @@ export function OrbitTaskGraph({ projectId, taskId }: OrbitTaskGraphProps) {
             icon={Network}
             title="No agents in this task yet"
             action={<Button variant="primary" size="sm" onClick={newAgent}><Plus />New agent</Button>}
-          >
-            Start a chat or spawn an agent here. Agents that spawn or message each other show up as a graph.
-          </PanelEmpty>
+          />
         </div>
       );
     }

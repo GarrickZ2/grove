@@ -1,7 +1,7 @@
 import { resolveAgentIcon } from "../../utils/agentIcon";
 import { liveChatKey, type LiveChats } from "./liveChats";
 import { Card, EmptyState, StatusDot, formatDateTime, shortAgo } from "../ui";
-import { taskLabel } from "./dashboardModel";
+import { LOCAL_TASK_ID, taskLabel } from "./dashboardModel";
 import type { RecentSession } from "./useRecentSessions";
 
 interface RecentSessionsCardProps {
@@ -41,7 +41,7 @@ export function RecentSessionsCard({ projectId, sessions, loaded, chats, taskNam
               <span className="odb-sess-ic" title={agent.label}><AgentIcon size={13} /></span>
               <span className="odb-sess-copy">
                 <b title={chat.title}>{chat.title || "Untitled session"}</b>
-                <span>{taskLabel(taskId, taskNames.get(taskId))}</span>
+                {taskId !== LOCAL_TASK_ID ? <span>{taskLabel(taskId, taskNames.get(taskId))}</span> : null}
               </span>
               {state ? <StatusDot tone={state} ring pulse={state === "live"} label={state === "live" ? "Running" : "Waiting on you"} /> : null}
               <span className="odb-sess-ago" title={`${chat.updated_at ? "Last active" : "Started"} ${formatDateTime(activeAt)}`}>{activeAt ? shortAgo(activeAt, now) : ""}</span>

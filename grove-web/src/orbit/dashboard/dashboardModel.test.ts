@@ -67,7 +67,7 @@ describe("buildNeedsYou", () => {
       hook({ task_id: "_local", chat_id: null }),
       hook({ task_id: "t2", chat_id: "c1" }),
     ], names);
-    expect(items.map((item) => [item.kind, item.source])).toEqual([["permission", "Main checkout"], ["notice", "Task two"]]);
+    expect(items.map((item) => [item.kind, item.source])).toEqual([["permission", ""], ["notice", "Task two"]]);
   });
 });
 

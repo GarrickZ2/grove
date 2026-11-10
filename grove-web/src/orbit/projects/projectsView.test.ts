@@ -45,7 +45,7 @@ describe("projectsView", () => {
     expect(projectsSummary(active, [])).toBe("3 projects · 4 tasks across them · 1 missing");
     expect(projectsSummary([project("a")], [])).toBe("1 project · no tasks yet");
     expect(projectsSummary([], [old])).toBe("No active projects · 1 archived");
-    expect(projectsSummary([], [])).toBe("Add a Git repo or start a Studio to begin.");
+    expect(projectsSummary([], [])).toBe("");
   });
 
   it("describes each tile", () => {

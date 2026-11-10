@@ -16,7 +16,7 @@ export function DayStrip({ timeline, onPick, selectedId }: DayStripProps) {
     <section className="oau-day oui-rise" style={{ animationDelay: "50ms" }} aria-label="Timeline">
       <div className="oau-day-head">
         <b>Timeline</b>
-        <span>{dayLine(timeline)}</span>
+        {dayLine(timeline) ? <span>{dayLine(timeline)}</span> : null}
       </div>
       <div className="oau-lane" onMouseLeave={() => setHot(null)}>
         <span className="oau-past" style={{ width: `${timeline.nowX}%` }} />

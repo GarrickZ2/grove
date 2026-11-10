@@ -32,7 +32,6 @@ export interface SettingsSub {
 export interface SettingsPageDef {
   id: SettingsPageId;
   title: string;
-  description: string;
   icon: LucideIcon;
   hue: PageHue;
   /** Nav items sharing a group number sit between the same separators. */
@@ -48,7 +47,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "agents",
     title: "Agents",
-    description: "Choose the default coding agent, manage custom agents, and let agents use your browser.",
     icon: Sparkle,
     hue: { from: "#a78bfa", to: "#6d28d9", glow: "rgba(124,58,237,.16)", strong: "rgba(109,40,217,.7)" },
     group: 0,
@@ -66,7 +64,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "general",
     title: "General",
-    description: "Interface behavior and the apps Grove opens files with.",
     icon: SlidersHorizontal,
     hue: { from: "#a8a29e", to: "#57534e", glow: "rgba(120,113,108,.12)", strong: "rgba(87,83,78,.6)" },
     group: 1,
@@ -80,7 +77,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "appearance",
     title: "Appearance",
-    description: "Theme, color mode and app icon.",
     icon: Palette,
     hue: { from: "#f9a8d4", to: "#db2777", glow: "rgba(219,39,119,.14)", strong: "rgba(219,39,119,.7)" },
     group: 1,
@@ -96,7 +92,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "notifications",
     title: "Notifications",
-    description: "When and where Grove tells you an agent needs you.",
     icon: Bell,
     hue: { from: "#fb923c", to: "#dc2626", glow: "rgba(239,68,68,.13)", strong: "rgba(220,38,38,.7)" },
     group: 1,
@@ -110,7 +105,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "shortcuts",
     title: "Keyboard Shortcuts",
-    description: "View and rebind every keyboard shortcut.",
     icon: Keyboard,
     hue: { from: "#fcd34d", to: "#d97706", glow: "rgba(217,119,6,.14)", strong: "rgba(217,119,6,.7)" },
     group: 1,
@@ -122,7 +116,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     // a task runs in. The id stays "worktrees" so existing links keep working.
     id: "worktrees",
     title: "Workspace",
-    description: "How task terminals run, and what every task worktree gets.",
     icon: FolderGit2,
     hue: { from: "#4ade80", to: "#15803d", glow: "rgba(22,163,74,.15)", strong: "rgba(21,128,61,.7)" },
     group: 2,
@@ -137,7 +130,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "voice",
     title: VOICE_PAGE_META.voice.title,
-    description: VOICE_PAGE_META.voice.description,
     icon: VOICE_PAGE_META.voice.icon,
     hue: VOICE_HUE,
     group: 3,
@@ -147,7 +139,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "vcontrol",
     title: VOICE_PAGE_META.vcontrol.title,
-    description: VOICE_PAGE_META.vcontrol.description,
     icon: VOICE_PAGE_META.vcontrol.icon,
     hue: VOICE_HUE,
     group: 3,
@@ -157,7 +148,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "avoice",
     title: VOICE_PAGE_META.avoice.title,
-    description: VOICE_PAGE_META.avoice.description,
     icon: VOICE_PAGE_META.avoice.icon,
     hue: VOICE_HUE,
     group: 3,
@@ -168,7 +158,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "providers",
     title: VOICE_PAGE_META.providers.title,
-    description: VOICE_PAGE_META.providers.description,
     icon: VOICE_PAGE_META.providers.icon,
     hue: VOICE_HUE,
     group: 3,
@@ -178,7 +167,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: "system",
     title: "System",
-    description: "Your machines, devices signed in to this Grove, and the resources it uses.",
     icon: MonitorCog,
     hue: { from: "#60a5fa", to: "#1d4ed8", glow: "rgba(37,99,235,.14)", strong: "rgba(29,78,216,.7)" },
     group: 4,

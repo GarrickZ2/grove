@@ -15,14 +15,13 @@ interface PageHeaderProps {
   icon: LucideIcon;
   hue: PageHue;
   title: string;
-  description?: string;
   /** Collapse into the compact frosted bar (content scrolled under it). */
   condensed?: boolean;
   /** Right-aligned slot (status chips, Saved, actions). */
   aside?: ReactNode;
 }
 
-export function PageHeader({ icon: Icon, hue, title, description, condensed = false, aside }: PageHeaderProps) {
+export function PageHeader({ icon: Icon, hue, title, condensed = false, aside }: PageHeaderProps) {
   const style = {
     "--oui-hue-a": hue.from,
     "--oui-hue-b": hue.to,
@@ -36,7 +35,6 @@ export function PageHeader({ icon: Icon, hue, title, description, condensed = fa
       </span>
       <div className="oui-hdr-copy">
         <h1>{title}</h1>
-        {description ? <p>{description}</p> : null}
       </div>
       {aside ? <div className="oui-hdr-aside">{aside}</div> : null}
     </header>

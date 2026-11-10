@@ -15,7 +15,7 @@ export function AgentContextCard({ context, onNavigate }: AgentContextCardProps)
   const [hot, setHot] = useState<ContextSourceId | null>(null);
   const budget = context.total !== null ? context.sources.filter((source) => (source.tokens ?? 0) > 0) : [];
   return (
-    <Card className="odb-ctx oui-rise" style={{ animationDelay: "160ms" }} aria-label="Agent context" title="Agent context" hint="what every task starts with">
+    <Card className="odb-ctx oui-rise" style={{ animationDelay: "160ms" }} aria-label="Agent context" title="Agent context">
       {context.total !== null ? (
         <>
           <div className="odb-ctx-sum">
@@ -69,7 +69,7 @@ function SourceRow({ source, index, hot, onHover, onNavigate }: {
       <span className="odb-src-ic"><Icon aria-hidden="true" /></span>
       <span className="odb-src-copy">
         <b>{source.name}{source.on ? null : <span className="odb-off">Off</span>}</b>
-        <span title={source.detail}>{source.detail}</span>
+        {source.on ? <span title={source.detail}>{source.detail}</span> : null}
       </span>
       {label ? <span className={`odb-tok${source.on ? "" : " is-dim"}`} title={source.tokens !== null ? "Estimated tokens" : undefined}>{label}</span> : null}
       {source.page ? <ChevronRight className="odb-chev" aria-hidden="true" /> : <span className="odb-chev-gap" aria-hidden="true" />}

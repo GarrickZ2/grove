@@ -105,7 +105,6 @@ export function OrbitExtensionsPage() {
         raised
         icon={Blocks}
         title="Extensions"
-        subtitle="What your agents can do: skills, plugins and MCP servers."
         actions={(
           <>
             <Segmented

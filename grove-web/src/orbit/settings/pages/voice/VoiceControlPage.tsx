@@ -35,7 +35,7 @@ function VoiceControlSettingsView({ settings, providers, onSave }: {
 
   return (
     <>
-      <Group title="Pipeline" hint="Speech becomes text, then a command." anchorId="pipeline">
+      <Group title="Pipeline" anchorId="pipeline">
         <Row title="Voice control" description="Speak a command, let Grove understand it, then run only the actions you allow.">
           <Toggle checked={current.enabled} onChange={(enabled) => patchSettings("enabled", enabled)} label="Voice control" />
         </Row>
@@ -96,7 +96,7 @@ function VoiceControlSettingsView({ settings, providers, onSave }: {
         </Row>
       </Group>
 
-      <Group title="Listening limits" hint="Ignore accidental taps and stop runaway capture." anchorId="limits">
+      <Group title="Listening limits" anchorId="limits">
         {LIMIT_ROWS.map((row) => (
           <Row key={row.key} title={row.title} description={row.description} dim={off}>
             <NumberInput

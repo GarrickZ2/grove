@@ -29,10 +29,10 @@ export function OrbitStudioPage() {
     return <OrbitPageMessage className="osd">Studio is only available for Studio projects.</OrbitPageMessage>;
   }
   // Keyed so folder, search and edit state start fresh per project.
-  return <ProjectStudio key={selectedProject.id} projectId={selectedProject.id} projectName={selectedProject.name} />;
+  return <ProjectStudio key={selectedProject.id} projectId={selectedProject.id} />;
 }
 
-function ProjectStudio({ projectId, projectName }: { projectId: string; projectName: string }) {
+function ProjectStudio({ projectId }: { projectId: string }) {
   const { browseFolder, folderPicker } = useBrowseFolder("Select Resource Folder");
   const library = useResourceLibrary(projectId, browseFolder);
   const instructions = useWorkspaceInstructions(projectId);
@@ -151,7 +151,6 @@ function ProjectStudio({ projectId, projectName }: { projectId: string; projectN
       <OrbitPageHeader
         icon={Layers}
         title="Studio"
-        subtitle={`Everything agents in ${projectName} can see: shared files, and how you want them to work.`}
         actions={(
           <>
             <Button variant="ghost" iconOnly aria-label="Refresh shared files" title="Refresh" disabled={refreshing} onClick={refresh}>
