@@ -43,6 +43,12 @@ mobile: web-build ## Run mobile LAN server (phone/tablet via HMAC; PERF=1 for pe
 tui: ## Run TUI (no web build)
 	cargo run
 
+.PHONY: registry
+registry: ## Update the agent registry shipped inside Grove (used when a first start is offline)
+	curl -fsS --max-time 30 https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json -o src/storage/bundled_registry.json.new
+	python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert len(d['agents']) > 10" src/storage/bundled_registry.json.new
+	mv src/storage/bundled_registry.json.new src/storage/bundled_registry.json
+
 # ─── Web ────────────────────────────────────────────────────────────────
 
 .PHONY: web-build

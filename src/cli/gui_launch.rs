@@ -4,6 +4,9 @@
 //! ends (or the user skips it) it calls `launch_reveal`, which fades the main
 //! window in and lets the launch window linger just long enough for its
 //! dissolve and the hum's tail before it is destroyed.
+//!
+//! The launch window opens before the backend is ready. Until then the page
+//! shows the startup step it reads from `/api/v1/startup`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -19,6 +22,7 @@ const FALLBACK: Duration = Duration::from_secs(6);
 const LINGER: Duration = Duration::from_millis(1600);
 
 static REVEALED: AtomicBool = AtomicBool::new(false);
+static REMOTE: AtomicBool = AtomicBool::new(false);
 
 /// Open the launch window. `false` means it could not be created and the
 /// caller should show the main window itself.
@@ -27,6 +31,7 @@ static REVEALED: AtomicBool = AtomicBool::new(false);
 /// (only `/api` is proxied). `remote` tells it not to read the appearance
 /// config: that lives on the remote backend and needs a sign-in first.
 pub fn open(app: &AppHandle, base_url: &str, remote: bool) -> bool {
+    REMOTE.store(remote, Ordering::Relaxed);
     let query = if remote { "?remote=1" } else { "" };
     let Ok(url) = format!("{base_url}/launch.html{query}").parse() else {
         return false;
@@ -50,10 +55,29 @@ pub fn open(app: &AppHandle, base_url: &str, remote: bool) -> bool {
     }
     let handle = app.clone();
     std::thread::spawn(move || {
+        // The page holds its animation until the backend is ready, so the
+        // fallback only counts from there. A failed start stays on the launch
+        // window, which shows the error.
+        loop {
+            let status = crate::startup::status();
+            if status.error.is_some() {
+                return;
+            }
+            if status.ready {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
         std::thread::sleep(FALLBACK);
         reveal(&handle);
     });
     true
+}
+
+/// Startup failed and the launch window said so: quit.
+#[tauri::command]
+pub fn launch_quit(app: AppHandle) {
+    app.exit(1);
 }
 
 /// The launch page is done (or was skipped): bring in the main window.
@@ -69,6 +93,8 @@ fn reveal(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(main) = handle.get_webview_window("main") {
+            // A first start opens on setup, in a small window of its own.
+            super::gui_setup::prepare(&main, REMOTE.load(Ordering::Relaxed));
             #[cfg(target_os = "macos")]
             fade_in(&main);
             #[cfg(not(target_os = "macos"))]

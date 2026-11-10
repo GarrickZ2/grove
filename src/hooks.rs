@@ -714,6 +714,11 @@ app.run()
 pub fn ensure_grove_app() -> PathBuf {
     use sha2::{Digest, Sha256};
 
+    // Startup builds the bundle in the background; a notification sent
+    // meanwhile waits here instead of starting a second build over it.
+    static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _building = BUILD.lock().unwrap_or_else(|e| e.into_inner());
+
     let grove_dir = notification_runtime_dir();
     let app_dir = grove_dir.join("Grove.app").join("Contents");
     let macos_dir = app_dir.join("MacOS");
@@ -801,6 +806,8 @@ pub fn ensure_grove_app() -> PathBuf {
                 "-",
                 &app_bundle.to_string_lossy(),
             ])
+            // codesign reports "replacing existing signature" on stderr.
+            .stderr(std::process::Stdio::null())
             .status()
             .ok();
 

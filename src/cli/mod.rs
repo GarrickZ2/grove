@@ -21,6 +21,8 @@ pub mod gui_launch;
 pub mod gui_machine_login;
 #[cfg(feature = "gui")]
 pub mod gui_save;
+#[cfg(feature = "gui")]
+pub mod gui_setup;
 
 use clap::{Parser, Subcommand};
 

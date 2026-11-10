@@ -2901,8 +2901,6 @@ pub fn migrate_installed_agents_to_v26() -> Result<()> {
         return Ok(());
     }
 
-    eprintln!("Migrating installed_agents v2.5 → v2.6 (multi-install per agent)…");
-
     let tx = conn.unchecked_transaction()?;
     tx.execute_batch(
         "ALTER TABLE installed_agents RENAME TO installed_agents_v25;

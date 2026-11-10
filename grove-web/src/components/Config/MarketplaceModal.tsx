@@ -68,8 +68,6 @@ interface MarketplaceModalProps {
   onClose: () => void;
   /** Tab shown each time the modal opens. Defaults to "installed". */
   initialTab?: "installed" | "explore";
-  /** One line above the tabs, for a first visit. */
-  intro?: string;
 }
 
 type TabKind = "installed" | "explore";
@@ -111,7 +109,7 @@ function hasUpdate(a: MarketplaceAgent): boolean {
   return Boolean(installed && latest && installed !== latest);
 }
 
-export function MarketplaceModal({ open, onClose, initialTab, intro }: MarketplaceModalProps) {
+export function MarketplaceModal({ open, onClose, initialTab }: MarketplaceModalProps) {
   const catalogRevision = useAgentCatalogRevision();
   const [data, setData] = useState<MarketplaceResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -271,9 +269,6 @@ export function MarketplaceModal({ open, onClose, initialTab, intro }: Marketpla
           </button>
         </div>
 
-        {intro && (
-          <p className="border-b border-[var(--color-border)] px-5 py-3 text-sm text-[var(--color-text)]">{intro}</p>
-        )}
 
         {data && missingRuntimes(data).map((runtime) => (
           <div key={runtime.name} className="flex items-center gap-2 border-b border-[color-mix(in_srgb,var(--color-warning)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_8%,transparent)] px-5 py-2 text-xs text-[var(--color-text)]">

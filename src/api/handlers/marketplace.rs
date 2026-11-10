@@ -174,33 +174,9 @@ pub struct MarketplaceResponse {
 // ─── GET /api/v1/agents/marketplace ──────────────────────────────────────────
 
 pub async fn list_marketplace() -> Result<Json<MarketplaceResponse>, MarketplaceError> {
-    // Registry: cache-first, sync-refresh on cold start so the first
-    // marketplace open after a fresh install has data.
-    let mut registry = agent_registry::get();
-    // Cache-empty heuristic: every entry is a grove-injected synthetic
-    // (Trae/TraeX/Hermes/Kiro/OpenClaw — see `inject_trae_and_traex_entries`).
-    // None of these come from upstream, so seeing only them means we
-    // haven't successfully fetched the CDN registry yet.
-    let synthetic_ids: &[&str] = &[
-        installed_agents::TRAE_ID,
-        installed_agents::TRAEX_ID,
-        "hermes",
-        "kiro",
-        "openclaw",
-    ];
-    if registry
-        .agents
-        .iter()
-        .all(|a| synthetic_ids.contains(&a.id.as_str()))
-    {
-        // Only the synthetics are present → registry cache is empty. Try a
-        // sync refresh; on failure we still return the synthetics-only
-        // doc so the user can at least see the synthetics.
-        if let Ok(doc) = agent_registry::refresh().await {
-            registry = doc;
-            agent_registry::inject_trae_and_traex_after_refresh(&mut registry);
-        }
-    }
+    // Registry: the cache, or the copy shipped with Grove before any fetch
+    // has succeeded. Never fetched here: a stale catalog now beats a wait.
+    let registry = agent_registry::get();
 
     // Kick off the PATH binary scan in the background — does NOT block this
     // response. The scan upserts/removes External installations as PATH

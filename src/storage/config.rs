@@ -419,9 +419,6 @@ pub struct ShareConfig {
     /// written on their shares. Unset until the person picks one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// The address other people reach this Grove at, when Grove can't tell.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub address: Option<String>,
 }
 
 /// AI Browser Control Config
@@ -667,6 +664,9 @@ pub struct WebConfig {
     /// Show the machine switcher in the sidebar. Off unless turned on.
     #[serde(default)]
     pub multi_machine: bool,
+    /// First-run setup was finished or skipped on this machine.
+    #[serde(default)]
+    pub setup_done: bool,
 }
 
 /// 自定义布局配置

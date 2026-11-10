@@ -58,6 +58,8 @@ export interface WebConfig {
   terminal_position?: "bottom" | "left";
   /** Show the machine switcher in the sidebar. Off by default. */
   multi_machine?: boolean;
+  /** First-run setup was finished or skipped on this machine. */
+  setup_done?: boolean;
   /** GUI-only global shortcut for showing or hiding the main window. */
   show_hide_window_shortcut?: string;
 }

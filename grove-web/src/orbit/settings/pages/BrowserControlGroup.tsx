@@ -1,62 +1,12 @@
-import { useEffect, useState, type CSSProperties } from "react";
-import {
-  getComputerPermissions,
-  requestComputerPermission,
-  type ComputerPermission,
-  type ComputerPermissions,
-} from "../../../api/browser";
+import { useState, type CSSProperties } from "react";
+import { requestComputerPermission, type ComputerPermission } from "../../../api/browser";
 import { Globe } from "lucide-react";
 import { InstallExtensionDialog } from "../../../components/Config/InstallExtensionDialog";
 import { ConfirmDialog } from "../../../components/Dialogs/ConfirmDialog";
 import { Button, Group, Lead, Row, Segmented, Toggle } from "../../ui";
+import { ACCESS_OPTIONS, access, type Access } from "./access";
 import type { SettingsPageProps } from "./types";
-
-type Access = "off" | "ask" | "allow";
-
-const ACCESS_OPTIONS: { value: Access; label: string; title?: string }[] = [
-  { value: "off", label: "Off" },
-  { value: "ask", label: "Ask", title: "Each chat session asks you once first" },
-  { value: "allow", label: "Allow", title: "No asking" },
-];
-
-function access(allowed: boolean, bypass: boolean): Access {
-  return !allowed ? "off" : bypass ? "allow" : "ask";
-}
-
-function errorText(cause: unknown): string {
-  return (cause as { message?: string } | null)?.message || "That did not work. Try again.";
-}
-
-/**
- * macOS permissions Computer Use needs, read again whenever Grove comes back
- * to the front, as after granting them in System Settings.
- */
-function useComputerPermissions(enabled: boolean) {
-  const [permissions, setPermissions] = useState<ComputerPermissions | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    if (!enabled) return;
-    let current = true;
-    const load = () => {
-      getComputerPermissions()
-        .then((next) => {
-          if (!current) return;
-          setPermissions(next);
-          setError("");
-        })
-        .catch((cause) => {
-          if (current) setError(errorText(cause));
-        });
-    };
-    load();
-    window.addEventListener("focus", load);
-    return () => {
-      current = false;
-      window.removeEventListener("focus", load);
-    };
-  }, [enabled]);
-  return { permissions, error, setError };
-}
+import { errorText, useComputerPermissions } from "./useComputerPermissions";
 
 function PermissionRow({
   title,

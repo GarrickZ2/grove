@@ -11,6 +11,8 @@ pub mod perf_middleware;
 #[cfg(feature = "perf-monitor")]
 pub mod perf_tracing;
 pub mod radio_server;
+#[cfg(feature = "gui")]
+pub mod startup_gate;
 pub mod state;
 pub mod tls;
 
@@ -251,6 +253,9 @@ pub fn create_api_router() -> Router {
         .route("/env/check", get(handlers::env::check_all))
         .route("/env/check/{name}", get(handlers::env::check_one))
         .route("/env/check-commands", post(handlers::env::check_commands))
+        // First-run setup: the tools Grove needs here
+        .route("/setup/tools", get(handlers::setup::tools))
+        .route("/setup/tools/{id}/install", post(handlers::setup::install))
         // Global Excalidraw library API (shared across all tasks/sketches).
         // The editor sync path (SketchCanvas `onLibraryChange`) PUTs the
         // full library every time, and a real user library can be many MB
@@ -2280,12 +2285,17 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
     let startup_registry = if onboarding_completed {
         crate::storage::agent_registry::get()
     } else {
+        // The GUI's background process starts after its launcher has already
+        // created the data directory, so this marker is what tells it apart.
+        crate::startup::mark_first_run();
+        crate::startup::step("Getting the list of coding agents");
         crate::storage::agent_registry::get_for_auto_install()
             .await
             .map_err(|e| {
                 std::io::Error::other(format!("agent registry initialization failed: {}", e))
             })?
     };
+    crate::startup::step("Looking for coding agents on this computer");
     tokio::task::spawn_blocking(move || -> crate::error::Result<usize> {
         crate::storage::installed_agents::reconcile_registry_state(&startup_registry)
     })
@@ -2344,9 +2354,13 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
         eprintln!("[warning] Failed to ensure system groups: {}", e);
     }
 
-    // Pre-build Grove.app notification bundle (macOS only, first run compiles Swift)
+    // Pre-build the Grove.app notification bundle (macOS only). The first run
+    // compiles Swift, which takes 20s or more on a cold module cache, so it
+    // must not hold up the window; the first notification waits for it instead.
     #[cfg(target_os = "macos")]
-    crate::hooks::ensure_grove_app();
+    std::thread::spawn(|| {
+        crate::hooks::ensure_grove_app();
+    });
 
     Ok(())
 }
@@ -2373,6 +2387,7 @@ pub async fn start_server(
         },
     );
     initialize_local_server_runtime(port).await?;
+    crate::startup::ready();
 
     let has_ui = static_dir.is_some() || has_embedded_assets();
     let app = create_router(static_dir, auth.clone(), None);

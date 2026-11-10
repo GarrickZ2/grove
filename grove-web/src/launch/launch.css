@@ -37,6 +37,19 @@ html.grove-launch-page body {
 
 .gl-word { position: absolute; top: calc(50% + 112px); left: 0; right: 0; text-align: center; color: var(--gl-text, #fff); font-size: 38px; font-weight: 600; letter-spacing: -.035em; text-shadow: 0 2px 4px rgb(0 0 0 / .35), 0 6px 30px rgb(0 0 0 / .45); opacity: 0; filter: blur(8px); }
 
+/* Backend still starting (first run, data update): the mark waits, breathing,
+   over a line saying what Grove is doing. Dark pill, readable on any desktop. */
+.is-waiting .gl-mark { filter: none; transform: none; animation: gl-fade 300ms ease forwards, gl-breathe 1800ms 300ms ease-in-out infinite alternate; }
+@keyframes gl-breathe { to { transform: scale(1.035); } }
+.gl-status { position: fixed; left: 50%; top: calc(50% + 116px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: 460px; padding: 10px 18px; border-radius: 14px; background: rgb(24 24 27 / .86); box-shadow: 0 8px 30px rgb(0 0 0 / .35), inset 0 0 0 .5px rgb(255 255 255 / .14); color: #fff; font-size: 13px; line-height: 1.4; text-align: center; animation: gl-fade 250ms ease forwards; }
+.gl-status[hidden] { display: none; }
+.gl-status-step { font-weight: 600; }
+.gl-status-note { color: rgb(255 255 255 / .62); font-size: 12px; overflow-wrap: anywhere; }
+.gl-status-note:empty { display: none; }
+.gl-status-quit { margin-top: 6px; padding: 5px 14px; border: 0; border-radius: 8px; background: rgb(255 255 255 / .16); color: #fff; font: inherit; font-weight: 500; cursor: default; }
+.gl-status-quit:hover { background: rgb(255 255 255 / .24); }
+.gl-status-quit[hidden] { display: none; }
+
 /* Light themes: the aura tints instead of glowing, the flash and ring take the
    accent (white would vanish on a light desktop), and shadows turn to a soft halo. */
 .is-light .gl-aura i { mix-blend-mode: normal; opacity: .7; }

@@ -76,13 +76,6 @@ describe("MarketplaceModal installed agents", () => {
   const button = (text: string) => Array.from(document.querySelectorAll("button")).find((item) => item.textContent === text);
   const openDetail = (name: string) => act(async () => { Array.from(document.querySelectorAll("button")).find((item) => item.textContent?.includes(name))!.click(); });
 
-  it("shows the intro only when asked to", async () => {
-    await open();
-    expect(document.body.textContent).not.toContain("Choose the agents you use");
-    await open({ intro: "Choose the agents you use." });
-    expect(document.body.textContent).toContain("Choose the agents you use.");
-  });
-
   it("offers each missing runtime an installed Agent uses, then checks again", async () => {
     vi.mocked(listMarketplace).mockResolvedValueOnce(response([agent("Claude", "npx"), agent("Hermes", "uvx")], { npx_available: false, uvx_available: false }));
     await open();

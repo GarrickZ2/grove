@@ -117,6 +117,7 @@ pub struct WebConfigDto {
     pub send_mode: Option<String>,
     pub terminal_position: Option<String>,
     pub multi_machine: bool,
+    pub setup_done: bool,
     pub show_hide_window_shortcut: Option<String>,
 }
 
@@ -177,6 +178,7 @@ impl From<&Config> for ConfigResponse {
                 send_mode: config.web.send_mode.clone(),
                 terminal_position: config.web.terminal_position.clone(),
                 multi_machine: config.web.multi_machine,
+                setup_done: config.web.setup_done,
                 show_hide_window_shortcut: config.web.show_hide_window_shortcut.clone(),
             },
             auto_link: AutoLinkConfigDto {
@@ -344,6 +346,7 @@ pub struct WebConfigPatch {
     pub buddy_motion: Option<String>,
     pub terminal_position: Option<String>,
     pub multi_machine: Option<bool>,
+    pub setup_done: Option<bool>,
     pub send_mode: Option<String>,
     pub show_hide_window_shortcut: Option<String>,
 }
@@ -497,6 +500,9 @@ pub async fn patch_config(
         }
         if let Some(multi_machine) = web_patch.multi_machine {
             config.web.multi_machine = multi_machine;
+        }
+        if let Some(setup_done) = web_patch.setup_done {
+            config.web.setup_done = setup_done;
         }
         if let Some(position) = web_patch.terminal_position {
             config.web.terminal_position = Some(position);

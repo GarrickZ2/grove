@@ -1,0 +1,117 @@
+/* First-run setup: one short title and the controls themselves, a step at a
+   time, over the Welcome page's aurora. */
+.ose{position:fixed;inset:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;color:var(--o-text);font-size:13px}
+.ose-top{position:relative;display:flex;align-items:center;justify-content:center;height:52px}
+.ose-prog{display:flex;gap:6px}
+.ose-prog i{position:relative;width:22px;height:4px;border-radius:2px;background:var(--o-track);overflow:hidden}
+.ose-prog i::after{content:"";position:absolute;inset:0;background:var(--o-ink);transform:scaleX(0);transform-origin:left;transition:transform var(--o-dur-slide) var(--o-ease-slide)}
+.ose-prog i.is-done::after{transform:none}
+.ose-skip{position:absolute;right:14px;top:12px;height:28px;padding:0 10px;border:0;border-radius:var(--o-radius-sm);background:none;font:inherit;color:var(--o-muted);cursor:pointer}
+.ose-skip:hover{background:var(--o-hover);color:var(--o-text)}
+.ose-skip:focus-visible,.ose-link:focus-visible,.ose-ag:focus-visible,.ose-default:focus-visible,.ose-keys:focus-visible,.ose-chip:focus-visible,.ose-cmd:focus-visible,.ose-swatch:focus-visible,.ose-icon:focus-visible{outline:2px solid var(--o-accent);outline-offset:2px}
+.ose-steps{min-height:0;overflow:hidden auto;display:flex;padding:8px 20px}
+.ose-step{margin:auto;width:min(520px,100%);text-align:center;animation:ose-in 480ms var(--o-ease-out) both}
+.ose-step.is-back{animation-name:ose-in-back}
+@keyframes ose-in{from{opacity:0;transform:translateX(28px);filter:blur(6px)}}
+@keyframes ose-in-back{from{opacity:0;transform:translateX(-28px);filter:blur(6px)}}
+.ose-step h1{margin:0;font-size:28px;font-weight:700;letter-spacing:-.035em;line-height:1.12;text-wrap:balance}
+.ose-step.is-welcome h1{margin-top:28px;font-size:40px;letter-spacing:-.04em}
+.ose-go{margin-top:32px}
+.ose-start.oui-btn{height:40px;padding:0 22px;border-radius:11px;font-size:14px;font-weight:600}
+.ose-foot{display:flex;align-items:center;justify-content:space-between;padding:12px 20px 18px}
+
+/* Grouped rows: glass over the aurora */
+.ose-list{margin-top:26px;text-align:left;display:flex;flex-direction:column;gap:10px}
+.ose .oui-group{background:color-mix(in oklab,var(--o-bg) 82%,transparent);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:var(--o-shadow-1),0 22px 44px -30px rgb(0 0 0 / 30%)}
+.ose .oui-gwrap{margin:0}
+
+/* Setup check: each missing tool, what needs it, and how it gets installed */
+.ose-tool{animation:ose-rise 460ms var(--o-ease-out) both}
+.ose-tool+.ose-tool{animation-delay:60ms}
+.ose-need{height:18px;padding:0 7px;border-radius:999px;display:inline-flex;align-items:center;background:var(--o-selected);font-size:11px;font-weight:500;color:var(--o-muted)}
+.ose-cmd,.ose-log{display:block;max-width:100%;margin-top:4px;font-family:var(--o-font-mono);font-size:11.5px;line-height:1.5;color:var(--o-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ose-cmd{padding:1px 7px;border:0;border-radius:var(--o-radius-xs);background:var(--o-selected);text-align:left;cursor:copy;transition:color var(--o-dur-fast),background-color var(--o-dur-fast)}
+.ose-cmd:hover{color:var(--o-text);background:var(--o-hover)}
+.ose-log.is-error{color:var(--o-error);white-space:normal}
+
+/* Permissions: what a choice still needs, under it */
+.ose .oui-row.ose-sub{min-height:40px;padding-block:6px;padding-left:58px;animation:ose-rise 320ms var(--o-ease-out) both}
+.ose-sub .oui-row-title{font-weight:400;color:var(--o-muted)}
+
+/* Agents */
+.ose-ag{cursor:pointer;animation:ose-rise 460ms var(--o-ease-out) both;transition:background-color var(--o-dur-fast)}
+.ose-ag:hover{background:var(--o-hover)}
+.ose-ag.is-loading{cursor:default;animation:none}
+.ose-skel{flex:1;height:8px;max-width:160px;border-radius:4px;background:var(--o-track);animation:ose-pulse 1s ease-in-out infinite}
+@keyframes ose-rise{from{opacity:0;transform:translateY(8px)}}
+.ose-default{height:20px;padding:0 8px;border-radius:999px;border:1px solid var(--o-border);background:none;font:inherit;font-size:11px;font-weight:500;color:var(--o-muted);cursor:pointer}
+.ose-default:hover{color:var(--o-text);border-color:var(--o-border-strong)}
+.ose-default.is-on{background:var(--o-accent);border-color:transparent;color:var(--o-on-accent);animation:ose-pop var(--o-dur-pop) var(--o-ease-pop)}
+@keyframes ose-pop{40%{transform:scale(1.2)}}
+.ose-state{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--o-muted);white-space:nowrap}
+.ose-state i{width:6px;height:6px;border-radius:50%;background:var(--o-track)}
+.ose-state.is-here{color:var(--o-text)}
+.ose-state.is-here i{background:var(--o-success);box-shadow:0 0 0 3px color-mix(in oklab,var(--o-success) 20%,transparent)}
+.ose-state.is-blocked{color:var(--o-warn)}
+.ose-state.is-blocked i{background:var(--o-warn)}
+.ose-box{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--o-border-strong);display:grid;place-items:center;flex-shrink:0;color:var(--o-on-ink);transition:background-color var(--o-dur-fast),border-color var(--o-dur-fast)}
+.ose-box svg{width:13px;height:13px;stroke-width:3}
+.ose-ag[aria-checked="true"] .ose-box{background:var(--o-ink);border-color:var(--o-ink);animation:ose-pop var(--o-dur-pop) var(--o-ease-pop)}
+.ose-under{margin-top:14px;display:flex;align-items:center;justify-content:center;gap:16px;min-height:28px;font-size:12.5px}
+.ose-link{display:inline-flex;align-items:center;gap:5px;border:0;background:none;padding:0;font:inherit;color:var(--o-muted);cursor:pointer}
+.ose-link:hover{color:var(--o-text)}
+
+/* Shortcut */
+.ose-keys-wrap{margin-top:34px;display:flex;align-items:center;justify-content:center;gap:10px}
+.ose-keys{display:inline-flex;gap:10px;padding:18px 22px;border-radius:22px;border:1px solid var(--o-border);background:color-mix(in oklab,var(--o-bg) 82%,transparent);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);font:inherit;color:inherit;cursor:pointer;transition:box-shadow 250ms,border-color 250ms,transform 280ms var(--o-ease-pop)}
+.ose-keys:hover{transform:translateY(-2px);border-color:var(--o-border-strong)}
+.ose-keys.is-recording{border-color:color-mix(in oklab,var(--o-accent) 60%,var(--o-border));box-shadow:0 0 0 4px var(--o-accent-soft),0 0 60px -10px var(--o-accent)}
+.ose-key{min-width:64px;height:64px;padding:0 16px;border-radius:14px;display:grid;place-items:center;font-family:inherit;font-size:24px;font-weight:600;letter-spacing:-.02em;background:linear-gradient(180deg,color-mix(in oklab,var(--o-text) 4%,var(--o-bg)),color-mix(in oklab,var(--o-text) 10%,var(--o-bg)));border:1px solid var(--o-border-strong);box-shadow:0 2px 0 var(--o-border-strong),0 10px 24px -12px rgb(0 0 0 / 30%),inset 0 1px 0 rgb(255 255 255 / 18%);animation:ose-key 420ms var(--o-ease-pop) both}
+.ose-key:nth-child(2){animation-delay:60ms}
+.ose-key:nth-child(3){animation-delay:120ms}
+.ose-key:nth-child(4){animation-delay:180ms}
+@keyframes ose-key{from{opacity:0;transform:translateY(8px) scale(.9)}}
+.ose-key.is-blank{font-size:15px;font-weight:500;color:var(--o-muted);border-style:dashed;background:none;box-shadow:none;min-width:112px}
+.ose-keys.is-recording .ose-key{animation:ose-pulse 1s ease-in-out infinite}
+@keyframes ose-pulse{50%{opacity:.4}}
+.ose-hint{margin:16px 0 0;min-height:18px;font-size:12.5px;color:var(--o-muted)}
+
+/* Make it yours */
+.ose-pick{align-items:flex-start;padding-block:11px}
+.ose-pick>.oui-row-title{flex:none;width:64px;padding-top:5px;font-weight:400;color:var(--o-muted)}
+.ose-chips{flex:1;min-width:0;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+.ose-chip{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px 0 6px;border-radius:var(--o-radius);border:1px solid var(--o-border);background:none;font:inherit;font-size:12.5px;color:var(--o-text);cursor:pointer;transition:border-color 200ms,box-shadow 200ms,background-color var(--o-dur-fast)}
+.ose-chip:hover{background:var(--o-hover)}
+.ose-chip[aria-checked="true"]{border-color:color-mix(in oklab,var(--o-accent) 55%,var(--o-border));box-shadow:var(--o-ring-selected)}
+.ose-menu{width:118px}
+.ose-menu.is-alone{width:220px}
+.ose-menu button{height:28px;padding-block:0;font-size:12.5px;border-radius:var(--o-radius)}
+.ose-app{width:16px;height:16px}
+.ose-stack{display:block;padding-block:11px 13px}
+.ose-stack-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:9px;font-size:13px}
+.ose-stack-head span{color:var(--o-muted)}
+.ose-stack-head b{font-weight:500}
+.ose-tiles{display:flex;flex-wrap:wrap;gap:6px 4px}
+.ose-tiles.is-spread{justify-content:space-between}
+.ose-swatch{width:24px;height:24px;padding:0;border-radius:7px;border:1px solid rgb(128 128 128 / 30%);background:linear-gradient(135deg,var(--sw-bg) 50%,var(--sw-ac) 50%);cursor:pointer;transition:transform 240ms var(--o-ease-pop),box-shadow 200ms,border-color 200ms}
+.ose-swatch.is-system{--sw-bg:#fafafa;--sw-ac:#0a0a0b}
+.ose-icon{width:34px;height:34px;padding:2px;border-radius:10px;border:1px solid transparent;background:none;cursor:pointer;transition:transform 240ms var(--o-ease-pop),box-shadow 200ms,border-color 200ms}
+.ose-icon img{display:block;width:100%;height:100%}
+.ose-swatch:hover,.ose-icon:hover{transform:translateY(-2px) scale(1.08)}
+.ose-swatch[aria-checked="true"],.ose-icon[aria-checked="true"]{border-color:color-mix(in oklab,var(--o-accent) 55%,var(--o-border));box-shadow:var(--o-ring-selected)}
+
+@media (max-width:767px){
+  .ose-step h1{font-size:23px}
+  .ose-step.is-welcome h1{font-size:30px}
+  .ose-steps{padding:8px 14px}
+  .ose-key{min-width:52px;height:52px;font-size:20px}
+  .ose-pick{flex-direction:column;gap:8px}
+  .ose-pick>.oui-row-title{width:auto;padding-top:0}
+  .ose-chips{justify-content:flex-start}
+  .ose-chip,.ose-menu button{height:32px}
+  .ose .oui-row:is(.ose-ag,.ose-tool,.ose-sub){flex-wrap:nowrap}
+  .ose .oui-row:is(.ose-ag,.ose-tool,.ose-sub) .oui-row-copy{flex-basis:0}
+  .ose-tiles.is-spread{justify-content:flex-start}
+  .ose-swatch{width:30px;height:30px}
+}
+@media (prefers-reduced-motion:reduce){.ose *,.ose *::after{animation:none!important;transition:none!important}}

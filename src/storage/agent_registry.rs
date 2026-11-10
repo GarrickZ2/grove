@@ -9,6 +9,9 @@
 //!     than `STALE_AFTER`.
 //!   - Manual refresh available via `POST /api/v1/agents/marketplace/refresh`.
 //!   - When refresh fails we fall back to the existing cache (offline-safe).
+//!   - With no cache at all (a first start that cannot reach the CDN) the copy
+//!     of the registry shipped inside Grove stands in, so there is always a
+//!     full catalog. `make registry` brings that copy up to date.
 //!
 //! We deliberately do NOT block the marketplace API on a fresh fetch — stale
 //! data is always better than no data. The merge layer can still show
@@ -25,6 +28,23 @@ use crate::error::Result;
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const STALE_AFTER: Duration = Duration::from_secs(60 * 60 * 24); // 24h
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
+/// The registry as it was when this build was made.
+const BUNDLED_JSON: &str = include_str!("bundled_registry.json");
+
+/// The registry shipped with Grove. Never written to the cache, so the next
+/// start still asks the CDN for a current one.
+fn bundled() -> RegistryDocument {
+    serde_json::from_str(BUNDLED_JSON).unwrap_or(RegistryDocument {
+        version: "0.0.0".to_string(),
+        agents: Vec::new(),
+    })
+}
+
+fn with_grove_entries(mut doc: RegistryDocument) -> RegistryDocument {
+    inject_trae_and_traex_entries(&mut doc);
+    inject_grove_supplements(&mut doc);
+    doc
+}
 
 /// A single registry agent entry. We mirror only the fields we use; the rest
 /// passes through as opaque JSON via #[serde(flatten)] is intentionally
@@ -237,13 +257,7 @@ pub async fn refresh() -> Result<RegistryDocument> {
 /// and the rest of the codebase treats them as ordinary registry
 /// entries.
 pub fn get() -> RegistryDocument {
-    let mut doc = load_cached().ok().flatten().unwrap_or(RegistryDocument {
-        version: "0.0.0".to_string(),
-        agents: Vec::new(),
-    });
-    inject_trae_and_traex_entries(&mut doc);
-    inject_grove_supplements(&mut doc);
-    doc
+    with_grove_entries(load_cached().ok().flatten().unwrap_or_else(bundled))
 }
 
 fn has_onboarding_contract(doc: &RegistryDocument) -> bool {
@@ -261,17 +275,24 @@ fn has_onboarding_contract(doc: &RegistryDocument) -> bool {
 ///
 /// Cache-first: a complete cached contract is immediately usable. If the
 /// cache is absent, corrupt, or predates one of the onboarding agents, perform
-/// one blocking network refresh before startup proceeds. This keeps the
-/// registry as the source of package/version metadata while making auto
-/// install a checked prerequisite instead of a best-effort background task.
+/// one blocking network refresh before startup proceeds, so a first start
+/// installs from current package/version metadata. When that refresh cannot
+/// be had (offline, a blocked CDN) the registry shipped with Grove is used:
+/// a start never fails for want of the network.
 pub async fn get_for_auto_install() -> Result<RegistryDocument> {
-    let cached = get();
-    if has_onboarding_contract(&cached) {
-        return Ok(cached);
+    if let Some(cached) = load_cached().ok().flatten().map(with_grove_entries) {
+        if has_onboarding_contract(&cached) {
+            return Ok(cached);
+        }
     }
 
-    let mut fresh = refresh().await?;
-    inject_trae_and_traex_after_refresh(&mut fresh);
+    let fresh = match refresh().await {
+        Ok(doc) => with_grove_entries(doc),
+        Err(error) => {
+            eprintln!("[warning] agent registry not reachable, using the built-in copy: {error}");
+            with_grove_entries(bundled())
+        }
+    };
     if !has_onboarding_contract(&fresh) {
         let missing = crate::storage::curated_agents::onboarding_agent_ids()
             .iter()
@@ -291,13 +312,6 @@ pub async fn get_for_auto_install() -> Result<RegistryDocument> {
         )));
     }
     Ok(fresh)
-}
-
-/// Add Trae + TraeX synthetics and grove-only supplements after a fresh
-/// refresh has replaced the document. `get()` does this automatically.
-pub fn inject_trae_and_traex_after_refresh(doc: &mut RegistryDocument) {
-    inject_trae_and_traex_entries(doc);
-    inject_grove_supplements(doc);
 }
 
 /// grove-only data overlays on top of the upstream ACP registry. This is
@@ -513,6 +527,14 @@ pub async fn refresh_if_stale() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_registry_shipped_with_grove_can_stand_in_for_the_network() {
+        let doc = with_grove_entries(bundled());
+        assert!(doc.agents.len() > 10, "a full catalog, not a stub");
+        // A first start with no network installs the onboarding agents from this copy.
+        assert!(has_onboarding_contract(&doc), "run `make registry`");
+    }
 
     #[test]
     fn parse_real_registry_snapshot() {

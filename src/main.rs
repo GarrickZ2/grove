@@ -29,7 +29,9 @@ pub(crate) mod radio;
 mod session;
 mod session_approval;
 mod session_scope;
+mod setup_tools;
 mod speech;
+mod startup;
 mod stats;
 mod storage;
 mod symbols;
@@ -72,15 +74,22 @@ fn ensure_storage_version() {
             .join("agents.toml")
             .exists();
 
+    // One line for the whole chain: which versions it passes through is of no
+    // use to the person waiting.
+    if version.is_none() && !has_legacy_files {
+        startup::mark_first_run();
+        startup::step("Setting up Grove for the first time");
+    } else {
+        startup::step("Updating your data for this version of Grove");
+    }
+
     // Chain migrations: None/1.0 → 1.1 → 2.0 → 2.1 → 2.2 → 2.3 → 2.4
     match version {
         Some("1.0") | None => {
             if has_legacy_files {
                 if storage::grove_dir().join("projects").exists() {
-                    eprintln!("Migrating storage v1.0 → v1.1...");
                     cli::migrate::execute(false);
                 }
-                eprintln!("Migrating storage v1.1 → v2.0 (SQLite)...");
                 storage::database::migrate_from_files();
             } else {
                 let _ = storage::database::connection();
@@ -88,16 +97,13 @@ fn ensure_storage_version() {
         }
         Some("1.1") => {
             if has_legacy_files {
-                eprintln!("Migrating storage v1.1 → v2.0 (SQLite)...");
                 storage::database::migrate_from_files();
             } else {
                 let _ = storage::database::connection();
             }
         }
         Some("2.0") => {
-            if storage::database::migrate_v20_fix_empty_slots() {
-                eprintln!("Migrating storage v2.0 → v2.1...");
-            }
+            storage::database::migrate_v20_fix_empty_slots();
         }
         Some("2.1") => {
             // v2.1 → v2.2: Agent Graph schema + chats.toml migration
@@ -321,6 +327,9 @@ fn main() -> io::Result<()> {
     if command.needs_local_storage() {
         // Check for updates at CLI startup and prompt user to auto-update
         let config = storage::config::load_config();
+        if update::should_check(config.update.last_check.as_deref()) {
+            startup::step("Checking for updates");
+        }
         let update_info = update::check_for_updates(
             config.update.latest_version.as_deref(),
             config.update.last_check.as_deref(),

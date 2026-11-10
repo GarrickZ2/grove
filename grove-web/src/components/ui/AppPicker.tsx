@@ -53,6 +53,53 @@ interface InstalledOption {
   app: AppInfo;
 }
 
+/** The predefined options that are installed, each with the app found for it. */
+function matchInstalledOptions(options: AppPickerOption[], applications: AppInfo[]): InstalledOption[] {
+  const results: InstalledOption[] = [];
+  for (const option of options) {
+    if (!option.appName) continue;
+    const optionNameLower = option.appName.toLowerCase();
+    // Exact match or contains match
+    const matchingApp = applications.find((app) => {
+      const appNameLower = app.name.toLowerCase();
+      return (
+        appNameLower === optionNameLower ||
+        appNameLower.includes(optionNameLower) ||
+        optionNameLower.includes(appNameLower)
+      );
+    });
+    if (matchingApp) results.push({ option, app: matchingApp });
+  }
+  return results;
+}
+
+/** Installed apps outside the predefined options, narrowed by `appFilter`. */
+function otherInstalledApps(applications: AppInfo[], installed: InstalledOption[], appFilter?: (app: AppInfo) => boolean): AppInfo[] {
+  const paths = new Set(installed.map((io) => io.app.path));
+  const others = applications.filter((app) => !paths.has(app.path));
+  return appFilter ? others.filter(appFilter) : others;
+}
+
+/** An installed app a picker offers. */
+export interface PickableApp {
+  app: AppInfo;
+  label: string;
+  /** The predefined option's id, when it is one. */
+  id?: string;
+  /** Legacy command value that also means this app. */
+  command?: string;
+}
+
+/** Everything a picker offers on this computer: installed predefined options first, then the other matching apps. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function pickableApps(options: AppPickerOption[], applications: AppInfo[], appFilter?: (app: AppInfo) => boolean): PickableApp[] {
+  const installed = matchInstalledOptions(options, applications);
+  return [
+    ...installed.map(({ option, app }) => ({ app, label: option.label, id: option.id, command: option.command })),
+    ...otherInstalledApps(applications, installed, appFilter).map((app) => ({ app, label: app.name })),
+  ];
+}
+
 interface AppPickerProps {
   /** Predefined options that will be filtered by installed apps */
   options: AppPickerOption[];
@@ -68,6 +115,8 @@ interface AppPickerProps {
   isLoadingApps?: boolean;
   /** Filter function for other applications (e.g., only show IDEs or terminals) */
   appFilter?: (app: AppInfo) => boolean;
+  /** Apps offered somewhere else already (by path), left out of this menu. */
+  exclude?: string[];
 }
 
 interface DropdownPosition {
@@ -86,6 +135,7 @@ export function AppPicker({
   applications = [],
   isLoadingApps = false,
   appFilter,
+  exclude,
 }: AppPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   useEscapeScope(isOpen, () => setIsOpen(false));
@@ -97,45 +147,16 @@ export function AppPicker({
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Match options with installed applications
-  const installedOptions = useMemo(() => {
-    const results: InstalledOption[] = [];
-
-    for (const option of options) {
-      if (!option.appName) continue;
-
-      // Find matching installed app
-      const matchingApp = applications.find((app) => {
-        const appNameLower = app.name.toLowerCase();
-        const optionNameLower = option.appName!.toLowerCase();
-
-        // Exact match or contains match
-        return (
-          appNameLower === optionNameLower ||
-          appNameLower.includes(optionNameLower) ||
-          optionNameLower.includes(appNameLower)
-        );
-      });
-
-      if (matchingApp) {
-        results.push({ option, app: matchingApp });
-      }
-    }
-
-    return results;
-  }, [options, applications]);
+  const installedOptions = useMemo(
+    () => matchInstalledOptions(options, applications).filter((io) => !exclude?.includes(io.app.path)),
+    [options, applications, exclude],
+  );
 
   // Get other applications not in predefined options
-  const otherApps = useMemo(() => {
-    const installedAppPaths = new Set(installedOptions.map((io) => io.app.path));
-    let filtered = applications.filter((app) => !installedAppPaths.has(app.path));
-
-    // Apply additional filter if provided
-    if (appFilter) {
-      filtered = filtered.filter(appFilter);
-    }
-
-    return filtered;
-  }, [applications, installedOptions, appFilter]);
+  const otherApps = useMemo(
+    () => otherInstalledApps(applications, matchInstalledOptions(options, applications), appFilter),
+    [applications, options, appFilter],
+  );
 
   // Filter by search query
   const searchedInstalledOptions = useMemo(() => {
@@ -189,15 +210,17 @@ export function AppPicker({
       const spaceBelow = window.innerHeight - rect.bottom - 8;
       const spaceAbove = rect.top - 8;
 
-      // Prefer below; flip above only if more room above and not enough below
-      const showAbove = spaceBelow < 120 && spaceAbove > spaceBelow;
+      // Prefer below; flip above when below cannot show a useful stretch of the list and above can show more
+      const showAbove = spaceBelow < 280 && spaceAbove > spaceBelow;
 
+      // A narrow trigger near the right edge would push the menu off-screen.
+      const width = Math.min(Math.max(rect.width, 320), window.innerWidth - 16);
       setDropdownPosition({
         top: showAbove ? null : rect.bottom + 4,
         bottom: showAbove ? (window.innerHeight - rect.top + 4) : null,
-        left: rect.left,
-        width: Math.max(rect.width, 320),
-        maxHeight: showAbove ? spaceAbove : spaceBelow,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+        width,
+        maxHeight: Math.min(showAbove ? spaceAbove : spaceBelow, 420),
       });
     }
   }, []);
@@ -265,10 +288,10 @@ export function AppPicker({
             maxHeight: dropdownPosition.maxHeight,
             zIndex: 9999,
           }}
-          className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-y-auto"
+          className="flex flex-col overflow-hidden bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-lg"
         >
           {/* Search input */}
-          <div className="p-2 border-b border-[var(--color-border)]">
+          <div className="flex-none p-2 border-b border-[var(--color-border)]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
               <input
@@ -284,7 +307,8 @@ export function AppPicker({
             </div>
           </div>
 
-          <div className="max-h-[340px] overflow-y-auto">
+          {/* The one scrolling area: the menu itself is as tall as the room it has. */}
+          <div className="min-h-0 flex-1 overflow-y-auto">
             {isLoadingApps ? (
               <div className="px-3 py-8 text-center text-sm text-[var(--color-text-muted)] flex flex-col items-center gap-2">
                 <Loader2 className="w-5 h-5 animate-spin" />

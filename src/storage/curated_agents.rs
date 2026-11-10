@@ -92,13 +92,6 @@ pub fn ensure_curated_file() -> Result<PathBuf> {
         let dir = curated_dir();
         std::fs::create_dir_all(&dir)?;
         std::fs::write(&path, CURATED_JSON)?;
-        // P3.11: log the first-touch so the boot output makes the
-        // file's location discoverable. The marketplace modal links
-        // to this same path in its "about curated" help text.
-        eprintln!(
-            "[curated_agents] first-touch bootstrap — wrote embedded default to {}",
-            path.display()
-        );
     }
     Ok(path)
 }

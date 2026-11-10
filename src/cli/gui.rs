@@ -8,6 +8,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const DAEMON_ENV: &str = "GROVE_GUI_DAEMON";
+/// Set for a background process whose `grove gui` command was typed in a
+/// terminal: it already has that shell's PATH.
+const FROM_TERMINAL_ENV: &str = "GROVE_GUI_FROM_TERMINAL";
+
+/// Whether this start came from a terminal, whose environment the process inherits.
+fn started_from_terminal() -> bool {
+    use std::io::IsTerminal;
+    std::env::var(FROM_TERMINAL_ENV).as_deref() == Ok("1") || std::io::stdin().is_terminal()
+}
 
 /// Tauri sets the small window icon, but its Windows runtime leaves the large
 /// taskbar icon unset. Use the icon resource embedded by tauri-build for it.
@@ -462,6 +471,10 @@ pub fn try_daemonize(port: u16, remote_url: Option<&str>) -> bool {
     }
     cmd.args(&args)
         .env(DAEMON_ENV, "1")
+        .env(
+            FROM_TERMINAL_ENV,
+            if started_from_terminal() { "1" } else { "0" },
+        )
         .stdin(std::process::Stdio::null())
         .stdout(stdout)
         .stderr(stderr);
@@ -472,10 +485,12 @@ pub fn try_daemonize(port: u16, remote_url: Option<&str>) -> bool {
     let child = cmd.spawn();
 
     match child {
-        Ok(c) => {
-            println!("Grove GUI launched in background (pid: {})", c.id());
-            if let Some(log_path) = log_path {
-                println!("Logs: {}", log_path.display());
+        Ok(mut c) => {
+            match &log_path {
+                // Stay until the window is open, showing what it is doing: a
+                // command that returns at once reads as "nothing happened".
+                Some(log_path) => follow_startup(&mut c, log_path),
+                None => println!("Grove is opening in the background (pid: {})", c.id()),
             }
             true // parent should exit
         }
@@ -483,6 +498,56 @@ pub fn try_daemonize(port: u16, remote_url: Option<&str>) -> bool {
             eprintln!("Failed to daemonize: {e}. Running in foreground.");
             false
         }
+    }
+}
+
+/// How long the command follows a start before leaving it to the window.
+const FOLLOW_LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// Print the background process's startup steps (read from its log) until it
+/// is ready, has failed, or has exited.
+fn follow_startup(child: &mut std::process::Child, log_path: &std::path::Path) {
+    use crate::startup::Event;
+    use std::io::{BufRead, BufReader};
+
+    let started = std::time::Instant::now();
+    let mut reader = std::fs::File::open(log_path).ok().map(BufReader::new);
+    let mut pending = String::new();
+    loop {
+        let exited = !matches!(child.try_wait(), Ok(None));
+        while let Some(reader) = reader.as_mut() {
+            // A line still being written comes back without its newline; keep
+            // it and read the rest on the next pass.
+            match reader.read_line(&mut pending) {
+                Ok(read) if read > 0 && pending.ends_with('\n') => {}
+                _ => break,
+            }
+            match crate::startup::parse_line(&pending) {
+                Some(Event::Step(label)) => crate::startup::print_step(&label),
+                Some(Event::Ready) => {
+                    println!("Grove is open. Logs: {}", log_path.display());
+                    return;
+                }
+                Some(Event::Failed(message)) => {
+                    eprintln!("Grove could not start: {message}");
+                    eprintln!("Logs: {}", log_path.display());
+                    return;
+                }
+                None => {}
+            }
+            pending.clear();
+        }
+        if exited {
+            eprintln!("Grove stopped before its window opened.");
+            eprintln!("Logs: {}", log_path.display());
+            return;
+        }
+        if started.elapsed() > FOLLOW_LIMIT {
+            println!("Grove is still starting; its window shows the progress.");
+            println!("Logs: {}", log_path.display());
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
@@ -608,9 +673,11 @@ fn read_interactive_path(shell: &str, timeout: std::time::Duration) -> Option<St
 /// Execute the GUI desktop application
 pub async fn execute(port: u16, remote_url: Option<String>) {
     let is_remote = remote_url.is_some();
-    // Only local agents need the user's shell environment.
+    // Only local agents need the user's shell environment, and a start from
+    // a terminal already has it: asking the shell is for the Dock and Finder.
     #[cfg(target_os = "macos")]
-    if !is_remote {
+    if !is_remote && !started_from_terminal() {
+        crate::startup::step("Reading your shell environment");
         expand_path_for_app_bundle();
     }
 
@@ -627,10 +694,6 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
         std::process::exit(1);
     }
 
-    // Flag to track if the server is ready
-    let server_ready = Arc::new(AtomicBool::new(false));
-    let server_ready_clone = server_ready.clone();
-
     // Bind to a port (with auto-fallback if in use)
     let (listener, bound_port) = match api::bind_with_fallback("127.0.0.1", port, 10).await {
         Ok(result) => result,
@@ -643,24 +706,33 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
     let actual_port = bound_port;
     let _ = GUI_PORT.set(actual_port);
 
-    // GUI-specific setup ends at listener binding/remote proxy selection.
-    // Local backend initialization is shared with `grove web` so new startup
-    // responsibilities cannot be added to one surface and omitted from the other.
-    if !is_remote {
-        if let Err(e) = api::initialize_local_server_runtime(actual_port).await {
-            eprintln!("Failed to initialize Grove backend: {}", e);
-            return;
-        }
+    // The server answers at once, but only the launch window's files and the
+    // startup status until the backend is ready (see `startup_gate`). The
+    // window can then open straight away and say what Grove is doing, instead
+    // of nothing showing for as long as first-run setup takes.
+    let gate = api::startup_gate::StartupGate::default();
+    let no_auth = || Arc::new(api::auth::ServerAuth::no_auth());
+    if is_remote {
+        gate.open(api::create_router(None, no_auth(), remote_url_clone));
+        crate::startup::ready();
+    } else {
+        // Local backend initialization is shared with `grove web` so new
+        // startup responsibilities cannot be added to one surface and omitted
+        // from the other.
+        let gate = gate.clone();
+        tokio::spawn(async move {
+            match api::initialize_local_server_runtime(actual_port).await {
+                Ok(()) => {
+                    gate.open(api::create_router(None, no_auth(), None));
+                    crate::startup::ready();
+                }
+                Err(e) => crate::startup::fail(&format!("Failed to initialize Grove backend: {e}")),
+            }
+        });
     }
 
-    // Start HTTP server in a background task
+    let app = gate.router();
     let handle = tokio::spawn(async move {
-        let auth = std::sync::Arc::new(api::auth::ServerAuth::no_auth());
-        let app = api::create_router(None, auth, remote_url_clone);
-
-        // Signal that server is ready
-        server_ready_clone.store(true, Ordering::SeqCst);
-
         if let Err(e) = axum::serve(listener, app).await {
             eprintln!("API server error: {}", e);
         }
@@ -670,14 +742,6 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
         }
     });
     let server_handle = Some(handle);
-
-    // Wait for server to be ready
-    while !server_ready.load(Ordering::SeqCst) {
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-    }
-
-    // Give the server a moment to fully initialize
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Build and run Tauri application
 
@@ -730,6 +794,8 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             crate::tray::buddy_mini::buddy_mini_close,
             crate::tray::buddy_mini::buddy_mini_open_in_main,
             super::gui_launch::launch_reveal,
+            super::gui_launch::launch_quit,
+            super::gui_setup::setup_window_end,
         ])
         .setup(move |app| {
             let _ = TAURI_APP.set(app.handle().clone());

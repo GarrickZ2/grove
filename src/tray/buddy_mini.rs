@@ -289,7 +289,7 @@ fn resize_to(window: &tauri::WebviewWindow, width: f64, height: f64) {
 }
 
 #[cfg(target_os = "macos")]
-mod cocoa {
+pub(crate) mod cocoa {
     use objc2::encode::{Encode, Encoding};
 
     #[repr(C)]

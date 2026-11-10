@@ -2,27 +2,26 @@ import { OrbitMachineMenu } from "../../components/Layout/OrbitMachineMenu";
 import { createElement, useEffect, useState, type CSSProperties } from "react";
 import { motion } from "framer-motion";
 import { Check, FolderOpen, FolderPlus, GitBranch, Palette, RotateCw, type LucideIcon } from "lucide-react";
-import { getVersion } from "../../api";
+import { getVersion, patchConfig } from "../../api";
 import { MarketplaceModal } from "../../components/Config/MarketplaceModal";
-import { useIsMobile } from "../../hooks";
+import { useConfig } from "../../context";
 import { GroveIcon } from "../../components/Layout/GroveIcon";
 import type { WelcomeAction } from "../../components/Welcome/WelcomePage";
 import { agentIconComponent } from "../../utils/agentIcon";
+import { invokeQuiet } from "../../utils/tauriShell";
 import { useOrbitInterface } from "../ui/interfaceContext";
-import { AGENT_INTRO_SEEN_KEY, hasSeen, markSeen } from "./storage";
+import { OrbitSetup } from "./OrbitSetup";
 import { useDetectedAgents, type AgentDetection } from "./useDetectedAgents";
 import "../tokens.css";
 import "../ui/orbit-ui.css";
 import "./welcome.css";
 
-const ACTIONS: { id: WelcomeAction; icon: LucideIcon; title: string; description: string; tint: string; glow: string }[] = [
-  { id: "existing", icon: FolderOpen, title: "Open a folder", description: "A repository already on this computer.", tint: "linear-gradient(150deg,#6ee7b7,#047857)", glow: "rgb(4 120 87 / 60%)" },
-  { id: "git", icon: GitBranch, title: "Clone a repository", description: "Paste a Git URL and start working.", tint: "linear-gradient(150deg,#93c5fd,#1d4ed8)", glow: "rgb(29 78 216 / 55%)" },
-  { id: "new", icon: FolderPlus, title: "Create a project", description: "Start from an empty folder.", tint: "linear-gradient(150deg,#fcd34d,#b45309)", glow: "rgb(180 83 9 / 55%)" },
-  { id: "studio", icon: Palette, title: "Start a Studio", description: "For design, docs and assets. No Git needed.", tint: "linear-gradient(150deg,#f9a8d4,#be185d)", glow: "rgb(190 24 93 / 55%)" },
+const ACTIONS: { id: WelcomeAction; icon: LucideIcon; title: string; tint: string; glow: string }[] = [
+  { id: "existing", icon: FolderOpen, title: "Open a folder", tint: "linear-gradient(150deg,#6ee7b7,#047857)", glow: "rgb(4 120 87 / 60%)" },
+  { id: "git", icon: GitBranch, title: "Clone a repository", tint: "linear-gradient(150deg,#93c5fd,#1d4ed8)", glow: "rgb(29 78 216 / 55%)" },
+  { id: "new", icon: FolderPlus, title: "Create a project", tint: "linear-gradient(150deg,#fcd34d,#b45309)", glow: "rgb(180 83 9 / 55%)" },
+  { id: "studio", icon: Palette, title: "Start a Studio", tint: "linear-gradient(150deg,#f9a8d4,#be185d)", glow: "rgb(190 24 93 / 55%)" },
 ];
-
-const AGENT_INTRO = "Choose the agents you use. Grove runs them on your machine, and you'll sign in the first time you use each one.";
 
 /** Agent chips shown before the rest fold into "+N". */
 const CHIP_LIMIT = 4;
@@ -56,7 +55,6 @@ function AgentLine({ detection, checking, onRecheck, onInstall }: {
     return (
       <div className="owl-noag" aria-live="polite">
         <b>Grove needs a coding agent</b>
-        <span>None found on this computer. Install one and Grove picks it up automatically.</span>
         <div className="owl-noag-row">
           <button type="button" className="oui-btn oui-btn-primary" onClick={onInstall}>Browse agents</button>
           <button type="button" className="oui-btn oui-btn-ghost" onClick={onRecheck} disabled={checking}>
@@ -83,23 +81,29 @@ function AgentLine({ detection, checking, onRecheck, onInstall }: {
   );
 }
 
-/** Orbit's Welcome page (no projects yet): the ways to add one, and which agents are ready. */
+/** Orbit's Welcome page (no projects yet): first-run setup once, then the ways to add a project and which agents are ready. */
 export function OrbitWelcome({ onAction }: { onAction: (action: WelcomeAction) => void }) {
   const [version, setVersion] = useState("");
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const { detection, checking, recheck } = useDetectedAgents();
   const isRemote = typeof window !== "undefined" && !!(window as unknown as Record<string, unknown>).__GROVE_REMOTE__;
   const orbit = useOrbitInterface();
-  // Welcome renders outside TabletAsDesktopContext, so isMobile still counts tablets.
-  const { isMobile, isTablet } = useIsMobile();
-  const phone = isMobile && !isTablet;
-  // This page is drawn before the config loads, so Workbench can land here for a moment.
-  const [introPending, setIntroPending] = useState(() => !hasSeen(AGENT_INTRO_SEEN_KEY));
-  const showIntro = introPending && orbit && !phone && !isRemote;
+  // Setup runs once per machine: the machine remembers, whichever browser, app or phone asks.
+  const { config, loading, refresh } = useConfig();
+  // The config setup was finished on: holds until the saved flag arrives, and says nothing about another machine's.
+  const [finishedOn, setFinishedOn] = useState<typeof config>(null);
+  const showSetup = !!config && config.web?.setup_done !== true && finishedOn !== config && orbit;
+  const finishSetup = () => {
+    setFinishedOn(config);
+    void patchConfig({ web: { setup_done: true } }).then(refresh).catch(() => {});
+    recheck();
+  };
 
+  // The desktop app opens a first start in a small setup window; without setup on show, it gets its usual size.
+  const settled = !!config || !loading;
   useEffect(() => {
-    if (showIntro) markSeen(AGENT_INTRO_SEEN_KEY);
-  }, [showIntro]);
+    if (settled && !showSetup) void invokeQuiet("setup_window_end");
+  }, [settled, showSetup]);
 
   useEffect(() => {
     getVersion().then((res) => setVersion(res.version)).catch(() => {});
@@ -114,37 +118,37 @@ export function OrbitWelcome({ onAction }: { onAction: (action: WelcomeAction) =
     >
       <div className="owl-aurora" aria-hidden="true"><i className="a1" /><i className="a2" /><i className="a3" /></div>
       <div className="owl-veil" aria-hidden="true" />
-      <div className="owl-center">
-        <div className="owl-mark"><GroveIcon size={96} /></div>
-        <h1>Steer agents with context.</h1>
-        <p className="owl-lead">
-          Grove runs every coding agent side by side, each in its own worktree. You decide what they know — instructions, memory, linked projects — and review what they ship.
-        </p>
-        <div className="owl-choices">
-          {ACTIONS.map(({ id, icon: Icon, title, description, tint, glow }, index) => (
-            <button
-              key={id}
-              type="button"
-              className={`owl-choice${index === 0 ? " is-primary" : ""}`}
-              style={{ "--glow": glow, animationDelay: `${300 + index * 70}ms` } as CSSProperties}
-              onClick={() => onAction(id)}
-            >
-              <span className="owl-cic" style={{ background: tint }}><Icon size={16} aria-hidden="true" /></span>
-              <b>{title}</b>
-              <span>{description}</span>
-            </button>
-          ))}
-        </div>
-        <AgentLine detection={detection} checking={checking} onRecheck={recheck} onInstall={() => setMarketplaceOpen(true)} />
-      </div>
-      <div className="owl-machine"><OrbitMachineMenu pairedOnly /></div>
-      {(version || isRemote) && (
-        <p className="owl-version">
-          {version && <span>v{version}</span>}
-          {isRemote && <span className="owl-remote">Remote</span>}
-        </p>
+      {showSetup ? <OrbitSetup onDone={finishSetup} /> : !settled ? null : (
+        <>
+          <div className="owl-center">
+            <div className="owl-mark"><GroveIcon size={96} /></div>
+            <h1>Add your first project</h1>
+            <div className="owl-choices">
+              {ACTIONS.map(({ id, icon: Icon, title, tint, glow }, index) => (
+                <button
+                  key={id}
+                  type="button"
+                  className="owl-choice"
+                  style={{ "--glow": glow, animationDelay: `${300 + index * 70}ms` } as CSSProperties}
+                  onClick={() => onAction(id)}
+                >
+                  <span className="owl-cic" style={{ background: tint }}><Icon size={18} aria-hidden="true" /></span>
+                  <b>{title}</b>
+                </button>
+              ))}
+            </div>
+            <AgentLine detection={detection} checking={checking} onRecheck={recheck} onInstall={() => setMarketplaceOpen(true)} />
+          </div>
+          <div className="owl-machine"><OrbitMachineMenu pairedOnly /></div>
+          {(version || isRemote) && (
+            <p className="owl-version">
+              {version && <span>v{version}</span>}
+              {isRemote && <span className="owl-remote">Remote</span>}
+            </p>
+          )}
+          <MarketplaceModal open={marketplaceOpen} initialTab="explore" onClose={() => { setMarketplaceOpen(false); recheck(); }} />
+        </>
       )}
-      <MarketplaceModal open={marketplaceOpen || showIntro} initialTab="explore" intro={showIntro ? AGENT_INTRO : undefined} onClose={() => { setMarketplaceOpen(false); setIntroPending(false); recheck(); }} />
     </motion.div>
   );
 }
