@@ -3,6 +3,7 @@
 pub mod artifact_zip;
 pub mod artifacts;
 pub mod crud;
+pub mod designs;
 pub mod file_explorer;
 pub mod git_ops;
 pub mod graph;
@@ -19,6 +20,7 @@ pub mod types;
 pub use artifact_zip::*;
 pub use artifacts::*;
 pub use crud::*;
+pub use designs::*;
 pub use file_explorer::*;
 pub use git_ops::*;
 pub use graph::*;

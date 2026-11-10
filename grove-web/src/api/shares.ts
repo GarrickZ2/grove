@@ -2,6 +2,7 @@
 // opens. See src/api/handlers/shares.rs.
 
 import { apiClient, type ApiError } from './client';
+import type { Design, DesignComment } from './designs';
 import type { DiffFile, DiffStatsResult } from './review';
 
 export type ShareState = 'active' | 'expired' | 'exhausted' | 'revoked' | 'removed' | 'missing';
@@ -32,7 +33,7 @@ export interface ShareLink {
 
 export interface ShareLinks {
   address: string;
-  addressSource: 'custom' | 'window' | 'remote';
+  addressSource: 'custom' | 'window';
   links: ShareLink[];
 }
 
@@ -40,9 +41,6 @@ export interface ShareProfile {
   name: string | null;
   suggestedName: string;
   device: string;
-  address: string;
-  addressSource: ShareLinks['addressSource'];
-  customAddress: string | null;
 }
 
 /** What a link is, as the owner's Grove describes it. */
@@ -62,6 +60,7 @@ export interface ShareInfo {
 }
 
 export interface SharedCommentReply {
+  id: number;
   author: string;
   content: string;
   timestamp: string;
@@ -80,6 +79,8 @@ export interface SharedComment {
   timestamp: string;
   status: 'open' | 'resolved' | 'outdated';
   replies: SharedCommentReply[];
+  /** Where in the rendered file a comment made on a preview or a design page sits. */
+  anchor?: Record<string, unknown> | null;
 }
 
 export interface SharedFile {
@@ -96,7 +97,19 @@ export interface NewSharedComment {
   side?: 'ADD' | 'DELETE';
   startLine?: number;
   endLine?: number;
+  /** For a comment made on a preview or a design page: where it sits. */
+  anchor?: unknown;
   content: string;
+}
+
+/** The Task's design boards as a share link shows them. */
+export interface SharedDesignData {
+  designs: Design[];
+  comments: DesignComment[];
+  me: string;
+  /** Where the pages' own files load from, on the owner's Grove: a path, and the same as a full address. */
+  filesPath: string;
+  filesUrl: string;
 }
 
 /** A link this Grove opened. `live` is the owner's answer just now. */
@@ -135,12 +148,30 @@ export function getShareProfile(): Promise<ShareProfile> {
   return apiClient.get<ShareProfile>('/api/v1/share-profile');
 }
 
-export function updateShareProfile(patch: { name?: string; address?: string }): Promise<ShareProfile> {
+export function updateShareProfile(patch: { name: string }): Promise<ShareProfile> {
   return apiClient.put<typeof patch, ShareProfile>('/api/v1/share-profile', patch);
 }
 
+const ADDRESS_KEY = 'grove_share_address';
+
+/** The address this window's links use, when it was changed by hand. Kept
+ *  per window, so each Grove on a machine keeps its own. */
+export function shareAddress(): string {
+  try { return localStorage.getItem(ADDRESS_KEY) ?? ''; } catch { return ''; }
+}
+
+export function setShareAddress(address: string): void {
+  try {
+    if (address.trim()) localStorage.setItem(ADDRESS_KEY, address.trim());
+    else localStorage.removeItem(ADDRESS_KEY);
+  } catch { /* private window */ }
+}
+
 export function listShareLinks(projectId: string, taskId: string): Promise<ShareLinks> {
-  return apiClient.get<ShareLinks>(`/api/v1/projects/${projectId}/tasks/${encodeURIComponent(taskId)}/shares`);
+  const address = shareAddress();
+  return apiClient.get<ShareLinks>(
+    `/api/v1/projects/${projectId}/tasks/${encodeURIComponent(taskId)}/shares${address ? `?address=${encodeURIComponent(address)}` : ''}`,
+  );
 }
 
 export function createShareLink(
@@ -148,13 +179,19 @@ export function createShareLink(
   taskId: string,
   options: { canComment: boolean; expiresInDays: number | null; maxPeople: number | null },
 ): Promise<ShareLink> {
-  return apiClient.post<typeof options, ShareLink>(
+  const body = { ...options, address: shareAddress() || undefined };
+  return apiClient.post<typeof body, ShareLink>(
     `/api/v1/projects/${projectId}/tasks/${encodeURIComponent(taskId)}/shares`,
-    options,
+    body,
   );
 }
 
 export function revokeShareLink(token: string): Promise<void> {
+  return apiClient.postNoContent(`/api/v1/shares/${token}/stop`);
+}
+
+/** Forget a link and who opened it; their comments stay with the Task. */
+export function deleteShareLink(token: string): Promise<void> {
   return apiClient.delete(`/api/v1/shares/${token}`);
 }
 
@@ -211,7 +248,14 @@ export interface ShareSource {
   fileUrl(path: string): string;
   comments(): Promise<{ comments: SharedComment[] }>;
   addComment(comment: NewSharedComment): Promise<{ comments: SharedComment[] }>;
+  /** Answer in a thread, whoever started it. */
+  addReply(id: number, content: string): Promise<{ comments: SharedComment[] }>;
+  /** The design boards, and the base address their pages load files from. */
+  designs(): Promise<{ designs: Design[]; comments: DesignComment[]; me: string; filesBase: string }>;
+  designPage(design: string, file: string): Promise<string>;
 }
+
+const designPagePath = (design: string, file: string) => `designs/${encodeURIComponent(design)}/pages/${encodeURIComponent(file)}`;
 
 export function receivedShareSource(id: string): ShareSource {
   const base = `/api/v1/shared/${id}/host`;
@@ -228,6 +272,13 @@ export function receivedShareSource(id: string): ShareSource {
     fileUrl: (path) => `${base}/files/download?${q(path)}`,
     comments: () => apiClient.get<{ comments: SharedComment[] }>(`${base}/comments`),
     addComment: (comment) => apiClient.post<NewSharedComment, { comments: SharedComment[] }>(`${base}/comments`, comment),
+    addReply: (id, content) => apiClient.post<{ content: string }, { comments: SharedComment[] }>(`${base}/comments/${id}/replies`, { content }),
+    // This Grove relays the calls; a page's frame loads its files from the owner's Grove itself.
+    designs: async () => {
+      const data = await apiClient.get<SharedDesignData>(`${base}/designs`);
+      return { designs: data.designs, comments: data.comments, me: data.me, filesBase: data.filesUrl };
+    },
+    designPage: (design, file) => apiClient.getText(`${base}/${designPagePath(design, file)}`),
   };
 }
 
@@ -274,5 +325,11 @@ export function publicShareSource(token: string): ShareSource {
     fileUrl: (path) => `${base}/files/download?${q(path)}`,
     comments: () => publicJson<{ comments: SharedComment[] }>(`${base}/comments`),
     addComment: (comment) => publicJson<{ comments: SharedComment[] }>(`${base}/comments`, jsonBody(comment)),
+    addReply: (id, content) => publicJson<{ comments: SharedComment[] }>(`${base}/comments/${id}/replies`, jsonBody({ content })),
+    designs: async () => {
+      const data = await publicJson<SharedDesignData>(`${base}/designs`);
+      return { designs: data.designs, comments: data.comments, me: data.me, filesBase: data.filesPath };
+    },
+    designPage: async (design, file) => (await publicRequest(`${base}/${designPagePath(design, file)}`)).text(),
   };
 }

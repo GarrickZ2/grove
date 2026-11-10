@@ -256,6 +256,93 @@ When you want the user to see a sketch you've drawn, write `sketch://<sketch-id>
 Prefer chips over describing the sketch in prose — the user can click through to see the real canvas.
 "##;
 
+/// Returned by `grove_design_read_me`: how designs are stored, laid out and checked.
+const DESIGN_READ_ME: &str = r##"# Grove Design — HTML pages on a board
+
+A design is a set of HTML pages. Grove's Design panel shows them side by side as artboards on a board; the user can open any page full size, click through it, comment on elements, and move artboards around. You write the files with your normal file tools; there is no drawing tool.
+
+## Files
+
+```
+design/
+├── system/               the Project's design system (shared by every task; see below)
+└── <design-name>/        one directory per design, e.g. design/checkout-flow/
+    ├── design.json       the board: where each page sits, and labels
+    ├── overview.html     one file per page, directly in this directory
+    ├── detail.html
+    └── assets/           images, extra CSS/JS the pages use
+```
+
+- Names use letters, digits, `-`, `_` and `.` only. Files and directories starting with `.` are Grove's; leave them alone.
+- Each page is a complete HTML document that renders on its own. Link shared files by relative path: `../system/tokens.css`, `assets/logo.svg`. Fonts and libraries from a public CDN are fine.
+- Link between pages with ordinary relative links (`<a href="detail.html">`). They work when the user plays the design, so wire up the navigation a real user would click.
+- Pages run in a sandboxed frame: no cookies or localStorage, and no access to Grove. Keep state in memory.
+- Use realistic content, not lorem ipsum.
+
+## design.json
+
+```json
+{
+  "name": "Checkout flow",
+  "pages": [
+    { "file": "cart.html",    "title": "Cart",    "x": 0,    "y": 0,    "width": 1440, "height": 900 },
+    { "file": "payment.html", "title": "Payment", "x": 1560, "y": 0,    "width": 1440, "height": 900 },
+    { "file": "receipt.html", "title": "Receipt", "x": 1560, "y": 1140, "width": 1440, "height": 900 }
+  ],
+  "labels": [
+    { "text": "Checkout", "x": 0, "y": -150, "size": "title" },
+    { "text": "Happy path, desktop", "x": 0, "y": -90, "size": "subtitle" }
+  ]
+}
+```
+
+- `x`, `y`: the artboard's top-left corner on the board, in page pixels. `width`, `height`: the viewport the page is designed for (default 1440 × 900; use 390 × 844 for a phone screen).
+- Grove adds `rendered_height` to a page once it has rendered it: how tall the page really came out. The artboard is as tall as the larger of `height` and `rendered_height`. Read it back before you place anything under that page.
+- `labels` are free text on the board: section titles (`"size": "title"`, about 72px tall) and smaller notes (`"subtitle"`, about 36px tall).
+- A page that is not in `design.json` still shows; Grove puts it under the others.
+- The user can drag artboards and labels, which rewrites `x` and `y` in this same file. Read `design.json` again before each edit and change only what you mean to change; do not regenerate it from memory, or you will undo the user's arrangement.
+- The user can also change a page in the panel: text, colors, spacing, the order of elements. Those edits are written into the page's HTML file, mostly as inline styles. Read a page again before you edit it, and keep changes you did not make.
+- `marks` in `design.json` are what the user wrote and drew on the board: sticky notes, text, shapes, pen strokes. They are the user's. Never change or remove them, and read them: a note beside a page is usually a request about that page.
+- Keep the values worth tuning (colours, radii, spacing, type sizes) in CSS variables on `:root`, in the design system's `tokens.css` or in the page's own `<style>`. The panel lists them under Tweaks, and the user changes them there; the new value is written into that stylesheet.
+
+## Laying out the board
+
+Arrange pages so the board reads as a map of the product:
+
+- One block per module or flow, with a title label above it. Leave 400px or more between blocks.
+- Pages at the same level sit in one row, left to right in the order a user meets them, 120px apart.
+- A page reached from another goes directly under the page it comes from: a detail page under its list page, a dialog state under the page that opens it. Leave about 240px between rows, measured from the real bottom of the row above.
+- Variants of one page (empty, loading, error, mobile) sit next to it in the same row.
+- Put labels about 150px above the top row of their block so they do not touch the artboards.
+
+## The design system
+
+`design/system/` is the Project's one design system. Every task of the Project sees the same directory, and any task may improve it.
+
+- If it is empty, tell the user this Project has no design system yet and recommend creating one before the first page. If they would rather not, design the pages directly.
+- A design system has:
+  - `DESIGN.md` — the rules in prose: what the product should feel like, how to use colour, type, spacing, and what to avoid.
+  - `tokens.css` — CSS custom properties for colours, type scale, spacing, radii, shadows (light and dark when the product has both).
+  - `components.css` — the classes for buttons, inputs, cards, tables, navigation and the rest, built only from the tokens.
+  - `tokens.html` and `components.html` — specimen pages that show every token and every component in all its states. The panel shows them as artboards, so the user can review and comment on the system itself.
+- Pages link `../system/tokens.css` and `../system/components.css` and use those classes. Do not copy the styles into a page. When a page needs something the system lacks, add it to the system and its specimen page first, then use it.
+- Read `DESIGN.md` before designing, and follow it.
+
+## Seeing your work
+
+After writing or changing pages, call `grove_design_read` with the design and page. While the user has the Design panel open, it returns the page as Grove rendered it: an image, plus a check of the page (content wider than the viewport, clipped or overlapping text, images that failed to load, script errors). Fix what it reports and read again. Call it with only the design to check the board layout (it reports artboards that overlap).
+
+If no render is available, the tool says so. Then review the HTML yourself and tell the user you could not look at the result.
+
+## Comments
+
+The user comments on elements of a page. `grove_design_read` lists a page's open comments with the element each is on. When you have dealt with one, answer it with `grove_reply_review` using its id, saying what you changed.
+
+## Pointing the user at a design
+
+Write `design://<design-name>` in your reply (or `design://<design-name>/<page>.html` for one page, `design://system` for the design system). Grove shows it as a chip that opens the panel there. Write it as bare text, not inside a markdown link or backticks.
+"##;
+
 const UNKNOWN_TASK_INSTRUCTIONS: &str = r#"
 # Grove - Task (unknown type)
 
@@ -340,7 +427,12 @@ fn filter_tools_for(kind: TaskEnvKind, all: Vec<Tool>) -> Vec<Tool> {
         "sketch_list",
         "sketch_read",
         "sketch_draw",
+        "design_read_me",
+        "design_read",
     ]);
+    // Comments on design pages are review comments, so a Studio agent answers
+    // them with the same tool a Coding agent uses.
+    let studio_shared: HashSet<&'static str> = HashSet::from(["reply_review"]);
     // Skill-authoring tools — available while working inside any real task
     // (Coding or Studio) so an agent can capture a skill mid-flow.
     let authoring: HashSet<&'static str> = HashSet::from(["skill_create", "skill_list"]);
@@ -375,6 +467,7 @@ fn filter_tools_for(kind: TaskEnvKind, all: Vec<Tool>) -> Vec<Tool> {
             .filter(|t| {
                 common_in_task.contains(t.name.as_ref())
                     || studio_only.contains(t.name.as_ref())
+                    || studio_shared.contains(t.name.as_ref())
                     || authoring.contains(t.name.as_ref())
             })
             .collect(),
@@ -651,6 +744,18 @@ pub struct ListChatsParams {
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 pub struct SketchListParams {}
+
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct DesignReadParams {
+    /// Design name: its directory under `design/`, or `system` for the design
+    /// system. Omit to list every design in this task.
+    #[serde(default)]
+    pub design: Option<String>,
+    /// Page file inside the design, e.g. `overview.html`. Omit to read the
+    /// board layout of the design.
+    #[serde(default)]
+    pub page: Option<String>,
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SketchReadParams {
@@ -1304,6 +1409,78 @@ impl GroveMcpServer {
         ensure_not_in_grove_task()?;
         let p = params.0;
         list_chats_impl(p).await
+    }
+
+    /// How designs are stored, laid out and checked.
+    #[tool(
+        name = "design_read_me",
+        description = "Return the Grove design reference: where HTML design pages and the Project's design system live, the `design.json` board format, how to lay pages out, and how to check your work. Call this ONCE before you create or change a UI design, mockup, prototype or design system in this Studio task. Designs are plain files you write with your own file tools."
+    )]
+    async fn grove_design_read_me(&self) -> Result<CallToolResult, McpError> {
+        let (key, task_id) = resolve_current_task()?;
+        let status = tokio::task::spawn_blocking(move || design_status_text(&key, &task_id))
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "{DESIGN_READ_ME}\n{status}"
+        ))]))
+    }
+
+    /// Look at designs in the current Studio task.
+    #[tool(
+        name = "design_read",
+        description = "Look at the designs in the current Studio task. With no arguments: list the designs and their pages. With `design`: the board layout (each page's position and size, labels, overlapping artboards). With `design` and `page`: the page as Grove's Design panel rendered it (an image, when the user has the panel open), a check of the page (overflow, clipped or overlapping text, broken images, script errors) and its open comments. Call it after writing or changing a page."
+    )]
+    async fn grove_design_read(
+        &self,
+        params: Parameters<DesignReadParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let (key, task_id) = resolve_current_task()?;
+        let (text, image) = match (p.design, p.page) {
+            (Some(design), Some(page)) => read_design_page(key, task_id, design, page).await?,
+            (None, Some(page)) => {
+                // A page alone is enough when one design has a page of that name.
+                let (project, task) = (key.clone(), task_id.clone());
+                let list = tokio::task::spawn_blocking(move || {
+                    crate::storage::designs::list_designs(&project, &task)
+                })
+                .await
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?
+                .map_err(|e| mcp_err(&e.to_string()))?;
+                let mut holders = list
+                    .iter()
+                    .filter(|design| design.pages.iter().any(|entry| entry.file == page));
+                let design = match (holders.next(), holders.next()) {
+                    (Some(only), None) => only.slug.clone(),
+                    (None, _) => return Err(mcp_err(&format!("no design has a page '{page}'"))),
+                    _ => {
+                        return Err(mcp_err(&format!(
+                            "more than one design has a page '{page}'; give `design` too"
+                        )))
+                    }
+                };
+                read_design_page(key, task_id, design, page).await?
+            }
+            (design, None) => {
+                let text = tokio::task::spawn_blocking(move || {
+                    read_design_board(&key, &task_id, design.as_deref())
+                })
+                .await
+                .map_err(|e| McpError::internal_error(e.to_string(), None))??;
+                (text, None)
+            }
+        };
+        let mut content = Vec::new();
+        if let Some(png) = image {
+            use base64::Engine;
+            content.push(Content::image(
+                base64::engine::general_purpose::STANDARD.encode(&png),
+                "image/png",
+            ));
+        }
+        content.push(Content::text(text));
+        Ok(CallToolResult::success(content))
     }
 
     /// Return the Grove sketch element-format reference (cheat sheet).
@@ -2349,6 +2526,286 @@ fn read_sketch_to_text(
     }
 
     Ok((body, thumb))
+}
+
+/// The live part of `grove_design_read_me`: what this task has right now.
+fn design_status_text(project: &str, task_id: &str) -> String {
+    use crate::storage::designs;
+    let mut out = String::from("## This task right now\n\n");
+    if let Err(error) = designs::ensure_root(project, task_id) {
+        out.push_str(&format!("`design/` could not be prepared: {error}\n"));
+        return out;
+    }
+    let list = designs::list_designs(project, task_id).unwrap_or_default();
+    match list.iter().find(|design| design.is_system) {
+        Some(system) => out.push_str(&format!(
+            "- Design system: present at `design/system/` ({}{} specimen page(s)). Read `DESIGN.md` and the CSS before designing.\n",
+            if system.has_guide { "DESIGN.md, " } else { "no DESIGN.md, " },
+            system.pages.len(),
+        )),
+        None => out.push_str(
+            "- Design system: none yet (`design/system/` is empty). Recommend creating one to the user before designing pages.\n",
+        ),
+    }
+    let own: Vec<_> = list.iter().filter(|design| !design.is_system).collect();
+    if own.is_empty() {
+        out.push_str("- Designs: none yet.\n");
+    } else {
+        for design in own {
+            out.push_str(&format!(
+                "- Design `{}` (\"{}\"): {} page(s).\n",
+                design.slug,
+                design.name,
+                design.pages.len()
+            ));
+        }
+    }
+    out
+}
+
+/// `grove_design_read` without a page: the list of designs, or one board.
+fn read_design_board(
+    project: &str,
+    task_id: &str,
+    design: Option<&str>,
+) -> Result<String, McpError> {
+    use crate::storage::designs;
+    let list = designs::list_designs(project, task_id).map_err(|e| mcp_err(&e.to_string()))?;
+    let Some(slug) = design else {
+        if list.is_empty() {
+            return Ok("No designs in this task yet, and the Project has no design system. Call grove_design_read_me before creating one.".to_string());
+        }
+        let mut out = String::new();
+        for design in &list {
+            out.push_str(&format!(
+                "{} `{}` — \"{}\", {} page(s): {}\n",
+                if design.is_system {
+                    "Design system"
+                } else {
+                    "Design"
+                },
+                design.slug,
+                design.name,
+                design.pages.len(),
+                design
+                    .pages
+                    .iter()
+                    .map(|page| page.file.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+        }
+        out.push_str("\nCall grove_design_read with `design` for a board's layout, or with `design` and `page` to look at a page.\n");
+        return Ok(out);
+    };
+    let Some(design) = list.iter().find(|design| design.slug == slug) else {
+        let names: Vec<_> = list.iter().map(|design| design.slug.as_str()).collect();
+        return Err(mcp_err(&format!(
+            "Design \"{slug}\" not found. Designs in this task: {}",
+            if names.is_empty() {
+                "(none)".to_string()
+            } else {
+                names.join(", ")
+            }
+        )));
+    };
+    let mut out = format!(
+        "Design `{}` — \"{}\"\n\nPages (x, y, width × height on the board):\n",
+        design.slug, design.name
+    );
+    for page in &design.pages {
+        out.push_str(&format!(
+            "- {} \"{}\": x {}, y {}, {} × {}{}{}\n",
+            page.file,
+            page.title,
+            page.x,
+            page.y,
+            page.width,
+            page.board_height(),
+            match page.rendered_height {
+                None if page.placed => " (not rendered yet; height is the declared one)",
+                _ => "",
+            },
+            if page.placed {
+                ""
+            } else {
+                " — not in design.json, placed by Grove"
+            },
+        ));
+    }
+    if !design.labels.is_empty() {
+        out.push_str("\nLabels:\n");
+        for label in &design.labels {
+            out.push_str(&format!(
+                "- \"{}\" ({}): x {}, y {}\n",
+                label.text, label.size, label.x, label.y
+            ));
+        }
+    }
+    if !design.marks.is_empty() {
+        out.push_str("\nThe user's marks on the board (theirs: read them, never change them):\n");
+        for mark in &design.marks {
+            let number = |key: &str| {
+                mark.get(key)
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0)
+                    .round()
+            };
+            let kind = mark
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("mark");
+            let text = mark
+                .get("text")
+                .and_then(serde_json::Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+                .map(|text| format!(": \"{}\"", text.trim()))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "- {kind} at x {}, y {}, {} × {}{text}\n",
+                number("x"),
+                number("y"),
+                number("width"),
+                number("height"),
+            ));
+        }
+    }
+    if design.warnings.is_empty() {
+        out.push_str("\nNo layout problems found.\n");
+    } else {
+        out.push_str("\nProblems:\n");
+        for warning in &design.warnings {
+            out.push_str(&format!("- {warning}\n"));
+        }
+    }
+    let open = crate::api::handlers::tasks::designs::design_comments(project, task_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|comment| comment.is_open() && comment.design() == slug)
+        .count();
+    if open > 0 {
+        out.push_str(&format!(
+            "\n{open} open comment(s) on this design's pages; read a page to see them.\n"
+        ));
+    }
+    Ok(out)
+}
+
+/// How long `grove_design_read` waits for the panel to render a changed page.
+const DESIGN_RENDER_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// The panel says it is open every few seconds; older than this, nobody is looking.
+const DESIGN_VIEWER_WINDOW: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// `grove_design_read` for one page: the stored render when it is current,
+/// the page check, and the open comments.
+async fn read_design_page(
+    project: String,
+    task_id: String,
+    slug: String,
+    file: String,
+) -> Result<(String, Option<Vec<u8>>), McpError> {
+    use crate::storage::designs;
+    let started = std::time::Instant::now();
+    loop {
+        let (project_key, task, design_slug, page_file) =
+            (project.clone(), task_id.clone(), slug.clone(), file.clone());
+        let looked = tokio::task::spawn_blocking(move || -> Result<_, McpError> {
+            let design = designs::get_design(&project_key, &task, &design_slug)
+                .map_err(|e| mcp_err(&e.to_string()))?
+                .ok_or_else(|| mcp_err(&format!("Design \"{design_slug}\" not found. Call grove_design_read with no arguments to list designs.")))?;
+            let page = design
+                .pages
+                .iter()
+                .find(|page| page.file == page_file)
+                .cloned()
+                .ok_or_else(|| {
+                    mcp_err(&format!(
+                        "Page \"{page_file}\" not found in design \"{design_slug}\". Pages: {}",
+                        design.pages.iter().map(|page| page.file.as_str()).collect::<Vec<_>>().join(", ")
+                    ))
+                })?;
+            let capture = designs::load_capture(&project_key, &task, &design_slug, &page_file)
+                .ok()
+                .flatten()
+                .filter(|capture| capture.version == page.version);
+            let watched = designs::viewer_recent(&project_key, &task, DESIGN_VIEWER_WINDOW);
+            Ok((page, capture, watched))
+        })
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))??;
+        let (page, capture, watched) = looked;
+        if capture.is_none() && watched && started.elapsed() < DESIGN_RENDER_WAIT {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            continue;
+        }
+
+        let mut out = format!(
+            "Page {} \"{}\" in design `{}` — viewport {} × {}\n",
+            page.file, page.title, slug, page.width, page.height
+        );
+        let image = match capture {
+            Some(capture) => {
+                out.push_str(&design_report_text(&capture.report));
+                if capture.png.is_none() {
+                    out.push_str(
+                        "\n(No image: the page was checked but could not be drawn as a picture.)\n",
+                    );
+                }
+                capture.png
+            }
+            None if watched => {
+                out.push_str("\nNo current render: the Design panel is open but has not finished rendering this version of the page. Read again in a moment.\n");
+                None
+            }
+            None => {
+                out.push_str("\nNo render available: nobody has the Design panel open for this task, so Grove has not rendered this version of the page. Review the HTML yourself and tell the user you could not look at the result.\n");
+                None
+            }
+        };
+        let comments: Vec<_> =
+            crate::api::handlers::tasks::designs::design_comments(&project, &task_id)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|comment| {
+                    comment.is_open() && comment.design() == slug && comment.page() == file
+                })
+                .collect();
+        if !comments.is_empty() {
+            out.push_str("\nOpen comments (answer with grove_reply_review once dealt with):\n");
+            for comment in comments {
+                out.push_str(&comment.describe());
+            }
+        }
+        return Ok((out, image));
+    }
+}
+
+/// The page check the panel stored, as text.
+fn design_report_text(report: &serde_json::Value) -> String {
+    let mut out = String::new();
+    if let Some(height) = report.get("height").and_then(|v| v.as_f64()) {
+        out.push_str(&format!("Rendered height: {height}px\n"));
+    }
+    let issues: Vec<&serde_json::Value> = report
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .map(|list| list.iter().collect())
+        .unwrap_or_default();
+    if issues.is_empty() {
+        out.push_str("\nPage check: no problems found.\n");
+    } else {
+        out.push_str("\nPage check:\n");
+        for issue in issues {
+            let message = issue.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            match issue.get("selector").and_then(|v| v.as_str()) {
+                Some(selector) if !selector.is_empty() => {
+                    out.push_str(&format!("- {message} ({selector})\n"))
+                }
+                _ => out.push_str(&format!("- {message}\n")),
+            }
+        }
+    }
+    out
 }
 
 fn ensure_not_in_grove_task() -> Result<(), McpError> {
@@ -4156,6 +4613,8 @@ mod tests {
             "sketch_list",
             "sketch_read",
             "sketch_draw",
+            "design_read_me",
+            "design_read",
         ] {
             assert!(!names.contains(name), "tool '{}' leaked out of task", name);
         }

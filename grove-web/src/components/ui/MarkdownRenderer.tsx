@@ -15,6 +15,12 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 const markdownSanitizeSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), "iframe"],
+  // `sketch://` and `design://` links never navigate: the link renderer
+  // turns them into chips. Without this the sanitizer empties their href.
+  protocols: {
+    ...(defaultSchema.protocols ?? {}),
+    href: [...(defaultSchema.protocols?.href ?? []), "sketch", "design"],
+  },
   attributes: {
     ...(defaultSchema.attributes ?? {}),
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "style"],
@@ -40,6 +46,8 @@ const markdownSanitizeSchema = {
 import mermaid from "mermaid";
 import { VSCodeIcon } from "./VSCodeIcon";
 import { SketchChip } from "./SketchChip";
+import { DesignChip } from "./DesignChip";
+import { parseDesignRef } from "../Studio/DesignPage/designModel";
 import { sketchThumbnailUrl } from "../../api/sketches";
 import { useAuthenticatedFileUrl } from "../../hooks/useAuthenticatedFileUrl";
 import { apiClient, appendHmacToUrl, getMachineApiBase } from "../../api/client";
@@ -82,9 +90,12 @@ const SKETCH_ID_RE = /^sketch-[0-9a-f-]+$/i;
 // them into <SketchChip>. The negative lookbehind avoids re-wrapping when
 // the URL is already inside `[label](...)` or `[...](...)`.
 const SKETCH_AUTOLINK_RE = /(?<![[(])(sketch:\/\/sketch-[0-9a-f-]+)\b/gi;
+// `design://<design>` or `design://<design>/<page>.html`: a design in this
+// Studio task, rendered as a chip that opens the Design panel.
+const DESIGN_AUTOLINK_RE = /(?<![[(])(design:\/\/[A-Za-z0-9_][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_][A-Za-z0-9._-]*\.html)?)(?![A-Za-z0-9_/-])/g;
 
 function preprocessSketchUrls(content: string): string {
-  if (!content.includes("sketch://")) return content;
+  if (!content.includes("sketch://") && !content.includes("design://")) return content;
   // Split by fenced code blocks and inline code spans so we don't rewrite
   // URLs inside code. Odd-indexed parts are the code regions.
   // Note: an author-written `sketch://...` wrapped in inline backticks is
@@ -92,7 +103,13 @@ function preprocessSketchUrls(content: string): string {
   // quoting it. Only non-code occurrences become clickable chips.
   const parts = content.split(/(```[\s\S]*?```|`[^`\n]+`)/g);
   for (let i = 0; i < parts.length; i += 2) {
-    parts[i] = parts[i].replace(SKETCH_AUTOLINK_RE, (m) => `[${m}](${m})`);
+    parts[i] = parts[i]
+      .replace(SKETCH_AUTOLINK_RE, (m) => `[${m}](${m})`)
+      // A sentence's full stop is not part of the reference.
+      .replace(DESIGN_AUTOLINK_RE, (m) => {
+        const ref = m.replace(/\.$/, "");
+        return `[${ref}](${ref})${m.slice(ref.length)}`;
+      });
   }
   return parts.join("");
 }
@@ -117,6 +134,7 @@ function preprocessInlineCodeUrls(content: string): string {
       const collapsed = inner.replace(/\s+/g, "");
       if (/^https?:\/\/\S+$/.test(collapsed)) return collapsed;
       if (SKETCH_BARE_RE.test(collapsed)) return collapsed;
+      if (parseDesignRef(collapsed)) return collapsed;
       return m;
     });
   }
@@ -1295,6 +1313,17 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, render
               );
             }
           }
+          const designRef = sketchContext && href ? parseDesignRef(href) : null;
+          if (sketchContext && designRef) {
+            return (
+              <DesignChip
+                projectId={sketchContext.projectId}
+                taskId={sketchContext.taskId}
+                design={designRef.design}
+                page={designRef.page}
+              />
+            );
+          }
           if (href?.startsWith("#")) {
             return (
               <a
@@ -1516,7 +1545,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, render
       rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
       components={components}
       urlTransform={(url) => {
-        if (url.startsWith("sketch://")) return url;
+        if (url.startsWith("sketch://") || url.startsWith("design://")) return url;
         if (/^data:image\//i.test(url)) return url;
         if (url.startsWith("file://")) return url;
         return defaultUrlTransform(url);

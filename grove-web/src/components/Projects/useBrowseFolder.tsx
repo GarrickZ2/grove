@@ -1,11 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 import { apiClient } from "../../api/client";
-import { useConfig } from "../../context";
+import { useOptionalConfig } from "../../context/ConfigContext";
 import { FolderTreePickerDialog } from "./FolderTreePickerDialog";
 
 /** Opens the in-app picker when a native dialog cannot be shown reliably. */
 export function useBrowseFolder(title = "Select Folder") {
-  const { config } = useConfig();
+  // Also mounted on a share link's page, which has no config of this Grove's.
+  const config = useOptionalConfig()?.config;
   const [open, setOpen] = useState(false);
   const [pickerTitle, setPickerTitle] = useState(title);
   const resolveRef = useRef<((path: string | null) => void) | null>(null);

@@ -5,7 +5,8 @@ import {
   listArtifacts, previewArtifact, artifactDownloadUrl, deleteArtifact,
   uploadArtifactWithProgress, artifactsZipUrl, createArtifactLink, updateArtifactLink, syncArtifactToResource, listArtifactWorkdirs, addArtifactWorkdir, deleteArtifactWorkdir, openArtifactWorkdir, openArtifactFile, revealArtifactFile,
   listResources,
-  type ArtifactFile, type ArtifactWorkDirectoryEntry,
+  getReviewComments,
+  type ArtifactFile, type ArtifactWorkDirectoryEntry, type ReviewCommentEntry,
 } from "../../../../api";
 import { apiClient } from "../../../../api/client";
 import { useBrowseFolder } from "../../../Projects/useBrowseFolder";
@@ -16,7 +17,8 @@ import {
   parseLinkFile,
 } from "../../../ui";
 import { openExternalUrl } from "../../../../utils/openExternal";
-import { previewCommentMarkerData, previewCommentTaskLabel, usePreviewComments, type PreviewCommentLocator } from "../../../../context";
+import type { PreviewCommentLocator } from "../../../../context";
+import { createFileComment, replyReviewComment, updateCommentStatus } from "../../../../api/review";
 import { getPreviewRenderer, type PreviewCommentMarker } from "../../../Review/previewRenderers";
 import { resolvePreviewTarget } from "./artifactsModel";
 
@@ -46,6 +48,14 @@ export interface SharedArtifacts {
   list(): Promise<ArtifactFile[]>;
   preview(path: string): Promise<string>;
   downloadUrl(path: string): string;
+  /** The link's comment threads. Each call answers with all of them. */
+  comments?: {
+    canComment: boolean;
+    list(): Promise<ReviewCommentEntry[]>;
+    /** `path` is the file's, `output/…`. */
+    add(path: string, content: string, anchor: unknown): Promise<ReviewCommentEntry[]>;
+    reply(id: number, content: string): Promise<ReviewCommentEntry[]>;
+  };
 }
 
 /** One file in the upload batch in flight. `progress` is 0..1, or null before it starts. */
@@ -102,7 +112,6 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     shared ? shared.downloadUrl(file.path) : artifactDownloadUrl(projectId ?? "", task.id, file.directory, file.path),
   [shared, projectId, task.id]);
   const { browseFolder, folderPicker } = useBrowseFolder("Select Artifact Folder");
-  const { drafts: previewCommentDrafts, addDraft, updateDraft, removeDraft } = usePreviewComments();
   const [inputFiles, setInputFiles] = useState<ArtifactFile[]>([]);
   const [outputFiles, setOutputFiles] = useState<ArtifactFile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -466,45 +475,76 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     void revealArtifactFile(projectId, task.id, file.directory, file.path);
   }, [projectId, task.id]);
 
-  const handleCreatePreviewComment = useCallback((file: ArtifactFile, locator: PreviewCommentLocator, comment: string, rendererId: string) => {
-    if (!projectId) return;
-    addDraft({
-      source: "artifact",
-      projectId,
-      taskId: task.id,
-      filePath: `${file.directory}/${file.path}`,
-      fileName: file.name,
-      rendererId,
-      locator,
-      comment,
-    });
-    setToastMessage("Preview comment added to chat");
-  }, [addDraft, projectId, task.id]);
+  // Comments on the previewed file. They are review comments, kept with the
+  // task: a thread each, read by everyone the task is shared with.
+  const [fileComments, setFileComments] = useState<ReviewCommentEntry[]>([]);
+  const sharedComments = shared?.comments;
+  // A shared Task shows its output files only, and lists them without their folder.
+  const commentPath = useCallback((file: ArtifactFile) => (shared ? `output/${file.path}` : `${file.directory}/${file.path}`), [shared]);
+  const previewFilePath = useMemo(() => (previewFile ? commentPath(previewFile.file) : null), [previewFile, commentPath]);
+  const reloadFileComments = useCallback(async () => {
+    try {
+      if (sharedComments) setFileComments(await sharedComments.list());
+      else if (projectId) setFileComments((await getReviewComments(projectId, task.id)).comments);
+    } catch {
+      // Kept as they were; the next read tries again.
+    }
+  }, [projectId, task.id, sharedComments]);
+  useEffect(() => {
+    if (!previewFilePath) return;
+    // Replies come from the agent and from people the task is shared with.
+    let timer: number | undefined;
+    const tick = () => {
+      if (!document.hidden) void reloadFileComments();
+      timer = window.setTimeout(tick, 8000);
+    };
+    tick();
+    return () => window.clearTimeout(timer);
+  }, [previewFilePath, reloadFileComments]);
 
-  const previewFilePath = useMemo(
-    () => (previewFile ? `${previewFile.file.directory}/${previewFile.file.path}` : null),
-    [previewFile],
+  const handleCreatePreviewComment = useCallback(async (file: ArtifactFile, locator: PreviewCommentLocator, comment: string) => {
+    // The element's markup is not needed to find it again.
+    const anchor = { ...locator, html: undefined };
+    try {
+      if (sharedComments) setFileComments(await sharedComments.add(commentPath(file), comment, anchor));
+      else if (projectId) setFileComments((await createFileComment(projectId, task.id, commentPath(file), comment, undefined, anchor)).comments);
+      else return;
+      setToastMessage("Comment added");
+    } catch {
+      setToastMessage("Couldn't add the comment");
+    }
+  }, [projectId, task.id, sharedComments, commentPath]);
+
+  const currentFileComments = useMemo(
+    () => fileComments.filter((comment) => comment.comment_type === "file" && comment.file_path === previewFilePath && comment.status !== "resolved"),
+    [fileComments, previewFilePath],
   );
-  const currentFilePreviewDrafts = useMemo(() => {
-    if (!projectId || !previewFilePath) return [];
-    return previewCommentDrafts.filter(
-      (d) => d.projectId === projectId && d.taskId === task.id && d.filePath === previewFilePath,
-    );
-  }, [previewCommentDrafts, projectId, task.id, previewFilePath]);
   const currentFilePreviewMarkers = useMemo<PreviewCommentMarker[]>(
-    () => currentFilePreviewDrafts.map((draft) =>
-      previewCommentMarkerData(
-        draft,
-        previewCommentTaskLabel(previewCommentDrafts, draft),
-      ),
-    ),
-    [currentFilePreviewDrafts, previewCommentDrafts],
+    () => currentFileComments.flatMap((comment, index) => {
+      const locator = comment.anchor as PreviewCommentLocator | undefined;
+      if (!locator?.selector && !locator?.xpath) return [];
+      return [{
+        id: String(comment.id),
+        label: String(index + 1),
+        selector: locator.selector,
+        xpath: locator.xpath,
+        extraBlocks: locator.extraBlocks,
+        locator,
+        comment: comment.content,
+      }];
+    }),
+    [currentFileComments],
   );
 
-  const handleUpdatePreviewComment = useCallback(
-    (id: string, comment: string) => updateDraft(id, { comment }),
-    [updateDraft],
-  );
+  const replyPreviewComment = useCallback(async (id: number, text: string) => {
+    if (sharedComments) setFileComments(await sharedComments.reply(id, text));
+    else if (projectId) setFileComments((await replyReviewComment(projectId, task.id, id, text)).comments);
+  }, [projectId, task.id, sharedComments]);
+  const resolvePreviewComment = useCallback((id: number) => {
+    if (!projectId) return;
+    setFileComments((list) => list.map((comment) => (comment.id === id ? { ...comment, status: "resolved" } : comment)));
+    updateCommentStatus(projectId, task.id, id, "resolved").catch(() => void reloadFileComments());
+  }, [projectId, task.id, reloadFileComments]);
   const handleOpenLink = useCallback(async (file: ArtifactFile) => {
     if (!readable) return;
     try {
@@ -648,6 +688,8 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     taskId: task.id,
     /** A shared Task: look and download, nothing else. */
     readOnly: !!shared,
+    /** Whether the reader may comment on previews and answer in threads. */
+    canComment: shared ? Boolean(sharedComments?.canComment) : !!projectId,
     /** Where a file's bytes are, or null when nothing can be read. */
     fileUrl: readable ? fileUrl : null,
     inputFiles,
@@ -687,9 +729,9 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     handleOpenInApp,
     handleRevealInFileManager,
     handleCreatePreviewComment,
-    handleUpdatePreviewComment,
-    removePreviewComment: removeDraft,
-    currentFilePreviewDrafts,
+    replyPreviewComment,
+    resolvePreviewComment,
+    currentFileComments,
     currentFilePreviewMarkers,
     handleOpenLink,
     handleEditLink,

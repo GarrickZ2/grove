@@ -16,10 +16,17 @@
 .osd-legacy-doc{flex:1;min-height:0;padding:14px 16px;border-radius:var(--o-radius-md);border:1px solid var(--o-border);background:var(--o-group)}
 .osd-legacy-acts{display:flex;justify-content:flex-end}
 
-/* Two cards fill the rest of the viewport */
+/* Three cards fill the rest of the viewport: files on the left, instructions over the design system on the right */
 .osd-grid{flex:1 1 0;min-height:0;display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:var(--oui-gap)}
 .osd-col{display:flex;flex-direction:column;min-height:0;min-width:0}
 .osd-col>.oui-card{flex:1}
+.osd-col-split{gap:var(--oui-gap)}
+.osd-col-split>.oui-card{flex:1 1 0;min-height:0}
+
+/* Design system card: the board fills it */
+.osd-system-body{flex:1;min-height:0;display:flex;border-top:1px solid var(--o-border);overflow:hidden;border-radius:0 0 var(--o-radius-lg) var(--o-radius-lg)}
+.osd-system-body>.oui-empty{margin:auto}
+.osd-system-sheet{display:flex;padding:0;border-top:1px solid var(--o-border)}
 
 /* Shared files card */
 .osd-files{position:relative;container-type:inline-size}

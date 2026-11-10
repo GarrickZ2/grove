@@ -255,6 +255,10 @@ pub struct ReviewCommentEntry {
     /// Written by someone the Task was shared with.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub via_share: bool,
+    /// Where in the rendered file the comment sits, for a comment made on a
+    /// preview or a design page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<serde_json::Value>,
 }
 
 /// Review comments response
@@ -351,6 +355,9 @@ pub struct CreateReviewCommentRequest {
     pub start_line: Option<u32>,
     pub end_line: Option<u32>,
     pub author: Option<String>,
+    /// For a file comment made on a preview: where in the rendered file it sits.
+    #[serde(default)]
+    pub anchor: Option<serde_json::Value>,
 }
 
 /// Create file request

@@ -473,12 +473,13 @@ export function OrbitArtifactsPanel(props: Props) {
               fileSize={previewFile.file.size}
               onOpenFile={!readOnly && hostFileActionsAvailable() ? () => panel.handleOpenInApp(previewFile.file) : undefined}
               onRefresh={() => panel.handlePreview(previewFile.file, true)}
-              onCreatePreviewComment={readOnly ? undefined : (locator, comment, rendererId) =>
-                panel.handleCreatePreviewComment(previewFile.file, locator, comment, rendererId)
+              onCreatePreviewComment={!panel.canComment ? undefined : (locator, comment) =>
+                void panel.handleCreatePreviewComment(previewFile.file, locator, comment)
               }
-              onUpdatePreviewComment={panel.handleUpdatePreviewComment}
-              onDeletePreviewComment={panel.removePreviewComment}
-              previewCommentDrafts={panel.currentFilePreviewDrafts}
+              previewComments={panel.currentFileComments}
+              onReplyPreviewComment={panel.canComment ? panel.replyPreviewComment : undefined}
+              previewCommentsToAgent={!readOnly}
+              onResolvePreviewComment={readOnly ? undefined : panel.resolvePreviewComment}
               previewCommentMarkers={panel.currentFilePreviewMarkers}
               sketchContext={props.projectId ? { projectId: props.projectId, taskId: props.task.id } : undefined}
               location={props.projectId ? {

@@ -15,6 +15,8 @@ pub mod connects;
 pub mod curated_agents;
 pub mod custom_agent;
 pub mod database;
+pub mod design_transfer;
+pub mod designs;
 pub mod extensions;
 pub mod installed_agents;
 pub mod keymap;

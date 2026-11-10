@@ -168,16 +168,6 @@ fn client_for(token: &str) -> String {
     ))
 }
 
-fn remote_address_file() -> std::path::PathBuf {
-    crate::storage::grove_dir().join("remote_address")
-}
-
-/// `grove remote` says where it can be reached, so a window on this machine
-/// can hand out links that work for other people.
-pub fn record_remote_address(base_url: &str) {
-    let _ = std::fs::write(remote_address_file(), base_url);
-}
-
 fn share_client() -> reqwest::Client {
     reqwest::Client::builder()
         // `grove remote` serves a self-signed certificate on the LAN.
@@ -200,21 +190,6 @@ fn share_stream_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-fn is_loopback_host(host: &str) -> bool {
-    let name = host
-        .rsplit_once(':')
-        .filter(|(_, port)| port.chars().all(|c| c.is_ascii_digit()))
-        .map(|(name, _)| name)
-        .unwrap_or(host)
-        .trim_start_matches('[')
-        .trim_end_matches(']');
-    name.eq_ignore_ascii_case("localhost")
-        || name.ends_with(".localhost")
-        || name
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-}
-
 fn normalize_address(value: &str) -> Option<String> {
     let value = value.trim().trim_end_matches('/');
     if value.is_empty() {
@@ -232,89 +207,48 @@ fn normalize_address(value: &str) -> Option<String> {
     Some(format!("{}://{}", url.scheme(), url.authority()))
 }
 
-/// The address links carry: the one the person entered, else this window's
-/// own address when it isn't loopback, else where `grove remote` last ran,
-/// else this window's address as it is. Whether others can reach it is up
-/// to whoever holds the link.
-fn resolve_address(headers: &HeaderMap) -> (String, &'static str) {
-    if let Some(address) = config::load_config()
-        .share
-        .address
-        .as_deref()
-        .and_then(normalize_address)
-    {
+/// The address links carry: the one this window was told to use (kept by
+/// the window itself), else the window's own address. Whether others can
+/// reach it is up to whoever holds the link.
+fn resolve_address(headers: &HeaderMap, chosen: Option<&str>) -> (String, &'static str) {
+    if let Some(address) = chosen.and_then(normalize_address) {
         return (address, "custom");
     }
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("localhost:3001");
-    let window = || {
-        let scheme = headers
-            .get("x-forwarded-proto")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string)
-            .unwrap_or_else(|| std::env::var("GROVE_PROTOCOL").unwrap_or_else(|_| "http".into()));
-        format!("{scheme}://{host}")
-    };
-    if !is_loopback_host(host) {
-        return (window(), "window");
-    }
-    if let Some(address) = std::fs::read_to_string(remote_address_file())
-        .ok()
-        .and_then(|value| normalize_address(&value))
-    {
-        return (address, "remote");
-    }
-    (window(), "window")
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+        .unwrap_or_else(|| std::env::var("GROVE_PROTOCOL").unwrap_or_else(|_| "http".into()));
+    (format!("{scheme}://{host}"), "window")
 }
 
 #[derive(Deserialize)]
 pub struct ProfileInput {
     #[serde(default)]
     name: Option<String>,
-    #[serde(default)]
-    address: Option<String>,
 }
 
 /// GET /api/v1/share-profile
-pub async fn get_profile(headers: HeaderMap) -> Json<Value> {
-    let config = config::load_config();
-    let (address, source) = resolve_address(&headers);
+pub async fn get_profile() -> Json<Value> {
     Json(json!({
         "name": chosen_name(),
         "suggestedName": suggested_name(),
         "device": machine_name(),
-        "address": address,
-        "addressSource": source,
-        "customAddress": config.share.address,
     }))
 }
 
 /// PUT /api/v1/share-profile
-pub async fn put_profile(
-    headers: HeaderMap,
-    Json(input): Json<ProfileInput>,
-) -> Result<Json<Value>, ShareError> {
+pub async fn put_profile(Json(input): Json<ProfileInput>) -> Result<Json<Value>, ShareError> {
     let mut config = config::load_config();
     if let Some(name) = input.name {
         config.share.name = Some(shares::clean_name(&name).map_err(grove_error)?);
     }
-    if let Some(address) = input.address {
-        config.share.address = if address.trim().is_empty() {
-            None
-        } else {
-            Some(normalize_address(&address).ok_or_else(|| {
-                fail(
-                    StatusCode::BAD_REQUEST,
-                    "invalid",
-                    "Enter an address like https://grove.example.com",
-                )
-            })?)
-        };
-    }
     config::save_config(&config).map_err(grove_error)?;
-    Ok(get_profile(headers).await)
+    Ok(get_profile().await)
 }
 
 // ============================================================================
@@ -357,13 +291,21 @@ fn task_key(project_id: &str) -> Result<String, ShareError> {
         .map_err(|_| fail(StatusCode::NOT_FOUND, "not_found", "Project not found"))
 }
 
+#[derive(Deserialize)]
+pub struct AddressQuery {
+    /// The address this window was told links should use.
+    #[serde(default)]
+    address: Option<String>,
+}
+
 /// GET /api/v1/projects/{id}/tasks/{taskId}/shares
 pub async fn list_links(
     Path((id, task_id)): Path<(String, String)>,
+    Query(query): Query<AddressQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ShareError> {
     let key = task_key(&id)?;
-    let (address, source) = resolve_address(&headers);
+    let (address, source) = resolve_address(&headers, query.address.as_deref());
     let all_counts = shares::comment_counts(&key, &task_id).map_err(grove_error)?;
     let open_comments: u32 = all_counts.iter().map(|(_, _, open)| open).sum();
     let counts: HashMap<String, u32> = all_counts
@@ -419,6 +361,9 @@ pub struct CreateLinkInput {
     /// How many people may open it; none for anyone with the link.
     #[serde(default)]
     max_people: Option<u32>,
+    /// The address this window was told links should use.
+    #[serde(default)]
+    address: Option<String>,
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/shares
@@ -434,7 +379,7 @@ pub async fn create_link(
     {
         return Err(fail(StatusCode::NOT_FOUND, "not_found", "Task not found"));
     }
-    let (address, _) = resolve_address(&headers);
+    let (address, _) = resolve_address(&headers, input.address.as_deref());
     let share = shares::create_share(
         &key,
         &task_id,
@@ -446,9 +391,15 @@ pub async fn create_link(
     Ok(Json(link_json(&share, &address, 0)))
 }
 
-/// DELETE /api/v1/shares/{token}
+/// POST /api/v1/shares/{token}/stop
 pub async fn revoke_link(Path(token): Path<String>) -> Result<StatusCode, ShareError> {
     shares::revoke_share(&token).map_err(grove_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// DELETE /api/v1/shares/{token} — forget the link entirely.
+pub async fn delete_link(Path(token): Path<String>) -> Result<StatusCode, ShareError> {
+    shares::delete_share(&token).map_err(grove_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -897,6 +848,103 @@ pub async fn public_files(
     Ok(Json(json!({ "files": files })))
 }
 
+/// What makes a visitor's path to a link's design files theirs alone.
+fn design_files_scope(token: &str, visitor: &str) -> String {
+    // NUL never appears in a plugin id, so this cannot collide with one.
+    format!("design-share\0{token}\0{visitor}")
+}
+
+/// GET /api/v1/share/{token}/designs — the Task's design boards, the comments
+/// visitors left on them, and where the pages' own files load from.
+pub async fn public_designs(
+    axum::extract::State(auth): axum::extract::State<std::sync::Arc<crate::api::auth::ServerAuth>>,
+    Path(token): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ShareError> {
+    use super::tasks::designs as design_api;
+    let (share, visitor) = visitor_for(&headers, &token)?;
+    if studio_or_repo(&share) == ProjectKind::Repo {
+        return Ok(Json(json!({
+            "designs": [], "comments": [], "me": visitor.name, "filesPath": "", "filesUrl": "",
+        })));
+    }
+    let (project, task_id) = (share.project_key.as_str(), share.task_id.as_str());
+    // The pages run in sandboxed frames that carry no cookie, so the files
+    // they load are reached by a path that is itself the permission. It is
+    // this visitor's on this link, and stops working when either ends.
+    let files = format!(
+        "/api/v1/share/{token}/design-files/{}/{}/",
+        visitor.id,
+        auth.plugin_asset_token(&design_files_scope(&token, &visitor.id))
+    );
+    Ok(Json(json!({
+        "designs": crate::storage::designs::list_designs(project, task_id).unwrap_or_default(),
+        "comments": design_api::shared_design_comments(project, task_id),
+        "me": visitor.name,
+        "filesPath": files,
+        "filesUrl": format!("{}{files}", resolve_address(&headers, None).0.trim_end_matches('/')),
+    })))
+}
+
+/// GET /api/v1/share/{token}/design-files/{visitor}/{pass}/{*path} — a file a
+/// shared design page loads. Checked against the link on every request, so
+/// it ends with the link.
+pub async fn public_design_file(
+    axum::extract::State(auth): axum::extract::State<std::sync::Arc<crate::api::auth::ServerAuth>>,
+    Path((token, visitor_id, pass, path)): Path<(String, String, String, String)>,
+) -> Result<Response, ShareError> {
+    let not_found = || fail(StatusCode::NOT_FOUND, "not_found", "File not found");
+    if !auth.verify_plugin_asset_token(&design_files_scope(&token, &visitor_id), &pass) {
+        return Err(not_found());
+    }
+    let share = load_share(&token)?;
+    let visitor = shares::get_visitor(&visitor_id)
+        .map_err(grove_error)?
+        .filter(|visitor| visitor.token == token && visitor.removed_at.is_none())
+        .ok_or_else(not_found)?;
+    match share.state() {
+        ShareState::Active => {}
+        ShareState::Exhausted if shares::has_opened(&visitor) => {}
+        state => return Err(state_error(state)),
+    }
+    if studio_or_repo(&share) == ProjectKind::Repo {
+        return Err(not_found());
+    }
+    super::tasks::designs::design_file(&share.project_key, &share.task_id, &path)
+        .map_err(|_| not_found())
+}
+
+/// `designs/{design}/pages/{file}`, with plain names.
+fn is_design_page_path(rest: &str) -> bool {
+    let parts: Vec<&str> = rest.split('/').collect();
+    matches!(parts.as_slice(), ["designs", design, "pages", file]
+        if crate::storage::designs::valid_name(design)
+            && crate::storage::designs::valid_name(file)
+            && file.to_ascii_lowercase().ends_with(".html"))
+}
+
+/// GET /api/v1/share/{token}/designs/{design}/pages/{file} — a page's HTML.
+pub async fn public_design_page(
+    Path((token, design, file)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, ShareError> {
+    let (share, _) = visitor_for(&headers, &token)?;
+    if studio_or_repo(&share) == ProjectKind::Repo {
+        return Err(fail(StatusCode::NOT_FOUND, "not_found", "Not found"));
+    }
+    let html =
+        crate::storage::designs::read_page(&share.project_key, &share.task_id, &design, &file)
+            .map_err(grove_error)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        html,
+    )
+        .into_response())
+}
+
 #[derive(Deserialize)]
 pub struct SharedFileQuery {
     path: String,
@@ -1009,12 +1057,23 @@ fn shared_comments(share: &Share, visitor: &Visitor) -> Result<Value, ShareError
     let list: Vec<Value> = data
         .comments
         .into_iter()
-        .filter_map(|comment| {
-            let author_id = written_by.get(&comment.id)?;
-            Some(json!({
+        .map(|comment| {
+            // The owner's comments and the agent's are shown too: everyone
+            // on the link reads the same threads.
+            let author_id = written_by.get(&comment.id);
+            let author = author_id
+                .and_then(|id| names.get(id).cloned())
+                .unwrap_or_else(|| comments::build_author(&comment.agent, &comment.role));
+            let anchor = matches!(comment.comment_type, comments::CommentType::File)
+                .then(|| comment.anchor_text.as_deref())
+                .flatten()
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .filter(Value::is_object);
+            json!({
                 "id": comment.id,
-                "author": names.get(author_id).cloned().unwrap_or(comment.agent),
-                "mine": author_id == &visitor.id,
+                "author": author,
+                "mine": author_id == Some(&visitor.id),
+                "anchor": anchor,
                 "commentType": comment.comment_type,
                 "filePath": comment.file_path,
                 "side": comment.side,
@@ -1024,11 +1083,12 @@ fn shared_comments(share: &Share, visitor: &Visitor) -> Result<Value, ShareError
                 "timestamp": comment.timestamp,
                 "status": comment.status,
                 "replies": comment.replies.iter().map(|reply| json!({
+                    "id": reply.id,
                     "author": reply.agent,
                     "content": reply.content,
                     "timestamp": reply.timestamp,
                 })).collect::<Vec<_>>(),
-            }))
+            })
         })
         .collect();
     Ok(json!({ "comments": list }))
@@ -1047,6 +1107,9 @@ pub struct NewSharedComment {
     start_line: Option<u32>,
     #[serde(default)]
     end_line: Option<u32>,
+    /// For a comment on a design page: the element it is about.
+    #[serde(default)]
+    anchor: Option<Value>,
     content: String,
 }
 
@@ -1099,20 +1162,34 @@ pub async fn public_add_comment(
             "",
             None,
         ),
-        (Some("file"), Some(path)) => comments::add_comment(
-            project,
-            task_id,
-            comments::CommentType::File,
-            Some(path),
-            None,
-            None,
-            None,
-            content,
-            &visitor.name,
-            "",
-            "",
-            None,
-        ),
+        (Some("file"), Some(path)) => {
+            let anchor = input
+                .anchor
+                .and_then(|anchor| super::tasks::designs::anchor_text(&anchor));
+            // Kept under the path the owner's own comments on the file use.
+            let path = if studio_or_repo(&share) == ProjectKind::Studio
+                && super::tasks::designs::split_design_path(&path).is_none()
+                && !path.starts_with("output/")
+            {
+                format!("output/{path}")
+            } else {
+                path
+            };
+            comments::add_comment(
+                project,
+                task_id,
+                comments::CommentType::File,
+                Some(path),
+                None,
+                None,
+                None,
+                content,
+                &visitor.name,
+                "",
+                "",
+                anchor,
+            )
+        }
         (_, Some(path)) => {
             let side = if input.side.as_deref() == Some("DELETE") {
                 "DELETE"
@@ -1154,13 +1231,72 @@ pub async fn public_add_comment(
     Ok(Json(shared_comments(&share, &visitor)?))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NewSharedReply {
+    content: String,
+}
+
+/// POST /api/v1/share/{token}/comments/{id}/replies
+///
+/// A visitor answers in a thread: the owner's, the agent's or another visitor's.
+pub async fn public_add_reply(
+    Path((token, id)): Path<(String, u32)>,
+    headers: HeaderMap,
+    Json(input): Json<NewSharedReply>,
+) -> Result<Json<Value>, ShareError> {
+    let (share, visitor) = visitor_for(&headers, &token)?;
+    if !share.can_comment {
+        return Err(fail(
+            StatusCode::FORBIDDEN,
+            "read_only",
+            "This link is read-only",
+        ));
+    }
+    let content = input.content.trim();
+    if content.is_empty() || content.chars().count() > COMMENT_LIMIT {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            "invalid",
+            format!("A reply needs 1 to {COMMENT_LIMIT} characters"),
+        ));
+    }
+    let found = comments::reply_comment(
+        &share.project_key,
+        &share.task_id,
+        id,
+        content,
+        &visitor.name,
+        "",
+        "",
+    )
+    .map_err(grove_error)?;
+    if !found {
+        return Err(fail(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Comment not found",
+        ));
+    }
+    Ok(Json(shared_comments(&share, &visitor)?))
+}
+
 /// Whether a file is one the link shows: a changed file, or an output file.
 async fn shared_path(share: &Share, path: &str) -> bool {
     if !plain_relative(path) {
         return false;
     }
     if studio_or_repo(share) == ProjectKind::Studio {
-        return check_output_file(share, path).is_ok();
+        // A design page, or an output file.
+        if let Some((design, file)) = super::tasks::designs::split_design_path(path) {
+            return crate::storage::designs::read_page(
+                &share.project_key,
+                &share.task_id,
+                design,
+                file,
+            )
+            .is_ok();
+        }
+        return check_output_file(share, path.strip_prefix("output/").unwrap_or(path)).is_ok();
     }
     super::tasks::get_diff(
         Path((share.project_key.clone(), share.task_id.clone())),
@@ -1438,6 +1574,17 @@ pub async fn mark_seen(Path(id): Path<String>) -> Result<StatusCode, ShareError>
 
 /// /api/v1/shared/{id}/host/{*rest} → the owner's /api/v1/share/{token}/{rest},
 /// carrying this Grove's key.
+/// `comments/<id>/replies`.
+fn is_reply_path(rest: &str) -> bool {
+    let mut parts = rest.split('/');
+    parts.next() == Some("comments")
+        && parts
+            .next()
+            .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+        && parts.next() == Some("replies")
+        && parts.next().is_none()
+}
+
 pub async fn via_host(
     Path((id, rest)): Path<(String, String)>,
     method: Method,
@@ -1456,8 +1603,10 @@ pub async fn via_host(
                 | "files/preview"
                 | "files/download"
                 | "comments"
+                | "designs"
         ) | ("POST", "open" | "comments")
-    );
+    ) || (method == axum::http::Method::GET && is_design_page_path(&rest))
+        || (method == axum::http::Method::POST && is_reply_path(&rest));
     if !allowed {
         return Err(fail(StatusCode::NOT_FOUND, "not_found", "Not found"));
     }
@@ -1545,15 +1694,6 @@ mod tests {
         assert!(!plain_relative("/etc/passwd"));
         assert!(!plain_relative("./report.pdf"));
         assert!(!plain_relative(":(top)secret"));
-    }
-
-    #[test]
-    fn loopback_hosts() {
-        assert!(is_loopback_host("localhost:3001"));
-        assert!(is_loopback_host("127.0.0.1:3001"));
-        assert!(is_loopback_host("[::1]:3001"));
-        assert!(!is_loopback_host("192.168.1.9:3001"));
-        assert!(!is_loopback_host("grove.example.com"));
     }
 
     #[test]

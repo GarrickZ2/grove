@@ -286,7 +286,7 @@ pub(crate) fn write_zip<W: Write + Seek>(items: &[ZipItem], out: W) -> std::io::
 
 /// `Content-Disposition` for an archive name, with an ASCII fallback and an
 /// RFC 5987 UTF-8 form for non-ASCII names.
-fn attachment_disposition(name: &str) -> String {
+pub(crate) fn attachment_disposition(name: &str) -> String {
     let clean = studio_common::sanitize_filename_for_header(name);
     let ascii: String = clean
         .chars()

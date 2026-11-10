@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Trash2 } from 'lucide-react';
 import type { PreviewCommentLocator } from '../../context';
 import { useDefineCommand, useKeyboardScope } from '../../keyboard';
+import { locateAnchor, selectorOf, xpathOf } from '../../utils/commentAnchor';
 import { rectInViewport, rectRelativeTo } from './previewCommentGeometry';
 
 export interface MarkdownCommentMarker {
@@ -51,54 +52,13 @@ function clean(s: string, n: number): string {
   return String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 }
 
-function cssEscape(v: string): string {
-  if (typeof window !== 'undefined' && window.CSS && CSS.escape) return CSS.escape(v);
-  return String(v).replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\0000${ch.charCodeAt(0).toString(16)} `);
-}
-
-function pathSelector(el: Element, stop: Element): string {
-  if (el.id) return `#${cssEscape(el.id)}`;
-  const parts: string[] = [];
-  let cur: Element | null = el;
-  while (cur && cur !== stop && cur.nodeType === 1) {
-    let part = cur.tagName.toLowerCase();
-    const cls = Array.from(cur.classList || []).filter(Boolean).slice(0, 2);
-    if (cls.length) part += `.${cls.map(cssEscape).join('.')}`;
-    const parentEl: Element | null = cur.parentElement;
-    if (parentEl) {
-      const same = Array.from(parentEl.children).filter((c: Element) => c.tagName === cur!.tagName);
-      if (same.length > 1) part += `:nth-of-type(${same.indexOf(cur) + 1})`;
-    }
-    parts.unshift(part);
-    cur = parentEl;
-    if (parts.length >= 6) break;
-  }
-  return parts.join(' > ');
-}
-
-function xPath(el: Element, stop: Element): string {
-  const segs: string[] = [];
-  let cur: Element | null = el;
-  while (cur && cur !== stop && cur.nodeType === 1) {
-    let i = 1;
-    let sib: Element | null = cur.previousElementSibling;
-    while (sib) {
-      if (sib.tagName === cur.tagName) i++;
-      sib = sib.previousElementSibling;
-    }
-    segs.unshift(`${cur.tagName.toLowerCase()}[${i}]`);
-    cur = cur.parentElement;
-  }
-  return `/${segs.join('/')}`;
-}
-
 function describe(el: Element, stop: Element): PreviewCommentLocator {
   const r = el.getBoundingClientRect();
   const html = el as HTMLElement;
   return {
     type: 'dom',
-    selector: pathSelector(el, stop),
-    xpath: xPath(el, stop),
+    selector: selectorOf(el, stop),
+    xpath: xpathOf(el, stop),
     tagName: el.tagName.toLowerCase(),
     id: el.id || undefined,
     className: clean(typeof el.className === 'string' ? el.className : (el.getAttribute('class') || ''), 160) || undefined,
@@ -221,8 +181,8 @@ function describeBlocks(blocks: Element[], stop: Element): PreviewCommentLocator
   const r = head.getBoundingClientRect();
   const html = head as HTMLElement;
   const extras = blocks.slice(1).map((b) => ({
-    selector: pathSelector(b, stop),
-    xpath: xPath(b, stop),
+    selector: selectorOf(b, stop),
+    xpath: xpathOf(b, stop),
   }));
   // Concatenate text across blocks (separated by newline) for agent context.
   const fullText = blocks
@@ -231,8 +191,8 @@ function describeBlocks(blocks: Element[], stop: Element): PreviewCommentLocator
     .join('\n');
   return {
     type: 'dom',
-    selector: pathSelector(head, stop),
-    xpath: xPath(head, stop),
+    selector: selectorOf(head, stop),
+    xpath: xpathOf(head, stop),
     tagName: head.tagName.toLowerCase(),
     id: head.id || undefined,
     className: clean(typeof head.className === 'string' ? head.className : (head.getAttribute('class') || ''), 160) || undefined,
@@ -675,22 +635,12 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
     if (!content || !host) return;
     const markers = JSON.parse(markersKey) as MarkdownCommentMarker[];
 
-    const lookupOne = (selector?: string, xp?: string): Element | null => {
-      let el: Element | null = null;
-      if (selector) { try { el = content.querySelector(selector); } catch { /* noop */ } }
-      if (!el && xp) {
-        let r: XPathResult | null = null;
-        try {
-          r = document.evaluate(xp, content, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-        } catch { /* noop */ }
-        const node = r ? r.singleNodeValue : null;
-        if (node && node.nodeType === 1) el = node as Element;
-      }
-      return el;
-    };
+    const lookupOne = (selector?: string, xp?: string, text?: string): Element | null =>
+      locateAnchor({ selector, xpath: xp, text }, content)?.element ?? null;
 
     const resolveAll = (m: MarkdownCommentMarker): Element[] => {
-      const head = lookupOne(m.selector, m.xpath);
+      // A comment on one element is found by how it read too; one over several blocks keeps their joined text.
+      const head = lookupOne(m.selector, m.xpath, m.extraBlocks?.length ? undefined : m.locator?.text);
       if (!head) return [];
       const out = [head];
       for (const eb of m.extraBlocks ?? []) {
@@ -862,7 +812,7 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
                   text: marker.comment ?? '',
                 });
               } else {
-                window.postMessage({ type: 'grove-preview-comment:marker-click', previewId, markerId: id }, '*');
+                window.postMessage({ type: 'grove-preview-comment:marker-click', previewId, markerId: id, x: e.clientX, y: e.clientY }, '*');
               }
             }}
           >

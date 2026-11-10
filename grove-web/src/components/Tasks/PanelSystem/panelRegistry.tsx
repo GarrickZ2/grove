@@ -13,7 +13,7 @@
 import type { CSSProperties, ElementType, ReactNode } from "react";
 import {
   Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText,
-  MessageCircle, FolderOpen, Pencil, Network, Info, Eye, Puzzle, Sparkle, Globe,
+  MessageCircle, FolderOpen, Pencil, Network, Info, Eye, Puzzle, Sparkle, Globe, Frame,
 } from "lucide-react";
 import { PanelShell, PanelEmpty, PANEL_HUES, type PanelHue } from "../../../orbit/ui";
 import type { Task } from "../../../data/types";
@@ -28,6 +28,7 @@ import { TaskGraph } from "../TaskView/TaskGraph";
 import { StatsTab, GitTab, NotesTab, CommentsTab, ArtifactsTab } from "../TaskInfoPanel/tabs";
 import type { ArtifactPreviewRequest } from "../TaskInfoPanel/tabs";
 import { SketchPage } from "../../Studio/SketchPage";
+import { DesignPage } from "../../Studio/DesignPage";
 import { PluginFrame } from "../../Plugins/PluginFrame";
 import { BrowserPanel } from "../BrowserPanel/BrowserPanel";
 import { commandRegistry, userKeymapStore, effectiveBindings, formatKeyDisplay } from "../../../keyboard";
@@ -120,7 +121,7 @@ export interface PanelDescriptor {
 
 // FlexLayout tab content wrapping (IDE Layout uses PanelSlot + CSS instead).
 const FLEX_SCROLL = new Set(["stats", "git", "notes", "comments"]);
-const FLEX_HIDDEN = new Set(["graph", "artifacts", "sketch", "browser"]);
+const FLEX_HIDDEN = new Set(["graph", "artifacts", "sketch", "design", "browser"]);
 
 /** The FlexLayout tab content wrapper style for a panel key. */
 export function flexWrapStyle(key: string): CSSProperties {
@@ -266,6 +267,23 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     orbit: { hue: PANEL_HUES.teal },
     render: (ctx) => (
       <SketchPage
+        projectId={ctx.projectId}
+        taskId={ctx.task.id}
+        isChatBusy={ctx.isChatBusy}
+        lastChatIdleAt={ctx.lastChatIdleAt}
+      />
+    ),
+  },
+  {
+    key: "design",
+    label: "Design",
+    icon: Frame,
+    color: "var(--color-info)",
+    category: "aux",
+    available: (c) => c.isStudio,
+    orbit: { hue: PANEL_HUES.indigo },
+    render: (ctx) => (
+      <DesignPage
         projectId={ctx.projectId}
         taskId={ctx.task.id}
         isChatBusy={ctx.isChatBusy}

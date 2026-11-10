@@ -89,7 +89,8 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/shares",
             get(handlers::shares::list_links).post(handlers::shares::create_link),
         )
-        .route("/shares/{token}", delete(handlers::shares::revoke_link))
+        .route("/shares/{token}", delete(handlers::shares::delete_link))
+        .route("/shares/{token}/stop", post(handlers::shares::revoke_link))
         .route(
             "/shares/{token}/visitors/{visitorId}",
             delete(handlers::shares::remove_visitor),
@@ -829,6 +830,60 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/sketches/ws",
             get(handlers::tasks::sketch_ws::ws_handler),
         )
+        // Designs API (Studio): HTML pages on a board
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs",
+            get(handlers::tasks::list_designs),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/guide",
+            get(handlers::tasks::get_design_guide),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/comments",
+            get(handlers::tasks::list_design_comments).post(handlers::tasks::create_design_comment),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/import",
+            // A zip of up to 100 MB.
+            post(handlers::tasks::import_design).layer(DefaultBodyLimit::max(101 * 1024 * 1024)),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/{design}/export",
+            get(handlers::tasks::export_design),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/{design}/pages/{file}/export",
+            get(handlers::tasks::export_design_page),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/{design}/layout",
+            patch(handlers::tasks::update_design_layout),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/styles",
+            put(handlers::tasks::update_design_style).layer(DefaultBodyLimit::max(4 * 1024 * 1024)),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/{design}/marks",
+            put(handlers::tasks::update_design_marks).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/{design}/pages",
+            post(handlers::tasks::create_design_page),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/{design}/pages/{file}",
+            get(handlers::tasks::get_design_page)
+                .put(handlers::tasks::update_design_page)
+                .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/designs/{design}/pages/{file}/capture",
+            // A full-page PNG, base64 in JSON.
+            post(handlers::tasks::upload_design_capture)
+                .layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+        )
         // Git operations API
         .route(
             "/projects/{id}/tasks/{taskId}/sync",
@@ -1540,6 +1595,40 @@ pub fn create_router(
             )
             .with_state(auth.clone());
 
+        // The same for the files a design page loads from its sandboxed frame.
+        let design_session = Router::new()
+            .route(
+                "/projects/{id}/tasks/{taskId}/designs/session",
+                post(handlers::tasks::create_design_session),
+            )
+            .route(
+                "/projects/{id}/design-system",
+                get(handlers::tasks::get_design_system),
+            )
+            .route(
+                "/projects/{id}/design-system/pages/{file}",
+                get(handlers::tasks::get_design_system_page),
+            )
+            .layer(middleware::from_fn_with_state(
+                auth.clone(),
+                auth::auth_middleware,
+            ))
+            .with_state(auth.clone());
+        let design_files = Router::new()
+            .route(
+                "/design-files/{token}/{project}/{task}/{*path}",
+                get(handlers::tasks::serve_design_file),
+            )
+            .route(
+                "/design-files/system/{token}/{project}/system/{*path}",
+                get(handlers::tasks::serve_design_system_file),
+            )
+            .route(
+                "/machines/{id}/via/api/v1/design-files/{*rest}",
+                get(handlers::machines::via),
+            )
+            .with_state(auth.clone());
+
         // What a share link opens. The token picks the Task and a visitor key
         // says who is looking, so these sit outside the auth layer.
         let share_links = Router::new()
@@ -1557,6 +1646,18 @@ pub fn create_router(
             )
             .route("/share/{token}/files", get(handlers::shares::public_files))
             .route(
+                "/share/{token}/designs",
+                get(handlers::shares::public_designs),
+            )
+            .route(
+                "/share/{token}/designs/{design}/pages/{file}",
+                get(handlers::shares::public_design_page),
+            )
+            .route(
+                "/share/{token}/design-files/{visitor}/{pass}/{*path}",
+                get(handlers::shares::public_design_file),
+            )
+            .route(
                 "/share/{token}/files/preview",
                 get(handlers::shares::public_file_preview),
             )
@@ -1568,8 +1669,13 @@ pub fn create_router(
                 "/share/{token}/comments",
                 get(handlers::shares::public_comments).post(handlers::shares::public_add_comment),
             )
+            .route(
+                "/share/{token}/comments/{id}/replies",
+                post(handlers::shares::public_add_reply),
+            )
             .layer(DefaultBodyLimit::max(256 * 1024))
-            .layer(middleware::from_fn(device_auth::no_store));
+            .layer(middleware::from_fn(device_auth::no_store))
+            .with_state(auth.clone());
 
         // OAuth / QR registration callback. Platform message transport remains
         // entirely inside the plugin backend.
@@ -1594,6 +1700,8 @@ pub fn create_router(
             .nest("/api/v1", protected_api)
             .nest("/api/v1", plugin_asset_session)
             .nest("/api/v1", plugin_assets)
+            .nest("/api/v1", design_session)
+            .nest("/api/v1", design_files)
             .nest("/api/v1", plugin_process_host)
             .nest("/api/v1", connect_provider_ingress)
             .nest("/api/v1", share_links)
@@ -2447,7 +2555,6 @@ pub async fn start_server(
 
         let display_host = display_host_for(host, lan_ip.as_deref());
         let base_url = format!("https://{}:{}", display_host, port);
-        handlers::shares::record_remote_address(&base_url);
         mobile_banner::present(auth.clone(), base_url, Some(tls_label));
 
         // Set env vars so handlers (e.g. connect_info) can discover port & protocol
@@ -2483,7 +2590,6 @@ pub async fn start_server(
         let lan_ip = get_lan_ip();
         let display_host = display_host_for(host, lan_ip.as_deref());
         let base_url = format!("http://{}:{}", display_host, actual_port);
-        handlers::shares::record_remote_address(&base_url);
         mobile_banner::present(auth.clone(), base_url, None);
     } else if has_ui {
         println!("Grove Web UI: http://localhost:{}", actual_port);

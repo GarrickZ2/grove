@@ -233,6 +233,18 @@ pub fn revoke_share(token: &str) -> Result<bool> {
     Ok(updated > 0)
 }
 
+/// Forget a link and who opened it. Comments left through it stay with
+/// the Task.
+pub fn delete_share(token: &str) -> Result<()> {
+    let conn = database::connection();
+    conn.execute(
+        "DELETE FROM share_visitors WHERE token = ?1",
+        params![token],
+    )?;
+    conn.execute("DELETE FROM task_shares WHERE token = ?1", params![token])?;
+    Ok(())
+}
+
 /// A deleted Task takes its links along. Runs inside the caller's transaction.
 pub fn delete_task_shares(
     conn: &rusqlite::Connection,

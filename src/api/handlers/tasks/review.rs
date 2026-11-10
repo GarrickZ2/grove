@@ -59,6 +59,14 @@ pub async fn get_review_comments(
                 })
                 .collect();
 
+            // Only a file comment's anchor is a place in a rendered file; an
+            // inline one keeps the lines of code it was made on there.
+            let anchor = matches!(c.comment_type, comments::CommentType::File)
+                .then(|| c.anchor_text.as_deref())
+                .flatten()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                .filter(serde_json::Value::is_object);
+
             ReviewCommentEntry {
                 id: c.id,
                 comment_type: Some(match c.comment_type {
@@ -76,6 +84,7 @@ pub async fn get_review_comments(
                 role: c.role,
                 timestamp: c.timestamp,
                 via_share: shared.contains_key(&c.id),
+                anchor,
                 status,
                 replies,
             }
@@ -214,7 +223,7 @@ pub async fn create_review_comment(
                 &agent,
                 "",
                 &role,
-                None,
+                req.anchor.as_ref().and_then(super::designs::anchor_text),
             )
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }

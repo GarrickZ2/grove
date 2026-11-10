@@ -37,3 +37,35 @@ describe("review comment chat prompt", () => {
     expect(isReviewCommentBatch(null)).toBe(false);
   });
 });
+
+describe("design comments", () => {
+  it("names the page and the element, and asks for a look and a reply", () => {
+    const prompt = payload(buildReviewCommentMessage({
+      id: 7,
+      comment_type: "file",
+      file_path: "design/insight/overview.html",
+      content: "Make this the primary action",
+      design: { name: "insight", page: "overview.html", selector: "main > button.export", text: "Export", replies: ["Ada: agreed"] },
+    }))["system-prompt"] as string;
+    expect(prompt).toContain("Comment #7 on the design page design/insight/overview.html");
+    expect(prompt).toContain('`main > button.export` ("Export")');
+    expect(prompt).toContain('Replies so far: "Ada: agreed".');
+    expect(prompt).toContain("grove_design_read");
+    expect(prompt).toContain("grove_reply_review");
+    expect(prompt).not.toContain("Code Review");
+  });
+
+  it("says which part of a file a preview comment is on, with its thread", () => {
+    const prompt = payload(buildReviewCommentMessage({
+      id: 12,
+      comment_type: "file",
+      file_path: "output/report.md",
+      content: "Too long",
+      anchor: { selector: "p:nth-of-type(2)", text: "Bravo paragraph here." },
+      replies: [{ agent: "Ada", content: "agreed" }],
+    }))["system-prompt"] as string;
+    expect(prompt).toBe('Please address Comment #12 on the file output/report.md, on the part that reads "Bravo paragraph here.". Comment: "Too long". Replies so far: "Ada: agreed". Use the grove_reply_review tool to reply and set resolve: true when addressed.');
+    const selection = payload(buildReviewCommentMessage({ id: 13, comment_type: "file", file_path: "output/report.md", content: "x", anchor: { text: "Bravo paragraph here.", textRange: { quote: "paragraph" } } }))["system-prompt"] as string;
+    expect(selection).toContain('reads "paragraph"');
+  });
+});

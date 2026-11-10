@@ -72,8 +72,8 @@ function WorkbenchArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt
     workdirs, isLoadingWorkdirs, isAddingWorkdir,
     loadFiles, loadWorkdirs, handleUpload, handleAddWorkdir, handleDeleteWorkdir, handleOpenWorkdir,
     handlePreview, handleDownload, handleOpenInApp, handleRevealInFileManager,
-    handleCreatePreviewComment, handleUpdatePreviewComment, removePreviewComment,
-    currentFilePreviewDrafts, currentFilePreviewMarkers,
+    handleCreatePreviewComment, replyPreviewComment, resolvePreviewComment,
+    currentFileComments, currentFilePreviewMarkers,
     handleOpenLink, handleEditLink, handleDelete, handleSyncToResource, handleOpenFolder,
     submitAddLink, submitEditLink, folderPicker,
   } = useArtifactsPanel({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy, onRevealTarget: revealTarget });
@@ -205,12 +205,12 @@ function WorkbenchArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt
             fileSize={previewFile.file.size}
             onOpenFile={hostFileActionsAvailable() ? () => handleOpenInApp(previewFile.file) : undefined}
             onRefresh={() => handlePreview(previewFile.file, true)}
-            onCreatePreviewComment={(locator, comment, rendererId) =>
-              handleCreatePreviewComment(previewFile.file, locator, comment, rendererId)
+            onCreatePreviewComment={(locator, comment) =>
+              void handleCreatePreviewComment(previewFile.file, locator, comment)
             }
-            onUpdatePreviewComment={handleUpdatePreviewComment}
-            onDeletePreviewComment={removePreviewComment}
-            previewCommentDrafts={currentFilePreviewDrafts}
+            previewComments={currentFileComments}
+            onReplyPreviewComment={replyPreviewComment}
+            onResolvePreviewComment={resolvePreviewComment}
             previewCommentMarkers={currentFilePreviewMarkers}
             sketchContext={projectId ? { projectId, taskId: task.id } : undefined}
             location={projectId ? {

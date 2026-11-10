@@ -50,6 +50,7 @@ import type { PanelMenuItem } from "../../../orbit/ui";
 import { ORBIT_PHONE_ACTIONS_SLOT, ORBIT_PHONE_SHOW_CHAT_EVENT } from "../../Layout/OrbitPhoneHeader";
 import type { FileNavRequest } from "../../Review";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from "../../ui/sketchChipCache";
+import { OPEN_DESIGN_EVENT, type OpenDesignDetail } from "../../Studio/DesignPage/designModel";
 import { OPEN_BROWSER_EVENT, type OpenBrowserDetail } from "../../../api/browser";
 import { useOpenReviewRequests, type OpenReviewRequest } from "../../../orbit/workspace/openReview";
 import { useConfig, useProject } from "../../../context";
@@ -817,6 +818,22 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       return () => window.removeEventListener(OPEN_SKETCH_EVENT, handler);
     }, [isStudio, projectId, task.id, setStateTagged]);
 
+    // Likewise for a design:// chip and the Design panel; the panel itself
+    // picks which design and page to show.
+    useEffect(() => {
+      if (!isStudio) return;
+      const handler = (e: Event) => {
+        const detail = (e as CustomEvent<OpenDesignDetail>).detail;
+        if (!detail || detail.projectId !== projectId || detail.taskId !== task.id) return;
+        setStateTagged((prev) => {
+          if (prev.auxVisible && prev.auxType === "design") return prev;
+          return { ...prev, auxType: "design", auxVisible: true };
+        });
+      };
+      window.addEventListener(OPEN_DESIGN_EVENT, handler);
+      return () => window.removeEventListener(OPEN_DESIGN_EVENT, handler);
+    }, [isStudio, projectId, task.id, setStateTagged]);
+
     // An agent started using the browser: show it unless another panel is open.
     useEffect(() => {
       const handler = (e: Event) => {
@@ -1072,6 +1089,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           const auxTypes = AUX_PANEL_TYPES.filter((type) =>
             (type !== "artifacts" || isStudio) &&
             (type !== "sketch" || isStudio) &&
+            (type !== "design" || isStudio) &&
             (type !== "terminal" || terminalAvailable) &&
             // Orbit docks these outside the left column.
             (!orbitDesk || slotOf(type) === "aux")

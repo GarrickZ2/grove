@@ -7811,6 +7811,9 @@ export function TaskChat({
       const customEvent = e as CustomEvent;
       const comment = customEvent.detail;
       if (!comment) return;
+      // Addressed to one chat: the others that are mounted leave it alone.
+      const target = (comment as { chatId?: string }).chatId;
+      if (target && target !== activeChatId) return;
 
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -11466,6 +11469,8 @@ export function TaskChat({
     <motion.div
       ref={taskChatRootRef}
       data-grove-chat-panel="true"
+      data-grove-chat-id={activeChatId ?? undefined}
+      data-grove-chat-agent={agentLabel ?? undefined}
       tabIndex={-1}
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}

@@ -20,6 +20,7 @@ import type { FileNavRequest } from '../../Review';
 import { TaskTerminal } from '../TaskView/TaskTerminal';
 import type { ArtifactPreviewRequest } from '../TaskInfoPanel/tabs';
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from '../../ui/sketchChipCache';
+import { OPEN_DESIGN_EVENT, type OpenDesignDetail } from '../../Studio/DesignPage/designModel';
 import { OPEN_BROWSER_EVENT, type OpenBrowserDetail } from '../../../api/browser';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { useConfig, useProject } from '../../../context';
@@ -512,6 +513,23 @@ export const FlexLayoutContainer = forwardRef<
     };
     window.addEventListener(OPEN_SKETCH_EVENT, handler);
     return () => window.removeEventListener(OPEN_SKETCH_EVENT, handler);
+  }, [isStudio, projectId, task.id, model, getAllTabs, addPanel]);
+
+  // Likewise for a design:// chip and the Design panel.
+  useEffect(() => {
+    if (!isStudio) return;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<OpenDesignDetail>).detail;
+      if (!detail || detail.projectId !== projectId || detail.taskId !== task.id) return;
+      const existing = getAllTabs().find((t) => t.getComponent() === 'design');
+      if (existing) {
+        model.doAction(Actions.selectTab(existing.getId()));
+      } else {
+        addPanel('design');
+      }
+    };
+    window.addEventListener(OPEN_DESIGN_EVENT, handler);
+    return () => window.removeEventListener(OPEN_DESIGN_EVENT, handler);
   }, [isStudio, projectId, task.id, model, getAllTabs, addPanel]);
 
   // An agent started using the browser: show it, without pulling focus from a

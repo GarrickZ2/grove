@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { ReviewCommentEntry } from '../../api/tasks';
-import { useGlobalActiveChatId } from '../Tasks/TaskView/useActiveChatId';
+import { useGlobalActiveChatId, visibleChatPanel } from '../Tasks/TaskView/useActiveChatId';
 import {
   ACTIVE_CHAT_AGENT_EVENT,
   SEND_COMMENT_TO_CHAT_EVENT,
@@ -23,10 +23,17 @@ function subscribeAgent(cb: () => void) {
 /** The visible active chat and its agent label (null when no chat is showing). */
 export function useActiveChatTarget(): { chatId: string | null; agent: string | null } {
   const chatId = useGlobalActiveChatId();
-  const agent = useSyncExternalStore(subscribeAgent, readActiveChatAgent, () => null);
-  return { chatId, agent: chatId ? agent : null };
+  const published = useSyncExternalStore(subscribeAgent, readActiveChatAgent, () => null);
+  // The visible chat's own label first: the published one is cleared when any chat unmounts.
+  const agent = chatId ? visibleChatPanel()?.dataset.groveChatAgent || published : null;
+  return { chatId, agent };
+}
+
+/** The chat a send goes to; the chats that are not it leave the message alone. */
+export function targetChatId(): string | undefined {
+  return visibleChatPanel()?.dataset.groveChatId || undefined;
 }
 
 export function sendCommentsToChat(comments: ReviewCommentEntry[]): void {
-  window.dispatchEvent(new CustomEvent(SEND_COMMENT_TO_CHAT_EVENT, { detail: { comments } }));
+  window.dispatchEvent(new CustomEvent(SEND_COMMENT_TO_CHAT_EVENT, { detail: { comments, chatId: targetChatId() } }));
 }

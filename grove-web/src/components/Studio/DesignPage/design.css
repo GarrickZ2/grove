@@ -1,0 +1,845 @@
+/* Design panel: a board of HTML pages. Colours come from the theme so the
+   panel reads the same in Orbit and Workbench. */
+.design-panel {
+  --d-line: color-mix(in oklab, var(--color-border) 70%, transparent);
+  --d-muted: var(--color-text-muted);
+  --d-accent: var(--color-highlight);
+  --d-canvas: color-mix(in oklab, var(--color-bg) 92%, var(--color-text) 8%);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 12.5px;
+}
+
+/* Pages being rendered for the agent: laid out and painted, never seen. */
+.design-capture-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.design-frame {
+  display: block;
+  border: 0;
+  background: #fff;
+}
+
+/* ── Design tabs ─────────────────────────────────────────────────────────── */
+/* Which design is shown: a button in the board's top left corner. */
+.design-picker { position: absolute; left: 12px; top: 12px; z-index: 4; max-width: calc(100% - 220px); }
+
+.design-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--d-line);
+  border-radius: 9px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 500;
+  box-shadow: 0 4px 16px -6px rgb(0 0 0 / 25%);
+  cursor: pointer;
+}
+
+.design-picker-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-picker-btn svg { flex: none; color: var(--d-muted); }
+
+/* A small menu under a floating control. */
+.design-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--d-line);
+  border-radius: 10px;
+  background: var(--color-bg);
+  box-shadow: 0 12px 34px -12px rgb(0 0 0 / 35%);
+}
+
+.design-menu.is-end { left: auto; right: 0; min-width: 150px; }
+
+.design-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.design-menu button:hover:not(:disabled) { background: color-mix(in oklab, var(--color-text) 6%, transparent); }
+.design-menu button:disabled { opacity: .45; cursor: default; }
+.design-menu button > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-menu button > svg { flex: none; color: var(--d-muted); }
+.design-menu button > svg.design-menu-check { color: var(--d-accent); }
+.design-menu-rule { height: 1px; margin: 4px 6px; background: var(--d-line); }
+
+/* The page as a file, from its title row. */
+.design-page-export { position: relative; display: inline-flex; flex: none; }
+
+.design-page-export-btn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--color-text) 9%, transparent);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.design-page-export-btn:hover, .design-page-export-btn.is-on { background: var(--d-accent); color: #fff; }
+
+.design-page-export-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 76px;
+  padding: 4px;
+  border: 1px solid var(--d-line);
+  border-radius: 8px;
+  background: var(--color-bg);
+  box-shadow: 0 10px 30px -12px rgb(0 0 0 / 35%);
+}
+
+.design-page-export-menu button {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.design-page-export-menu button:hover:not(:disabled) { background: color-mix(in oklab, var(--color-text) 7%, transparent); }
+.design-page-export-menu button:disabled { opacity: .4; cursor: default; }
+
+/* Asked when an import brings a design system the Project already has. */
+.design-ask {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in oklab, var(--color-bg) 55%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.design-ask-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(340px, 100%);
+  padding: 16px;
+  border: 1px solid var(--d-line);
+  border-radius: 12px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-shadow: 0 24px 60px -24px rgb(0 0 0 / 45%);
+}
+
+.design-ask-card > span { color: var(--d-muted); overflow-wrap: anywhere; }
+.design-ask-acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+
+.design-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  flex: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--d-muted);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.design-tab:hover { background: color-mix(in oklab, var(--color-text) 5%, transparent); color: var(--color-text); }
+.design-tab.is-active { background: color-mix(in oklab, var(--color-text) 8%, transparent); color: var(--color-text); }
+
+.design-stage {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* ── Board ───────────────────────────────────────────────────────────────── */
+.design-board-wrap { display: flex; flex: 1; min-width: 0; min-height: 0; }
+
+.design-board {
+  position: relative;
+  flex: 1 0 260px;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--d-canvas);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.design-board:active { cursor: grabbing; }
+.design-board:focus { outline: 0; }
+.design-board.is-draw, .design-board.is-draw:active { cursor: crosshair; }
+.design-board.is-select { cursor: default; }
+.design-board.is-select:active { cursor: grabbing; }
+
+.design-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.design-label {
+  position: absolute;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  color: var(--color-text);
+  cursor: move;
+}
+
+.design-label.is-subtitle { font-weight: 450; letter-spacing: -0.01em; color: var(--d-muted); }
+
+.design-artboard,
+.design-guide { position: absolute; }
+
+/* The title row keeps its size on screen however far the board is zoomed. */
+.design-artboard-head {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  transform-origin: 0 100%;
+  pointer-events: none;
+}
+
+.design-artboard-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--d-muted);
+}
+
+.design-artboard.is-selected .design-artboard-title { color: var(--d-accent); }
+
+.design-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  flex: none;
+  border: 0;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--color-text) 9%, transparent);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.design-play:hover, .design-play.is-on { background: var(--d-accent); color: #fff; }
+.design-artboard.is-playing .design-artboard-body { box-shadow: 0 0 0 2px var(--d-accent), 0 8px 30px -12px rgb(0 0 0 / 25%); }
+
+.design-artboard-body {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-text) 14%, transparent), 0 8px 30px -12px rgb(0 0 0 / 25%);
+}
+
+.design-artboard.is-selected .design-artboard-body { box-shadow: 0 0 0 3px var(--d-accent), 0 8px 30px -12px rgb(0 0 0 / 25%); }
+
+.design-artboard-head.is-handle { pointer-events: auto; cursor: move; }
+
+.design-guide-body {
+  padding: 40px 48px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-text) 14%, transparent), 0 8px 30px -12px rgb(0 0 0 / 25%);
+  cursor: default;
+  user-select: text;
+}
+
+.design-pin {
+  position: absolute;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50% 50% 50% 4px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.design-pin { transform-origin: 0 100%; }
+.design-pin:hover { z-index: 2; filter: brightness(1.08); }
+/* Its element changed or is gone: the pin is where the element was. */
+.design-pin.is-stale { border-style: dashed; border-color: var(--d-muted); background: var(--color-bg); }
+.design-pin.is-stale .design-avatar { opacity: .45; }
+
+.design-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 650;
+  line-height: 1;
+}
+
+/* View controls float in the board's top right corner, the tools along its
+   bottom: they never share an edge, and both are the same surface. */
+.design-zoom {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--d-line);
+  border-radius: 9px;
+  background: var(--color-bg);
+  box-shadow: 0 4px 16px -6px rgb(0 0 0 / 25%);
+  cursor: default;
+}
+
+.design-zoom-rule { width: 1px; height: 16px; margin: 0 4px; background: var(--d-line); }
+.design-btn.is-bare:not(.is-on) { border-color: transparent; background: transparent; }
+
+.design-zoom-menu { position: relative; display: inline-flex; }
+
+.design-zoom-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 26px;
+  padding: 0 6px 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.design-zoom-value:hover { background: color-mix(in oklab, var(--color-text) 6%, transparent); }
+.design-zoom .design-icon-btn.is-on { background: color-mix(in oklab, var(--color-highlight) 16%, transparent); color: var(--color-highlight); }
+.design-tools button:disabled { opacity: .35; cursor: default; }
+
+/* ── Shared controls ─────────────────────────────────────────────────────── */
+.design-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.design-icon-btn:hover:not(:disabled) { background: color-mix(in oklab, var(--color-text) 7%, transparent); color: var(--color-text); }
+.design-icon-btn:disabled { opacity: .35; cursor: default; }
+.design-resolved { color: var(--color-success); }
+
+.design-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  flex: none;
+  border: 1px solid color-mix(in oklab, var(--color-border) 70%, transparent);
+  border-radius: 7px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.design-btn:hover:not(:disabled) { background: color-mix(in oklab, var(--color-text) 5%, var(--color-bg)); }
+.design-btn:disabled { opacity: .45; cursor: default; }
+.design-btn.is-on { border-color: var(--color-highlight); background: color-mix(in oklab, var(--color-highlight) 14%, var(--color-bg)); color: var(--color-highlight); }
+.design-btn.is-primary { border-color: transparent; background: var(--color-text); color: var(--color-bg); }
+.design-btn.is-primary:hover:not(:disabled) { background: color-mix(in oklab, var(--color-text) 88%, var(--color-bg)); }
+
+.design-play-meta { flex: none; color: var(--d-muted); font-variant-numeric: tabular-nums; }
+.design-play-gap { flex: 1; }
+
+.design-select-bar {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  gap: 1px;
+  padding: 3px;
+  transform-origin: 0 0;
+  border-radius: 9px;
+  background: #18181b;
+  box-shadow: 0 6px 20px -6px rgb(0 0 0 / 45%);
+  white-space: nowrap;
+}
+
+.design-select-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #fafafa;
+  font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  cursor: pointer;
+}
+
+.design-select-bar button:hover { background: rgb(255 255 255 / 14%); }
+.design-select-bar button.is-icon { padding: 0 6px; color: #a1a1aa; }
+
+/* ── Comment thread (portaled to <body>) ─────────────────────────────────── */
+.design-thread {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  border: 1px solid color-mix(in oklab, var(--color-border) 70%, transparent);
+  border-radius: 12px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 7%), 0 16px 36px -14px rgb(0 0 0 / 30%);
+  font-size: 12.5px;
+}
+
+.design-thread-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 6px 6px 12px;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border) 70%, transparent);
+}
+
+.design-thread-target {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+}
+
+.design-thread-list { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 2px; }
+.design-thread-item { display: flex; gap: 8px; margin-bottom: 10px; }
+.design-thread-text { min-width: 0; flex: 1; }
+.design-thread-meta { display: flex; align-items: baseline; gap: 6px; }
+.design-thread-meta span { color: var(--color-text-muted); font-size: 11px; }
+.design-thread-text p { margin: 2px 0 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.design-thread-compose { flex: none; padding: 10px 12px 12px; }
+
+.design-thread-compose textarea {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  resize: none;
+  border: 1px solid color-mix(in oklab, var(--color-border) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-bg) 98%, var(--color-text) 2%);
+  color: var(--color-text);
+  font: inherit;
+  line-height: 1.4;
+}
+
+.design-thread-compose textarea:focus { outline: 0; border-color: var(--color-highlight); box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-highlight) 16%, transparent); }
+.design-thread-error { margin-top: 6px; color: var(--color-error); }
+.design-thread-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.design-thread-foot .design-btn { min-width: 0; flex: 0 1 auto; }
+.design-thread-send { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The open comments of a design, beside the board. */
+.design-comments { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.design-comments-list { flex: 1; min-height: 0; overflow: auto; padding: 4px; }
+.design-comments-none { padding: 28px 16px; color: var(--d-muted); text-align: center; }
+.design-comments-foot { display: flex; flex: none; padding: 8px; border-top: 1px solid var(--d-line); }
+.design-comments-foot .design-btn { flex: 1; justify-content: center; min-width: 0; }
+
+.design-comment-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.design-comment-row:hover { background: color-mix(in oklab, var(--color-text) 5%, transparent); }
+.design-comment-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.design-comment-meta { display: flex; align-items: baseline; gap: 6px; min-width: 0; color: var(--d-muted); font-size: 11px; white-space: nowrap; }
+.design-comment-meta b { color: var(--color-text); font-size: 12px; font-weight: 600; }
+.design-comment-meta span { overflow: hidden; text-overflow: ellipsis; }
+.design-comment-body { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
+.design-comment-replies { color: var(--d-muted); font-size: 11px; }
+
+/* ── Tools ───────────────────────────────────────────────────────────────── */
+.design-tools {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  max-width: calc(100% - 24px);
+  overflow-x: auto;
+  scrollbar-width: none;
+  transform: translateX(-50%);
+  border: 1px solid var(--d-line);
+  border-radius: 11px;
+  background: var(--color-bg);
+  box-shadow: 0 4px 16px -6px rgb(0 0 0 / 25%);
+  cursor: default;
+}
+
+.design-tools .design-select-rule { background: var(--d-line); }
+
+.design-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  flex: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.design-tools button:hover { background: color-mix(in oklab, var(--color-text) 7%, transparent); color: var(--color-text); }
+.design-tools button.is-on { background: color-mix(in oklab, var(--color-highlight) 16%, transparent); color: var(--color-highlight); }
+
+.design-well {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.design-well:hover { background: rgb(255 255 255 / 14%); }
+.design-well span { width: 16px; height: 16px; border-radius: 4px; box-shadow: 0 0 0 1px rgb(255 255 255 / 35%); }
+.design-well span.is-none { background: linear-gradient(135deg, transparent 45%, #ef4444 45%, #ef4444 55%, transparent 55%) #fff !important; }
+.design-well input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.design-select-rule { width: 1px; margin: 5px 3px; background: rgb(255 255 255 / 18%); }
+
+/* ── Inspector ───────────────────────────────────────────────────────────── */
+.design-inspector {
+  display: flex;
+  flex: 0 1 328px;
+  flex-direction: column;
+  min-width: 248px;
+  min-height: 0;
+  border-left: 1px solid var(--d-line);
+  background: var(--color-bg);
+}
+
+.design-inspector-tabs { display: flex; flex: none; align-items: center; gap: 2px; padding: 6px 8px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--d-line); }
+.design-inspector-tabs .design-tab { padding: 0 7px; }
+.design-inspector-tabs .design-icon-btn { flex: none; }
+
+.design-layers { flex: 0 1 42%; min-height: 96px; overflow: auto; padding: 4px 0; border-bottom: 1px solid var(--d-line); }
+
+.design-layer {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding-right: 8px;
+  border-block: 1px solid transparent;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.design-layer:hover { background: color-mix(in oklab, var(--color-text) 5%, transparent); }
+.design-layer.is-chosen { background: color-mix(in oklab, var(--color-highlight) 14%, transparent); }
+.design-layer.is-page { font-weight: 550; }
+.design-layer.is-drop-before { border-top-color: var(--color-highlight); }
+.design-layer.is-drop-after { border-bottom-color: var(--color-highlight); }
+.design-layer.is-drop-inside { box-shadow: inset 0 0 0 1.5px var(--color-highlight); }
+
+.design-layer-twist {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 18px;
+  padding: 0;
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--d-muted);
+  cursor: pointer;
+}
+
+.design-layer-icon { flex: none; color: var(--d-muted); }
+.design-layer-kind { flex: none; }
+.design-layer-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--d-muted); }
+.design-layer.is-page .design-layer-name { color: var(--color-text); }
+
+.design-props { flex: 1; min-height: 0; overflow: auto; }
+
+.design-props-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 36px 20px;
+  text-align: center;
+  color: var(--d-muted);
+}
+
+.design-props-empty strong { font-weight: 550; color: var(--color-text); }
+
+.design-props-body { min-width: 0; margin: 0; padding: 0; border: 0; }
+.design-props-head { display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--d-line); font-weight: 550; }
+.design-props-selector { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; color: var(--d-muted); }
+.design-props-note { padding: 8px 12px; color: var(--d-muted); border-bottom: 1px solid var(--d-line); }
+
+.design-props-section { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px; border-bottom: 1px solid var(--d-line); }
+.design-props-section h4 { margin: 0 0 2px; font-size: 12.5px; font-weight: 600; }
+.design-props-row { display: flex; align-items: flex-start; gap: 8px; }
+.design-props-label { flex: none; width: 62px; line-height: 26px; color: var(--d-muted); }
+.design-props-value { display: flex; flex: 1; min-width: 0; gap: 6px; }
+
+.design-field {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--d-line);
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--color-text) 3%, var(--color-bg));
+  color: var(--color-text);
+  font: inherit;
+}
+
+.design-field:focus-within { border-color: var(--color-highlight); }
+.design-field input:not([type="color"]) { flex: 1; min-width: 0; width: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; font-variant-numeric: tabular-nums; }
+.design-field-unit, .design-field-hint { flex: none; font-size: 11px; color: var(--d-muted); }
+.design-field.is-select { flex: 0 0 76px; padding: 0 4px; outline: 0; }
+.design-field.is-select.is-wide { flex: 1; }
+.design-field.is-area { height: auto; padding: 6px 7px; resize: vertical; outline: 0; line-height: 1.4; }
+.design-field.is-color input[type="color"] { flex: none; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; background: none; cursor: pointer; }
+.design-field.is-color input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.design-field.is-color input[type="color"]::-webkit-color-swatch { border: 1px solid var(--d-line); border-radius: 4px; }
+.design-field-grid { display: grid; flex: 1; grid-template-columns: 1fr 1fr; gap: 6px; min-width: 0; }
+
+.design-choice { display: flex; flex: 1; gap: 2px; padding: 2px; border-radius: 7px; background: color-mix(in oklab, var(--color-text) 6%, var(--color-bg)); }
+
+.design-choice button {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--d-muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.design-choice button.is-on { background: var(--color-bg); color: var(--color-text); box-shadow: 0 1px 2px rgb(0 0 0 / 14%); }
+
+.design-code { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.design-code-file { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--d-line); color: var(--d-muted); }
+.design-code pre { flex: 1; min-height: 0; margin: 0; padding: 10px 12px; overflow: auto; font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; user-select: text; white-space: pre; }
+
+/* ── Marks: what the user wrote and drew on the board ────────────────────── */
+.design-mark { position: absolute; }
+.design-mark.is-ink { pointer-events: none; }
+.design-mark.is-ink svg { display: block; overflow: visible; }
+.design-mark svg * { vector-effect: non-scaling-stroke; }
+.design-mark.is-ink svg g:last-child { cursor: move; }
+.design-mark.is-chosen { outline: 1.5px solid var(--d-accent); outline-offset: 4px; }
+
+.design-mark.is-note {
+  padding: 12px 14px;
+  background: #fde68a;
+  color: #422006;
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 16px -8px rgb(0 0 0 / 40%), 0 0 0 1px rgb(0 0 0 / 6%);
+}
+
+.design-mark.is-text {
+  min-width: 12px;
+  min-height: 34px;
+  color: var(--color-text);
+  font: 600 26px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  white-space: pre;
+}
+
+.design-mark.is-active { cursor: move; }
+.design-mark textarea { display: block; width: 100%; min-width: 180px; padding: 0; border: 0; outline: 0; resize: none; background: transparent; color: inherit; font: inherit; }
+.design-mark.is-text textarea { min-width: 320px; }
+
+.design-mark-colors {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 8px;
+  transform-origin: 0 100%;
+  border-radius: 8px;
+  background: #18181b;
+  pointer-events: auto;
+  cursor: default;
+}
+
+.design-mark-rule { width: 1px; margin: 1px 2px; background: rgb(255 255 255 / 22%); }
+.design-mark-colors .design-mark-weight { display: inline-flex; align-items: center; justify-content: center; width: 18px; border-radius: 4px; background: transparent; box-shadow: none; }
+.design-mark-colors .design-mark-weight.is-on { background: rgb(255 255 255 / 22%); }
+.design-mark-weight i { display: block; width: 12px; border-radius: 3px; background: #fff; }
+.design-mark-colors button { width: 14px; height: 14px; padding: 0; border: 0; border-radius: 50%; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 30%); cursor: pointer; }
+
+.design-mark-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #18181b;
+  color: #fff;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* ── Inspector: alignment, tweaks, tokens ────────────────────────────────── */
+.design-align { display: flex; padding: 6px 8px; border-bottom: 1px solid var(--d-line); }
+.design-align button { display: inline-flex; flex: 1; align-items: center; justify-content: center; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--d-muted); cursor: pointer; }
+.design-align button:hover:not(:disabled) { background: color-mix(in oklab, var(--color-text) 7%, transparent); color: var(--color-text); }
+.design-align button:disabled { opacity: .3; cursor: default; }
+
+.design-tweak { display: flex; align-items: center; gap: 8px; }
+.design-tweak-name { flex: 0 0 104px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--d-muted); }
+
+.design-color { display: flex; flex: 1; flex-direction: column; gap: 6px; min-width: 0; }
+.design-field-tokens { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--d-muted); cursor: pointer; }
+.design-field-tokens:hover, .design-field-tokens.is-on { background: color-mix(in oklab, var(--color-text) 9%, transparent); color: var(--color-text); }
+.design-swatches { display: flex; flex-wrap: wrap; gap: 4px; }
+.design-swatches button { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 5px; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 14%); cursor: pointer; }
+.design-swatches button:hover { transform: scale(1.15); }
+
+/* A file preview's comments, under its header: the same list the Design panel has in its inspector. */
+.comment-pop-anchor { position: relative; display: inline-flex; }
+
+.comment-pop {
+  --d-line: color-mix(in oklab, var(--color-border) 70%, transparent);
+  --d-muted: var(--color-text-muted);
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  max-height: min(60vh, 480px);
+  border: 1px solid var(--d-line);
+  border-radius: 10px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  box-shadow: 0 12px 34px -12px rgb(0 0 0 / 35%);
+}

@@ -45,15 +45,22 @@ let globalActiveChatId: string | null = null;
 const activeChatSubscribers = new Set<() => void>();
 let activeChatTeardown: (() => void) | null = null;
 
+/**
+ * The chat that comments are sent to: the one on screen, or, when the chat is
+ * put away to give a panel the whole window, the one that is still open
+ * behind it.
+ */
+export function visibleChatPanel(): HTMLElement | null {
+  if (typeof document === "undefined") return null;
+  const panels = Array.from(document.querySelectorAll<HTMLElement>('[data-grove-chat-panel="true"][data-grove-chat-id]'));
+  return panels.find((panel) => panel.offsetParent !== null) ?? panels[0] ?? null;
+}
+
+// Read from the panel itself, not from `__groveActiveChatId`: that one is
+// cleared whenever any chat unmounts, also when another has become the
+// active one in the meantime.
 function computeActiveAndVisible(): string | null {
-  if (typeof window === "undefined") return null;
-  const id = (window as Window & { __groveActiveChatId?: string | null }).__groveActiveChatId || null;
-  if (!id) return null;
-  // The chat panel must actually be visible in the DOM (display !== none).
-  const panelEl = document.querySelector('[data-grove-chat-panel="true"]');
-  if (!panelEl) return null;
-  if ((panelEl as HTMLElement).offsetParent === null) return null;
-  return id;
+  return visibleChatPanel()?.dataset.groveChatId || null;
 }
 
 function recomputeActiveChat() {

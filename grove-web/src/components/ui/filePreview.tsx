@@ -5,7 +5,7 @@ import { trackedDownload } from "../../transfers/download";
 import { useState, useEffect, useId, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { Code, Download, Expand, Eye, List, Loader2, Maximize2, MessageSquarePlus, Minimize2, RefreshCw, Shrink, Trash2, X } from "lucide-react";
+import { Code, Download, Expand, Eye, List, Loader2, Maximize2, MessageSquare, MessageSquarePlus, Minimize2, RefreshCw, Send, Shrink, X } from "lucide-react";
 import { fileInfoRenderer, getPreviewRenderer, resolveFullRenderer, type PreviewCommentMarker } from "../Review/previewRenderers";
 import { highlightCode, detectLanguage } from "../Review/syntaxHighlight";
 import { PreviewSearchBar } from "../Review/PreviewSearchBar";
@@ -23,8 +23,12 @@ import { isVirtualizedMarkdownPreview } from "./filePreviewPolicy";
 import {
   previewCommentLocatorInParentViewport,
   type PreviewCommentLocator,
-  type PreviewCommentDraft,
 } from "../../context";
+import type { ReviewCommentEntry } from "../../api/tasks";
+import { relativeText, usePopover } from "../../orbit/ui";
+import { sendCommentsToChat, useActiveChatTarget } from "../Review/sendOpenComments";
+import { Avatar, DesignThread } from "../Studio/DesignPage/DesignThread";
+import "../Studio/DesignPage/design.css";
 import { useKeyboardScope, useCommand, useContextKey } from "../../keyboard";
 import type { FileLocation } from "./fileLocation";
 
@@ -132,10 +136,13 @@ interface FilePreviewDrawerProps {
   onDownload: () => void;
   onRefresh?: () => void;
   onCreatePreviewComment?: (locator: PreviewCommentLocator, comment: string, rendererId: string) => void;
-  onUpdatePreviewComment?: (id: string, comment: string) => void;
-  onDeletePreviewComment?: (id: string) => void;
   previewCommentMarkers?: PreviewCommentMarker[];
-  previewCommentDrafts?: PreviewCommentDraft[];
+  /** The file's open comments: threads kept with the task. */
+  previewComments?: ReviewCommentEntry[];
+  onReplyPreviewComment?: (id: number, text: string) => Promise<void>;
+  onResolvePreviewComment?: (id: number) => void;
+  /** Whether the reader has an agent to send comments to; a visitor has none. */
+  previewCommentsToAgent?: boolean;
   /** When provided, markdown previews resolve `sketch://<uuid>` refs to the
    *  scoped task's sketch render (image inline, lightbox on click). Omit on
    *  surfaces that aren't task-scoped (e.g. project-level shared resources)
@@ -150,6 +157,77 @@ interface FilePreviewDrawerProps {
   onOpenFile?: () => void;
 }
 
+/** The file's open comments, and the way to hand them all to the agent. */
+function PreviewCommentList({ comments, agent, canSend, sendable, onOpen }: {
+  comments: ReviewCommentEntry[];
+  agent: string | null;
+  canSend: boolean;
+  /** False for a reader with no agent of their own. */
+  sendable: boolean;
+  onOpen: (comment: ReviewCommentEntry, at: { x: number; y: number }) => void;
+}) {
+  const { open, close, toggle, rootRef } = usePopover();
+  return (
+    <span ref={rootRef} className="comment-pop-anchor">
+      <button
+        type="button"
+        onClick={toggle}
+        className="inline-flex items-center gap-1 rounded-md p-1.5 text-xs transition-colors hover:bg-[var(--color-bg-tertiary)]"
+        style={{ color: open ? "var(--color-highlight)" : "var(--color-text-muted)" }}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={`Comments, ${comments.length} open`}
+        title="Comments"
+      >
+        <MessageSquare className="w-4 h-4" />
+        {comments.length}
+      </button>
+      {open ? (
+        <div className="comment-pop" role="dialog" aria-label="Comments">
+          <div className="design-comments-list">
+            {comments.map((comment) => (
+              <button
+                key={comment.id}
+                type="button"
+                className="design-comment-row"
+                onClick={(event) => {
+                  const box = event.currentTarget.getBoundingClientRect();
+                  close();
+                  onOpen(comment, { x: box.left - 342, y: box.top + 12 });
+                }}
+              >
+                <Avatar name={comment.agent || "You"} />
+                <span className="design-comment-text">
+                  <span className="design-comment-meta">
+                    <b>{comment.agent || "You"}</b>
+                    <span>{relativeText(comment.timestamp)}</span>
+                  </span>
+                  <span className="design-comment-body">{comment.content}</span>
+                  {comment.replies.length ? <span className="design-comment-replies">{comment.replies.length} {comment.replies.length === 1 ? "reply" : "replies"}</span> : null}
+                </span>
+              </button>
+            ))}
+          </div>
+          {sendable ? (
+            <div className="design-comments-foot">
+              <button
+                type="button"
+                className="design-btn is-primary"
+                disabled={!canSend}
+                title={canSend ? undefined : "Open the task's chat to send comments to its agent"}
+                onClick={() => { close(); sendCommentsToChat(comments); }}
+              >
+                <Send size={13} />
+                Send {comments.length} to {agent || "the agent"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </span>
+  );
+}
+
 export function FilePreviewDrawer({
   fileName,
   content,
@@ -161,10 +239,11 @@ export function FilePreviewDrawer({
   onDownload,
   onRefresh,
   onCreatePreviewComment,
-  onUpdatePreviewComment,
-  onDeletePreviewComment,
   previewCommentMarkers,
-  previewCommentDrafts,
+  previewComments,
+  onReplyPreviewComment,
+  onResolvePreviewComment,
+  previewCommentsToAgent = true,
   sketchContext,
   location,
   unpreviewable = false,
@@ -188,7 +267,10 @@ export function FilePreviewDrawer({
   const stableMarkers = useMemo<PreviewCommentMarker[]>(() => JSON.parse(markerKey), [markerKey]);
   const [pendingLocator, setPendingLocator] = useState<PreviewCommentLocator | null>(null);
   const [commentText, setCommentText] = useState("");
-  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  // The thread that is open, and where on screen it opens.
+  const [thread, setThread] = useState<{ id: number; at: { x: number; y: number } } | null>(null);
+  const chat = useActiveChatTarget();
+  const openThread = previewComments?.find((comment) => comment.id === thread?.id);
 
   const isMarkdown = fileName.endsWith(".md") || fileName.endsWith(".markdown");
   const isLargeMarkdown = !showSource && isVirtualizedMarkdownPreview(fileName, content);
@@ -370,7 +452,6 @@ export function FilePreviewDrawer({
   useCommand("preview.closeCommentModal", () => {
     setPendingLocator(null);
     setCommentText("");
-    setEditingDraftId(null);
   });
 
   // Action commands — mirror the header button behaviour so the command
@@ -409,7 +490,7 @@ export function FilePreviewDrawer({
   useEffect(() => {
     if (!commentable) return;
     const handler = (event: MessageEvent) => {
-      const data = event.data as { type?: string; previewId?: string; payload?: PreviewCommentLocator; markerId?: string };
+      const data = event.data as { type?: string; previewId?: string; payload?: PreviewCommentLocator; markerId?: string; x?: number; y?: number };
       if (!data || data.previewId !== previewId) return;
       if (data.type === "grove-preview-comment:selected" && data.payload) {
         // Keep commentMode true so the picker resumes once the modal closes,
@@ -418,26 +499,23 @@ export function FilePreviewDrawer({
         // hides while the modal is up.
         setPendingLocator(previewCommentLocatorInParentViewport(data.payload, event.source, drawerRef.current));
         setCommentText("");
-        setEditingDraftId(null);
       } else if (data.type === "grove-preview-comment:cancel") {
         setCommentMode(false);
       } else if (data.type === "grove-preview-comment:marker-click" && data.markerId) {
-        const draft = previewCommentDrafts?.find((d) => d.id === data.markerId);
-        if (draft) {
-          setPendingLocator(draft.locator);
-          setCommentText(draft.comment);
-          setEditingDraftId(draft.id);
-        }
+        const box = drawerRef.current?.getBoundingClientRect();
+        setThread({
+          id: Number(data.markerId),
+          at: { x: data.x ?? (box ? box.left + box.width / 2 : window.innerWidth / 2), y: data.y ?? (box ? box.top + 120 : 160) },
+        });
       }
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [commentable, previewId, previewCommentDrafts]);
+  }, [commentable, previewId]);
 
   const closeCommentModal = () => {
     setPendingLocator(null);
     setCommentText("");
-    setEditingDraftId(null);
   };
 
   // Reset comment state when the previewed file changes, so a pending modal
@@ -448,7 +526,6 @@ export function FilePreviewDrawer({
       if (cancelled) return;
       setPendingLocator(null);
       setCommentText("");
-      setEditingDraftId(null);
       setCommentMode(false);
     });
     return () => {
@@ -457,20 +534,8 @@ export function FilePreviewDrawer({
   }, [fileName]);
 
   const submitPreviewComment = () => {
-    if (!pendingLocator || !commentText.trim() || !renderer) return;
-    if (editingDraftId) {
-      if (!onUpdatePreviewComment) return;
-      onUpdatePreviewComment(editingDraftId, commentText.trim());
-    } else {
-      if (!onCreatePreviewComment) return;
-      onCreatePreviewComment(pendingLocator, commentText.trim(), renderer.id);
-    }
-    closeCommentModal();
-  };
-
-  const deletePreviewComment = () => {
-    if (!editingDraftId || !onDeletePreviewComment) return;
-    onDeletePreviewComment(editingDraftId);
+    if (!pendingLocator || !commentText.trim() || !renderer || !onCreatePreviewComment) return;
+    onCreatePreviewComment(pendingLocator, commentText.trim(), renderer.id);
     closeCommentModal();
   };
 
@@ -587,6 +652,15 @@ export function FilePreviewDrawer({
                 <MessageSquarePlus className="w-4 h-4" />
               </button>
             )}
+            {previewComments?.length ? (
+              <PreviewCommentList
+                comments={previewComments}
+                agent={chat.agent}
+                canSend={Boolean(chat.chatId)}
+                sendable={previewCommentsToAgent}
+                onOpen={(comment, at) => setThread({ id: comment.id, at })}
+              />
+            ) : null}
             <button
               onClick={onDownload}
               className="p-1.5 rounded-md transition-colors"
@@ -774,18 +848,7 @@ export function FilePreviewDrawer({
                 }}
               />
               <div className="mt-1 flex items-center justify-between gap-1">
-                <div className="flex items-center gap-2">
-                  {editingDraftId && onDeletePreviewComment && (
-                    <button
-                      onClick={deletePreviewComment}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--color-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)] hover:text-[var(--color-error)]"
-                      title="Delete comment"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                      Delete
-                    </button>
-                  )}
-                </div>
+                <span />
                 <div className="flex gap-1">
                   <button
                     onClick={closeCommentModal}
@@ -799,7 +862,7 @@ export function FilePreviewDrawer({
                     className="rounded-md px-2 py-1 text-[10px] font-semibold text-white shadow-sm transition-opacity disabled:opacity-40"
                     style={{ background: "var(--color-highlight)" }}
                   >
-                    {editingDraftId ? "Save" : "Add comment"}
+                    Add comment
                   </button>
                 </div>
               </div>
@@ -807,6 +870,31 @@ export function FilePreviewDrawer({
         </>,
         document.body,
       )}
+      {thread && openThread ? (
+        <DesignThread
+          at={thread.at}
+          comment={{
+            id: openThread.id,
+            design: "",
+            page: fileName,
+            anchor: null,
+            author: openThread.agent || "You",
+            content: openThread.content,
+            timestamp: openThread.timestamp,
+            status: "open",
+            via_share: Boolean(openThread.via_share),
+            replies: openThread.replies.map((reply) => ({ id: reply.id, author: reply.agent || "You", content: reply.content, timestamp: reply.timestamp })),
+          }}
+          target={fileName}
+          agent={chat.agent}
+          canSend={Boolean(chat.chatId)}
+          compose={Boolean(onReplyPreviewComment)}
+          onClose={() => setThread(null)}
+          onResolve={onResolvePreviewComment ? () => { onResolvePreviewComment(openThread.id); setThread(null); } : undefined}
+          onSend={onReplyPreviewComment && previewCommentsToAgent ? () => { sendCommentsToChat([openThread]); setThread(null); } : undefined}
+          onSubmit={async (text) => { await onReplyPreviewComment?.(openThread.id, text); }}
+        />
+      ) : null}
       <ImageLightbox
         imageUrl={lightboxUrl}
         svgContent={lightboxSvg}

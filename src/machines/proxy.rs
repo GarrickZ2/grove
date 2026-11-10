@@ -291,7 +291,9 @@ fn allow_home_framing(headers: &mut header::HeaderMap, home_port: u16) {
 }
 
 fn guarded(path: &str) -> bool {
-    (path.starts_with("/api/") || path == "/ws") && !path.starts_with("/api/v1/plugin-assets/")
+    (path.starts_with("/api/") || path == "/ws")
+        && !path.starts_with("/api/v1/plugin-assets/")
+        && !path.starts_with("/api/v1/design-files/")
 }
 
 /// What a machine's API looks like from here, wherever a window reaches it from.

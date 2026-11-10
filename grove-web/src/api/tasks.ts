@@ -118,6 +118,8 @@ export interface ReviewCommentEntry {
   status: string; // "open" | "resolved" | "outdated"
   replies: CommentReply[];
   via_share?: boolean; // written by someone the task was shared with
+  /** Where in the rendered file a comment made on a preview or a design page sits. */
+  anchor?: Record<string, unknown>;
 }
 
 export interface ReviewCommentsResponse {

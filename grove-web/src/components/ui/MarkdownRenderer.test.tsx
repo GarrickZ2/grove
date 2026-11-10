@@ -235,3 +235,30 @@ describe("MarkdownRenderer streaming reconciliation", () => {
     container.remove();
   });
 });
+
+describe("MarkdownRenderer design references", () => {
+  const render = (content: string, studio = true) => renderToStaticMarkup(
+    <MarkdownRenderer content={content} sketchContext={studio ? { projectId: "project", taskId: "task" } : undefined} />,
+  );
+
+  it("turns design:// references into chips in a Studio task", () => {
+    const html = render("Here is the flow: design://checkout-flow and the receipt design://checkout-flow/receipt.html.");
+    expect(html).toContain("Open checkout-flow in the Design panel");
+    expect(html).toContain("Open checkout-flow · receipt in the Design panel");
+    // The sentence's full stop stays text.
+    expect(html).toMatch(/<\/button>\.<\/p>/);
+  });
+
+  it("names the design system, also when the agent wrapped it in backticks", () => {
+    expect(render("See `design://system`")).toContain("Open Design system in the Design panel");
+  });
+
+  it("leaves the text alone outside Studio and inside code blocks", () => {
+    expect(render("design://checkout-flow", false)).not.toContain("Design panel");
+    expect(render("```\ndesign://checkout-flow\n```")).not.toContain("Design panel");
+  });
+
+  it("still renders sketch references as chips", () => {
+    expect(render("sketch://sketch-550e8400-e29b-41d4-a716-446655440000")).toContain("<button");
+  });
+});

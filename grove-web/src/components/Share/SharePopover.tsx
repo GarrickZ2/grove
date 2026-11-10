@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, CircleStop, Copy, Link2, Share2, X } from "lucide-react";
+import { Check, CircleStop, Copy, Link2, Share2, Trash2, X } from "lucide-react";
 import { Button, PanelMenuButton, Segmented, usePopover } from "../../orbit/ui";
 import {
   createShareLink,
+  deleteShareLink,
   listShareLinks,
   removeShareVisitor,
   revokeShareLink,
   shareErrorMessage,
-  updateShareProfile,
+  setShareAddress,
   type ShareLink,
   type ShareLinks,
 } from "../../api/shares";
@@ -160,7 +161,6 @@ function LinkRow({ link, onChanged }: { link: ShareLink; onChanged: () => void }
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const ended = stateText(link);
-  // Used-up links still serve people who opened them in the last 30 minutes.
   const stoppable = link.state === "active" || link.state === "exhausted";
   const names = link.visitors.map((visitor) => visitor.name);
   const who = names.length === 0 ? "Not opened yet" : names.join(", ");
@@ -195,13 +195,14 @@ function LinkRow({ link, onChanged }: { link: ShareLink; onChanged: () => void }
             {copied ? <Check size={14} /> : <Copy size={14} />}
           </button>
         )}
-        {stoppable && (
-          <PanelMenuButton
-            portal
-            label="Link actions"
-            items={[{ id: "stop", label: "Stop sharing", icon: CircleStop, danger: true, onSelect: () => { void revokeShareLink(link.token).then(onChanged); } }]}
-          />
-        )}
+        <PanelMenuButton
+          portal
+          label="Link actions"
+          items={[
+            ...(stoppable ? [{ id: "stop", label: "Stop sharing", icon: CircleStop, onSelect: () => { void revokeShareLink(link.token).then(onChanged); } }] : []),
+            { id: "delete", label: "Delete", icon: Trash2, danger: true, onSelect: () => { void deleteShareLink(link.token).then(onChanged); } },
+          ]}
+        />
       </div>
       {expanded && link.visitors.length > 0 && (
         <ul className="share-visitors">
@@ -239,29 +240,36 @@ function AddressFooter({ data, editing, onEdit, onSaved }: {
   if (!data) return null;
   const host = data.address.replace(/^https?:\/\//, "");
 
-  const save = async () => {
-    setError(null);
-    try {
-      await updateShareProfile({ address: value });
-      onEdit(false);
-      onSaved();
-    } catch (err) {
-      setError(shareErrorMessage(err));
+  const save = () => {
+    const address = value.trim();
+    if (address) {
+      try {
+        const url = new URL(address.includes("://") ? address : `https://${address}`);
+        if (!/^https?:$/.test(url.protocol)) throw new Error();
+      } catch {
+        setError("Enter an address like https://grove.example.com");
+        return;
+      }
     }
+    setError(null);
+    setShareAddress(address);
+    onEdit(false);
+    onSaved();
   };
+
 
   if (!editing) {
     return (
       <div className="share-foot">
         <span>Links use <b>{host}</b></span>
-        <button type="button" className="share-link-button" onClick={() => { setValue(data.address); onEdit(true); }}>Change</button>
+        <button type="button" className="share-link-button" onClick={() => { setValue(data.addressSource === "custom" ? data.address : ""); onEdit(true); }}>Change</button>
       </div>
     );
   }
   return (
-    <form className="share-foot is-editing" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+    <form className="share-foot is-editing" onSubmit={(event) => { event.preventDefault(); save(); }}>
       <div className="share-address">
-        <input className="oui-field" value={value} onChange={(event) => setValue(event.target.value)} placeholder="https://grove.example.com" aria-label="Address other people use" autoComplete="off" spellCheck={false} />
+        <input className="oui-field" value={value} onChange={(event) => setValue(event.target.value)} placeholder={data.address} aria-label="Address other people use" autoComplete="off" spellCheck={false} />
         <Button variant="secondary" size="sm" type="submit" disabled={!value.trim() && data.addressSource !== "custom"}>Save</Button>
         <Button variant="ghost" size="sm" onClick={() => onEdit(false)}>Cancel</Button>
       </div>

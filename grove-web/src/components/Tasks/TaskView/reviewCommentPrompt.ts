@@ -21,10 +21,58 @@ export interface ChatReviewComment {
   content: string;
   agent?: string;
   status?: string;
+  /** Where in the rendered file a comment made on a preview sits. */
+  anchor?: { text?: string; selector?: string; textRange?: { quote?: string } };
+  /** The thread under a comment made on a preview, oldest first. */
+  replies?: Array<{ agent?: string; content: string }>;
+  /** Set for a comment on a design page (Studio's Design panel). */
+  design?: {
+    name: string;
+    page: string;
+    /** The element the comment is on. */
+    selector?: string;
+    text?: string;
+    /** Replies in the thread so far, oldest first. */
+    replies?: string[];
+  };
+}
+
+/** A comment on a design page: where it is, the thread, and how to answer. */
+function buildDesignCommentMessage(comment: ChatReviewComment & { design: NonNullable<ChatReviewComment["design"]> }): string {
+  const { design } = comment;
+  const element = design.selector
+    ? ` on the element \`${design.selector}\`${design.text ? ` ("${design.text}")` : ""}`
+    : "";
+  const thread = design.replies?.length ? ` Replies so far: ${design.replies.map((reply) => `"${reply}"`).join("; ")}.` : "";
+  const systemPrompt = `Please address Comment #${comment.id} on the design page design/${design.name}/${design.page}${element}. Comment: "${comment.content}".${thread} Change the design, look at the result with grove_design_read, then answer the comment with the grove_reply_review tool, saying what you changed.`;
+  return buildGroveMetaTag(
+    "review_comment",
+    {
+      id: comment.id,
+      commentType: "file",
+      filePath: comment.file_path || `design/${design.name}/${design.page}`,
+      content: comment.content,
+      agent: comment.agent || "",
+      status: comment.status || "open",
+    },
+    systemPrompt,
+  );
+}
+
+/** A comment made on a file's preview: the part of the file it is on, and the thread so far. */
+function previewCommentPrompt(comment: ChatReviewComment, anchor: NonNullable<ChatReviewComment["anchor"]>): string {
+  const quote = (anchor.textRange?.quote || anchor.text || "").trim();
+  const part = quote ? `, on the part that reads "${quote.length > 300 ? `${quote.slice(0, 300)}…` : quote}"` : "";
+  const thread = comment.replies?.length
+    ? ` Replies so far: ${comment.replies.map((reply) => `"${reply.agent ? `${reply.agent}: ` : ""}${reply.content}"`).join("; ")}.`
+    : "";
+  return `Please address Comment #${comment.id} on the file ${comment.file_path}${part}. Comment: "${comment.content}".${thread} Use the grove_reply_review tool to reply and set resolve: true when addressed.`;
 }
 
 /** One comment's grove-meta tag (unchanged from the original per-comment send). */
 export function buildReviewCommentMessage(comment: ChatReviewComment): string {
+  if (comment.design) return buildDesignCommentMessage({ ...comment, design: comment.design });
+
   // 1. Build line/location labels
   const lineRange = comment.start_line
     ? comment.start_line === comment.end_line
@@ -48,7 +96,9 @@ export function buildReviewCommentMessage(comment: ChatReviewComment): string {
     status: comment.status || "open",
   };
 
-  const systemPrompt = `Please address Code Review Comment #${comment.id} on ${locLabel}. Comment: "${comment.content}". Use the grove_reply_review tool to reply and set resolve: true when addressed.`;
+  const systemPrompt = comment.anchor
+    ? previewCommentPrompt(comment, comment.anchor)
+    : `Please address Code Review Comment #${comment.id} on ${locLabel}. Comment: "${comment.content}". Use the grove_reply_review tool to reply and set resolve: true when addressed.`;
 
   return buildGroveMetaTag(metaType, metaData, systemPrompt);
 }

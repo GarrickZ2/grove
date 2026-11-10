@@ -14,6 +14,7 @@ import { useStudioCommands } from "../../components/Studio/useStudioCommands";
 import { Button, OrbitPage, OrbitPageHeader, OrbitPageMessage, Sheet, type PageHue } from "../ui";
 import { SharedFilesCard } from "./SharedFilesCard";
 import { InstructionsCard } from "./InstructionsCard";
+import { DesignSystemCard } from "./DesignSystemCard";
 import "./orbit-studio.css";
 
 const HUE: PageHue = {
@@ -181,8 +182,9 @@ function ProjectStudio({ projectId }: { projectId: string }) {
         <div className="osd-col oui-rise" style={{ animationDelay: "60ms" }}>
           <SharedFilesCard library={library} openFilePicker={openFilePicker} />
         </div>
-        <div className="osd-col oui-rise" style={{ animationDelay: "100ms" }}>
+        <div className="osd-col osd-col-split oui-rise" style={{ animationDelay: "100ms" }}>
           <InstructionsCard state={instructions} />
+          <DesignSystemCard projectId={projectId} />
         </div>
       </div>
     </OrbitPage>

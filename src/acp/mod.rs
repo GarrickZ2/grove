@@ -1522,7 +1522,7 @@ const WORKING_CODING_WORKTREE_INSTRUCTION: &str = r#"This is a repository Task o
 
 When continuing or reviewing an existing change, inspect the available Grove review feedback and distinguish confirmed implementation facts, inferences, and remaining validation needs."#;
 
-const WORKING_STUDIO_INSTRUCTION: &str = r#"This is a Studio Task. Follow the workspace contract in `AGENTS.md` and the Project guidance in `instructions.md` when present. Use visual collaboration capabilities when a visual artifact would communicate or validate the result better than prose alone."#;
+const WORKING_STUDIO_INSTRUCTION: &str = r#"This is a Studio Task. Follow the workspace contract in `AGENTS.md` and the Project guidance in `instructions.md` when present. Use visual collaboration capabilities when a visual artifact would communicate or validate the result better than prose alone. For a UI design, mockup, prototype or design system, build HTML pages under `design/` that the user reviews on a board in the Design panel; call `design_read_me` first."#;
 
 const WORKING_COMPUTER_INSTRUCTION: &str = r#"Use the `computer` tool only when a task needs a desktop app on the user's computer; call `computer_help` first for its tools. It acts on the user's real apps and screen, so the user approves it in the chat before your first call in this session. Prefer the browser tool for websites."#;
 

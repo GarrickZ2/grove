@@ -98,6 +98,7 @@ async function createComment(
     endLine?: number;
     content: string;
     author?: string;
+    anchor?: unknown;
   },
 ): Promise<ReviewCommentsResponse> {
   return apiClient.post<Record<string, unknown>, ReviewCommentsResponse>(
@@ -110,6 +111,7 @@ async function createComment(
       end_line: params.endLine,
       content: params.content,
       author: params.author,
+      anchor: params.anchor,
     },
   );
 }
@@ -133,19 +135,21 @@ export async function createInlineComment(
   });
 }
 
-/** Create a file-level comment */
+/** Create a file-level comment; `anchor` is where in the rendered file it sits, when made on a preview. */
 export async function createFileComment(
   projectId: string,
   taskId: string,
   filePath: string,
   content: string,
   author?: string,
+  anchor?: unknown,
 ): Promise<ReviewCommentsResponse> {
   return createComment(projectId, taskId, {
     comment_type: 'file',
     filePath,
     content,
     author,
+    anchor,
   });
 }
 
