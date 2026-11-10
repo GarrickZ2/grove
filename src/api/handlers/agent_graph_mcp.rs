@@ -605,7 +605,7 @@ impl AgentGraphMcpService {
     )]
     async fn grove_computer_help_tool(
         &self,
-        Parameters(input): Parameters<BrowserHelpInput>,
+        Parameters(input): Parameters<ComputerHelpInput>,
     ) -> Result<CallToolResult, McpError> {
         shared_grove_computer_help_tool(input).await
     }
@@ -812,6 +812,13 @@ pub struct ComputerInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct BrowserHelpInput {
     /// A browser tool name, or "guide". Leave unset for the tool list.
+    #[serde(default)]
+    pub topic: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ComputerHelpInput {
+    /// A computer tool name, or "guide". Leave unset for the tool list.
     #[serde(default)]
     pub topic: Option<String>,
 }
@@ -1780,7 +1787,7 @@ pub(crate) async fn call_shared_tool(
             .await
         }
         "computer_help" => {
-            let input: BrowserHelpInput = serde_json::from_value(arguments)
+            let input: ComputerHelpInput = serde_json::from_value(arguments)
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
             shared_grove_computer_help_tool(input).await
         }
@@ -1971,7 +1978,7 @@ fn ensure_computer_use_enabled() -> Result<(), McpError> {
 }
 
 async fn shared_grove_computer_help_tool(
-    input: BrowserHelpInput,
+    input: ComputerHelpInput,
 ) -> Result<CallToolResult, McpError> {
     ensure_computer_use_enabled()?;
     crate::computer::help(input.topic.as_deref())
