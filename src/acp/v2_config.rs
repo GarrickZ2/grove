@@ -1,6 +1,6 @@
 //! Project v2 select and boolean options into Grove's existing UI model.
 
-use agent_client_protocol::schema::{v1, v2};
+use agent_client_protocol::{v1::schema as v1, v2::schema as v2};
 
 pub fn options(values: &[v2::SessionConfigOption]) -> Vec<v1::SessionConfigOption> {
     values

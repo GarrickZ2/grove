@@ -614,7 +614,7 @@ pub(crate) fn entries_of(
                         .content
                         .iter()
                         .filter_map(|content| match content {
-                            agent_client_protocol::schema::v2::ContentBlock::Text(text) => {
+                            agent_client_protocol::v2::schema::ContentBlock::Text(text) => {
                                 Some(text.text.as_str())
                             }
                             _ => None,
@@ -875,10 +875,14 @@ mod tests {
         assert_eq!(chat.acp_session_id.as_deref(), Some("old-acp-id"));
         assert_eq!(chat.agent, "claude-acp");
         assert!(tasks::add_chat_session(&buddy.project_hash, tasks::LOCAL_TASK_ID, chat).is_err());
-        assert!(
-            tasks::update_chat_title(&buddy.project_hash, tasks::LOCAL_TASK_ID, old, "bad")
-                .is_err()
-        );
+        assert!(tasks::update_chat_title(
+            &buddy.project_hash,
+            tasks::LOCAL_TASK_ID,
+            old,
+            "bad",
+            tasks::TitleSource::User
+        )
+        .is_err());
         assert!(crate::agent_graph::tools::ensure_target_handle(
             &buddy.project_hash,
             tasks::LOCAL_TASK_ID,

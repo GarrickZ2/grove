@@ -68,7 +68,7 @@ impl AgentConfigSelection {
     /// removed options and values fall back to the Agent's current default.
     pub fn reconciled_with(
         &self,
-        advertised: &[agent_client_protocol::schema::v1::SessionConfigOption],
+        advertised: &[agent_client_protocol::v1::schema::SessionConfigOption],
     ) -> Self {
         let Self::ConfigOptions { agent_id, values } = self else {
             return self.clone();
@@ -85,6 +85,44 @@ impl AgentConfigSelection {
                 .map(|(id, value)| (id.clone(), value.clone()))
                 .collect(),
         }
+    }
+
+    /// Explicit config values in the order the installed Agent advertised its
+    /// options, so a value that changes later options (a model resetting the
+    /// available modes) is applied first. Values the snapshot does not list
+    /// keep their stored order at the end.
+    pub fn ordered_config_values(&self) -> Vec<(String, crate::acp::ConfigOptionValue)> {
+        let Self::ConfigOptions { agent_id, values } = self else {
+            return Vec::new();
+        };
+        let advertised: Vec<String> = agent_id
+            .as_deref()
+            .map(crate::storage::installed_agents::canonicalize_agent_id)
+            .and_then(|id| {
+                crate::storage::installed_agents::get_capability_snapshot(&id)
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|snapshot| snapshot.get("config_options").cloned())
+            .and_then(|raw| {
+                serde_json::from_value::<
+                    Vec<agent_client_protocol::v1::schema::SessionConfigOption>,
+                >(raw)
+                .ok()
+            })
+            .map(|options| options.iter().map(|option| option.id.to_string()).collect())
+            .unwrap_or_default();
+        let mut ordered: Vec<_> = values
+            .iter()
+            .map(|(id, value)| (id.clone(), value.clone()))
+            .collect();
+        ordered.sort_by_key(|(id, _)| {
+            advertised
+                .iter()
+                .position(|candidate| candidate == id)
+                .unwrap_or(usize::MAX)
+        });
+        ordered
     }
 
     /// Reconcile persisted overrides against the latest installed-Agent
@@ -119,7 +157,7 @@ impl AgentConfigSelection {
             return Ok(self.clone());
         };
         let Ok(advertised) = serde_json::from_value::<
-            Vec<agent_client_protocol::schema::v1::SessionConfigOption>,
+            Vec<agent_client_protocol::v1::schema::SessionConfigOption>,
         >(raw_options) else {
             // A stale or future snapshot shape must not make configuration
             // pages unsavable. The live runtime remains authoritative.
@@ -130,10 +168,10 @@ impl AgentConfigSelection {
 }
 
 pub fn config_option_accepts(
-    option: &agent_client_protocol::schema::v1::SessionConfigOption,
+    option: &agent_client_protocol::v1::schema::SessionConfigOption,
     value: &crate::acp::ConfigOptionValue,
 ) -> bool {
-    use agent_client_protocol::schema::v1::{SessionConfigKind, SessionConfigSelectOptions};
+    use agent_client_protocol::v1::schema::{SessionConfigKind, SessionConfigSelectOptions};
 
     match (&option.kind, value) {
         (SessionConfigKind::Boolean(_), crate::acp::ConfigOptionValue::Boolean(_)) => true,
@@ -156,10 +194,10 @@ pub fn config_option_accepts(
 }
 
 pub fn config_option_has_current_value(
-    option: &agent_client_protocol::schema::v1::SessionConfigOption,
+    option: &agent_client_protocol::v1::schema::SessionConfigOption,
     value: &crate::acp::ConfigOptionValue,
 ) -> bool {
-    use agent_client_protocol::schema::v1::SessionConfigKind;
+    use agent_client_protocol::v1::schema::SessionConfigKind;
 
     match (&option.kind, value) {
         (SessionConfigKind::Boolean(current), crate::acp::ConfigOptionValue::Boolean(value)) => {
@@ -175,7 +213,7 @@ pub fn config_option_has_current_value(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol::schema::v1::{
+    use agent_client_protocol::v1::schema::{
         SessionConfigOption, SessionConfigSelectGroup, SessionConfigSelectOption,
     };
 

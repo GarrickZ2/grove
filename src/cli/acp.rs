@@ -9,10 +9,10 @@ use crate::acp::{self, AcpStartConfig, AcpUpdate, ContentBlockData};
 
 fn v2_message_delta(
     messages: &mut acp::v2_messages::Messages,
-    update: &agent_client_protocol::schema::v2::SessionUpdate,
+    update: &agent_client_protocol::v2::schema::SessionUpdate,
 ) -> Option<(bool, String)> {
     use acp::v2_messages::MessageKind;
-    use agent_client_protocol::schema::v2::{ContentBlock, SessionUpdate};
+    use agent_client_protocol::v2::schema::{ContentBlock, SessionUpdate};
     let (kind, id) = match update {
         SessionUpdate::AgentMessage(message) => {
             (MessageKind::Agent, message.message_id.to_string())
@@ -64,7 +64,7 @@ fn v2_message_delta(
     Some((kind == MessageKind::Thought, delta))
 }
 
-fn display_v2_tool_content(content: &agent_client_protocol::schema::v2::ToolCallContent) {
+fn display_v2_tool_content(content: &agent_client_protocol::v2::schema::ToolCallContent) {
     if let Ok(value) = serde_json::to_value(content) {
         if let Some(text) = value
             .pointer("/content/text")
@@ -229,7 +229,9 @@ pub async fn execute(agent: String, cwd: String) {
                     }
                 }
                 Ok(AcpUpdate::V2ToolUpdate { update }) => {
-                    use agent_client_protocol::schema::{v2::SessionUpdate, MaybeUndefined};
+                    use agent_client_protocol::{
+                        schema::MaybeUndefined, v2::schema::SessionUpdate,
+                    };
                     match update {
                         SessionUpdate::ToolCallUpdate(tool) => {
                             let title = match tool.title {
@@ -419,6 +421,7 @@ pub async fn execute(agent: String, cwd: String) {
                 Ok(AcpUpdate::AuthLoggedOut) => continue,
                 Ok(
                     AcpUpdate::SubagentUpdate { .. }
+                    | AcpUpdate::BackgroundWork { .. }
                     | AcpUpdate::SubagentEvent { .. }
                     | AcpUpdate::SessionMessage { .. }
                     | AcpUpdate::Busy { .. }

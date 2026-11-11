@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PreviewCommentDraft } from "../../../../context";
-import { OrbitCommentsTray, OrbitMemoryTray, OrbitQueueTray } from "./OrbitTrays";
+import { OrbitBackgroundTray, OrbitCommentsTray, OrbitMemoryTray, OrbitQueueTray } from "./OrbitTrays";
 import { commentAnchor } from "./trayModel";
 
 vi.mock("../../../../keyboard/useEscapeScope", () => ({ useEscapeScope: vi.fn() }));
@@ -26,6 +26,24 @@ describe("Orbit trays", () => {
     act(() => root.unmount());
     container.remove();
     vi.unstubAllGlobals();
+  });
+
+  it("lists background work with its command, elapsed time and a cancel for what can stop", () => {
+    const onCancel = vi.fn();
+    const startedAt = Math.floor(Date.now() / 1000) - 75;
+    act(() => root.render(<OrbitBackgroundTray onCancel={onCancel} items={[
+      { kind: "terminal", id: "t1", label: "npm run dev", cwd: "/srv/app", started_at: startedAt, cancellable: true },
+      { kind: "tool_call", id: "w1", started_at: startedAt, cancellable: false },
+    ]} />));
+    expect(container.textContent).toContain("2 running");
+    expect(container.textContent).toContain("npm run dev");
+    expect(container.textContent).toContain("/srv/app");
+    expect(container.textContent).toContain("1m 15s");
+    expect(container.textContent).toContain("Tool call");
+    const cancels = container.querySelectorAll("button[aria-label^='Cancel']");
+    expect(cancels).toHaveLength(1);
+    act(() => (cancels[0] as HTMLButtonElement).click());
+    expect(onCancel).toHaveBeenCalledWith(expect.objectContaining({ kind: "terminal", id: "t1" }));
   });
 
   it("names a comment's anchor", () => {

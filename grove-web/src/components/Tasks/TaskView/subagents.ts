@@ -10,6 +10,7 @@ export interface SubagentMessage {
   description?: string;
   capabilities?: { cancel?: object | null };
   state?: { state: string };
+  cwd?: string;
   messages: ChatMessage[];
 }
 
@@ -70,7 +71,7 @@ export function reduceSubagentEvent(messages: ChatMessage[], event: ServerEvent,
     if (typeof event.session_id !== "string" || typeof event.parent_session_id !== "string" || event.session_id === event.parent_session_id) return messages;
     const patch = (child: SubagentMessage): SubagentMessage => {
       const next = { ...child };
-      for (const key of ["title", "description", "capabilities", "state"] as const) {
+      for (const key of ["title", "description", "capabilities", "state", "cwd"] as const) {
         if (Object.prototype.hasOwnProperty.call(event, key)) Object.assign(next, { [key]: event[key] ?? undefined });
       }
       if (next.state?.state && next.state.state !== "running" && next.state.state !== "requires_action") {

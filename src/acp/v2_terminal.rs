@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use agent_client_protocol::schema::{v2, MaybeUndefined};
+use agent_client_protocol::{schema::MaybeUndefined, v2::schema as v2};
 use base64::{engine::general_purpose::STANDARD, DecodeError, Engine};
 
 pub struct Terminal {
@@ -21,6 +21,9 @@ pub struct Terminals {
 impl Terminals {
     pub fn values(&self) -> impl Iterator<Item = &Terminal> {
         self.items.values()
+    }
+    pub fn get(&self, id: &str) -> Option<&Terminal> {
+        self.items.get(id)
     }
     fn get_or_insert(&mut self, id: &str) -> &mut Terminal {
         self.items.entry(id.to_owned()).or_insert_with(|| Terminal {

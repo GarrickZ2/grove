@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUpRight, Check, ChevronRight, LoaderCircle, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Check, ChevronRight, Folder, LoaderCircle, Square, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { SubagentAvatar } from "./SubagentAvatar";
 import { flattenSubagentMessages, subagentPreview, subagentStatus, type SubagentMessage } from "./subagents";
@@ -35,6 +35,7 @@ export function SubagentsPanel({ agents, selectedId, connected, onSelect, onClos
         {selected ? (
           <div className="oc-tray-pad">
             {selected.description && !selected.description.startsWith("Delegated task for ") && <p className="oc-sub-lede" title={selected.description}>{selected.description}</p>}
+            {selected.cwd && <p className="oc-sub-cwd" title={selected.cwd}><Folder aria-hidden="true" /><span>{selected.cwd}</span></p>}
             {request && <button type="button" className="oc-ask-link" onClick={() => onOpenRequest(request.type === "permission" ? "permission" : "elicitation")}><span>{request.type === "permission" ? "Permission requested" : "Your response is needed"}</span><ArrowUpRight aria-hidden="true" /></button>}
             {selected.messages.length ? renderActivity(selected) : <p className="oc-tray-empty">Waiting for the first update…</p>}
           </div>
@@ -75,6 +76,7 @@ export function SubagentsPanel({ agents, selectedId, connected, onSelect, onClos
       {selected ? (
         <div className="px-3 pb-3 pt-2">
           {selected.description && !selected.description.startsWith("Delegated task for ") && <p className="mb-3 line-clamp-2 text-xs leading-relaxed text-[var(--color-text-muted)]" title={selected.description}>{selected.description}</p>}
+          {selected.cwd && <p className="mb-3 flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-[var(--color-text-muted)]" title={selected.cwd}><Folder size={12} className="shrink-0" aria-hidden="true" /><span className="truncate">{selected.cwd}</span></p>}
           {request && <button type="button" onClick={() => onOpenRequest(request.type === "permission" ? "permission" : "elicitation")} className="mb-3 flex w-full items-center justify-between rounded-lg bg-[color-mix(in_srgb,var(--color-highlight)_9%,transparent)] px-3 py-2 text-xs text-[var(--color-highlight)]"><span>{request.type === "permission" ? "Permission requested" : "Your response is needed"}</span><ArrowUpRight size={14} /></button>}
           {selected.messages.length ? renderActivity(selected) : <p className="py-8 text-center text-xs text-[var(--color-text-muted)]">Waiting for the first update…</p>}
         </div>

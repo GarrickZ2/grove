@@ -260,6 +260,7 @@ pub fn should_persist(update: &AcpUpdate) -> bool {
     !matches!(
         update,
         AcpUpdate::Busy { .. }
+            | AcpUpdate::BackgroundWork { .. }
             | AcpUpdate::Error { .. }
             | AcpUpdate::PromptStarted { .. }
             | AcpUpdate::InputAccepted { .. }

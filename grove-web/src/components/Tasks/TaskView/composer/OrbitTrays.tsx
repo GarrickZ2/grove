@@ -1,10 +1,12 @@
-import { useState, type ReactNode } from "react";
-import { Database, Pencil, Send, X } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Bot, Database, Pencil, Send, Square, SquareTerminal, Wrench, X } from "lucide-react";
 import type { MemoryEntityMetadata } from "../../../../api/memory";
 import type { PreviewCommentDraft } from "../../../../context";
 import { Segmented } from "../../../../orbit/ui/Segmented";
 import { OrbitTrayHead } from "./OrbitComposer";
 import { commentAnchor } from "./trayModel";
+import { formatElapsed } from "./composerStatus";
+import { backgroundWorkLabel, type BackgroundWorkItem } from "../backgroundWork";
 
 /**
  * Orbit Comments tray: the same drafts and actions as the Workbench panel
@@ -88,6 +90,46 @@ export function OrbitCommentsTray({ drafts, onUpdate, onSend, onRemove, onClose 
 }
 
 /** Orbit Memory tray: what the agent read this turn, as flat rows. */
+/** Background tray: what keeps running, for how long, and a way to stop it. */
+export function OrbitBackgroundTray({ items, onCancel, onClose }: {
+  items: BackgroundWorkItem[];
+  /** Absent when this viewer cannot stop work (remote sessions). */
+  onCancel?: (item: BackgroundWorkItem) => void;
+  onClose?: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <>
+      <OrbitTrayHead title="Background" detail={`${items.length} running`} onClose={onClose} />
+      <ul className="oc-rows" aria-label="Background work">
+        {items.map((item) => {
+          const Icon = item.kind === "terminal" ? SquareTerminal : item.kind === "subagent" ? Bot : Wrench;
+          const label = backgroundWorkLabel(item);
+          return (
+            <li key={`${item.kind}:${item.id}`} className="oc-row">
+              <Icon className="oc-row-ic" aria-hidden="true" />
+              <div className="oc-row-main">
+                <span className={`oc-row-text${item.kind === "terminal" ? " is-code" : ""}`} title={label}>{label}</span>
+                <span className="oc-row-meta">
+                  <span>{formatElapsed(now - item.started_at * 1000)}</span>
+                  {item.cwd && <span className="oc-row-id" title={item.cwd}>{item.cwd}</span>}
+                </span>
+              </div>
+              {onCancel && item.cancellable && (
+                <button type="button" className="oc-tray-action" onClick={() => onCancel(item)} aria-label={`Cancel ${label}`}><Square aria-hidden="true" />Cancel</button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
+
 export function OrbitMemoryTray({ memories, onClose }: { memories: MemoryEntityMetadata[]; onClose?: () => void }) {
   return (
     <>

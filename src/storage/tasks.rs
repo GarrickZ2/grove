@@ -1033,14 +1033,36 @@ pub(crate) fn add_chat_session_on(
     Ok(())
 }
 
-/// 更新 ChatSession 的标题
-pub fn update_chat_title(project: &str, task_id: &str, chat_id: &str, title: &str) -> Result<()> {
+/// Who set a Session's title. A title is only replaced by an equal or higher
+/// source, so the user's own name always stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i64)]
+pub enum TitleSource {
+    /// Grove's default, or the title taken from the first prompt.
+    Auto = 0,
+    /// The Agent called Grove's `set_title` tool.
+    AgentTool = 1,
+    /// The Agent's own `session_info_update`.
+    AgentInfo = 2,
+    /// The user renamed it.
+    User = 3,
+}
+
+/// Set a Session's title unless a higher source already set it. Returns
+/// whether the title was applied.
+pub fn update_chat_title(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+    title: &str,
+    source: TitleSource,
+) -> Result<bool> {
     let conn = crate::storage::database::connection();
-    conn.execute(
-        "UPDATE session SET title = ?1 WHERE project = ?2 AND task_id = ?3 AND session_id = ?4",
-        params![title, project, task_id, chat_id],
-    )?;
-    Ok(())
+    Ok(conn.execute(
+        "UPDATE session SET title = ?1, title_source = ?5
+         WHERE project = ?2 AND task_id = ?3 AND session_id = ?4 AND title_source <= ?5",
+        params![title, project, task_id, chat_id, source as i64],
+    )? > 0)
 }
 
 /// Rename only if the title has not changed since it was inspected.
@@ -1053,8 +1075,9 @@ pub fn update_chat_title_if_unchanged(
 ) -> Result<bool> {
     let conn = crate::storage::database::connection();
     Ok(conn.execute(
-        "UPDATE session SET title = ?1 WHERE project = ?2 AND task_id = ?3 AND session_id = ?4 AND title = ?5",
-        params![title, project, task_id, chat_id, expected],
+        "UPDATE session SET title = ?1
+         WHERE project = ?2 AND task_id = ?3 AND session_id = ?4 AND title = ?5 AND title_source = ?6",
+        params![title, project, task_id, chat_id, expected, TitleSource::Auto as i64],
     )? > 0)
 }
 
@@ -1071,12 +1094,16 @@ pub fn update_chat_session_info(
         .as_ref()
         .and_then(|value| value.map(|dt| dt.to_rfc3339()));
     let conn = crate::storage::database::connection();
+    // The Agent's title replaces Grove's and the `set_title` tool's, never the
+    // user's (TitleSource).
     let changed = conn.execute(
         "UPDATE session SET
-            title = CASE WHEN ?1 THEN ?2 ELSE title END,
+            title = CASE WHEN ?1 AND title_source <= ?8 THEN ?2 ELSE title END,
+            title_source = CASE WHEN ?1 AND title_source <= ?8 THEN ?8 ELSE title_source END,
             updated_at = CASE WHEN ?3 THEN ?4 ELSE updated_at END
          WHERE project = ?5 AND task_id = ?6 AND session_id = ?7
-           AND ((?1 AND title IS NOT ?2) OR (?3 AND updated_at IS NOT ?4))",
+           AND ((?1 AND title_source <= ?8 AND (title IS NOT ?2 OR title_source < ?8))
+                OR (?3 AND updated_at IS NOT ?4))",
         params![
             title.is_some(),
             title,
@@ -1084,7 +1111,8 @@ pub fn update_chat_session_info(
             timestamp,
             project,
             task_id,
-            chat_id
+            chat_id,
+            TitleSource::AgentInfo as i64
         ],
     )?;
     Ok(changed > 0)
@@ -1645,6 +1673,79 @@ mod tests {
         .unwrap());
         assert_eq!(chat_readonly("segment").unwrap(), None);
 
+        crate::storage::set_grove_dir_override(None);
+    }
+
+    #[test]
+    fn title_sources_only_replace_equal_or_lower_ones() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let temp = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(temp.path().to_path_buf()));
+        let project = format!("project-{}", uuid::Uuid::new_v4().simple());
+        let task = "task-title";
+        add_chat_session(
+            &project,
+            task,
+            ChatSession {
+                id: "chat".to_string(),
+                title: "New session".to_string(),
+                agent: "codex".to_string(),
+                acp_session_id: None,
+                created_at: Utc::now(),
+                duty: None,
+            },
+        )
+        .unwrap();
+        let title = || {
+            get_chat_session(&project, task, "chat")
+                .unwrap()
+                .unwrap()
+                .title
+        };
+
+        // Grove's first-prompt title, then the tool, then the Agent's own.
+        assert!(update_chat_title_if_unchanged(
+            &project,
+            task,
+            "chat",
+            "New session",
+            "From prompt"
+        )
+        .unwrap());
+        assert!(
+            update_chat_title(&project, task, "chat", "From tool", TitleSource::AgentTool).unwrap()
+        );
+        assert!(!update_chat_title_if_unchanged(
+            &project,
+            task,
+            "chat",
+            "From tool",
+            "Prompt again"
+        )
+        .unwrap());
+        assert!(
+            update_chat_session_info(&project, task, "chat", Some("From agent"), None).unwrap()
+        );
+        assert!(
+            !update_chat_title(&project, task, "chat", "Tool again", TitleSource::AgentTool)
+                .unwrap()
+        );
+        assert_eq!(title(), "From agent");
+
+        // The user's name stands against everything else.
+        assert!(update_chat_title(&project, task, "chat", "Mine", TitleSource::User).unwrap());
+        assert!(
+            !update_chat_session_info(&project, task, "chat", Some("Agent again"), None).unwrap()
+        );
+        assert!(
+            !update_chat_title(&project, task, "chat", "Tool again", TitleSource::AgentTool)
+                .unwrap()
+        );
+        assert_eq!(title(), "Mine");
+        assert!(
+            update_chat_title(&project, task, "chat", "Mine, renamed", TitleSource::User).unwrap()
+        );
+        assert_eq!(title(), "Mine, renamed");
         crate::storage::set_grove_dir_override(None);
     }
 

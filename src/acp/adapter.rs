@@ -8,7 +8,7 @@ use std::path::Path;
 
 // Keep ACP v1 schema types behind a local namespace so adapter call sites stay concise.
 mod acp {
-    pub use agent_client_protocol::schema::v1::*;
+    pub use agent_client_protocol::v1::schema::*;
 }
 
 use super::adapter_terminal::parse_terminal_meta;

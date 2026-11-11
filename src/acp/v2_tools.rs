@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use agent_client_protocol::schema::{v2, MaybeUndefined};
+use agent_client_protocol::{schema::MaybeUndefined, v2::schema as v2};
 
 #[derive(Default)]
 pub struct Tools {
@@ -12,6 +12,9 @@ pub struct Tools {
 impl Tools {
     pub fn contains(&self, id: &str) -> bool {
         self.calls.contains_key(id)
+    }
+    pub fn get(&self, id: &str) -> Option<&v2::ToolCallUpdate> {
+        self.calls.get(id)
     }
     pub fn update(&mut self, update: v2::ToolCallUpdate) -> &v2::ToolCallUpdate {
         let id = update.tool_call_id.to_string();

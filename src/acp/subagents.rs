@@ -19,6 +19,9 @@ pub struct SubagentUpdateData {
     pub capabilities: MaybeUndefined<Value>,
     #[serde(default, skip_serializing_if = "MaybeUndefined::is_undefined")]
     pub state: MaybeUndefined<Value>,
+    /// The child's working directory; unset means its parent's.
+    #[serde(default, skip_serializing_if = "MaybeUndefined::is_undefined")]
+    pub cwd: MaybeUndefined<String>,
 }
 
 struct Child {
@@ -53,6 +56,16 @@ impl SubagentRegistry {
 impl AcpSessionHandle {
     pub(super) fn is_subagent(&self, id: &str) -> bool {
         self.subagents.lock().unwrap().children.contains_key(id)
+    }
+
+    /// A known child's title and whether it can be cancelled.
+    pub(super) fn subagent_summary(&self, id: &str) -> Option<(Option<String>, bool)> {
+        self.subagents
+            .lock()
+            .unwrap()
+            .children
+            .get(id)
+            .map(|child| (child.title.clone(), child.cancel))
     }
 
     fn root_session_id(&self) -> Option<String> {
@@ -144,6 +157,7 @@ impl AcpSessionHandle {
                     description: MaybeUndefined::Undefined,
                     capabilities: MaybeUndefined::Undefined,
                     state: MaybeUndefined::Undefined,
+                    cwd: MaybeUndefined::Undefined,
                 },
             });
         match &update.title {
@@ -168,6 +182,9 @@ impl AcpSessionHandle {
             state: update
                 .state
                 .map_value(|value| serde_json::to_value(value).unwrap()),
+            cwd: update
+                .cwd
+                .map_value(|path| path.to_string_lossy().into_owned()),
         };
         macro_rules! patch {
             ($field:ident) => {
@@ -180,6 +197,7 @@ impl AcpSessionHandle {
         patch!(description);
         patch!(capabilities);
         patch!(state);
+        patch!(cwd);
         // A reusable child can re-enter a truncated history window. Carry its
         // identity on live updates even when the Agent sends only a state patch.
         let data = child.snapshot.clone();
@@ -276,7 +294,7 @@ impl AcpSessionHandle {
         if let Some(connection) = v2_connection.as_ref() {
             connection
                 .send_notification(
-                    agent_client_protocol::schema::v2::CancelSessionNotification::new(
+                    agent_client_protocol::v2::schema::CancelSessionNotification::new(
                         session.to_owned(),
                     ),
                 )
@@ -329,8 +347,8 @@ impl AcpSessionHandle {
 pub(super) fn session_message(message: acp::SessionMessage) -> AcpUpdate {
     AcpUpdate::SessionMessage {
         id: message.message_id.to_string(),
-        sender: message.sender_session_id.map(|id| id.to_string()),
-        recipient: message.recipient_session_id.map(|id| id.to_string()),
+        sender: message.sender_session_id.take().map(|id| id.to_string()),
+        recipient: message.recipient_session_id.take().map(|id| id.to_string()),
         content: message
             .content
             .map_value(|blocks| blocks.iter().filter_map(content_block_to_data).collect()),
@@ -341,8 +359,9 @@ pub(super) fn session_message(message: acp::SessionMessage) -> AcpUpdate {
 pub(super) fn session_message_chunk(chunk: acp::SessionMessageChunk) -> AcpUpdate {
     AcpUpdate::SessionMessage {
         id: chunk.message_id.to_string(),
-        sender: chunk.sender_session_id.map(|id| id.to_string()),
-        recipient: chunk.recipient_session_id.map(|id| id.to_string()),
+        // Chunks no longer carry identity; it comes from the message they extend.
+        sender: None,
+        recipient: None,
         content: MaybeUndefined::Value(content_block_to_data(&chunk.content).into_iter().collect()),
         append: true,
     }
@@ -821,7 +840,7 @@ mod tests {
         let (client_writer, peer_reader) = tokio::io::duplex(16384);
         let (mut peer_writer, client_reader) = tokio::io::duplex(16384);
         let client = acp::Client
-            .builder()
+            .v1()
             .on_receive_request(
                 {
                     let state = state.clone();

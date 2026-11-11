@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use agent_client_protocol::{schema::v2, Agent, V2ConnectionTo};
+use agent_client_protocol::{
+    schema::MaybeUndefined, v2::schema as v2, v2::ConnectionTo as V2ConnectionTo, Agent,
+};
 use futures::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
@@ -125,6 +127,7 @@ where
                 let result =
                     drive(connection, state.clone(), config, &mut commands, updates_rx).await;
                 *state.handle.subagent_connection_v2.lock().unwrap() = None;
+                state.handle.set_background(Vec::new());
                 result
             },
         )
@@ -374,6 +377,7 @@ async fn drive(
         std::collections::HashMap::<String, super::v2_terminal::Terminals>::new();
     let mut messages = super::v2_messages::Messages::default();
     let mut tools = super::v2_tools::Tools::default();
+    let mut background_started = std::collections::HashMap::<String, i64>::new();
     let mut accepted_user_messages = std::collections::HashSet::new();
     loop {
         let can_take_command = pending_updates.is_empty();
@@ -395,6 +399,12 @@ async fn drive(
                 }
                 match notification.update {
                     v2::SessionUpdate::StateUpdate(update) => {
+                        // `None` means the Agent does not report background work;
+                        // keep what was last reported rather than guess.
+                        if let Some(listed) = update.background() {
+                            let items = background_items(&state, listed, &terminals, &tools, &mut background_started);
+                            state.handle.set_background(items);
+                        }
                         match foreground.apply(&update) {
                             super::v2_state::Transition::Active | super::v2_state::Transition::Waiting => {
                                 if !state.handle.is_busy.load(std::sync::atomic::Ordering::Relaxed) {
@@ -758,6 +768,8 @@ async fn handle_command(
                 state.handle.retry_prompt_after_auth(retry);
             }
         }
+        // Grove reads auth/status on the v1 connection only.
+        AcpCommand::AuthStatusChanged { .. } => {}
         AcpCommand::Prompt { .. }
         | AcpCommand::Cancel
         | AcpCommand::CancelPrompts(_)
@@ -835,6 +847,7 @@ async fn await_start_auth(
                 }
             }
             AcpCommand::RetryAuthentication => return Ok(true),
+            AcpCommand::AuthStatusChanged { .. } => {}
             AcpCommand::Kill => return Ok(false),
             AcpCommand::Prompt {
                 message_ids,
@@ -1099,6 +1112,96 @@ fn terminal_event(terminal: &super::v2_terminal::Terminal, checkpoint: bool) -> 
     }
 }
 
+/// Describe the Agent's background list with what Grove already tracks for
+/// each item: a terminal's command, a tool call's title, a subagent's title.
+fn background_items(
+    state: &AcpClientState,
+    listed: &[v2::BackgroundWork],
+    terminals: &super::v2_terminal::Terminals,
+    tools: &super::v2_tools::Tools,
+    started: &mut std::collections::HashMap<String, i64>,
+) -> Vec<super::BackgroundItem> {
+    let now = chrono::Utc::now().timestamp();
+    let mut seen = std::collections::HashSet::new();
+    let items: Vec<_> = listed
+        .iter()
+        .map(|work| {
+            let (kind, id, label, cwd, cancellable) = match work {
+                v2::BackgroundWork::Terminal(work) => {
+                    let id = work.terminal_id.to_string();
+                    let terminal = terminals.get(&id).map(|terminal| &terminal.state);
+                    (
+                        "terminal".to_string(),
+                        id,
+                        terminal.and_then(|t| present(&t.command).cloned()),
+                        terminal.and_then(|t| {
+                            present(&t.cwd).map(|cwd| cwd.0.to_string_lossy().into_owned())
+                        }),
+                        terminal
+                            .and_then(|t| present(&t.capabilities))
+                            .is_some_and(|c| c.cancel.is_some()),
+                    )
+                }
+                v2::BackgroundWork::ToolCall(work) => {
+                    let id = work.tool_call_id.to_string();
+                    let call = tools.get(&id);
+                    (
+                        "tool_call".to_string(),
+                        id,
+                        call.and_then(|c| present(&c.title).or(present(&c.name)).cloned()),
+                        None,
+                        call.and_then(|c| present(&c.capabilities))
+                            .is_some_and(|c| c.cancel.is_some()),
+                    )
+                }
+                v2::BackgroundWork::Subagent(work) => {
+                    let id = work.session_id.to_string();
+                    let (title, cancel) =
+                        state.handle.subagent_summary(&id).unwrap_or((None, false));
+                    ("subagent".to_string(), id, title, None, cancel)
+                }
+                other => {
+                    let kind = serde_json::to_value(other)
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .get("type")
+                                .and_then(|t| t.as_str())
+                                .map(str::to_owned)
+                        })
+                        .unwrap_or_else(|| "other".to_string());
+                    let id = serde_json::to_value(other)
+                        .ok()
+                        .map(|value| value.to_string())
+                        .unwrap_or_default();
+                    (kind, id, None, None, false)
+                }
+            };
+            let key = format!("{kind}:{id}");
+            let started_at = *started.entry(key.clone()).or_insert(now);
+            seen.insert(key);
+            super::BackgroundItem {
+                kind,
+                id,
+                label,
+                cwd,
+                started_at,
+                cancellable,
+            }
+        })
+        .collect();
+    started.retain(|key, _| seen.contains(key));
+    items
+}
+
+/// The value of a field that is set, ignoring unset and cleared ones.
+fn present<T>(field: &MaybeUndefined<T>) -> Option<&T> {
+    match field {
+        MaybeUndefined::Value(value) => Some(value),
+        _ => None,
+    }
+}
+
 fn handle_update(
     state: &AcpClientState,
     update: v2::SessionUpdate,
@@ -1247,15 +1350,23 @@ fn handle_update(
             })
         }
         SessionUpdate::UsageUpdate(update) => {
-            let cost = update.cost.map(|cost| super::UsageCost {
-                amount: cost.amount,
-                currency: cost.currency,
-            });
-            *state.handle.current_usage.lock().unwrap() = Some(super::UsageSnapshot {
+            let mut current_usage = state.handle.current_usage.lock().unwrap();
+            let cost = match update.cost {
+                MaybeUndefined::Value(cost) => Some(super::UsageCost {
+                    amount: cost.amount,
+                    currency: cost.currency,
+                }),
+                MaybeUndefined::Null => None,
+                MaybeUndefined::Undefined => {
+                    current_usage.as_ref().and_then(|usage| usage.cost.clone())
+                }
+            };
+            *current_usage = Some(super::UsageSnapshot {
                 used: update.used,
                 size: update.size,
                 cost: cost.clone(),
             });
+            drop(current_usage);
             state.handle.emit(super::AcpUpdate::UsageUpdate {
                 used: update.used,
                 size: update.size,
@@ -1304,10 +1415,13 @@ fn emit_commands(state: &AcpClientState, commands: Vec<v2::AvailableCommand>) {
     let commands = commands
         .into_iter()
         .map(|command| super::CommandInfo {
-            name: command.name,
-            description: command.description,
-            input_hint: match command.input {
-                Some(v2::AvailableCommandInput::Text(input)) => Some(input.hint),
+            name: command.name().to_string(),
+            description: command.description().to_string(),
+            input_hint: match command {
+                v2::AvailableCommand::Command(v2::Command {
+                    input: Some(v2::AvailableCommandInput::Text(input)),
+                    ..
+                }) => Some(input.hint),
                 _ => None,
             },
         })
@@ -1387,6 +1501,254 @@ fn handle_child_update(
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn v1_session_status_retires_a_missing_session_without_resuming() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                crate::storage::set_grove_dir_override(None);
+            }
+        }
+        let _reset = Reset;
+        crate::storage::installed_agents::patch_or_create("status-fixture", None, None, None, None)
+            .unwrap();
+        crate::storage::installed_agents::set_acp_protocol_version("status-fixture", 1).unwrap();
+        let key = format!("status-{}", uuid::Uuid::new_v4());
+        let chat = format!("status-chat-{}", uuid::Uuid::new_v4());
+        crate::storage::tasks::add_chat_session(
+            &key,
+            "task",
+            crate::storage::tasks::ChatSession {
+                id: chat.clone(),
+                title: "kept".into(),
+                agent: "status-fixture".into(),
+                acp_session_id: Some("gone-session".into()),
+                created_at: chrono::Utc::now(),
+                duty: None,
+            },
+        )
+        .unwrap();
+        // A conversation exists, so the Chat is kept read-only, not replaced.
+        crate::storage::chat_history::append_event(
+            &key,
+            "task",
+            &chat,
+            &super::super::AcpUpdate::UserMessage {
+                message_id: None,
+                text: "earlier request".into(),
+                client_message_id: None,
+                attachments: vec![],
+                sender: None,
+                terminal: false,
+            },
+        );
+        let script = dir.path().join("agent.py");
+        let trace = dir.path().join("methods");
+        std::fs::write(&script, r#"
+import json, sys
+def reply(ident, result=None, error=None):
+    msg = {'jsonrpc':'2.0','id':ident}
+    if error: msg['error'] = error
+    else: msg['result'] = result
+    print(json.dumps(msg), flush=True)
+for line in sys.stdin:
+    req = json.loads(line); method = req.get('method'); ident = req.get('id')
+    if ident is None: continue
+    with open(sys.argv[1], 'a') as f: f.write(method + '\n')
+    if method == 'initialize':
+        reply(ident, {'protocolVersion':1, 'agentInfo':{'name':'fixture','version':'1'}, 'authMethods':[],
+                      'agentCapabilities':{'loadSession':True, 'sessionCapabilities':{'resume':{}, 'status':{}}}})
+    elif method == 'session/status':
+        assert req['params']['sessionId'] == 'gone-session', req
+        reply(ident, error={'code':-32002, 'message':'Resource not found', 'data':{'sessionId':'gone-session'}})
+    else:
+        reply(ident, error={'code':-32601, 'message':'unexpected ' + method})
+"#).unwrap();
+        let config = AcpStartConfig {
+            agent_command: "/usr/bin/python3".into(),
+            agent_name: "status-fixture".into(),
+            agent_args: vec![
+                script.to_string_lossy().into_owned(),
+                trace.to_string_lossy().into_owned(),
+            ],
+            working_dir: dir.path().into(),
+            env_vars: HashMap::new(),
+            project_key: key.clone(),
+            task_id: "task".into(),
+            chat_id: Some(chat.clone()),
+            artifact_dir: Some(dir.path().join("artifacts")),
+            additional_mcp_servers: Vec::new(),
+            mcp_server_policy: super::super::McpServerPolicy::ExplicitOnly,
+            agent_type: "local".into(),
+            remote_url: None,
+            remote_auth: None,
+            suppress_initial_connecting: false,
+            import_session: false,
+            persona_injection: None,
+        };
+        let started = super::super::get_or_start_session(key.clone(), config).await;
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while crate::storage::tasks::chat_readonly(&chat)
+                .unwrap()
+                .is_none()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the Chat was not marked read-only");
+        if let Ok((handle, _)) = started {
+            handle.request_shutdown();
+        }
+        let methods = std::fs::read_to_string(&trace).unwrap();
+        assert!(
+            methods.lines().any(|method| method == "session/status"),
+            "{methods}"
+        );
+        assert!(
+            !methods
+                .lines()
+                .any(|method| method == "session/resume" || method == "session/load"),
+            "{methods}"
+        );
+        assert_eq!(
+            crate::storage::tasks::chat_readonly(&chat)
+                .unwrap()
+                .unwrap()
+                .reason,
+            crate::storage::tasks::READONLY_AGENT_EXPIRED
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_background_terminal_is_listed_and_cancelled() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                crate::storage::set_grove_dir_override(None);
+            }
+        }
+        let _reset = Reset;
+        crate::storage::installed_agents::patch_or_create("bg-fixture", None, None, None, None)
+            .unwrap();
+        let script = dir.path().join("agent.py");
+        std::fs::write(&script, r#"
+import json, sys
+def send(msg): print(json.dumps(msg, separators=(',', ':')), flush=True)
+def update(data): send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'bg-session','update':data}})
+for line in sys.stdin:
+    req = json.loads(line)
+    method = req.get('method')
+    ident = req.get('id')
+    if method == 'initialize':
+        if req['params']['protocolVersion'] == 1:
+            send({'jsonrpc':'2.0','id':ident,'error':{'code':-32022,'message':'unsupported protocol version','data':{'requested':1,'supported':[2]}}})
+        else:
+            send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':2,'info':{'name':'fixture','version':'1'},'capabilities':{'session':{}}}})
+    elif method == 'session/new':
+        send({'jsonrpc':'2.0','id':ident,'result':{'sessionId':'bg-session'}})
+    elif method == 'session/prompt':
+        update({'sessionUpdate':'state_update','state':'running','background':[]})
+        update({'sessionUpdate':'terminal_update','terminalId':'t1','command':'npm run dev','cwd':'/srv/app','capabilities':{'cancel':{}}})
+        send({'jsonrpc':'2.0','id':ident,'result':{'messageId':'u1'}})
+        update({'sessionUpdate':'state_update','state':'idle','stopReason':'end_turn','background':[{'type':'terminal','terminalId':'t1'}]})
+    elif method == 'terminal/cancel':
+        assert req['params'] == {'sessionId':'bg-session','terminalId':'t1'}, req
+        send({'jsonrpc':'2.0','id':ident,'result':{}})
+        update({'sessionUpdate':'terminal_update','terminalId':'t1','exitStatus':{'signal':'SIGTERM'}})
+        update({'sessionUpdate':'state_update','state':'idle','background':[]})
+    elif method == 'session/close':
+        send({'jsonrpc':'2.0','id':ident,'result':{}})
+"#).unwrap();
+        let key = format!("v2-bg-{}", uuid::Uuid::new_v4());
+        crate::storage::tasks::add_chat_session(
+            &key,
+            "test",
+            crate::storage::tasks::ChatSession {
+                id: "bg-chat".into(),
+                title: "bg".into(),
+                agent: "bg-fixture".into(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            },
+        )
+        .unwrap();
+        let config = AcpStartConfig {
+            agent_command: "/usr/bin/python3".into(),
+            agent_name: "bg-fixture".into(),
+            agent_args: vec![script.to_string_lossy().into_owned()],
+            working_dir: dir.path().into(),
+            env_vars: HashMap::from([("GROVE_AGENT_ID".into(), "bg-fixture".into())]),
+            project_key: key.clone(),
+            task_id: "test".into(),
+            chat_id: Some("bg-chat".into()),
+            artifact_dir: Some(dir.path().join("artifacts")),
+            additional_mcp_servers: vec![],
+            mcp_server_policy: super::super::McpServerPolicy::WorkingSession,
+            agent_type: "local".into(),
+            remote_url: None,
+            remote_auth: None,
+            suppress_initial_connecting: false,
+            import_session: false,
+            persona_injection: None,
+        };
+        let (handle, mut events) = super::super::get_or_start_session(key.clone(), config)
+            .await
+            .unwrap();
+        struct Stop(Arc<super::super::AcpSessionHandle>);
+        impl Drop for Stop {
+            fn drop(&mut self) {
+                self.0.request_shutdown();
+            }
+        }
+        let _stop = Stop(handle.clone());
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            let mut cancelled = false;
+            loop {
+                match events.recv().await.unwrap() {
+                    super::super::AcpUpdate::SessionReady { .. } => {
+                        handle
+                            .send_tracked_prompt(
+                                "start the dev server".into(),
+                                vec![],
+                                None,
+                                false,
+                                None,
+                            )
+                            .await
+                            .unwrap();
+                    }
+                    super::super::AcpUpdate::BackgroundWork { items } if !cancelled => {
+                        assert_eq!(items.len(), 1, "{items:?}");
+                        let item = &items[0];
+                        assert_eq!((item.kind.as_str(), item.id.as_str()), ("terminal", "t1"));
+                        assert_eq!(item.label.as_deref(), Some("npm run dev"));
+                        assert_eq!(item.cwd.as_deref(), Some("/srv/app"));
+                        assert!(item.cancellable);
+                        assert!(handle.cancel_background("terminal", "missing").is_err());
+                        handle.cancel_background("terminal", "t1").unwrap();
+                        cancelled = true;
+                    }
+                    super::super::AcpUpdate::BackgroundWork { items } => {
+                        assert!(items.is_empty(), "{items:?}");
+                        break;
+                    }
+                    super::super::AcpUpdate::SessionNotice { title, .. } => panic!("{title}"),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn v2_agent_connects_and_finishes_only_after_idle() {

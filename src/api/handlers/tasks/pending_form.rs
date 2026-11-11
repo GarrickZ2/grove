@@ -190,7 +190,7 @@ pub async fn answer_pending_form(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol::schema::v1 as acp;
+    use agent_client_protocol::v1::schema as acp;
 
     fn snapshot(schema: acp::ElicitationSchema) -> crate::acp::ElicitationRequestSnapshot {
         crate::acp::ElicitationRequestSnapshot {

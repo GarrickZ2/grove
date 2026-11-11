@@ -259,13 +259,14 @@ import { contextUsagePercent } from "./contextUsage";
 import { ChatComposerPanel } from "./ChatComposerPanel";
 import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
 import { OrbitComposer, OrbitPlanSteps, OrbitSendOrb, OrbitStatusBar, OrbitTrayHead } from "./composer/OrbitComposer";
-import { OrbitCommentsTray, OrbitMemoryTray, OrbitQueueTray } from "./composer/OrbitTrays";
+import { OrbitBackgroundTray, OrbitCommentsTray, OrbitMemoryTray, OrbitQueueTray } from "./composer/OrbitTrays";
 import { OrbitComposerSheet } from "./composer/OrbitSheet";
 import { OrbitSetupChip, type SetupField, type SetupToggle } from "./composer/OrbitSetupChip";
 import { OrbitUsageRing } from "./composer/OrbitUsageRing";
 import { orbitTrayForPanel, resolveOrbAction, useComposerStatus, type AskKind, type OrbitTray } from "./composer/composerStatus";
 import { MobileComposerStatus } from "./MobileComposerStatus";
 import { mobileComposerPanelTitles, type MobileComposerPanel } from "./mobileComposerPanels";
+import { normalizeBackgroundWork, type BackgroundWorkItem } from "./backgroundWork";
 import { collectReadMemoryIds } from "./memoryRead";
 import {
   quotaBadgePercent,
@@ -1001,6 +1002,7 @@ interface PerChatState {
   planEntries: PlanEntry[];
   showPlan: boolean;
   slashCommands: SlashCommand[];
+  backgroundWork: BackgroundWorkItem[];
   isConnected: boolean;
   promptCaps: PromptCaps;
   /** Agent 是否声明 ACP `session/fork` 能力(`unstable_session_fork`)。
@@ -1333,6 +1335,9 @@ function reduceChatEventForCache(
     case "available_commands":
       state.slashCommands = msg.commands ?? [];
       break;
+    case "background_work":
+      state.backgroundWork = normalizeBackgroundWork(msg.items);
+      break;
     case "auth_logged_out":
       state.messages = [
         ...state.messages,
@@ -1410,6 +1415,7 @@ function defaultPerChatState(): PerChatState {
     planEntries: [],
     showPlan: false,
     slashCommands: [],
+    backgroundWork: [],
     isConnected: false,
     isRemoteSession: false,
     remoteOwnerName: "",
@@ -2915,6 +2921,8 @@ export function TaskChat({
   const [showAuthPanel, setShowAuthPanel] = useState(false);
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
+  const [backgroundWork, setBackgroundWork] = useState<BackgroundWorkItem[]>([]);
+  const [showBackground, setShowBackground] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
@@ -3761,11 +3769,13 @@ export function TaskChat({
   const hasPreviewCommentsPanel = taskPreviewCommentDrafts.length > 0;
   const subagents = useMemo(() => flattenSubagentMessages(messages).filter((message): message is SubagentMessage => message.type === "subagent"), [messages]);
   const hasSubagentsPanel = subagents.length > 0;
+  const hasBackgroundPanel = backgroundWork.length > 0;
   const selectedSubagentId = subagentSelection.chatId === activeChatId ? subagentSelection.id : undefined;
   const [mobileDetails, setMobileDetails] = useState<{ chatId: string; panel: MobileComposerPanel } | null>(null);
   // A details sheet belongs to its Session and the currently loaded history.
   const missingHistoryPanel = (mobileDetails?.panel === "memory" && !hasMemoryPanel)
     || (mobileDetails?.panel === "subagents" && !hasSubagentsPanel)
+    || (mobileDetails?.panel === "background" && !hasBackgroundPanel)
     || (mobileDetails?.panel === "todo" && !hasTodoPanel)
     || (mobileDetails?.panel === "plan" && !hasPlanPanel);
   if (mobileDetails && (!isPhoneLayout || mobileDetails.chatId !== activeChatId || missingHistoryPanel)) setMobileDetails(null);
@@ -3781,6 +3791,8 @@ export function TaskChat({
             ? requestedMobilePanel
           : showSubagents && hasSubagentsPanel && subagentSelection.chatId === activeChatId
             ? "subagents"
+          : showBackground && hasBackgroundPanel
+            ? "background"
           : showMemoryPanel && hasMemoryPanel
             ? "memory"
             : showPlan && hasTodoPanel
@@ -3872,6 +3884,7 @@ export function TaskChat({
       setSubagentSelection((previous) => ({ chatId: activeChatId ?? null, id: previous.chatId === activeChatId ? previous.id : undefined }));
     }
     setShowSubagents(tray === "subagents");
+    setShowBackground(tray === "background");
     setShowPendingQueue(tray === "queue");
     setShowMemoryPanel(tray === "memory");
     // Todos and plan documents share the Plan tray.
@@ -3897,6 +3910,7 @@ export function TaskChat({
       ? planDocumentTitle(nativePlans[nativePlans.length - 1], nativePlans.length - 1)
       : planFileContent ? planFilePath.split("/").pop() || "Plan" : null,
     subagents: subagents.map((agent) => ({ sessionId: agent.sessionId, status: subagentStatus(agent, isConnected) })),
+    backgroundCount: backgroundWork.length,
     queue: { count: pendingQueueRows.length, failed: pendingQueueRows.filter((row) => row.input?.status === "failed").length },
     memoryCount: readMemories.length,
     commentCount: taskPreviewCommentDrafts.length,
@@ -4932,6 +4946,7 @@ export function TaskChat({
       planEntries,
       showPlan,
       slashCommands,
+      backgroundWork,
       isConnected,
       promptCaps,
       forkCapable,
@@ -4967,6 +4982,7 @@ export function TaskChat({
     planEntries,
     showPlan,
     slashCommands,
+    backgroundWork,
     isConnected,
     promptCaps,
     forkCapable,
@@ -5020,6 +5036,7 @@ export function TaskChat({
       setPlanEntries(cached.planEntries);
       setShowPlan(cached.showPlan ?? false);
       setSlashCommands(cached.slashCommands);
+      setBackgroundWork(cached.backgroundWork ?? []);
       setIsConnected(chatIsConnected);
       setPromptCaps(cached.promptCaps);
       // Each live WebSocket keeps its own initialized Agent capabilities.
@@ -5056,6 +5073,7 @@ export function TaskChat({
       setShowPlan(false);
       setContextUsage(null);
       setSlashCommands([]);
+      setBackgroundWork([]);
       setIsConnected(chatIsConnected);
       setConnectPhase(null);
       setConnectPhaseStartedAt(null);
@@ -7026,6 +7044,9 @@ export function TaskChat({
         }
         case "available_commands":
           setSlashCommands(msg.commands ?? []);
+          break;
+        case "background_work":
+          setBackgroundWork(normalizeBackgroundWork(msg.items));
           break;
         case "usage_update":
           // ACP v1 `usage_update` — context window pill data.
@@ -11396,6 +11417,14 @@ export function TaskChat({
     <OrbitCommentsTray drafts={taskPreviewCommentDrafts} onUpdate={updatePreviewCommentDraft} onSend={sendPreviewComments} onRemove={removePreviewCommentDraft} onClose={() => setOrbitTray(null)} />
   ) : orbitActiveTray === "memory" ? (
     <OrbitMemoryTray memories={readMemories} onClose={() => setOrbitTray(null)} />
+  ) : orbitActiveTray === "background" ? (
+    <OrbitBackgroundTray
+      items={backgroundWork}
+      onClose={() => setOrbitTray(null)}
+      onCancel={isRemoteSession ? undefined : (item) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: "cancel_background", kind: item.kind, id: item.id }));
+      }}
+    />
   ) : orbitActiveTray && orbitActiveTray !== "ask" ? composerPanelBody : null;
   const orbitComposerTools = orbitShell ? (
     <>

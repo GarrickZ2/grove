@@ -1223,8 +1223,20 @@ pub async fn grove_agent_set_title(
         ));
     }
 
-    tasks::update_chat_title(&project_key, &task_id, &caller_chat.id, trimmed_title)
-        .map_err(AgentGraphError::from)?;
+    // A title the user or the Agent's own session info set stands.
+    let applied = tasks::update_chat_title(
+        &project_key,
+        &task_id,
+        &caller_chat.id,
+        trimmed_title,
+        tasks::TitleSource::AgentTool,
+    )
+    .map_err(AgentGraphError::from)?;
+    if !applied {
+        return Err(AgentGraphError::Internal(
+            "the Session title was set by the user or the Agent and was left unchanged".to_string(),
+        ));
+    }
 
     // Broadcast ChatListChanged so sidebar/other views pick up the change
     broadcast_radio_event(RadioEvent::ChatListChanged {

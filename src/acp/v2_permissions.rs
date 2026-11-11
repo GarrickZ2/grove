@@ -1,6 +1,6 @@
 //! v2 permission requests use a standalone title and optional subject.
 
-use agent_client_protocol::{schema::v2, RequestCancellation};
+use agent_client_protocol::{v2::schema as v2, RequestCancellation};
 use tokio_util::sync::CancellationToken;
 
 use super::{acp, AcpClientState, AcpUpdate, PermOptionData, TurnOrigin};
@@ -15,7 +15,11 @@ pub(super) async fn request(
     state
         .handle
         .validate_session(&request.session_id.to_string())?;
-    let cancelled = || v2::RequestPermissionResponse::new(v2::RequestPermissionOutcome::Cancelled);
+    let cancelled = || {
+        v2::RequestPermissionResponse::new(v2::RequestPermissionOutcome::Cancelled(
+            v2::CancelledPermissionOutcome::new(),
+        ))
+    };
     let _guard = tokio::select! {
         guard = state.handle.permission_lock.lock() => guard,
         _ = child_cancel.cancelled() => return Ok(cancelled()),

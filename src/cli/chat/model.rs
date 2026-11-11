@@ -495,7 +495,7 @@ impl Session {
     }
 
     fn apply_v2_message(&mut self, update: &Value) {
-        let Ok(typed) = serde_json::from_value::<agent_client_protocol::schema::v2::SessionUpdate>(
+        let Ok(typed) = serde_json::from_value::<agent_client_protocol::v2::schema::SessionUpdate>(
             update.clone(),
         ) else {
             return;

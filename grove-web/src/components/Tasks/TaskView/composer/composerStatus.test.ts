@@ -5,11 +5,18 @@ import {
 } from "./composerStatus";
 
 const base: ComposerStatusInput = {
-  running: false, planEntries: [], planDocTitle: null, subagents: [],
+  running: false, planEntries: [], planDocTitle: null, subagents: [], backgroundCount: 0,
   queue: { count: 0, failed: 0 }, memoryCount: 0, commentCount: 0, ask: null,
 };
 
 describe("composer status zone", () => {
+  it("shows a background chip while work keeps running and maps its panel to the tray", () => {
+    const status = buildComposerStatus({ ...base, backgroundCount: 2 });
+    expect(status.background).toBe(2);
+    expect(hasComposerStatus(status)).toBe(true);
+    expect(orbitTrayForPanel("background")).toBe("background");
+  });
+
   it("shows nothing for an idle session without plan, subagents, queue, memory or comments", () => {
     expect(hasComposerStatus(buildComposerStatus(base))).toBe(false);
     expect(hasComposerStatus(null)).toBe(false);

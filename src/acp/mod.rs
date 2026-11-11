@@ -38,10 +38,11 @@ use tool_identity::ToolIdentity;
 // so keep its schema and runtime types behind one local namespace.
 #[allow(clippy::module_inception)]
 mod acp {
-    pub use agent_client_protocol::schema::v1::*;
     pub use agent_client_protocol::schema::ProtocolVersion;
+    pub use agent_client_protocol::v1::schema::*;
+    pub use agent_client_protocol::v1::ConnectionTo;
     pub use agent_client_protocol::{
-        Agent, ByteStreams, Client, ConnectionTo, Error, RequestCancellation, Result,
+        Agent, ByteStreams, Client, Error, RequestCancellation, Result,
     };
 }
 use chrono::{DateTime, Utc};
@@ -125,7 +126,7 @@ pub struct AcpSessionHandle {
     idle: Arc<Mutex<idle::IdleState>>,
     subagents: Mutex<subagents::SubagentRegistry>,
     subagent_connection: Mutex<Option<acp::ConnectionTo<acp::Agent>>>,
-    subagent_connection_v2: Mutex<Option<agent_client_protocol::V2ConnectionTo<acp::Agent>>>,
+    subagent_connection_v2: Mutex<Option<agent_client_protocol::v2::ConnectionTo<acp::Agent>>>,
     pub update_tx: broadcast::Sender<AcpUpdate>,
     cmd_tx: mpsc::Sender<AcpCommand>,
     /// Out-of-band shutdown signal for the whole ACP transport/process.
@@ -291,6 +292,15 @@ pub struct AcpSessionHandle {
     /// tear down 一个 session 前若为 true,先发 `session/close` 让 agent
     /// 优雅 cancel + 释放资源,再 SIGKILL 兜底。
     pub close_capable: std::sync::atomic::AtomicBool,
+    /// agent 声明了 `session.archive`。
+    pub archive_capable: std::sync::atomic::AtomicBool,
+    /// Grove 归档这个 Chat 时置位：tear down 时发 `session/archive`
+    /// (同时关闭 session) 代替 `session/close`。
+    pub archive_on_close: std::sync::atomic::AtomicBool,
+    /// agent 声明了 `session.title`,可以接收用户改的名字。
+    pub title_capable: std::sync::atomic::AtomicBool,
+    /// Latest background-work snapshot (ACP v2), for reconnects and cancel.
+    pub background: Mutex<Vec<BackgroundItem>>,
     /// session/new 阶段被 -32000 卡住后,记录当前 banner 状态(methods + agent_name)。
     /// 用途:WS 重连时,如果还没登录成功,跳过假的 SessionReady,改发 AuthRequired
     /// 让前端继续显示 banner;避免"刷新后看起来连上了但消息发不出去"。
@@ -359,6 +369,10 @@ enum AcpCommand {
     /// Agent 未声明认证方法时，用户可先在外部 CLI 完成登录，再要求 Grove
     /// 重试被 `auth_required` 拒绝的请求。
     RetryAuthentication,
+    /// The Agent reported a change of its sign-in state (`auth/status_update`).
+    AuthStatusChanged {
+        authenticated: bool,
+    },
     /// 调用 ACP v1 `logout`。reply 用于把协议调用结果返回给 WebSocket handler。
     Logout {
         reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
@@ -394,6 +408,23 @@ enum AcpCommand {
 pub enum ConfigOptionValue {
     Select(String),
     Boolean(bool),
+}
+
+/// One piece of background work as the panel shows it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BackgroundItem {
+    /// `terminal`, `tool_call`, `subagent`, or a type Grove does not know.
+    pub kind: String,
+    pub id: String,
+    /// The command, tool title or subagent title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Where it runs, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Unix seconds when Grove first saw it in the background.
+    pub started_at: i64,
+    pub cancellable: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -610,7 +641,7 @@ pub enum AcpUpdate {
     /// An ACP v2 message delta or snapshot. Retaining the protocol payload
     /// preserves replacement, clearing, and future content for history replay.
     V2MessageUpdate {
-        update: agent_client_protocol::schema::v2::SessionUpdate,
+        update: agent_client_protocol::v2::schema::SessionUpdate,
     },
     V2MessageBind {
         client_message_id: String,
@@ -618,7 +649,7 @@ pub enum AcpUpdate {
     },
     /// Raw v2 tool event, preserved for both live rendering and history.
     V2ToolUpdate {
-        update: agent_client_protocol::schema::v2::SessionUpdate,
+        update: agent_client_protocol::v2::schema::SessionUpdate,
     },
     /// Agent 思考过程片段
     ThoughtChunk {
@@ -729,7 +760,7 @@ pub enum AcpUpdate {
             skip_serializing_if = "agent_client_protocol::schema::MaybeUndefined::is_undefined"
         )]
         meta:
-            agent_client_protocol::schema::MaybeUndefined<agent_client_protocol::schema::v2::Meta>,
+            agent_client_protocol::schema::MaybeUndefined<agent_client_protocol::v2::schema::Meta>,
     },
     /// 权限请求（带选项，等待用户交互）。`id` 是 ACP tool_call.id，
     /// 用于把后续的 PermissionResponse 精确对应到这条 Request；老历史里的
@@ -753,6 +784,12 @@ pub enum AcpUpdate {
     AskForm {
         form_id: String,
         definition: crate::agent_graph::ask_form::AskFormInput,
+    },
+    /// The work an ACP v2 Agent reports running independently of the
+    /// conversation (background terminals, tool calls, subagents). A complete
+    /// snapshot each time; transient, resent when a browser reconnects.
+    BackgroundWork {
+        items: Vec<BackgroundItem>,
     },
     /// Native ACP `elicitation/create`. Kept transient; the live pending
     /// snapshot is replayed directly when the browser reconnects.
@@ -1126,7 +1163,7 @@ pub enum ToolCallContentData {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct TerminalExitStatusData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<u32>,
+    pub exit_code: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signal: Option<String>,
 }
@@ -1491,8 +1528,8 @@ fn set_initial_title_from_prompt(handle: &AcpSessionHandle, text: &str) {
         }
         AcpUpdate::V2MessageUpdate { update } => matches!(
             update,
-            agent_client_protocol::schema::v2::SessionUpdate::UserMessage(_)
-                | agent_client_protocol::schema::v2::SessionUpdate::UserMessageChunk(_)
+            agent_client_protocol::v2::schema::SessionUpdate::UserMessage(_)
+                | agent_client_protocol::v2::schema::SessionUpdate::UserMessageChunk(_)
         ),
         _ => false,
     }) {
@@ -4654,6 +4691,60 @@ fn validated_config_request_value(
     config_request_value(&advertised, config_id, value)
 }
 
+/// `Some(true)` signed in, `Some(false)` signed out; `None` when the state says
+/// nothing Grove should act on (no sign-in needed, unknown, or a future value).
+fn auth_state_signed_in(state: &acp::AuthState) -> Option<bool> {
+    match state {
+        acp::AuthState::Authenticated => Some(true),
+        acp::AuthState::Unauthenticated => Some(false),
+        _ => None,
+    }
+}
+
+/// Show the sign-in banner without a failed request behind it.
+fn show_auth_required(handle: &AcpSessionHandle, agent_name: &str) {
+    let methods = handle
+        .auth_methods
+        .lock()
+        .map(|methods| methods.clone())
+        .unwrap_or_default();
+    if let Ok(mut slot) = handle.pending_auth.lock() {
+        *slot = Some(PendingAuthState {
+            methods: methods.clone(),
+            agent_name: Some(agent_name.to_string()),
+        });
+    }
+    handle.emit(AcpUpdate::AuthRequired {
+        methods,
+        agent_name: Some(agent_name.to_string()),
+    });
+}
+
+/// Initial `session/new` config values for a Custom Agent whose settings come
+/// from a capability snapshot. Empty unless the Agent accepts initial values;
+/// the Agent ignores entries it no longer recognises.
+fn initial_config_options(
+    supported: bool,
+    selection: Option<&crate::agent_config::AgentConfigSelection>,
+) -> Vec<acp::InitialSessionConfigOption> {
+    let (true, Some(selection)) = (supported, selection) else {
+        return Vec::new();
+    };
+    selection
+        .ordered_config_values()
+        .into_iter()
+        .map(|(config_id, value)| {
+            let value = match value {
+                ConfigOptionValue::Select(value) => {
+                    acp::SessionConfigOptionValue::from(acp::SessionConfigValueId::new(value))
+                }
+                ConfigOptionValue::Boolean(value) => acp::SessionConfigOptionValue::from(value),
+            };
+            acp::InitialSessionConfigOption::new(acp::SessionConfigId::new(config_id), value)
+        })
+        .collect()
+}
+
 fn config_request_value(
     advertised: &[acp::SessionConfigOption],
     config_id: &str,
@@ -4869,7 +4960,7 @@ fn build_terminal_shell_command(
 
 fn terminal_exit_status_data(status: &acp::TerminalExitStatus) -> TerminalExitStatusData {
     TerminalExitStatusData {
-        exit_code: status.exit_code,
+        exit_code: status.exit_code.map(i64::from),
         signal: status.signal.clone(),
     }
 }
@@ -5266,6 +5357,10 @@ pub async fn get_or_start_session(
                     import_capable: std::sync::atomic::AtomicBool::new(false),
                     delete_capable: std::sync::atomic::AtomicBool::new(false),
                     close_capable: std::sync::atomic::AtomicBool::new(false),
+                    archive_capable: std::sync::atomic::AtomicBool::new(false),
+                    archive_on_close: std::sync::atomic::AtomicBool::new(false),
+                    title_capable: std::sync::atomic::AtomicBool::new(false),
+                    background: Mutex::default(),
                 });
 
                 // 注册到全局表
@@ -5849,12 +5944,29 @@ async fn run_acp_connection(
     // 本身是 Send,所以 state 必须是 Send + Sync(AcpClientState 已满足)。
     let mut shutdown_rx = handle.shutdown_tx.subscribe();
     let connection = acp::Client
-        .builder()
+        .v1()
         .on_receive_notification(
             {
                 let state = Arc::clone(&state);
                 async move |notif: acp::SessionNotification, _cx| {
                     handle_session_notification(&state, notif).await
+                }
+            },
+            agent_client_protocol::on_receive_notification!(),
+        )
+        .on_receive_notification(
+            {
+                let state = Arc::clone(&state);
+                async move |notification: acp::AuthStatusUpdateNotification, _cx| {
+                    if let Some(authenticated) = auth_state_signed_in(&notification.state) {
+                        // A full queue drops the update; the next prompt still
+                        // reports auth_required on its own.
+                        let _ = state
+                            .handle
+                            .cmd_tx
+                            .try_send(AcpCommand::AuthStatusChanged { authenticated });
+                    }
+                    Ok(())
                 }
             },
             agent_client_protocol::on_receive_notification!(),
@@ -6320,6 +6432,33 @@ async fn drive_session(
     handle
         .close_capable
         .store(close_capable, std::sync::atomic::Ordering::Relaxed);
+    let archive_capable = init_resp
+        .agent_capabilities
+        .session_capabilities
+        .archive
+        .is_some();
+    handle
+        .archive_capable
+        .store(archive_capable, std::sync::atomic::Ordering::Relaxed);
+    handle.title_capable.store(
+        init_resp
+            .agent_capabilities
+            .session_capabilities
+            .title
+            .is_some(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let supports_session_options = init_resp
+        .agent_capabilities
+        .session_capabilities
+        .options
+        .is_some();
+    let supports_auth_status = init_resp.agent_capabilities.auth.status.is_some();
+    let supports_session_status = init_resp
+        .agent_capabilities
+        .session_capabilities
+        .status
+        .is_some();
 
     // 查找保存的 session_id(从 chat session 读取)
     let saved_id = config.chat_id.as_ref().and_then(|cid| {
@@ -6409,6 +6548,12 @@ async fn drive_session(
                                 return Err(acp::Error::internal_error());
                             }
                             Some(AcpCommand::Authenticate { method_id }) => break method_id,
+                            Some(AcpCommand::AuthStatusChanged { authenticated: true }) => {
+                                // Signed in outside Grove's login flow (a terminal or
+                                // browser). Retry the blocked request.
+                                handle.emit(AcpUpdate::AuthSucceeded);
+                                break 'auth_wait;
+                            }
                             Some(AcpCommand::RetryAuthentication) if methods.is_empty() => {
                                 // The user completed login outside ACP. Treat this
                                 // as a request to retry, not proof of authentication;
@@ -6467,7 +6612,7 @@ async fn drive_session(
                                         .to_string(),
                                 ));
                             }
-                            Some(AcpCommand::Cancel | AcpCommand::CancelPrompts(_) | AcpCommand::RetryAuthentication) => {}
+                            Some(AcpCommand::Cancel | AcpCommand::CancelPrompts(_) | AcpCommand::RetryAuthentication | AcpCommand::AuthStatusChanged { .. }) => {}
                             Some(AcpCommand::ListSessions { reply, .. }) => {
                                 let _ = reply.send(Err("session/list unavailable during authentication".into()));
                             }
@@ -6561,7 +6706,7 @@ async fn drive_session(
                                         .to_string(),
                                 ));
                             }
-                            Some(AcpCommand::Cancel | AcpCommand::CancelPrompts(_) | AcpCommand::RetryAuthentication) => {}
+                            Some(AcpCommand::Cancel | AcpCommand::CancelPrompts(_) | AcpCommand::RetryAuthentication | AcpCommand::AuthStatusChanged { .. }) => {}
                             Some(AcpCommand::ListSessions { reply, .. }) => {
                                 let _ = reply.send(Err("session/list unavailable during authentication".into()));
                             }
@@ -6605,13 +6750,21 @@ async fn drive_session(
             // 成功后回到 loop 顶端再试一次 session/new。这一段没有进 cmd 主循环,
             // 登录期间到达的 prompt 会进入可见队列，其他 session action 会得到
             // 明确回复，避免共享 command channel 中的命令被静默丢弃。
+            // A Custom Agent's settings from its capability snapshot go out with
+            // session/new when the Agent accepts initial values, instead of one
+            // set_config_option round trip each after the session exists.
+            let initial_config_options = initial_config_options(
+                supports_session_options,
+                config.persona_injection.as_ref().map(|p| &p.agent_config),
+            );
             let resp = loop {
                 match startup_request!("session/new", conn
                     .send_request(
                         acp::NewSessionRequest::new(&config.working_dir)
                             .additional_directories(additional_directories.clone())
                             .mcp_servers(mcp_servers.clone())
-                            .system_prompt(system_prompt.clone()),
+                            .system_prompt(system_prompt.clone())
+                            .config_options(initial_config_options.clone()),
                     )
                     .block_task())
                 {
@@ -6670,6 +6823,13 @@ async fn drive_session(
                 let sid_arc = acp::SessionId::new(&*sid);
 
                 let uses_capability_config = match &p.agent_config {
+                    crate::agent_config::AgentConfigSelection::ConfigOptions { .. }
+                        if !initial_config_options.is_empty() =>
+                    {
+                        // Already applied by session/new; its response carries the
+                        // values the session actually has.
+                        true
+                    }
                     crate::agent_config::AgentConfigSelection::ConfigOptions { values, .. } => {
                         // Apply exact option ids and values selected from the persisted
                         // capability snapshot. Best-effort keeps a stale snapshot from
@@ -6822,7 +6982,48 @@ async fn drive_session(
             .chat_id
             .as_ref()
             .is_some_and(|cid| chat_history_is_empty(&config.project_key, &config.task_id, cid));
+    // A session archived through Grove (or the Agent's own UI) must be
+    // unarchived before it is continued. Unarchiving one that is not
+    // archived succeeds, so this needs no local bookkeeping.
+    if let Some(saved_id) = saved_id.as_ref().filter(|_| archive_capable) {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            conn.send_request(acp::UnarchiveSessionRequest::new(acp::SessionId::new(
+                saved_id.as_str(),
+            )))
+            .block_task(),
+        )
+        .await;
+    }
     let session_id = 'restore: {
+        // Ask whether the Agent still has the saved session before resuming
+        // it. Only a definite "unknown session" (-32002) skips the resume;
+        // any other answer, or no support, keeps the resume/load path below,
+        // which recognises a missing session from its errors.
+        if let (Some(saved_id), true, false) = (
+            saved_id.as_ref(),
+            supports_session_status,
+            config.import_session,
+        ) {
+            if let Ok(Err(error)) = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                conn.send_request(acp::SessionStatusRequest::new(acp::SessionId::new(
+                    saved_id.as_str(),
+                )))
+                .block_task(),
+            )
+            .await
+            {
+                if i32::from(error.code) == -32002 {
+                    if can_recreate_empty {
+                        break 'restore create_new_session!(true);
+                    }
+                    retire_missing_session(&config, &error);
+                    return Err(acp::Error::internal_error()
+                        .data(format!("The Agent no longer has this session: {error}")));
+                }
+            }
+        }
         match (
             saved_id,
             supports_resume,
@@ -7266,6 +7467,27 @@ async fn drive_session(
     });
 
     handle.finish_terminal_auth_reconnect();
+
+    // Some Agents open sessions while signed out and only reject the first
+    // prompt. Ask up front so the sign-in banner shows before that.
+    if supports_auth_status {
+        if let Ok(Ok(status)) = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            conn.send_request(acp::AuthStatusRequest::new())
+                .block_task(),
+        )
+        .await
+        {
+            let pending = handle
+                .pending_auth
+                .lock()
+                .map(|slot| slot.is_some())
+                .unwrap_or(false);
+            if auth_state_signed_in(&status.state) == Some(false) && !pending {
+                show_auth_required(&handle, &agent_name);
+            }
+        }
+    }
 
     // 处理命令循环
     while let Some(cmd) = handle.next_command(cmd_rx).await {
@@ -7760,6 +7982,10 @@ async fn drive_session(
                                     // retry is only meaningful after this prompt resolves
                                     // with auth_required.
                                 }
+                                AcpCommand::AuthStatusChanged { .. } => {
+                                    // The in-flight prompt settles it: a signed-out Agent
+                                    // answers it with auth_required.
+                                }
                                 AcpCommand::Logout { reply } => {
                                     let _ = reply.send(Err(
                                         "Cannot log out while agent is busy".to_string(),
@@ -8191,13 +8417,28 @@ async fn drive_session(
                                             .to_string(),
                                     ));
                                 }
-                                Some(AcpCommand::Cancel | AcpCommand::CancelPrompts(_) | AcpCommand::RetryAuthentication) => {}
+                                Some(AcpCommand::Cancel | AcpCommand::CancelPrompts(_) | AcpCommand::RetryAuthentication | AcpCommand::AuthStatusChanged { .. }) => {}
                                 Some(AcpCommand::ListSessions { reply, .. }) => {
                                     let _ = reply.send(Err("session/list unavailable during authentication".into()));
                                 }
                             }
                         }
                     }
+                }
+            }
+            AcpCommand::AuthStatusChanged { authenticated } => {
+                let pending = handle
+                    .pending_auth
+                    .lock()
+                    .map(|slot| slot.is_some())
+                    .unwrap_or(false);
+                if authenticated && pending {
+                    // Signed in outside Grove's login flow: same as a retry.
+                    let _ = handle.cmd_tx.try_send(AcpCommand::RetryAuthentication);
+                } else if !authenticated && !pending {
+                    // Signed out or expired: ask for sign-in now rather than
+                    // after the next prompt fails.
+                    show_auth_required(&handle, &agent_name);
                 }
             }
             AcpCommand::RetryAuthentication => {
@@ -8339,6 +8580,21 @@ async fn drive_session(
     // 的工作 + 释放资源,再由 run_acp_session 的 drop(child) SIGKILL 兜底。
     // best-effort:失败 / 超时一律忽略,不阻塞 tear down。
     if handle
+        .archive_on_close
+        .load(std::sync::atomic::Ordering::Relaxed)
+        && handle
+            .archive_capable
+            .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        // Archiving closes an active session too, then hides it from the
+        // Agent's default session list.
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            conn.send_request(acp::ArchiveSessionRequest::new(session_id_arc.clone()))
+                .block_task(),
+        )
+        .await;
+    } else if handle
         .close_capable
         .load(std::sync::atomic::Ordering::Relaxed)
     {
@@ -8711,9 +8967,9 @@ impl AcpSessionHandle {
                 (ids, TurnEvent::MessageChunk { text: text.clone() }, false)
             }
             AcpUpdate::V2MessageUpdate {
-                update: agent_client_protocol::schema::v2::SessionUpdate::AgentMessageChunk(chunk),
+                update: agent_client_protocol::v2::schema::SessionUpdate::AgentMessageChunk(chunk),
             } => {
-                let agent_client_protocol::schema::v2::ContentBlock::Text(text) = &chunk.content
+                let agent_client_protocol::v2::schema::ContentBlock::Text(text) = &chunk.content
                 else {
                     return;
                 };
@@ -8730,7 +8986,7 @@ impl AcpSessionHandle {
                 )
             }
             AcpUpdate::V2ToolUpdate {
-                update: agent_client_protocol::schema::v2::SessionUpdate::ToolCallUpdate(tool),
+                update: agent_client_protocol::v2::schema::SessionUpdate::ToolCallUpdate(tool),
             } => {
                 let Some(ids) = self.active_turn_ids() else {
                     return;
@@ -9853,6 +10109,10 @@ impl AcpSessionHandle {
             for snapshot in self.subagent_snapshots() {
                 self.emit_unsuppressed(snapshot);
             }
+            let background = self.background.lock().unwrap().clone();
+            if !background.is_empty() {
+                self.emit_unsuppressed(AcpUpdate::BackgroundWork { items: background });
+            }
         }
 
         if should_compact {
@@ -10294,6 +10554,116 @@ impl AcpSessionHandle {
     }
 
     /// 终止会话
+    /// Replace the background snapshot; emits only when it changed.
+    pub(crate) fn set_background(&self, items: Vec<BackgroundItem>) {
+        let mut current = self.background.lock().unwrap();
+        if *current == items {
+            return;
+        }
+        *current = items.clone();
+        drop(current);
+        self.emit(AcpUpdate::BackgroundWork { items });
+    }
+
+    /// Cancel one listed piece of background work. The Agent confirms with a
+    /// later update that drops it from the list.
+    pub fn cancel_background(&self, kind: &str, id: &str) -> std::result::Result<(), String> {
+        let listed = self
+            .background
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|item| item.kind == kind && item.id == id)
+            .cloned()
+            .ok_or("That background work is no longer running")?;
+        if !listed.cancellable {
+            return Err("The Agent cannot cancel this background work".into());
+        }
+        if kind == "subagent" {
+            return self.cancel_subagent(id);
+        }
+        let connection = self
+            .subagent_connection_v2
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("Agent is disconnected")?;
+        let session_id = self
+            .agent_info
+            .read()
+            .ok()
+            .and_then(|info| info.as_ref().map(|(id, _, _)| id.clone()))
+            .ok_or("Agent is disconnected")?;
+        let handle_key = self.key.clone();
+        let (kind, id) = (kind.to_string(), id.to_string());
+        tokio::spawn(async move {
+            use agent_client_protocol::v2::schema as v2;
+            let result = if kind == "terminal" {
+                connection
+                    .send_request(v2::CancelTerminalRequest::new(session_id, id))
+                    .block_task()
+                    .await
+                    .map(|_| ())
+            } else {
+                connection
+                    .send_request(v2::CancelToolCallRequest::new(session_id, id))
+                    .block_task()
+                    .await
+                    .map(|_| ())
+            };
+            if let (Err(error), Some(handle)) = (result, get_session_handle(&handle_key)) {
+                handle.emit(AcpUpdate::SessionNotice {
+                    severity: "warning".into(),
+                    title: format!("Could not cancel background work: {error}"),
+                    description: None,
+                });
+            }
+        });
+        Ok(())
+    }
+
+    /// Tell the Agent the name the user gave this session, so its own session
+    /// list matches and it stops generating titles. Best-effort.
+    pub fn push_user_title(&self, title: &str) {
+        if !self
+            .title_capable
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return;
+        }
+        let Some(conn) = self.subagent_connection.lock().unwrap().clone() else {
+            return;
+        };
+        let Some(session_id) = self
+            .agent_info
+            .read()
+            .ok()
+            .and_then(|info| info.as_ref().map(|(id, _, _)| id.clone()))
+        else {
+            return;
+        };
+        let title = title.to_string();
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                conn.send_request(acp::SetSessionTitleRequest::new(
+                    acp::SessionId::new(session_id),
+                    title,
+                ))
+                .block_task(),
+            )
+            .await;
+        });
+    }
+
+    /// Tear the session down and, when the Agent supports it, archive its
+    /// session there as well so it leaves the Agent's default session list.
+    pub async fn archive_and_kill(&self) -> crate::error::Result<()> {
+        self.archive_on_close
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.kill().await
+    }
+
     pub async fn kill(&self) -> crate::error::Result<()> {
         self.cmd_tx
             .send(AcpCommand::Kill)
@@ -11300,6 +11670,10 @@ pub fn new_handle_for_test(
         import_capable: std::sync::atomic::AtomicBool::new(false),
         delete_capable: std::sync::atomic::AtomicBool::new(false),
         close_capable: std::sync::atomic::AtomicBool::new(false),
+        archive_capable: std::sync::atomic::AtomicBool::new(false),
+        archive_on_close: std::sync::atomic::AtomicBool::new(false),
+        title_capable: std::sync::atomic::AtomicBool::new(false),
+        background: Mutex::default(),
     });
 
     if let Ok(mut sessions) = ACP_SESSIONS.write() {
@@ -12050,6 +12424,54 @@ async fn drain_stderr_to_file(stderr: tokio::process::ChildStderr, path: PathBuf
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn auth_state_maps_only_signed_in_and_signed_out() {
+        assert_eq!(
+            auth_state_signed_in(&acp::AuthState::Authenticated),
+            Some(true)
+        );
+        assert_eq!(
+            auth_state_signed_in(&acp::AuthState::Unauthenticated),
+            Some(false)
+        );
+        assert_eq!(auth_state_signed_in(&acp::AuthState::NotRequired), None);
+        assert_eq!(auth_state_signed_in(&acp::AuthState::Unknown), None);
+    }
+
+    #[test]
+    fn initial_config_options_need_agent_support_and_snapshot_values() {
+        let selection = crate::agent_config::AgentConfigSelection::ConfigOptions {
+            agent_id: None,
+            values: [
+                (
+                    "model".to_string(),
+                    ConfigOptionValue::Select("opus".into()),
+                ),
+                ("fast".to_string(), ConfigOptionValue::Boolean(true)),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        assert!(initial_config_options(false, Some(&selection)).is_empty());
+        assert!(initial_config_options(true, None).is_empty());
+        assert!(initial_config_options(
+            true,
+            Some(&crate::agent_config::AgentConfigSelection::Modes {
+                agent_id: None,
+                mode_id: "plan".into(),
+            })
+        )
+        .is_empty());
+        let wire = serde_json::to_value(initial_config_options(true, Some(&selection))).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!([
+                {"configId": "fast", "type": "boolean", "value": true},
+                {"configId": "model", "value": "opus"},
+            ])
+        );
+    }
+
     #[tokio::test]
     async fn unavailable_mcp_does_not_block_other_servers() {
         use crate::storage::extensions::ResolvedMcpConfig;
@@ -12161,8 +12583,14 @@ mod tests {
                 terminal: false,
             },
         );
-        crate::storage::tasks::update_chat_title(&project, task, chat, "Renamed afterwards")
-            .unwrap();
+        crate::storage::tasks::update_chat_title(
+            &project,
+            task,
+            chat,
+            "Renamed afterwards",
+            crate::storage::tasks::TitleSource::User,
+        )
+        .unwrap();
         set_initial_title_from_prompt(&handle, "Another user request");
         assert_eq!(title(), "Renamed afterwards");
     }
@@ -12215,7 +12643,9 @@ mod tests {
         assert!(chat_history_is_empty("project", "task", "chat"));
         std::fs::write(&path, "unparseable history must be preserved").unwrap();
         assert!(!chat_history_is_empty("project", "task", "chat"));
-        assert!(missing_saved_session(&acp::Error::resource_not_found(None)));
+        assert!(missing_saved_session(&acp::Error::from(
+            agent_client_protocol::v1::schema::Error::resource_not_found(None),
+        )));
         assert!(missing_saved_session(
             &acp::Error::internal_error().data("no rollout found for thread id abc")
         ));
@@ -13566,7 +13996,7 @@ mod tests {
         let (client_writer, peer_reader) = tokio::io::duplex(4096);
         let (mut peer_writer, client_reader) = tokio::io::duplex(4096);
         let transport = acp::ByteStreams::new(client_writer.compat_write(), client_reader.compat());
-        let client = acp::Client.builder().on_receive_request(
+        let client = acp::Client.v1().on_receive_request(
             {
                 let state = Arc::clone(&state);
                 async move |req: acp::WaitForTerminalExitRequest, responder, cx| {
@@ -13722,7 +14152,7 @@ mod tests {
             .iter()
             .map(|block| {
                 let value = serde_json::to_value(to_acp_content_block(block)).unwrap();
-                let v2: agent_client_protocol::schema::v2::ContentBlock =
+                let v2: agent_client_protocol::v2::schema::ContentBlock =
                     serde_json::from_value(value).unwrap();
                 serde_json::to_value(v2).unwrap()
             })

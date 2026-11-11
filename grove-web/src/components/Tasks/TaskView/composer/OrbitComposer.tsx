@@ -1,5 +1,5 @@
 import { memo, type DragEventHandler, type PointerEventHandler, type ReactNode, type Ref } from "react";
-import { ArrowUp, BookOpen, Check, ChevronsUp, Database, ExternalLink, KeyRound, ListChecks, Loader2, MessageSquarePlus, ShieldCheck, Square, X } from "lucide-react";
+import { ArrowUp, BookOpen, Check, ChevronsUp, Database, ExternalLink, KeyRound, ListChecks, Loader2, MessageSquarePlus, ShieldCheck, Square, Timer, X } from "lucide-react";
 import { useEscapeScope } from "../../../../keyboard/useEscapeScope";
 import { SubagentAvatar } from "../SubagentAvatar";
 import type { PlanEntry } from "../planEntries";
@@ -92,7 +92,7 @@ export const OrbitStatusBar = memo(function OrbitStatusBar({ status, activeTray,
   if (!hasComposerStatus(status)) return null;
   const toggle = (tray: OrbitTray) => onTrayChange(activeTray === tray ? null : tray);
   const chip = (tray: OrbitTray) => `oc-chip${activeTray === tray ? " is-on" : ""}`;
-  const { plan, subagents, queue, memory, comments, ask } = status;
+  const { plan, subagents, background, queue, memory, comments, ask } = status;
   return (
     <div className="oc-status" role="toolbar" aria-label="Session status">
       {plan?.kind === "steps" && (
@@ -114,6 +114,11 @@ export const OrbitStatusBar = memo(function OrbitStatusBar({ status, activeTray,
         <button type="button" className={chip("subagents")} aria-expanded={activeTray === "subagents"} onClick={() => toggle("subagents")} aria-label={`Subagents · ${subagents.count}${subagents.running ? `, ${subagents.running} running` : ""}`}>
           <span className="oc-stack" aria-hidden="true">{subagents.avatars.map((id) => <SubagentAvatar key={id} sessionId={id} size={15} />)}</span>
           Subagents<b>{subagents.count}</b>
+        </button>
+      )}
+      {background !== null && (
+        <button type="button" className={chip("background")} aria-expanded={activeTray === "background"} onClick={() => toggle("background")} aria-label={`Background · ${background} running`}>
+          <Timer size={12} aria-hidden="true" />Background<b>{background}</b>
         </button>
       )}
       {queue && (

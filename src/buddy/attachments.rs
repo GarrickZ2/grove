@@ -306,7 +306,7 @@ pub fn store_for_task(project: &str, task: &str, files: &[Outgoing]) -> Result<V
 
 /// Media in an ACP v2 message, in Grove's block shape (text is left out).
 pub fn from_v2_block(
-    block: &agent_client_protocol::schema::v2::ContentBlock,
+    block: &agent_client_protocol::v2::schema::ContentBlock,
 ) -> Option<ContentBlockData> {
     let value = serde_json::to_value(block).ok()?;
     let field = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_owned);

@@ -111,6 +111,16 @@ describe("subagent timeline", () => {
     expect(subagentStatus(getChild(messages, "a"), true)).toBe("Status unknown");
   });
 
+  it("keeps a child's working directory until it is cleared and shows it in the panel", () => {
+    let messages = reduce([], announce("a", { title: "Reviewer", cwd: "/repo/.grove/worktrees/review", state: { state: "running" } }));
+    messages = reduce(messages, announce("a", { state: { state: "idle" } }));
+    expect(getChild(messages, "a").cwd).toBe("/repo/.grove/worktrees/review");
+    const html = renderToStaticMarkup(<SubagentsPanel agents={[getChild(messages, "a")]} selectedId="a" connected onSelect={() => {}} onClose={() => {}} onOpenRequest={() => {}} renderActivity={() => null} />);
+    expect(html).toContain("/repo/.grove/worktrees/review");
+    messages = reduce(messages, announce("a", { cwd: null }));
+    expect(getChild(messages, "a").cwd).toBeUndefined();
+  });
+
   it("restores history and lets an idle child resume without duplicating its card", () => {
     const history = [announce("a", { state: { state: "running" } }), scoped("a", { type: "message_chunk", text: "First job" }), announce("a", { state: { state: "idle" } }), announce("a", { state: { state: "running" } }), scoped("a", { type: "message_chunk", text: "Second job" })];
     const restored = history.reduce(reduce, [] as ChatMessage[]);

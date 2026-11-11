@@ -43,7 +43,8 @@ pub fn parse_terminal_meta(meta: Option<&acp::Meta>) -> Vec<AgentTerminalEvent> 
                 exit_code: exit
                     .get("exit_code")
                     .and_then(|v| v.as_u64())
-                    .and_then(|v| u32::try_from(v).ok()),
+                    .and_then(|v| u32::try_from(v).ok())
+                    .map(i64::from),
                 signal: exit
                     .get("signal")
                     .and_then(|v| v.as_str())

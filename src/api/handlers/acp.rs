@@ -51,6 +51,11 @@ pub(crate) enum ClientMessage {
     CancelSubagent {
         session_id: String,
     },
+    /// Cancel one listed piece of background work (`kind` as the list gives it).
+    CancelBackground {
+        kind: String,
+        id: String,
+    },
     /// Explicitly kill the ACP session
     Kill,
     /// Respond to a permission request. `id` is the request id (ACP tool_call_id)
@@ -155,6 +160,9 @@ pub(crate) enum ClientMessage {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ServerMessage {
+    BackgroundWork {
+        items: Vec<crate::acp::BackgroundItem>,
+    },
     SubagentUpdate {
         #[serde(flatten)]
         update: crate::acp::SubagentUpdateData,
@@ -251,14 +259,14 @@ enum ServerMessage {
         content: ContentBlockData,
     },
     V2MessageUpdate {
-        update: agent_client_protocol::schema::v2::SessionUpdate,
+        update: agent_client_protocol::v2::schema::SessionUpdate,
     },
     V2MessageBind {
         client_message_id: String,
         message_id: String,
     },
     V2ToolUpdate {
-        update: agent_client_protocol::schema::v2::SessionUpdate,
+        update: agent_client_protocol::v2::schema::SessionUpdate,
     },
     ThoughtChunk {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -574,6 +582,7 @@ impl From<AcpUpdate> for ServerMessage {
     fn from(update: AcpUpdate) -> Self {
         match update {
             AcpUpdate::SubagentUpdate { update } => Self::SubagentUpdate { update },
+            AcpUpdate::BackgroundWork { items } => Self::BackgroundWork { items },
             AcpUpdate::SubagentEvent { session_id, event } => Self::SubagentEvent {
                 session_id,
                 event: Box::new((*event).into()),
@@ -1420,6 +1429,13 @@ async fn handle_acp_ws(
             let _ = ws_sender.send(Message::Text(json.into())).await;
         }
     }
+    let background = handle.background.lock().unwrap().clone();
+    if !background.is_empty() {
+        let event = AcpUpdate::BackgroundWork { items: background };
+        if let Ok(json) = serde_json::to_string(&ServerMessage::from(event)) {
+            let _ = ws_sender.send(Message::Text(json.into())).await;
+        }
+    }
     for snapshot in elicitation_snapshots {
         let msg = ServerMessage::from(
             handle.scope_subagent_event(AcpUpdate::ElicitationRequest { snapshot }),
@@ -1577,6 +1593,16 @@ async fn handle_acp_ws(
                                 {
                                     handle_for_input.emit(AcpUpdate::Error {
                                         message: e.to_string(),
+                                    });
+                                }
+                            }
+                            ClientMessage::CancelBackground { kind, id } => {
+                                if let Err(message) = handle_for_input.cancel_background(&kind, &id)
+                                {
+                                    handle_for_input.emit(AcpUpdate::SessionNotice {
+                                        severity: "warning".into(),
+                                        title: message,
+                                        description: None,
                                     });
                                 }
                             }
@@ -2193,7 +2219,7 @@ pub async fn archive_chat(
     if let Some(handle) = acp::get_session_handle(&session_key) {
         handle.attribute_action(TurnAction::user(TurnActionKind::EndSession));
         handle
-            .kill()
+            .archive_and_kill()
             .await
             .map_err(|error| AcpError::Internal(error.to_string()))?;
     }
@@ -2380,8 +2406,17 @@ pub async fn update_chat(
         .map_err(|e| AcpError::BadRequest(e.to_string()))?;
     let (project_key, _, _) = resolve_project_key(&project_id)?;
 
-    tasks::update_chat_title(&project_key, &task_id, &chat_id, &body.title)
-        .map_err(|e| AcpError::Internal(e.to_string()))?;
+    tasks::update_chat_title(
+        &project_key,
+        &task_id,
+        &chat_id,
+        &body.title,
+        tasks::TitleSource::User,
+    )
+    .map_err(|e| AcpError::Internal(e.to_string()))?;
+    if let Some(handle) = acp::get_session_handle(&format!("{project_key}:{task_id}:{chat_id}")) {
+        handle.push_user_title(&body.title);
+    }
 
     let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?
@@ -3084,10 +3119,10 @@ fn history_start_for_recent_turns(history: &[AcpUpdate], turns: usize) -> (usize
             }
             AcpUpdate::V2MessageUpdate { update } => {
                 let id = match update {
-                    agent_client_protocol::schema::v2::SessionUpdate::UserMessage(message) => {
+                    agent_client_protocol::v2::schema::SessionUpdate::UserMessage(message) => {
                         &message.message_id
                     }
-                    agent_client_protocol::schema::v2::SessionUpdate::UserMessageChunk(chunk) => {
+                    agent_client_protocol::v2::schema::SessionUpdate::UserMessageChunk(chunk) => {
                         &chunk.message_id
                     }
                     _ => return None,
@@ -3151,6 +3186,7 @@ fn history_window(
             patch!(description);
             patch!(capabilities);
             patch!(state);
+            patch!(cwd);
             repeated_state = existed && *previous == before;
         }
         if index < start {

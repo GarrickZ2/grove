@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use agent_client_protocol::schema::{v2, MaybeUndefined};
+use agent_client_protocol::{schema::MaybeUndefined, v2::schema as v2};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MessageKind {

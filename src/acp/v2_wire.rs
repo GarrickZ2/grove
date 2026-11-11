@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 
 use agent_client_protocol::{
-    schema::{v2, ProtocolVersion},
-    Agent, InitializeOutcome, V2ConnectionTo,
+    schema::ProtocolVersion,
+    v2::schema as v2,
+    v2::{ConnectionTo as V2ConnectionTo, InitializeOutcome},
+    Agent,
 };
 
 use super::acp;
@@ -72,7 +74,7 @@ pub async fn initialize(
     );
     if local {
         capabilities = capabilities
-            .auth(v2::AuthCapabilities::new().terminal(v2::TerminalAuthCapabilities::new()));
+            .auth(v2::ClientAuthCapabilities::new().terminal(v2::TerminalAuthCapabilities::new()));
     }
     let request = v2::InitializeRequest::new(
         ProtocolVersion::V2,
@@ -85,10 +87,10 @@ pub async fn initialize(
             -32022,
             format!(
                 "ACP v2 was selected, but the Agent selected version {}",
-                mismatch.selected.as_u16()
+                mismatch.selected().as_u16()
             ),
         )
-        .data(serde_json::json!({"requested": 2, "supported": [mismatch.selected.as_u16()], "grove_lower_version": true}))),
+        .data(serde_json::json!({"requested": 2, "supported": [mismatch.selected().as_u16()], "grove_lower_version": true}))),
         _ => Err(acp::Error::internal_error().data("Unsupported ACP initialization outcome")),
     }
 }

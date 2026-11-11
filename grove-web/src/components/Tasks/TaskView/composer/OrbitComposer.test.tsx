@@ -9,7 +9,7 @@ vi.mock("../../../../keyboard/useEscapeScope", () => ({ useEscapeScope: vi.fn() 
 vi.mock("../SubagentAvatar", () => ({ SubagentAvatar: ({ sessionId }: { sessionId: string }) => <i data-avatar={sessionId} /> }));
 
 const base: ComposerStatusInput = {
-  running: false, planEntries: [], planDocTitle: null, subagents: [],
+  running: false, planEntries: [], planDocTitle: null, subagents: [], backgroundCount: 0,
   queue: { count: 0, failed: 0 }, memoryCount: 0, commentCount: 0, ask: null,
 };
 

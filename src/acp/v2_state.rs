@@ -1,7 +1,7 @@
 //! Track the v2 foreground state independently of prompt acceptance.
 //! A resume snapshot or repeated idle update is not another completion.
 
-use agent_client_protocol::schema::v2::{IdleStateUpdate, StateUpdate};
+use agent_client_protocol::v2::schema::{IdleStateUpdate, StateUpdate};
 
 #[derive(Debug, Default)]
 pub struct Foreground {

@@ -2,11 +2,11 @@ import { useMemo } from "react";
 import type { PlanEntry } from "../planEntries";
 
 /** The tray (or docked agent request) the Orbit composer's status zone has open. */
-export type OrbitTray = "plan" | "subagents" | "queue" | "memory" | "comments" | "ask";
+export type OrbitTray = "plan" | "subagents" | "background" | "queue" | "memory" | "comments" | "ask";
 
 /** What the TaskChat composer panel state maps to in Orbit. */
 export type ComposerPanelId =
-  | "auth" | "permission" | "ask_form" | "subagents" | "memory" | "todo" | "plan"
+  | "auth" | "permission" | "ask_form" | "subagents" | "background" | "memory" | "todo" | "plan"
   | "pending" | "previewComments" | "quota" | "context";
 
 export function orbitTrayForPanel(panel: ComposerPanelId | null): OrbitTray | null {
@@ -14,6 +14,7 @@ export function orbitTrayForPanel(panel: ComposerPanelId | null): OrbitTray | nu
     case "todo":
     case "plan": return "plan";
     case "subagents": return "subagents";
+    case "background": return "background";
     case "pending": return "queue";
     case "memory": return "memory";
     case "previewComments": return "comments";
@@ -38,6 +39,8 @@ export interface ComposerStatus {
   running: boolean;
   plan: PlanChip | null;
   subagents: { count: number; running: number; avatars: string[] } | null;
+  /** Work the Agent keeps running outside the conversation (ACP v2). */
+  background: number | null;
   queue: { count: number; failed: number } | null;
   memory: number | null;
   comments: number | null;
@@ -51,6 +54,7 @@ export interface ComposerStatusInput {
   /** Title of the latest plan document, when the session has one. */
   planDocTitle: string | null;
   subagents: readonly { sessionId: string; status: string }[];
+  backgroundCount: number;
   queue: { count: number; failed: number };
   memoryCount: number;
   commentCount: number;
@@ -94,6 +98,7 @@ export function buildComposerStatus(input: ComposerStatusInput): ComposerStatus 
     subagents: input.subagents.length > 0
       ? { count: input.subagents.length, running: runningSubagents, avatars: input.subagents.slice(0, 3).map((agent) => agent.sessionId) }
       : null,
+    background: input.backgroundCount > 0 ? input.backgroundCount : null,
     queue: input.queue.count > 0 ? { ...input.queue } : null,
     memory: input.memoryCount > 0 ? input.memoryCount : null,
     comments: input.commentCount > 0 ? input.commentCount : null,
@@ -104,7 +109,7 @@ export function buildComposerStatus(input: ComposerStatusInput): ComposerStatus 
 /** The status zone shows only while it has something to say. */
 export function hasComposerStatus(status: ComposerStatus | null): status is ComposerStatus {
   return !!status && (
-    status.running || !!status.plan || !!status.subagents || !!status.queue
+    status.running || !!status.plan || !!status.subagents || status.background !== null || !!status.queue
     || status.memory !== null || status.comments !== null || status.ask !== null
   );
 }
