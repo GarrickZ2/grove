@@ -90,6 +90,14 @@ pub fn create_api_router() -> Router {
             get(handlers::shares::list_links).post(handlers::shares::create_link),
         )
         .route("/shares/{token}", delete(handlers::shares::delete_link))
+        .route(
+            "/shares/{token}/scope",
+            put(handlers::shares::set_link_scope),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/share-items",
+            get(handlers::shares::share_items),
+        )
         .route("/shares/{token}/stop", post(handlers::shares::revoke_link))
         .route(
             "/shares/{token}/visitors/{visitorId}",

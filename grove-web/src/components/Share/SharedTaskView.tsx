@@ -13,6 +13,8 @@ import { SharedSketchPage } from "../Studio/SketchPage";
 import type { SharedSketches } from "../../api/sketches";
 import type { Task } from "../../data/types";
 import { OrbitInterfaceContext } from "../../orbit/ui/interfaceContext";
+import { ProjectSwitcher } from "../Tasks/TaskView/ProjectSwitcher";
+import { useProjectTarget, type ProjectTarget } from "../Tasks/TaskView/useProjectTarget";
 import { PanelShell, PANEL_HUES, Segmented } from "../../orbit/ui";
 import {
   shareErrorCode,
@@ -52,8 +54,11 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
     void (async () => {
       try {
         const opened = await source.open();
+        const changed = (from: ShareSource) => from.diff().then((value) => value.files.length).catch(() => 0);
         const [diff, output, pages, drawn] = await Promise.all([
-          source.diff().then((value) => value.files.length).catch(() => 0),
+          // The Task's own changes and those of the Projects it links.
+          Promise.all([changed(source), ...(opened.reviews ?? []).map((review) => changed(source.review(review.id)))])
+            .then((all) => all.reduce((sum, n) => sum + n, 0)),
           source.files().then((value) => value.files.filter((file) => !file.is_dir).length).catch(() => 0),
           source.designs()
             .then((value) => value.designs.filter((design) => !design.is_system).reduce((sum, design) => sum + design.pages.length, 0))
@@ -76,7 +81,6 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
   }, [source, attempt]);
 
   const canComment = !!info?.canComment;
-  const backend = useMemo(() => shareBackend(source, { canComment }), [source, canComment]);
   const shared = useMemo<SharedArtifacts>(() => {
     // The link's comments in the shape the Artifacts panel reads its own in.
     const entries = (list: SharedComment[]): ReviewCommentEntry[] => list.map((comment) => ({
@@ -132,6 +136,24 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
   }), [source, canComment]);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
+  // The reviews the Code Review tab switches between: the Task's own (Studio
+  // Tasks have none), and those of the Projects it links, as in the owner's
+  // Review panel.
+  const linkedReviews = info?.reviews;
+  const ownReview = info?.ownReview ?? true;
+  const targets = useMemo<ProjectTarget[]>(() => {
+    const linked = (linkedReviews ?? []).map((review) => ({ projectId: review.id, taskId: shareKey, name: review.name, linked: true }));
+    const own = { projectId: "", taskId: shareKey, name: info?.project || "This task", linked: false };
+    return ownReview || linked.length === 0 ? [own, ...linked] : linked;
+  }, [linkedReviews, ownReview, shareKey, info?.project]);
+  const { active: reviewTarget, select: selectReview } = useProjectTarget(`grove:share-review:${shareKey}`, targets);
+  const linkedReview = reviewTarget?.linked ? reviewTarget.projectId : null;
+  const reviewSource = useMemo(
+    () => (linkedReview ? source.review(linkedReview) : source),
+    [source, linkedReview],
+  );
+  const backend = useMemo(() => shareBackend(reviewSource, { canComment }), [reviewSource, canComment]);
+
   if (failure) {
     const message = stateMessage(failure.code, info?.owner || failure.owner);
     return (
@@ -155,7 +177,7 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
   const hasFiles = counts.files > 0;
   const hasDesigns = counts.designs > 0;
   const hasSketches = counts.sketches > 0;
-  const hasChanges = counts.changes > 0 || (!hasFiles && !hasDesigns && !hasSketches);
+  const hasChanges = counts.changes > 0 || (info.reviews?.length ?? 0) > 0 || (!hasFiles && !hasDesigns && !hasSketches);
   const tabs = [
     hasChanges ? { value: "changes" as const, label: `Changes ${counts.changes}` } : null,
     hasDesigns ? { value: "designs" as const, label: `Designs ${counts.designs}` } : null,
@@ -182,7 +204,16 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
         <div className="shared-body">
           {shown === "changes" ? (
             <PanelShell glyph={Eye} hue={PANEL_HUES.violet} title="Code Review" body="fill">
-              <DiffReviewPage projectId="share" taskId={shareKey} backend={backend} embedded />
+              <DiffReviewPage
+                key={reviewTarget?.projectId ?? ""}
+                projectId="share"
+                taskId={reviewTarget?.linked ? `${shareKey}:${reviewTarget.projectId}` : shareKey}
+                backend={backend}
+                embedded
+                title={(linkedReviews?.length ?? 0) > 0 && reviewTarget ? (
+                  <ProjectSwitcher targets={targets} active={reviewTarget} onSelect={selectReview} verb="Reviewing" />
+                ) : undefined}
+              />
             </PanelShell>
           ) : shown === "designs" ? (
             <PanelShell glyph={Frame} hue={PANEL_HUES.indigo} title="Design" body="fill">

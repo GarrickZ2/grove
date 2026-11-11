@@ -8,7 +8,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, OptionalExtension, Row};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::database;
@@ -25,12 +25,62 @@ pub enum ShareState {
     Revoked,
 }
 
+/// What one link shows of its Task. Each kind is either all of it (`None`:
+/// whatever the Task has, now and later) or the listed items only. A link
+/// with no scope shows the whole Task, the comments on the Task itself too.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShareScope {
+    /// Code Reviews: `""` for the Task's own, else a linked Project's id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviews: Option<Vec<String>>,
+    /// Design boards, by slug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub designs: Option<Vec<String>>,
+    /// Sketches, by id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sketches: Option<Vec<String>>,
+    /// Output files, by their path under `output/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<String>>,
+}
+
+impl ShareScope {
+    /// `None` when every kind is whole: that is the whole Task.
+    pub fn normalized(self) -> Option<Self> {
+        (self != Self::default()).then_some(self)
+    }
+
+    fn allows(list: &Option<Vec<String>>, item: &str) -> bool {
+        list.as_ref()
+            .is_none_or(|items| items.iter().any(|i| i == item))
+    }
+
+    pub fn allows_review(&self, id: &str) -> bool {
+        Self::allows(&self.reviews, id)
+    }
+    pub fn allows_design(&self, slug: &str) -> bool {
+        Self::allows(&self.designs, slug)
+    }
+    pub fn allows_sketch(&self, id: &str) -> bool {
+        Self::allows(&self.sketches, id)
+    }
+    pub fn allows_file(&self, path: &str) -> bool {
+        Self::allows(&self.files, path)
+    }
+    /// The design system shows as a board only with every design shared.
+    pub fn all_designs(&self) -> bool {
+        self.designs.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Share {
     pub token: String,
     pub project_key: String,
     pub task_id: String,
     pub can_comment: bool,
+    /// What the link shows; `None` for the whole Task.
+    pub scope: Option<ShareScope>,
     pub expires_at: Option<String>,
     pub max_opens: Option<u32>,
     pub opens: u32,
@@ -159,11 +209,30 @@ fn share_from_row(row: &Row) -> rusqlite::Result<Share> {
         opens: row.get(6)?,
         created_at: row.get(7)?,
         revoked_at: row.get(8)?,
+        // A scope that no longer reads is the narrowest one: nothing.
+        scope: row
+            .get::<_, Option<String>>(9)?
+            .map(|text| serde_json::from_str(&text).unwrap_or_else(|_| nothing_scope())),
     })
 }
 
+fn nothing_scope() -> ShareScope {
+    ShareScope {
+        reviews: Some(Vec::new()),
+        designs: Some(Vec::new()),
+        sketches: Some(Vec::new()),
+        files: Some(Vec::new()),
+    }
+}
+
+fn scope_text(scope: &Option<ShareScope>) -> Option<String> {
+    scope
+        .as_ref()
+        .map(|scope| serde_json::to_string(scope).unwrap_or_default())
+}
+
 const SHARE_COLUMNS: &str =
-    "token, project_key, task_id, can_comment, expires_at, max_opens, opens, created_at, revoked_at";
+    "token, project_key, task_id, can_comment, expires_at, max_opens, opens, created_at, revoked_at, scope";
 
 pub fn create_share(
     project_key: &str,
@@ -171,7 +240,9 @@ pub fn create_share(
     can_comment: bool,
     expires_in_days: Option<u32>,
     max_opens: Option<u32>,
+    scope: Option<ShareScope>,
 ) -> Result<Share> {
+    let scope = scope.and_then(ShareScope::normalized);
     let now = Utc::now();
     let share = Share {
         token: random_token(),
@@ -185,10 +256,11 @@ pub fn create_share(
         opens: 0,
         created_at: now.to_rfc3339(),
         revoked_at: None,
+        scope,
     };
     database::connection().execute(
-        "INSERT INTO task_shares (token, project_key, task_id, can_comment, expires_at, max_opens, opens, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)",
+        "INSERT INTO task_shares (token, project_key, task_id, can_comment, expires_at, max_opens, opens, created_at, scope)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8)",
         params![
             share.token,
             share.project_key,
@@ -197,9 +269,20 @@ pub fn create_share(
             share.expires_at,
             share.max_opens,
             share.created_at,
+            scope_text(&share.scope),
         ],
     )?;
     Ok(share)
+}
+
+/// Change what a link shows. `None` (or every kind whole) is the whole Task.
+pub fn set_scope(token: &str, scope: Option<ShareScope>) -> Result<bool> {
+    let scope = scope.and_then(ShareScope::normalized);
+    let updated = database::connection().execute(
+        "UPDATE task_shares SET scope = ?1 WHERE token = ?2",
+        params![scope_text(&scope), token],
+    )?;
+    Ok(updated > 0)
 }
 
 pub fn get_share(token: &str) -> Result<Option<Share>> {
@@ -726,6 +809,25 @@ mod tests {
     }
 
     #[test]
+    fn scope_lists_or_whole_kinds() {
+        // Every kind whole is the whole Task.
+        assert_eq!(ShareScope::default().normalized(), None);
+        let scope = ShareScope {
+            designs: Some(vec!["home".into()]),
+            files: Some(Vec::new()),
+            ..Default::default()
+        };
+        assert!(scope.allows_design("home"));
+        assert!(!scope.allows_design("about"));
+        assert!(!scope.all_designs());
+        assert!(!scope.allows_file("report.md"));
+        // A kind left out is all of it, later additions too.
+        assert!(scope.allows_sketch("anything"));
+        assert!(scope.allows_review(""));
+        assert_eq!(scope.clone().normalized(), Some(scope));
+    }
+
+    #[test]
     fn state_follows_limits() {
         let mut share = Share {
             token: "t".into(),
@@ -737,6 +839,7 @@ mod tests {
             opens: 1,
             created_at: Utc::now().to_rfc3339(),
             revoked_at: None,
+            scope: None,
         };
         assert_eq!(share.state(), ShareState::Active);
         share.opens = 2;

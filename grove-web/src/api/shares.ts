@@ -18,10 +18,32 @@ export interface ShareVisitor {
   rejoined: boolean;
 }
 
+/** What a link shows. A kind left out is all of it, later additions too;
+ *  a list is those items only. No scope at all is the whole Task. */
+export interface ShareScope {
+  /** `""` for the Task's own changes, else a linked Project's id. */
+  reviews?: string[];
+  designs?: string[];
+  sketches?: string[];
+  /** Paths under output/. */
+  files?: string[];
+}
+
+export type ShareScopeKind = keyof ShareScope;
+
+/** What a link of a Task can show, to choose from. */
+export interface ShareItems {
+  reviews: { id: string; name: string }[];
+  designs: { id: string; name: string }[];
+  sketches: { id: string; name: string }[];
+  files: string[];
+}
+
 export interface ShareLink {
   token: string;
   url: string;
   canComment: boolean;
+  scope: ShareScope | null;
   expiresAt: string | null;
   /** How many people may open it; null for anyone with the link. */
   maxPeople: number | null;
@@ -57,6 +79,10 @@ export interface ShareInfo {
   people: number;
   state: ShareState;
   activityAt: string | null;
+  /** Whether the Task has a Code Review of its own (Studio Tasks don't). */
+  ownReview?: boolean;
+  /** Linked Projects whose Code Review the link also shows. */
+  reviews?: { id: string; name: string }[];
   you: { id: string; name: string; kind: 'grove' | 'browser' } | null;
 }
 
@@ -178,13 +204,21 @@ export function listShareLinks(projectId: string, taskId: string): Promise<Share
 export function createShareLink(
   projectId: string,
   taskId: string,
-  options: { canComment: boolean; expiresInDays: number | null; maxPeople: number | null },
+  options: { canComment: boolean; expiresInDays: number | null; maxPeople: number | null; scope: ShareScope | null },
 ): Promise<ShareLink> {
   const body = { ...options, address: shareAddress() || undefined };
   return apiClient.post<typeof body, ShareLink>(
     `/api/v1/projects/${projectId}/tasks/${encodeURIComponent(taskId)}/shares`,
     body,
   );
+}
+
+export function setShareLinkScope(token: string, scope: ShareScope | null): Promise<void> {
+  return apiClient.put<{ scope: ShareScope | null }, void>(`/api/v1/shares/${token}/scope`, { scope });
+}
+
+export function getShareItems(projectId: string, taskId: string): Promise<ShareItems> {
+  return apiClient.get<ShareItems>(`/api/v1/projects/${projectId}/tasks/${encodeURIComponent(taskId)}/share-items`);
 }
 
 export function revokeShareLink(token: string): Promise<void> {
@@ -257,18 +291,26 @@ export interface ShareSource {
   /** The Task's sketches and the comments on them. */
   sketches(): Promise<{ sketches: SketchMeta[]; comments: SketchComment[]; me: string }>;
   sketchScene(sketchId: string): Promise<unknown>;
+  /** The same link, its review calls (changes and comments) reading a
+   *  linked Project's Code Review instead of the Task's own. */
+  review(projectId: string): ShareSource;
 }
 
 type SharedSketchData = Awaited<ReturnType<ShareSource['sketches']>>;
 
 const designPagePath = (design: string, file: string) => `designs/${encodeURIComponent(design)}/pages/${encodeURIComponent(file)}`;
 
-export function receivedShareSource(id: string): ShareSource {
+/** `&project=…` / `?project=…` for a linked Project's review, else nothing. */
+const reviewParam = (project: string | undefined, first: boolean) =>
+  project ? `${first ? '?' : '&'}project=${encodeURIComponent(project)}` : '';
+
+export function receivedShareSource(id: string, project?: string): ShareSource {
   const base = `/api/v1/shared/${id}/host`;
-  const q = (path: string) => `path=${encodeURIComponent(path)}`;
+  const q = (path: string) => `path=${encodeURIComponent(path)}${reviewParam(project, false)}`;
+  const r = reviewParam(project, true);
   return {
     open: () => apiClient.post<undefined, ShareInfo>(`${base}/open`),
-    diff: () => apiClient.get<DiffStatsResult>(`${base}/diff`),
+    diff: () => apiClient.get<DiffStatsResult>(`${base}/diff${r}`),
     fileDiff: (path, oldPath) =>
       apiClient.get<DiffFile>(`${base}/diff/file?${q(path)}${oldPath ? `&old_path=${encodeURIComponent(oldPath)}` : ''}`),
     fileContent: async (path) => (await apiClient.get<{ content: string }>(`${base}/diff/content?${q(path)}`)).content,
@@ -276,9 +318,9 @@ export function receivedShareSource(id: string): ShareSource {
     fileText: (path) => apiClient.getText(`${base}/files/preview?${q(path)}`),
     fileBlob: (path) => apiClient.getBlob(`${base}/files/download?${q(path)}`),
     fileUrl: (path) => `${base}/files/download?${q(path)}`,
-    comments: () => apiClient.get<{ comments: SharedComment[] }>(`${base}/comments`),
-    addComment: (comment) => apiClient.post<NewSharedComment, { comments: SharedComment[] }>(`${base}/comments`, comment),
-    addReply: (id, content) => apiClient.post<{ content: string }, { comments: SharedComment[] }>(`${base}/comments/${id}/replies`, { content }),
+    comments: () => apiClient.get<{ comments: SharedComment[] }>(`${base}/comments${r}`),
+    addComment: (comment) => apiClient.post<NewSharedComment, { comments: SharedComment[] }>(`${base}/comments${r}`, comment),
+    addReply: (id, content) => apiClient.post<{ content: string }, { comments: SharedComment[] }>(`${base}/comments/${id}/replies${r}`, { content }),
     // This Grove relays the calls; a page's frame loads its files from the owner's Grove itself.
     designs: async () => {
       const data = await apiClient.get<SharedDesignData>(`${base}/designs`);
@@ -287,6 +329,7 @@ export function receivedShareSource(id: string): ShareSource {
     designPage: (design, file) => apiClient.getText(`${base}/${designPagePath(design, file)}`),
     sketches: () => apiClient.get<SharedSketchData>(`${base}/sketches`),
     sketchScene: (sketchId) => apiClient.get<unknown>(`${base}/sketches/${encodeURIComponent(sketchId)}/scene`),
+    review: (projectId) => receivedShareSource(id, projectId),
   };
 }
 
@@ -318,12 +361,13 @@ export function joinPublicShare(token: string, name: string): Promise<ShareInfo>
   return publicJson<ShareInfo>(`/api/v1/share/${token}/join`, jsonBody({ name, kind: 'browser' }));
 }
 
-export function publicShareSource(token: string): ShareSource {
+export function publicShareSource(token: string, project?: string): ShareSource {
   const base = `/api/v1/share/${token}`;
-  const q = (path: string) => `path=${encodeURIComponent(path)}`;
+  const q = (path: string) => `path=${encodeURIComponent(path)}${reviewParam(project, false)}`;
+  const r = reviewParam(project, true);
   return {
     open: () => publicJson<ShareInfo>(`${base}/open`, { method: 'POST' }),
-    diff: () => publicJson<DiffStatsResult>(`${base}/diff`),
+    diff: () => publicJson<DiffStatsResult>(`${base}/diff${r}`),
     fileDiff: (path, oldPath) =>
       publicJson<DiffFile>(`${base}/diff/file?${q(path)}${oldPath ? `&old_path=${encodeURIComponent(oldPath)}` : ''}`),
     fileContent: async (path) => (await publicJson<{ content: string }>(`${base}/diff/content?${q(path)}`)).content,
@@ -331,9 +375,9 @@ export function publicShareSource(token: string): ShareSource {
     fileText: async (path) => (await publicRequest(`${base}/files/preview?${q(path)}`)).text(),
     fileBlob: async (path) => (await publicRequest(`${base}/files/download?${q(path)}`)).blob(),
     fileUrl: (path) => `${base}/files/download?${q(path)}`,
-    comments: () => publicJson<{ comments: SharedComment[] }>(`${base}/comments`),
-    addComment: (comment) => publicJson<{ comments: SharedComment[] }>(`${base}/comments`, jsonBody(comment)),
-    addReply: (id, content) => publicJson<{ comments: SharedComment[] }>(`${base}/comments/${id}/replies`, jsonBody({ content })),
+    comments: () => publicJson<{ comments: SharedComment[] }>(`${base}/comments${r}`),
+    addComment: (comment) => publicJson<{ comments: SharedComment[] }>(`${base}/comments${r}`, jsonBody(comment)),
+    addReply: (id, content) => publicJson<{ comments: SharedComment[] }>(`${base}/comments/${id}/replies${r}`, jsonBody({ content })),
     designs: async () => {
       const data = await publicJson<SharedDesignData>(`${base}/designs`);
       return { designs: data.designs, comments: data.comments, me: data.me, filesBase: data.filesPath };
@@ -341,5 +385,6 @@ export function publicShareSource(token: string): ShareSource {
     designPage: async (design, file) => (await publicRequest(`${base}/${designPagePath(design, file)}`)).text(),
     sketches: () => publicJson<SharedSketchData>(`${base}/sketches`),
     sketchScene: (sketchId) => publicJson<unknown>(`${base}/sketches/${encodeURIComponent(sketchId)}/scene`),
+    review: (projectId) => publicShareSource(token, projectId),
   };
 }

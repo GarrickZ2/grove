@@ -1021,6 +1021,7 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     add_column_if_missing(conn, "connects", "buddy_id", "TEXT")?;
     // The share visitor who wrote a comment through a share link.
     add_column_if_missing(conn, "review_comments", "share_visitor", "TEXT")?;
+    add_column_if_missing(conn, "task_shares", "scope", "TEXT")?;
     // The latest Buddy message a follow-up waits on; lets startup reconcile it.
     add_column_if_missing(conn, "buddy_delegations", "round_message_id", "TEXT")?;
     // ALTER TABLE ADD COLUMN is not idempotent in SQLite, so we ignore errors

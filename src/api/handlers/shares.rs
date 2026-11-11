@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::error::GroveError;
-use crate::storage::shares::{self, Received, Share, ShareState, Visitor, VisitorKind};
+use crate::storage::shares::{self, Received, Share, ShareScope, ShareState, Visitor, VisitorKind};
 use crate::storage::{comments, config, tasks, workspace};
 
 type ShareError = (StatusCode, Json<Value>);
@@ -275,6 +275,7 @@ fn link_json(share: &Share, address: &str, comments: u32) -> Value {
         "token": share.token,
         "url": format!("{address}/s/{}", share.token),
         "canComment": share.can_comment,
+        "scope": share.scope,
         "expiresAt": share.expires_at,
         "maxPeople": share.max_opens,
         "people": share.opens,
@@ -364,6 +365,9 @@ pub struct CreateLinkInput {
     /// The address this window was told links should use.
     #[serde(default)]
     address: Option<String>,
+    /// What the link shows; none for the whole Task.
+    #[serde(default)]
+    scope: Option<ShareScope>,
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/shares
@@ -386,9 +390,78 @@ pub async fn create_link(
         input.can_comment,
         input.expires_in_days,
         input.max_people,
+        input.scope,
     )
     .map_err(grove_error)?;
     Ok(Json(link_json(&share, &address, 0)))
+}
+
+#[derive(Deserialize)]
+pub struct ScopeInput {
+    #[serde(default)]
+    scope: Option<ShareScope>,
+}
+
+/// PUT /api/v1/shares/{token}/scope — change what a link shows.
+pub async fn set_link_scope(
+    Path(token): Path<String>,
+    Json(input): Json<ScopeInput>,
+) -> Result<StatusCode, ShareError> {
+    if !shares::set_scope(&token, input.scope).map_err(grove_error)? {
+        return Err(fail(StatusCode::NOT_FOUND, "not_found", "Link not found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// GET /api/v1/projects/{id}/tasks/{taskId}/share-items — what a link of
+/// this Task can show, to choose from.
+pub async fn share_items(
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Json<Value>, ShareError> {
+    let key = task_key(&id)?;
+    let project = workspace::load_project_by_hash(&key)
+        .ok()
+        .flatten()
+        .ok_or_else(|| fail(StatusCode::NOT_FOUND, "not_found", "Project not found"))?;
+    let studio = project.project_type == workspace::ProjectType::Studio;
+    let mut reviews = Vec::new();
+    if !studio {
+        reviews.push(json!({ "id": "", "name": project.name }));
+    }
+    for (id, name) in linked_projects_reviews(&key, &task_id) {
+        reviews.push(json!({ "id": id, "name": name }));
+    }
+    let (designs, sketches, files) = if studio {
+        let designs: Vec<Value> = crate::storage::designs::list_designs(&key, &task_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|design| !design.is_system)
+            .map(|design| json!({ "id": design.slug, "name": design.name }))
+            .collect();
+        let sketches: Vec<Value> = crate::storage::sketches::load_index(&key, &task_id)
+            .map(|index| index.sketches)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|sketch| json!({ "id": sketch.id, "name": sketch.name }))
+            .collect();
+        let files: Vec<String> = super::tasks::list_artifacts(Path((key.clone(), task_id)))
+            .await
+            .map(|Json(artifacts)| artifacts.output)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|file| !file.is_dir)
+            .map(|file| file.path)
+            .collect();
+        (designs, sketches, files)
+    } else {
+        (Vec::new(), Vec::new(), Vec::new())
+    };
+    Ok(Json(json!({
+        "reviews": reviews,
+        "designs": designs,
+        "sketches": sketches,
+        "files": files,
+    })))
 }
 
 /// POST /api/v1/shares/{token}/stop
@@ -537,6 +610,13 @@ fn share_info(share: &Share, visitor: Option<&Visitor>) -> Value {
             }
         },
         "activityAt": activity,
+        // Whether the Task has a Code Review of its own (Studio Tasks don't),
+        // and those of the Projects it links, which the link also shows.
+        "ownReview": shows_own_review(share),
+        "reviews": linked_reviews(share)
+            .into_iter()
+            .map(|(id, name)| json!({ "id": id, "name": name }))
+            .collect::<Vec<_>>(),
         "you": visitor.map(|visitor| json!({
             "id": visitor.id,
             "name": visitor.name,
@@ -718,17 +798,18 @@ pub async fn public_open(
 pub async fn public_diff(
     Path(token): Path<String>,
     headers: HeaderMap,
+    Query(review): Query<ReviewQuery>,
 ) -> Result<Response, ShareError> {
     let (share, _) = visitor_for(&headers, &token)?;
-    let project = studio_or_repo(&share);
-    if project == ProjectKind::Studio {
+    if review.project.is_none() && !shows_own_review(&share) {
         return Ok(
             Json(json!({ "files": [], "total_additions": 0, "total_deletions": 0 }))
                 .into_response(),
         );
     }
+    let target = review_target(&share, review.project.as_deref())?;
     match super::tasks::get_diff(
-        Path((share.project_key.clone(), share.task_id.clone())),
+        Path(target),
         Query(super::tasks::DiffQuery {
             from_ref: None,
             to_ref: None,
@@ -751,6 +832,8 @@ pub struct FileDiffQuery {
     path: String,
     #[serde(default)]
     old_path: Option<String>,
+    #[serde(default)]
+    project: Option<String>,
 }
 
 /// GET /api/v1/share/{token}/diff/file?path=…
@@ -768,8 +851,12 @@ pub async fn public_file_diff(
     {
         return Err(fail(StatusCode::NOT_FOUND, "not_found", "File not found"));
     }
+    let target = review_target(&share, query.project.as_deref())?;
+    if query.project.is_none() && !shows_own_review(&share) {
+        return Err(fail(StatusCode::NOT_FOUND, "not_found", "File not found"));
+    }
     super::tasks::get_single_file_diff(
-        Path((share.project_key.clone(), share.task_id.clone())),
+        Path(target),
         Query(super::tasks::SingleFileDiffQuery {
             path: query.path,
             old_path: query.old_path,
@@ -791,10 +878,13 @@ pub async fn public_file_content(
     use crate::platform::CanonicalPath;
     let (share, _) = visitor_for(&headers, &token)?;
     let not_found = || fail(StatusCode::NOT_FOUND, "not_found", "File not found");
-    if studio_or_repo(&share) == ProjectKind::Studio || !shared_path(&share, &query.path).await {
+    let (project, task_id) = review_target(&share, query.project.as_deref())?;
+    if (query.project.is_none() && !shows_own_review(&share))
+        || !changed_path(&project, &task_id, &query.path).await
+    {
         return Err(not_found());
     }
-    let task = tasks::get_task(&share.project_key, &share.task_id)
+    let task = tasks::get_task(&project, &task_id)
         .ok()
         .flatten()
         .ok_or_else(task_gone)?;
@@ -812,6 +902,84 @@ pub async fn public_file_content(
     }
     let content = std::fs::read_to_string(&file).map_err(|_| not_found())?;
     Ok(Json(json!({ "content": content, "path": query.path })))
+}
+
+#[derive(Deserialize, Default)]
+pub struct ReviewQuery {
+    /// A linked Project whose Code Review to read instead of the Task's own.
+    #[serde(default)]
+    project: Option<String>,
+}
+
+/// The Code Reviews of the Projects a Task links, as its owner's Review
+/// panel shows them: (project id, name), in link order. Each is that
+/// Project's Local Task.
+fn linked_reviews(share: &Share) -> Vec<(String, String)> {
+    let scope = scope_of(share);
+    linked_projects_reviews(&share.project_key, &share.task_id)
+        .into_iter()
+        .filter(|(id, _)| scope.allows_review(id))
+        .collect()
+}
+
+/// Every linked Project with a Code Review, whatever a link shows.
+fn linked_projects_reviews(project_key: &str, task_id: &str) -> Vec<(String, String)> {
+    let ids = tasks::load_linked_project_ids(project_key, task_id).unwrap_or_default();
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let registered = workspace::load_projects().unwrap_or_default();
+    super::tasks::linked_projects::resolve_items(ids, &registered)
+        .linked_projects
+        .into_iter()
+        .filter(|item| item.exists && item.review_task_id.is_some())
+        .map(|item| (item.id, item.name))
+        .collect()
+}
+
+fn scope_of(share: &Share) -> ShareScope {
+    share.scope.clone().unwrap_or_default()
+}
+
+/// Whether the link shows the Task's own Code Review.
+fn shows_own_review(share: &Share) -> bool {
+    studio_or_repo(share) == ProjectKind::Repo && scope_of(share).allows_review("")
+}
+
+/// Whether someone on the link sees a comment on the shared Task: one on
+/// something the link shows. Comments on the Task itself need the whole Task.
+fn comment_in_scope(share: &Share, comment: &comments::Comment) -> bool {
+    let Some(scope) = share.scope.as_ref() else {
+        return true;
+    };
+    let Some(path) = comment.file_path.as_deref() else {
+        return false;
+    };
+    if matches!(comment.comment_type, comments::CommentType::Project) {
+        return false;
+    }
+    if let Some((design, _)) = super::tasks::designs::split_design_path(path) {
+        return scope.allows_design(design);
+    }
+    if let Some(sketch) = super::tasks::split_sketch_path(path) {
+        return scope.allows_sketch(sketch);
+    }
+    if let Some(file) = path.strip_prefix("output/") {
+        return scope.allows_file(file);
+    }
+    studio_or_repo(share) == ProjectKind::Repo && scope.allows_review("")
+}
+
+/// Whose review a request reads: the shared Task's own, or a linked
+/// Project's Local Task when `project` names one the link shows.
+fn review_target(share: &Share, project: Option<&str>) -> Result<(String, String), ShareError> {
+    match project.filter(|id| !id.is_empty()) {
+        None => Ok((share.project_key.clone(), share.task_id.clone())),
+        Some(id) if linked_reviews(share).iter().any(|(linked, _)| linked == id) => {
+            Ok((id.to_string(), tasks::LOCAL_TASK_ID.to_string()))
+        }
+        Some(_) => Err(fail(StatusCode::NOT_FOUND, "not_found", "Not found")),
+    }
 }
 
 #[derive(PartialEq)]
@@ -841,10 +1009,28 @@ pub async fn public_files(
     if studio_or_repo(&share) == ProjectKind::Repo {
         return Ok(Json(json!({ "files": [] })));
     }
-    let files = super::tasks::list_artifacts(Path((share.project_key, share.task_id)))
+    let scope = scope_of(&share);
+    let output = super::tasks::list_artifacts(Path((share.project_key, share.task_id)))
         .await
-        .map(|Json(artifacts)| json!(artifacts.output))
-        .unwrap_or_else(|_| json!([]));
+        .map(|Json(artifacts)| artifacts.output)
+        .unwrap_or_default();
+    // Chosen files only; a folder shows when a chosen file is inside it.
+    let chosen: Vec<&str> = output
+        .iter()
+        .filter(|file| !file.is_dir && scope.allows_file(&file.path))
+        .map(|file| file.path.as_str())
+        .collect();
+    let files: Vec<&super::tasks::ArtifactFile> = output
+        .iter()
+        .filter(|file| {
+            if file.is_dir {
+                let prefix = format!("{}/", file.path);
+                chosen.iter().any(|path| path.starts_with(&prefix))
+            } else {
+                chosen.contains(&file.path.as_str())
+            }
+        })
+        .collect();
     Ok(Json(json!({ "files": files })))
 }
 
@@ -877,9 +1063,25 @@ pub async fn public_designs(
         visitor.id,
         auth.plugin_asset_token(&design_files_scope(&token, &visitor.id))
     );
+    let scope = scope_of(&share);
+    let designs: Vec<_> = crate::storage::designs::list_designs(project, task_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|design| {
+            if design.is_system {
+                scope.all_designs()
+            } else {
+                scope.allows_design(&design.slug)
+            }
+        })
+        .collect();
+    let comments: Vec<_> = design_api::shared_design_comments(project, task_id)
+        .into_iter()
+        .filter(|comment| scope.allows_design(comment.design()))
+        .collect();
     Ok(Json(json!({
-        "designs": crate::storage::designs::list_designs(project, task_id).unwrap_or_default(),
-        "comments": design_api::shared_design_comments(project, task_id),
+        "designs": designs,
+        "comments": comments,
         "me": visitor.name,
         "filesPath": files,
         "filesUrl": format!("{}{files}", resolve_address(&headers, None).0.trim_end_matches('/')),
@@ -898,11 +1100,21 @@ pub async fn public_sketches(
         ));
     }
     let (project, task_id) = (share.project_key.as_str(), share.task_id.as_str());
+    let scope = scope_of(&share);
+    let sketches: Vec<_> = crate::storage::sketches::load_index(project, task_id)
+        .map(|index| index.sketches)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|sketch| scope.allows_sketch(&sketch.id))
+        .collect();
+    let comments: Vec<_> = super::tasks::sketch_comments(project, task_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|comment| scope.allows_sketch(comment.sketch()))
+        .collect();
     Ok(Json(json!({
-        "sketches": crate::storage::sketches::load_index(project, task_id)
-            .map(|index| index.sketches)
-            .unwrap_or_default(),
-        "comments": super::tasks::sketch_comments(project, task_id).unwrap_or_default(),
+        "sketches": sketches,
+        "comments": comments,
         "me": visitor.name,
     })))
 }
@@ -922,6 +1134,7 @@ pub async fn public_sketch_scene(
     let (share, _) = visitor_for(&headers, &token)?;
     let not_found = || fail(StatusCode::NOT_FOUND, "not_found", "Not found");
     if studio_or_repo(&share) == ProjectKind::Repo
+        || !scope_of(&share).allows_sketch(&sketch)
         || !super::tasks::sketch_exists(&share.project_key, &share.task_id, &sketch)
     {
         return Err(not_found());
@@ -952,7 +1165,11 @@ pub async fn public_design_file(
         ShareState::Exhausted if shares::has_opened(&visitor) => {}
         state => return Err(state_error(state)),
     }
-    if studio_or_repo(&share) == ProjectKind::Repo {
+    // A page loads its own design's files and the design system's.
+    let design = path.split('/').next().unwrap_or("");
+    if studio_or_repo(&share) == ProjectKind::Repo
+        || !(design == crate::storage::designs::SYSTEM || scope_of(&share).allows_design(design))
+    {
         return Err(not_found());
     }
     super::tasks::designs::design_file(&share.project_key, &share.task_id, &path)
@@ -974,7 +1191,13 @@ pub async fn public_design_page(
     headers: HeaderMap,
 ) -> Result<Response, ShareError> {
     let (share, _) = visitor_for(&headers, &token)?;
-    if studio_or_repo(&share) == ProjectKind::Repo {
+    let scope = scope_of(&share);
+    let shown = if design == crate::storage::designs::SYSTEM {
+        scope.all_designs()
+    } else {
+        scope.allows_design(&design)
+    };
+    if studio_or_repo(&share) == ProjectKind::Repo || !shown {
         return Err(fail(StatusCode::NOT_FOUND, "not_found", "Not found"));
     }
     let html =
@@ -993,6 +1216,8 @@ pub async fn public_design_page(
 #[derive(Deserialize)]
 pub struct SharedFileQuery {
     path: String,
+    #[serde(default)]
+    project: Option<String>,
 }
 
 /// A path inside the shared area: plain names only, no `..`, no root, no
@@ -1010,7 +1235,7 @@ fn plain_relative(path: &str) -> bool {
 fn check_output_file(share: &Share, path: &str) -> Result<(), ShareError> {
     use crate::platform::CanonicalPath;
     let not_found = || fail(StatusCode::NOT_FOUND, "not_found", "File not found");
-    if !plain_relative(path) {
+    if !plain_relative(path) || !scope_of(share).allows_file(path) {
         return Err(not_found());
     }
     let project = workspace::load_project_by_hash(&share.project_key)
@@ -1088,20 +1313,30 @@ pub async fn public_file_download(
 pub async fn public_comments(
     Path(token): Path<String>,
     headers: HeaderMap,
+    Query(review): Query<ReviewQuery>,
 ) -> Result<Json<Value>, ShareError> {
     let (share, visitor) = visitor_for(&headers, &token)?;
-    Ok(Json(shared_comments(&share, &visitor)?))
+    let target = review_target(&share, review.project.as_deref())?;
+    Ok(Json(shared_comments(&share, &target, &visitor)?))
 }
 
-fn shared_comments(share: &Share, visitor: &Visitor) -> Result<Value, ShareError> {
-    let written_by = comments::share_comment_visitors(&share.project_key, &share.task_id)
-        .map_err(grove_error)?;
+/// The threads on `target` (the shared Task, or a linked Project's review).
+fn shared_comments(
+    share: &Share,
+    (project, task_id): &(String, String),
+    visitor: &Visitor,
+) -> Result<Value, ShareError> {
+    let written_by = comments::share_comment_visitors(project, task_id).map_err(grove_error)?;
+    // Names of people on this Task's links: a linked Project's review has
+    // visitors of this link writing in it too.
     let names =
         shares::task_visitor_names(&share.project_key, &share.task_id).map_err(grove_error)?;
-    let data = comments::load_comments(&share.project_key, &share.task_id).map_err(grove_error)?;
+    let data = comments::load_comments(project, task_id).map_err(grove_error)?;
+    let own = *project == share.project_key && *task_id == share.task_id;
     let list: Vec<Value> = data
         .comments
         .into_iter()
+        .filter(|comment| !own || comment_in_scope(share, comment))
         .map(|comment| {
             // The owner's comments and the agent's are shown too: everyone
             // on the link reads the same threads.
@@ -1164,9 +1399,12 @@ const COMMENT_LIMIT: usize = 10_000;
 pub async fn public_add_comment(
     Path(token): Path<String>,
     headers: HeaderMap,
+    Query(review): Query<ReviewQuery>,
     Json(input): Json<NewSharedComment>,
 ) -> Result<Json<Value>, ShareError> {
     let (share, visitor) = visitor_for(&headers, &token)?;
+    let target = review_target(&share, review.project.as_deref())?;
+    let linked = review.project.is_some();
     if !share.can_comment {
         return Err(fail(
             StatusCode::FORBIDDEN,
@@ -1183,7 +1421,12 @@ pub async fn public_add_comment(
         ));
     }
     if let Some(path) = input.file_path.as_deref() {
-        if !shared_path(&share, path).await {
+        let shown = if linked {
+            changed_path(&target.0, &target.1, path).await
+        } else {
+            shared_path(&share, path).await
+        };
+        if !shown {
             return Err(fail(
                 StatusCode::BAD_REQUEST,
                 "invalid",
@@ -1191,7 +1434,16 @@ pub async fn public_add_comment(
             ));
         }
     }
-    let (project, task_id) = (share.project_key.as_str(), share.task_id.as_str());
+    let wants_task_comment =
+        input.comment_type.as_deref() == Some("project") || input.file_path.is_none();
+    if !linked && wants_task_comment && share.scope.is_some() {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            "invalid",
+            "Comments go on what this link shows",
+        ));
+    }
+    let (project, task_id) = (target.0.as_str(), target.1.as_str());
     let comment = match (input.comment_type.as_deref(), input.file_path) {
         (Some("project"), _) | (_, None) => comments::add_comment(
             project,
@@ -1212,7 +1464,8 @@ pub async fn public_add_comment(
                 .anchor
                 .and_then(|anchor| super::tasks::designs::anchor_text(&anchor));
             // Kept under the path the owner's own comments on the file use.
-            let path = if studio_or_repo(&share) == ProjectKind::Studio
+            let path = if !linked
+                && studio_or_repo(&share) == ProjectKind::Studio
                 && super::tasks::designs::split_design_path(&path).is_none()
                 && super::tasks::split_sketch_path(&path).is_none()
                 && !path.starts_with("output/")
@@ -1274,7 +1527,7 @@ pub async fn public_add_comment(
     .map_err(grove_error)?;
     comments::set_share_visitor(project, task_id, comment.id, &visitor.id).map_err(grove_error)?;
     notify_comment(&share, &visitor, &comment);
-    Ok(Json(shared_comments(&share, &visitor)?))
+    Ok(Json(shared_comments(&share, &target, &visitor)?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1288,9 +1541,11 @@ pub struct NewSharedReply {
 pub async fn public_add_reply(
     Path((token, id)): Path<(String, u32)>,
     headers: HeaderMap,
+    Query(review): Query<ReviewQuery>,
     Json(input): Json<NewSharedReply>,
 ) -> Result<Json<Value>, ShareError> {
     let (share, visitor) = visitor_for(&headers, &token)?;
+    let target = review_target(&share, review.project.as_deref())?;
     if !share.can_comment {
         return Err(fail(
             StatusCode::FORBIDDEN,
@@ -1306,16 +1561,23 @@ pub async fn public_add_reply(
             format!("A reply needs 1 to {COMMENT_LIMIT} characters"),
         ));
     }
-    let found = comments::reply_comment(
-        &share.project_key,
-        &share.task_id,
-        id,
-        content,
-        &visitor.name,
-        "",
-        "",
-    )
-    .map_err(grove_error)?;
+    let own = target.0 == share.project_key && target.1 == share.task_id;
+    if own {
+        let visible = comments::load_comments(&target.0, &target.1)
+            .map_err(grove_error)?
+            .comments
+            .iter()
+            .any(|comment| comment.id == id && comment_in_scope(&share, comment));
+        if !visible {
+            return Err(fail(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "Comment not found",
+            ));
+        }
+    }
+    let found = comments::reply_comment(&target.0, &target.1, id, content, &visitor.name, "", "")
+        .map_err(grove_error)?;
     if !found {
         return Err(fail(
             StatusCode::NOT_FOUND,
@@ -1323,7 +1585,7 @@ pub async fn public_add_reply(
             "Comment not found",
         ));
     }
-    Ok(Json(shared_comments(&share, &visitor)?))
+    Ok(Json(shared_comments(&share, &target, &visitor)?))
 }
 
 /// Whether a file is one the link shows: a changed file, or an output file.
@@ -1333,22 +1595,33 @@ async fn shared_path(share: &Share, path: &str) -> bool {
     }
     if studio_or_repo(share) == ProjectKind::Studio {
         // A design page, a sketch, or an output file.
+        let scope = scope_of(share);
         if let Some(sketch) = super::tasks::split_sketch_path(path) {
-            return super::tasks::sketch_exists(&share.project_key, &share.task_id, sketch);
+            return scope.allows_sketch(sketch)
+                && super::tasks::sketch_exists(&share.project_key, &share.task_id, sketch);
         }
         if let Some((design, file)) = super::tasks::designs::split_design_path(path) {
-            return crate::storage::designs::read_page(
-                &share.project_key,
-                &share.task_id,
-                design,
-                file,
-            )
-            .is_ok();
+            return scope.allows_design(design)
+                && crate::storage::designs::read_page(
+                    &share.project_key,
+                    &share.task_id,
+                    design,
+                    file,
+                )
+                .is_ok();
         }
         return check_output_file(share, path.strip_prefix("output/").unwrap_or(path)).is_ok();
     }
+    shows_own_review(share) && changed_path(&share.project_key, &share.task_id, path).await
+}
+
+/// Whether a file is one a review's changes touch.
+async fn changed_path(project: &str, task_id: &str, path: &str) -> bool {
+    if !plain_relative(path) {
+        return false;
+    }
     super::tasks::get_diff(
-        Path((share.project_key.clone(), share.task_id.clone())),
+        Path((project.to_string(), task_id.to_string())),
         Query(super::tasks::DiffQuery {
             from_ref: None,
             to_ref: None,
