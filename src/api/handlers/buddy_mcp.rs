@@ -82,8 +82,8 @@ impl Default for BuddyMcpService {
     }
 }
 impl ServerHandler for BuddyMcpService {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.server_info = Implementation::new("grove-buddy", env!("CARGO_PKG_VERSION"));
         info
     }
@@ -91,7 +91,7 @@ impl ServerHandler for BuddyMcpService {
         &self,
         request: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let parts = context
             .extensions
             .get::<Parts>()
@@ -116,6 +116,7 @@ impl ServerHandler for BuddyMcpService {
                 serde_json::Value::Object(request.arguments.unwrap_or_default()),
             )
             .await
+            .map(Into::into)
         }
     }
     async fn list_tools(
@@ -130,11 +131,7 @@ impl ServerHandler for BuddyMcpService {
         let (buddy, _) = caller(parts)?;
         let mut tools = self.tool_router.list_all();
         tools.extend(super::agent_graph_mcp::shared_tools(&buddy.project_hash));
-        Ok(ListToolsResult {
-            tools,
-            next_cursor: None,
-            meta: None,
-        })
+        Ok(ListToolsResult::with_all_items(tools))
     }
 }
 pub fn streamable_service() -> StreamableHttpService<BuddyMcpService, LocalSessionManager> {
@@ -142,7 +139,7 @@ pub fn streamable_service() -> StreamableHttpService<BuddyMcpService, LocalSessi
         || Ok(BuddyMcpService::default()),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default()
-            .with_stateful_mode(true)
+            .with_legacy_session_mode(true)
             .with_json_response(false),
     )
 }
@@ -219,7 +216,7 @@ pub(super) fn success(value: impl serde::Serialize) -> Result<CallToolResult, Mc
     if value.is_object() {
         return Ok(CallToolResult::structured(value));
     }
-    Ok(CallToolResult::success(vec![Content::text(
+    Ok(CallToolResult::success(vec![ContentBlock::text(
         serde_json::to_string_pretty(&value).map_err(internal)?,
     )]))
 }

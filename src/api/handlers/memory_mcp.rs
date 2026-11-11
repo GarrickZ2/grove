@@ -89,8 +89,8 @@ impl MemoryMcpService {
 }
 
 impl ServerHandler for MemoryMcpService {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.protocol_version = ProtocolVersion::LATEST;
         let mut implementation = Implementation::new("grove-memory", env!("CARGO_PKG_VERSION"));
         implementation.title = Some("Grove Memory MCP".to_string());
@@ -103,7 +103,7 @@ impl ServerHandler for MemoryMcpService {
         &self,
         request: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         self.tool_router.call(tcc).await
     }
@@ -123,11 +123,7 @@ impl ServerHandler for MemoryMcpService {
         if !deep_organization_enabled(&run) {
             tools.retain(|tool| tool.name != "memory_get_recent_chats");
         }
-        Ok(ListToolsResult {
-            tools,
-            next_cursor: None,
-            meta: None,
-        })
+        Ok(ListToolsResult::with_all_items(tools))
     }
 }
 
@@ -977,7 +973,7 @@ fn bounded_limit(
 pub fn streamable_service() -> StreamableHttpService<MemoryMcpService, LocalSessionManager> {
     let session_manager = Arc::new(LocalSessionManager::default());
     let config = StreamableHttpServerConfig::default()
-        .with_stateful_mode(true)
+        .with_legacy_session_mode(true)
         .with_json_response(false);
     StreamableHttpService::new(|| Ok(MemoryMcpService::new()), session_manager, config)
 }

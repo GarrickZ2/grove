@@ -534,8 +534,8 @@ impl Default for GroveMcpServer {
 }
 
 impl ServerHandler for GroveMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.protocol_version = ProtocolVersion::LATEST;
         info.server_info = {
             let mut impl_info = Implementation::new("grove", env!("CARGO_PKG_VERSION"));
@@ -551,7 +551,7 @@ impl ServerHandler for GroveMcpServer {
         &self,
         request: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         self.tool_router.call(tcc).await
     }
@@ -561,11 +561,9 @@ impl ServerHandler for GroveMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        Ok(ListToolsResult {
-            tools: filter_tools(self.tool_router.list_all()),
-            meta: None,
-            next_cursor: None,
-        })
+        Ok(ListToolsResult::with_all_items(filter_tools(
+            self.tool_router.list_all(),
+        )))
     }
 }
 
@@ -1280,7 +1278,7 @@ impl GroveMcpServer {
 
         let json = serde_json::to_string_pretty(&result)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     /// Create a new skill entry in a local package, then author it with your own tools
@@ -1463,7 +1461,7 @@ impl GroveMcpServer {
         let status = tokio::task::spawn_blocking(move || design_status_text(&key, &task_id))
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "{DESIGN_READ_ME}\n{status}"
         ))]))
     }
@@ -1516,12 +1514,12 @@ impl GroveMcpServer {
         let mut content = Vec::new();
         if let Some(png) = image {
             use base64::Engine;
-            content.push(Content::image(
+            content.push(ContentBlock::image(
                 base64::engine::general_purpose::STANDARD.encode(&png),
                 "image/png",
             ));
         }
-        content.push(Content::text(text));
+        content.push(ContentBlock::text(text));
         Ok(CallToolResult::success(content))
     }
 
@@ -1534,7 +1532,7 @@ impl GroveMcpServer {
         let mut body = String::with_capacity(SKETCH_READ_ME.len() + 512);
         body.push_str(SKETCH_READ_ME);
         body.push_str(&render_library_listing());
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     /// List Excalidraw sketches in the current Studio task.
@@ -1577,9 +1575,9 @@ impl GroveMcpServer {
         if let Some(png) = thumb {
             use base64::Engine;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
-            content.push(Content::image(b64, "image/png"));
+            content.push(ContentBlock::image(b64, "image/png"));
         }
-        content.push(Content::text(text));
+        content.push(ContentBlock::text(text));
         Ok(CallToolResult::success(content))
     }
 
@@ -1696,9 +1694,9 @@ impl GroveMcpServer {
         if let Some(png) = thumb {
             use base64::Engine;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
-            content.push(Content::image(b64, "image/png"));
+            content.push(ContentBlock::image(b64, "image/png"));
         }
-        content.push(Content::text(body));
+        content.push(ContentBlock::text(body));
         Ok(CallToolResult::success(content))
     }
 
@@ -1714,10 +1712,12 @@ impl GroveMcpServer {
         let project_key = workspace::project_hash(&project_path);
 
         match notes::load_notes(&project_key, &task_id) {
-            Ok(content) if content.is_empty() => Ok(CallToolResult::success(vec![Content::text(
-                "No notes yet.",
-            )])),
-            Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
+            Ok(content) if content.is_empty() => {
+                Ok(CallToolResult::success(vec![ContentBlock::text(
+                    "No notes yet.",
+                )]))
+            }
+            Ok(content) => Ok(CallToolResult::success(vec![ContentBlock::text(content)])),
             Err(e) => Err(McpError::internal_error(
                 format!("Failed to read notes: {}", e),
                 None,
@@ -1765,7 +1765,7 @@ impl GroveMcpServer {
         // Linked groups are listed even when empty so the agent learns their
         // project_id values for grove_add_comment.
         if linked.is_empty() && !has_any_comment {
-            return Ok(CallToolResult::success(vec![Content::text(
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
                 "No code review comments yet.",
             )]));
         }
@@ -1773,7 +1773,7 @@ impl GroveMcpServer {
         let result = ReadReviewResult { reviews: groups };
         let json = serde_json::to_string_pretty(&result)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     /// Reply to review comments (supports batch)
@@ -1908,7 +1908,7 @@ impl GroveMcpServer {
             return Err(McpError::invalid_params(json, None));
         }
 
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     /// Add review comments. Supports three levels: inline (code lines), file (entire file),
@@ -2083,7 +2083,7 @@ impl GroveMcpServer {
             return Err(McpError::invalid_params(json, None));
         }
 
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     /// Complete the current task: commit, sync (rebase), and merge
@@ -2134,7 +2134,7 @@ impl GroveMcpServer {
 
             // git commit
             if let Err(e) = git::commit(&worktree_path, &params.0.commit_message) {
-                return Ok(CallToolResult::success(vec![Content::text(
+                return Ok(CallToolResult::success(vec![ContentBlock::text(
                     serde_json::to_string_pretty(&CompleteTaskResult {
                         success: false,
                         error: Some("commit_failed".to_string()),
@@ -2166,7 +2166,7 @@ impl GroveMcpServer {
                 // Abort rebase and return conflict info
                 let _ = git::abort_rebase(&worktree_path);
 
-                return Ok(CallToolResult::success(vec![Content::text(
+                return Ok(CallToolResult::success(vec![ContentBlock::text(
                     serde_json::to_string_pretty(&CompleteTaskResult {
                         success: false,
                         error: Some("rebase_conflict".to_string()),
@@ -2181,7 +2181,7 @@ impl GroveMcpServer {
         // Step 3: Merge into target branch (in main repo)
         // First checkout target branch in main repo
         if let Err(e) = git::checkout(&project_path, &target_branch) {
-            return Ok(CallToolResult::success(vec![Content::text(
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
                 serde_json::to_string_pretty(&CompleteTaskResult {
                     success: false,
                     error: Some("checkout_failed".to_string()),
@@ -2208,7 +2208,7 @@ impl GroveMcpServer {
             // Checkout back to original branch (best effort)
             let _ = git::checkout(&project_path, &branch);
 
-            return Ok(CallToolResult::success(vec![Content::text(
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
                 serde_json::to_string_pretty(&CompleteTaskResult {
                     success: false,
                     error: Some("merge_failed".to_string()),
@@ -2232,7 +2232,7 @@ impl GroveMcpServer {
         let json = serde_json::to_string_pretty(&result)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 }
 
@@ -2243,7 +2243,7 @@ impl GroveMcpServer {
 fn ok_json(value: serde_json::Value) -> Result<CallToolResult, McpError> {
     let json = serde_json::to_string_pretty(&value)
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    Ok(CallToolResult::success(vec![Content::text(json)]))
+    Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
 }
 
 async fn blocking_json(

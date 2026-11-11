@@ -244,8 +244,8 @@ impl AgentGraphMcpService {
 }
 
 impl ServerHandler for AgentGraphMcpService {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.protocol_version = ProtocolVersion::LATEST;
         info.server_info = {
             let mut impl_info = Implementation::new("grove-agent-graph", env!("CARGO_PKG_VERSION"));
@@ -260,7 +260,7 @@ impl ServerHandler for AgentGraphMcpService {
         &self,
         request: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         self.tool_router.call(tcc).await
     }
@@ -284,11 +284,7 @@ impl ServerHandler for AgentGraphMcpService {
         if !memory_enabled {
             tools.retain(|tool| !WORKING_MEMORY_TOOLS.contains(&tool.name.as_ref()));
         }
-        Ok(ListToolsResult {
-            tools,
-            meta: None,
-            next_cursor: None,
-        })
+        Ok(ListToolsResult::with_all_items(tools))
     }
 }
 
@@ -950,7 +946,7 @@ fn caller_context_from_parts(parts: &Parts) -> Result<ToolContext, McpError> {
 fn json_success<T: serde::Serialize>(value: &T) -> Result<CallToolResult, McpError> {
     let json = serde_json::to_string_pretty(value)
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    Ok(CallToolResult::success(vec![Content::text(json)]))
+    Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
 }
 
 /// Tools that advertise an output schema must return structured content.
@@ -993,7 +989,7 @@ fn tool_error(err: AgentGraphError) -> CallToolResult {
     }
     let text = serde_json::to_string_pretty(&body)
         .unwrap_or_else(|_| format!("{{\"error\":\"{}\"}}", err.code()));
-    CallToolResult::error(vec![Content::text(text)])
+    CallToolResult::error(vec![ContentBlock::text(text)])
 }
 
 // ─── Listener bootstrap ───────────────────────────────────────────────────────
@@ -1046,14 +1042,14 @@ pub async fn start_listener(base_port: u16, max_attempts: u16) -> std::io::Resul
 /// Test-only variant of [`build_router`] that runs the server in **stateless +
 /// JSON-response** mode so test clients can issue one-shot tool calls and read
 /// plain JSON without managing `Mcp-Session-Id` headers or parsing SSE frames.
-/// rmcp 1.3 only honors `json_response` in stateless mode (stateful POSTs are
+/// rmcp only honors `json_response` in stateless mode (stateful POSTs are
 /// always streamed as SSE per the MCP spec). Real ACP agents in production
 /// connect to the stateful router built by [`build_router`].
 #[cfg(test)]
 fn build_router_json_for_test() -> Router {
     let session_manager = Arc::new(LocalSessionManager::default());
     let config = StreamableHttpServerConfig::default()
-        .with_stateful_mode(false)
+        .with_legacy_session_mode(false)
         .with_json_response(true);
     let svc: StreamableHttpService<AgentGraphMcpService, LocalSessionManager> =
         StreamableHttpService::new(|| Ok(AgentGraphMcpService::new()), session_manager, config);
@@ -1082,7 +1078,7 @@ pub fn build_router() -> Router {
     // implement it). Caller identity is separate from the MCP session — we
     // derive it from the URL path token at tool-call time.
     let config = StreamableHttpServerConfig::default()
-        .with_stateful_mode(true)
+        .with_legacy_session_mode(true)
         .with_json_response(false);
     let svc: StreamableHttpService<AgentGraphMcpService, LocalSessionManager> =
         StreamableHttpService::new(|| Ok(AgentGraphMcpService::new()), session_manager, config);
@@ -1927,7 +1923,7 @@ async fn shared_grove_browser_help_tool(
     ensure_browser_control_enabled()?;
     crate::browser::help(input.topic.as_deref())
         .await
-        .map(|text| CallToolResult::success(vec![Content::text(text)]))
+        .map(|text| CallToolResult::success(vec![ContentBlock::text(text)]))
         .map_err(|error| McpError::internal_error(error, None))
 }
 
@@ -1983,7 +1979,7 @@ async fn shared_grove_computer_help_tool(
     ensure_computer_use_enabled()?;
     crate::computer::help(input.topic.as_deref())
         .await
-        .map(|text| CallToolResult::success(vec![Content::text(text)]))
+        .map(|text| CallToolResult::success(vec![ContentBlock::text(text)]))
         .map_err(|error| McpError::internal_error(error, None))
 }
 
@@ -2020,8 +2016,8 @@ fn browser_tool_result(result: serde_json::Value) -> CallToolResult {
             .as_str()
             .map(str::to_owned)
             .unwrap_or_else(|| message.to_string());
-        return CallToolResult::error(vec![Content::text(text)]);
+        return CallToolResult::error(vec![ContentBlock::text(text)]);
     }
     serde_json::from_value(result.clone())
-        .unwrap_or_else(|_| CallToolResult::error(vec![Content::text(result.to_string())]))
+        .unwrap_or_else(|_| CallToolResult::error(vec![ContentBlock::text(result.to_string())]))
 }

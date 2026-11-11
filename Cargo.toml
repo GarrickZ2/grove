@@ -87,7 +87,7 @@ tree-sitter-go = "0.25"
 # MCP Server
 # transport-streamable-http-server is used by the Agent Graph in-process MCP listener
 # (src/api/handlers/agent_graph_mcp.rs). The stdio `grove mcp` uses transport-io.
-rmcp = { version = "1.3", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "3.9", features = ["server", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.0"
 tokio = { version = "1", features = ["full"] }
 
