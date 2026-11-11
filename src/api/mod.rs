@@ -827,6 +827,10 @@ pub fn create_api_router() -> Router {
             post(handlers::tasks::restore_sketch_checkpoint),
         )
         .route(
+            "/projects/{id}/tasks/{taskId}/sketches/comments",
+            get(handlers::tasks::list_sketch_comments).post(handlers::tasks::create_sketch_comment),
+        )
+        .route(
             "/projects/{id}/tasks/{taskId}/sketches/ws",
             get(handlers::tasks::sketch_ws::ws_handler),
         )
@@ -1652,6 +1656,14 @@ pub fn create_router(
             .route(
                 "/share/{token}/designs/{design}/pages/{file}",
                 get(handlers::shares::public_design_page),
+            )
+            .route(
+                "/share/{token}/sketches",
+                get(handlers::shares::public_sketches),
+            )
+            .route(
+                "/share/{token}/sketches/{sketch}/scene",
+                get(handlers::shares::public_sketch_scene),
             )
             .route(
                 "/share/{token}/design-files/{visitor}/{pass}/{*path}",

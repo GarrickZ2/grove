@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Eye, FolderOpen, Frame, RefreshCw } from "lucide-react";
+import { Eye, FolderOpen, Frame, Pencil, RefreshCw } from "lucide-react";
 import { DiffReviewPage } from "../Review/DiffReviewPage";
 import { shareBackend } from "../Review/reviewBackend";
 import { OrbitArtifactsPanel } from "../../orbit/workspace/artifacts/OrbitArtifactsPanel";
@@ -9,6 +9,8 @@ import type { SharedComment } from "../../api/shares";
 import { shareDesignSource } from "../../api/designs";
 import { BannerProvider, PreviewCommentProvider } from "../../context";
 import { DesignPage } from "../Studio/DesignPage";
+import { SharedSketchPage } from "../Studio/SketchPage";
+import type { SharedSketches } from "../../api/sketches";
 import type { Task } from "../../data/types";
 import { OrbitInterfaceContext } from "../../orbit/ui/interfaceContext";
 import { PanelShell, PANEL_HUES, Segmented } from "../../orbit/ui";
@@ -22,7 +24,7 @@ import {
 import { initials, stateMessage, untilText } from "./shareFormat";
 import "./share.css";
 
-type Tab = "changes" | "files" | "designs";
+type Tab = "changes" | "files" | "designs" | "sketches";
 
 export interface SharedTaskViewProps {
   source: ShareSource;
@@ -39,7 +41,7 @@ export interface SharedTaskViewProps {
 export function SharedTaskView({ source, shareKey, headerAside, onInfo }: SharedTaskViewProps) {
   const [info, setInfo] = useState<ShareInfo | null>(null);
   const [failure, setFailure] = useState<{ code?: string; message: string; owner: string } | null>(null);
-  const [counts, setCounts] = useState<{ changes: number; files: number; designs: number } | null>(null);
+  const [counts, setCounts] = useState<{ changes: number; files: number; designs: number; sketches: number } | null>(null);
   const [tab, setTab] = useState<Tab>("changes");
   const [attempt, setAttempt] = useState(0);
   const onInfoRef = useRef(onInfo);
@@ -50,19 +52,21 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
     void (async () => {
       try {
         const opened = await source.open();
-        const [diff, output, pages] = await Promise.all([
+        const [diff, output, pages, drawn] = await Promise.all([
           source.diff().then((value) => value.files.length).catch(() => 0),
           source.files().then((value) => value.files.filter((file) => !file.is_dir).length).catch(() => 0),
           source.designs()
             .then((value) => value.designs.filter((design) => !design.is_system).reduce((sum, design) => sum + design.pages.length, 0))
             .catch(() => 0),
+          source.sketches().then((value) => value.sketches.length).catch(() => 0),
         ]);
         if (cancelled) return;
         setInfo(opened);
         setFailure(null);
-        setCounts({ changes: diff, files: output, designs: pages });
+        setCounts({ changes: diff, files: output, designs: pages, sketches: drawn });
         if (diff === 0 && pages > 0) setTab("designs");
         else if (diff === 0 && output > 0) setTab("files");
+        else if (diff === 0 && drawn > 0) setTab("sketches");
         onInfoRef.current?.(opened);
       } catch (error) {
         if (!cancelled) setFailure({ code: shareErrorCode(error), message: shareErrorMessage(error), owner: shareErrorOwner(error) });
@@ -116,6 +120,16 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
   // Taken away only when the view closes: the panel inside reads through it
   // in its own effects, which run before this one is set up again.
   useEffect(() => () => shareDesignSource(designKey, null), [designKey]);
+  const sketches = useMemo<SharedSketches>(() => ({
+    list: () => source.sketches(),
+    scene: (sketchId) => source.sketchScene(sketchId),
+    addComment: canComment
+      ? async ({ sketch, anchor, content }) => {
+        await source.addComment({ commentType: "file", filePath: `sketch/${sketch}`, anchor, content });
+      }
+      : undefined,
+    reply: canComment ? async (id, content) => { await source.addReply(id, content); } : undefined,
+  }), [source, canComment]);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   if (failure) {
@@ -140,10 +154,12 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
 
   const hasFiles = counts.files > 0;
   const hasDesigns = counts.designs > 0;
-  const hasChanges = counts.changes > 0 || (!hasFiles && !hasDesigns);
+  const hasSketches = counts.sketches > 0;
+  const hasChanges = counts.changes > 0 || (!hasFiles && !hasDesigns && !hasSketches);
   const tabs = [
     hasChanges ? { value: "changes" as const, label: `Changes ${counts.changes}` } : null,
     hasDesigns ? { value: "designs" as const, label: `Designs ${counts.designs}` } : null,
+    hasSketches ? { value: "sketches" as const, label: `Sketches ${counts.sketches}` } : null,
     hasFiles ? { value: "files" as const, label: `Files ${counts.files}` } : null,
   ].filter((entry) => entry !== null);
   const shown: Tab = tabs.some((entry) => entry.value === tab) ? tab : tabs[0].value;
@@ -175,6 +191,10 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
                   <DesignPage projectId={designKey} taskId="shared" shared={{ canComment }} />
                 </PreviewCommentProvider>
               </BannerProvider>
+            </PanelShell>
+          ) : shown === "sketches" ? (
+            <PanelShell glyph={Pencil} hue={PANEL_HUES.teal} title="Sketch" body="fill">
+              <SharedSketchPage source={sketches} />
             </PanelShell>
           ) : (
             <PanelShell glyph={FolderOpen} hue={PANEL_HUES.pink} title="Artifacts" body="fill">

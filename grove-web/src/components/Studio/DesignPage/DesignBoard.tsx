@@ -669,7 +669,7 @@ export function DesignBoard({
           <button type="button" className="design-icon-btn" onClick={() => setViewerComments(false)} title="Hide" aria-label="Hide the comments"><X size={14} /></button>
         </div>
         <DesignCommentList
-          design={design}
+          placeOf={(comment) => design.pages.find((page) => page.file === comment.page)?.title ?? comment.page}
           comments={comments.filter((comment) => comment.design === design.slug && comment.status === "open")}
           onOpen={(comment, at) => {
             const target = placed.pages.find((page) => page.file === comment.page);

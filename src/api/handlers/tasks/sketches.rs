@@ -352,3 +352,251 @@ pub async fn get_sketch_thumbnail(
     );
     Ok(resp)
 }
+
+// ── Comments ────────────────────────────────────────────────────────────────
+//
+// A comment on a sketch is a review comment on `sketch/<sketch-id>`, with the
+// element it is on (or the canvas point) kept in `anchor_text`. Replies,
+// resolving and `grove_reply_review` work on it as on any review comment.
+
+/// `sketch/<sketch-id>` → the sketch id.
+pub fn split_sketch_path(path: &str) -> Option<&str> {
+    let id = path.strip_prefix("sketch/")?;
+    sketches::is_valid_sketch_id(id).then_some(id)
+}
+
+#[derive(Debug, Serialize)]
+pub struct SketchCommentReply {
+    id: u32,
+    author: String,
+    content: String,
+    timestamp: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SketchComment {
+    id: u32,
+    sketch: String,
+    /// The element (`element`, its `text`) and the canvas point (`x`, `y`)
+    /// the comment is on.
+    anchor: serde_json::Value,
+    author: String,
+    content: String,
+    timestamp: String,
+    status: &'static str,
+    via_share: bool,
+    replies: Vec<SketchCommentReply>,
+}
+
+impl SketchComment {
+    pub fn sketch(&self) -> &str {
+        &self.sketch
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.status == "open"
+    }
+
+    /// The comment for an agent: id, who, which element, what was said.
+    pub fn describe(&self) -> String {
+        let text = |key: &str| {
+            self.anchor
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+        };
+        let mut out = format!("- #{} by {}", self.id, self.author);
+        match (text("element"), text("text")) {
+            (Some(element), Some(label)) => {
+                out.push_str(&format!(" on element `{element}` (\"{label}\")"))
+            }
+            (Some(element), None) => out.push_str(&format!(" on element `{element}`")),
+            _ => {
+                let at = |key: &str| self.anchor.get(key).and_then(serde_json::Value::as_f64);
+                match (at("x"), at("y")) {
+                    (Some(x), Some(y)) => {
+                        out.push_str(&format!(" at canvas point ({}, {})", x.round(), y.round()))
+                    }
+                    _ => out.push_str(" on the sketch"),
+                }
+            }
+        }
+        out.push_str(&format!(": {}\n", self.content));
+        for reply in &self.replies {
+            out.push_str(&format!("  - {}: {}\n", reply.author, reply.content));
+        }
+        out
+    }
+}
+
+/// Comments on the task's sketches that still exist, oldest first.
+pub fn sketch_comments(project: &str, task_id: &str) -> Result<Vec<SketchComment>, GroveError> {
+    use crate::storage::comments;
+    let live: std::collections::HashSet<String> = sketches::load_index(project, task_id)?
+        .sketches
+        .into_iter()
+        .map(|meta| meta.id)
+        .collect();
+    let shared = comments::share_comment_visitors(project, task_id).unwrap_or_default();
+    Ok(comments::load_comments(project, task_id)?
+        .comments
+        .into_iter()
+        .filter_map(|comment| {
+            let sketch = split_sketch_path(comment.file_path.as_deref()?)?.to_string();
+            if !live.contains(&sketch) {
+                return None;
+            }
+            Some(SketchComment {
+                id: comment.id,
+                sketch,
+                anchor: comment
+                    .anchor_text
+                    .as_deref()
+                    .and_then(|text| serde_json::from_str(text).ok())
+                    .unwrap_or(serde_json::Value::Null),
+                author: comments::build_author(&comment.agent, &comment.role),
+                content: comment.content,
+                timestamp: comment.timestamp,
+                status: match comment.status {
+                    comments::CommentStatus::Resolved => "resolved",
+                    _ => "open",
+                },
+                via_share: shared.contains_key(&comment.id),
+                replies: comment
+                    .replies
+                    .into_iter()
+                    .map(|reply| SketchCommentReply {
+                        id: reply.id,
+                        author: comments::build_author(&reply.agent, &reply.role),
+                        content: reply.content,
+                        timestamp: reply.timestamp,
+                    })
+                    .collect(),
+            })
+        })
+        .collect())
+}
+
+fn sketch_comments_json(
+    project: &str,
+    task_id: &str,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let list = sketch_comments(project, task_id).map_err(scene_error_response)?;
+    Ok(Json(serde_json::json!({
+        "comments": list,
+        "me": super::crud::get_git_user_name(project, task_id),
+    })))
+}
+
+/// GET /projects/{id}/tasks/{taskId}/sketches/comments
+pub async fn list_sketch_comments(
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(project_err)?;
+    sketch_comments_json(&project_key, &task_id)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewSketchComment {
+    sketch: String,
+    #[serde(default)]
+    anchor: serde_json::Value,
+    content: String,
+}
+
+const SKETCH_COMMENT_LIMIT: usize = 10_000;
+
+/// POST /projects/{id}/tasks/{taskId}/sketches/comments
+pub async fn create_sketch_comment(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(request): Json<NewSketchComment>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    use crate::storage::comments;
+    let (_project, project_key) = find_project_by_id(&id).map_err(project_err)?;
+    let content = request.content.trim();
+    if content.is_empty() || content.chars().count() > SKETCH_COMMENT_LIMIT {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("A comment needs 1 to {SKETCH_COMMENT_LIMIT} characters"),
+        ));
+    }
+    if !sketch_exists(&project_key, &task_id, &request.sketch) {
+        return Err((StatusCode::NOT_FOUND, "Sketch not found".to_string()));
+    }
+    let author =
+        super::crud::get_git_user_name(&project_key, &task_id).unwrap_or_else(|| "You".to_string());
+    let (agent, role) = comments::parse_author_to_agent_role(&author);
+    comments::add_comment(
+        &project_key,
+        &task_id,
+        comments::CommentType::File,
+        Some(format!("sketch/{}", request.sketch)),
+        None,
+        None,
+        None,
+        content,
+        &agent,
+        "",
+        &role,
+        super::designs::anchor_text(&request.anchor),
+    )
+    .map_err(scene_error_response)?;
+    sketch_comments_json(&project_key, &task_id)
+}
+
+/// Whether the task has a sketch with this id.
+pub fn sketch_exists(project: &str, task_id: &str, sketch_id: &str) -> bool {
+    sketches::is_valid_sketch_id(sketch_id)
+        && sketches::load_index(project, task_id)
+            .is_ok_and(|index| index.sketches.iter().any(|meta| meta.id == sketch_id))
+}
+
+#[cfg(test)]
+mod comment_tests {
+    use super::*;
+
+    #[test]
+    fn sketch_paths() {
+        let id = "sketch-550e8400-e29b-41d4-a716-446655440000";
+        assert_eq!(split_sketch_path(&format!("sketch/{id}")), Some(id));
+        assert_eq!(split_sketch_path("sketch/../x"), None);
+        assert_eq!(split_sketch_path("design/a/b.html"), None);
+        assert_eq!(split_sketch_path(&format!("sketch/{id}/scene")), None);
+    }
+
+    fn comment(anchor: serde_json::Value) -> SketchComment {
+        SketchComment {
+            id: 7,
+            sketch: "sketch-x".into(),
+            anchor,
+            author: "Ann".into(),
+            content: "Bigger".into(),
+            timestamp: String::new(),
+            status: "open",
+            via_share: false,
+            replies: vec![SketchCommentReply {
+                id: 1,
+                author: "Bob".into(),
+                content: "Agree".into(),
+                timestamp: String::new(),
+            }],
+        }
+    }
+
+    #[test]
+    fn describes_comments_for_the_agent() {
+        let on_element =
+            comment(serde_json::json!({"element": "r1", "text": "Sign in", "x": 1, "y": 2}));
+        assert_eq!(
+            on_element.describe(),
+            "- #7 by Ann on element `r1` (\"Sign in\"): Bigger\n  - Bob: Agree\n"
+        );
+        let on_canvas = comment(serde_json::json!({"x": 10.4, "y": -3.6}));
+        assert!(on_canvas
+            .describe()
+            .starts_with("- #7 by Ann at canvas point (10, -4): Bigger"));
+        assert!(comment(serde_json::Value::Null)
+            .describe()
+            .contains(" on the sketch: "));
+    }
+}

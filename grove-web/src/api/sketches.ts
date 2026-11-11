@@ -178,3 +178,67 @@ export function sketchWsUrl(projectId: string, taskId: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${host}/api/v1/projects/${projectId}/tasks/${taskId}/sketches/ws`;
 }
+
+// ── Comments ───────────────────────────────────────────────────────────────
+
+/** Where a comment sits: on an element (it follows the element), or on a point of the canvas. */
+export interface SketchAnchor {
+  /** The element's id, when the comment is on one. */
+  element?: string;
+  /** What the element reads, for the agent and for a thread's title. */
+  text?: string;
+  /** The pin's point in scene coordinates when the comment was made. */
+  x: number;
+  y: number;
+  /** The pin's offset from the element's top left corner. */
+  dx?: number;
+  dy?: number;
+}
+
+export interface SketchCommentReply {
+  id: number;
+  author: string;
+  content: string;
+  timestamp: string;
+}
+
+export interface SketchComment {
+  id: number;
+  sketch: string;
+  anchor: SketchAnchor | null;
+  author: string;
+  content: string;
+  timestamp: string;
+  status: 'open' | 'resolved';
+  via_share: boolean;
+  replies: SketchCommentReply[];
+}
+
+export interface SketchComments {
+  comments: SketchComment[];
+  me?: string | null;
+}
+
+export function listSketchComments(projectId: string, taskId: string): Promise<SketchComments> {
+  return apiClient.get<SketchComments>(`/api/v1/projects/${projectId}/tasks/${taskId}/sketches/comments`);
+}
+
+export function createSketchComment(
+  projectId: string,
+  taskId: string,
+  comment: { sketch: string; anchor: SketchAnchor; content: string },
+): Promise<SketchComments> {
+  return apiClient.post<typeof comment, SketchComments>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/sketches/comments`,
+    comment,
+  );
+}
+
+/** Sketches someone else shared: read through their share link. */
+export interface SharedSketches {
+  list(): Promise<{ sketches: SketchMeta[]; comments: SketchComment[]; me: string }>;
+  scene(sketchId: string): Promise<unknown>;
+  /** Absent where the link is read-only. */
+  addComment?(comment: { sketch: string; anchor: SketchAnchor; content: string }): Promise<void>;
+  reply?(id: number, content: string): Promise<void>;
+}

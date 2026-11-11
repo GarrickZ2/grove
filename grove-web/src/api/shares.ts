@@ -3,6 +3,7 @@
 
 import { apiClient, type ApiError } from './client';
 import type { Design, DesignComment } from './designs';
+import type { SketchComment, SketchMeta } from './sketches';
 import type { DiffFile, DiffStatsResult } from './review';
 
 export type ShareState = 'active' | 'expired' | 'exhausted' | 'revoked' | 'removed' | 'missing';
@@ -253,7 +254,12 @@ export interface ShareSource {
   /** The design boards, and the base address their pages load files from. */
   designs(): Promise<{ designs: Design[]; comments: DesignComment[]; me: string; filesBase: string }>;
   designPage(design: string, file: string): Promise<string>;
+  /** The Task's sketches and the comments on them. */
+  sketches(): Promise<{ sketches: SketchMeta[]; comments: SketchComment[]; me: string }>;
+  sketchScene(sketchId: string): Promise<unknown>;
 }
+
+type SharedSketchData = Awaited<ReturnType<ShareSource['sketches']>>;
 
 const designPagePath = (design: string, file: string) => `designs/${encodeURIComponent(design)}/pages/${encodeURIComponent(file)}`;
 
@@ -279,6 +285,8 @@ export function receivedShareSource(id: string): ShareSource {
       return { designs: data.designs, comments: data.comments, me: data.me, filesBase: data.filesUrl };
     },
     designPage: (design, file) => apiClient.getText(`${base}/${designPagePath(design, file)}`),
+    sketches: () => apiClient.get<SharedSketchData>(`${base}/sketches`),
+    sketchScene: (sketchId) => apiClient.get<unknown>(`${base}/sketches/${encodeURIComponent(sketchId)}/scene`),
   };
 }
 
@@ -331,5 +339,7 @@ export function publicShareSource(token: string): ShareSource {
       return { designs: data.designs, comments: data.comments, me: data.me, filesBase: data.filesPath };
     },
     designPage: async (design, file) => (await publicRequest(`${base}/${designPagePath(design, file)}`)).text(),
+    sketches: () => publicJson<SharedSketchData>(`${base}/sketches`),
+    sketchScene: (sketchId) => publicJson<unknown>(`${base}/sketches/${encodeURIComponent(sketchId)}/scene`),
   };
 }

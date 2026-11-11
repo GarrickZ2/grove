@@ -20,6 +20,11 @@ use crate::storage::tasks;
 
 /// Validate that `sketch_id` matches the `sketch-<uuid-v4>` shape so it cannot
 /// escape the sketches directory via path separators or `..` components.
+/// Whether `sketch_id` is a well-formed `sketch-<uuid>` id.
+pub fn is_valid_sketch_id(sketch_id: &str) -> bool {
+    validate_sketch_id(sketch_id).is_ok()
+}
+
 fn validate_sketch_id(sketch_id: &str) -> Result<()> {
     // sketch-<uuid-v4>. Parse the UUID strictly so nonsense like
     // "sketch-----------------------------------" (36 dashes, 43 chars) is

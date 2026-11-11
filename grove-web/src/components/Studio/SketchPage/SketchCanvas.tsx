@@ -23,6 +23,10 @@ interface LibraryFile {
  * same lazy-loaded module, and b) the whole thing stays in the Excalidraw
  * code-split chunk — matching the `perf(sketch): lazy-load Excalidraw` intent.
  *
+ * The menu's button is hidden (see `.sketch-canvas` in sketch.css): the
+ * panel's sketch picker takes that corner and carries export and the canvas
+ * theme. The menu stays trimmed in case it is reached another way.
+ *
  * Items we keep: Export image, Find on canvas, Help, Dark mode, Canvas
  * background.
  * Items we drop: Open, Save to... (conflicts with Grove's own storage),
@@ -164,6 +168,9 @@ interface Props {
    * busy so the user can't edit concurrently with AI-authored writes
    * (which would otherwise overwrite each other at save time). */
   locked?: boolean;
+  /** False to leave the user's Excalidraw library out: a share link's reader
+   * has none on the owner's Grove. */
+  library?: boolean;
 }
 
 interface ExcalidrawScene {
@@ -263,6 +270,7 @@ export function SketchCanvas({
   onChange,
   onExcalidrawAPI,
   locked,
+  library = true,
 }: Props) {
   // Remote-driven updates are surfaced via key-based remount in the parent
   // (SketchPage); nothing to track here.
@@ -272,8 +280,9 @@ export function SketchCanvas({
   // we hold off rendering Excalidraw until then because `initialData` is read
   // exactly once at Excalidraw's mount — late-binding the library would mean
   // it never shows up in the UI without a remount.
-  const [initialLibrary, setInitialLibrary] = useState<unknown[] | null>(null);
+  const [initialLibrary, setInitialLibrary] = useState<unknown[] | null>(library ? null : []);
   useEffect(() => {
+    if (!library) return;
     let cancelled = false;
     fetchInitialLibrary()
       .then((items) => {
@@ -288,7 +297,7 @@ export function SketchCanvas({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [library]);
 
   // Refresh the live Excalidraw library when a peer tab installs a new
   // library via the "Add to Excalidraw" callback flow. The callback tab
@@ -296,7 +305,7 @@ export function SketchCanvas({
   // calling `updateLibrary({ merge: true })` so the new items appear without
   // requiring a manual reload.
   useEffect(() => {
-    if (typeof BroadcastChannel === "undefined") return;
+    if (!library || typeof BroadcastChannel === "undefined") return;
     const ch = new BroadcastChannel("grove-library");
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     const scheduleRefresh = () => {
@@ -332,7 +341,7 @@ export function SketchCanvas({
       if (refreshTimer) clearTimeout(refreshTimer);
       ch.close();
     };
-  }, []);
+  }, [library]);
 
   // Debounced PUT of the current library snapshot. We hold the latest items
   // in a ref so the timer's closure always sees the freshest payload without
@@ -411,6 +420,7 @@ export function SketchCanvas({
     flushLibraryRef.current = flushLibrary;
   }, [flushLibrary]);
   const handleLibraryChange = (items: readonly unknown[]) => {
+    if (!library) return;
     pendingItemsRef.current = items;
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => flushLibraryRef.current(false), LIBRARY_PUT_DEBOUNCE_MS);
@@ -468,7 +478,9 @@ export function SketchCanvas({
 
   const initial = scene as ExcalidrawScene | null;
   return (
-    <div className="w-full h-full">
+    // `sketch-canvas`: Excalidraw's own menu button is hidden, the panel's
+    // sketch picker sits in that corner instead.
+    <div className="sketch-canvas w-full h-full">
       <Suspense
         fallback={
           <div

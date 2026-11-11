@@ -5,11 +5,14 @@ import type { DesignComment } from "../../../api/designs";
 import { relativeText } from "../../../orbit/ui";
 import { authorHue, initials } from "./designModel";
 
+/** What a thread shows of a comment: Design's and Sketch's comments both have it. */
+export type ThreadComment = Pick<DesignComment, "author" | "content" | "timestamp" | "status" | "replies">;
+
 interface Props {
   /** Viewport point the thread opens beside. */
   at: { x: number; y: number };
   /** The thread; absent while writing a new comment. */
-  comment?: DesignComment;
+  comment?: ThreadComment;
   /** What the comment is on: "Overview · button.primary". */
   target: string;
   /** The chat's agent, when a chat is open to send to. */
@@ -39,7 +42,7 @@ export function Avatar({ name, size = 22 }: { name: string; size?: number }) {
   );
 }
 
-/** A comment thread on an element: what was said, a reply box, and a way to hand it to the agent. */
+/** A comment thread on an element (a page's or a sketch's): what was said, a reply box, and a way to hand it to the agent. */
 export function DesignThread({ at, comment, target, agent, canSend, onSubmit, onSend, onResolve, onClose, compose = true }: Props) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);

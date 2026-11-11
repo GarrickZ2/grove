@@ -131,7 +131,21 @@ Use 4:3 sizes: 400x300, 600x450, 800x600, 1200x900, 1600x1200. Emit BEFORE the e
 | Light Teal | `#c3fae8` | storage, data |
 | Light Pink | `#eebefa` | analytics |
 
+### Background zones (large rectangles behind a group, `"opacity":30`)
+| Color | Hex | Good for |
+|-------|-----|----------|
+| Blue zone | `#dbe4ff` | UI / frontend layer |
+| Purple zone | `#e5dbff` | logic / agent layer |
+| Green zone | `#d3f9d8` | data / tool layer |
+
 Dark mode: start with a huge `{type:"rectangle", x:-4000, y:-3000, width:10000, height:7500, backgroundColor:"#1e1e2e", fillStyle:"solid"}` background element.
+
+### Style: hand-drawn or clean
+Pick one look per sketch and keep it on every element.
+- Hand-drawn (Excalidraw's default): `"roughness":1`, text `"fontFamily":5`.
+- Clean (diagrams, UI flows, anything that should read as finished): `"roughness":0` on shapes and arrows, `"fontFamily":6` on text and labels (`"label":{"text":"…","fontFamily":6}`).
+- Code or identifiers: `"fontFamily":3` (monospace).
+Follow the user's wording when they ask for a look ("clean", "sketchy", "whiteboard").
 
 ## Excalidraw Elements
 
@@ -217,6 +231,22 @@ ALWAYS emit the first `cameraUpdate` BEFORE the elements it frames.
 ]
 ```
 
+## Sequence diagram recipe
+
+Actors as labeled boxes in a row; a dashed vertical arrow with no head under each as its lifeline; messages as horizontal labeled arrows between lifelines, top to bottom; replies dashed.
+```
+[
+  {"type":"cameraUpdate","width":800,"height":600,"x":0,"y":0},
+  {"type":"rectangle","id":"uHead","x":60,"y":60,"width":120,"height":40,"roundness":{"type":3},"backgroundColor":"#a5d8ff","fillStyle":"solid","label":{"text":"User","fontSize":16}},
+  {"type":"arrow","id":"uLine","x":120,"y":100,"width":0,"height":400,"points":[[0,0],[0,400]],"strokeColor":"#b0b0b0","strokeWidth":1,"strokeStyle":"dashed","endArrowhead":null},
+  {"type":"rectangle","id":"sHead","x":460,"y":60,"width":120,"height":40,"roundness":{"type":3},"backgroundColor":"#ffd8a8","fillStyle":"solid","label":{"text":"Server","fontSize":16}},
+  {"type":"arrow","id":"sLine","x":520,"y":100,"width":0,"height":400,"points":[[0,0],[0,400]],"strokeColor":"#b0b0b0","strokeWidth":1,"strokeStyle":"dashed","endArrowhead":null},
+  {"type":"arrow","id":"m1","x":120,"y":160,"width":400,"height":0,"points":[[0,0],[400,0]],"endArrowhead":"arrow","label":{"text":"request","fontSize":16}},
+  {"type":"arrow","id":"m2","x":520,"y":220,"width":-400,"height":0,"points":[[0,0],[-400,0]],"strokeStyle":"dashed","endArrowhead":"arrow","label":{"text":"response","fontSize":16}}
+]
+```
+Lifeline and message arrows are not bound to the boxes: leave out `startBinding` / `endBinding` on them.
+
 ## Incremental editing example
 
 First call creates the base and returns `checkpoint_id: "cp-abc…"`.
@@ -243,6 +273,10 @@ To delete `b1` before adding `b3`: include `{"type":"delete","ids":"b1"}` anywhe
 - `cameraUpdate` is great for guiding attention while drawing complex diagrams. Emit multiple to pan/zoom across sections.
 - For dark themes: put a massive dark rectangle at index 0 BEFORE any `cameraUpdate`. Use bright primary colors on top.
 - Save every `checkpoint_id` in your reasoning; reverting is just passing an older id.
+
+## Comments from the user
+
+The user comments on elements of a sketch (or on a point of the canvas). `grove_sketch_read` lists the open ones with the element id each is on. When asked to address them: read the sketch, change it with `grove_sketch_draw` (keep the commented element's id when you change it, so the comment stays on it), then answer each comment with `grove_reply_review`, saying what you changed.
 
 ## Referencing a sketch in chat (sketch:// chip)
 
@@ -779,6 +813,9 @@ pub struct SketchElementLabel {
     /// Text color override (hex). Defaults to the container's strokeColor.
     #[serde(skip_serializing_if = "Option::is_none", rename = "strokeColor")]
     pub stroke_color: Option<String>,
+    /// Font: 5 hand-drawn (default), 6 clean sans-serif, 3 monospace.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "fontFamily")]
+    pub font_family: Option<u8>,
 }
 
 /// Rounded-corner descriptor. Use `{"type": 3}` for the standard adaptive rounding.
@@ -897,6 +934,11 @@ pub struct SketchElement {
     /// For standalone `text` elements: font size in px.
     #[serde(skip_serializing_if = "Option::is_none", rename = "fontSize")]
     pub font_size: Option<f64>,
+
+    /// For standalone `text` elements: 5 hand-drawn (default), 6 clean
+    /// sans-serif, 3 monospace.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "fontFamily")]
+    pub font_family: Option<u8>,
 
     /// For shapes: attach auto-centered text instead of a separate `text`
     /// element. PREFERRED for labeled boxes/arrows — saves tokens.
@@ -2508,6 +2550,18 @@ fn read_sketch_to_text(
     body.push_str(&format!(
         "\nTo modify this sketch, call grove_sketch_draw with:\n  [{{\"type\":\"restoreCheckpoint\",\"id\":\"{cp_id}\"}}, ...your new elements]\n"
     ));
+
+    let comments: Vec<_> = crate::api::handlers::tasks::sketch_comments(project, task_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|comment| comment.is_open() && comment.sketch() == meta.id)
+        .collect();
+    if !comments.is_empty() {
+        body.push_str("\nOpen comments (answer with grove_reply_review once dealt with):\n");
+        for comment in comments {
+            body.push_str(&comment.describe());
+        }
+    }
 
     if detail_full {
         body.push_str("\n--- Full Excalidraw scene JSON ---\n");

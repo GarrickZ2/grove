@@ -3,13 +3,17 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { useSketchList } from "./hooks/useSketchList";
 import { useSketchSync } from "./hooks/useSketchSync";
 import { useSketchThumbnail } from "./hooks/useSketchThumbnail";
-import { SketchCanvas } from "./SketchCanvas";
-import { SketchTabBar } from "./SketchTabBar";
+import { SketchBoard } from "./SketchBoard";
+import { exportSketchPng } from "./sketchExport";
 import { SketchHistoryDialog } from "./SketchHistoryDialog";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail, setSketchNames } from "../../ui/sketchChipCache";
-import { saveBlobAsFile } from "../../ui/filePreview";
 import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
 import { useCommand, useContextKey } from "../../../keyboard";
+import { createSketchComment, listSketchComments, type SketchAnchor, type SketchComment } from "../../../api";
+import { replyReviewComment, updateCommentStatus } from "../../../api/review";
+import { targetChatId, useActiveChatTarget } from "../../Review/sendOpenComments";
+import { SEND_COMMENT_TO_CHAT_EVENT, type ChatReviewComment } from "../../Tasks/TaskView/reviewCommentPrompt";
+import { useBanner } from "../../../context";
 
 interface Props {
   projectId: string;
@@ -155,19 +159,52 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
   const handleExport = useCallback(async () => {
     if (!apiRef) return;
     try {
-      const { exportToBlob } = await import("@excalidraw/excalidraw");
-      const blob = await exportToBlob({
-        elements: apiRef.getSceneElements(),
-        appState: apiRef.getAppState(),
-        files: apiRef.getFiles(),
-        mimeType: "image/png",
-      });
-      const name = `${sketches.find((s) => s.id === activeId)?.name ?? "sketch"}.png`;
-      await saveBlobAsFile(blob, name);
+      await exportSketchPng(apiRef, sketches.find((s) => s.id === activeId)?.name ?? "sketch");
     } catch (e) {
       console.error("sketch export failed", e);
     }
   }, [apiRef, sketches, activeId]);
+
+  // Comments on the task's sketches. Read again when the agent stops (it
+  // answers with grove_reply_review) and when the sketch shown changes.
+  const { showBanner } = useBanner();
+  const chat = useActiveChatTarget();
+  const [comments, setComments] = useState<SketchComment[]>([]);
+  const reloadComments = useCallback(async () => {
+    try {
+      setComments((await listSketchComments(projectId, taskId)).comments);
+    } catch (e) {
+      console.warn("[SketchPage] couldn't load comments", e);
+    }
+  }, [projectId, taskId]);
+  useEffect(() => {
+    void Promise.resolve().then(reloadComments);
+  }, [reloadComments, lastChatIdleAt, activeId]);
+
+  const addComment = useCallback(async (sketch: string, anchor: SketchAnchor, content: string) => {
+    setComments((await createSketchComment(projectId, taskId, { sketch, anchor, content })).comments);
+  }, [projectId, taskId]);
+
+  const sendToAgent = useCallback((list: SketchComment[]) => {
+    const details: ChatReviewComment[] = list.map((comment) => ({
+      id: comment.id,
+      comment_type: "file",
+      file_path: `sketch/${comment.sketch}`,
+      content: comment.content,
+      agent: comment.author,
+      status: comment.status,
+      sketch: {
+        id: comment.sketch,
+        name: sketches.find((s) => s.id === comment.sketch)?.name ?? "sketch",
+        element: comment.anchor?.element,
+        text: comment.anchor?.text,
+        replies: comment.replies.map((reply) => `${reply.author}: ${reply.content}`),
+      },
+    }));
+    if (details.length === 0) return;
+    const chatId = targetChatId();
+    window.dispatchEvent(new CustomEvent(SEND_COMMENT_TO_CHAT_EVENT, { detail: details.length === 1 ? { ...details[0], chatId } : { comments: details, chatId } }));
+  }, [sketches]);
 
   // Catalog-declared sketch commands. Several entries gate on the
   // `sketchSelected` context key — set it from `activeId` so keyboard
@@ -216,60 +253,44 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
   );
 
   return (
-    <div
-      className="flex flex-col h-full w-full"
-      style={{ background: "var(--color-bg)" }}
-    >
-      <SketchTabBar
-        sketches={sketches}
+    <>
+      <SketchBoard
+        sketches={listLoading ? [] : sketches}
         activeId={activeId}
         onSelect={selectAndPersist}
-        onCreate={handleCreate}
-        onDelete={remove}
-        onRename={rename}
-        onExportPng={handleExport}
-        onRefresh={() => {
-          // Manual refresh = "resync with server". Refresh both the active
-          // scene AND the sketch index — otherwise a sketch the agent just
-          // created (via MCP, out-of-process) wouldn't appear as a tab.
-          void refreshScene();
-          void refresh();
+        scene={scene}
+        sceneKey={`${activeId}-${remoteTick}`}
+        sceneLoading={sceneLoading}
+        owner={{
+          onCreate: () => void handleCreate(),
+          onRename: (id, name) => void rename(id, name),
+          onDelete: (id) => void remove(id),
+          onHistory: () => setHistoryOpen(true),
+          onChange: onLocalChange,
+          aiBusy: isChatBusy,
+          // `undefined` while first connecting, so nothing flashes on mount.
+          wsConnected,
         }}
-        onOpenHistory={() => setHistoryOpen(true)}
-        aiBusy={isChatBusy}
-        // Surface real-time-stream state so the user sees when updates are
-        // paused. `wsConnected` is `undefined` during the initial connect
-        // attempt; the pill only renders when it's explicitly `false`, so
-        // there's no flash on first mount.
-        wsConnected={wsConnected}
+        comments={comments}
+        onAddComment={addComment}
+        onReply={async (id, content) => {
+          await replyReviewComment(projectId, taskId, id, content);
+          await reloadComments();
+        }}
+        onResolve={(comment) => {
+          const status = comment.status === "open" ? "resolved" : "open";
+          setComments((list) => list.map((entry) => (entry.id === comment.id ? { ...entry, status } : entry)));
+          updateCommentStatus(projectId, taskId, comment.id, status).catch(() => {
+            showBanner("Couldn't update the comment", "error");
+            void reloadComments();
+          });
+        }}
+        onSend={sendToAgent}
+        agent={chat.agent}
+        canSend={Boolean(chat.chatId)}
+        onApi={setApiRef}
+        empty={listLoading ? <CenterMessage>Loading…</CenterMessage> : <EmptyState onCreate={handleCreate} />}
       />
-      <div className="flex-1 min-h-0">
-        {listLoading ? (
-          <CenterMessage>Loading…</CenterMessage>
-        ) : sketches.length === 0 ? (
-          <EmptyState onCreate={handleCreate} />
-        ) : sceneLoading || !activeId ? (
-          <CenterMessage>Loading sketch…</CenterMessage>
-        ) : (
-          <SketchCanvas
-            // Force Excalidraw to fully remount on any remote-driven update
-            // (polling / refresh / WS). Excalidraw's imperative updateScene
-            // merges via version reconciliation and does not reliably apply
-            // our cross-process AI-authored writes; remounting with fresh
-            // initialData is the same code path as a full page reload, which
-            // the user already confirmed works. Local user edits are
-            // unaffected because onLocalChange never bumps remoteTick.
-            key={`${activeId}-${remoteTick}`}
-            scene={scene}
-            onChange={onLocalChange}
-            onExcalidrawAPI={setApiRef}
-            // Lock the canvas while the ACP chat is busy: prevents user
-            // edits from racing with AI-authored MCP writes (otherwise the
-            // user's debounced PUT would overwrite AI's additions).
-            locked={isChatBusy}
-          />
-        )}
-      </div>
       {activeId && (
         <SketchHistoryDialog
           isOpen={historyOpen}
@@ -286,7 +307,7 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
           }}
         />
       )}
-    </div>
+    </>
   );
 }
 

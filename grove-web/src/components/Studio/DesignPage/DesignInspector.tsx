@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import type { Design, DesignComment } from "../../../api/designs";
 import { relativeText } from "../../../orbit/ui";
-import { Avatar } from "./DesignThread";
+import { Avatar, type ThreadComment } from "./DesignThread";
 import type { DesignVariable, PickedElement, TreeNode } from "./DesignFrame";
 import { length, px, toHex } from "./designEdit";
 import { usePageHtml } from "./useDesignData";
@@ -49,13 +49,14 @@ interface Props {
 }
 
 /** A design's open comments; with `onSend`, the way to hand them all to the agent. */
-export function DesignCommentList({ design, comments, agent, canSend, onSend, onOpen }: {
-  design: Design;
-  comments: DesignComment[];
+export function DesignCommentList<C extends ThreadComment & { id: number }>({ comments, placeOf, agent, canSend, onSend, onOpen }: {
+  comments: C[];
+  /** Where the comment is, shown beside its author: a page's title, an element. */
+  placeOf: (comment: C) => string;
   agent?: string | null;
   canSend?: boolean;
-  onSend?: (comments: DesignComment[]) => void;
-  onOpen: (comment: DesignComment, at: { x: number; y: number }) => void;
+  onSend?: (comments: C[]) => void;
+  onOpen: (comment: C, at: { x: number; y: number }) => void;
 }) {
   if (comments.length === 0) return <div className="design-comments"><div className="design-comments-none">No open comments</div></div>;
   return (
@@ -75,7 +76,7 @@ export function DesignCommentList({ design, comments, agent, canSend, onSend, on
             <span className="design-comment-text">
               <span className="design-comment-meta">
                 <b>{comment.author}</b>
-                <span>{design.pages.find((page) => page.file === comment.page)?.title ?? comment.page}</span>
+                <span>{placeOf(comment)}</span>
                 <span>{relativeText(comment.timestamp)}</span>
               </span>
               <span className="design-comment-body">{comment.content}</span>
@@ -202,8 +203,8 @@ export function DesignInspector({
       </div>
       {tab === "comments" ? (
         <DesignCommentList
-          design={design}
           comments={openComments}
+          placeOf={(comment) => design.pages.find((page) => page.file === comment.page)?.title ?? comment.page}
           agent={agent}
           canSend={canSend}
           onSend={onSendComments}

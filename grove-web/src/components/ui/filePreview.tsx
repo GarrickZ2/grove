@@ -874,15 +874,10 @@ export function FilePreviewDrawer({
         <DesignThread
           at={thread.at}
           comment={{
-            id: openThread.id,
-            design: "",
-            page: fileName,
-            anchor: null,
             author: openThread.agent || "You",
             content: openThread.content,
             timestamp: openThread.timestamp,
             status: "open",
-            via_share: Boolean(openThread.via_share),
             replies: openThread.replies.map((reply) => ({ id: reply.id, author: reply.agent || "You", content: reply.content, timestamp: reply.timestamp })),
           }}
           target={fileName}

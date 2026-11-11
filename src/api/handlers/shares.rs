@@ -886,6 +886,51 @@ pub async fn public_designs(
     })))
 }
 
+/// GET /api/v1/share/{token}/sketches — the Task's sketches and the comments on them.
+pub async fn public_sketches(
+    Path(token): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ShareError> {
+    let (share, visitor) = visitor_for(&headers, &token)?;
+    if studio_or_repo(&share) == ProjectKind::Repo {
+        return Ok(Json(
+            json!({ "sketches": [], "comments": [], "me": visitor.name }),
+        ));
+    }
+    let (project, task_id) = (share.project_key.as_str(), share.task_id.as_str());
+    Ok(Json(json!({
+        "sketches": crate::storage::sketches::load_index(project, task_id)
+            .map(|index| index.sketches)
+            .unwrap_or_default(),
+        "comments": super::tasks::sketch_comments(project, task_id).unwrap_or_default(),
+        "me": visitor.name,
+    })))
+}
+
+/// `sketches/{sketch}/scene`, with a well-formed sketch id.
+fn is_sketch_scene_path(rest: &str) -> bool {
+    let parts: Vec<&str> = rest.split('/').collect();
+    matches!(parts.as_slice(), ["sketches", sketch, "scene"]
+        if crate::storage::sketches::is_valid_sketch_id(sketch))
+}
+
+/// GET /api/v1/share/{token}/sketches/{sketch}/scene — a sketch's Excalidraw scene.
+pub async fn public_sketch_scene(
+    Path((token, sketch)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, ShareError> {
+    let (share, _) = visitor_for(&headers, &token)?;
+    let not_found = || fail(StatusCode::NOT_FOUND, "not_found", "Not found");
+    if studio_or_repo(&share) == ProjectKind::Repo
+        || !super::tasks::sketch_exists(&share.project_key, &share.task_id, &sketch)
+    {
+        return Err(not_found());
+    }
+    let scene = crate::storage::sketches::load_scene(&share.project_key, &share.task_id, &sketch)
+        .map_err(|_| not_found())?;
+    Ok(([(header::CONTENT_TYPE, "application/json")], scene).into_response())
+}
+
 /// GET /api/v1/share/{token}/design-files/{visitor}/{pass}/{*path} — a file a
 /// shared design page loads. Checked against the link on every request, so
 /// it ends with the link.
@@ -1169,6 +1214,7 @@ pub async fn public_add_comment(
             // Kept under the path the owner's own comments on the file use.
             let path = if studio_or_repo(&share) == ProjectKind::Studio
                 && super::tasks::designs::split_design_path(&path).is_none()
+                && super::tasks::split_sketch_path(&path).is_none()
                 && !path.starts_with("output/")
             {
                 format!("output/{path}")
@@ -1286,7 +1332,10 @@ async fn shared_path(share: &Share, path: &str) -> bool {
         return false;
     }
     if studio_or_repo(share) == ProjectKind::Studio {
-        // A design page, or an output file.
+        // A design page, a sketch, or an output file.
+        if let Some(sketch) = super::tasks::split_sketch_path(path) {
+            return super::tasks::sketch_exists(&share.project_key, &share.task_id, sketch);
+        }
         if let Some((design, file)) = super::tasks::designs::split_design_path(path) {
             return crate::storage::designs::read_page(
                 &share.project_key,
@@ -1604,8 +1653,10 @@ pub async fn via_host(
                 | "files/download"
                 | "comments"
                 | "designs"
+                | "sketches"
         ) | ("POST", "open" | "comments")
-    ) || (method == axum::http::Method::GET && is_design_page_path(&rest))
+    ) || (method == axum::http::Method::GET
+        && (is_design_page_path(&rest) || is_sketch_scene_path(&rest)))
         || (method == axum::http::Method::POST && is_reply_path(&rest));
     if !allowed {
         return Err(fail(StatusCode::NOT_FOUND, "not_found", "Not found"));

@@ -170,9 +170,8 @@ export function MultiTabTerminalPanel({
 
   return (
     <div className={`ide-panel-slot ide-panel-slot--${side} ide-panel-slot--terminal`}>
-      {/* Tab bar — styled to match `SketchTabBar` for design consistency:
-          rounded chip tabs, inline rename via double-click, always-visible
-          close × on each tab. */}
+      {/* Tab bar — rounded chip tabs, inline rename via double-click,
+          always-visible close × on each tab. */}
       <div
         className="flex items-center gap-1 px-2 py-1.5 border-b"
         style={{

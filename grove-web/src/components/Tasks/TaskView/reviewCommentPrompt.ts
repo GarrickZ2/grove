@@ -35,6 +35,38 @@ export interface ChatReviewComment {
     /** Replies in the thread so far, oldest first. */
     replies?: string[];
   };
+  /** Set for a comment on a sketch (Studio's Sketch panel). */
+  sketch?: {
+    id: string;
+    name: string;
+    /** The element the comment is on, and what it reads. */
+    element?: string;
+    text?: string;
+    /** Replies in the thread so far, oldest first. */
+    replies?: string[];
+  };
+}
+
+/** A comment on a sketch: which sketch and element, the thread, and how to answer. */
+function buildSketchCommentMessage(comment: ChatReviewComment & { sketch: NonNullable<ChatReviewComment["sketch"]> }): string {
+  const { sketch } = comment;
+  const element = sketch.element
+    ? ` on the element \`${sketch.element}\`${sketch.text ? ` ("${sketch.text}")` : ""}`
+    : "";
+  const thread = sketch.replies?.length ? ` Replies so far: ${sketch.replies.map((reply) => `"${reply}"`).join("; ")}.` : "";
+  const systemPrompt = `Please address Comment #${comment.id} on the sketch "${sketch.name}" (sketch://${sketch.id})${element}. Comment: "${comment.content}".${thread} Read the sketch with grove_sketch_read, change it with grove_sketch_draw, then answer the comment with the grove_reply_review tool, saying what you changed.`;
+  return buildGroveMetaTag(
+    "review_comment",
+    {
+      id: comment.id,
+      commentType: "file",
+      filePath: comment.file_path || `sketch/${sketch.id}`,
+      content: comment.content,
+      agent: comment.agent || "",
+      status: comment.status || "open",
+    },
+    systemPrompt,
+  );
 }
 
 /** A comment on a design page: where it is, the thread, and how to answer. */
@@ -72,6 +104,7 @@ function previewCommentPrompt(comment: ChatReviewComment, anchor: NonNullable<Ch
 /** One comment's grove-meta tag (unchanged from the original per-comment send). */
 export function buildReviewCommentMessage(comment: ChatReviewComment): string {
   if (comment.design) return buildDesignCommentMessage({ ...comment, design: comment.design });
+  if (comment.sketch) return buildSketchCommentMessage({ ...comment, sketch: comment.sketch });
 
   // 1. Build line/location labels
   const lineRange = comment.start_line
