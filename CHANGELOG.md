@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-11-11
+
+### Added
+
+- **Sketch comments** — Comment on one element of a sketch, several, a group or an area of the canvas. Pins follow their elements; reply, resolve and send to the agent as with design comments. Share links carry the Task's sketches.
+- **Share scope** — Each link shows the whole Task or the reviews, design boards, sketches and output files you pick, including Code Reviews of linked Projects. The scope can be changed later from the link's menu.
+- **Share notifications** — You are notified when someone comments or replies through a share link.
+- **Always show agent narration** — A chat setting that shows every agent reply as it streams, with thinking and tool calls expanded inline.
+- **Background work** — Orbit lists what the agent keeps running, with elapsed time, and cancels what allows it (Agents on ACP v2).
+
+### Improved
+
+- **ACP 5.2** — Sign-in state shows before a prompt fails, and a sign-in made outside Grove resumes the request. Archiving and renaming a Chat reach the Agent, and a session the Agent no longer knows is retired without a failed resume.
+- **New page config** — Config chosen on the New page goes out when the session is created and is restored on resume.
+- **Session titles** — Your rename wins over the Agent's titles, which win over the first-prompt title.
+- **Design panel layout** — The Sketch page gets the Design board's picker and view controls.
+- **Test browser** — Uses the browser agent-browser was given, and where the download fails (as on Linux ARM64) tells the agent how to install Chrome or Chromium.
+- **macOS downloads** — Separate DMGs for Apple Silicon and Intel instead of one universal DMG.
+
 ## [0.15.0] - 2026-11-10
 
 ### Added
