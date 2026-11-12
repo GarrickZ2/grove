@@ -5,6 +5,7 @@ import { useSketchSync } from "./hooks/useSketchSync";
 import { useSketchThumbnail } from "./hooks/useSketchThumbnail";
 import { SketchBoard } from "./SketchBoard";
 import { exportSketchPng } from "./sketchExport";
+import { describePlace } from "./sketchAnchor";
 import { SketchHistoryDialog } from "./SketchHistoryDialog";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail, setSketchNames } from "../../ui/sketchChipCache";
 import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
@@ -196,8 +197,7 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
       sketch: {
         id: comment.sketch,
         name: sketches.find((s) => s.id === comment.sketch)?.name ?? "sketch",
-        element: comment.anchor?.element,
-        text: comment.anchor?.text,
+        place: describePlace(comment.anchor),
         replies: comment.replies.map((reply) => `${reply.author}: ${reply.content}`),
       },
     }));

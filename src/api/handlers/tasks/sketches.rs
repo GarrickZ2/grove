@@ -397,35 +397,79 @@ impl SketchComment {
         self.status == "open"
     }
 
-    /// The comment for an agent: id, who, which element, what was said.
+    /// The comment for an agent: id, who, where on the sketch, what was said.
     pub fn describe(&self) -> String {
-        let text = |key: &str| {
-            self.anchor
-                .get(key)
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| !value.is_empty())
-        };
-        let mut out = format!("- #{} by {}", self.id, self.author);
-        match (text("element"), text("text")) {
-            (Some(element), Some(label)) => {
-                out.push_str(&format!(" on element `{element}` (\"{label}\")"))
-            }
-            (Some(element), None) => out.push_str(&format!(" on element `{element}`")),
-            _ => {
-                let at = |key: &str| self.anchor.get(key).and_then(serde_json::Value::as_f64);
-                match (at("x"), at("y")) {
-                    (Some(x), Some(y)) => {
-                        out.push_str(&format!(" at canvas point ({}, {})", x.round(), y.round()))
-                    }
-                    _ => out.push_str(" on the sketch"),
-                }
-            }
-        }
+        let mut out = format!(
+            "- #{} by {} on {}",
+            self.id,
+            self.author,
+            describe_place(&self.anchor)
+        );
         out.push_str(&format!(": {}\n", self.content));
         for reply in &self.replies {
             out.push_str(&format!("  - {}: {}\n", reply.author, reply.content));
         }
         out
+    }
+}
+
+/// Where a comment is, for an agent: its elements by id, type and text, or
+/// the area dragged out and what it holds.
+fn describe_place(anchor: &serde_json::Value) -> String {
+    use serde_json::Value;
+    let items: Vec<String> = anchor
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let id = item.get("id")?.as_str()?;
+                    let kind = item
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("element");
+                    Some(match item.get("text").and_then(Value::as_str) {
+                        Some(text) if !text.is_empty() => format!("`{id}` ({kind}, \"{text}\")"),
+                        _ => format!("`{id}` ({kind})"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut list = items
+        .iter()
+        .take(20)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if items.len() > 20 {
+        list.push_str(&format!(", and {} more", items.len() - 20));
+    }
+    let area = anchor.get("area").and_then(Value::as_bool).unwrap_or(false);
+    let side = |key: &str| {
+        anchor
+            .get("box")
+            .and_then(|b| b.get(key))
+            .and_then(Value::as_f64)
+            .map(f64::round)
+    };
+    if area {
+        if let (Some(x), Some(y), Some(w), Some(h)) =
+            (side("x"), side("y"), side("width"), side("height"))
+        {
+            let place = format!("the area x={x} y={y} w={w} h={h}");
+            return if items.is_empty() {
+                format!("{place}, which is empty")
+            } else {
+                format!("{place}, which holds {list}")
+            };
+        }
+    }
+    match items.len() {
+        0 => "the sketch".to_string(),
+        1 => format!("the element {list}"),
+        _ => format!("the elements {list}"),
     }
 }
 
@@ -585,16 +629,20 @@ mod comment_tests {
 
     #[test]
     fn describes_comments_for_the_agent() {
-        let on_element =
-            comment(serde_json::json!({"element": "r1", "text": "Sign in", "x": 1, "y": 2}));
+        let on_elements = comment(serde_json::json!({
+            "items": [{"id": "r1", "type": "rectangle", "text": "Sign in"}, {"id": "a1", "type": "arrow"}],
+            "box": {"x": 0, "y": 0, "width": 10, "height": 10},
+        }));
         assert_eq!(
-            on_element.describe(),
-            "- #7 by Ann on element `r1` (\"Sign in\"): Bigger\n  - Bob: Agree\n"
+            on_elements.describe(),
+            "- #7 by Ann on the elements `r1` (rectangle, \"Sign in\"), `a1` (arrow): Bigger\n  - Bob: Agree\n"
         );
-        let on_canvas = comment(serde_json::json!({"x": 10.4, "y": -3.6}));
-        assert!(on_canvas
+        let area = comment(serde_json::json!({
+            "items": [], "area": true, "box": {"x": 10.4, "y": -3.6, "width": 200, "height": 80},
+        }));
+        assert!(area
             .describe()
-            .starts_with("- #7 by Ann at canvas point (10, -4): Bigger"));
+            .starts_with("- #7 by Ann on the area x=10 y=-4 w=200 h=80, which is empty: Bigger"));
         assert!(comment(serde_json::Value::Null)
             .describe()
             .contains(" on the sketch: "));

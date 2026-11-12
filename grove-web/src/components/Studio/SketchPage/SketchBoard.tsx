@@ -15,13 +15,14 @@ import {
   X,
 } from "lucide-react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import type { SketchAnchor, SketchComment, SketchMeta } from "../../../api";
+import type { SketchAnchor, SketchBox, SketchComment, SketchMeta } from "../../../api";
 import { usePopover } from "../../../orbit/ui";
 import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
 import { DesignCommentList } from "../DesignPage/DesignInspector";
 import { Avatar, DesignThread } from "../DesignPage/DesignThread";
 import { SketchCanvas } from "./SketchCanvas";
 import { exportSketchPng } from "./sketchExport";
+import { anchorOn, anchorOnArea, idsAt, placeLabel, placeOf, type SceneElement } from "./sketchAnchor";
 import "../DesignPage/design.css";
 import "./sketch.css";
 
@@ -63,14 +64,6 @@ interface Props {
 type Thread =
   | { kind: "existing"; id: number; at: { x: number; y: number } }
   | { kind: "new"; sketch: string; anchor: SketchAnchor; at: { x: number; y: number } };
-
-/** How a comment's place reads: what its element says, or that it is on the canvas. */
-function placeLabel(anchor: SketchAnchor | null | undefined): string {
-  if (!anchor) return "the sketch";
-  const text = anchor.text?.trim();
-  if (text) return `"${text.length > 40 ? `${text.slice(0, 40)}…` : text}"`;
-  return anchor.element ? "an element" : "the canvas";
-}
 
 /**
  * The Sketch panel's surface: the canvas, the sketch picker in its top left
@@ -131,8 +124,17 @@ export function SketchBoard({
           type="button"
           className={`design-icon-btn${commenting ? " is-on" : ""}`}
           aria-pressed={commenting}
-          onClick={() => setCommenting((on) => !on)}
-          title="Comment: click an element or a spot on the canvas"
+          onClick={(event) => {
+            // Shapes chosen on the canvas: the comment is on them, at once.
+            const chosen = api && !commenting ? selectionAnchor(api) : null;
+            if (chosen && activeId) {
+              const box = event.currentTarget.getBoundingClientRect();
+              setThread({ kind: "new", sketch: activeId, anchor: chosen, at: { x: box.left - 330, y: box.bottom + 8 } });
+              return;
+            }
+            setCommenting((on) => !on);
+          }}
+          title="Comment on the shapes chosen, or click a shape or drag over an area"
           aria-label="Comment"
         >
           <MessageSquarePlus size={14} />
@@ -180,6 +182,8 @@ export function SketchBoard({
           commenting={commenting}
           onPick={(anchor, at) => setThread({ kind: "new", sketch: activeId, anchor, at })}
           onOpen={openThread}
+          // The elements of the thread open, outlined on the canvas.
+          shown={thread?.kind === "new" ? thread.anchor : existing?.anchor ?? null}
         />
       ) : null}
     </>
@@ -222,10 +226,9 @@ export function SketchBoard({
               canSend={canSend}
               onSend={onSend}
               onOpen={(comment, at) => {
-                const element = comment.anchor?.element
-                  ? api?.getSceneElements().find((entry) => entry.id === comment.anchor?.element)
-                  : undefined;
-                if (api && element) api.scrollToContent(element, { animate: true });
+                const ids = new Set((comment.anchor?.items ?? []).map((item) => item.id));
+                const targets = api?.getSceneElements().filter((entry) => ids.has(entry.id)) ?? [];
+                if (api && targets.length) api.scrollToContent(targets, { animate: true });
                 openThread(comment, at);
               }}
             />
@@ -382,91 +385,35 @@ interface View {
   zoom: number;
 }
 
-interface SceneElement {
-  id: string;
-  type: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  isDeleted?: boolean;
-  containerId?: string | null;
-  text?: string;
-  points?: readonly (readonly [number, number])[];
-}
-
-/** An element's box in scene coordinates. */
-function boxOf(element: SceneElement): { left: number; top: number; right: number; bottom: number } {
-  if (element.points && element.points.length) {
-    const xs = element.points.map((point) => point[0]);
-    const ys = element.points.map((point) => point[1]);
-    return {
-      left: element.x + Math.min(...xs),
-      top: element.y + Math.min(...ys),
-      right: element.x + Math.max(...xs),
-      bottom: element.y + Math.max(...ys),
-    };
-  }
-  const left = Math.min(element.x, element.x + element.width);
-  const top = Math.min(element.y, element.y + element.height);
-  return { left, top, right: left + Math.abs(element.width), bottom: top + Math.abs(element.height) };
-}
-
-/** The front-most element under a scene point; a label counts as its shape. Frames only when nothing else is there. */
-function elementAt(elements: readonly SceneElement[], x: number, y: number, zoom: number): SceneElement | null {
-  const slack = 6 / zoom;
-  const byId = new Map(elements.map((element) => [element.id, element]));
-  let frame: SceneElement | null = null;
-  for (let index = elements.length - 1; index >= 0; index -= 1) {
-    const element = elements[index];
-    if (element.isDeleted) continue;
-    const box = boxOf(element);
-    if (x < box.left - slack || x > box.right + slack || y < box.top - slack || y > box.bottom + slack) continue;
-    if (element.type === "frame" || element.type === "magicframe") {
-      frame ??= element;
-      continue;
-    }
-    const container = element.containerId ? byId.get(element.containerId) : undefined;
-    return container && !container.isDeleted ? container : element;
-  }
-  return frame;
-}
-
-/** What an element reads: its own text, or its label's. */
-function textOf(elements: readonly SceneElement[], element: SceneElement): string | undefined {
-  const own = element.type === "text" ? element.text : elements.find((entry) => entry.containerId === element.id && !entry.isDeleted)?.text;
-  const text = own?.replace(/\s+/g, " ").trim();
-  return text ? text.slice(0, 120) : undefined;
-}
-
-/** Where a comment's pin is in the scene, and whether its element is gone. */
-function pinOf(comment: SketchComment, byId: Map<string, SceneElement>): { x: number; y: number; stale: boolean } | null {
-  const anchor = comment.anchor;
-  if (!anchor || typeof anchor.x !== "number" || typeof anchor.y !== "number") return null;
-  if (!anchor.element) return { x: anchor.x, y: anchor.y, stale: false };
-  const element = byId.get(anchor.element);
-  if (!element || element.isDeleted) return { x: anchor.x, y: anchor.y, stale: true };
-  return { x: element.x + (anchor.dx ?? 0), y: element.y + (anchor.dy ?? 0), stale: false };
+/** A comment's place on the shapes chosen on the canvas, if any are. */
+function selectionAnchor(api: ExcalidrawImperativeAPI): SketchAnchor | null {
+  const chosen = Object.entries(api.getAppState().selectedElementIds).filter(([, on]) => on).map(([id]) => id);
+  if (chosen.length === 0) return null;
+  return anchorOn(api.getSceneElements() as unknown as readonly SceneElement[], chosen);
 }
 
 /**
  * Comment pins over the canvas, kept on their elements as the canvas pans,
- * zooms and changes. While commenting, a click picks the element under it
- * (or the spot, on empty canvas) for a new comment.
+ * zooms and changes, and an outline around the elements of the thread open
+ * or the pin pointed at. While commenting, a click picks the shape under it
+ * (with its group) and a drag picks an area.
  */
-function SketchPins({ api, comments, commenting, onPick, onOpen }: {
+function SketchPins({ api, comments, commenting, onPick, onOpen, shown }: {
   api: ExcalidrawImperativeAPI;
   comments: SketchComment[];
   commenting: boolean;
   onPick: (anchor: SketchAnchor, at: { x: number; y: number }) => void;
   onOpen: (comment: SketchComment, at: { x: number; y: number }) => void;
+  shown: SketchAnchor | null;
 }) {
-  const layerRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>(() => {
     const state = api.getAppState();
     return { scrollX: state.scrollX, scrollY: state.scrollY, zoom: state.zoom.value };
   });
   const [elements, setElements] = useState<readonly SceneElement[]>(() => api.getSceneElements() as unknown as readonly SceneElement[]);
+  const [hover, setHover] = useState<number | null>(null);
+  const drag = useRef<{ x: number; y: number; sx: number; sy: number } | null>(null);
+  const [band, setBand] = useState<SketchBox | null>(null);
 
   useEffect(() => {
     let frame = 0;
@@ -495,40 +442,75 @@ function SketchPins({ api, comments, commenting, onPick, onOpen }: {
   }, [api]);
 
   const byId = new Map(elements.map((element) => [element.id, element]));
-  const toScreen = (x: number, y: number) => ({ left: (x + view.scrollX) * view.zoom, top: (y + view.scrollY) * view.zoom });
+  const toScreen = (box: SketchBox) => ({
+    left: (box.x + view.scrollX) * view.zoom,
+    top: (box.y + view.scrollY) * view.zoom,
+    width: box.width * view.zoom,
+    height: box.height * view.zoom,
+  });
+  const toScene = (event: React.PointerEvent<HTMLDivElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    return { x: (event.clientX - box.left) / view.zoom - view.scrollX, y: (event.clientY - box.top) / view.zoom - view.scrollY };
+  };
+  const hovered = hover !== null ? comments.find((comment) => comment.id === hover)?.anchor ?? null : null;
+  const outline = placeOf(hovered ?? shown, byId);
 
   return (
     <div
-      ref={layerRef}
       className={`sketch-pins${commenting ? " is-commenting" : ""}`}
       onPointerDown={(event) => {
         if (!commenting || event.button !== 0 || event.target !== event.currentTarget) return;
         event.preventDefault();
         event.stopPropagation();
-        const box = event.currentTarget.getBoundingClientRect();
-        const x = (event.clientX - box.left) / view.zoom - view.scrollX;
-        const y = (event.clientY - box.top) / view.zoom - view.scrollY;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        const at = toScene(event);
+        drag.current = { ...at, sx: event.clientX, sy: event.clientY };
+      }}
+      onPointerMove={(event) => {
+        const start = drag.current;
+        if (!start) return;
+        const at = toScene(event);
+        if (Math.hypot(event.clientX - start.sx, event.clientY - start.sy) < 4) return;
+        setBand({ x: Math.min(start.x, at.x), y: Math.min(start.y, at.y), width: Math.abs(at.x - start.x), height: Math.abs(at.y - start.y) });
+      }}
+      onPointerUp={(event) => {
+        const start = drag.current;
+        drag.current = null;
+        if (!start) return;
+        const area = band;
+        setBand(null);
         const live = api.getSceneElements() as unknown as readonly SceneElement[];
-        const element = elementAt(live, x, y, view.zoom);
-        const anchor: SketchAnchor = element
-          ? { element: element.id, text: textOf(live, element), x, y, dx: x - element.x, dy: y - element.y }
-          : { x, y };
-        onPick(anchor, { x: event.clientX, y: event.clientY });
+        const at = { x: event.clientX, y: event.clientY };
+        if (area) {
+          onPick(anchorOnArea(live, area), at);
+          return;
+        }
+        // A click on empty canvas picks nothing: drag over an area instead.
+        const anchor = anchorOn(live, idsAt(live, start.x, start.y, view.zoom));
+        if (anchor) onPick(anchor, at);
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+        setBand(null);
       }}
     >
+      {outline ? <div className={`sketch-target${outline.stale ? " is-stale" : ""}`} style={toScreen(outline.box)} /> : null}
+      {band ? <div className="sketch-target is-band" style={toScreen(band)} /> : null}
       {comments.map((comment) => {
-        const pin = pinOf(comment, byId);
-        if (!pin) return null;
-        const at = toScreen(pin.x, pin.y);
+        const place = placeOf(comment.anchor, byId);
+        if (!place) return null;
+        const at = toScreen(place.box);
         return (
           <button
             key={comment.id}
             type="button"
-            className={`design-pin${pin.stale ? " is-stale" : ""}`}
-            style={{ left: at.left, top: at.top }}
+            className={`design-pin${place.stale ? " is-stale" : ""}`}
+            style={{ left: at.left + at.width, top: at.top }}
             onPointerDown={(event) => event.stopPropagation()}
+            onPointerEnter={() => setHover(comment.id)}
+            onPointerLeave={() => setHover((id) => (id === comment.id ? null : id))}
             onClick={(event) => onOpen(comment, { x: event.clientX, y: event.clientY })}
-            title={`${comment.author}: ${comment.content}${pin.stale ? " · Its element is no longer on the sketch" : ""}`}
+            title={`${comment.author}: ${comment.content}${place.stale ? " · Its elements are no longer on the sketch" : ""}`}
           >
             <Avatar name={comment.author} size={24} />
           </button>

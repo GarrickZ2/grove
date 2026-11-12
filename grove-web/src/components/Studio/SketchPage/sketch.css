@@ -86,7 +86,21 @@
 }
 
 .sketch-pins.is-commenting { pointer-events: auto; cursor: crosshair; }
-.sketch-pins .design-pin { pointer-events: auto; transform: translate(0, -100%); }
+.sketch-pins .design-pin { pointer-events: auto; transform: translate(-50%, -100%); }
+
+/* The elements of the thread open or the pin pointed at; the area being dragged out. */
+.sketch-target {
+  position: absolute;
+  margin: -4px 0 0 -4px;
+  padding: 4px;
+  box-sizing: content-box;
+  border: 1.5px solid var(--color-highlight);
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--color-highlight) 6%, transparent);
+  pointer-events: none;
+}
+.sketch-target.is-stale { border-style: dashed; border-color: var(--color-text-muted); background: transparent; }
+.sketch-target.is-band { margin: 0; padding: 0; border-style: dashed; border-radius: 2px; }
 
 .sketch-body { position: relative; display: flex; flex: 1; min-height: 0; }
 /* Its own stacking context: the pins (3) sit over Excalidraw's canvases (1, 2)

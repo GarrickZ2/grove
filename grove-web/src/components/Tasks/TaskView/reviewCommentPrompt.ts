@@ -39,9 +39,8 @@ export interface ChatReviewComment {
   sketch?: {
     id: string;
     name: string;
-    /** The element the comment is on, and what it reads. */
-    element?: string;
-    text?: string;
+    /** Where on the sketch, for the agent: the elements by id, type and text, or the area. */
+    place: string;
     /** Replies in the thread so far, oldest first. */
     replies?: string[];
   };
@@ -50,11 +49,8 @@ export interface ChatReviewComment {
 /** A comment on a sketch: which sketch and element, the thread, and how to answer. */
 function buildSketchCommentMessage(comment: ChatReviewComment & { sketch: NonNullable<ChatReviewComment["sketch"]> }): string {
   const { sketch } = comment;
-  const element = sketch.element
-    ? ` on the element \`${sketch.element}\`${sketch.text ? ` ("${sketch.text}")` : ""}`
-    : "";
   const thread = sketch.replies?.length ? ` Replies so far: ${sketch.replies.map((reply) => `"${reply}"`).join("; ")}.` : "";
-  const systemPrompt = `Please address Comment #${comment.id} on the sketch "${sketch.name}" (sketch://${sketch.id})${element}. Comment: "${comment.content}".${thread} Read the sketch with grove_sketch_read, change it with grove_sketch_draw, then answer the comment with the grove_reply_review tool, saying what you changed.`;
+  const systemPrompt = `Please address Comment #${comment.id} on the sketch "${sketch.name}" (sketch://${sketch.id}), on ${sketch.place}. Comment: "${comment.content}".${thread} Read the sketch with grove_sketch_read, change it with grove_sketch_draw (keep the ids of the elements you change), then answer the comment with the grove_reply_review tool, saying what you changed.`;
   return buildGroveMetaTag(
     "review_comment",
     {

@@ -276,7 +276,7 @@ To delete `b1` before adding `b3`: include `{"type":"delete","ids":"b1"}` anywhe
 
 ## Comments from the user
 
-The user comments on elements of a sketch (or on a point of the canvas). `grove_sketch_read` lists the open ones with the element id each is on. When asked to address them: read the sketch, change it with `grove_sketch_draw` (keep the commented element's id when you change it, so the comment stays on it), then answer each comment with `grove_reply_review`, saying what you changed.
+The user comments on elements of a sketch (one, several, or a group) or on an area of the canvas. `grove_sketch_read` lists the open ones with the elements each is on, by id, type and text, and the area when there is one. When asked to address them: read the sketch, change it with `grove_sketch_draw` (keep the ids of the elements you change, so the comment stays on them), then answer each comment with `grove_reply_review`, saying what you changed.
 
 ## Referencing a sketch in chat (sketch:// chip)
 

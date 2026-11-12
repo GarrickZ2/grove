@@ -181,18 +181,32 @@ export function sketchWsUrl(projectId: string, taskId: string): string {
 
 // ── Comments ───────────────────────────────────────────────────────────────
 
-/** Where a comment sits: on an element (it follows the element), or on a point of the canvas. */
-export interface SketchAnchor {
-  /** The element's id, when the comment is on one. */
-  element?: string;
-  /** What the element reads, for the agent and for a thread's title. */
-  text?: string;
-  /** The pin's point in scene coordinates when the comment was made. */
+/** A box in scene coordinates. */
+export interface SketchBox {
   x: number;
   y: number;
-  /** The pin's offset from the element's top left corner. */
-  dx?: number;
-  dy?: number;
+  width: number;
+  height: number;
+}
+
+/** An element a comment is on, as it was when the comment was made. */
+export interface SketchAnchorItem {
+  id: string;
+  type: string;
+  /** What it reads: its own text or its label's. */
+  text?: string;
+}
+
+/**
+ * Where a comment sits: on elements chosen together (it follows them), or on
+ * an area dragged out on the canvas (with the elements inside it then).
+ */
+export interface SketchAnchor {
+  items?: SketchAnchorItem[];
+  /** Around the elements when the comment was made, or the area. */
+  box?: SketchBox;
+  /** An area dragged out, rather than elements chosen. */
+  area?: boolean;
 }
 
 export interface SketchCommentReply {
