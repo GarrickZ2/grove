@@ -66,9 +66,19 @@ pub async fn install_browser() -> Result<(), String> {
     if output.success {
         Ok(())
     } else {
-        Err(last_line(&output.stderr)
-            .or_else(|| last_line(&output.stdout))
-            .unwrap_or_else(|| "The browser could not be installed.".to_string()))
+        // The end of what agent-browser printed: its reason and advice, not
+        // the download progress before it.
+        let said = format!("{}\n{}", output.stdout, output.stderr);
+        let lines: Vec<&str> = said
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        let tail = lines[lines.len().saturating_sub(20)..].join("\n");
+        Err(if tail.is_empty() {
+            "The browser could not be installed.".to_string()
+        } else {
+            tail
+        })
     }
 }
 

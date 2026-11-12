@@ -400,10 +400,32 @@ fn install_marker() -> PathBuf {
         .join("installed")
 }
 
+/// The browser agent-browser was told to launch, through its environment
+/// variable or its user config file, if any.
+fn configured_browser() -> Option<String> {
+    if let Ok(path) = std::env::var("AGENT_BROWSER_EXECUTABLE_PATH") {
+        if !path.trim().is_empty() {
+            return Some(path.trim().to_string());
+        }
+    }
+    let file = std::env::var_os("AGENT_BROWSER_CONFIG")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".agent-browser").join("config.json")))?;
+    executable_path_in(&std::fs::read_to_string(file).ok()?)
+}
+
+/// `executablePath` from an agent-browser config file, when it names one.
+fn executable_path_in(config: &str) -> Option<String> {
+    let config: Value = serde_json::from_str(config).ok()?;
+    let path = config.get("executablePath")?.as_str()?.trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
+
 /// The test browser is downloaded on first use. That takes minutes, longer
 /// than a tool call should hang, so it runs in the background meanwhile.
+/// Nothing is downloaded when agent-browser was given a browser to use.
 fn prepare_managed_browser() -> Option<String> {
-    if install_marker().exists() {
+    if install_marker().exists() || configured_browser().is_some() {
         return None;
     }
     let mut preparation = PREPARATION.lock().unwrap();
@@ -412,7 +434,7 @@ fn prepare_managed_browser() -> Option<String> {
         Some(Preparation::Running) => Some(PREPARING.to_string()),
         Some(Preparation::Failed(error)) => {
             *preparation = None;
-            Some(format!("The test browser could not be installed: {error}"))
+            Some(install_failed(&error))
         }
         None => {
             *preparation = Some(Preparation::Running);
@@ -433,6 +455,21 @@ fn prepare_managed_browser() -> Option<String> {
             Some(PREPARING.to_string())
         }
     }
+}
+
+/// What the agent is told when the test browser cannot be downloaded, such
+/// as on Linux ARM64 where no Chrome for Testing build exists: install a
+/// browser and tell agent-browser where it is.
+fn install_failed(error: &str) -> String {
+    format!(
+        "The test browser could not be installed on this machine ({os}/{arch}). agent-browser said:\n{error}\n\n\
+         Install Chrome or Chromium yourself (for example `sudo apt install chromium` on Debian/Ubuntu; \
+         ask the user if it needs their password), then set \"executablePath\" to its path in \
+         ~/.agent-browser/config.json, for example {{\"executablePath\": \"/usr/bin/chromium\"}}, \
+         and retry. Grove uses that browser from then on.",
+        os = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+    )
 }
 
 const PREPARING: &str =
@@ -555,6 +592,25 @@ pub async fn switch_tab(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_browser_named_in_the_agent_browser_config() {
+        assert_eq!(
+            executable_path_in(r#"{"executablePath": " /usr/bin/chromium "}"#).as_deref(),
+            Some("/usr/bin/chromium")
+        );
+        assert_eq!(executable_path_in(r#"{"executablePath": ""}"#), None);
+        assert_eq!(executable_path_in(r#"{"headed": true}"#), None);
+        assert_eq!(executable_path_in("not json"), None);
+    }
+
+    #[test]
+    fn an_install_failure_tells_the_agent_what_to_do() {
+        let text = install_failed("Chrome for Testing does not provide Linux ARM64 builds.");
+        assert!(text.contains("does not provide Linux ARM64 builds"));
+        assert!(text.contains("~/.agent-browser/config.json"));
+        assert!(text.contains("\"executablePath\""));
+    }
 
     #[test]
     fn accepts_tool_names_with_or_without_the_prefix() {
