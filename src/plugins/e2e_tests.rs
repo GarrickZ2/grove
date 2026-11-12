@@ -875,6 +875,8 @@ fn every_review_permission_label_exists() {
     }
 }
 
+// Links node_modules into a temp directory, which this does the Unix way.
+#[cfg(unix)]
 #[test]
 fn the_sdk_passes_strict_type_checking() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("grove-web/node_modules/.bin/tsc");
