@@ -349,10 +349,20 @@ jobs:
         shell: pwsh
         run: gh release upload ${{ needs.create-release.outputs.tag }} grove-${{ needs.create-release.outputs.tag }}-aarch64-pc-windows-msvc.zip --clobber
 
-  # Build macOS universal .app + DMG (arm64 + x86_64 combined)
+  # Build the macOS .app + DMG, one for Apple silicon and one for Intel
   build-macos-dmg:
     needs: [create-release, build-frontend, build-extension]
     runs-on: macos-latest
+    # One DMG per chip, built side by side: a universal one compiles Grove
+    # twice in a row and is twice the download.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            cache-key: macos-arm-gui
+          - target: x86_64-apple-darwin
+            cache-key: macos-intel-gui
     steps:
       - uses: actions/checkout@v4
       - name: Download frontend dist
@@ -368,12 +378,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.target }}
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          key: macos-dmg-universal
-          cache-all-crates: true
+          key: ${{ matrix.cache-key }}
           add-job-id-key: false
           save-if: false
       - name: Cache Tauri CLI binary
@@ -385,18 +394,18 @@ jobs:
       - name: Install Tauri CLI
         if: steps.cache-tauri.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version "=2.10.0" --locked
-      - name: Build universal DMG
+      - name: Build DMG
         run: |
-          cargo tauri build --target universal-apple-darwin --features gui \
+          cargo tauri build --target ${{ matrix.target }} --features gui \
             --config '{"build":{"beforeBuildCommand":""}}'
       - name: Rename and upload DMG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ needs.create-release.outputs.tag }}"
-          DMG=$(find target/universal-apple-darwin/release/bundle/dmg -name "*.dmg" | head -1)
-          cp "$DMG" "grove-${TAG}-universal-apple-darwin.dmg"
-          gh release upload "${TAG}" "grove-${TAG}-universal-apple-darwin.dmg" --clobber
+          DMG=$(find target/${{ matrix.target }}/release/bundle/dmg -name "*.dmg" | head -1)
+          cp "$DMG" "grove-${TAG}-${{ matrix.target }}.dmg"
+          gh release upload "${TAG}" "grove-${TAG}-${{ matrix.target }}.dmg" --clobber
 
   # Build Chrome extension. Two roles:
   #   1. Upload the unpacked `dist/` as an actions artifact so every grove
@@ -446,7 +455,9 @@ jobs:
 
   # Publish the release
   publish-release:
-    needs: [create-release, build-macos-arm, build-macos-intel, build-linux-x64, build-linux-arm, build-linux-gui-x64, build-macos-dmg, build-windows-x64, build-windows-arm64, build-extension]
+    # The DMGs are not waited for: they take the longest, and are added to the
+    # release when they are done.
+    needs: [create-release, build-macos-arm, build-macos-intel, build-linux-x64, build-linux-arm, build-linux-gui-x64, build-windows-x64, build-windows-arm64, build-extension]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

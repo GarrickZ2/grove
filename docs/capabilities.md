@@ -350,7 +350,7 @@ LAN access with HMAC auth — see §8.
 
 ## 12. Platform Support
 
-- **macOS** 12+ — universal binary (Apple Silicon + Intel), `.dmg` bundle with GUI
+- **macOS** 12+ — Apple Silicon and Intel, a `.dmg` bundle with GUI for each
 - **Linux** — Debian/Ubuntu, separate GUI artifact, WebKitGTK runtime deps
 - **Windows** 10/11 — `grove web` / `grove mcp` / `grove acp` / `grove gui` native; `grove tui` / `grove fp` show WSL2 guidance
 - **Cross-platform filesystem links** — unified hard links + junctions (Windows) / symlinks (Unix)

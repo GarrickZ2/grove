@@ -182,12 +182,6 @@ jobs:
             cache-key: macos-intel-gui
             target: x86_64-apple-darwin
             features: gui
-          - os: macos-latest
-            cache-key: macos-dmg-universal
-            target: aarch64-apple-darwin
-            extra-target: x86_64-apple-darwin
-            features: gui
-            cache-all-crates: true
           - os: windows-latest
             cache-key: ci-windows-x64-gui
             target: x86_64-pc-windows-msvc
@@ -201,7 +195,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ !matrix.use-cross && (matrix.extra-target && format('{0},{1}', matrix.target, matrix.extra-target) || matrix.target) || '' }}
+          targets: ${{ !matrix.use-cross && matrix.target || '' }}
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -258,7 +252,3 @@ jobs:
           else
             cargo build --release --target ${{ matrix.target }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
           fi
-      - name: Build extra target (universal DMG warm-up)
-        if: matrix.extra-target != ''
-        shell: bash
-        run: cargo build --release --target ${{ matrix.extra-target }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
