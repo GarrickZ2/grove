@@ -1578,6 +1578,14 @@ pub async fn public_add_reply(
     }
     let found = comments::reply_comment(&target.0, &target.1, id, content, &visitor.name, "", "")
         .map_err(grove_error)?;
+    if found {
+        if let Some(comment) = comments::load_comments(&target.0, &target.1)
+            .ok()
+            .and_then(|data| data.comments.into_iter().find(|c| c.id == id))
+        {
+            notify_reply(&share, &visitor, &comment, content);
+        }
+    }
     if !found {
         return Err(fail(
             StatusCode::NOT_FOUND,
@@ -1635,8 +1643,22 @@ async fn changed_path(project: &str, task_id: &str, path: &str) -> bool {
     })
 }
 
-/// Tell the owner, through the usual notifications.
+/// Tell the owner, through the usual notifications: a banner, and the
+/// Task's entry in the notification list.
 fn notify_comment(share: &Share, visitor: &Visitor, comment: &comments::Comment) {
+    notify(
+        share,
+        &format!("{} commented", visitor.name),
+        comment,
+        &comment.content,
+    );
+}
+
+fn notify_reply(share: &Share, visitor: &Visitor, comment: &comments::Comment, reply: &str) {
+    notify(share, &format!("{} replied", visitor.name), comment, reply);
+}
+
+fn notify(share: &Share, what: &str, comment: &comments::Comment, text: &str) {
     let place = match (&comment.file_path, comment.start_line) {
         (Some(path), Some(line)) => {
             let file = path.rsplit('/').next().unwrap_or(path);
@@ -1645,15 +1667,15 @@ fn notify_comment(share: &Share, visitor: &Visitor, comment: &comments::Comment)
         (Some(path), None) => format!("{} · ", path.rsplit('/').next().unwrap_or(path)),
         _ => String::new(),
     };
-    let excerpt: String = comment.content.chars().take(80).collect();
+    let excerpt: String = text.chars().take(80).collect();
     let _ = crate::hooks::update_hook(
         &share.project_key,
         &share.task_id,
         crate::hooks::HookFact {
-            kind: crate::hooks::HookKind::External,
-            label: Some(format!("{} commented", visitor.name)),
+            kind: crate::hooks::HookKind::Comment,
+            label: Some(what.to_string()),
             level: Some(crate::hooks::NotificationLevel::Notice),
-            message: Some(format!("{} commented: {place}{excerpt}", visitor.name)),
+            message: Some(format!("{what}: {place}{excerpt}")),
             chat_id: None,
             permission: None,
         },

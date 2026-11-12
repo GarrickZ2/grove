@@ -96,6 +96,8 @@ fn render(event: &RadioEvent) {
         HookKind::PermissionRequired => notif.notification_show_permission,
         HookKind::ElicitationRequired => notif.notification_show_elicitation,
         HookKind::External => false,
+        // People on a share link: only the master switch.
+        HookKind::Comment => true,
     };
     if !event_enabled {
         return;
@@ -104,7 +106,7 @@ fn render(event: &RadioEvent) {
     // ── 声音（延续历史策略：完成=Glass 类，权限=Purr 类，elicitation 无声）──
     let hooks_cfg = &cfg.hooks;
     let sound = match kind {
-        HookKind::TurnComplete if hooks_cfg.response_sound_enabled => {
+        HookKind::TurnComplete | HookKind::Comment if hooks_cfg.response_sound_enabled => {
             Some(if hooks_cfg.response_sound.is_empty() {
                 "Glass"
             } else {
@@ -182,6 +184,7 @@ fn default_label(kind: HookKind) -> &'static str {
         HookKind::PermissionRequired => "Permission Required",
         HookKind::ElicitationRequired => "Input Required",
         HookKind::External => "Notification",
+        HookKind::Comment => "Comment",
     }
 }
 

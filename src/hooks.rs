@@ -71,6 +71,8 @@ pub enum HookKind {
     /// machine itself; the server-side fact only feeds badges and remote
     /// surfaces.
     External,
+    /// Someone commented or replied through a share link.
+    Comment,
 }
 
 impl HookKind {
@@ -80,6 +82,7 @@ impl HookKind {
             HookKind::PermissionRequired => "permission_required",
             HookKind::ElicitationRequired => "elicitation_required",
             HookKind::External => "external",
+            HookKind::Comment => "comment",
         }
     }
 
@@ -89,6 +92,7 @@ impl HookKind {
             "permission_required" => Some(HookKind::PermissionRequired),
             "elicitation_required" => Some(HookKind::ElicitationRequired),
             "external" => Some(HookKind::External),
+            "comment" => Some(HookKind::Comment),
             _ => None,
         }
     }
@@ -221,7 +225,7 @@ pub fn update_hook(project_key: &str, task_id: &str, fact: HookFact) -> Result<(
                         WHEN 'notice' THEN 0
                         WHEN 'warn' THEN 1
                         ELSE 2 END)
-                 < (CASE excluded.level
+                 <= (CASE excluded.level
                         WHEN 'notice' THEN 0
                         WHEN 'warn' THEN 1
                         ELSE 2 END)",

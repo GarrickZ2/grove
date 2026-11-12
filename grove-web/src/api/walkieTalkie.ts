@@ -93,7 +93,7 @@ export type RadioEvent =
       /** Attention level — always present on new backends, absent on old ones. */
       level?: "notice" | "warn" | "critical";
       /** What produced the hook: presentation policy keys off this. */
-      kind?: "turn_complete" | "permission_required" | "elicitation_required" | "external";
+      kind?: "turn_complete" | "permission_required" | "elicitation_required" | "external" | "comment";
       /** Semantic event label, e.g. "Task Complete" / "Permission Required". */
       label?: string;
       message?: string;

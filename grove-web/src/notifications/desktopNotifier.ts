@@ -87,6 +87,8 @@ function defaultLabel(kind: HookAddedEvent["kind"]): string {
       return "Permission Required";
     case "elicitation_required":
       return "Input Required";
+    case "comment":
+      return "Comment";
     case "external":
       return "Notification";
     default:
@@ -127,7 +129,7 @@ function pickSound(
   kind: HookAddedEvent["kind"],
   hooks: HooksConfig,
 ): string | null {
-  if (kind === "turn_complete" || kind === "external") {
+  if (kind === "turn_complete" || kind === "external" || kind === "comment") {
     if (!hooks.response_sound_enabled) return null;
     return hooks.response_sound || "Glass";
   }
@@ -339,7 +341,10 @@ export function renderHookNotification(event: HookAddedEvent): void {
           ? n.notification_show_permission
           : event.kind === "elicitation_required"
             ? n.notification_show_elicitation
-            : n.notification_show_done;
+            // People on a share link: only the master switch.
+            : event.kind === "comment"
+              ? true
+              : n.notification_show_done;
       if (!show) return;
 
       const sound = pickSound(event.kind, policy.hooks);
