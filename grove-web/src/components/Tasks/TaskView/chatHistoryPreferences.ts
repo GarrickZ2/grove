@@ -3,6 +3,7 @@ export interface ChatHistoryPreferences {
   recentTurns: number;
   includeMedia: boolean;
   includeToolDetails: boolean;
+  showAgentNarration: boolean;
   renderWindowLimit: number;
   renderWindowTrigger: number;
   /** Sessions kept in memory after leaving their Task, including Buddies. 0 disables this. */
@@ -16,6 +17,7 @@ export const DEFAULT_CHAT_HISTORY_PREFERENCES: ChatHistoryPreferences = {
   recentTurns: 0,
   includeMedia: true,
   includeToolDetails: true,
+  showAgentNarration: false,
   renderWindowLimit: 0,
   renderWindowTrigger: 1500,
   recentSessions: 30,
@@ -30,6 +32,7 @@ export function loadChatHistoryPreferences(legacy?: { render_window_limit?: numb
         recentTurns: Number.isSafeInteger(saved.recentTurns) && saved.recentTurns! >= 0 ? saved.recentTurns! : 0,
         includeMedia: saved.includeMedia !== false,
         includeToolDetails: saved.includeToolDetails !== false,
+        showAgentNarration: saved.showAgentNarration === true,
         renderWindowLimit: Number.isSafeInteger(saved.renderWindowLimit) && saved.renderWindowLimit! >= 0 ? saved.renderWindowLimit! : 0,
         renderWindowTrigger: Number.isSafeInteger(saved.renderWindowTrigger) && saved.renderWindowTrigger! > 0 ? saved.renderWindowTrigger! : 1500,
         recentSessions: Number.isSafeInteger(saved.recentSessions) && saved.recentSessions! >= 0 ? saved.recentSessions! : DEFAULT_CHAT_HISTORY_PREFERENCES.recentSessions,

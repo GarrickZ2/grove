@@ -13,6 +13,27 @@ function label(item: ReturnType<typeof buildRenderItems>[number]) {
   return item.kind === "single" ? item.message.type === "assistant" ? item.message.content : item.message.type : item.kind;
 }
 
+describe("always show agent narration", () => {
+  it.each([true, false])("keeps narration and process in order with busy=%s", (busy) => {
+    const thinking: ChatMessage = { type: "thinking", content: "Reasoning", complete: true, collapsed: true };
+    const result = buildRenderItems(
+      [user, thinking, assistant("I will check"), tool("read"), assistant("Found it")],
+      busy,
+      { groupLiveWork: true, showAgentNarration: true },
+    );
+
+    expect(result.map(label)).toEqual(["user", "work-summary", "I will check", "work-summary", "Found it"]);
+    expect(result[1]).toMatchObject({
+      disclosure: { id: "narrated-work-1", showHeader: true },
+      items: [{ message: thinking, index: 1 }],
+    });
+    expect(result[3]).toMatchObject({
+      disclosure: { id: "narrated-work-1", showHeader: false },
+      items: [{ message: tool("read"), index: 3 }],
+    });
+  });
+});
+
 describe("completed work grouping", () => {
   it("folds the ordinary process while keeping notices and subagents outside, with the answer visible", () => {
     const messages: ChatMessage[] = [user, assistant("Investigating"), tool("read"), child, notice, tool("wait"), assistant("Final answer")];

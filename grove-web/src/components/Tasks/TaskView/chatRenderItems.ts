@@ -16,6 +16,7 @@ export type RenderItem =
       kind: "work-summary";
       sectionId: string;
       items: WorkSummaryItem[];
+      disclosure?: { id: string; showHeader: boolean };
       durationSeconds?: number;
       lastToolId?: string;
       /** Orbit only: the running turn's work, grouped while it happens. */
@@ -34,6 +35,7 @@ export type RenderItem =
 export type BuildRenderItemsOptions = {
   /** Fold the running turn's process into one live work group (Orbit). */
   groupLiveWork?: boolean;
+  showAgentNarration?: boolean;
 };
 
 export function shouldRenderTimelineTool(message: ToolMessage): boolean {
@@ -109,7 +111,9 @@ export function buildRenderItems(messages: ChatMessage[], isBusy = false, option
     if (userIndex >= messages.length) {
       const remaining = messages.slice(cursor);
       const live = isBusy || remaining.some((message) => (message.type === "assistant" || message.type === "thinking") && !message.complete);
-      items.push(...buildSequentialRenderItems(remaining, cursor, live ? null : undefined));
+      items.push(...(options.showAgentNarration
+        ? buildNarratedTurnItems(remaining, cursor)
+        : buildSequentialRenderItems(remaining, cursor, live ? null : undefined)));
       break;
     }
 
@@ -126,6 +130,11 @@ export function buildRenderItems(messages: ChatMessage[], isBusy = false, option
     const isLatestTurn = nextUserIndex === messages.length;
     const turnEntries = messages.slice(userIndex + 1, nextUserIndex);
     const lastToolId = lastToolCallId(turnEntries);
+    if (options.showAgentNarration) {
+      items.push(...buildNarratedTurnItems(turnEntries, userIndex + 1));
+      cursor = nextUserIndex;
+      continue;
+    }
     const hasStreamingEntry = turnEntries.some(
       (message) =>
         (message.type === "assistant" || message.type === "thinking") &&
@@ -163,6 +172,42 @@ export function buildRenderItems(messages: ChatMessage[], isBusy = false, option
     items.push(...compactCompletedSegment(turnEntries.slice(segmentStart), userIndex + 1 + segmentStart, lastToolId, foldSubagents));
     cursor = nextUserIndex;
   }
+  return items;
+}
+
+/** Keep narration as regular rows and share one disclosure across the turn's process rows. */
+function buildNarratedTurnItems(messages: ChatMessage[], startIndex: number): RenderItem[] {
+  const items: RenderItem[] = [];
+  const disclosureId = `narrated-work-${startIndex}`;
+  const lastToolId = lastToolCallId(messages);
+  let process: WorkSummaryItem[] = [];
+  let showHeader = true;
+
+  function flushProcess() {
+    if (!process.length) return;
+    items.push({
+      kind: "work-summary",
+      sectionId: `narrated-work-${process[0].index}`,
+      disclosure: { id: disclosureId, showHeader },
+      items: process,
+      lastToolId,
+    });
+    process = [];
+    showHeader = false;
+  }
+
+  messages.forEach((message, offset) => {
+    const index = startIndex + offset;
+    if (message.type === "plan_document" || message.type === "auth_required") return;
+    if (message.type === "tool" && !shouldRenderTimelineTool(message)) return;
+    if (message.type === "tool" || message.type === "thinking" || message.type === "subagent") {
+      process.push({ message, index });
+    } else {
+      flushProcess();
+      items.push({ kind: "single", message, index });
+    }
+  });
+  flushProcess();
   return items;
 }
 

@@ -140,6 +140,8 @@ export function SettingsPage() {
     setChatHistoryRecentTurnsDraft,
     chatHistoryIncludeMedia,
     setChatHistoryIncludeMedia,
+    showAgentNarration,
+    setShowAgentNarration,
     chatHistoryIncludeToolDetails,
     setChatHistoryIncludeToolDetails,
     chatRenderWindowLimit,
@@ -332,6 +334,14 @@ export function SettingsPage() {
                 count={customAgents.length}
                 onClick={() => setShowCustomAgentModal(true)}
               />
+            </div>
+
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+              <div>
+                <div className="text-sm font-medium text-[var(--color-text)]">Always show agent narration</div>
+                <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">Show every agent reply as it streams. Expand thinking and tool calls inline.</div>
+              </div>
+              <ToggleSwitch checked={showAgentNarration} onChange={setShowAgentNarration} label="Always show agent narration" />
             </div>
 
             <div>

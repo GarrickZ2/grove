@@ -1697,9 +1697,9 @@ function extractRenderItemText(item: RenderItem, expandedSections: Set<string>):
   } else if (item.kind === "tool-section") {
     return "";
   }
-  if (!expandedSections.has(item.sectionId)) return "";
+  if (!expandedSections.has(item.disclosure?.id ?? item.sectionId)) return "";
   return item.items
-    .flatMap(({ message }) => (message.type === "assistant" ? [message.content] : []))
+    .flatMap(({ message }) => (message.type === "assistant" || (item.disclosure && message.type === "thinking") ? [message.content] : []))
     .join("\n");
 }
 
@@ -9939,11 +9939,19 @@ export function TaskChat({
     ],
   );
 
-  const renderItems = useMemo(
-    () => buildRenderItems(messageTimeline.messages, isBusy, { groupLiveWork: orbitComposer }).map((item) => item.kind === "single"
+  const allRenderItems = useMemo(
+    () => buildRenderItems(messageTimeline.messages, isBusy, { groupLiveWork: orbitComposer, showAgentNarration: historyPreferences.showAgentNarration }).map((item) => item.kind === "single"
       ? { ...item, sourceIndex: messageTimeline.sourceIndices[item.index] }
       : item),
-    [messageTimeline, isBusy, orbitComposer],
+    [messageTimeline, isBusy, orbitComposer, historyPreferences.showAgentNarration],
+  );
+  const renderItems = useMemo(
+    () => historyPreferences.showAgentNarration
+      ? allRenderItems.filter((item) =>
+          item.kind !== "work-summary" || !item.disclosure ||
+          item.disclosure.showHeader || expandedSections.has(item.disclosure.id))
+      : allRenderItems,
+    [allRenderItems, expandedSections, historyPreferences.showAgentNarration],
   );
   // The minimap is deliberately derived from the same `messages` state that
   // renders the chat. It is therefore immediately available for loaded
@@ -10534,6 +10542,8 @@ export function TaskChat({
         </MeasuredTaskChatRow>
       );
     }
+    const disclosureId = item.disclosure?.id ?? item.sectionId;
+    const expanded = expandedSections.has(disclosureId);
     return (
       <MeasuredTaskChatRow
         className={rowClassName}
@@ -10543,11 +10553,12 @@ export function TaskChat({
         onObserve={observeMeasuredRow}
       >
         <WorkSummaryView
-          sectionId={item.sectionId}
+          sectionId={disclosureId}
+          disclosure={item.disclosure}
           items={item.items}
           lastToolId={item.lastToolId}
           durationSeconds={item.durationSeconds}
-          expanded={expandedSections.has(item.sectionId)}
+          expanded={expanded}
           onToggleSection={toggleSection}
           onFileClick={onNavigateToFile}
           live={item.live}
@@ -14948,6 +14959,7 @@ function formatWorkDuration(durationSeconds?: number): string | null {
  * collapsed. */
 const WorkSummaryView = memo(function WorkSummaryView({
   sectionId,
+  disclosure,
   items,
   lastToolId,
   durationSeconds,
@@ -14964,6 +14976,7 @@ const WorkSummaryView = memo(function WorkSummaryView({
   onOpenSubagent,
 }: {
   sectionId: string;
+  disclosure?: { showHeader: boolean };
   items: WorkSummaryItem[];
   lastToolId?: string;
   durationSeconds?: number;
@@ -15003,7 +15016,7 @@ const WorkSummaryView = memo(function WorkSummaryView({
       | { kind: "subagent"; message: SubagentMessage; index: number }
     > = [];
     for (const item of items) {
-      if (item.message.type === "thinking") continue;
+      if (item.message.type === "thinking" && !disclosure) continue;
       if (item.message.type === "subagent") {
         result.push({ kind: "subagent", message: item.message, index: item.index });
         continue;
@@ -15023,9 +15036,9 @@ const WorkSummaryView = memo(function WorkSummaryView({
       }
     }
     return result;
-  }, [items]);
+  }, [items, disclosure]);
   const duration = formatWorkDuration(durationSeconds);
-  const title = duration ? `Worked for ${duration}` : "Worked";
+  const title = disclosure ? "Agent activity" : duration ? `Worked for ${duration}` : "Worked";
   const orbitConversation = useOrbitConversation();
   const liveSummary = useMemo(
     () => (live ? summarizeLiveWork(items, atTail, awaitingApproval) : null),
@@ -15055,7 +15068,7 @@ const WorkSummaryView = memo(function WorkSummaryView({
     // A live group grows with every step; animating that layout would chase
     // the stream, so only settled summaries animate.
     <motion.div layout={!live} className="text-[var(--color-text)]">
-      {header ?? <button
+      {disclosure?.showHeader !== false && (header ?? <button
         type="button"
         onClick={() => onToggleSection(sectionId)}
         className="group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
@@ -15071,7 +15084,7 @@ const WorkSummaryView = memo(function WorkSummaryView({
         <ChevronRight
           className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
         />
-      </button>}
+      </button>)}
 
       {orbitConversation && !expanded && previewText && (
         <div className="ocv-work-preview text-sm ocv-prose">
