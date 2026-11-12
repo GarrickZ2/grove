@@ -9,20 +9,54 @@
 .share-form{display:flex;flex-direction:column;gap:10px;padding:8px 16px 14px}
 .share-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12.5px;color:var(--o-muted)}
 .share-copy{width:100%;justify-content:center}
-.share-scope{display:flex;flex-direction:column;gap:8px}
-.share-scope-list{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;padding:6px;border:1px solid var(--o-border);border-radius:var(--o-radius);scrollbar-width:thin}
-.share-scope-empty{font-size:12px;color:var(--o-muted);padding:4px 2px}
+.share-scope-host{display:contents}
+.share-scope-card{display:flex;align-items:center;gap:10px;width:100%;min-height:46px;padding:7px 10px 7px 8px;border:0;border-radius:9px;background:var(--o-selected);box-shadow:inset 0 0 0 .5px var(--o-border);color:var(--o-text);font:inherit;text-align:left;cursor:pointer;transition:background-color var(--o-dur-fast)}
+.share-scope-card:hover{background:color-mix(in oklab,var(--o-selected) 70%,var(--o-hover))}
+.share-scope-card:focus-visible{outline:2px solid var(--o-accent);outline-offset:2px}
+.share-scope-card-ic{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:7px;background:var(--o-bg);box-shadow:0 1px 3px var(--o-shadow),0 0 0 .5px var(--o-border);color:var(--o-muted);flex-shrink:0}
+.share-scope-card-ic.is-part{color:var(--o-accent)}
+.share-scope-card-ic svg{width:15px;height:15px}
+.share-scope-card-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.share-scope-card-text b{font-size:13px;font-weight:550}
+.share-scope-card-text span{font-size:11.5px;color:var(--o-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.share-scope-card-go{width:15px;height:15px;color:var(--o-muted);flex-shrink:0}
+/* The chooser */
+.oui-dlg.share-scope-dlg{height:min(520px,calc(100vh - 80px))}
+.share-scope-body{flex:1;min-height:0;display:grid;grid-template-columns:184px 1fr;border-top:1px solid var(--o-border);border-bottom:1px solid var(--o-border);margin-top:10px}
+.share-scope-body>.share-scope-empty{grid-column:1/-1;margin:auto}
+.share-scope-empty{font-size:12.5px;color:var(--o-muted);padding:16px;text-align:center}
+.share-scope-rail{display:flex;flex-direction:column;gap:2px;padding:10px 8px;border-right:1px solid var(--o-border);background:color-mix(in oklab,var(--o-group) 60%,transparent)}
+.share-scope-kind{display:flex;align-items:center;gap:9px;height:32px;padding:0 10px;border:0;border-radius:var(--o-radius-sm);background:none;color:var(--o-text);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.share-scope-kind:hover{background:var(--o-hover)}
+.share-scope-kind.is-active{background:var(--o-selected);font-weight:550}
+.share-scope-kind svg{width:15px;height:15px;color:var(--o-muted);flex-shrink:0}
+.share-scope-kind span{flex:1;min-width:0}
+.share-scope-kind em{font-style:normal;font-size:11.5px;font-weight:550;padding:1px 7px;border-radius:999px;background:var(--o-accent-soft);color:color-mix(in oklab,var(--o-accent) 80%,var(--o-text))}
+.share-scope-kind em.is-none{background:var(--o-selected);color:var(--o-muted)}
+.share-scope-pane{display:flex;flex-direction:column;min-height:0;min-width:0}
+.share-scope-pane-head{display:flex;align-items:center;gap:10px;padding:12px 16px 8px}
+.share-scope-pane-head b{font-size:13px;font-weight:600}
+.share-scope-pane-head span{margin-left:auto;font-size:12px;color:var(--o-muted)}
+.share-scope-search{margin:0 16px 6px}
+.share-scope-items{flex:1;min-height:0;overflow-y:auto;padding:2px 8px 10px;scrollbar-width:thin}
 .share-scope-group{display:flex;flex-direction:column}
-.share-scope-head,.share-scope-item{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:var(--o-radius-sm);font-size:12.5px;color:var(--o-text);cursor:pointer;min-width:0}
-.share-scope-head:hover,.share-scope-item:hover{background:var(--o-hover)}
-.share-scope-head b{font-weight:600}
-.share-scope-head span{margin-left:auto;font-size:11.5px;color:var(--o-muted)}
-.share-scope-item{padding-left:28px}
-.share-scope-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.share-scope-item em{font-style:normal;color:var(--o-muted)}
-.share-scope input[type=checkbox]{accent-color:var(--o-accent);margin:0;flex-shrink:0}
-.share-link-scope{display:flex;flex-direction:column;gap:8px;padding:6px 8px 10px 40px}
-.share-link-scope-actions{display:flex;justify-content:flex-end;gap:6px}
+.share-scope-group+.share-scope-group{margin-top:4px}
+.share-scope-row{display:flex;align-items:center;gap:10px;width:100%;min-height:32px;padding:0 8px;border:0;border-radius:var(--o-radius-sm);background:none;color:var(--o-text);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.share-scope-row:hover{background:var(--o-hover)}
+.share-scope-row>span:last-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.share-scope-row:not(.is-on)>span:last-child{color:var(--o-muted)}
+.share-scope-row.is-folder>span:last-child{font-weight:550;color:var(--o-text)}
+.share-scope-row.is-nested{padding-left:30px}
+.share-scope-row-ic{width:15px;height:15px;color:var(--o-muted);flex-shrink:0}
+.share-tick-button{display:inline-flex;padding:0;border:0;background:none;cursor:pointer}
+.share-tick{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:5px;border:1.5px solid color-mix(in oklab,var(--o-muted) 60%,transparent);flex-shrink:0;transition:background .12s,border-color .12s}
+.share-tick.is-on,.share-tick.is-some{background:var(--o-accent);border-color:var(--o-accent);color:var(--o-on-accent)}
+.share-tick svg{width:12px;height:12px;stroke-width:3}
+.share-scope-reset{border:0;background:none;padding:0;font:inherit;font-size:12.5px;color:var(--o-accent);cursor:pointer}
+.share-scope-reset:hover:not(:disabled){text-decoration:underline}
+.share-scope-reset:disabled{color:var(--o-muted);cursor:default}
+.share-scope-summary{flex:1;min-width:0;text-align:right;font-size:12px;color:var(--o-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:560px){.share-scope-body{grid-template-columns:1fr}.share-scope-rail{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--o-border)}.share-scope-kind{flex-shrink:0}}
 .share-notice{margin:0;font-size:12px;line-height:1.45;color:var(--o-muted)}
 .share-notice.is-ok{color:color-mix(in oklab,var(--o-success) 80%,var(--o-text))}
 .share-notice.is-error{color:var(--o-error)}

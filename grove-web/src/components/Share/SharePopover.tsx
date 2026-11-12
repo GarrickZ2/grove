@@ -15,7 +15,8 @@ import {
   type ShareLinks,
   type ShareScope,
 } from "../../api/shares";
-import { ScopeEditor } from "./ScopePicker";
+import { ScopeButton, ScopeDialog } from "./ScopePicker";
+import { scopeSummary } from "./scopeItems";
 import { useShareItems } from "./useShareItems";
 import { copyText, initials, untilText } from "./shareFormat";
 import "./share.css";
@@ -66,9 +67,8 @@ function SharePanel({ projectId, taskId, data, onChanged }: {
   const [copied, setCopied] = useState(false);
   const [editingAddress, setEditingAddress] = useState(false);
   const [scope, setScope] = useState<ShareScope | null>(null);
-  const [editingScope, setEditingScope] = useState<string | null>(null);
-  // Loaded once something needs choosing.
-  const items = useShareItems(projectId, taskId, scope !== null || editingScope !== null);
+  const [choosing, setChoosing] = useState(false);
+  const items = useShareItems(projectId, taskId, true);
 
   const createLink = async () => {
     setBusy(true);
@@ -103,9 +103,16 @@ function SharePanel({ projectId, taskId, data, onChanged }: {
       <div className="share-head">
         <b>Share this task</b>
       </div>
-      {/* Out of the way while a link's scope is being changed. */}
-      {editingScope === null && <div className="share-form">
-        <ScopeEditor items={items} value={scope} onChange={setScope} />
+      <div className="share-form">
+        <ScopeButton items={items} value={scope} onClick={() => setChoosing(true)} />
+        <ScopeDialog
+          open={choosing}
+          items={items}
+          value={scope}
+          title="Choose what this link shows"
+          onClose={() => setChoosing(false)}
+          onSave={(next) => { setScope(next); setChoosing(false); }}
+        />
         <div className="share-row">
           <span>Can</span>
           <Segmented
@@ -145,7 +152,7 @@ function SharePanel({ projectId, taskId, data, onChanged }: {
           {copied ? <Check aria-hidden="true" /> : <Link2 aria-hidden="true" />}{busy ? "Creating…" : copied ? "Link copied" : "Create link"}
         </Button>
         {error && <p className="share-notice is-error" role="alert">{error}</p>}
-      </div>}
+      </div>
 
       {links.length > 0 && (
         <div className="share-links">
@@ -156,8 +163,6 @@ function SharePanel({ projectId, taskId, data, onChanged }: {
                 key={link.token}
                 link={link}
                 items={items}
-                editing={editingScope === link.token}
-                onEditScope={(editing) => setEditingScope(editing ? link.token : null)}
                 onChanged={onChanged}
               />
             ))}
@@ -178,21 +183,31 @@ function stateText(link: ShareLink): string | null {
   }
 }
 
-function LinkRow({ link, items, editing, onEditScope, onChanged }: {
+function LinkRow({ link, items, onChanged }: {
   link: ShareLink;
   items: ShareItems | null;
-  editing: boolean;
-  onEditScope: (editing: boolean) => void;
   onChanged: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [choosing, setChoosing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const saveScope = async (scope: ShareScope | null) => {
+    setSaving(true);
+    try {
+      await setShareLinkScope(link.token, scope);
+      onChanged();
+      setChoosing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
   const [copied, setCopied] = useState(false);
   const ended = stateText(link);
   const stoppable = link.state === "active" || link.state === "exhausted";
   const names = link.visitors.map((visitor) => visitor.name);
   const who = names.length === 0 ? "Not opened yet" : names.join(", ");
   const facts = [
-    link.scope ? "Part of the task" : null,
+    link.scope ? scopeSummary(link.scope, items) : null,
     link.canComment ? "Can comment" : "Can view",
     link.maxPeople === 1 ? "One person" : null,
     link.comments > 0 ? `${link.comments} ${link.comments === 1 ? "comment" : "comments"}` : null,
@@ -227,13 +242,21 @@ function LinkRow({ link, items, editing, onEditScope, onChanged }: {
           portal
           label="Link actions"
           items={[
-            ...(stoppable ? [{ id: "scope", label: "Change what it shows", icon: ListChecks, onSelect: () => onEditScope(true) }] : []),
+            ...(stoppable ? [{ id: "scope", label: "Change what it shows", icon: ListChecks, onSelect: () => setChoosing(true) }] : []),
             ...(stoppable ? [{ id: "stop", label: "Stop sharing", icon: CircleStop, onSelect: () => { void revokeShareLink(link.token).then(onChanged); } }] : []),
             { id: "delete", label: "Delete", icon: Trash2, danger: true, onSelect: () => { void deleteShareLink(link.token).then(onChanged); } },
           ]}
         />
       </div>
-      {editing && <LinkScope link={link} items={items} onDone={() => onEditScope(false)} onChanged={onChanged} />}
+      <ScopeDialog
+        open={choosing}
+        items={items}
+        value={link.scope}
+        title="Change what this link shows"
+        saving={saving}
+        onClose={() => setChoosing(false)}
+        onSave={(scope) => void saveScope(scope)}
+      />
       {expanded && link.visitors.length > 0 && (
         <ul className="share-visitors">
           {link.visitors.map((visitor) => (
@@ -255,40 +278,6 @@ function LinkRow({ link, items, editing, onEditScope, onChanged }: {
           ))}
         </ul>
       )}
-    </div>
-  );
-}
-
-function LinkScope({ link, items, onDone, onChanged }: {
-  link: ShareLink;
-  items: ShareItems | null;
-  onDone: () => void;
-  onChanged: () => void;
-}) {
-  const [scope, setScope] = useState<ShareScope | null>(link.scope);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await setShareLinkScope(link.token, scope);
-      onChanged();
-      onDone();
-    } catch (err) {
-      setError(shareErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="share-link-scope">
-      <ScopeEditor items={items} value={scope} onChange={setScope} />
-      {error && <p className="share-notice is-error" role="alert">{error}</p>}
-      <div className="share-link-scope-actions">
-        <Button variant="ghost" size="sm" onClick={onDone}>Cancel</Button>
-        <Button variant="primary" size="sm" onClick={save} disabled={busy}>Save</Button>
-      </div>
     </div>
   );
 }
