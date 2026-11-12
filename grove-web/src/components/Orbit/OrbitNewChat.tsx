@@ -368,11 +368,12 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     const composer = composerRef.current?.getBoundingClientRect();
     if (main && composer) setHandoffOffset(Math.max(0, main.bottom - 12 - composer.bottom));
     try {
+      const config = promptConfigFromSelection(selection, configOptions);
       const [chat] = await Promise.all([
-        createChat(selectedProject.id, effectiveTaskId, buildDefaultSessionTitle(), agentId),
+        createChat(selectedProject.id, effectiveTaskId, buildDefaultSessionTitle(), agentId, config?.config_options),
         new Promise((resolve) => window.setTimeout(resolve, HANDOFF_MS)),
       ]);
-      setOrbitFirstMessage(chat.id, { text: text.trim(), config: promptConfigFromSelection(selection, configOptions), chat, attachments });
+      setOrbitFirstMessage(chat.id, { text: text.trim(), config, chat, attachments });
       writeLastAgent(agentId);
       writeDraftHtml("");
       markSeen(STARTERS_DONE_KEY);

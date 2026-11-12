@@ -1033,6 +1033,40 @@ pub(crate) fn add_chat_session_on(
     Ok(())
 }
 
+/// Remember the config values chosen for a Session before it existed, so its
+/// first `session/new` can carry them.
+pub fn set_chat_initial_config(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+    values: &std::collections::BTreeMap<String, crate::acp::ConfigOptionValue>,
+) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE session SET initial_config = ?1 WHERE project = ?2 AND task_id = ?3 AND session_id = ?4",
+        params![serde_json::to_string(values)?, project, task_id, chat_id],
+    )?;
+    Ok(())
+}
+
+/// The config values chosen for a Session before it existed, if any.
+pub fn chat_initial_config(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+) -> Option<std::collections::BTreeMap<String, crate::acp::ConfigOptionValue>> {
+    let conn = crate::storage::database::connection();
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT initial_config FROM session WHERE project = ?1 AND task_id = ?2 AND session_id = ?3",
+            params![project, task_id, chat_id],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
+    raw.and_then(|raw| serde_json::from_str(&raw).ok())
+}
+
 /// Who set a Session's title. A title is only replaced by an equal or higher
 /// source, so the user's own name always stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

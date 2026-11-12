@@ -1503,6 +1503,162 @@ mod tests {
     use std::collections::HashMap;
 
     #[tokio::test]
+    async fn v1_new_and_restored_sessions_carry_their_config() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                crate::storage::set_grove_dir_override(None);
+            }
+        }
+        let _reset = Reset;
+        crate::storage::installed_agents::patch_or_create(
+            "options-fixture",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        crate::storage::installed_agents::set_acp_protocol_version("options-fixture", 1).unwrap();
+        let script = dir.path().join("agent.py");
+        let trace = dir.path().join("requests");
+        // Records every request; answers with a model option whose current
+        // value is whatever the request's initial configOptions set.
+        std::fs::write(&script, r#"
+import json, sys
+def options(params):
+    chosen = {o['configId']: o['value'] for o in params.get('configOptions') or []}
+    return [{'id':'model','name':'Model','category':'model','type':'select','currentValue':chosen.get('model','sonnet'),
+             'options':[{'value':'sonnet','name':'Sonnet'},{'value':'opus','name':'Opus'}]}]
+for line in sys.stdin:
+    req = json.loads(line); method = req.get('method'); ident = req.get('id')
+    if ident is None: continue
+    with open(sys.argv[1], 'a') as f: f.write(json.dumps({'method':method,'params':req.get('params')}) + '\n')
+    if method == 'initialize':
+        result = {'protocolVersion':1, 'agentInfo':{'name':'fixture','version':'1'}, 'authMethods':[],
+                  'agentCapabilities':{'loadSession':True, 'sessionCapabilities':{'resume':{}, 'options':{}}}}
+    elif method == 'session/new':
+        result = {'sessionId':'new-session', 'configOptions':options(req['params'])}
+    elif method == 'session/resume':
+        result = {'configOptions':options(req['params'])}
+    else:
+        result = {}
+    print(json.dumps({'jsonrpc':'2.0','id':ident,'result':result}), flush=True)
+"#).unwrap();
+        let key = format!("options-{}", uuid::Uuid::new_v4());
+        let add_chat = |id: &str, acp: Option<&str>| {
+            crate::storage::tasks::add_chat_session(
+                &key,
+                "task",
+                crate::storage::tasks::ChatSession {
+                    id: id.into(),
+                    title: id.into(),
+                    agent: "options-fixture".into(),
+                    acp_session_id: acp.map(str::to_owned),
+                    created_at: chrono::Utc::now(),
+                    duty: None,
+                },
+            )
+            .unwrap();
+        };
+        // A new Chat whose model was chosen on the New page.
+        add_chat("fresh", None);
+        crate::storage::tasks::set_chat_initial_config(
+            &key,
+            "task",
+            "fresh",
+            &[(
+                "model".to_string(),
+                super::super::ConfigOptionValue::Select("opus".into()),
+            )]
+            .into_iter()
+            .collect(),
+        )
+        .unwrap();
+        // A Chat that last ran on Opus, restored by resume.
+        add_chat("restored", Some("old-session"));
+        let session_json = super::super::session_json_path(&key, "task", "restored");
+        std::fs::create_dir_all(session_json.parent().unwrap()).unwrap();
+        std::fs::write(&session_json, serde_json::json!({
+            "pid": 1, "agent_name": "fixture", "agent_version": "1",
+            "available_modes": [], "current_mode_id": null, "available_models": [], "current_model_id": null,
+            "uses_config_options": true,
+            "config_options": [{"id":"model","name":"Model","category":"model","type":"select","currentValue":"opus",
+                                "options":[{"value":"sonnet","name":"Sonnet"},{"value":"opus","name":"Opus"}]}]
+        }).to_string()).unwrap();
+
+        for chat in ["fresh", "restored"] {
+            let config = AcpStartConfig {
+                agent_command: "/usr/bin/python3".into(),
+                agent_name: "options-fixture".into(),
+                agent_args: vec![
+                    script.to_string_lossy().into_owned(),
+                    trace.to_string_lossy().into_owned(),
+                ],
+                working_dir: dir.path().into(),
+                env_vars: HashMap::from([("GROVE_AGENT_ID".into(), "options-fixture".into())]),
+                project_key: key.clone(),
+                task_id: "task".into(),
+                chat_id: Some(chat.into()),
+                artifact_dir: Some(dir.path().join("artifacts")),
+                additional_mcp_servers: Vec::new(),
+                mcp_server_policy: super::super::McpServerPolicy::ExplicitOnly,
+                agent_type: "local".into(),
+                remote_url: None,
+                remote_auth: None,
+                suppress_initial_connecting: false,
+                import_session: false,
+                persona_injection: None,
+            };
+            let (handle, mut events) =
+                super::super::get_or_start_session(format!("{key}:task:{chat}"), config)
+                    .await
+                    .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                loop {
+                    match events.recv().await.unwrap() {
+                        super::super::AcpUpdate::SessionReady {
+                            current_model_id, ..
+                        } => {
+                            assert_eq!(current_model_id.as_deref(), Some("opus"), "{chat}");
+                            break;
+                        }
+                        super::super::AcpUpdate::Error { message } => panic!("{chat}: {message}"),
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            handle.request_shutdown();
+        }
+        let requests: Vec<serde_json::Value> = std::fs::read_to_string(&trace)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let sent = |method: &str| {
+            requests
+                .iter()
+                .find(|request| request["method"] == method)
+                .unwrap_or_else(|| panic!("no {method} in {requests:?}"))["params"]["configOptions"]
+                .clone()
+        };
+        let opus = serde_json::json!([{"configId":"model","value":"opus"}]);
+        assert_eq!(sent("session/new"), opus);
+        assert_eq!(sent("session/resume"), opus);
+        assert!(
+            !requests
+                .iter()
+                .any(|request| request["method"] == "session/set_config_option"),
+            "{requests:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn v1_session_status_retires_a_missing_session_without_resuming() {
         let _lock = crate::storage::database::test_lock().lock().await;
         let dir = tempfile::tempdir().unwrap();

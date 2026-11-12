@@ -1973,6 +1973,11 @@ pub struct ChatListResponse {
 pub struct CreateChatRequest {
     pub title: Option<String>,
     pub agent: Option<String>,
+    /// Config values chosen before the session exists (the New page). Sent
+    /// with `session/new` when the Agent accepts initial values; the first
+    /// prompt carries them as well for Agents that do not.
+    #[serde(default)]
+    pub config_options: std::collections::BTreeMap<String, crate::acp::ConfigOptionValue>,
 }
 
 #[derive(Deserialize)]
@@ -2302,6 +2307,10 @@ pub async fn create_chat(
 
     tasks::add_chat_session(&project_key, &task_id, chat.clone())
         .map_err(|e| AcpError::Internal(e.to_string()))?;
+    if !body.config_options.is_empty() {
+        tasks::set_chat_initial_config(&project_key, &task_id, &chat.id, &body.config_options)
+            .map_err(|e| AcpError::Internal(e.to_string()))?;
+    }
 
     crate::radio::publish(crate::radio::RadioEvent::ChatListChanged {
         project_id: project_id.clone(),

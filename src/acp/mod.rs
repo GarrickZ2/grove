@@ -4691,6 +4691,68 @@ fn validated_config_request_value(
     config_request_value(&advertised, config_id, value)
 }
 
+/// The config values a new session should start with: a Custom Agent's
+/// settings, overridden by what was chosen for this Chat before it existed
+/// (the New page).
+fn new_session_config(
+    config: &AcpStartConfig,
+) -> Option<crate::agent_config::AgentConfigSelection> {
+    use crate::agent_config::AgentConfigSelection;
+    let chosen = config
+        .chat_id
+        .as_deref()
+        .and_then(|chat| {
+            crate::storage::tasks::chat_initial_config(&config.project_key, &config.task_id, chat)
+        })
+        .unwrap_or_default();
+    match config
+        .persona_injection
+        .as_ref()
+        .map(|persona| &persona.agent_config)
+    {
+        Some(AgentConfigSelection::ConfigOptions { agent_id, values }) => {
+            let mut values = values.clone();
+            values.extend(chosen);
+            Some(AgentConfigSelection::ConfigOptions {
+                agent_id: agent_id.clone(),
+                values,
+            })
+        }
+        _ if !chosen.is_empty() => Some(AgentConfigSelection::ConfigOptions {
+            agent_id: config.env_vars.get("GROVE_AGENT_ID").cloned(),
+            values: chosen,
+        }),
+        other => other.cloned(),
+    }
+}
+
+/// The values a restored session last had, for `session/load` and
+/// `session/resume` when the Agent accepts initial values.
+fn restored_config_options(
+    supported: bool,
+    persisted: Option<&SessionMetadata>,
+) -> Vec<acp::InitialSessionConfigOption> {
+    let (true, Some(persisted)) = (supported, persisted) else {
+        return Vec::new();
+    };
+    persisted
+        .config_options
+        .iter()
+        .filter_map(|option| {
+            let value = match config_option_current_value(option)? {
+                ConfigOptionValue::Select(value) => {
+                    acp::SessionConfigOptionValue::from(acp::SessionConfigValueId::new(value))
+                }
+                ConfigOptionValue::Boolean(value) => acp::SessionConfigOptionValue::from(value),
+            };
+            Some(acp::InitialSessionConfigOption::new(
+                option.id.clone(),
+                value,
+            ))
+        })
+        .collect()
+}
+
 /// `Some(true)` signed in, `Some(false)` signed out; `None` when the state says
 /// nothing Grove should act on (no sign-in needed, unknown, or a future value).
 fn auth_state_signed_in(state: &acp::AuthState) -> Option<bool> {
@@ -6755,7 +6817,7 @@ async fn drive_session(
             // set_config_option round trip each after the session exists.
             let initial_config_options = initial_config_options(
                 supports_session_options,
-                config.persona_injection.as_ref().map(|p| &p.agent_config),
+                new_session_config(&config).as_ref(),
             );
             let resp = loop {
                 match startup_request!("session/new", conn
@@ -6995,6 +7057,13 @@ async fn drive_session(
         )
         .await;
     }
+    // The values Grove last confirmed for this session go out with
+    // load/resume when the Agent accepts initial values; otherwise they are
+    // re-applied one by one after the session is restored (below).
+    let restore_config = restored_config_options(
+        supports_session_options,
+        persisted_session_metadata.as_ref(),
+    );
     let session_id = 'restore: {
         // Ask whether the Agent still has the saved session before resuming
         // it. Only a definite "unknown session" (-32002) skips the resume;
@@ -7108,7 +7177,8 @@ async fn drive_session(
                             )
                             .additional_directories(additional_directories.clone())
                             .mcp_servers(mcp_servers.clone())
-                            .system_prompt(system_prompt.clone()),
+                            .system_prompt(system_prompt.clone())
+                            .config_options(restore_config.clone()),
                         )
                         .block_task()
                     ) {
@@ -7151,7 +7221,8 @@ async fn drive_session(
                                 )
                                 .additional_directories(additional_directories.clone())
                                 .mcp_servers(mcp_servers.clone())
-                                .system_prompt(system_prompt.clone()),
+                                .system_prompt(system_prompt.clone())
+                                .config_options(restore_config.clone()),
                             )
                             .block_task()
                         ) {
@@ -7239,7 +7310,8 @@ async fn drive_session(
                             )
                             .additional_directories(additional_directories.clone())
                             .mcp_servers(mcp_servers.clone())
-                            .system_prompt(system_prompt.clone()),
+                            .system_prompt(system_prompt.clone())
+                            .config_options(restore_config.clone()),
                         )
                         .block_task()
                     ) {

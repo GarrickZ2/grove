@@ -532,6 +532,7 @@ interface ChatListResponse {
 interface CreateChatRequest {
   title?: string;
   agent?: string;
+  config_options?: Record<string, string | boolean>;
 }
 
 interface UpdateChatTitleRequest {
@@ -619,10 +620,12 @@ export async function createChat(
   taskId: string,
   title?: string,
   agent?: string,
+  /** Config values chosen before the session exists; sent with session/new where the Agent accepts them. */
+  configOptions?: Record<string, string | boolean>,
 ): Promise<ChatSessionResponse> {
   return apiClient.post<CreateChatRequest, ChatSessionResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/chats`,
-    { title, agent }
+    { title, agent, ...(configOptions && Object.keys(configOptions).length > 0 ? { config_options: configOptions } : {}) }
   );
 }
 

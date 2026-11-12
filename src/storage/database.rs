@@ -475,7 +475,10 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             readonly_meta   TEXT,
             -- who set the title (TitleSource); a title is only replaced by an
             -- equal or higher source
-            title_source    INTEGER NOT NULL DEFAULT 0
+            title_source    INTEGER NOT NULL DEFAULT 0,
+            -- config values chosen before the session existed (New page),
+            -- JSON object keyed by config option id; sent with session/new
+            initial_config  TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_session_task ON session(project, task_id);
 
@@ -1083,6 +1086,7 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         "title_source",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
+    add_column_if_missing(conn, "session", "initial_config", "TEXT")?;
     add_column_if_missing(
         conn,
         "connects",
