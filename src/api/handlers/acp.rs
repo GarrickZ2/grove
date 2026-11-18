@@ -3398,8 +3398,11 @@ pub async fn take_control(
                 .await
                 .map_err(|e| AcpError::Internal(format!("Failed to kill remote session: {}", e)))?;
 
-            // Brief wait for the socket to become stale
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // The owner closes its Agent session before its socket goes away,
+            // which can take seconds. Returning earlier lets the caller find
+            // the old owner still there and stay read-only, while the old
+            // owner's own window reconnects and takes the session back.
+            wait_until_released(&project_key, &task_id, &chat_id, &session_key).await?;
 
             Ok(Json(TakeControlResponse { success: true }))
         }
@@ -3408,6 +3411,27 @@ pub async fn take_control(
             Ok(Json(TakeControlResponse { success: true }))
         }
     }
+}
+
+/// Wait for a stopped ACP owner's handle and socket to disappear, so the next
+/// connection starts a fresh owner instead of observing the old one.
+async fn wait_until_released(
+    project_key: &str,
+    task_id: &str,
+    chat_id: &str,
+    session_key: &str,
+) -> Result<(), AcpError> {
+    // `session/close` has a three-second best-effort timeout. Allow enough
+    // room for that plus subprocess/socket cleanup.
+    for _ in 0..200 {
+        if acp::discover_session(project_key, task_id, chat_id, session_key).is_none() {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    Err(AcpError::Internal(
+        "Timed out while stopping the existing ACP session".to_string(),
+    ))
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/reconnect
@@ -3446,19 +3470,9 @@ pub async fn reconnect_chat(
         None => {}
     }
 
-    // `session/close` has a three-second best-effort timeout. Allow enough
-    // room for that plus subprocess/socket cleanup, while never starting a
-    // replacement process concurrently with the old owner.
-    for _ in 0..200 {
-        if acp::discover_session(&project_key, &task_id, &chat_id, &session_key).is_none() {
-            return Ok(Json(ReconnectChatResponse { success: true }));
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-
-    Err(AcpError::Internal(
-        "Timed out while stopping the existing ACP session".to_string(),
-    ))
+    // Never start a replacement process concurrently with the old owner.
+    wait_until_released(&project_key, &task_id, &chat_id, &session_key).await?;
+    Ok(Json(ReconnectChatResponse { success: true }))
 }
 
 #[cfg(test)]
