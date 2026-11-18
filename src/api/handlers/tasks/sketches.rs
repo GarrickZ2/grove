@@ -371,6 +371,7 @@ pub struct SketchCommentReply {
     author: String,
     content: String,
     timestamp: String,
+    mine: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -385,6 +386,8 @@ pub struct SketchComment {
     timestamp: String,
     status: &'static str,
     via_share: bool,
+    /// Written by the share link visitor reading it.
+    mine: bool,
     replies: Vec<SketchCommentReply>,
 }
 
@@ -475,6 +478,15 @@ fn describe_place(anchor: &serde_json::Value) -> String {
 
 /// Comments on the task's sketches that still exist, oldest first.
 pub fn sketch_comments(project: &str, task_id: &str) -> Result<Vec<SketchComment>, GroveError> {
+    sketch_comments_seen_by(project, task_id, None)
+}
+
+/// [`sketch_comments`], with what a share link's visitor wrote marked `mine`.
+pub fn sketch_comments_seen_by(
+    project: &str,
+    task_id: &str,
+    visitor: Option<&str>,
+) -> Result<Vec<SketchComment>, GroveError> {
     use crate::storage::comments;
     let live: std::collections::HashSet<String> = sketches::load_index(project, task_id)?
         .sketches
@@ -482,6 +494,8 @@ pub fn sketch_comments(project: &str, task_id: &str) -> Result<Vec<SketchComment
         .map(|meta| meta.id)
         .collect();
     let shared = comments::share_comment_visitors(project, task_id).unwrap_or_default();
+    let replied = comments::share_reply_visitors(project, task_id).unwrap_or_default();
+    let by_visitor = |id: Option<&String>| visitor.is_some() && id.map(String::as_str) == visitor;
     Ok(comments::load_comments(project, task_id)?
         .comments
         .into_iter()
@@ -506,10 +520,12 @@ pub fn sketch_comments(project: &str, task_id: &str) -> Result<Vec<SketchComment
                     _ => "open",
                 },
                 via_share: shared.contains_key(&comment.id),
+                mine: by_visitor(shared.get(&comment.id)),
                 replies: comment
                     .replies
                     .into_iter()
                     .map(|reply| SketchCommentReply {
+                        mine: by_visitor(replied.get(&(comment.id, reply.id))),
                         id: reply.id,
                         author: comments::build_author(&reply.agent, &reply.role),
                         content: reply.content,
@@ -618,11 +634,13 @@ mod comment_tests {
             timestamp: String::new(),
             status: "open",
             via_share: false,
+            mine: false,
             replies: vec![SketchCommentReply {
                 id: 1,
                 author: "Bob".into(),
                 content: "Agree".into(),
                 timestamp: String::new(),
+                mine: false,
             }],
         }
     }

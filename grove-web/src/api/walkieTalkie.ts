@@ -108,6 +108,9 @@ export type RadioEvent =
       task_name?: string;
     }
   | { type: "chat_list_changed"; project_id: string; task_id: string }
+  /** A Task's review comments changed: written, answered, edited, resolved
+   *  or deleted, by anyone. Surfaces showing them read them again. */
+  | { type: "comments_changed"; project_id: string; task_id: string }
   | { type: "client_connected" }
   | { type: "client_disconnected" }
   | { type: "client_count"; count: number }

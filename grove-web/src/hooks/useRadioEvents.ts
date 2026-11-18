@@ -55,6 +55,8 @@ export interface RadioEventCallbacks {
       body_excerpt?: string;
     },
   ) => void;
+  /** A Task's review comments changed. */
+  onCommentsChanged?: (projectId: string, taskId: string) => void;
   /** Fired when the shared WS opens or reopens after a disconnect. Useful for
    *  consumers who need to re-sync state after a missed-events window. */
   onConnected?: () => void;
@@ -119,6 +121,10 @@ function dispatch(event: RadioEvent) {
     case "chat_list_changed":
       for (const s of subscribers)
         s.current.onChatListChanged?.(event.project_id, event.task_id);
+      break;
+    case "comments_changed":
+      for (const s of subscribers)
+        s.current.onCommentsChanged?.(event.project_id, event.task_id);
       break;
     case "chat_status":
       for (const s of subscribers)

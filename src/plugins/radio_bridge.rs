@@ -34,6 +34,8 @@ fn task_of(event: &RadioEvent) -> Option<&str> {
         | RadioEvent::ClientDisconnected
         | RadioEvent::ClientCount { .. }
         | RadioEvent::GroupChanged
+        // Not part of the plugin event API.
+        | RadioEvent::CommentsChanged { .. }
         | RadioEvent::BuddyGroupChanged { .. }
         | RadioEvent::AgentsChanged
         | RadioEvent::ThemeChanged { .. } => None,

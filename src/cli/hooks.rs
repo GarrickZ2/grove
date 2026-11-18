@@ -177,6 +177,41 @@ pub fn execute(level: HookLevel) {
     }
 }
 
+/// Tell the running Grove server that this process changed a Task's review
+/// comments, so the surfaces showing them read them again. Best effort, in
+/// the background: the caller never waits on it.
+pub fn report_comments_changed(project_key: &str, task_id: &str) {
+    let base = hooks::get_server_base_url();
+    let url = format!("{}/api/v1/comments/changed", base.trim_end_matches('/'));
+    let token = std::fs::read_to_string(crate::storage::grove_dir().join("local_report_token"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let body = serde_json::json!({ "project_id": project_key, "task_id": task_id });
+    std::thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        runtime.block_on(async {
+            let Ok(client) = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_millis(1500))
+                .danger_accept_invalid_certs(true)
+                .build()
+            else {
+                return;
+            };
+            let mut request = client.post(&url).json(&body);
+            if let Some(t) = token.as_deref() {
+                request = request.header("x-grove-local-token", t);
+            }
+            let _ = request.send().await;
+        });
+    });
+}
+
 /// Best-effort POST of a hook fact to the running Grove server. Returns true
 /// only when the server acknowledged the report.
 fn report_hook_to_server(project_key: &str, task_id: &str, fact: &hooks::HookFact) -> bool {

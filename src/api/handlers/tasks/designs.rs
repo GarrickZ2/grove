@@ -135,8 +135,9 @@ pub async fn update_design_page(
 
 /// The design comments a visitor sees: all of them, the owner's and the
 /// agent's answers included, so the board reads the same on both sides.
-pub fn shared_design_comments(project: &str, task_id: &str) -> Vec<DesignComment> {
-    design_comments(project, task_id).unwrap_or_default()
+/// What a share link's visitor sees, with what they wrote marked `mine`.
+pub fn shared_design_comments(project: &str, task_id: &str, visitor: &str) -> Vec<DesignComment> {
+    design_comments_seen_by(project, task_id, Some(visitor)).unwrap_or_default()
 }
 
 #[derive(Debug, Deserialize)]
@@ -597,6 +598,7 @@ pub struct DesignReply {
     author: String,
     content: String,
     timestamp: String,
+    mine: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -611,6 +613,8 @@ pub struct DesignComment {
     timestamp: String,
     status: &'static str,
     via_share: bool,
+    /// Written by the share link visitor reading it.
+    mine: bool,
     replies: Vec<DesignReply>,
 }
 
@@ -660,7 +664,18 @@ pub fn split_design_path(path: &str) -> Option<(&str, &str)> {
 /// Comments left on design pages. They are review comments on the page file,
 /// with the element kept in `anchor_text`.
 pub fn design_comments(project: &str, task_id: &str) -> Result<Vec<DesignComment>, GroveError> {
+    design_comments_seen_by(project, task_id, None)
+}
+
+/// [`design_comments`], with what a share link's visitor wrote marked `mine`.
+fn design_comments_seen_by(
+    project: &str,
+    task_id: &str,
+    visitor: Option<&str>,
+) -> Result<Vec<DesignComment>, GroveError> {
     let shared = comments::share_comment_visitors(project, task_id).unwrap_or_default();
+    let replied = comments::share_reply_visitors(project, task_id).unwrap_or_default();
+    let by_visitor = |id: Option<&String>| visitor.is_some() && id.map(String::as_str) == visitor;
     Ok(comments::load_comments(project, task_id)?
         .comments
         .into_iter()
@@ -683,10 +698,12 @@ pub fn design_comments(project: &str, task_id: &str) -> Result<Vec<DesignComment
                     _ => "open",
                 },
                 via_share: shared.contains_key(&comment.id),
+                mine: by_visitor(shared.get(&comment.id)),
                 replies: comment
                     .replies
                     .into_iter()
                     .map(|reply| DesignReply {
+                        mine: by_visitor(replied.get(&(comment.id, reply.id))),
                         id: reply.id,
                         author: comments::build_author(&reply.agent, &reply.role),
                         content: reply.content,

@@ -72,7 +72,7 @@ function WorkbenchArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt
     workdirs, isLoadingWorkdirs, isAddingWorkdir,
     loadFiles, loadWorkdirs, handleUpload, handleAddWorkdir, handleDeleteWorkdir, handleOpenWorkdir,
     handlePreview, handleDownload, handleOpenInApp, handleRevealInFileManager,
-    handleCreatePreviewComment, replyPreviewComment, resolvePreviewComment,
+    handleCreatePreviewComment, replyPreviewComment, resolvePreviewComment, previewCommentChanges,
     currentFileComments, currentFilePreviewMarkers,
     handleOpenLink, handleEditLink, handleDelete, handleSyncToResource, handleOpenFolder,
     submitAddLink, submitEditLink, folderPicker,
@@ -210,6 +210,7 @@ function WorkbenchArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt
             }
             previewComments={currentFileComments}
             onReplyPreviewComment={replyPreviewComment}
+            previewCommentChanges={previewCommentChanges}
             onResolvePreviewComment={resolvePreviewComment}
             previewCommentMarkers={currentFilePreviewMarkers}
             sketchContext={projectId ? { projectId, taskId: task.id } : undefined}

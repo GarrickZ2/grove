@@ -402,6 +402,16 @@ fn load_replies_for_comment(
 // Public API
 // ============================================================================
 
+/// Tell the surfaces showing a Task's comments that they changed. In a
+/// process other than the server (the agent's `grove mcp`) nobody listens;
+/// those callers report to the server themselves.
+fn changed(project: &str, task_id: &str) {
+    crate::radio::publish(crate::radio::RadioEvent::CommentsChanged {
+        project_id: project.to_string(),
+        task_id: task_id.to_string(),
+    });
+}
+
 /// 读取 Review Comments
 pub fn load_comments(project: &str, task_id: &str) -> Result<CommentsData> {
     let conn = database::connection();
@@ -500,21 +510,62 @@ pub fn reply_comment(
     model: &str,
     role: &str,
 ) -> Result<bool> {
-    let conn = database::connection();
+    insert_reply(
+        project, task_id, comment_id, message, agent, model, role, None,
+    )
+}
 
-    let exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) > 0 FROM review_comments WHERE project_key = ?1 AND task_id = ?2 AND id = ?3",
-            rusqlite::params![project, task_id, comment_id],
-            |row| row.get(0),
-        )
-        .unwrap_or(false);
+/// A reply written through a share link, marked with its visitor so they can
+/// edit or delete it later.
+pub fn reply_comment_as_visitor(
+    project: &str,
+    task_id: &str,
+    comment_id: u32,
+    message: &str,
+    name: &str,
+    visitor_id: &str,
+) -> Result<bool> {
+    insert_reply(
+        project,
+        task_id,
+        comment_id,
+        message,
+        name,
+        "",
+        "",
+        Some(visitor_id),
+    )
+}
 
-    if !exists {
-        return Ok(false);
-    }
+#[allow(clippy::too_many_arguments)]
+fn insert_reply(
+    project: &str,
+    task_id: &str,
+    comment_id: u32,
+    message: &str,
+    agent: &str,
+    model: &str,
+    role: &str,
+    visitor_id: Option<&str>,
+) -> Result<bool> {
+    {
+        let conn = database::connection();
 
-    if !message.is_empty() {
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM review_comments WHERE project_key = ?1 AND task_id = ?2 AND id = ?3",
+                rusqlite::params![project, task_id, comment_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !exists {
+            return Ok(false);
+        }
+
+        if message.is_empty() {
+            return Ok(true);
+        }
         let next_id: u32 = conn
             .query_row(
                 "SELECT COALESCE(MAX(id), 0) + 1 FROM review_replies WHERE project_key = ?1 AND task_id = ?2 AND comment_id = ?3",
@@ -525,12 +576,12 @@ pub fn reply_comment(
 
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO review_replies (id, comment_id, project_key, task_id, content, agent, model_name, role, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            rusqlite::params![next_id, comment_id, project, task_id, message, agent, model, role, now],
+            "INSERT INTO review_replies (id, comment_id, project_key, task_id, content, agent, model_name, role, timestamp, share_visitor)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![next_id, comment_id, project, task_id, message, agent, model, role, now, visitor_id],
         )?;
     }
-
+    changed(project, task_id);
     Ok(true)
 }
 
@@ -547,6 +598,9 @@ pub fn update_comment_status(
         "UPDATE review_comments SET status = ?1 WHERE project_key = ?2 AND task_id = ?3 AND id = ?4",
         rusqlite::params![status_str, project, task_id, comment_id],
     )?;
+    if updated > 0 {
+        changed(project, task_id);
+    }
     Ok(updated > 0)
 }
 
@@ -622,6 +676,7 @@ pub fn add_comment(
         ],
     )?;
 
+    changed(project, task_id);
     Ok(comment)
 }
 
@@ -651,6 +706,26 @@ pub fn share_comment_visitors(
     )?;
     let rows = stmt.query_map(rusqlite::params![project, task_id], |row| {
         Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// (comment id, reply id) → share visitor id, for the replies written
+/// through share links.
+pub fn share_reply_visitors(
+    project: &str,
+    task_id: &str,
+) -> Result<std::collections::HashMap<(u32, u32), String>> {
+    let conn = database::connection();
+    let mut stmt = conn.prepare(
+        "SELECT comment_id, id, share_visitor FROM review_replies
+         WHERE project_key = ?1 AND task_id = ?2 AND share_visitor IS NOT NULL",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![project, task_id], |row| {
+        Ok((
+            (row.get::<_, u32>(0)?, row.get::<_, u32>(1)?),
+            row.get::<_, String>(2)?,
+        ))
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
@@ -724,6 +799,9 @@ pub fn bulk_delete_comments(
     let params: Vec<&dyn rusqlite::types::ToSql> =
         param_values.iter().map(|p| p.as_ref()).collect();
     let deleted = conn.execute(&sql, rusqlite::params_from_iter(params))?;
+    if deleted > 0 {
+        changed(project, task_id);
+    }
     Ok(deleted)
 }
 
@@ -734,6 +812,9 @@ pub fn delete_comment(project: &str, task_id: &str, comment_id: u32) -> Result<b
         "DELETE FROM review_comments WHERE project_key = ?1 AND task_id = ?2 AND id = ?3",
         rusqlite::params![project, task_id, comment_id],
     )?;
+    if deleted > 0 {
+        changed(project, task_id);
+    }
     Ok(deleted > 0)
 }
 
@@ -749,6 +830,9 @@ pub fn edit_comment(
         "UPDATE review_comments SET content = ?1 WHERE project_key = ?2 AND task_id = ?3 AND id = ?4",
         rusqlite::params![new_content, project, task_id, comment_id],
     )?;
+    if updated > 0 {
+        changed(project, task_id);
+    }
     Ok(updated > 0)
 }
 
@@ -765,6 +849,9 @@ pub fn edit_reply(
         "UPDATE review_replies SET content = ?1 WHERE project_key = ?2 AND task_id = ?3 AND comment_id = ?4 AND id = ?5",
         rusqlite::params![new_content, project, task_id, comment_id, reply_id],
     )?;
+    if updated > 0 {
+        changed(project, task_id);
+    }
     Ok(updated > 0)
 }
 
@@ -775,6 +862,9 @@ pub fn delete_reply(project: &str, task_id: &str, comment_id: u32, reply_id: u32
         "DELETE FROM review_replies WHERE project_key = ?1 AND task_id = ?2 AND comment_id = ?3 AND id = ?4",
         rusqlite::params![project, task_id, comment_id, reply_id],
     )?;
+    if deleted > 0 {
+        changed(project, task_id);
+    }
     Ok(deleted > 0)
 }
 

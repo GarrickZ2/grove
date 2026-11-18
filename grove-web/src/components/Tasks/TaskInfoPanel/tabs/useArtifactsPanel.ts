@@ -18,7 +18,9 @@ import {
 } from "../../../ui";
 import { openExternalUrl } from "../../../../utils/openExternal";
 import type { PreviewCommentLocator } from "../../../../context";
-import { createFileComment, replyReviewComment, updateCommentStatus } from "../../../../api/review";
+import { createFileComment, deleteComment, deleteReply, editComment, editReply, replyReviewComment, updateCommentStatus } from "../../../../api/review";
+import { useCommentsChanged } from "../../../../hooks/useCommentsChanged";
+import { writtenByReader, type ThreadChanges } from "../../../Studio/DesignPage/threadChanges";
 import { getPreviewRenderer, type PreviewCommentMarker } from "../../../Review/previewRenderers";
 import { resolvePreviewTarget } from "./artifactsModel";
 
@@ -55,6 +57,11 @@ export interface SharedArtifacts {
     /** `path` is the file's, `output/…`. */
     add(path: string, content: string, anchor: unknown): Promise<ReviewCommentEntry[]>;
     reply(id: number, content: string): Promise<ReviewCommentEntry[]>;
+    /** Change or delete what the reader wrote: the comment, or one of its replies. */
+    edit(id: number, content: string, replyId?: number): Promise<ReviewCommentEntry[]>;
+    remove(id: number, replyId?: number): Promise<ReviewCommentEntry[]>;
+    /** Call `onChange` when the comments change; returns how to stop. */
+    watch(onChange: () => void): () => void;
   };
 }
 
@@ -482,25 +489,30 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
   // A shared Task shows its output files only, and lists them without their folder.
   const commentPath = useCallback((file: ArtifactFile) => (shared ? `output/${file.path}` : `${file.directory}/${file.path}`), [shared]);
   const previewFilePath = useMemo(() => (previewFile ? commentPath(previewFile.file) : null), [previewFile, commentPath]);
+  // The same list again keeps the same array, so nothing re-renders for it.
+  const takeFileComments = useCallback((next: ReviewCommentEntry[]) => {
+    setFileComments((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next));
+  }, []);
   const reloadFileComments = useCallback(async () => {
     try {
-      if (sharedComments) setFileComments(await sharedComments.list());
-      else if (projectId) setFileComments((await getReviewComments(projectId, task.id)).comments);
+      if (sharedComments) takeFileComments(await sharedComments.list());
+      else if (projectId) takeFileComments((await getReviewComments(projectId, task.id)).comments);
     } catch {
-      // Kept as they were; the next read tries again.
+      // Kept as they were; the next change tries again.
     }
-  }, [projectId, task.id, sharedComments]);
+  }, [projectId, task.id, sharedComments, takeFileComments]);
+  // Read when a file is opened, then whenever anyone changes the comments:
+  // the server pushes it, for this Grove's own Task and for a share link.
+  const previewingRef = useRef(false);
   useEffect(() => {
-    if (!previewFilePath) return;
-    // Replies come from the agent and from people the task is shared with.
-    let timer: number | undefined;
-    const tick = () => {
-      if (!document.hidden) void reloadFileComments();
-      timer = window.setTimeout(tick, 8000);
-    };
-    tick();
-    return () => window.clearTimeout(timer);
+    previewingRef.current = Boolean(previewFilePath);
+    if (previewFilePath) void Promise.resolve().then(reloadFileComments);
   }, [previewFilePath, reloadFileComments]);
+  const reloadIfPreviewing = useCallback(() => {
+    if (previewingRef.current) void reloadFileComments();
+  }, [reloadFileComments]);
+  useCommentsChanged(sharedComments ? null : projectId, task.id, reloadIfPreviewing);
+  useEffect(() => sharedComments?.watch(reloadIfPreviewing), [sharedComments, reloadIfPreviewing]);
 
   const handleCreatePreviewComment = useCallback(async (file: ArtifactFile, locator: PreviewCommentLocator, comment: string) => {
     // The element's markup is not needed to find it again.
@@ -516,11 +528,13 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
   }, [projectId, task.id, sharedComments, commentPath]);
 
   const currentFileComments = useMemo(
-    () => fileComments.filter((comment) => comment.comment_type === "file" && comment.file_path === previewFilePath && comment.status !== "resolved"),
+    // Resolved ones too: the list keeps them folded, and they can be reopened.
+    () => fileComments.filter((comment) => comment.comment_type === "file" && comment.file_path === previewFilePath),
     [fileComments, previewFilePath],
   );
   const currentFilePreviewMarkers = useMemo<PreviewCommentMarker[]>(
-    () => currentFileComments.flatMap((comment, index) => {
+    // Pins only for the open ones.
+    () => currentFileComments.filter((comment) => comment.status !== "resolved").flatMap((comment, index) => {
       const locator = comment.anchor as PreviewCommentLocator | undefined;
       if (!locator?.selector && !locator?.xpath) return [];
       return [{
@@ -540,10 +554,30 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     if (sharedComments) setFileComments(await sharedComments.reply(id, text));
     else if (projectId) setFileComments((await replyReviewComment(projectId, task.id, id, text)).comments);
   }, [projectId, task.id, sharedComments]);
-  const resolvePreviewComment = useCallback((id: number) => {
+  // The owner may change every comment; a share link's reader what they wrote.
+  const previewCommentChanges = useMemo<ThreadChanges<ReviewCommentEntry>>(() => ({
+    canChange: sharedComments ? writtenByReader : () => true,
+    edit: async (comment, text, replyId) => {
+      if (sharedComments) takeFileComments(await sharedComments.edit(comment.id, text, replyId));
+      else if (projectId) {
+        if (replyId === undefined) await editComment(projectId, task.id, comment.id, text);
+        else await editReply(projectId, task.id, comment.id, replyId, text);
+        await reloadFileComments();
+      }
+    },
+    remove: async (comment, replyId) => {
+      if (sharedComments) takeFileComments(await sharedComments.remove(comment.id, replyId));
+      else if (projectId) {
+        if (replyId === undefined) await deleteComment(projectId, task.id, comment.id);
+        else await deleteReply(projectId, task.id, comment.id, replyId);
+        await reloadFileComments();
+      }
+    },
+  }), [projectId, task.id, sharedComments, takeFileComments, reloadFileComments]);
+  const resolvePreviewComment = useCallback((id: number, status: "open" | "resolved") => {
     if (!projectId) return;
-    setFileComments((list) => list.map((comment) => (comment.id === id ? { ...comment, status: "resolved" } : comment)));
-    updateCommentStatus(projectId, task.id, id, "resolved").catch(() => void reloadFileComments());
+    setFileComments((list) => list.map((comment) => (comment.id === id ? { ...comment, status } : comment)));
+    updateCommentStatus(projectId, task.id, id, status).catch(() => void reloadFileComments());
   }, [projectId, task.id, reloadFileComments]);
   const handleOpenLink = useCallback(async (file: ArtifactFile) => {
     if (!readable) return;
@@ -731,6 +765,7 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     handleCreatePreviewComment,
     replyPreviewComment,
     resolvePreviewComment,
+    previewCommentChanges,
     currentFileComments,
     currentFilePreviewMarkers,
     handleOpenLink,

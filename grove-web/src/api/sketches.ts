@@ -214,6 +214,8 @@ export interface SketchCommentReply {
   author: string;
   content: string;
   timestamp: string;
+  /** On a share link: written by the person reading it. */
+  mine?: boolean;
 }
 
 export interface SketchComment {
@@ -225,6 +227,8 @@ export interface SketchComment {
   timestamp: string;
   status: 'open' | 'resolved';
   via_share: boolean;
+  /** On a share link: written by the person reading it. */
+  mine?: boolean;
   replies: SketchCommentReply[];
 }
 
@@ -255,4 +259,11 @@ export interface SharedSketches {
   /** Absent where the link is read-only. */
   addComment?(comment: { sketch: string; anchor: SketchAnchor; content: string }): Promise<void>;
   reply?(id: number, content: string): Promise<void>;
+  /** Change what the reader wrote: the comment, or one of its replies.
+   *  Absent where the link is read-only. */
+  editComment?(id: number, content: string, replyId?: number): Promise<void>;
+  /** Delete what the reader wrote; the comment goes with its thread. */
+  deleteComment?(id: number, replyId?: number): Promise<void>;
+  /** Call `onChange` when the comments change; returns how to stop. */
+  watchComments?(onChange: () => void): () => void;
 }

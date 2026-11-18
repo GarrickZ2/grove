@@ -2,7 +2,7 @@
 // Backend routes are mounted under /api/v1/projects/{id}/tasks/{taskId}/designs
 
 import { apiClient, machineUrl } from './client';
-import { replyReviewComment } from './review';
+import { deleteComment, deleteReply, editComment, editReply, replyReviewComment } from './review';
 
 export interface DesignPage {
   file: string;
@@ -74,6 +74,8 @@ export interface DesignReply {
   author: string;
   content: string;
   timestamp: string;
+  /** On a share link: written by the person reading it. */
+  mine?: boolean;
 }
 
 export interface DesignComment {
@@ -86,6 +88,8 @@ export interface DesignComment {
   timestamp: string;
   status: 'open' | 'resolved';
   via_share: boolean;
+  /** On a share link: written by the person reading it. */
+  mine?: boolean;
   replies: DesignReply[];
 }
 
@@ -112,6 +116,12 @@ export interface SharedDesigns {
   addComment(comment: { design: string; page: string; anchor: DesignAnchor | null; content: string }): Promise<void>;
   /** Answer in a thread; absent where the reader can only look. */
   reply?(id: number, content: string): Promise<void>;
+  /** Change or delete what the reader wrote (`mine`): the comment, or one of
+   *  its replies. Absent where the reader can only look. */
+  edit?(id: number, content: string, replyId?: number): Promise<void>;
+  remove?(id: number, replyId?: number): Promise<void>;
+  /** Call `onChange` when the comments change; returns how to stop. */
+  watchComments?(onChange: () => void): () => void;
 }
 
 type SharedList = Awaited<ReturnType<SharedDesigns['list']>>;
@@ -363,6 +373,49 @@ export async function importDesigns(
 export function canReplyToDesignComments(projectId: string): boolean {
   const shared = sourceOf(projectId);
   return shared ? Boolean(shared.source.reply) : true;
+}
+
+/**
+ * Whether the reader may edit and delete this entry of a thread: the owner
+ * any of them; a share link's reader what they wrote, where the link lets
+ * them comment.
+ */
+export function canChangeDesignComment(projectId: string, comment: DesignComment, replyId?: number): boolean {
+  const shared = sourceOf(projectId);
+  if (!shared) return true;
+  if (!shared.source.edit || !shared.source.remove) return false;
+  if (replyId === undefined) return Boolean(comment.mine);
+  return Boolean(comment.replies.find((reply) => reply.id === replyId)?.mine);
+}
+
+/** Rewrite a comment, or one of its replies. */
+export async function editDesignComment(projectId: string, taskId: string, id: number, content: string, replyId?: number): Promise<void> {
+  const shared = sourceOf(projectId);
+  if (shared) {
+    if (!shared.source.edit) throw new Error('This link is read-only');
+    await shared.source.edit(id, content, replyId);
+    return;
+  }
+  if (replyId === undefined) await editComment(projectId, taskId, id, content);
+  else await editReply(projectId, taskId, id, replyId, content);
+}
+
+/** Delete a reply, or a comment with its thread. */
+export async function deleteDesignComment(projectId: string, taskId: string, id: number, replyId?: number): Promise<void> {
+  const shared = sourceOf(projectId);
+  if (shared) {
+    if (!shared.source.remove) throw new Error('This link is read-only');
+    await shared.source.remove(id, replyId);
+    return;
+  }
+  if (replyId === undefined) await deleteComment(projectId, taskId, id);
+  else await deleteReply(projectId, taskId, id, replyId);
+}
+
+/** For a share link's designs: call `onChange` when its comments change.
+ *  Returns how to stop, or nothing where the designs are this Grove's own. */
+export function watchSharedDesignComments(projectId: string, onChange: () => void): (() => void) | undefined {
+  return sourceOf(projectId)?.source.watchComments?.(onChange);
 }
 
 /** Answer in a comment's thread. */

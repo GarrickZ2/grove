@@ -50,6 +50,7 @@ interface Props {
 
 /** A design's open comments; with `onSend`, the way to hand them all to the agent. */
 export function DesignCommentList<C extends ThreadComment & { id: number }>({ comments, placeOf, agent, canSend, onSend, onOpen }: {
+  /** Open and resolved: the resolved ones wait folded under the open ones. */
   comments: C[];
   /** Where the comment is, shown beside its author: a page's title, an element. */
   placeOf: (comment: C) => string;
@@ -58,44 +59,56 @@ export function DesignCommentList<C extends ThreadComment & { id: number }>({ co
   onSend?: (comments: C[]) => void;
   onOpen: (comment: C, at: { x: number; y: number }) => void;
 }) {
-  if (comments.length === 0) return <div className="design-comments"><div className="design-comments-none">No open comments</div></div>;
+  const [showResolved, setShowResolved] = useState(false);
+  const open = comments.filter((comment) => comment.status !== "resolved");
+  const resolved = comments.filter((comment) => comment.status === "resolved");
+  const row = (comment: C) => (
+    <button
+      key={comment.id}
+      type="button"
+      className={`design-comment-row${comment.status === "resolved" ? " is-resolved" : ""}`}
+      onClick={(event) => {
+        const box = event.currentTarget.getBoundingClientRect();
+        onOpen(comment, { x: box.left - 342, y: box.top + 12 });
+      }}
+    >
+      <Avatar name={comment.author} />
+      <span className="design-comment-text">
+        <span className="design-comment-meta">
+          <b>{comment.author}</b>
+          <span>{placeOf(comment)}</span>
+          <span>{relativeText(comment.timestamp)}</span>
+        </span>
+        <span className="design-comment-body">{comment.content}</span>
+        {comment.replies.length ? <span className="design-comment-replies">{comment.replies.length} {comment.replies.length === 1 ? "reply" : "replies"}</span> : null}
+      </span>
+    </button>
+  );
   return (
     <div className="design-comments">
       <div className="design-comments-list">
-        {comments.map((comment) => (
-          <button
-            key={comment.id}
-            type="button"
-            className="design-comment-row"
-            onClick={(event) => {
-              const box = event.currentTarget.getBoundingClientRect();
-              onOpen(comment, { x: box.left - 342, y: box.top + 12 });
-            }}
-          >
-            <Avatar name={comment.author} />
-            <span className="design-comment-text">
-              <span className="design-comment-meta">
-                <b>{comment.author}</b>
-                <span>{placeOf(comment)}</span>
-                <span>{relativeText(comment.timestamp)}</span>
-              </span>
-              <span className="design-comment-body">{comment.content}</span>
-              {comment.replies.length ? <span className="design-comment-replies">{comment.replies.length} {comment.replies.length === 1 ? "reply" : "replies"}</span> : null}
-            </span>
-          </button>
-        ))}
+        {open.length ? open.map(row) : <div className="design-comments-none">No open comments</div>}
+        {resolved.length ? (
+          <>
+            <button type="button" className="design-comments-fold" aria-expanded={showResolved} onClick={() => setShowResolved((shown) => !shown)}>
+              <ChevronRight size={13} className={showResolved ? "is-open" : undefined} />
+              Resolved · {resolved.length}
+            </button>
+            {showResolved ? resolved.map(row) : null}
+          </>
+        ) : null}
       </div>
-      {onSend ? (
+      {onSend && open.length ? (
         <div className="design-comments-foot">
           <button
             type="button"
             className="design-btn is-primary"
             disabled={!canSend}
             title={canSend ? undefined : "Open the task's chat to send comments to its agent"}
-            onClick={() => onSend(comments)}
+            onClick={() => onSend(open)}
           >
             <Send size={13} />
-            Send {comments.length} to {agent || "the agent"}
+            Send {open.length} to {agent || "the agent"}
           </button>
         </div>
       ) : null}
@@ -117,7 +130,7 @@ export function DesignInspector({
   onSelectPage, onSelectNode, onStyle, onText, onDuplicate, onRemove, onMove, comments, agent, canSend, onSendComments, onOpenThread, onClose,
 }: Props) {
   const [tab, setTab] = useState<"properties" | "code" | "tweaks" | "comments">("properties");
-  const openComments = comments.filter((comment) => comment.design === design.slug && comment.status === "open");
+  const designComments = comments.filter((comment) => comment.design === design.slug);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [drop, setDrop] = useState<{ key: string; place: "before" | "after" | "inside" } | null>(null);
   const [dragging, setDragging] = useState<{ file: string; path: string } | null>(null);
@@ -203,7 +216,7 @@ export function DesignInspector({
       </div>
       {tab === "comments" ? (
         <DesignCommentList
-          comments={openComments}
+          comments={designComments}
           placeOf={(comment) => design.pages.find((page) => page.file === comment.page)?.title ?? comment.page}
           agent={agent}
           canSend={canSend}

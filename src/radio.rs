@@ -99,6 +99,12 @@ pub enum RadioEvent {
         project_id: String,
         task_id: String,
     },
+    /// A Task's review comments changed: one was written, answered, edited,
+    /// resolved or deleted, by anyone. Surfaces showing them read them again.
+    CommentsChanged {
+        project_id: String,
+        task_id: String,
+    },
     /// Input attention is independent of busy/idle: ask_form can stay open
     /// after the agent's turn has finished.
     ChatInputStatus {

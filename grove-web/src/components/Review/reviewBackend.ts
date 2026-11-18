@@ -55,6 +55,9 @@ export interface ReviewBackend {
   editReply(commentId: number, replyId: number, content: string): Comments;
   deleteReply(commentId: number, replyId: number): Comments;
   bulkDelete(statuses?: string[], authors?: string[]): Comments;
+  /** Call `onChange` when the comments change elsewhere; returns how to stop.
+   *  Absent for the owner, whose comments come through Grove's own events. */
+  watchComments?(onChange: () => void): () => void;
   commits(): Promise<CommitsResponse>;
   taskFiles(): Promise<{ files: string[] }>;
   dirEntries(dirPath: string): Promise<DirEntriesResponse>;
@@ -107,13 +110,16 @@ function reviewComments(comments: SharedComment[]): ReviewCommentsResponse {
     role: '',
     timestamp: comment.timestamp,
     status: comment.status,
-    replies: comment.replies.map((reply, index) => ({
-      id: index + 1,
+    // Only what the reader wrote can be changed by them.
+    mine: comment.mine,
+    replies: comment.replies.map((reply) => ({
+      id: reply.id,
       content: reply.content,
       agent: reply.author,
       model: '',
       role: '',
       timestamp: reply.timestamp,
+      mine: reply.mine,
     })),
   }));
   const count = (status: string) => entries.filter((entry) => entry.status === status).length;
@@ -151,13 +157,16 @@ export function shareBackend(source: ShareSource, { canComment }: { canComment: 
     }),
     addFileComment: (filePath, content) => add({ commentType: 'file', filePath, content }),
     addProjectComment: (content) => add({ commentType: 'project', content }),
-    reply: refused,
+    // Anyone on a link that allows comments answers in any thread.
+    reply: async (id, message) => (canComment ? reviewComments((await source.addReply(id, message)).comments) : refused()),
     setStatus: refused,
-    deleteComment: refused,
-    editComment: refused,
-    editReply: refused,
-    deleteReply: refused,
+    // What the reader wrote: the owner's Grove refuses anything else.
+    deleteComment: async (id) => (canComment ? reviewComments((await source.deleteComment(id)).comments) : refused()),
+    editComment: async (id, content) => (canComment ? reviewComments((await source.editComment(id, content)).comments) : refused()),
+    editReply: async (id, replyId, content) => (canComment ? reviewComments((await source.editReply(id, replyId, content)).comments) : refused()),
+    deleteReply: async (id, replyId) => (canComment ? reviewComments((await source.deleteReply(id, replyId)).comments) : refused()),
     bulkDelete: refused,
+    watchComments: (onChange) => source.watchComments(onChange),
     commits: refused,
     taskFiles: refused,
     dirEntries: refused,

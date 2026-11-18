@@ -1075,7 +1075,7 @@ pub async fn public_designs(
             }
         })
         .collect();
-    let comments: Vec<_> = design_api::shared_design_comments(project, task_id)
+    let comments: Vec<_> = design_api::shared_design_comments(project, task_id, &visitor.id)
         .into_iter()
         .filter(|comment| scope.allows_design(comment.design()))
         .collect();
@@ -1107,11 +1107,12 @@ pub async fn public_sketches(
         .into_iter()
         .filter(|sketch| scope.allows_sketch(&sketch.id))
         .collect();
-    let comments: Vec<_> = super::tasks::sketch_comments(project, task_id)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|comment| scope.allows_sketch(comment.sketch()))
-        .collect();
+    let comments: Vec<_> =
+        super::tasks::sketch_comments_seen_by(project, task_id, Some(&visitor.id))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|comment| scope.allows_sketch(comment.sketch()))
+            .collect();
     Ok(Json(json!({
         "sketches": sketches,
         "comments": comments,
@@ -1327,6 +1328,7 @@ fn shared_comments(
     visitor: &Visitor,
 ) -> Result<Value, ShareError> {
     let written_by = comments::share_comment_visitors(project, task_id).map_err(grove_error)?;
+    let replied_by = comments::share_reply_visitors(project, task_id).map_err(grove_error)?;
     // Names of people on this Task's links: a linked Project's review has
     // visitors of this link writing in it too.
     let names =
@@ -1365,6 +1367,7 @@ fn shared_comments(
                 "replies": comment.replies.iter().map(|reply| json!({
                     "id": reply.id,
                     "author": reply.agent,
+                    "mine": replied_by.get(&(comment.id, reply.id)) == Some(&visitor.id),
                     "content": reply.content,
                     "timestamp": reply.timestamp,
                 })).collect::<Vec<_>>(),
@@ -1576,8 +1579,15 @@ pub async fn public_add_reply(
             ));
         }
     }
-    let found = comments::reply_comment(&target.0, &target.1, id, content, &visitor.name, "", "")
-        .map_err(grove_error)?;
+    let found = comments::reply_comment_as_visitor(
+        &target.0,
+        &target.1,
+        id,
+        content,
+        &visitor.name,
+        &visitor.id,
+    )
+    .map_err(grove_error)?;
     if found {
         if let Some(comment) = comments::load_comments(&target.0, &target.1)
             .ok()
@@ -1594,6 +1604,201 @@ pub async fn public_add_reply(
         ));
     }
     Ok(Json(shared_comments(&share, &target, &visitor)?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EditedShared {
+    content: String,
+}
+
+/// A comment a visitor may change, if they wrote it: on a link that allows
+/// comments, and one the link shows.
+fn own_comment(share: &Share, target: &(String, String), id: u32) -> Result<(), ShareError> {
+    if !share.can_comment {
+        return Err(fail(
+            StatusCode::FORBIDDEN,
+            "read_only",
+            "This link is read-only",
+        ));
+    }
+    let not_found = || fail(StatusCode::NOT_FOUND, "not_found", "Comment not found");
+    let own = target.0 == share.project_key && target.1 == share.task_id;
+    let comment = comments::load_comments(&target.0, &target.1)
+        .map_err(grove_error)?
+        .comments
+        .into_iter()
+        .find(|comment| comment.id == id)
+        .ok_or_else(not_found)?;
+    if own && !comment_in_scope(share, &comment) {
+        return Err(not_found());
+    }
+    Ok(())
+}
+
+fn not_yours() -> ShareError {
+    fail(
+        StatusCode::FORBIDDEN,
+        "not_yours",
+        "Only the person who wrote it can change it",
+    )
+}
+
+fn edited_content(input: &EditedShared) -> Result<&str, ShareError> {
+    let content = input.content.trim();
+    if content.is_empty() || content.chars().count() > COMMENT_LIMIT {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            "invalid",
+            format!("A comment needs 1 to {COMMENT_LIMIT} characters"),
+        ));
+    }
+    Ok(content)
+}
+
+/// PATCH /api/v1/share/{token}/comments/{id} — a visitor rewrites their comment.
+pub async fn public_edit_comment(
+    Path((token, id)): Path<(String, u32)>,
+    headers: HeaderMap,
+    Query(review): Query<ReviewQuery>,
+    Json(input): Json<EditedShared>,
+) -> Result<Json<Value>, ShareError> {
+    let (share, visitor) = visitor_for(&headers, &token)?;
+    let target = review_target(&share, review.project.as_deref())?;
+    own_comment(&share, &target, id)?;
+    let written_by = comments::share_comment_visitors(&target.0, &target.1).map_err(grove_error)?;
+    if written_by.get(&id) != Some(&visitor.id) {
+        return Err(not_yours());
+    }
+    comments::edit_comment(&target.0, &target.1, id, edited_content(&input)?)
+        .map_err(grove_error)?;
+    Ok(Json(shared_comments(&share, &target, &visitor)?))
+}
+
+/// DELETE /api/v1/share/{token}/comments/{id} — a visitor deletes their
+/// comment, and with it the thread under it.
+pub async fn public_delete_comment(
+    Path((token, id)): Path<(String, u32)>,
+    headers: HeaderMap,
+    Query(review): Query<ReviewQuery>,
+) -> Result<Json<Value>, ShareError> {
+    let (share, visitor) = visitor_for(&headers, &token)?;
+    let target = review_target(&share, review.project.as_deref())?;
+    own_comment(&share, &target, id)?;
+    let written_by = comments::share_comment_visitors(&target.0, &target.1).map_err(grove_error)?;
+    if written_by.get(&id) != Some(&visitor.id) {
+        return Err(not_yours());
+    }
+    comments::delete_comment(&target.0, &target.1, id).map_err(grove_error)?;
+    Ok(Json(shared_comments(&share, &target, &visitor)?))
+}
+
+/// PATCH /api/v1/share/{token}/comments/{id}/replies/{reply} — a visitor
+/// rewrites their reply.
+pub async fn public_edit_reply(
+    Path((token, id, reply)): Path<(String, u32, u32)>,
+    headers: HeaderMap,
+    Query(review): Query<ReviewQuery>,
+    Json(input): Json<EditedShared>,
+) -> Result<Json<Value>, ShareError> {
+    let (share, visitor) = visitor_for(&headers, &token)?;
+    let target = review_target(&share, review.project.as_deref())?;
+    own_comment(&share, &target, id)?;
+    let written_by = comments::share_reply_visitors(&target.0, &target.1).map_err(grove_error)?;
+    if written_by.get(&(id, reply)) != Some(&visitor.id) {
+        return Err(not_yours());
+    }
+    comments::edit_reply(&target.0, &target.1, id, reply, edited_content(&input)?)
+        .map_err(grove_error)?;
+    Ok(Json(shared_comments(&share, &target, &visitor)?))
+}
+
+/// DELETE /api/v1/share/{token}/comments/{id}/replies/{reply} — a visitor
+/// deletes their reply.
+pub async fn public_delete_reply(
+    Path((token, id, reply)): Path<(String, u32, u32)>,
+    headers: HeaderMap,
+    Query(review): Query<ReviewQuery>,
+) -> Result<Json<Value>, ShareError> {
+    let (share, visitor) = visitor_for(&headers, &token)?;
+    let target = review_target(&share, review.project.as_deref())?;
+    own_comment(&share, &target, id)?;
+    let written_by = comments::share_reply_visitors(&target.0, &target.1).map_err(grove_error)?;
+    if written_by.get(&(id, reply)) != Some(&visitor.id) {
+        return Err(not_yours());
+    }
+    comments::delete_reply(&target.0, &target.1, id, reply).map_err(grove_error)?;
+    Ok(Json(shared_comments(&share, &target, &visitor)?))
+}
+
+/// GET /api/v1/share/{token}/events — a stream telling the visitor when the
+/// comments they can read changed, so their page reads them again. It names
+/// no comment and carries no text: what they may read is still decided by
+/// the routes that list them. It ends when the link stops letting them in.
+pub async fn public_events(
+    Path(token): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ShareError> {
+    use crate::radio::RadioEvent;
+    use axum::response::sse::{Event, KeepAlive, Sse};
+
+    let (share, _) = visitor_for(&headers, &token)?;
+    // The Task's own comments, then those of each linked Project's review
+    // the link shows, by the `project` its review calls pass.
+    let mut targets: Vec<(String, String, Option<String>)> =
+        vec![(share.project_key.clone(), share.task_id.clone(), None)];
+    for (id, _) in linked_reviews(&share) {
+        targets.push((id.clone(), tasks::LOCAL_TASK_ID.to_string(), Some(id)));
+    }
+
+    struct Watch {
+        radio: crate::radio::Subscription,
+        recheck: tokio::time::Interval,
+        token: String,
+        headers: HeaderMap,
+        targets: Vec<(String, String, Option<String>)>,
+    }
+    let mut recheck = tokio::time::interval(Duration::from_secs(30));
+    recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let watch = Watch {
+        radio: crate::radio::subscribe(),
+        recheck,
+        token,
+        headers,
+        targets,
+    };
+    let stream = futures::stream::unfold(watch, |mut watch| async move {
+        loop {
+            tokio::select! {
+                event = watch.radio.recv() => match event {
+                    Some(RadioEvent::CommentsChanged { project_id, task_id }) => {
+                        let Some((_, _, project)) = watch
+                            .targets
+                            .iter()
+                            .find(|(p, t, _)| *p == project_id && *t == task_id)
+                        else {
+                            continue;
+                        };
+                        if visitor_for(&watch.headers, &watch.token).is_err() {
+                            return None;
+                        }
+                        let data = json!({ "project": project }).to_string();
+                        let event = Event::default().event("comments").data(data);
+                        return Some((Ok::<_, std::convert::Infallible>(event), watch));
+                    }
+                    Some(_) => continue,
+                    None => return None,
+                },
+                _ = watch.recheck.tick() => {
+                    if visitor_for(&watch.headers, &watch.token).is_err() {
+                        return None;
+                    }
+                }
+            }
+        }
+    });
+    Ok(Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response())
 }
 
 /// Whether a file is one the link shows: a changed file, or an output file.
@@ -1659,12 +1864,25 @@ fn notify_reply(share: &Share, visitor: &Visitor, comment: &comments::Comment, r
 }
 
 fn notify(share: &Share, what: &str, comment: &comments::Comment, text: &str) {
-    let place = match (&comment.file_path, comment.start_line) {
-        (Some(path), Some(line)) => {
+    // A sketch by its name, not its id.
+    let sketch = comment
+        .file_path
+        .as_deref()
+        .and_then(super::tasks::split_sketch_path)
+        .and_then(|id| {
+            crate::storage::sketches::load_index(&share.project_key, &share.task_id)
+                .ok()?
+                .sketches
+                .into_iter()
+                .find(|meta| meta.id == id)
+        });
+    let place = match (sketch, &comment.file_path, comment.start_line) {
+        (Some(meta), _, _) => format!("{} · ", meta.name),
+        (None, Some(path), Some(line)) => {
             let file = path.rsplit('/').next().unwrap_or(path);
             format!("{file}:{line} · ")
         }
-        (Some(path), None) => format!("{} · ", path.rsplit('/').next().unwrap_or(path)),
+        (None, Some(path), None) => format!("{} · ", path.rsplit('/').next().unwrap_or(path)),
         _ => String::new(),
     };
     let excerpt: String = text.chars().take(80).collect();
@@ -1918,15 +2136,25 @@ pub async fn mark_seen(Path(id): Path<String>) -> Result<StatusCode, ShareError>
 
 /// /api/v1/shared/{id}/host/{*rest} → the owner's /api/v1/share/{token}/{rest},
 /// carrying this Grove's key.
+fn is_number(part: &str) -> bool {
+    !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// `comments/<id>/replies`.
 fn is_reply_path(rest: &str) -> bool {
-    let mut parts = rest.split('/');
-    parts.next() == Some("comments")
-        && parts
-            .next()
-            .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
-        && parts.next() == Some("replies")
-        && parts.next().is_none()
+    let parts: Vec<&str> = rest.split('/').collect();
+    matches!(parts.as_slice(), ["comments", id, "replies"] if is_number(id))
+}
+
+/// `comments/<id>` or `comments/<id>/replies/<reply>`: what a visitor edits
+/// or deletes.
+fn is_own_comment_path(rest: &str) -> bool {
+    let parts: Vec<&str> = rest.split('/').collect();
+    match parts.as_slice() {
+        ["comments", id] => is_number(id),
+        ["comments", id, "replies", reply] => is_number(id) && is_number(reply),
+        _ => false,
+    }
 }
 
 pub async fn via_host(
@@ -1949,10 +2177,13 @@ pub async fn via_host(
                 | "comments"
                 | "designs"
                 | "sketches"
+                | "events"
         ) | ("POST", "open" | "comments")
     ) || (method == axum::http::Method::GET
         && (is_design_page_path(&rest) || is_sketch_scene_path(&rest)))
-        || (method == axum::http::Method::POST && is_reply_path(&rest));
+        || (method == axum::http::Method::POST && is_reply_path(&rest))
+        || ((method == axum::http::Method::PATCH || method == axum::http::Method::DELETE)
+            && is_own_comment_path(&rest));
     if !allowed {
         return Err(fail(StatusCode::NOT_FOUND, "not_found", "Not found"));
     }
@@ -1989,6 +2220,8 @@ pub async fn via_host(
         .to_ascii_lowercase();
     let content_type = if upstream_type.starts_with("application/json") {
         "application/json"
+    } else if rest == "events" && upstream_type.starts_with("text/event-stream") {
+        "text/event-stream"
     } else if upstream_type.starts_with("text/plain") {
         "text/plain; charset=utf-8"
     } else {
@@ -2016,6 +2249,20 @@ pub async fn via_host(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relayed_comment_paths() {
+        assert!(is_reply_path("comments/12/replies"));
+        assert!(!is_reply_path("comments/x/replies"));
+        assert!(!is_reply_path("comments/12/replies/3"));
+        assert!(is_own_comment_path("comments/12"));
+        assert!(is_own_comment_path("comments/12/replies/3"));
+        assert!(!is_own_comment_path("comments"));
+        assert!(!is_own_comment_path("comments/12/replies"));
+        assert!(!is_own_comment_path("comments/12/replies/3/x"));
+        assert!(!is_own_comment_path("comments/../12"));
+        assert!(!is_own_comment_path("comments//replies/3"));
+    }
 
     #[test]
     fn share_links_parse() {

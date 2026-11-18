@@ -266,20 +266,48 @@ pub struct HookReportRequest {
     pub chat_id: Option<String>,
 }
 
+/// Whether a same-machine report carries the local-report token (or none is
+/// needed). Fail-closed: an unset token (provisioning failed) rejects all.
+fn local_report_allowed(headers: &HeaderMap) -> bool {
+    if !LOCAL_REPORT_REQUIRED.load(std::sync::atomic::Ordering::Relaxed) {
+        return true;
+    }
+    let presented = headers
+        .get("x-grove-local-token")
+        .and_then(|v| v.to_str().ok());
+    LOCAL_REPORT_TOKEN.get().is_some_and(|expected| {
+        presented.is_some_and(|presented| {
+            crate::api::auth::constant_time_eq(presented.as_bytes(), expected.as_bytes())
+        })
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommentsChangedReport {
+    pub project_id: String,
+    pub task_id: String,
+}
+
+/// POST /comments/changed — a same-machine process (the agent's `grove mcp`)
+/// wrote review comments; tell the surfaces showing them. Same auth as
+/// `/hooks/report`.
+pub async fn report_comments_changed(
+    headers: HeaderMap,
+    Json(req): Json<CommentsChangedReport>,
+) -> StatusCode {
+    if !local_report_allowed(&headers) {
+        return StatusCode::UNAUTHORIZED;
+    }
+    crate::radio::publish(crate::radio::RadioEvent::CommentsChanged {
+        project_id: req.project_id,
+        task_id: req.task_id,
+    });
+    StatusCode::NO_CONTENT
+}
+
 pub async fn report_hook(headers: HeaderMap, Json(req): Json<HookReportRequest>) -> StatusCode {
-    if LOCAL_REPORT_REQUIRED.load(std::sync::atomic::Ordering::Relaxed) {
-        let expected = LOCAL_REPORT_TOKEN.get();
-        let presented = headers
-            .get("x-grove-local-token")
-            .and_then(|v| v.to_str().ok());
-        // Fail-closed: unset token (provisioning failed) rejects everything.
-        match expected {
-            Some(expected)
-                if presented.is_some_and(|presented| {
-                    crate::api::auth::constant_time_eq(presented.as_bytes(), expected.as_bytes())
-                }) => {}
-            _ => return StatusCode::UNAUTHORIZED,
-        }
+    if !local_report_allowed(&headers) {
+        return StatusCode::UNAUTHORIZED;
     }
     let level = hooks::level_from_str(&req.level).unwrap_or(NotificationLevel::Notice);
     // 5xx on persistence failure: the CLI treats any non-2xx as "not handed

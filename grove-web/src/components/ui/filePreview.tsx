@@ -5,7 +5,7 @@ import { trackedDownload } from "../../transfers/download";
 import { useState, useEffect, useId, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { Code, Download, Expand, Eye, List, Loader2, Maximize2, MessageSquare, MessageSquarePlus, Minimize2, RefreshCw, Send, Shrink, X } from "lucide-react";
+import { Code, Download, Expand, Eye, List, Loader2, Maximize2, MessageSquare, MessageSquarePlus, Minimize2, RefreshCw, Shrink, X } from "lucide-react";
 import { fileInfoRenderer, getPreviewRenderer, resolveFullRenderer, type PreviewCommentMarker } from "../Review/previewRenderers";
 import { highlightCode, detectLanguage } from "../Review/syntaxHighlight";
 import { PreviewSearchBar } from "../Review/PreviewSearchBar";
@@ -25,9 +25,11 @@ import {
   type PreviewCommentLocator,
 } from "../../context";
 import type { ReviewCommentEntry } from "../../api/tasks";
-import { relativeText, usePopover } from "../../orbit/ui";
+import { usePopover } from "../../orbit/ui";
 import { sendCommentsToChat, useActiveChatTarget } from "../Review/sendOpenComments";
-import { Avatar, DesignThread } from "../Studio/DesignPage/DesignThread";
+import { DesignThread } from "../Studio/DesignPage/DesignThread";
+import { DesignCommentList } from "../Studio/DesignPage/DesignInspector";
+import type { ThreadChanges } from "../Studio/DesignPage/threadChanges";
 import "../Studio/DesignPage/design.css";
 import { useKeyboardScope, useCommand, useContextKey } from "../../keyboard";
 import type { FileLocation } from "./fileLocation";
@@ -140,7 +142,10 @@ interface FilePreviewDrawerProps {
   /** The file's open comments: threads kept with the task. */
   previewComments?: ReviewCommentEntry[];
   onReplyPreviewComment?: (id: number, text: string) => Promise<void>;
-  onResolvePreviewComment?: (id: number) => void;
+  /** Resolve a comment, or reopen a resolved one. */
+  onResolvePreviewComment?: (id: number, status: "open" | "resolved") => void;
+  /** Editing and deleting comments and replies; absent where none can be. */
+  previewCommentChanges?: ThreadChanges<ReviewCommentEntry>;
   /** Whether the reader has an agent to send comments to; a visitor has none. */
   previewCommentsToAgent?: boolean;
   /** When provided, markdown previews resolve `sketch://<uuid>` refs to the
@@ -159,6 +164,7 @@ interface FilePreviewDrawerProps {
 
 /** The file's open comments, and the way to hand them all to the agent. */
 function PreviewCommentList({ comments, agent, canSend, sendable, onOpen }: {
+  /** Open and resolved: the list folds the resolved ones under the open ones. */
   comments: ReviewCommentEntry[];
   agent: string | null;
   canSend: boolean;
@@ -167,6 +173,8 @@ function PreviewCommentList({ comments, agent, canSend, sendable, onOpen }: {
   onOpen: (comment: ReviewCommentEntry, at: { x: number; y: number }) => void;
 }) {
   const { open, close, toggle, rootRef } = usePopover();
+  const rows = comments.map((entry) => ({ ...threadOf(entry), id: entry.id, entry }));
+  const openCount = rows.filter((row) => row.status === "open").length;
   return (
     <span ref={rootRef} className="comment-pop-anchor">
       <button
@@ -176,56 +184,37 @@ function PreviewCommentList({ comments, agent, canSend, sendable, onOpen }: {
         style={{ color: open ? "var(--color-highlight)" : "var(--color-text-muted)" }}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={`Comments, ${comments.length} open`}
+        aria-label={`Comments, ${openCount} open`}
         title="Comments"
       >
         <MessageSquare className="w-4 h-4" />
-        {comments.length}
+        {openCount}
       </button>
       {open ? (
         <div className="comment-pop" role="dialog" aria-label="Comments">
-          <div className="design-comments-list">
-            {comments.map((comment) => (
-              <button
-                key={comment.id}
-                type="button"
-                className="design-comment-row"
-                onClick={(event) => {
-                  const box = event.currentTarget.getBoundingClientRect();
-                  close();
-                  onOpen(comment, { x: box.left - 342, y: box.top + 12 });
-                }}
-              >
-                <Avatar name={comment.agent || "You"} />
-                <span className="design-comment-text">
-                  <span className="design-comment-meta">
-                    <b>{comment.agent || "You"}</b>
-                    <span>{relativeText(comment.timestamp)}</span>
-                  </span>
-                  <span className="design-comment-body">{comment.content}</span>
-                  {comment.replies.length ? <span className="design-comment-replies">{comment.replies.length} {comment.replies.length === 1 ? "reply" : "replies"}</span> : null}
-                </span>
-              </button>
-            ))}
-          </div>
-          {sendable ? (
-            <div className="design-comments-foot">
-              <button
-                type="button"
-                className="design-btn is-primary"
-                disabled={!canSend}
-                title={canSend ? undefined : "Open the task's chat to send comments to its agent"}
-                onClick={() => { close(); sendCommentsToChat(comments); }}
-              >
-                <Send size={13} />
-                Send {comments.length} to {agent || "the agent"}
-              </button>
-            </div>
-          ) : null}
+          <DesignCommentList
+            comments={rows}
+            placeOf={() => ""}
+            agent={agent}
+            canSend={canSend}
+            onSend={sendable ? (list) => { close(); sendCommentsToChat(list.map((row) => row.entry)); } : undefined}
+            onOpen={(row, at) => { close(); onOpen(row.entry, at); }}
+          />
         </div>
       ) : null}
     </span>
   );
+}
+
+/** A file comment as a thread shows it. Outdated reads as open. */
+function threadOf(comment: ReviewCommentEntry) {
+  return {
+    author: comment.agent || "You",
+    content: comment.content,
+    timestamp: comment.timestamp,
+    status: comment.status === "resolved" ? "resolved" as const : "open" as const,
+    replies: comment.replies.map((reply) => ({ id: reply.id, author: reply.agent || "You", content: reply.content, timestamp: reply.timestamp })),
+  };
 }
 
 export function FilePreviewDrawer({
@@ -243,6 +232,7 @@ export function FilePreviewDrawer({
   previewComments,
   onReplyPreviewComment,
   onResolvePreviewComment,
+  previewCommentChanges,
   previewCommentsToAgent = true,
   sketchContext,
   location,
@@ -873,21 +863,22 @@ export function FilePreviewDrawer({
       {thread && openThread ? (
         <DesignThread
           at={thread.at}
-          comment={{
-            author: openThread.agent || "You",
-            content: openThread.content,
-            timestamp: openThread.timestamp,
-            status: "open",
-            replies: openThread.replies.map((reply) => ({ id: reply.id, author: reply.agent || "You", content: reply.content, timestamp: reply.timestamp })),
-          }}
+          comment={threadOf(openThread)}
           target={fileName}
           agent={chat.agent}
           canSend={Boolean(chat.chatId)}
           compose={Boolean(onReplyPreviewComment)}
           onClose={() => setThread(null)}
-          onResolve={onResolvePreviewComment ? () => { onResolvePreviewComment(openThread.id); setThread(null); } : undefined}
+          onResolve={onResolvePreviewComment ? () => {
+            const resolving = openThread.status !== "resolved";
+            onResolvePreviewComment(openThread.id, resolving ? "resolved" : "open");
+            if (resolving) setThread(null);
+          } : undefined}
           onSend={onReplyPreviewComment && previewCommentsToAgent ? () => { sendCommentsToChat([openThread]); setThread(null); } : undefined}
           onSubmit={async (text) => { await onReplyPreviewComment?.(openThread.id, text); }}
+          canChange={previewCommentChanges ? (replyId) => previewCommentChanges.canChange(openThread, replyId) : undefined}
+          onEdit={previewCommentChanges ? (text, replyId) => previewCommentChanges.edit(openThread, text, replyId) : undefined}
+          onDelete={previewCommentChanges ? (replyId) => previewCommentChanges.remove(openThread, replyId) : undefined}
         />
       ) : null}
       <ImageLightbox

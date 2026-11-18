@@ -99,6 +99,8 @@ export interface CommentReply {
   model: string;
   role: string;
   timestamp: string;
+  /** On a share link: written by the person reading it. */
+  mine?: boolean;
 }
 
 export type CommentType = 'inline' | 'file' | 'project';
@@ -118,6 +120,8 @@ export interface ReviewCommentEntry {
   status: string; // "open" | "resolved" | "outdated"
   replies: CommentReply[];
   via_share?: boolean; // written by someone the task was shared with
+  /** On a share link: written by the person reading it, who may change it. */
+  mine?: boolean;
   /** Where in the rendered file a comment made on a preview or a design page sits. */
   anchor?: Record<string, unknown>;
 }

@@ -20,6 +20,8 @@ import { usePopover } from "../../../orbit/ui";
 import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
 import { DesignCommentList } from "../DesignPage/DesignInspector";
 import { Avatar, DesignThread } from "../DesignPage/DesignThread";
+import { BoardRefresh } from "../DesignPage/BoardRefresh";
+import type { ThreadChanges } from "../DesignPage/threadChanges";
 import { SketchCanvas } from "./SketchCanvas";
 import { exportSketchPng } from "./sketchExport";
 import { anchorOn, anchorOnArea, idsAt, placeLabel, placeOf, type SceneElement } from "./sketchAnchor";
@@ -54,6 +56,10 @@ interface Props {
   onReply?: (id: number, content: string) => Promise<void>;
   onResolve?: (comment: SketchComment) => void;
   onSend?: (comments: SketchComment[]) => void;
+  /** Editing and deleting comments and replies; absent where none can be. */
+  changes?: ThreadChanges<SketchComment>;
+  /** Read the sketches, the one shown and the comments again. */
+  onRefresh?: () => Promise<void>;
   agent: string | null;
   canSend: boolean;
   onApi?: (api: ExcalidrawImperativeAPI | null) => void;
@@ -72,7 +78,7 @@ type Thread =
  */
 export function SketchBoard({
   sketches, activeId, onSelect, scene, sceneKey, sceneLoading, owner,
-  comments, onAddComment, onReply, onResolve, onSend, agent, canSend, onApi, empty,
+  comments, onAddComment, onReply, onResolve, onSend, changes, onRefresh, agent, canSend, onApi, empty,
 }: Props) {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const [commenting, setCommenting] = useState(false);
@@ -156,6 +162,7 @@ export function SketchBoard({
           <History size={14} />
         </button>
       ) : null}
+      {onRefresh ? <BoardRefresh onRefresh={onRefresh} /> : null}
     </div>
   );
 
@@ -220,7 +227,7 @@ export function SketchBoard({
               <button type="button" className="design-icon-btn" onClick={() => setListOpen(false)} title="Hide" aria-label="Hide the comments"><X size={14} /></button>
             </div>
             <DesignCommentList
-              comments={open}
+              comments={comments.filter((comment) => comment.sketch === activeId)}
               placeOf={(comment) => placeLabel(comment.anchor)}
               agent={agent}
               canSend={canSend}
@@ -268,6 +275,9 @@ export function SketchBoard({
           onSubmit={async (text) => {
             if (onReply) await onReply(existing.id, text);
           }}
+          canChange={changes ? (replyId) => changes.canChange(existing, replyId) : undefined}
+          onEdit={changes ? (text, replyId) => changes.edit(existing, text, replyId) : undefined}
+          onDelete={changes ? (replyId) => changes.remove(existing, replyId) : undefined}
         />
       ) : null}
       {owner ? (

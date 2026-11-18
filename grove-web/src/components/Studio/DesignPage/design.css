@@ -405,6 +405,8 @@
 .design-icon-btn:hover:not(:disabled) { background: color-mix(in oklab, var(--color-text) 7%, transparent); color: var(--color-text); }
 .design-icon-btn:disabled { opacity: .35; cursor: default; }
 .design-resolved { color: var(--color-success); }
+.design-spin { animation: design-spin 800ms linear infinite; }
+@keyframes design-spin { to { transform: rotate(360deg); } }
 
 .design-btn {
   display: inline-flex;
@@ -428,6 +430,8 @@
 .design-btn.is-on { border-color: var(--color-highlight); background: color-mix(in oklab, var(--color-highlight) 14%, var(--color-bg)); color: var(--color-highlight); }
 .design-btn.is-primary { border-color: transparent; background: var(--color-text); color: var(--color-bg); }
 .design-btn.is-primary:hover:not(:disabled) { background: color-mix(in oklab, var(--color-text) 88%, var(--color-bg)); }
+.design-btn.is-danger { border-color: transparent; background: var(--color-error); color: #fff; }
+.design-btn.is-danger:hover:not(:disabled) { background: color-mix(in oklab, var(--color-error) 88%, #000); }
 
 .design-play-meta { flex: none; color: var(--d-muted); font-variant-numeric: tabular-nums; }
 .design-play-gap { flex: 1; }
@@ -501,6 +505,28 @@
 .design-thread-meta { display: flex; align-items: baseline; gap: 6px; }
 .design-thread-meta span { color: var(--color-text-muted); font-size: 11px; }
 .design-thread-text p { margin: 2px 0 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.design-thread-actions { display: inline-flex; gap: 0; margin-left: auto; opacity: 0; transition: opacity .12s; }
+.design-thread-item:hover .design-thread-actions,
+.design-thread-actions:focus-within { opacity: 1; }
+.design-thread-actions .design-icon-btn { width: 20px; height: 20px; }
+.design-thread-edit textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 5px 7px;
+  resize: none;
+  border: 1px solid var(--color-highlight);
+  border-radius: 7px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  line-height: 1.4;
+}
+.design-thread-edit textarea:focus { outline: 0; box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-highlight) 16%, transparent); }
+.design-thread-edit-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.design-thread-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; color: var(--color-text-muted); }
+.design-thread-confirm span { flex: 1 1 100%; }
+.design-thread-pad { padding: 0 12px 10px; }
 
 .design-thread-compose { flex: none; padding: 10px 12px 12px; }
 
@@ -551,6 +577,26 @@
 .design-comment-meta span { overflow: hidden; text-overflow: ellipsis; }
 .design-comment-body { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
 .design-comment-replies { color: var(--d-muted); font-size: 11px; }
+.design-comment-row.is-resolved { opacity: .62; }
+.design-comments-fold {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 8px 6px;
+  border: 0;
+  border-top: 1px solid var(--d-line);
+  background: none;
+  color: var(--d-muted);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.design-comments-fold:hover { color: var(--color-text); }
+.design-comments-fold svg { transition: transform .12s; }
+.design-comments-fold svg.is-open { transform: rotate(90deg); }
 
 /* ── Tools ───────────────────────────────────────────────────────────────── */
 .design-tools {

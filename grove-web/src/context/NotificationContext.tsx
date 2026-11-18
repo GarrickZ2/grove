@@ -5,6 +5,7 @@ import type { HookEntryResponse } from "../api/hooks";
 import type { RadioEvent } from "../api/walkieTalkie";
 import { useRadioEvents } from "../hooks/useRadioEvents";
 import { renderHookNotification } from "../notifications/desktopNotifier";
+import { useBanner } from "./BannerContext";
 
 interface NotificationContextType {
   notifications: HookEntryResponse[];
@@ -19,6 +20,7 @@ const NotificationContext = createContext<NotificationContextType | undefined>(u
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<HookEntryResponse[]>([]);
+  const { showBanner } = useBanner();
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -78,8 +80,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       ) => {
         void fetchNotifications();
         if (payload) renderHookNotification(payload);
+        // Someone on a share link commented or replied: say so in the app
+        // too, on whatever page is open — a system banner doesn't show
+        // while Grove is in front.
+        if (payload?.kind === "comment" && payload.message) {
+          showBanner(payload.task_name ? `${payload.task_name} · ${payload.message}` : payload.message, "info", 6000);
+        }
       },
-      [fetchNotifications],
+      [fetchNotifications, showBanner],
     ),
     onConnected: useCallback(() => {
       void fetchNotifications();

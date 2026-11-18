@@ -93,7 +93,8 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
       role: "",
       timestamp: comment.timestamp,
       status: comment.status,
-      replies: comment.replies.map((reply) => ({ id: reply.id, content: reply.content, agent: reply.author, model: "", role: "", timestamp: reply.timestamp })),
+      mine: comment.mine,
+      replies: comment.replies.map((reply) => ({ id: reply.id, content: reply.content, agent: reply.author, model: "", role: "", timestamp: reply.timestamp, mine: reply.mine })),
       anchor: comment.anchor ?? undefined,
     }));
     return {
@@ -105,6 +106,11 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
         list: async () => entries((await source.comments()).comments),
         add: async (path, content, anchor) => entries((await source.addComment({ commentType: "file", filePath: path, content, anchor })).comments),
         reply: async (id, content) => entries((await source.addReply(id, content)).comments),
+        edit: async (id, content, replyId) =>
+          entries((await (replyId === undefined ? source.editComment(id, content) : source.editReply(id, replyId, content))).comments),
+        remove: async (id, replyId) =>
+          entries((await (replyId === undefined ? source.deleteComment(id) : source.deleteReply(id, replyId))).comments),
+        watch: (onChange) => source.watchComments(onChange),
       },
     };
   }, [source, canComment]);
@@ -119,6 +125,17 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
         await source.addComment({ commentType: "file", filePath: `design/${comment.design}/${comment.page}`, anchor: comment.anchor, content: comment.content });
       },
       reply: canComment ? async (id, content) => { await source.addReply(id, content); } : undefined,
+      edit: canComment
+        ? async (id, content, replyId) => {
+          await (replyId === undefined ? source.editComment(id, content) : source.editReply(id, replyId, content));
+        }
+        : undefined,
+      remove: canComment
+        ? async (id, replyId) => {
+          await (replyId === undefined ? source.deleteComment(id) : source.deleteReply(id, replyId));
+        }
+        : undefined,
+      watchComments: (onChange) => source.watchComments(onChange),
     });
   }, [designKey, source, canComment]);
   // Taken away only when the view closes: the panel inside reads through it
@@ -133,6 +150,17 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
       }
       : undefined,
     reply: canComment ? async (id, content) => { await source.addReply(id, content); } : undefined,
+    editComment: canComment
+      ? async (id, content, replyId) => {
+        await (replyId === undefined ? source.editComment(id, content) : source.editReply(id, replyId, content));
+      }
+      : undefined,
+    deleteComment: canComment
+      ? async (id, replyId) => {
+        await (replyId === undefined ? source.deleteComment(id) : source.deleteReply(id, replyId));
+      }
+      : undefined,
+    watchComments: (onChange) => source.watchComments(onChange),
   }), [source, canComment]);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 

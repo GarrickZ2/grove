@@ -9,6 +9,7 @@ import { DesignCommentList, DesignInspector } from "./DesignInspector";
 import { applyEdits, checkOf, setCssVariable, setPageVariable, type DesignEdit } from "./designEdit";
 import { DesignSelectBar } from "./DesignSelectBar";
 import { Avatar } from "./DesignThread";
+import { BoardRefresh } from "./BoardRefresh";
 import {
   GUIDE_WIDTH, LABEL_SIZE, boardBounds, fitView, guidePosition, pageComments, pageHeight, pinPosition, zoomAt,
   type BoardView,
@@ -48,6 +49,10 @@ interface Props {
   agent?: string | null;
   canSend?: boolean;
   onSendComments?: (comments: DesignComment[]) => void;
+  /** Read the designs, their pages and comments again. */
+  onRefresh?: () => Promise<void>;
+  /** Times the board was refreshed; each loads every page and its files again. */
+  refreshes?: number;
 }
 
 /** Room left around a fitted board: the controls float over its top and bottom edges. */
@@ -179,7 +184,7 @@ function wheelView(view: BoardView, deltaX: number, deltaY: number, zoom: boolea
  */
 export function DesignBoard({
   projectId, taskId, token, design, guide, comments, focusPage, onMove, onOpenThread, onOpenDesign, onComment,
-  readOnly, onSaved, onNotice, onMarks, onFrame, viewer, onExportPage, agent, canSend, onSendComments,
+  readOnly, onSaved, onNotice, onMarks, onFrame, viewer, onExportPage, agent, canSend, onSendComments, onRefresh, refreshes = 0,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -535,6 +540,7 @@ export function DesignBoard({
             filesBase={designFilesBase(token, projectId, taskId, design.slug)}
             design={design.slug}
             page={page}
+            refreshes={refreshes}
             zoom={view.k}
             selected={selected === page.file}
             ref={(handle) => {
@@ -640,6 +646,7 @@ export function DesignBoard({
             <SlidersHorizontal size={14} />
           </button>
         )}
+        {onRefresh ? <BoardRefresh onRefresh={onRefresh} /> : null}
         <ZoomMenu percent={Math.round(view.k * 100)} onZoom={zoomBy} onFit={() => setUserView(null)} />
       </div>
       <div className="design-tools" role="toolbar" aria-label="Tools" onPointerDown={(event) => event.stopPropagation()}>
@@ -670,7 +677,7 @@ export function DesignBoard({
         </div>
         <DesignCommentList
           placeOf={(comment) => design.pages.find((page) => page.file === comment.page)?.title ?? comment.page}
-          comments={comments.filter((comment) => comment.design === design.slug && comment.status === "open")}
+          comments={comments.filter((comment) => comment.design === design.slug)}
           onOpen={(comment, at) => {
             const target = placed.pages.find((page) => page.file === comment.page);
             if (target) focus(target, 0, true);
@@ -723,6 +730,8 @@ interface ArtboardProps {
   filesBase: string;
   design: string;
   page: DesignPage;
+  /** Times the board was refreshed: each one loads the page and its files again. */
+  refreshes: number;
   zoom: number;
   selected: boolean;
   ref?: Ref<ArtboardHandle>;
@@ -819,7 +828,7 @@ function queueEdit(waiting: DesignEdit[], op: DesignEdit): DesignEdit[] {
 }
 
 function Artboard({
-  ref, projectId, taskId, filesBase, design, page, zoom, selected, tool, readOnly, selection, comments, onPointerDown, playing, onPlay, onExport, onOpenThread,
+  ref, projectId, taskId, filesBase, design, page, refreshes, zoom, selected, tool, readOnly, selection, comments, onPointerDown, playing, onPlay, onExport, onOpenThread,
   onSelected, onClearSelection, onEscape, onWheel, onNavigate, onScrollTo, onComment,
   onTree, onVariables, onMoved, onWrote, onUndo, onStyle, onDuplicate, onRemove, onSaved, onNotice,
 }: ArtboardProps) {
@@ -830,9 +839,9 @@ function Artboard({
   const [held, setHeld] = useState<{ shown: LoadedPage; accepted: string[] } | null>(null);
   const [reloads, setReloads] = useState(0);
   const saving = useRef<{ waiting: DesignEdit[]; timer: number; chain: Promise<void> }>({ waiting: [], timer: 0, chain: Promise.resolve() });
-  const latest = usePageHtml(projectId, taskId, design, page.file, page.version);
+  const latest = usePageHtml(projectId, taskId, design, page.file, page.version, refreshes);
   const loaded = latest && held?.accepted.includes(latest.html) ? held.shown : latest;
-  const frameVersion = loaded ? `${loaded.version}#${reloads}` : "";
+  const frameVersion = loaded ? `${loaded.version}#${reloads}#${refreshes}` : "";
   const shownRef = useRef(loaded);
   useEffect(() => { shownRef.current = loaded; });
   // The frame grows to its content; counted per document so a page that keeps

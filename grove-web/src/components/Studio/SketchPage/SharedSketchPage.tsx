@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pencil } from "lucide-react";
 import type { SharedSketches, SketchComment, SketchMeta } from "../../../api";
 import { PanelEmpty, PanelError, PanelLoading } from "../../../orbit/ui";
 import { SketchBoard } from "./SketchBoard";
+import { writtenByReader, type ThreadChanges } from "../DesignPage/threadChanges";
 
 /**
  * Sketches someone shared, read through their share link: the same board as
@@ -13,7 +14,10 @@ export function SharedSketchPage({ source }: { source: SharedSketches }) {
   const [comments, setComments] = useState<SketchComment[]>([]);
   const [failure, setFailure] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [scene, setScene] = useState<{ id: string; scene: unknown } | null>(null);
+  // `read`: which Refresh it was read for; the canvas starts over on each.
+  const [scene, setScene] = useState<{ id: string; scene: unknown; read: number } | null>(null);
+  // Bumped by Refresh: the sketch shown is read again and the canvas starts over.
+  const [sceneTick, setSceneTick] = useState(0);
 
   const reload = useCallback(async () => {
     try {
@@ -28,16 +32,34 @@ export function SharedSketchPage({ source }: { source: SharedSketches }) {
   useEffect(() => {
     void Promise.resolve().then(reload);
   }, [reload]);
+  // Read again whenever the owner's Grove says the comments changed.
+  useEffect(() => source.watchComments?.(() => void reload()), [source, reload]);
+  // What the reader wrote, they may change.
+  const changes = useMemo<ThreadChanges<SketchComment> | undefined>(() => {
+    const { editComment, deleteComment } = source;
+    if (!editComment || !deleteComment) return undefined;
+    return {
+      canChange: writtenByReader,
+      edit: async (comment, text, replyId) => {
+        await editComment(comment.id, text, replyId);
+        await reload();
+      },
+      remove: async (comment, replyId) => {
+        await deleteComment(comment.id, replyId);
+        await reload();
+      },
+    };
+  }, [source, reload]);
 
   const shown = activeId && sketches?.some((sketch) => sketch.id === activeId) ? activeId : sketches?.[0]?.id ?? null;
   useEffect(() => {
     if (!shown) return;
     let cancelled = false;
     source.scene(shown)
-      .then((value) => { if (!cancelled) setScene({ id: shown, scene: value }); })
-      .catch(() => { if (!cancelled) setScene({ id: shown, scene: null }); });
+      .then((value) => { if (!cancelled) setScene({ id: shown, scene: value, read: sceneTick }); })
+      .catch(() => { if (!cancelled) setScene({ id: shown, scene: null, read: sceneTick }); });
     return () => { cancelled = true; };
-  }, [source, shown]);
+  }, [source, shown, sceneTick]);
 
   if (failure && !sketches) return <PanelError title="Couldn't load the sketches" onRetry={() => void reload()}>{failure}</PanelError>;
   if (!sketches) return <PanelLoading />;
@@ -49,7 +71,7 @@ export function SharedSketchPage({ source }: { source: SharedSketches }) {
       activeId={shown}
       onSelect={setActiveId}
       scene={scene?.scene ?? null}
-      sceneKey={shown ?? ""}
+      sceneKey={`${shown ?? ""}-${scene?.read ?? 0}`}
       sceneLoading={!scene || scene.id !== shown}
       comments={comments}
       onAddComment={addComment ? async (sketch, anchor, content) => {
@@ -60,6 +82,11 @@ export function SharedSketchPage({ source }: { source: SharedSketches }) {
         await reply(id, content);
         await reload();
       } : undefined}
+      changes={changes}
+      onRefresh={async () => {
+        setSceneTick((tick) => tick + 1);
+        await reload();
+      }}
       agent={null}
       canSend={false}
       empty={<PanelEmpty icon={Pencil} title="No sketches" />}

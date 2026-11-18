@@ -1690,8 +1690,22 @@ pub fn create_router(
                 get(handlers::shares::public_comments).post(handlers::shares::public_add_comment),
             )
             .route(
+                "/share/{token}/comments/{id}",
+                patch(handlers::shares::public_edit_comment)
+                    .delete(handlers::shares::public_delete_comment),
+            )
+            .route(
                 "/share/{token}/comments/{id}/replies",
                 post(handlers::shares::public_add_reply),
+            )
+            .route(
+                "/share/{token}/comments/{id}/replies/{reply}",
+                patch(handlers::shares::public_edit_reply)
+                    .delete(handlers::shares::public_delete_reply),
+            )
+            .route(
+                "/share/{token}/events",
+                get(handlers::shares::public_events),
             )
             .layer(DefaultBodyLimit::max(256 * 1024))
             .layer(middleware::from_fn(device_auth::no_store))
@@ -1727,11 +1741,16 @@ pub fn create_router(
             .nest("/api/v1", share_links)
             .nest("/api/v1", auth_router)
             .nest("/api/v1", device_router)
-            // Same-machine attention-fact intake (grove hooks CLI). Sits
-            // outside the auth layer on purpose — see report_hook's docs.
+            // Same-machine intake (grove hooks CLI, the agent's grove mcp).
+            // Sits outside the auth layer on purpose — see report_hook's docs.
             .nest(
                 "/api/v1",
-                Router::new().route("/hooks/report", post(handlers::hooks::report_hook)),
+                Router::new()
+                    .route("/hooks/report", post(handlers::hooks::report_hook))
+                    .route(
+                        "/comments/changed",
+                        post(handlers::hooks::report_comments_changed),
+                    ),
             )
             .route("/api/{*path}", any(api_not_found))
             .layer(middleware::from_fn(csrf::csrf_middleware))

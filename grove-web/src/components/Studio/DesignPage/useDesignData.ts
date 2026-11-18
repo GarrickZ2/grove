@@ -4,9 +4,11 @@ import {
   getDesignPage,
   listDesignComments,
   listDesigns,
+  watchSharedDesignComments,
   type Design,
   type DesignComment,
 } from "../../../api/designs";
+import { useCommentsChanged } from "../../../hooks/useCommentsChanged";
 
 /** While the agent works, its file writes show up this often. */
 const BUSY_POLL_MS = 2500;
@@ -73,6 +75,10 @@ export function useDesignData(projectId: string, taskId: string, { isChatBusy, l
     };
   }, [reload, isChatBusy, lastChatIdleAt]);
 
+  // Comments: read again as soon as anyone changes them, here or on a share link.
+  useCommentsChanged(projectId, taskId, reload);
+  useEffect(() => watchSharedDesignComments(projectId, () => void reload()), [projectId, reload]);
+
   const current = data?.scope === scope ? data : null;
 
   /** Change the designs or comments in place, ahead of the next poll. */
@@ -96,6 +102,12 @@ const EMPTY_COMMENTS: DesignComment[] = [];
 const pageCache = new Map<string, Promise<string>>();
 const PAGE_CACHE_LIMIT = 80;
 
+/** Drop the pages of a task kept here, so the next read is from the server. */
+export function forgetDesignPages(projectId: string, taskId: string): void {
+  const prefix = `${projectId}/${taskId}/`;
+  for (const key of [...pageCache.keys()]) if (key.startsWith(prefix)) pageCache.delete(key);
+}
+
 /** A page's HTML at one version. Versions never change, so they cache. */
 export function loadPageHtml(projectId: string, taskId: string, design: string, file: string, version: string): Promise<string> {
   const key = `${projectId}/${taskId}/${design}/${file}@${version}`;
@@ -115,8 +127,9 @@ export interface LoadedPage {
   version: string;
 }
 
-/** One page's HTML, reloaded when its version changes. Null until the first load. */
-export function usePageHtml(projectId: string, taskId: string, design: string, file: string, version: string): LoadedPage | null {
+/** One page's HTML, reloaded when its version changes, or when `fresh` does
+ *  (a Refresh). Null until the first load. */
+export function usePageHtml(projectId: string, taskId: string, design: string, file: string, version: string, fresh = 0): LoadedPage | null {
   const page = `${projectId}/${taskId}/${design}/${file}`;
   const [loaded, setLoaded] = useState<(LoadedPage & { page: string }) | null>(null);
   useEffect(() => {
@@ -127,7 +140,7 @@ export function usePageHtml(projectId: string, taskId: string, design: string, f
         if (!cancelled) setLoaded({ page, version, html: "<p style=\"font:14px system-ui;padding:24px\">This page could not be loaded.</p>" });
       });
     return () => { cancelled = true; };
-  }, [projectId, taskId, design, file, version, page]);
+  }, [projectId, taskId, design, file, version, page, fresh]);
   // The previous version stays up until the new one arrives: no blank flash.
   return loaded?.page === page ? loaded : null;
 }

@@ -478,6 +478,7 @@ export function OrbitArtifactsPanel(props: Props) {
               }
               previewComments={panel.currentFileComments}
               onReplyPreviewComment={panel.canComment ? panel.replyPreviewComment : undefined}
+              previewCommentChanges={panel.canComment ? panel.previewCommentChanges : undefined}
               previewCommentsToAgent={!readOnly}
               onResolvePreviewComment={readOnly ? undefined : panel.resolvePreviewComment}
               previewCommentMarkers={panel.currentFilePreviewMarkers}

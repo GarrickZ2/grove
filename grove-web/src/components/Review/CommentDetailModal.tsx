@@ -392,7 +392,7 @@ export function CommentDetailModal({
                         <Reply style={{ width: 13, height: 13 }} />
                       </button>
                     )}
-                    {onEditReply && (
+                    {onEditReply && reply.mine !== false && (
                       <button
                         onClick={() => handleStartEditReply(reply.id, reply.content)}
                         title="Edit reply"
@@ -409,7 +409,7 @@ export function CommentDetailModal({
                         <Pencil style={{ width: 13, height: 13 }} />
                       </button>
                     )}
-                    {onDeleteReply && (
+                    {onDeleteReply && reply.mine !== false && (
                       <button
                         onClick={() => onDeleteReply(comment.id, reply.id)}
                         title="Delete reply"
@@ -535,7 +535,7 @@ export function CommentDetailModal({
               Reply
             </button>
           )}
-          {onEdit && (
+          {onEdit && comment.mine !== false && (
             <button
               onClick={handleStartEditComment}
               style={{
@@ -625,7 +625,7 @@ export function CommentDetailModal({
               Reopen
             </button>
           )}
-          {onDelete && (
+          {onDelete && comment.mine !== false && (
             <button
               onClick={() => {
                 onDelete(comment.id);

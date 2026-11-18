@@ -89,6 +89,8 @@ export interface ShareInfo {
 export interface SharedCommentReply {
   id: number;
   author: string;
+  /** Written by the person reading it, who may edit or delete it. */
+  mine: boolean;
   content: string;
   timestamp: string;
 }
@@ -285,6 +287,15 @@ export interface ShareSource {
   addComment(comment: NewSharedComment): Promise<{ comments: SharedComment[] }>;
   /** Answer in a thread, whoever started it. */
   addReply(id: number, content: string): Promise<{ comments: SharedComment[] }>;
+  /** Change or remove what the reader wrote (`mine`); deleting a comment
+   *  deletes its thread. */
+  editComment(id: number, content: string): Promise<{ comments: SharedComment[] }>;
+  deleteComment(id: number): Promise<{ comments: SharedComment[] }>;
+  editReply(id: number, replyId: number, content: string): Promise<{ comments: SharedComment[] }>;
+  deleteReply(id: number, replyId: number): Promise<{ comments: SharedComment[] }>;
+  /** Call `onChange` whenever the comments this source reads change, pushed
+   *  by the owner's Grove. Returns how to stop. */
+  watchComments(onChange: () => void): () => void;
   /** The design boards, and the base address their pages load files from. */
   designs(): Promise<{ designs: Design[]; comments: DesignComment[]; me: string; filesBase: string }>;
   designPage(design: string, file: string): Promise<string>;
@@ -304,6 +315,96 @@ const designPagePath = (design: string, file: string) => `designs/${encodeURICom
 const reviewParam = (project: string | undefined, first: boolean) =>
   project ? `${first ? '?' : '&'}project=${encodeURIComponent(project)}` : '';
 
+/** `undefined`: the stream reconnected or an event couldn't be read, so
+ *  every listener reads again. */
+type CommentsChange = (project: string | null | undefined) => void;
+
+/** One stream per link, shared by everything on the page reading it. */
+const commentStreams = new Map<string, { listeners: Set<CommentsChange>; stop: () => void }>();
+
+/**
+ * Read a link's event stream (server-sent events) and hand each `comments`
+ * event to the listeners: `null` for the Task's own comments, a Project id
+ * for a linked Project's review. Reconnects with backoff, and on reconnect
+ * tells every listener to read again, for what changed meanwhile. Stops for
+ * good once the link no longer lets the reader in.
+ */
+function streamComments(open: (signal: AbortSignal) => Promise<Response>, emit: CommentsChange): () => void {
+  const controller = new AbortController();
+  void (async () => {
+    let delay = 1000;
+    let connected = false;
+    while (!controller.signal.aborted) {
+      try {
+        const response = await open(controller.signal);
+        if (connected) emit(undefined);
+        connected = true;
+        delay = 1000;
+        const reader = response.body?.getReader();
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        let buffer = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+          let end: number;
+          while ((end = buffer.indexOf('\n\n')) >= 0) {
+            const block = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
+            const lines = block.split('\n');
+            const name = lines.find((line) => line.startsWith('event:'))?.slice(6).trim();
+            const data = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+            if (name !== 'comments') continue;
+            try {
+              emit((JSON.parse(data) as { project?: string | null }).project ?? null);
+            } catch {
+              emit(undefined);
+            }
+          }
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        const status = (error as { status?: number })?.status;
+        // The link ended, or the reader was removed: nothing more will come.
+        if (status === 401 || status === 403 || status === 404 || status === 410) return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay = Math.min(delay * 2, 30000);
+    }
+  })();
+  return () => controller.abort();
+}
+
+/** `onChange` for the comments of `project` (a linked Project's review) or,
+ *  without one, the Task's own. */
+function watchLink(key: string, open: (signal: AbortSignal) => Promise<Response>, project: string | undefined, onChange: () => void): () => void {
+  const listener: CommentsChange = (changed) => {
+    if (changed === undefined || changed === (project ?? null)) onChange();
+  };
+  let stream = commentStreams.get(key);
+  if (!stream) {
+    const listeners = new Set<CommentsChange>();
+    stream = {
+      listeners,
+      stop: streamComments(open, (changed) => {
+        for (const each of listeners) each(changed);
+      }),
+    };
+    commentStreams.set(key, stream);
+  }
+  stream.listeners.add(listener);
+  return () => {
+    const current = commentStreams.get(key);
+    if (!current) return;
+    current.listeners.delete(listener);
+    if (current.listeners.size === 0) {
+      current.stop();
+      commentStreams.delete(key);
+    }
+  };
+}
+
 export function receivedShareSource(id: string, project?: string): ShareSource {
   const base = `/api/v1/shared/${id}/host`;
   const q = (path: string) => `path=${encodeURIComponent(path)}${reviewParam(project, false)}`;
@@ -321,6 +422,11 @@ export function receivedShareSource(id: string, project?: string): ShareSource {
     comments: () => apiClient.get<{ comments: SharedComment[] }>(`${base}/comments${r}`),
     addComment: (comment) => apiClient.post<NewSharedComment, { comments: SharedComment[] }>(`${base}/comments${r}`, comment),
     addReply: (id, content) => apiClient.post<{ content: string }, { comments: SharedComment[] }>(`${base}/comments/${id}/replies${r}`, { content }),
+    editComment: (comment, content) => apiClient.patch<{ content: string }, { comments: SharedComment[] }>(`${base}/comments/${comment}${r}`, { content }),
+    deleteComment: (comment) => apiClient.delete<{ comments: SharedComment[] }>(`${base}/comments/${comment}${r}`),
+    editReply: (comment, reply, content) => apiClient.patch<{ content: string }, { comments: SharedComment[] }>(`${base}/comments/${comment}/replies/${reply}${r}`, { content }),
+    deleteReply: (comment, reply) => apiClient.delete<{ comments: SharedComment[] }>(`${base}/comments/${comment}/replies/${reply}${r}`),
+    watchComments: (onChange) => watchLink(`received:${id}`, (signal) => apiClient.getResponse(`${base}/events`, signal), project, onChange),
     // This Grove relays the calls; a page's frame loads its files from the owner's Grove itself.
     designs: async () => {
       const data = await apiClient.get<SharedDesignData>(`${base}/designs`);
@@ -378,6 +484,11 @@ export function publicShareSource(token: string, project?: string): ShareSource 
     comments: () => publicJson<{ comments: SharedComment[] }>(`${base}/comments${r}`),
     addComment: (comment) => publicJson<{ comments: SharedComment[] }>(`${base}/comments${r}`, jsonBody(comment)),
     addReply: (id, content) => publicJson<{ comments: SharedComment[] }>(`${base}/comments/${id}/replies${r}`, jsonBody({ content })),
+    editComment: (comment, content) => publicJson<{ comments: SharedComment[] }>(`${base}/comments/${comment}${r}`, { ...jsonBody({ content }), method: 'PATCH' }),
+    deleteComment: (comment) => publicJson<{ comments: SharedComment[] }>(`${base}/comments/${comment}${r}`, { method: 'DELETE' }),
+    editReply: (comment, reply, content) => publicJson<{ comments: SharedComment[] }>(`${base}/comments/${comment}/replies/${reply}${r}`, { ...jsonBody({ content }), method: 'PATCH' }),
+    deleteReply: (comment, reply) => publicJson<{ comments: SharedComment[] }>(`${base}/comments/${comment}/replies/${reply}${r}`, { method: 'DELETE' }),
+    watchComments: (onChange) => watchLink(`public:${token}`, (signal) => publicRequest(`${base}/events`, { signal }), project, onChange),
     designs: async () => {
       const data = await publicJson<SharedDesignData>(`${base}/designs`);
       return { designs: data.designs, comments: data.comments, me: data.me, filesBase: data.filesPath };

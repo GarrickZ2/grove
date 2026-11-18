@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { useSketchList } from "./hooks/useSketchList";
 import { useSketchSync } from "./hooks/useSketchSync";
@@ -11,10 +11,12 @@ import { OPEN_SKETCH_EVENT, type OpenSketchDetail, setSketchNames } from "../../
 import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
 import { useCommand, useContextKey } from "../../../keyboard";
 import { createSketchComment, listSketchComments, type SketchAnchor, type SketchComment } from "../../../api";
-import { replyReviewComment, updateCommentStatus } from "../../../api/review";
+import { deleteComment, deleteReply, editComment, editReply, replyReviewComment, updateCommentStatus } from "../../../api/review";
 import { targetChatId, useActiveChatTarget } from "../../Review/sendOpenComments";
 import { SEND_COMMENT_TO_CHAT_EVENT, type ChatReviewComment } from "../../Tasks/TaskView/reviewCommentPrompt";
 import { useBanner } from "../../../context";
+import { useCommentsChanged } from "../../../hooks/useCommentsChanged";
+import type { ThreadChanges } from "../DesignPage/threadChanges";
 
 interface Props {
   projectId: string;
@@ -166,8 +168,8 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
     }
   }, [apiRef, sketches, activeId]);
 
-  // Comments on the task's sketches. Read again when the agent stops (it
-  // answers with grove_reply_review) and when the sketch shown changes.
+  // Comments on the task's sketches. Read again whenever anyone changes
+  // them (the server pushes it), and when the sketch shown changes.
   const { showBanner } = useBanner();
   const chat = useActiveChatTarget();
   const [comments, setComments] = useState<SketchComment[]>([]);
@@ -181,6 +183,21 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
   useEffect(() => {
     void Promise.resolve().then(reloadComments);
   }, [reloadComments, lastChatIdleAt, activeId]);
+  useCommentsChanged(projectId, taskId, reloadComments);
+  // The owner may change every comment and reply, whoever wrote it.
+  const changes = useMemo<ThreadChanges<SketchComment>>(() => ({
+    canChange: () => true,
+    edit: async (comment, text, replyId) => {
+      if (replyId === undefined) await editComment(projectId, taskId, comment.id, text);
+      else await editReply(projectId, taskId, comment.id, replyId, text);
+      await reloadComments();
+    },
+    remove: async (comment, replyId) => {
+      if (replyId === undefined) await deleteComment(projectId, taskId, comment.id);
+      else await deleteReply(projectId, taskId, comment.id, replyId);
+      await reloadComments();
+    },
+  }), [projectId, taskId, reloadComments]);
 
   const addComment = useCallback(async (sketch: string, anchor: SketchAnchor, content: string) => {
     setComments((await createSketchComment(projectId, taskId, { sketch, anchor, content })).comments);
@@ -286,6 +303,10 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
           });
         }}
         onSend={sendToAgent}
+        changes={changes}
+        onRefresh={async () => {
+          await Promise.all([refresh(), refreshScene(), reloadComments()]);
+        }}
         agent={chat.agent}
         canSend={Boolean(chat.chatId)}
         onApi={setApiRef}

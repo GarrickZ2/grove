@@ -158,7 +158,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
               <Reply style={{ width: 13, height: 13 }} />
             </button>
           )}
-          {onEdit && (
+          {onEdit && comment.mine !== false && (
             <button
               className="diff-comment-action-btn"
               onClick={handleStartEditComment}
@@ -188,7 +188,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
               </button>
             )
           )}
-          {onDelete && (
+          {onDelete && comment.mine !== false && (
             <button
               className="diff-comment-action-btn"
               onClick={() => onDelete(comment.id)}
@@ -274,7 +274,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
                       <Reply style={{ width: 11, height: 11 }} />
                     </button>
                   )}
-                  {onEditReply && (
+                  {onEditReply && reply.mine !== false && (
                     <button
                       className="diff-comment-action-btn"
                       onClick={() => handleStartEditReply(reply.id, reply.content)}
@@ -283,7 +283,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
                       <Pencil style={{ width: 11, height: 11 }} />
                     </button>
                   )}
-                  {onDeleteReply && (
+                  {onDeleteReply && reply.mine !== false && (
                     <button
                       className="diff-comment-action-btn"
                       onClick={() => onDeleteReply(comment.id, reply.id)}

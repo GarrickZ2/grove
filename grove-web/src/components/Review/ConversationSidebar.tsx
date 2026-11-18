@@ -594,7 +594,7 @@ function ConversationItem({
             <RotateCcw style={{ width: 12, height: 12 }} />
           </button>
         )}
-        {onDelete && (
+        {onDelete && comment.mine !== false && (
           <button
             className="conv-item-resolve-btn"
             onClick={(e) => {

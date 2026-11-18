@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Check, ChevronDown, Download, Frame, Shapes, Upload } from "lucide-react";
 import {
   createDesignComment,
+  canChangeDesignComment,
   canReplyToDesignComments,
+  deleteDesignComment,
+  editDesignComment,
   createDesignPage,
   designExportUrl,
   designPageExportUrl,
@@ -28,7 +31,7 @@ import { DesignCaptureHost } from "./DesignCaptureHost";
 import type { PickedElement } from "./DesignFrame";
 import { DesignThread } from "./DesignThread";
 import { OPEN_DESIGN_EVENT, takePendingOpen, type OpenDesignDetail } from "./designModel";
-import { useDesignData } from "./useDesignData";
+import { forgetDesignPages, useDesignData } from "./useDesignData";
 import "./design.css";
 
 interface Props {
@@ -129,6 +132,13 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
     return { scope, design: asked?.design ?? null, page: asked?.page ?? null };
   });
   const [thread, setThread] = useState<Thread | null>(null);
+  // Refresh: pages, their files, the guide and comments, all read again.
+  const [refreshes, setRefreshes] = useState(0);
+  const refresh = useCallback(async () => {
+    forgetDesignPages(projectId, taskId);
+    setRefreshes((count) => count + 1);
+    await reload();
+  }, [projectId, taskId, reload]);
   const [guide, setGuide] = useState<{ scope: string; text: string | null } | null>(null);
   const chat = useActiveChatTarget();
   const { showBanner } = useBanner();
@@ -170,7 +180,7 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
       if (!cancelled) setGuide({ scope: `${projectId}/${taskId}`, text });
     });
     return () => { cancelled = true; };
-  }, [wantsGuide, designs, projectId, taskId]);
+  }, [wantsGuide, designs, projectId, taskId, refreshes]);
 
   const move = useCallback((slug: string, changes: { pages?: PageChange[]; labels?: LabelChange[] }) => {
     patch(({ designs: list }) => ({
@@ -325,6 +335,8 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
           <DesignBoard
             key={`${design.slug}:${here.page ?? ""}`}
             focusPage={here.page}
+            onRefresh={refresh}
+            refreshes={refreshes}
             projectId={projectId}
             taskId={taskId}
             token={token}
@@ -402,6 +414,15 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
           }}
           onSubmit={async (text) => {
             await replyDesignComment(projectId, taskId, existing.id, text);
+            await reload();
+          }}
+          canChange={(replyId) => canChangeDesignComment(projectId, existing, replyId)}
+          onEdit={async (text, replyId) => {
+            await editDesignComment(projectId, taskId, existing.id, text, replyId);
+            await reload();
+          }}
+          onDelete={async (replyId) => {
+            await deleteDesignComment(projectId, taskId, existing.id, replyId);
             await reload();
           }}
         />

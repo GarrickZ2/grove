@@ -1803,6 +1803,8 @@ impl GroveMcpServer {
             resolve_agent_identity(params.0.agent_name.as_deref(), params.0.role.as_deref());
 
         let mut reply_results: Vec<ReplyResultEntry> = Vec::new();
+        // The Tasks whose comments this changed, told to the server at the end.
+        let mut touched: HashSet<(String, String)> = HashSet::new();
 
         for reply in &params.0.replies {
             let scope =
@@ -1864,6 +1866,7 @@ impl GroveMcpServer {
                         (None, None)
                     };
 
+                    touched.insert((project_key.to_string(), task_id.to_string()));
                     reply_results.push(ReplyResultEntry {
                         project_id: scope.result_project_id(),
                         comment_id: reply.comment_id,
@@ -1896,6 +1899,9 @@ impl GroveMcpServer {
             }
         }
 
+        for (project_key, task_id) in &touched {
+            crate::cli::hooks::report_comments_changed(project_key, task_id);
+        }
         let all_failed = reply_results.iter().all(|r| !r.success);
         let result = ReplyReviewResult {
             replies: reply_results,
@@ -1934,6 +1940,7 @@ impl GroveMcpServer {
 
         let mut created = Vec::new();
         let mut errors = Vec::new();
+        let mut touched: HashSet<(String, String)> = HashSet::new();
 
         // Process each comment
         for (idx, item) in params.0.comments.iter().enumerate() {
@@ -2061,6 +2068,7 @@ impl GroveMcpServer {
                         }
                         comments::CommentType::Project => "Project-level".to_string(),
                     };
+                    touched.insert((project_key.to_string(), task_id.to_string()));
                     created.push(CreatedCommentEntry {
                         project_id: scope.result_project_id(),
                         comment_id: comment.id,
@@ -2074,6 +2082,9 @@ impl GroveMcpServer {
             }
         }
 
+        for (project_key, task_id) in &touched {
+            crate::cli::hooks::report_comments_changed(project_key, task_id);
+        }
         let result = AddCommentResult { created, errors };
 
         let json = serde_json::to_string_pretty(&result)

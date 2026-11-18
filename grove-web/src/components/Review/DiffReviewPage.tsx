@@ -77,6 +77,7 @@ import { OrbitMergeFooter } from './OrbitMergeFooter';
 import { PanelEmpty, PanelError, PanelLoading } from '../../orbit/ui/PanelShell';
 import { Button as OrbitButton } from '../../orbit/ui/Button';
 import { useIsMobile } from '../../hooks';
+import { useCommentsChanged } from '../../hooks/useCommentsChanged';
 import { useKeyboardScope, useCommand, useContextKey } from '../../keyboard';
 import './diffTheme.css';
 
@@ -194,6 +195,15 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [comments, setComments] = useState<ReviewCommentEntry[]>([]);
+  // Anyone's change to the comments — the agent's, a share link's reader's,
+  // another window's — comes in as an event: read them again.
+  const refreshComments = useCallback(() => {
+    backend.comments().then((result) => {
+      setComments((previous) => (JSON.stringify(previous) === JSON.stringify(result.comments) ? previous : result.comments));
+    }).catch(() => {});
+  }, [backend]);
+  useCommentsChanged(backend.owner ? projectId : null, taskId, refreshComments);
+  useEffect(() => backend.watchComments?.(refreshComments), [backend, refreshComments]);
   const [commentFormAnchor, setCommentFormAnchor] = useState<CommentAnchor | null>(null);
   const [fileCommentFormPath, setFileCommentFormPath] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -2470,7 +2480,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                       commentFormAnchor={commentFormAnchor}
                       onGutterClick={backend.canComment ? handleGutterClick : undefined}
                       onAddComment={backend.canComment ? handleAddComment : undefined}
-                      onDeleteComment={backend.owner ? handleDeleteComment : undefined}
+                      onDeleteComment={backend.owner || backend.canComment ? handleDeleteComment : undefined}
                       onCancelComment={handleCancelComment}
                       isCollapsed={collapsedFiles.has(file.new_path)}
                       onToggleCollapse={handleToggleCollapse}
@@ -2478,8 +2488,8 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                       onToggleViewed={handleToggleViewed}
                       commentCount={fileCommentCounts.get(file.new_path)}
                       replyFormCommentId={replyFormCommentId}
-                      onOpenReplyForm={backend.owner ? handleOpenReplyForm : undefined}
-                      onReplyComment={backend.owner ? handleReplyComment : undefined}
+                      onOpenReplyForm={backend.owner || backend.canComment ? handleOpenReplyForm : undefined}
+                      onReplyComment={backend.owner || backend.canComment ? handleReplyComment : undefined}
                       onCancelReply={handleCancelReply}
                       onResolveComment={backend.owner ? handleResolveComment : undefined}
                       onReopenComment={backend.owner ? handleReopenComment : undefined}
@@ -2494,9 +2504,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                       fileCommentFormPath={fileCommentFormPath}
                       onCancelFileComment={handleCancelFileComment}
                       onSubmitFileComment={handleSubmitFileComment}
-                      onEditComment={backend.owner ? handleEditComment : undefined}
-                      onEditReply={backend.owner ? handleEditReply : undefined}
-                      onDeleteReply={backend.owner ? handleDeleteReply : undefined}
+                      onEditComment={backend.owner || backend.canComment ? handleEditComment : undefined}
+                      onEditReply={backend.owner || backend.canComment ? handleEditReply : undefined}
+                      onDeleteReply={backend.owner || backend.canComment ? handleDeleteReply : undefined}
                       codeSearchQuery={codeSearchQuery}
                       codeSearchCaseSensitive={codeSearchCaseSensitive}
                       scrollToLine={scrollToLine?.file === file.new_path ? { line: scrollToLine.line, seq: scrollToLine.seq } : undefined}
@@ -2546,11 +2556,11 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
               onNavigateToComment={handleNavigateToComment}
               onResolveComment={backend.owner ? handleResolveComment : undefined}
               onReopenComment={backend.owner ? handleReopenComment : undefined}
-              onReplyComment={backend.owner ? handleReplyComment : undefined}
-              onDeleteComment={backend.owner ? handleDeleteComment : undefined}
-              onEditComment={backend.owner ? handleEditComment : undefined}
-              onEditReply={backend.owner ? handleEditReply : undefined}
-              onDeleteReply={backend.owner ? handleDeleteReply : undefined}
+              onReplyComment={backend.owner || backend.canComment ? handleReplyComment : undefined}
+              onDeleteComment={backend.owner || backend.canComment ? handleDeleteComment : undefined}
+              onEditComment={backend.owner || backend.canComment ? handleEditComment : undefined}
+              onEditReply={backend.owner || backend.canComment ? handleEditReply : undefined}
+              onDeleteReply={backend.owner || backend.canComment ? handleDeleteReply : undefined}
               onBulkDelete={backend.owner ? handleBulkDelete : undefined}
               mentionItems={mentionItems}
               onSendAllOpen={orbit && backend.owner ? handleRequestSendAll : undefined}
