@@ -1356,10 +1356,8 @@ function reduceChatEventForCache(
 
 function ChatHistorySkeleton() {
   return (
-    <div className="absolute inset-x-0 top-0 z-10 flex animate-pulse flex-col gap-5 p-6" role="status" aria-label="Loading conversation">
-      {["w-2/5 self-end", "w-4/5", "w-3/5", "w-1/3 self-end", "w-2/3"].map((width) => (
-        <div key={width} className={`h-4 rounded-md bg-[var(--color-bg-tertiary)] ${width}`} />
-      ))}
+    <div className="chat-history-loading" role="status" aria-label="Loading conversation">
+      <i /><i /><i />
     </div>
   );
 }
@@ -12191,7 +12189,7 @@ export function TaskChat({
               newest tail. Dynamic heights above the reader cannot perturb
               the newest messages, and older history is admitted ten turns
               at a time. */}
-          {hydratingChatId === activeChatId && activeChatId && messages.length === 0 && <ChatHistorySkeleton />}
+          {hydratingChatId === activeChatId && activeChatId && renderItems.length === 0 && <ChatHistorySkeleton />}
           <ChatListErrorBoundary
             resetKey={activeChatId}
             projectId={projectId}

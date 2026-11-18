@@ -678,3 +678,34 @@
     max-width: 84px;
   }
 }
+
+/* Opening a Session: three dots ripple in the middle of the transcript. They wait
+   a moment before showing, so a history that loads quickly never flashes them. */
+.chat-history-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+  animation: chat-history-loading-in .3s ease .35s both;
+}
+.chat-history-loading i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-text-muted);
+  animation: chat-history-loading-wave 1.2s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+.chat-history-loading i:nth-child(2) { animation-delay: .15s; }
+.chat-history-loading i:nth-child(3) { animation-delay: .3s; }
+@keyframes chat-history-loading-in { from { opacity: 0; } }
+@keyframes chat-history-loading-wave {
+  0%, 60%, 100% { opacity: .25; transform: translateY(0) scale(.85); }
+  30% { opacity: .9; transform: translateY(-4px) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-history-loading i { animation: none; opacity: .5; }
+}
