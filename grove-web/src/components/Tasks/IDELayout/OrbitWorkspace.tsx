@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ElementType, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ElementType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { Menu } from "lucide-react";
@@ -38,6 +38,45 @@ interface OrbitWorkspaceBarProps {
   foldRight?: number;
 }
 
+/** Room kept for the task's name before panel buttons move under ⋯. */
+const TITLE_RESERVE = 120;
+const TOOLS_PADDING = 6;
+const TOOL_GAP = 2;
+const TOOL_SEPARATOR = 7;
+const NO_KEYS: ReadonlySet<string> = new Set();
+
+function outerWidth(el: HTMLElement): number {
+  const cs = getComputedStyle(el);
+  return el.getBoundingClientRect().width + (parseFloat(cs.marginLeft) || 0) + (parseFloat(cs.marginRight) || 0);
+}
+
+/**
+ * Which panel buttons don't fit beside the title and the trailing actions.
+ * The last buttons go first, those of panels that aren't open before those
+ * that are; the Agent always stays.
+ */
+function overflowingTools(groups: OrbitToolItem[][], room: number, widthOf: (item: OrbitToolItem) => number): ReadonlySet<string> {
+  const needed = (hidden: ReadonlySet<string>) => {
+    let total = TOOLS_PADDING;
+    let shownGroups = 0;
+    for (const group of groups) {
+      const shown = group.filter((item) => !hidden.has(item.key));
+      if (shown.length === 0) continue;
+      if (shownGroups++ > 0) total += TOOL_SEPARATOR;
+      total += shown.reduce((sum, item) => sum + widthOf(item), 0) + TOOL_GAP * (shown.length - 1);
+    }
+    return total;
+  };
+  const order = groups.flat().filter((item) => !item.primary).reverse();
+  const candidates = [...order.filter((item) => !item.active), ...order.filter((item) => item.active)];
+  const hidden = new Set<string>();
+  for (const item of candidates) {
+    if (needed(hidden) <= room) break;
+    hidden.add(item.key);
+  }
+  return hidden;
+}
+
 export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trailing, menu, foldRight }: OrbitWorkspaceBarProps) {
   const [tip, setTip] = useState<{ item: OrbitToolItem; left: number; top: number } | null>(null);
   const tipTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -50,8 +89,73 @@ export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trail
   const hideTip = () => { clearTimeout(tipTimer.current); setTip(null); };
   const visibleGroups = groups.filter((g) => g.length > 0);
 
+  // Buttons that don't fit move under ⋯. The book fold keeps its scrolling strip.
+  const barRef = useRef<HTMLDivElement>(null);
+  const toolWidths = useRef(new Map<string, number>());
+  const [hiddenTools, setHiddenTools] = useState<ReadonlySet<string>>(NO_KEYS);
+  const groupsRef = useRef(visibleGroups);
+  useLayoutEffect(() => { groupsRef.current = visibleGroups; });
+  const toolsSignature = visibleGroups.map((g) => g.map((i) => `${i.key}:${i.active ? 1 : 0}:${i.primary ? 1 : 0}`).join(",")).join("|");
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar || foldRight) {
+      setHiddenTools(NO_KEYS);
+      return;
+    }
+    const fit = () => {
+      const tools = bar.querySelector<HTMLElement>(":scope > .ows-tools");
+      let plain = 0;
+      tools?.querySelectorAll<HTMLElement>("[data-orbit-tool]").forEach((el) => {
+        const key = el.dataset.orbitTool;
+        if (!key) return;
+        toolWidths.current.set(key, el.offsetWidth);
+        if (!el.classList.contains("is-primary")) plain = el.offsetWidth;
+      });
+      const cs = getComputedStyle(bar);
+      const gap = parseFloat(cs.columnGap) || 0;
+      let room = bar.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+      let rendered = 0;
+      for (const child of Array.from(bar.children) as HTMLElement[]) {
+        if (child.getClientRects().length === 0) continue;
+        rendered++;
+        if (child === tools) continue;
+        if (child.classList.contains("ows-bar-spacer")) { room -= parseFloat(getComputedStyle(child).minWidth) || 0; continue; }
+        if (child.classList.contains("ows-bar-title")) {
+          const name = child.querySelector<HTMLElement>(".ows-bar-name");
+          const wanted = Math.min((name?.scrollWidth ?? 0) + (child.querySelector(".ows-bar-branch") ? parseFloat(getComputedStyle(child).columnGap) || 0 : 0), TITLE_RESERVE);
+          room -= Math.max(wanted, parseFloat(getComputedStyle(child).minWidth) || 0);
+          continue;
+        }
+        room -= outerWidth(child);
+      }
+      room -= gap * Math.max(0, rendered - 1);
+      const next = overflowingTools(groupsRef.current, room, (item) => toolWidths.current.get(item.key) ?? (item.primary ? 72 : plain || 30));
+      setHiddenTools((prev) => (prev.size === next.size && [...next].every((k) => prev.has(k)) ? prev : next));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(bar);
+    for (const child of Array.from(bar.children)) {
+      if (!child.classList.contains("ows-tools") && !child.classList.contains("ows-bar-spacer") && !child.classList.contains("ows-bar-title")) ro.observe(child);
+    }
+    return () => ro.disconnect();
+  }, [foldRight, toolsSignature, title, branch, state]);
+
+  const shownGroups = visibleGroups.map((g) => g.filter((item) => !hiddenTools.has(item.key))).filter((g) => g.length > 0);
+  const overflowMenu: PanelMenuItem[] = visibleGroups.flat().filter((item) => hiddenTools.has(item.key)).map((item) => ({
+    id: `panel:${item.key}`,
+    label: item.label,
+    icon: item.icon,
+    shortcut: item.shortcut,
+    onSelect: item.onToggle,
+  }));
+  const fullMenu: PanelMenuItem[] = [
+    ...overflowMenu,
+    ...(menu ?? []).map((row, i) => (i === 0 && overflowMenu.length ? { ...row, separator: true } : row)),
+  ];
+
   return (
-    <div className={`ows-bar orbit-ui${foldRight ? " is-fold" : ""}`} style={foldRight ? ({ "--fold-right": `${foldRight}px` } as React.CSSProperties) : undefined}>
+    <div ref={barRef} className={`ows-bar orbit-ui${foldRight ? " is-fold" : ""}`} style={foldRight ? ({ "--fold-right": `${foldRight}px` } as React.CSSProperties) : undefined}>
       {leading ? <div className="ows-bar-leading">{leading}</div> : null}
       <h1 className="ows-bar-title" title={branch ? `${title} · ${branch}` : title}>
         <span className="ows-bar-name">{title}</span>
@@ -63,9 +167,9 @@ export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trail
         <span className="ows-state is-archived">Archived</span>
       ) : null}
       <span className="ows-bar-spacer" />
-      {visibleGroups.length > 0 ? (
+      {shownGroups.length > 0 ? (
         <div className="ows-tools" role="toolbar" aria-label="Panels">
-          {visibleGroups.map((group, gi) => (
+          {shownGroups.map((group, gi) => (
             <div key={gi} className="ows-tools-group">
               {gi > 0 ? <span className="ows-tsep" aria-hidden="true" /> : null}
               {group.map((item) => {
@@ -93,10 +197,10 @@ export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trail
           ))}
         </div>
       ) : null}
-      {trailing || menu?.length ? (
+      {trailing || fullMenu.length ? (
         <div className="ows-bar-trailing">
           {trailing}
-          {menu?.length ? <PanelMenuButton items={menu} label="Workspace actions" /> : null}
+          {fullMenu.length ? <PanelMenuButton items={fullMenu} label="Workspace actions" /> : null}
         </div>
       ) : null}
       {tip && createPortal(

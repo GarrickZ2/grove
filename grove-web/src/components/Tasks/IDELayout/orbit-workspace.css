@@ -5,15 +5,17 @@
 .ows-bar{display:flex;align-items:center;gap:8px;width:100%;height:100%;min-width:0;padding:0 2px 0 10px;box-sizing:border-box;color:var(--o-text);font-size:13px;-webkit-font-smoothing:antialiased;user-select:none}
 .ows-bar-leading{display:flex;align-items:center;flex-shrink:0}
 .ows-bar-title{margin:0;flex:0 1 auto;min-width:0;display:flex;align-items:baseline;gap:8px;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden}
-.ows-bar-name{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.ows-bar-branch{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--o-font-mono);font-size:12px;font-weight:400;color:var(--o-muted)}
+/* The task's name first; its branch gets what's left. */
+.ows-bar-name{flex:0 1 auto;min-width:min(100%,88px);overflow:hidden;text-overflow:ellipsis}
+.ows-bar-branch{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--o-font-mono);font-size:12px;font-weight:400;color:var(--o-muted)}
 .ows-state{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:999px;flex-shrink:0;font-size:11.5px;font-weight:500;animation:oui-fade-up 240ms var(--o-ease-out) both}
 .ows-state.is-working{background:var(--o-accent-soft);color:color-mix(in oklab,var(--o-accent) 80%,var(--o-text))}
 .ows-state.is-working i{width:6px;height:6px;border-radius:50%;background:var(--o-accent);animation:ows-live 1.8s ease-in-out infinite}
 .ows-state.is-archived{background:var(--o-selected);color:var(--o-muted)}
 @keyframes ows-live{50%{box-shadow:0 0 0 3px var(--o-accent-soft)}}
 .ows-bar-spacer{flex:1 1 auto;min-width:8px}
-.ows-tools{display:flex;align-items:center;flex:0 1 auto;min-width:0;padding:3px;border-radius:10px;background:var(--o-selected);overflow-x:auto;scrollbar-width:none}
+/* Buttons that don't fit move under ⋯ (OrbitWorkspaceBar), so the strip keeps its width. */
+.ows-tools{display:flex;align-items:center;flex:0 0 auto;min-width:0;padding:3px;border-radius:10px;background:var(--o-selected);overflow-x:auto;scrollbar-width:none}
 .ows-tools::-webkit-scrollbar{display:none}
 .ows-tools-group{display:flex;align-items:center;gap:2px;flex-shrink:0}
 .ows-tsep{width:1px;height:16px;margin:0 3px;background:var(--o-border);flex-shrink:0}
@@ -138,9 +140,6 @@ html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area .oc-bod
   /* A fingertip's worth of toolbar. Commit and Merge move to the ⋯ menu
      (TaskView), which leaves the width to the title and the tools. */
   .ows-bar-title{flex:1 1 auto;min-width:96px}
-  /* The task's name first; its branch gets what's left. */
-  .ows-bar-name{flex:0 1 auto;min-width:min(100%,88px)}
-  .ows-bar-branch{flex:0 100 auto}
   .ows-bar-spacer{display:none}
   .ows-tb{width:40px;height:34px}
   .ows-tb-icon{width:18px;height:18px}

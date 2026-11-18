@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from "react";
+import type { IJsonModel } from "flexlayout-react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeft,
@@ -21,6 +22,7 @@ import { AUX_PANEL_TYPES, INFO_PANEL_TYPES } from "../IDELayout";
 import type { Task } from "../../../data/types";
 import { TaskGitActionsContext, type TaskGitActions } from "./taskGitActions";
 import type { PanelType } from "../PanelSystem/types";
+import { freeLayoutMinSize, readSavedFlexLayout } from "../PanelSystem/orbitFit";
 import { sendInputToTerminal, pasteToTerminal } from "../TaskDetail/terminalCache";
 import { taskTerminalKey } from "../TaskDetail/terminalEndpoint";
 import { activateTask } from "../../../api";
@@ -193,8 +195,35 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   const coarseTouch = typeof window.matchMedia === "function" && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
   // Orbit reaches TaskView on phones too; App keeps tablets on the desktop layout.
   const orbit = config?.web?.interface === "orbit";
+  const wantsFlex = config?.web?.workspace_layout === "flex";
+  // Orbit: where the workspace is smaller than the free layout's minimum
+  // (orbitFit.ts), the docked layout stands in until it fits again. The free
+  // layout itself is kept as it was.
+  const [layoutArea, setLayoutArea] = useState<HTMLDivElement | null>(null);
+  const [areaSize, setAreaSize] = useState<{ w: number; h: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!layoutArea) return;
+    const measure = () => {
+      const r = layoutArea.getBoundingClientRect();
+      const next = { w: Math.round(r.width), h: Math.round(r.height) };
+      setAreaSize((prev) => (prev && prev.w === next.w && prev.h === next.h ? prev : next));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(layoutArea);
+    return () => ro.disconnect();
+  }, [layoutArea]);
+  const flexKey = `${projectId}/${task.id}`;
+  const [flexFit, setFlexFit] = useState(() => ({ key: flexKey, min: freeLayoutMinSize(readSavedFlexLayout(projectId, task.id)) }));
+  const flexMin = flexFit.key === flexKey ? flexFit.min : freeLayoutMinSize(readSavedFlexLayout(projectId, task.id));
+  const handleFlexLayoutChange = useCallback((json: IJsonModel) => {
+    const min = freeLayoutMinSize(json);
+    setFlexFit((prev) => (prev.key === flexKey && prev.min.w === min.w && prev.min.h === min.h ? prev : { key: flexKey, min }));
+  }, [flexKey]);
+  const flexFits = !areaSize || areaSize.w === 0 || (areaSize.w >= flexMin.w && areaSize.h >= flexMin.h);
+  const freeFallback = orbit && !isMobile && wantsFlex && !flexFits;
   // Docking panels has no room on a phone: Orbit there shows one panel at a time.
-  const layoutMode: LayoutMode = (config?.web?.workspace_layout === "flex" && !(orbit && isMobile) ? "flex" : "ide") as LayoutMode;
+  const layoutMode: LayoutMode = (wantsFlex && !(orbit && isMobile) && !freeFallback ? "flex" : "ide") as LayoutMode;
   const fullscreen = externalFullscreen ?? false;
   const toggleFullscreen = () => onFullscreenChange?.(!fullscreen);
 
@@ -401,9 +430,11 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
       .then(() => refreshConfig())
       .catch((err) => console.error("[TaskView] toggle layout failed:", err));
   }, [layoutMode, refreshConfig]);
-  useCommand("workspace.layout.toggle", toggleLayoutMode, { enabled: activeWorkspaceCommand }, [toggleLayoutMode, activeWorkspaceCommand]);
-  useCommand("workspace.ideLayout.toggle", toggleLayoutMode, { enabled: activeWorkspaceCommand }, [toggleLayoutMode, activeWorkspaceCommand]);
-  useCommand("mode.ide.layout.toggle", toggleLayoutMode, { enabled: activeWorkspaceCommand }, [toggleLayoutMode, activeWorkspaceCommand]);
+  // While the docked layout stands in for a free layout that doesn't fit, there is no layout to switch to.
+  const layoutToggleEnabled = useCallback(() => isActive && !freeFallback, [isActive, freeFallback]);
+  useCommand("workspace.layout.toggle", toggleLayoutMode, { enabled: layoutToggleEnabled }, [toggleLayoutMode, layoutToggleEnabled]);
+  useCommand("workspace.ideLayout.toggle", toggleLayoutMode, { enabled: layoutToggleEnabled }, [toggleLayoutMode, layoutToggleEnabled]);
+  useCommand("mode.ide.layout.toggle", toggleLayoutMode, { enabled: layoutToggleEnabled }, [toggleLayoutMode, layoutToggleEnabled]);
 
   // Close workspace (Esc): return to the task list. Only meaningful when a
   // parent wired `onBack` — Work mode opens TaskView with no back affordance,
@@ -631,7 +662,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
       </div>}
 
       {/* Layout area — fills remaining space */}
-      <div className="flex-1 min-h-0 relative">
+      <div ref={setLayoutArea} className="flex-1 min-h-0 relative">
         {layoutMode === "ide" ? (
           <IDELayoutContainer
             key={`${projectId}-${task.id}`}
@@ -642,7 +673,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             toolbarTrailing={orbit && !isMobile ? (coarseTouch ? undefined : orbitWorkspaceActions) : workspaceActions}
             phoneActions={phoneActions}
             isActive={isActive}
-            onToggleLayoutMode={toggleLayoutMode}
+            onToggleLayoutMode={freeFallback ? undefined : toggleLayoutMode}
             toolbarMenu={orbit && !isMobile ? (coarseTouch ? orbitTouchMenu : orbitOverflow) : undefined}
           />
         ) : (
@@ -658,6 +689,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             toolbarTrailing={orbit && !coarseTouch ? orbitWorkspaceActions : undefined}
             toolbarMenu={orbit ? (coarseTouch ? orbitTouchMenu : orbitOverflow) : undefined}
             onToggleLayoutMode={toggleLayoutMode}
+            onLayoutChange={handleFlexLayoutChange}
           />
         )}
       </div>

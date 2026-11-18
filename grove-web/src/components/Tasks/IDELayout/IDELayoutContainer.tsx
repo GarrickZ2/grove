@@ -724,6 +724,13 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         return;
       }
       if (!isMobile || wasMobile) return;
+      // Orbit on a phone always comes back on the chat, as it opens. iOS can
+      // report a wider window for a moment when the app is switched away and
+      // back; the desktop arrangement restored meanwhile must not stick.
+      if (orbitPhone) {
+        setStateTagged((prev) => ({ ...prev, chatVisible: true, auxVisible: false, infoVisible: false }));
+        return;
+      }
       setStateTagged((prev) => {
         const aux = prev.auxVisible && !!prev.auxType;
         const info = prev.infoVisible && !!prev.infoType;

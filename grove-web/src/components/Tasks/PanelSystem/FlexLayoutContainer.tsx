@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { OrbitWorkspaceBar, type OrbitToolItem } from '../IDELayout/OrbitWorkspace';
 import { orbitTabTitle } from './orbitTabs';
+import { flexLayoutStorageKey, ORBIT_FREE_MIN_HEIGHT, ORBIT_FREE_MIN_WIDTH, ORBIT_FREE_SPLITTER, stripTabsetMins, tabsetHoldsAgent } from './orbitFit';
+import { ORBIT_CHAT_MIN } from '../IDELayout/orbitDock';
 import { useSlotElement } from '../IDELayout/useSlotElement';
 import type { PanelMenuItem } from '../../../orbit/ui';
 import 'flexlayout-react/style/light.css';
@@ -263,6 +265,24 @@ export interface FlexLayoutContainerHandle {
   navigateToFile: (filePath: string, line?: number, mode?: 'diff' | 'full') => Promise<boolean>;
 }
 
+/** Orbit: hairline splitters and the docked layout's panel minimums. */
+const ORBIT_GLOBALS = {
+  splitterSize: ORBIT_FREE_SPLITTER,
+  splitterExtra: 4,
+  tabSetMinWidth: ORBIT_FREE_MIN_WIDTH,
+  tabSetMinHeight: ORBIT_FREE_MIN_HEIGHT,
+};
+
+/** The globals Orbit overrides, as the saved layout (or FlexLayout's defaults) had them. */
+function savedGlobals(json: IJsonModel) {
+  return {
+    splitterSize: json.global?.splitterSize ?? 4,
+    splitterExtra: json.global?.splitterExtra ?? 0,
+    tabSetMinWidth: json.global?.tabSetMinWidth ?? 0,
+    tabSetMinHeight: json.global?.tabSetMinHeight ?? 0,
+  };
+}
+
 export const FlexLayoutContainer = forwardRef<
   FlexLayoutContainerHandle,
   FlexLayoutContainerProps
@@ -278,7 +298,7 @@ export const FlexLayoutContainer = forwardRef<
   const taskIsGitRepo = taskProject?.isGitRepo;
   const linkedReviewProjects = useLinkedReviewProjects(projectId, task.id);
 
-  const layoutStorageKey = `grove-flexlayout-${projectId}-${task.id}`;
+  const layoutStorageKey = flexLayoutStorageKey(projectId, task.id);
 
   // Orbit: the workspace toolbar lives in the window header slot.
   const orbitToolbarSlot = useSlotElement(orbit ? 'orbit-workspace-toolbar' : null, isActive);
@@ -354,7 +374,7 @@ export const FlexLayoutContainer = forwardRef<
   const [model] = useState<Model>(() => {
     const restored = Model.fromJson({
       ...initialLayoutJson,
-      global: { ...initialLayoutJson.global, ...(orbit ? { splitterSize: 1, splitterExtra: 4 } : {}) },
+      global: { ...initialLayoutJson.global, ...(orbit ? ORBIT_GLOBALS : {}) },
     });
     // Update saved default labels while preserving user-renamed panels.
     restored.visitNodes((node) => {
@@ -367,10 +387,7 @@ export const FlexLayoutContainer = forwardRef<
     return restored;
   });
   useEffect(() => {
-    model.doAction(Actions.updateModelAttributes({
-      splitterSize: orbit ? 1 : (initialLayoutJson.global?.splitterSize ?? 4),
-      splitterExtra: orbit ? 4 : (initialLayoutJson.global?.splitterExtra ?? 0),
-    }));
+    model.doAction(Actions.updateModelAttributes(orbit ? ORBIT_GLOBALS : savedGlobals(initialLayoutJson)));
   }, [model, orbit, initialLayoutJson]);
 
   // Installed plugins that contribute a workspace panel — the dynamic part of
@@ -1070,11 +1087,10 @@ export const FlexLayoutContainer = forwardRef<
   // outside the try block to satisfy React Compiler's value-blocks rule.
   const handleModelChange = useCallback((m: Model) => {
     const json = m.toJson();
-    if (orbit) json.global = {
-      ...json.global,
-      splitterSize: initialLayoutJson.global?.splitterSize ?? 4,
-      splitterExtra: initialLayoutJson.global?.splitterExtra ?? 0,
-    };
+    if (orbit) {
+      json.global = { ...json.global, ...savedGlobals(initialLayoutJson) };
+      stripTabsetMins(json.layout);
+    }
     stripMaximizedNodes(json.layout);
     let serialized: string | null = null;
     try {
@@ -1093,6 +1109,19 @@ export const FlexLayoutContainer = forwardRef<
     setIsEmpty(getAllTabs().length === 0);
     setModelVersion((v) => v + 1);
   }, [layoutStorageKey, onLayoutChange, getAllTabs, orbit, initialLayoutJson]);
+
+  // Orbit: a tabset holding an Agent keeps the Agent's minimum width, wherever
+  // it is dragged; the rest take the global minimum.
+  useEffect(() => {
+    if (!orbit) return;
+    void modelVersion;
+    model.visitNodes((node) => {
+      if (node.getType() !== 'tabset') return;
+      const tabset = node as TabSetNode;
+      const want = tabsetHoldsAgent(tabset.getChildren().map((t) => ({ component: (t as TabNode).getComponent() }))) ? ORBIT_CHAT_MIN : ORBIT_FREE_MIN_WIDTH;
+      if (tabset.getMinWidth() !== want) model.doAction(Actions.updateNodeAttributes(tabset.getId(), { minWidth: want }));
+    });
+  }, [model, orbit, modelVersion]);
 
   // Orbit header toolbar: a raised button for each panel with an open tab.
   // Clicking selects (or adds) that panel; clicking the selected one closes it.
