@@ -1179,7 +1179,15 @@ function EmbeddedHtmlIframe({ src, fitLocalHtml, className, height, ...props }: 
   );
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, renderMode = "compact", onFileClick, resolveImageUrl, location, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode = "chip", enableHeadingIds, onHeadingLinkClick, comments }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, renderMode = "compact", onFileClick, resolveImageUrl, location: locationProp, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext: sketchContextProp, sketchRenderMode = "chip", enableHeadingIds, onHeadingLinkClick, comments }: MarkdownRendererProps) {
+  // Callers often build `location` and `sketchContext` inline, so each parent
+  // render hands over a new object with the same value. Keep them stable by
+  // value: otherwise `components` is rebuilt, react-markdown remounts the
+  // whole document, and the reader's scroll position is lost.
+  const locationKey = locationProp ? JSON.stringify(locationProp) : "";
+  const location = useMemo<FileLocation | undefined>(() => (locationKey ? JSON.parse(locationKey) : undefined), [locationKey]);
+  const sketchContextKey = sketchContextProp ? JSON.stringify(sketchContextProp) : "";
+  const sketchContext = useMemo<MarkdownRendererProps["sketchContext"]>(() => (sketchContextKey ? JSON.parse(sketchContextKey) : undefined), [sketchContextKey]);
   const markdownRootRef = useRef<HTMLDivElement>(null);
   const previewComments = useOptionalPreviewComments();
   const automaticCommentId = useId().replace(/:/g, "");
