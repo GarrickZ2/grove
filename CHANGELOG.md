@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] - 2026-11-18
+
+### Added
+
+- **Edit and delete shared comments** — People on a share link can edit or delete their own comments and replies; deleting a comment removes its thread.
+- **Live comments** — Comments and replies, the agent's included, reach every open review, design board, sketch, file preview and share page as they are written, with no reload. Design and Sketch boards get a refresh button.
+- **In-app share alerts** — A banner in Grove when someone comments or replies through a share link.
+
+### Improved
+
+- **Orbit on small screens** — Panel buttons that don't fit move under ⋯, the docked layout stands in while the window is too small for yours, and a phone turned sideways stays in the phone layout.
+- **Opening a Session** — A quiet loading indicator while its history arrives.
+
+### Fixed
+
+- **Take control** — Taking over a session another window holds no longer leaves you read-only.
+- **New chat on phones** — The composer stays above the keyboard, and Grove's agent picker no longer clashes with an Agent setting of the same name.
+- **Markdown previews** — Keep their scroll position when the page around them updates.
+
 ## [0.15.1] - 2026-11-11
 
 ### Added
