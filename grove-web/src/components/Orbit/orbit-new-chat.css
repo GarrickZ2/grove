@@ -102,3 +102,8 @@
 .orbit-new.is-phone .orbit-new__context { margin: -14px 12px 0; padding: 20px 6px 4px; border-radius: 0 0 16px 16px; }
 .orbit-new.is-phone .orbit-new__chip { height: 40px; padding: 0 10px; font-size: 13.5px; }
 .orbit-new.is-phone .orbit-new__input { font-size: 16px; min-height: 44px; }
+
+/* Phone keyboard: the page keeps its height (App freezes it), so lift the docked composer
+   onto the keyboard like TaskChat's, and drop the recent list that no longer fits above it. */
+html.grove-keyboard-open .orbit-new.is-phone { padding-bottom: calc(var(--grove-kb-inset, 0px) + 8px); overscroll-behavior: none; }
+html.grove-keyboard-open .orbit-new.is-phone .orbit-new__recent { display: none; }

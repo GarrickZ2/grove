@@ -293,8 +293,11 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   };
   const modes = selection.source === "modes" ? snapshot?.modes?.available ?? [] : [];
   // Desktop: every setting lives in the composer's one setup chip.
+  // Field ids key the open submenu, and an Agent's own settings may use any id
+  // (Claude's adapter has one named "agent"), so Grove's picker takes one no
+  // Agent setting can.
   const setupFields: SetupField[] = [
-    { id: "agent", kind: "agent", label: "Agent", value: agentId, onSelect: chooseAgent,
+    { id: "grove:agent", kind: "agent", label: "Agent", value: agentId, onSelect: chooseAgent,
       options: agentItems.map((item) => ({ value: item.id, label: item.label, group: item.group, icon: item.icon })),
       action: phone ? undefined : { label: "Manage agents...", onSelect: () => setMarketplaceTab("installed") } },
     ...([quick.model, quick.mode, quick.thinking] as const).flatMap((option, index): SetupField[] => option ? [{
