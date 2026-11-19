@@ -2809,6 +2809,18 @@ pub async fn chat_ws_handler(
     );
     let mut working_dir = std::path::PathBuf::from(&task.worktree_path);
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
+    // A Studio task made by an older Grove gets the current contract before
+    // its Agent reads it. Only a generated contract is ever rewritten.
+    if !acp::session_exists(&session_key) {
+        if let Err(error) =
+            crate::operations::tasks::refresh_studio_task_contract(&working_dir, &task.name)
+        {
+            eprintln!(
+                "[acp] Failed to refresh the Studio contract in {}: {error}",
+                working_dir.display()
+            );
+        }
+    }
     let mut additional_mcp_servers = Vec::new();
     let mut mcp_server_policy = crate::acp::McpServerPolicy::WorkingSession;
 

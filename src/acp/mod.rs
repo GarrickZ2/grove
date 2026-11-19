@@ -1541,7 +1541,9 @@ const WORKING_CODING_WORKTREE_INSTRUCTION: &str = r#"This is a repository Task o
 
 When continuing or reviewing an existing change, inspect the available Grove review feedback and distinguish confirmed implementation facts, inferences, and remaining validation needs."#;
 
-const WORKING_STUDIO_INSTRUCTION: &str = r#"This is a Studio Task. Follow the workspace contract in `AGENTS.md` and the Project guidance in `instructions.md` when present. Use visual collaboration capabilities when a visual artifact would communicate or validate the result better than prose alone. For a UI design, mockup, prototype or design system, build HTML pages under `design/` that the user reviews on a board in the Design panel; call `design_read_me` first."#;
+const WORKING_STUDIO_INSTRUCTION: &str = r#"This is a Studio Task. Follow the workspace contract in `AGENTS.md` and the Project guidance in `instructions.md` when present. Use visual collaboration capabilities when a visual artifact would communicate or validate the result better than prose alone. For a UI design, mockup, prototype or design system, use Grove's Design capability: call `design_read_me` first and follow it. To work an idea out with the user on a canvas they can comment on and edit, use Sketch: call `sketch_read_me` first."#;
+
+const WORKING_RESPONSE_FORMAT_INSTRUCTION: &str = r#"Grove renders your replies as Markdown. Write math in LaTeX, `$…$` inline and `$$…$$` for a displayed equation. When a small diagram explains something better than prose (a flow, a sequence, a structure), use a ```mermaid code block. Never draw diagrams in ASCII."#;
 
 const WORKING_COMPUTER_INSTRUCTION: &str = r#"Use the `computer` tool only when a task needs a desktop app on the user's computer; call `computer_help` first for its tools. It acts on the user's real apps and screen, so the user approves it in the chat before your first call in this session. Prefer the browser tool for websites."#;
 
@@ -1642,6 +1644,7 @@ fn working_grove_sections(
             grove_sections.push(WORKING_MEMORY_INSTRUCTION);
         }
         grove_sections.push(WORKING_AGENT_RUNTIME_INSTRUCTION);
+        grove_sections.push(WORKING_RESPONSE_FORMAT_INSTRUCTION);
         if crate::storage::config::load_config()
             .browser_control
             .enabled

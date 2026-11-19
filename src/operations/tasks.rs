@@ -548,6 +548,48 @@ const STUDIO_RESPONSE_GUIDANCE: &str = "## Responses and File Deliverables\n\n\
 For greetings, ordinary questions, explanations, and discussion, answer directly in chat. Do not create a file just to record a conversational reply.\n\n\
 Create or update files when the user requests a saved artifact or when file changes are necessary to complete the requested task. Put final file deliverables in `output/`; this directory rule does not require every response to produce a file.\n\n";
 
+/// Formats Grove shows the user directly, and how to pick between them.
+const STUDIO_FORMAT_GUIDANCE: &str = "## Visuals and File Formats\n\n\
+Grove previews these formats directly, so the user sees the result without leaving it.\n\n\
+- **Documents**: Markdown. Write math in LaTeX: `$…$` inline, `$$…$$` on its own lines.\n\
+- **Diagrams**: choose by purpose. Never draw diagrams in ASCII.\n\
+  - **Sketch**, to work an idea out with the user: a canvas they can comment on and edit with you. Call `sketch_read_me` before your first `sketch_draw`.\n\
+  - **SVG**, for polished figures meant to be shown: write the SVG file yourself (for example `output/figures/flow.svg`) and embed it in Markdown with `![Flow](figures/flow.svg)`.\n\
+  - **Mermaid**, for simple structures that explain (a short flow, a sequence): a ```mermaid code block in Markdown.\n\
+- **UI designs, mockups, prototypes and design systems**: use Grove's Design capability. Call `design_read_me` first and follow it.\n\
+- **Interactive demos**: one self-contained HTML file, with its CSS and scripts inline.\n\
+- **Tables and data**: CSV, or XLSX when the user needs a spreadsheet.\n";
+
+/// The first line of a generated Studio contract, before its version number.
+const STUDIO_CONTRACT_MARKER: &str = "<!-- grove-studio-task-contract:v";
+/// Raise when the contract changes: older generated contracts are rewritten.
+const STUDIO_CONTRACT_VERSION: u32 = 4;
+
+/// Rewrite a Studio task's contract when an older Grove generated it. A file
+/// without the generated marker (a repository's own AGENTS.md) is left alone.
+pub fn refresh_studio_task_contract(task_dir: &std::path::Path, task_name: &str) -> Result<()> {
+    let agents_path = task_dir.join("AGENTS.md");
+    let Ok(metadata) = std::fs::symlink_metadata(&agents_path) else {
+        return Ok(());
+    };
+    if !metadata.is_file() {
+        return Ok(());
+    }
+    let Ok(content) = std::fs::read_to_string(&agents_path) else {
+        return Ok(());
+    };
+    let version = content
+        .strip_prefix(STUDIO_CONTRACT_MARKER)
+        .and_then(|rest| rest.split_once(" -->"))
+        .and_then(|(version, _)| version.parse::<u32>().ok());
+    match version {
+        Some(version) if version < STUDIO_CONTRACT_VERSION => {
+            write_studio_task_contract(task_dir, task_name)
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Replace a Studio task's generated agent contract with the current version.
 ///
 /// This is shared by task creation and legacy Memory migration so existing
@@ -556,7 +598,7 @@ Create or update files when the user requests a saved artifact or when file chan
 /// symlinks.
 pub fn write_studio_task_contract(task_dir: &std::path::Path, task_name: &str) -> Result<()> {
     let agents_md = format!(
-        "<!-- grove-studio-task-contract:v3 -->\n\
+        "{STUDIO_CONTRACT_MARKER}{STUDIO_CONTRACT_VERSION} -->\n\
          # Studio Task: {task_name}\n\
          This is an isolated Grove Studio task workspace. Follow this file contract and the user-authored guidance in `instructions.md`.\n\n\
          ## Directory Structure\n\
@@ -589,11 +631,7 @@ pub fn write_studio_task_contract(task_dir: &std::path::Path, task_name: &str) -
          - NEVER modify files in `input/` unless the user explicitly asks you to.\n\
          - NEVER modify `instructions.md` — it is a read-only symlink.\n\
          - Keep `output/` organized. Use subdirectories if you produce many files.\n\n\
-         ## File Format Defaults\n\
-         \n\
-         - **Documentation**: Write in Markdown format.\n\
-         - **Diagrams**: Use [Mermaid](https://mermaid.js.org/) for flowcharts and sequence diagrams; use [D2](https://d2lang.com/) for architecture and system diagrams.\n\
-         - **Demos**: Use JSX/React components for interactive demos and visual presentations.\n",
+         {STUDIO_FORMAT_GUIDANCE}",
     );
 
     let agents_path = task_dir.join("AGENTS.md");
@@ -1080,5 +1118,33 @@ mod studio_local_tests {
             .unwrap()
             .is_empty());
         crate::storage::set_grove_dir_override(None);
+    }
+
+    #[test]
+    fn an_older_generated_contract_is_rewritten_and_others_are_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = dir.path().join("AGENTS.md");
+
+        std::fs::write(&agents, "<!-- grove-studio-task-contract:v3 -->\n# old").unwrap();
+        refresh_studio_task_contract(dir.path(), "Patent").unwrap();
+        let current = std::fs::read_to_string(&agents).unwrap();
+        assert!(current.starts_with(&format!(
+            "{STUDIO_CONTRACT_MARKER}{STUDIO_CONTRACT_VERSION} -->"
+        )));
+        assert!(current.contains("## Visuals and File Formats"));
+        assert!(current.contains("Never draw diagrams in ASCII"));
+        assert!(!current.contains("D2"));
+
+        // Current: unchanged, even if edited after it was written.
+        std::fs::write(&agents, format!("{current}\nedited")).unwrap();
+        refresh_studio_task_contract(dir.path(), "Patent").unwrap();
+        assert!(std::fs::read_to_string(&agents)
+            .unwrap()
+            .ends_with("edited"));
+
+        // A repository's own AGENTS.md has no marker and is never touched.
+        std::fs::write(&agents, "# Repo rules").unwrap();
+        refresh_studio_task_contract(dir.path(), "Patent").unwrap();
+        assert_eq!(std::fs::read_to_string(&agents).unwrap(), "# Repo rules");
     }
 }
