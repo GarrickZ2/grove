@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SubagentCard } from "./SubagentCard";
 import { SessionExchangeCard } from "./SessionExchangeCard";
-import { flattenSubagentMessages, reduceSubagentEvent, resetSubagentActivity, sessionExchangeLabel, sessionExchangePreview, subagentPreview, subagentStatus, type SessionExchangeMessage, type SubagentMessage } from "./subagents";
+import { flattenSubagentMessages, reduceSubagentEvent, resetSubagentActivity, sessionExchangeLabel, sessionExchangePreview, sessionExchangeText, subagentPreview, subagentStatus, type SessionExchangeMessage, type SubagentMessage } from "./subagents";
 import type { ChatMessage, ServerEvent } from "./TaskChat";
 
 const announce = (id: string, fields = {}, parent = "root"): ServerEvent => ({ type: "subagent_update", session_id: id, parent_session_id: parent, ...fields });
@@ -162,10 +162,27 @@ describe("subagent timeline", () => {
     let messages = reduce([], announce("a", { title: "Read paper" }));
     messages = reduce(messages, { type: "session_message", id: "out", sender: "root", recipient: "a", content: [{ type: "text", text: "Read it" }] });
     messages = reduce(messages, { type: "session_message", id: "in", sender: "a", recipient: "root", content: [{ type: "text", text: "Done" }] });
-    const [, out, back] = messages as SessionExchangeMessage[];
+    // Both live on the card, not in the timeline.
+    expect(messages).toHaveLength(1);
+    const [out, back] = (messages[0] as SubagentMessage).messages as SessionExchangeMessage[];
     expect(sessionExchangeLabel(out)).toBe("To Read paper");
     expect(sessionExchangeLabel(back)).toBe("From Read paper");
     expect(sessionExchangeLabel({ type: "session_exchange", id: "x", blocks: [] })).toBe("Agent communication");
+  });
+
+  it("moves a message that arrived before its Subagent onto the card", () => {
+    let messages = reduce([], { type: "session_message", id: "out", sender: "root", recipient: "a", content: [{ type: "text", text: "Read it" }] });
+    messages = reduce(messages, announce("a", { title: "Read paper" }));
+    expect(messages).toHaveLength(1);
+    const card = messages[0] as SubagentMessage;
+    expect(card.messages.map((message) => message.type)).toEqual(["session_exchange"]);
+    messages = reduce(messages, { type: "session_message", id: "out", append: true, content: [{ type: "text", text: " now" }] });
+    expect(sessionExchangeText((messages[0] as SubagentMessage).messages[0] as SessionExchangeMessage)).toBe("Read it now");
+  });
+
+  it("keeps messages between other Sessions in the timeline", () => {
+    const messages = reduce([], { type: "session_message", id: "peer", sender: "root", recipient: "sibling", content: [{ type: "text", text: "Hi" }] });
+    expect(messages.map((message) => message.type)).toEqual(["session_exchange"]);
   });
 
   it("does not attach unknown-session activity to the parent transcript", () => {

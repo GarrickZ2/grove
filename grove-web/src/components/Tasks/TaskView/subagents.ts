@@ -89,8 +89,11 @@ export function reduceSubagentEvent(messages: ChatMessage[], event: ServerEvent,
     // finished/idle child into the current turn. Active work keeps its controls.
     if (event.snapshot && !["running", "requires_action"].includes(event.state?.state)) return messages;
     // Split parent text at delegation, preserving chronology during streaming.
-    const before = messages.map((message) => (message.type === "assistant" || message.type === "thinking") ? { ...message, complete: true } : message);
-    const child = patch({ type: "subagent", sessionId: event.session_id, parentSessionId: event.parent_session_id, messages: [] });
+    let before = messages.map((message) => (message.type === "assistant" || message.type === "thinking") ? { ...message, complete: true } : message);
+    // A message to it that arrived before the card moves onto the card.
+    const early = (message: ChatMessage) => message.type === "session_exchange" && (message.recipient === event.session_id || message.sender === event.session_id);
+    const child = patch({ type: "subagent", sessionId: event.session_id, parentSessionId: event.parent_session_id, messages: before.filter(early) });
+    if (child.messages.length) before = before.filter((message) => !early(message));
     if (flattenSubagentMessages(before).some((message) => message.type === "subagent" && message.sessionId === event.parent_session_id)) {
       return updateChild(before, event.parent_session_id, (parent) => ({ ...parent, messages: [...parent.messages, child] }));
     }
@@ -98,20 +101,31 @@ export function reduceSubagentEvent(messages: ChatMessage[], event: ServerEvent,
   }
   if (event.type === "session_message") {
     if (typeof event.id !== "string") return messages;
-    const previous = messages.find((message): message is SessionExchangeMessage => message.type === "session_exchange" && message.id === event.id);
+    const all = flattenSubagentMessages(messages);
+    const previous = all.find((message): message is SessionExchangeMessage => message.type === "session_exchange" && message.id === event.id);
     const blocks = Object.prototype.hasOwnProperty.call(event, "content")
       ? (Array.isArray(event.content) ? event.content as AgentContentBlock[] : []) : undefined;
     const sender = event.sender ?? previous?.sender;
     const recipient = event.recipient ?? previous?.recipient;
-    const titleOf = (sessionId: string | undefined) => flattenSubagentMessages(messages).find((message): message is SubagentMessage => message.type === "subagent" && message.sessionId === sessionId)?.title;
+    const titleOf = (sessionId: string | undefined) => all.find((message): message is SubagentMessage => message.type === "subagent" && message.sessionId === sessionId)?.title;
     const next: SessionExchangeMessage = {
       type: "session_exchange", id: event.id, sender, recipient,
       senderTitle: titleOf(sender) ?? previous?.senderTitle, recipientTitle: titleOf(recipient) ?? previous?.recipientTitle,
       blocks: blocks === undefined ? previous?.blocks ?? [] : event.append ? blocks.reduce((content, block) => block.type === "text" ? appendTextContentBlock(content, "", block.text) : [...content, block], previous?.blocks ?? []) : blocks,
     };
-    return previous ? messages.map((message) => message === previous ? next : message) : [...messages.map((message) => message.type === "assistant" || message.type === "thinking" ? { ...message, complete: true } : message), next];
+    if (previous) return mapSubagentMessages(messages, (message) => message === previous ? next : message);
+    const settled = messages.map((message) => message.type === "assistant" || message.type === "thinking" ? { ...message, complete: true } : message);
+    // A message to or from a Subagent belongs on its card, not in the timeline.
+    const child = exchangeChild(next, all);
+    return child ? updateChild(settled, child, (card) => ({ ...card, messages: [...card.messages, next] })) : [...settled, next];
   }
   return messages;
+}
+
+/** The Subagent card a message belongs on: the one it went to, else the one that sent it. */
+function exchangeChild(message: SessionExchangeMessage, all: ChatMessage[]): string | undefined {
+  const cards = new Set(all.flatMap((m) => m.type === "subagent" ? [m.sessionId] : []));
+  return [message.recipient, message.sender].find((id): id is string => !!id && cards.has(id));
 }
 
 export function subagentStatus(child: SubagentMessage, connected: boolean): string {
