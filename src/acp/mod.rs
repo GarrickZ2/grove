@@ -82,26 +82,12 @@ fn report_plugin_mcp_issue_once(key: String, message: impl FnOnce() -> String) {
     }
 }
 
-const SHORT_MEMORY_TOOL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
-
-#[derive(Clone)]
-struct ShortToolWatch {
-    title: String,
-    started_at: std::time::Instant,
-    deadline: std::time::Instant,
-}
-
 /// Grove-owned attribution captured when an ACP request enters the client.
 /// ACP request payloads do not carry a turn token, so this snapshot must be
 /// taken before the request is spawned or waits on a serialization lock.
 #[derive(Clone)]
 pub(crate) struct TurnOrigin {
     message_ids: Vec<String>,
-}
-
-fn is_short_memory_tool(title: &str) -> bool {
-    let normalized = title.to_ascii_lowercase();
-    normalized.contains("grove_agent") && normalized.contains("memory_")
 }
 
 static ACP_SESSIONS: once_cell::sync::Lazy<RwLock<HashMap<String, Arc<AcpSessionHandle>>>> =
@@ -258,10 +244,6 @@ pub struct AcpSessionHandle {
     /// Tool calls in the current turn that have not reached a terminal status.
     /// Used to apply ACP's preemptive client-side cancellation semantics.
     active_tool_calls: Mutex<std::collections::HashSet<String>>,
-    /// Fast local Project Memory calls should finish in milliseconds. Track a
-    /// short deadline separately so a wedged MCP transport cannot hold the
-    /// entire Agent turn forever.
-    short_tool_watches: Mutex<HashMap<String, ShortToolWatch>>,
     /// True from the moment `session/cancel` is sent until the current prompt
     /// resolves. Permission requests arriving in that window are immediately
     /// answered with the protocol-level `cancelled` outcome.
@@ -3506,12 +3488,6 @@ async fn handle_session_notification(
                 let mut active = state.handle.active_tool_calls.lock().unwrap();
                 if matches!(status.as_str(), "completed" | "failed") {
                     active.remove(&tool_call_id);
-                    state
-                        .handle
-                        .short_tool_watches
-                        .lock()
-                        .unwrap()
-                        .remove(&tool_call_id);
                 } else {
                     active.insert(tool_call_id.clone());
                 }
@@ -5404,7 +5380,6 @@ pub async fn get_or_start_session(
         pending_action: Mutex::new(None),
                     last_permission_info: Mutex::new(None),
                     active_tool_calls: Mutex::new(std::collections::HashSet::new()),
-                    short_tool_watches: Mutex::new(HashMap::new()),
                     cancel_requested: std::sync::atomic::AtomicBool::new(false),
                     auth_methods: Mutex::new(Vec::new()),
                     terminal_auth: Mutex::new(TerminalAuthState::default()),
@@ -7615,7 +7590,6 @@ async fn drive_session(
                     .cancel_requested
                     .store(false, std::sync::atomic::Ordering::Relaxed);
                 handle.active_tool_calls.lock().unwrap().clear();
-                handle.short_tool_watches.lock().unwrap().clear();
                 // Import replay is complete once the user starts a new turn.
                 // From here on UserMessageChunk is a normal Agent echo and
                 // must be ignored to avoid duplicating Grove's own message.
@@ -7981,30 +7955,9 @@ async fn drive_session(
                 tokio::pin!(prompt_fut);
 
                 let mut got_kill = false;
-                let mut short_tool_watchdog =
-                    tokio::time::interval(std::time::Duration::from_secs(1));
-                short_tool_watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-                // There is no generic turn timeout: agents may legitimately
-                // run long tools. Fast local Memory MCP calls are the narrow
-                // exception above; their watchdog sends protocol cancellation
-                // without dropping `prompt_fut`, so the ACP session can still
-                // finish its normal cancel acknowledgement.
                 let result = loop {
                     tokio::select! {
                         res = &mut prompt_fut => break res,
-                        _ = short_tool_watchdog.tick() => {
-                            if let Some((tool_call_id, watch)) = handle.take_expired_short_tool() {
-                                eprintln!(
-                                    "[ACP] short MCP tool timed out after {:.1}s; cancelling turn (id={}, title={})",
-                                    watch.started_at.elapsed().as_secs_f64(),
-                                    tool_call_id,
-                                    watch.title,
-                                );
-                                handle.cancel_current_turn_state();
-                                let _ = conn.send_notification(acp::CancelNotification::new(session_id_arc.clone()));
-                            }
-                        }
                         Some(inner_cmd) = cmd_rx.recv() => {
                             match inner_cmd {
                                 command @ (AcpCommand::Cancel | AcpCommand::CancelPrompts(_)) => {
@@ -10603,7 +10556,6 @@ impl AcpSessionHandle {
 
         let active_tool_calls: Vec<String> =
             self.active_tool_calls.lock().unwrap().drain().collect();
-        self.short_tool_watches.lock().unwrap().clear();
         for id in active_tool_calls {
             self.emit(AcpUpdate::ToolCallUpdate {
                 id,
@@ -10613,17 +10565,6 @@ impl AcpSessionHandle {
                 raw_input: None,
             });
         }
-    }
-
-    fn take_expired_short_tool(&self) -> Option<(String, ShortToolWatch)> {
-        let now = std::time::Instant::now();
-        let mut watches = self.short_tool_watches.lock().unwrap();
-        let id = watches
-            .iter()
-            .filter(|(_, watch)| watch.deadline <= now)
-            .min_by_key(|(_, watch)| watch.deadline)
-            .map(|(id, _)| id.clone())?;
-        watches.remove(&id).map(|watch| (id, watch))
     }
 
     /// 终止会话
@@ -11727,7 +11668,6 @@ pub fn new_handle_for_test(
         pending_action: Mutex::new(None),
         last_permission_info: Mutex::new(None),
         active_tool_calls: Mutex::new(std::collections::HashSet::new()),
-        short_tool_watches: Mutex::new(HashMap::new()),
         cancel_requested: std::sync::atomic::AtomicBool::new(false),
         auth_methods: Mutex::new(Vec::new()),
         terminal_auth: Mutex::new(TerminalAuthState::default()),
@@ -13621,16 +13561,6 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].id, id);
         assert_eq!(messages[0].text, "keep this");
-    }
-
-    #[test]
-    fn only_agent_memory_mcp_tools_use_the_short_watchdog() {
-        assert!(is_short_memory_tool("mcp.grove_agent.memory_append_log"));
-        assert!(is_short_memory_tool(
-            "Tool: grove_agent/memory_get_recent_logs"
-        ));
-        assert!(!is_short_memory_tool("mcp.grove_agent.grove_agent_spawn"));
-        assert!(!is_short_memory_tool("memory_append_log"));
     }
 
     #[test]

@@ -73,15 +73,6 @@ pub(crate) fn is_grove_memory_read_name(name: &str) -> bool {
         || grove_tool_name(name).is_some_and(|name| name == "memory_read")
 }
 
-pub(super) fn is_short_memory_tool_named(name: Option<&str>, title: &str) -> bool {
-    match name {
-        Some(name) if !name.is_empty() => {
-            grove_tool_name(name).is_some_and(|name| name.starts_with("memory_"))
-        }
-        _ => is_short_memory_tool(title),
-    }
-}
-
 impl AcpClientState {
     /// Apply v1 metadata patch semantics before interpreting the call. Names
     /// omitted/null in updates leave the previous identity unchanged.
@@ -117,21 +108,6 @@ impl AcpClientState {
             }
             value
         };
-        let mut watches = self.handle.short_tool_watches.lock().unwrap();
-        if active && is_short_memory_tool_named(identity.name.as_deref(), &identity.title) {
-            let watch = watches
-                .entry(id.to_string())
-                .or_insert_with(|| ShortToolWatch {
-                    title: identity.title.clone(),
-                    started_at: identity.started_at,
-                    deadline: identity.started_at + SHORT_MEMORY_TOOL_TIMEOUT,
-                });
-            watch.title = identity.title.clone();
-        } else {
-            watches.remove(id);
-        }
-        drop(watches);
-
         if identity.edits_files() {
             if let Some((path, _)) = identity.locations.first() {
                 self.write_tool_paths
@@ -203,7 +179,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tool_names_can_arrive_late_and_correct_memory_watchdog_attribution() {
+    async fn tool_names_can_arrive_late_and_correct_attribution() {
         let _lock = crate::storage::database::test_lock().lock().await;
         let _storage = TestStorage::new();
         let (state, mut updates, _guard) = state();
@@ -212,7 +188,6 @@ mod tests {
             acp::SessionUpdate::ToolCall(acp::ToolCall::new("tool", "正在读取")),
         )
         .await;
-        assert!(state.handle.short_tool_watches.lock().unwrap().is_empty());
         notify(
             &state,
             acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
@@ -221,12 +196,6 @@ mod tests {
             )),
         )
         .await;
-        assert!(state
-            .handle
-            .short_tool_watches
-            .lock()
-            .unwrap()
-            .contains_key("tool"));
         notify(
             &state,
             acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
@@ -235,12 +204,6 @@ mod tests {
             )),
         )
         .await;
-        assert!(state
-            .handle
-            .short_tool_watches
-            .lock()
-            .unwrap()
-            .contains_key("tool"));
         notify(
             &state,
             acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
@@ -249,7 +212,6 @@ mod tests {
             )),
         )
         .await;
-        assert!(state.handle.short_tool_watches.lock().unwrap().is_empty());
         let events = std::iter::from_fn(|| updates.try_recv().ok()).collect::<Vec<_>>();
         assert!(events.iter().any(|event| matches!(event, AcpUpdate::ToolCallUpdateV1 { name: Some(name), .. } if name == "mcp__grove_agent__memory_read")));
         notify(
@@ -317,14 +279,5 @@ mod tests {
         assert!(identity.edits_files());
         identity.kind = "read".into();
         assert!(!identity.edits_files());
-        assert!(is_short_memory_tool_named(
-            Some("mcp__grove_agent__memory_read"),
-            "读取记忆"
-        ));
-        assert!(!is_short_memory_tool_named(
-            Some("mcp__other__memory_read"),
-            "grove_agent memory_read"
-        ));
-        assert!(is_short_memory_tool_named(None, "grove_agent memory_read"));
     }
 }

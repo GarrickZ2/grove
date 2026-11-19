@@ -261,6 +261,9 @@ impl ServerHandler for AgentGraphMcpService {
         request: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
+        if WORKING_MEMORY_TOOLS.contains(&request.name.as_ref()) {
+            return call_memory_tool(request, context).await;
+        }
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         self.tool_router.call(tcc).await
     }
@@ -285,6 +288,35 @@ impl ServerHandler for AgentGraphMcpService {
             tools.retain(|tool| !WORKING_MEMORY_TOOLS.contains(&tool.name.as_ref()));
         }
         Ok(ListToolsResult::with_all_items(tools))
+    }
+}
+
+/// Memory tools are local database calls that answer in milliseconds. One that
+/// takes longer than this ends with an error the Agent reads, and its turn goes on.
+const MEMORY_TOOL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Run a Memory tool on its own task, so the timeout fires even while the
+/// tool's synchronous database work holds the thread.
+async fn call_memory_tool(
+    request: CallToolRequestParams,
+    context: rmcp::service::RequestContext<rmcp::RoleServer>,
+) -> Result<CallToolResponse, McpError> {
+    let name = request.name.to_string();
+    let call = tokio::spawn(async move {
+        let service = AgentGraphMcpService::new();
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(&service, request, context);
+        service.tool_router.call(tcc).await
+    });
+    match tokio::time::timeout(MEMORY_TOOL_TIMEOUT, call).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => Err(McpError::internal_error(
+            format!("{name} failed: {error}"),
+            None,
+        )),
+        Err(_) => Err(McpError::internal_error(
+            format!("{name} timed out after {}s", MEMORY_TOOL_TIMEOUT.as_secs()),
+            None,
+        )),
     }
 }
 
