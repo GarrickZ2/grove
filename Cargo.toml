@@ -5,7 +5,6 @@ edition = "2021"
 description = "A Kanban-style TUI for parallel AI coding. Manage Git worktrees as tasks, run multiple agents in isolated tmux sessions, get notified via hooks."
 license = "MIT"
 repository = "https://github.com/GarrickZ2/grove"
-homepage = "https://github.com/GarrickZ2/grove"
 keywords = ["git", "worktree", "tmux", "tui", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
@@ -44,7 +43,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-gui = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-plugin-global-shortcut", "dep:tauri-build", "dep:rfd", "dep:tauri-plugin-updater", "dep:tauri-plugin-deep-link", "dep:tauri-plugin-drag"]
+gui = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-plugin-global-shortcut", "dep:tauri-build", "dep:rfd", "dep:tauri-plugin-updater", "dep:tauri-plugin-deep-link", "dep:tauri-plugin-drag", "dep:objc2"]
 # Enables developer-only tracing and the perf panel. Resource Monitor uses
 # sysinfo independently in normal builds, sampling only while requested.
 perf-monitor = ["dep:tracing", "dep:tracing-subscriber"]
@@ -62,7 +61,6 @@ tempfile = "3"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 rpassword = "7"
-arboard = "3"
 ureq = { version = "2.9", features = ["json"] }
 semver = "1.0"
 hound = "3.5"
@@ -72,7 +70,6 @@ serde_yaml = "0.9"
 notify = "6.1"
 thiserror = "2.0"
 cron = "0.12"
-glob = "0.3"
 globset = "0.4"
 walkdir = "2"
 dunce = "1"
@@ -193,7 +190,7 @@ install-updater = false
 
 # macOS-only deps (used by tray module to call NSApp.activateIgnoringOtherApps).
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = { version = "0.5" }
+objc2 = { version = "0.5", optional = true }
 
 # Keep line information for symbolicated panic backtraces in development.
 [profile.dev]

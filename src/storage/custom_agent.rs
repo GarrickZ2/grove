@@ -177,10 +177,7 @@ pub(crate) fn is_known_base_agent(id: &str) -> bool {
         return true;
     }
     let config = crate::storage::config::load_config();
-    if config.acp.custom_agents.iter().any(|a| a.id == canonical) {
-        return true;
-    }
-    false
+    config.acp.custom_agents.iter().any(|a| a.id == canonical)
 }
 
 #[cfg(test)]

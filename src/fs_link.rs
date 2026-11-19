@@ -54,13 +54,12 @@ pub fn remove_link(path: &Path) -> std::io::Result<()> {
 /// On Unix this checks for symlinks. On Windows this additionally detects
 /// junction points, which do not report as symlinks via `is_symlink()`.
 pub fn is_link(path: &Path) -> bool {
-    if path.is_symlink() {
-        return true;
-    }
     #[cfg(windows)]
     {
-        junction::exists(path).unwrap_or(false)
+        path.is_symlink() || junction::exists(path).unwrap_or(false)
     }
     #[cfg(not(windows))]
-    false
+    {
+        path.is_symlink()
+    }
 }
