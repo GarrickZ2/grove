@@ -9,7 +9,7 @@ import { blankAnswer, buildSubmittedMarkdown, answerValue, validationError, type
  * locally (no message sent to the agent).
  *
  * Layout (4 lines, per user spec):
- *   L1: [icon] Survey title           [Cancel] [Submit]
+ *   L1: [icon] Survey title           [Cancel] [Submit — last question only]
  *   L2: Question N of M: <title>      [Prev]   [Next]
  *   L3: question.description (small muted, optional)
  *   L4: question controls
@@ -165,11 +165,11 @@ export function FormPill({
           <button type="button" className="ocv-btn is-quiet" disabled={disabled} onClick={fireDismiss}>Cancel</button>
           {onDecline && <button type="button" className="ocv-btn is-quiet" disabled={disabled} onClick={fireDecline}>Decline</button>}
           <span className="ocv-decision-spacer" />
-          {total > 1 && <>
-            <button type="button" className="ocv-btn" onClick={onPrev} disabled={currentTab === 0} aria-label="Previous question"><ChevronLeft className="oc-btn-ic" aria-hidden="true" />Prev</button>
-            <button type="button" className="ocv-btn" onClick={onNext} disabled={isLast} aria-label="Next question">Next<ChevronRight className="oc-btn-ic is-end" aria-hidden="true" /></button>
-          </>}
-          <button type="button" className="ocv-btn is-primary" disabled={disabled} onClick={onSubmitClick}><Send className="oc-btn-ic" aria-hidden="true" />Submit</button>
+          {total > 1 && <button type="button" className="ocv-btn" onClick={onPrev} disabled={currentTab === 0} aria-label="Previous question"><ChevronLeft className="oc-btn-ic" aria-hidden="true" />Prev</button>}
+          {/* Submit only on the last question, so it can't be sent before the rest are seen. */}
+          {isLast
+            ? <button type="button" className="ocv-btn is-primary" disabled={disabled} onClick={onSubmitClick}><Send className="oc-btn-ic" aria-hidden="true" />Submit</button>
+            : <button type="button" className="ocv-btn is-primary" onClick={onNext} aria-label="Next question">Next<ChevronRight className="oc-btn-ic is-end" aria-hidden="true" /></button>}
         </div>
       </div>
     );
@@ -196,9 +196,11 @@ export function FormPill({
               Decline
             </Button>
           )}
-          <Button variant="primary" size="sm" disabled={disabled} onClick={onSubmitClick}>
-            <Send className="w-3.5 h-3.5 mr-1" /> Submit
-          </Button>
+          {isLast && (
+            <Button variant="primary" size="sm" disabled={disabled} onClick={onSubmitClick}>
+              <Send className="w-3.5 h-3.5 mr-1" /> Submit
+            </Button>
+          )}
         </div>
       </div>
 
@@ -242,7 +244,7 @@ export function FormPill({
                 <ChevronLeft className="w-3.5 h-3.5 mr-1" /> Prev
               </Button>
               <Button
-                variant="ghost"
+                variant={isLast ? "ghost" : "primary"}
                 size="sm"
                 onClick={onNext}
                 disabled={isLast}
