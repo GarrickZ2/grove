@@ -13,6 +13,8 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import { convertLatexDelimiters } from "./markdownMath";
 import type { Root, RootContent } from "mdast";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { createSlugger } from "./headingSlug";
@@ -166,7 +168,7 @@ interface ParseResult {
 function parseContent(content: string): ParseResult {
   let tree: Root;
   try {
-    tree = unified().use(remarkParse).use(remarkGfm).parse(content) as Root;
+    tree = unified().use(remarkParse).use(remarkGfm).use(remarkMath).parse(content) as Root;
   } catch {
     // Malformed markdown — degrade to a single block so we still render
     // *something* rather than crashing the preview pane.
@@ -305,7 +307,8 @@ export const VirtualizedMarkdownRenderer = forwardRef<
   } = props;
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const { blocks, headings } = useMemo(() => parseContent(content), [content]);
+  // Split with math known, so a multi-line `$$` formula stays one block.
+  const { blocks, headings } = useMemo(() => parseContent(convertLatexDelimiters(content)), [content]);
   const scrollToHeadingId = useCallback((id: string): boolean => {
     const normalized = id.normalize("NFKC").toLowerCase().replace(/[\s_-]+/g, "");
     const heading = headings.find((item) => item.id === id) ?? headings.find(
@@ -595,7 +598,10 @@ export const VirtualizedMarkdownRenderer = forwardRef<
       // (TocPanel + IntersectionObserver) and hash navigation both work
       // off this anchor, which is the primary use case.
       return (
-        <div data-virt-block={index} className={renderMode === "document" ? "px-8 lg:px-12" : "px-5"}>
+        // flow-root keeps the block's own margins inside it: Virtuoso sizes
+        // each item by its box, and margins that collapse out of it are
+        // never counted, so every correction of the drift jumps the view.
+        <div data-virt-block={index} className={`flow-root ${renderMode === "document" ? "px-8 lg:px-12" : "px-5"}`}>
           {headingId && (
             <span
               id={headingId}

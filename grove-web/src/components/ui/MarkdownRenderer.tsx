@@ -6,6 +6,10 @@ import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markd
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
+import { convertLatexDelimiters, remarkMathRules } from "./markdownMath";
 
 // Sanitize schema used by rehype-sanitize when rendering markdown. Extends the
 // default schema (which already strips unknown tags, event handlers, and
@@ -24,6 +28,9 @@ const markdownSanitizeSchema = {
   attributes: {
     ...(defaultSchema.attributes ?? {}),
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "style"],
+    // remark-math marks its code elements; rehype-katex, after the
+    // sanitizer, reads `math-display` to render a block.
+    code: [["className", /^language-./, "math-inline", "math-display"]],
     iframe: [
       "src",
       "width",
@@ -43,6 +50,14 @@ const markdownSanitizeSchema = {
     ],
   },
 };
+// KaTeX runs after the sanitizer: its own markup is trusted, and with
+// `trust` off it renders no links or raw HTML from the formula.
+const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkMath, remarkMathRules];
+const MARKDOWN_REHYPE_PLUGINS = [
+  rehypeRaw,
+  [rehypeSanitize, markdownSanitizeSchema],
+  [rehypeKatex, { throwOnError: false, strict: false }],
+] as NonNullable<Parameters<typeof ReactMarkdown>[0]["rehypePlugins"]>;
 import mermaid from "mermaid";
 import { VSCodeIcon } from "./VSCodeIcon";
 import { SketchChip } from "./SketchChip";
@@ -1228,6 +1243,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, render
   const effectiveComments = comments === false ? undefined : comments ?? automaticComments;
   const processedContent = useMemo(() => {
     let out = normalizeStrongEmphasis(content);
+    out = convertLatexDelimiters(out);
     out = preprocessInlineCodeUrls(out);
     if (sketchContext) out = preprocessSketchUrls(out);
     return out;
@@ -1549,8 +1565,8 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, render
       onCopy={(event) => copySelectedMarkdown(event, markdownRootRef.current)}
     >
       <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
+      remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+      rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
       components={components}
       urlTransform={(url) => {
         if (url.startsWith("sketch://") || url.startsWith("design://")) return url;

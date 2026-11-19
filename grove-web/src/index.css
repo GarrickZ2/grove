@@ -506,6 +506,14 @@ body.blitz-command-pressed .blitz-shortcut {
   contain-intrinsic-size: auto 600px;
 }
 
+/* The virtualized Markdown renderer already windows its blocks, and a block
+ * it mounts again has no remembered size: the 600px placeholder would stand
+ * in for the real height and make the scroller correct its position. */
+[data-virt-block] .markdown-code-block {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+
 .markdown-code-block .hljs-keyword,
 .markdown-code-block .hljs-selector-tag {
   color: #c678dd;
