@@ -2,7 +2,10 @@ import { getTauriInternals } from "../../utils/tauri";
 import { isIosClient } from "../../utils/platform";
 import { trackedDownload } from "../../transfers/download";
 /* eslint-disable react-refresh/only-export-components */
-import { useState, useEffect, useId, useMemo, useRef } from "react";
+import { useState, useEffect, useId, useLayoutEffect, useMemo, useRef } from "react";
+import { hasMacWindowControls } from "../../orbit/ui/windowControls";
+import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
+import "./file-preview.css";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { Code, Download, Expand, Eye, List, Loader2, Maximize2, MessageSquare, MessageSquarePlus, Minimize2, RefreshCw, Shrink, X } from "lucide-react";
@@ -276,7 +279,40 @@ export function FilePreviewDrawer({
 
   // ── Search ─────────────────────────────────────────────────────────────
   const drawerRef = useRef<HTMLDivElement>(null);
+  // In Orbit the header matches the panel header above it.
+  const orbitLook = useOrbitInterface();
+  // A full-screen preview that reaches the window's top-left corner keeps
+  // its header clear of the macOS traffic lights. Grove fullscreen always
+  // covers the window; panel fullscreen is measured once it has slid in,
+  // since the drawer starts its slide off to the right.
+  const [panelAtCorner, setPanelAtCorner] = useState(false);
+  const measureCorner = () => {
+    const box = fullscreen ? drawerRef.current?.getBoundingClientRect() : undefined;
+    setPanelAtCorner(Boolean(box && box.left < 80 && box.top < 40));
+  };
+  useLayoutEffect(measureCorner, [fullscreen]);
+  const clearsMacControls = hasMacWindowControls && (groveFullscreen || (fullscreen && panelAtCorner));
   const searchRootRef = useRef<HTMLDivElement>(null);
+  // Where the reader left the preview. An update (an agent rewriting the
+  // file) can shorten the page for a moment and pull the view up; the view
+  // goes back to the reader's place, as far as the new page allows.
+  // Only the reader moves it: a scroll counts when it follows their own wheel,
+  // touch, key or click in the preview, not when a shorter page clamps it.
+  const readerTopRef = useRef({ file: fileName, top: 0 });
+  const readerActiveUntilRef = useRef(0);
+  const markReaderActive = () => { readerActiveUntilRef.current = performance.now() + 1000; };
+  // A held pointer (dragging the scrollbar) counts until it is let go.
+  const holdReaderActive = () => {
+    readerActiveUntilRef.current = Infinity;
+    window.addEventListener("pointerup", markReaderActive, { once: true });
+    window.addEventListener("pointercancel", markReaderActive, { once: true });
+  };
+  useLayoutEffect(() => {
+    const root = searchRootRef.current;
+    if (!root) return;
+    if (readerTopRef.current.file !== fileName) readerTopRef.current = { file: fileName, top: 0 };
+    root.scrollTop = readerTopRef.current.top;
+  }, [fileName, content]);
   const virtRef = useRef<VirtualizedMarkdownHandle>(null);
   // Tracked as state (not a ref) so consumers like TocPanel re-render when
   // Virtuoso's internal scroller mounts — a plain ref mutation would never
@@ -545,6 +581,10 @@ export function FilePreviewDrawer({
         ref={drawerRef}
         data-hotkeys-dialog="true"
         tabIndex={-1}
+        onWheelCapture={markReaderActive}
+        onTouchMoveCapture={markReaderActive}
+        onKeyDownCapture={markReaderActive}
+        onPointerDownCapture={holdReaderActive}
         onPointerDown={(e) => {
           const root = drawerRef.current;
           if (!root) return;
@@ -563,10 +603,17 @@ export function FilePreviewDrawer({
         animate={{ x: 0 }}
         exit={{ x: "100%" }}
         transition={{ type: "spring", damping: 30, stiffness: 300 }}
+        onAnimationComplete={measureCorner}
       >
         <div
-          className="flex items-center justify-between px-4 py-3 shrink-0"
-          style={{ borderBottom: "1px solid var(--color-border)", background: "var(--color-bg-secondary)" }}
+          className={orbitLook ? "file-preview-head orbit-ui" : "flex items-center justify-between px-4 py-3 shrink-0"}
+          data-tauri-drag-region={clearsMacControls ? true : undefined}
+          style={{
+            borderBottom: "1px solid var(--color-border)",
+            background: "var(--color-bg-secondary)",
+            // The window's traffic lights sit over the top-left corner (gui.rs).
+            ...(clearsMacControls ? { minHeight: 54, paddingLeft: 92 } : {}),
+          }}
         >
           <div className="flex items-center gap-2.5 min-w-0">
             <Eye className="w-4 h-4 shrink-0" style={{ color: "var(--color-highlight)" }} />
@@ -648,7 +695,14 @@ export function FilePreviewDrawer({
                 agent={chat.agent}
                 canSend={Boolean(chat.chatId)}
                 sendable={previewCommentsToAgent}
-                onOpen={(comment, at) => setThread({ id: comment.id, at })}
+                onOpen={(comment, at) => {
+                  // Open the thread beside its marker, as clicking the marker does.
+                  const marker = drawerRef.current?.querySelector(`[data-grove-comment-marker="${comment.id}"]`);
+                  if (!marker) return setThread({ id: comment.id, at });
+                  marker.scrollIntoView({ block: "center" });
+                  const box = marker.getBoundingClientRect();
+                  setThread({ id: comment.id, at: { x: box.right, y: box.top + box.height / 2 } });
+                }}
               />
             ) : null}
             <button
@@ -706,6 +760,9 @@ export function FilePreviewDrawer({
           <div
             ref={searchRootRef}
             className={`flex-1 relative min-w-0 min-h-0 ${isLargeMarkdown ? "overflow-hidden" : "overflow-auto"}`}
+            onScroll={(e) => {
+              if (performance.now() < readerActiveUntilRef.current) readerTopRef.current.top = e.currentTarget.scrollTop;
+            }}
           >
           {searchOpen && (
             <PreviewSearchBar

@@ -782,6 +782,7 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
             />
           ))}
           <div
+            data-grove-comment-marker={id}
             className="absolute flex items-center justify-center text-[11px] font-semibold text-white transition-transform hover:scale-110"
             style={{
               left: anchor.right + 4,

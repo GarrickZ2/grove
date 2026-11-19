@@ -469,7 +469,8 @@
 /* ── Comment thread (portaled to <body>) ─────────────────────────────────── */
 .design-thread {
   position: fixed;
-  z-index: 1000;
+  /* Above a full-screen file preview (z 9998), which opens these threads too. */
+  z-index: 9999;
   display: flex;
   flex-direction: column;
   max-height: 420px;

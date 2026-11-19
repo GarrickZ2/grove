@@ -154,7 +154,9 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
   useEffect(() => { onRevealTargetRef.current = onRevealTarget; }, [onRevealTarget]);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const refreshPreviewContent = useCallback((file: ArtifactFile, seq: number) => {
+  /** `whileWriting`: the agent may be mid-write, so an empty read is the
+   *  file between being cleared and rewritten, not its content. */
+  const refreshPreviewContent = useCallback((file: ArtifactFile, seq: number, whileWriting = false) => {
     if (!readable) return;
     const t = getPreviewType(file.name);
     // Image and binary previews load their own bytes; neither can be
@@ -163,6 +165,8 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     readArtifact(file)
       .then((content) => {
         if (seq !== liveRefreshSeqRef.current) return;
+        // Showing it would empty the preview and lose the reader's place.
+        if (whileWriting && content === "" && previewFileRef.current?.content) return;
         lastGoodContentRef.current = content;
         // Short-circuit when content is unchanged: skipping setState keeps
         // the preview DOM stable, which preserves the user's scroll
@@ -184,7 +188,7 @@ export function useArtifactsPanel({ projectId, task, previewRequest, lastChatIdl
     const seq = ++liveRefreshSeqRef.current;
     const file = previewFile.file;
     const timer = setInterval(() => {
-      refreshPreviewContent(file, seq);
+      refreshPreviewContent(file, seq, true);
     }, 10_000);
     return () => clearInterval(timer);
   }, [isChatBusy, previewFile, readable, refreshPreviewContent]);

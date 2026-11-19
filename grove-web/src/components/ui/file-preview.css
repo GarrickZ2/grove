@@ -1,0 +1,10 @@
+/* Orbit: the preview header takes the panel header's measures (panel-shell.css):
+   40px tall, 13px semibold title, 26px buttons with 14px icons. */
+.file-preview-head{display:flex;align-items:center;justify-content:space-between;gap:8px;height:40px;padding:0 6px 0 12px;flex-shrink:0;box-sizing:border-box}
+.file-preview-head > div:first-child{gap:8px}
+.file-preview-head > div:first-child > span:nth-child(2){font-size:13px;font-weight:600}
+.file-preview-head > div:first-child > svg{width:14px;height:14px}
+.file-preview-head > div:last-child{gap:2px}
+.file-preview-head button:not(.hidden){display:inline-flex}
+.file-preview-head button{align-items:center;justify-content:center;gap:4px;min-width:26px;height:26px;padding:0 6px;border-radius:var(--o-radius-sm)}
+.file-preview-head button svg{width:14px;height:14px}
