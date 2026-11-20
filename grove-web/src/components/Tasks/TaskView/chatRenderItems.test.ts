@@ -47,15 +47,18 @@ describe("completed work grouping", () => {
     expect(buildRenderItems(JSON.parse(JSON.stringify(messages)))).toEqual(result);
   });
 
-  it("folds subagents into the work group for Orbit, live and settled", () => {
-    const messages: ChatMessage[] = [user, assistant("Investigating"), tool("read"), child, notice, assistant("Final answer")];
+  it("keeps subagent cards outside the Orbit work group, live and settled", () => {
+    const messages: ChatMessage[] = [user, assistant("Investigating"), tool("read"), child, tool("wait"), notice, assistant("Final answer")];
     const settled = buildRenderItems(messages, false, { groupLiveWork: true });
-    expect(settled.map(label)).toEqual(["user", "work-summary", "session_notice", "Final answer"]);
+    expect(settled.map(label)).toEqual(["user", "work-summary", "subagent", "session_notice", "Final answer"]);
     const summary = settled[1];
     if (summary.kind !== "work-summary") throw new Error("Missing summary");
-    expect(summary.items.map((item) => item.message.type)).toEqual(["assistant", "tool", "subagent"]);
-    const live = buildRenderItems([user, tool("read"), child], true, { groupLiveWork: true });
-    expect(live.map(label)).toEqual(["user", "work-summary"]);
+    expect(summary.items.map((item) => item.message.type)).toEqual(["assistant", "tool", "tool"]);
+    const live = buildRenderItems([user, tool("read"), child, tool("wait")], true, { groupLiveWork: true });
+    expect(live.map(label)).toEqual(["user", "work-summary", "subagent"]);
+    const liveSummary = live[1];
+    if (liveSummary.kind !== "work-summary") throw new Error("Missing live summary");
+    expect(liveSummary.items.map((item) => item.message.type)).toEqual(["tool", "tool"]);
   });
 
   it("keeps a live turn chronological and applies folding only after it finishes", () => {

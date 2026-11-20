@@ -157,19 +157,18 @@ export function buildRenderItems(messages: ChatMessage[], isBusy = false, option
     }
 
     // Compaction dividers and rich assistant content are hard boundaries.
-    // Notices (and, outside Orbit, subagent anchors) remain outside the work
-    // summary, but must not disable compaction of the rest of this turn.
-    const foldSubagents = !!options.groupLiveWork;
+    // Notices and subagent cards remain outside the work summary, but must
+    // not disable compaction of the rest of this turn.
     let segmentStart = 0;
     turnEntries.forEach((message, offset) => {
       const boundary = message.type === "compaction" ||
         (message.type === "assistant" && message.blocks?.some((block) => block.type !== "text"));
       if (!boundary) return;
-      items.push(...compactCompletedSegment(turnEntries.slice(segmentStart, offset), userIndex + 1 + segmentStart, lastToolId, foldSubagents));
+      items.push(...compactCompletedSegment(turnEntries.slice(segmentStart, offset), userIndex + 1 + segmentStart, lastToolId));
       items.push({ kind: "single", message, index: userIndex + 1 + offset });
       segmentStart = offset + 1;
     });
-    items.push(...compactCompletedSegment(turnEntries.slice(segmentStart), userIndex + 1 + segmentStart, lastToolId, foldSubagents));
+    items.push(...compactCompletedSegment(turnEntries.slice(segmentStart), userIndex + 1 + segmentStart, lastToolId));
     cursor = nextUserIndex;
   }
   return items;
@@ -200,7 +199,7 @@ function buildNarratedTurnItems(messages: ChatMessage[], startIndex: number): Re
     const index = startIndex + offset;
     if (message.type === "plan_document" || message.type === "auth_required") return;
     if (message.type === "tool" && !shouldRenderTimelineTool(message)) return;
-    if (message.type === "tool" || message.type === "thinking" || message.type === "subagent") {
+    if (message.type === "tool" || message.type === "thinking") {
       process.push({ message, index });
     } else {
       flushProcess();
@@ -228,7 +227,7 @@ function buildLiveTurnItems(turnEntries: ChatMessage[], startIndex: number, star
       (message.type === "assistant" && message.blocks?.some((block) => block.type !== "text"));
     if (!boundary) return;
     const segment = turnEntries.slice(segmentStart, offset);
-    items.push(...compactCompletedSegment(segment, startIndex + segmentStart, lastToolCallId(segment), true));
+    items.push(...compactCompletedSegment(segment, startIndex + segmentStart, lastToolCallId(segment)));
     items.push({ kind: "single", message, index: startIndex + offset });
     segmentStart = offset + 1;
   });
@@ -240,7 +239,7 @@ function liveSegment(entries: ChatMessage[], startIndex: number, startedAt?: num
   let lastToolOffset = -1;
   let lastThinkingOffset = -1;
   entries.forEach((message, offset) => {
-    if ((message.type === "tool" && message.kind !== "think") || message.type === "subagent") lastToolOffset = offset;
+    if (message.type === "tool" && message.kind !== "think") lastToolOffset = offset;
     if (message.type === "thinking" && !message.complete) lastThinkingOffset = offset;
   });
   // A turn that has only streamed text or thinking so far needs no group.
@@ -253,7 +252,7 @@ function liveSegment(entries: ChatMessage[], startIndex: number, startedAt?: num
   for (let offset = 0; offset <= processEnd; offset += 1) {
     const message = entries[offset];
     const index = startIndex + offset;
-    if (message.type === "assistant" || message.type === "thinking" || message.type === "subagent") {
+    if (message.type === "assistant" || message.type === "thinking") {
       processItems.push({ message, index });
     } else if (message.type === "tool") {
       if (shouldRenderTimelineTool(message)) processItems.push({ message, index });
@@ -279,12 +278,12 @@ function liveSegment(entries: ChatMessage[], startIndex: number, startedAt?: num
 }
 
 /** Fold ordinary process content together; keep operational entries outside in order. */
-function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number, lastToolId?: string, foldSubagents = false): RenderItem[] {
+function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number, lastToolId?: string): RenderItem[] {
   const items: RenderItem[] = [];
     let processEndOffset = -1;
     for (let i = turnEntries.length - 1; i >= 0; i -= 1) {
       const message = turnEntries[i];
-      if ((message.type === "tool" && message.kind !== "think") || (foldSubagents && message.type === "subagent")) {
+      if (message.type === "tool" && message.kind !== "think") {
         processEndOffset = i;
         break;
       }
@@ -296,8 +295,7 @@ function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number,
         if (
           (message.type === "assistant" && i <= processEndOffset) ||
           message.type === "thinking" ||
-          (message.type === "tool" && i <= processEndOffset && shouldRenderTimelineTool(message)) ||
-          (foldSubagents && message.type === "subagent" && i <= processEndOffset)
+          (message.type === "tool" && i <= processEndOffset && shouldRenderTimelineTool(message))
         ) {
           processItems.push({ message, index: startIndex + i });
         }
@@ -335,7 +333,6 @@ function compactCompletedSegment(turnEntries: ChatMessage[], startIndex: number,
             message.type !== "assistant" &&
             message.type !== "thinking" &&
             message.type !== "tool" &&
-            !(foldSubagents && message.type === "subagent") &&
             message.type !== "plan_document",
         );
       passthrough.forEach(({ message, index }) =>
