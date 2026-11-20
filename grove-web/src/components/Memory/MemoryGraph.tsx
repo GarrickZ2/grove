@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { Maximize2, Minus, Pause, Play, Plus } from "lucide-react";
 import type { MemoryEntity, MemoryRelation } from "../../api/memory";
+import { usePinchZoom } from "../../hooks/usePinchZoom";
 import { selectVisibleRelations } from "./memoryGraphRelations";
 import { selectMemoryGraphTopology } from "./memoryGraphTopology";
 
@@ -325,6 +326,15 @@ export function MemoryGraph({
     dirtyRef.current = true;
   };
 
+  // Two fingers on a touch screen zoom like the wheel.
+  usePinchZoom(canvasRef, {
+    onStart: () => { dragRef.current = null; },
+    onPinch: ({ factor }) => {
+      cameraRef.current.zoom = clamp(cameraRef.current.zoom * factor, MIN_ZOOM, MAX_ZOOM);
+      dirtyRef.current = true;
+    },
+  });
+
   const changeZoom = (factor: number) => {
     cameraRef.current.zoom = clamp(cameraRef.current.zoom * factor, MIN_ZOOM, MAX_ZOOM);
     dirtyRef.current = true;
@@ -354,7 +364,7 @@ export function MemoryGraph({
       )}
       <canvas
         ref={canvasRef}
-        className="h-full w-full cursor-grab select-none active:cursor-grabbing"
+        className="h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
         role="img"
         aria-label="Interactive three-dimensional Memory relation map"
         onPointerDown={handlePointerDown}

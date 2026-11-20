@@ -4,6 +4,7 @@ import { Check, Maximize2, Minus, Plus } from "lucide-react";
 import type { GraphEdge, GraphNode } from "../../../components/Tasks/TaskView/graphShared";
 import type { EdgeLiveState, EdgeValidity } from "../../../components/Tasks/TaskView/useTaskGraphModel";
 import { agentColor } from "../../../components/Stats/agentColors";
+import { usePinchZoom } from "../../../hooks/usePinchZoom";
 import { resolveAgentIcon } from "../../../utils/agentIcon";
 import {
   DENSE_COUNT,
@@ -171,6 +172,19 @@ export function GraphCanvas(props: GraphCanvasProps) {
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
+
+  // Two fingers on a touch screen zoom like the wheel; one keeps panning.
+  usePinchZoom(viewportRef, {
+    onStart: () => {
+      gesture.current = null;
+      setPanning(false);
+    },
+    onPinch: ({ factor, x, y, dx, dy }) => {
+      const { view: current, fitKey: key } = latest.current;
+      const zoomed = zoomAround(current, factor, { x, y });
+      setManual({ key, view: { ...zoomed, x: zoomed.x + dx, y: zoomed.y + dy } });
+    },
+  });
 
   // ── Pointer gestures: pan, drag a card, drag a connection ────────────────
   const gesture = useRef<Gesture | null>(null);

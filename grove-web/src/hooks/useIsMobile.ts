@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import { onFoldChange, readLaptopFold } from "./useBookFold";
+import { onFoldChange } from "./useBookFold";
 
 /**
  * Orbit keeps its desktop layout on tablets: only phones get the mobile
@@ -15,31 +15,26 @@ interface DeviceState {
   isTouchDevice: boolean;
 }
 
-const MOBILE_BREAKPOINT = 768;
+const MOBILE_BREAKPOINT = 860;
 const TABLET_BREAKPOINT = 1200;
-/** A touch screen whose short side is below this is a phone, turned sideways or not. */
-const PHONE_SHORT_SIDE = 600;
-const COARSE_QUERY = "(hover: none) and (pointer: coarse)";
+const COARSE_QUERY = "(pointer: coarse)";
 
-function isPhoneSideways(width: number): boolean {
-  if (width < MOBILE_BREAKPOINT || typeof window.matchMedia !== "function") return false;
-  return window.matchMedia(COARSE_QUERY).matches && Math.min(width, window.innerHeight) < PHONE_SHORT_SIDE;
+/**
+ * Touch or mouse decides the interaction model, never the window's width: a
+ * phone, iPhone Duo or iPad keeps touch interactions at any size, and a
+ * computer keeps the desktop ones even in a narrow window. The iOS app is
+ * always touch.
+ */
+export function isTouchClient(): boolean {
+  if (typeof window === "undefined") return false;
+  if ((window as Window & { __GROVE_IOS__?: boolean }).__GROVE_IOS__ === true) return true;
+  return typeof window.matchMedia === "function" && window.matchMedia(COARSE_QUERY).matches;
 }
 
 function getDeviceState(): DeviceState {
-  const width = window.innerWidth;
-  return {
-    // isMobile includes tablet — anything below desktop breakpoint uses mobile layout
-    isMobile: width < TABLET_BREAKPOINT,
-    // The inner screen folded like a laptop is phone-narrow, but Orbit gives it
-    // the desktop layout: that has the panel headers and toolbar it spreads
-    // over the two screens.
-    // A phone turned sideways is as wide as a tablet but has no height for one.
-    isTablet: width < TABLET_BREAKPOINT && ((width >= MOBILE_BREAKPOINT && !isPhoneSideways(width)) || !!readLaptopFold()),
-    isDesktop: width >= TABLET_BREAKPOINT,
-    isTouchDevice:
-      "ontouchstart" in window || navigator.maxTouchPoints > 0,
-  };
+  const isTouchDevice = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+  if (isTouchClient()) return { isMobile: true, isTablet: false, isDesktop: false, isTouchDevice: true };
+  return { isMobile: false, isTablet: false, isDesktop: true, isTouchDevice };
 }
 
 export function useIsMobile(): DeviceState {

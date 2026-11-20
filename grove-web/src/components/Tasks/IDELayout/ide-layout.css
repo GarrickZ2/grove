@@ -596,6 +596,27 @@
   grid-row: 1;
 }
 
+/* A touch screen folded: the phone layout split at the crease, a panel on
+   one screen and the Agent on the other. */
+.ide-workbench.is-stacked.is-fold-book .ide-layout {
+  grid-template-columns: var(--fold-left) minmax(0, 1fr) !important;
+  column-gap: var(--fold-gap, 0px);
+}
+/* Laptop: the Agent is the upper screen, panels (or the picker) the lower one,
+   where the keyboard comes up too, so the conversation never moves. */
+.ide-workbench.is-stacked.is-fold-laptop .ide-chat-surface { grid-row: 1; grid-column: 1; --grove-kb-inset: 0px; }
+.ide-workbench.is-stacked.is-fold-laptop :is(.ide-aux-host, .ide-info-host) { grid-column: 1; border-right: 0; }
+/* The keyboard comes up over the lower screen: the composer stays where it is
+   instead of riding up on it (the phone rule pins it above the keyboard). */
+html.grove-keyboard-open .ide-workbench.is-stacked.is-fold-laptop .ide-chat-surface .task-chat-input-area {
+  position: absolute !important;
+  inset-inline: 0 !important;
+  bottom: var(--grove-safe-bottom, 12px) !important;
+}
+.ide-workbench.is-stacked.is-fold-book .ide-chat-surface { grid-column: 2; }
+.ide-workbench.is-stacked.is-fold-book .ide-aux-host,
+.ide-workbench.is-stacked.is-fold-book .ide-info-host { border-right: 1px solid var(--color-border); }
+
 /* The Agent is hidden and two panels are open: the dock takes its screen. */
 .ide-workbench.is-fold-two-panels .ide-info-host {
   grid-column: 2;
@@ -631,3 +652,128 @@
     display: none;
   }
 }
+
+/* Laptop fold: the upper screen is for reading, the lower one is the work
+   bar — one swipeable row of panels, and below it the Composer while no panel
+   is open, or the open panel. Tapping into the Composer brings the keyboard up
+   over the lower screen and the Composer moves up to the foot of the upper one. */
+.ide-workbench.is-stacked.is-fold-laptop .ide-layout {
+  grid-template-rows: var(--fold-top) auto minmax(0, 1fr) !important;
+  row-gap: 0;
+}
+.ide-workbench.is-stacked.is-fold-laptop :is(.ide-aux-host, .ide-info-host) { grid-row: 3; border-top: 0; }
+/* The lower screen is one slab, a shade deeper than the page above the crease,
+   so the two halves read as screen and deck. */
+.ide-workbench.is-stacked.is-fold-laptop .ide-layout { position: relative; }
+.ide-workbench.is-stacked.is-fold-laptop .ide-layout::before {
+  content: "";
+  position: absolute;
+  inset: calc(var(--fold-top) + var(--fold-gap, 0px)) 0 0;
+  border-radius: 26px 26px 0 0;
+  background: color-mix(in oklab, var(--color-text) 5%, var(--color-bg));
+  pointer-events: none;
+}
+.ide-workbench.is-stacked.is-fold-laptop :is(.ide-aux-host, .ide-info-host) { position: relative; margin: 0 10px 10px; overflow: hidden; border-radius: 20px; background: var(--color-bg); box-shadow: 0 0 0 .5px color-mix(in oklab, var(--color-text) 10%, transparent); }
+.orbit-laptop-strip {
+  position: relative;
+  grid-row: 2;
+  grid-column: 1;
+  display: flex;
+  gap: 8px;
+  margin-top: var(--fold-gap, 0px);
+  padding: 14px 16px 12px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 16px;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 10px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 10px, #000 calc(100% - 24px), transparent);
+}
+.orbit-laptop-strip::-webkit-scrollbar { display: none; }
+.orbit-laptop-strip .orbit-laptop-tab {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--glass-fill-strong);
+  box-shadow: var(--glass-rim), var(--glass-lift);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  color: color-mix(in oklab, var(--color-text) 78%, transparent);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  scroll-snap-align: start;
+  transition: background var(--o-dur-fast, 150ms), color var(--o-dur-fast, 150ms), transform var(--o-dur-fast, 150ms);
+}
+.orbit-laptop-strip .orbit-laptop-tab svg { opacity: .8; }
+.orbit-laptop-strip .orbit-laptop-tab:active { transform: scale(.96); }
+/* The open panel's tab: filled, the one dark thing on the deck. */
+.orbit-laptop-strip .orbit-laptop-tab.is-on { background: var(--color-text); color: var(--color-bg); box-shadow: 0 4px 12px -6px rgb(0 0 0 / 35%); }
+.orbit-laptop-strip .orbit-laptop-tab.is-on svg { opacity: 1; }
+.orbit-laptop-strip .orbit-laptop-tab.is-warning { color: var(--color-warning); }
+.orbit-laptop-strip .orbit-laptop-tab.is-danger { color: var(--color-error); }
+.orbit-laptop-strip .orbit-laptop-tab:disabled { opacity: .4; cursor: default; }
+.orbit-laptop-strip__sep { flex: none; width: 1px; margin: 10px 4px; background: color-mix(in oklab, var(--color-text) 12%, transparent); }
+/* No panel, no keyboard: the workbench fills the deck (OrbitLaptopBench),
+   with the Composer as one input line under it — it moves up the moment you
+   type, so the line is all the room it needs. */
+.orbit-laptop-bench {
+  grid-row: 3;
+  grid-column: 1;
+  min-height: 0;
+  padding-bottom: calc(76px + var(--grove-safe-bottom, env(safe-area-inset-bottom, 0px)));
+}
+html:not(.grove-keyboard-open) .ide-workbench.is-fold-laptop.is-laptop-idle .task-chat-input-area {
+  position: fixed !important;
+  top: auto !important;
+  bottom: var(--grove-safe-bottom, env(safe-area-inset-bottom, 0px)) !important;
+  inset-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px) !important;
+  max-height: calc(100dvh - var(--fold-deck-top) - 60px);
+  padding: 0 12px 10px;
+}
+/* The workbench shows what the status chips would; a tray or a request still
+   rises out of the input line, over the workbench. */
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone::before,
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone > :is(.oc-orbit, .oc-status) { display: none; }
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone > * { grid-column: 1 / -1; }
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone > :is(.oc-tray, .oc-ask) { max-height: min(56dvh, 420px); overflow-y: auto; border: 0; border-radius: 20px; background: var(--color-bg); box-shadow: 0 0 0 .5px color-mix(in oklab, var(--color-text) 12%, transparent), 0 12px 30px -12px rgb(0 0 0 / 25%); }
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone > .oc-body { grid-column: 1; display: flex; align-items: center; min-height: 50px; max-height: 50px; overflow: hidden; padding: 0 4px 0 18px; border-radius: 25px 0 0 25px; background: var(--color-bg); box-shadow: -0.5px 0 0 0 var(--olb-line), 0 .5px 0 0 var(--olb-line), 0 -.5px 0 0 var(--olb-line); font-size: 16px; }
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone > .oc-body > * { flex: 1; min-width: 0; }
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone > .oc-bar { grid-column: 2; height: 50px; box-sizing: border-box; padding: 0 6px 0 0; border-radius: 0 25px 25px 0; background: var(--color-bg); box-shadow: .5px 0 0 0 var(--olb-line), 0 .5px 0 0 var(--olb-line), 0 -.5px 0 0 var(--olb-line); }
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone { --olb-line: color-mix(in oklab, var(--color-text) 12%, transparent); }
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone .oc-hint { display: none; }
+/* Mode and context are on the Agent card; the line keeps the input tools and send. */
+html:not(.grove-keyboard-open) .is-laptop-idle .oc-shell.is-phone .oc-who > :not(:last-child) { display: none; }
+/* The jump-to-latest arrow belongs to the conversation, above the crease. */
+html:not(.grove-keyboard-open) .ide-workbench.is-fold-laptop.is-laptop-idle .task-chat-jump { top: calc(-1 * (100dvh - var(--fold-deck-top) - var(--grove-safe-bottom, 0px) - 60px) - var(--fold-gap, 0px) - 8px); }
+html:not(.grove-keyboard-open) .ide-workbench.is-fold-laptop.is-laptop-idle .task-chat-input-area > .ocv-fade { display: none; }
+/* …and the conversation above runs to the crease instead of leaving room for it. */
+html:not(.grove-keyboard-open) .ide-workbench.is-fold-laptop.is-laptop-idle .task-chat-composer-spacer { height: 20px !important; }
+.ide-workbench.is-stacked.is-fold-laptop .ide-chat-surface { overflow: hidden; }
+
+/* A wide touch screen with a panel open: the panel and the chat side by side,
+   half each, the panel on the left like a book fold's left screen. */
+.ide-workbench.is-stacked.is-split .ide-layout { position: relative; grid-template-columns: minmax(0, var(--split-left, 1fr)) minmax(0, var(--split-right, 1fr)) !important; }
+.ide-workbench.is-stacked.is-split :is(.ide-aux-host, .ide-info-host) { grid-column: 1; border-right: .5px solid color-mix(in oklab, var(--color-text) 12%, transparent); }
+/* The divider: a wide touch target on the seam, a small grabber in the middle. */
+.orbit-split-handle { position: absolute; top: 0; bottom: 0; z-index: 20; width: 28px; margin-left: -14px; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: col-resize; }
+.orbit-split-handle > i { width: 5px; height: 44px; border-radius: 3px; background: color-mix(in oklab, var(--color-text) 22%, transparent); transition: height 160ms cubic-bezier(.25, 1, .5, 1), background 160ms; }
+.orbit-split-handle.is-dragging > i { height: 64px; background: color-mix(in oklab, var(--color-text) 45%, transparent); }
+.ide-workbench.is-stacked.is-split .ide-chat-surface { grid-column: 2; }

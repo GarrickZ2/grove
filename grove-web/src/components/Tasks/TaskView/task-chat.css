@@ -311,10 +311,10 @@
 
 /* The input area floats above the home bar; keep the transcript hidden below it too. */
 .task-chat-input-scrim {
-  bottom: calc(-1 * max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom, 0px)));
+  bottom: calc(-1 * max(var(--grove-kb-inset, 0px), var(--grove-safe-bottom,env(safe-area-inset-bottom, 0px))));
 }
 
-@media (max-width: 767px) {
+@media (pointer: coarse) {
   /* Narrow lines: wrap identifiers whole, and keep both pieces of a split one rounded. */
   .task-chat-message-pane :not(pre) > code {
     word-break: normal;
@@ -335,7 +335,7 @@
 
   .mobile-composer-sheet-body {
     max-height: min(64dvh, 520px);
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    padding-bottom: max(12px, var(--grove-safe-bottom,env(safe-area-inset-bottom)));
     -webkit-overflow-scrolling: touch;
   }
 
@@ -356,7 +356,7 @@
   }
 
   html.grove-standalone .task-chat-input-area:has(.mobile-composer-pill) {
-    bottom: env(safe-area-inset-bottom, 0px) !important;
+    bottom: var(--grove-safe-bottom,env(safe-area-inset-bottom, 0px)) !important;
   }
 
   .task-chat-mobile-composer .chatbox-bubble {
@@ -425,7 +425,7 @@
     position: fixed !important;
     inset-inline-start: var(--grove-chat-inline-start, 0px) !important;
     inset-inline-end: var(--grove-chat-inline-end, 0px) !important;
-    bottom: max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom)) !important;
+    bottom: max(var(--grove-kb-inset, 0px), var(--grove-safe-bottom,env(safe-area-inset-bottom))) !important;
     z-index: 80;
     padding: 0 12px 8px;
   }
@@ -437,7 +437,7 @@
   [data-session-settings-menu] {
     left: 12px !important;
     right: 12px !important;
-    bottom: max(12px, var(--grove-kb-inset, 0px), env(safe-area-inset-bottom)) !important;
+    bottom: max(12px, var(--grove-kb-inset, 0px), var(--grove-safe-bottom,env(safe-area-inset-bottom))) !important;
     width: auto !important;
     max-height: min(70dvh, 520px) !important;
     border-radius: 22px !important;
@@ -448,7 +448,7 @@
     position: fixed !important;
     left: 12px !important;
     right: 12px !important;
-    bottom: max(12px, var(--grove-kb-inset, 0px), env(safe-area-inset-bottom)) !important;
+    bottom: max(12px, var(--grove-kb-inset, 0px), var(--grove-safe-bottom,env(safe-area-inset-bottom))) !important;
     width: auto !important;
     max-height: min(62dvh, 440px);
     margin: 0 !important;
@@ -606,7 +606,7 @@
 
 /* Orbit on a phone: the docked composer matches Orbit's New page — Agent pill
    on top, attach on the left, Model / Mode / Thinking values next to Send. */
-@media (max-width: 767px) {
+@media (pointer: coarse) {
   .task-chat-mobile-composer.is-orbit-phone .chatbox-bubble {
     border-radius: 26px;
     padding: 8px 12px 12px;

@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { onFoldChange, readBookFold, readLaptopFold, useBookFold, type BookFold } from "./useBookFold";
+import { NATIVE_FOLD_EVENT, onFoldChange, readBookFold, readLaptopFold, readTentFold, useBookFold, type BookFold } from "./useBookFold";
 
 const rect = (x: number, y: number, width: number, height: number) => new DOMRect(x, y, width, height);
 const book = [rect(0, 0, 330, 900), rect(339, 0, 330, 900)];
@@ -19,6 +19,38 @@ describe("useBookFold", () => {
   afterEach(() => {
     delete (window as { viewport?: unknown }).viewport;
     delete (navigator as { devicePosture?: unknown }).devicePosture;
+    delete (window as { __GROVE_FOLD__?: unknown }).__GROVE_FOLD__;
+  });
+
+  it("takes the iOS app's hinge over the web APIs", () => {
+    setFold(book, "folded");
+    // Half open, upright: the crease runs across, like a laptop, whatever the app last said.
+    vi.stubGlobal("innerWidth", 669);
+    vi.stubGlobal("innerHeight", 951);
+    (window as { __GROVE_FOLD__?: unknown }).__GROVE_FOLD__ = { posture: "book", at: 476, gap: 0 };
+    expect(readBookFold()).toBeNull();
+    expect(readLaptopFold()).toEqual({ top: 476, gap: 0 });
+    // On its side: a book.
+    vi.stubGlobal("innerWidth", 951);
+    vi.stubGlobal("innerHeight", 669);
+    (window as { __GROVE_FOLD__?: unknown }).__GROVE_FOLD__ = { posture: "laptop", at: 335, gap: 0 };
+    expect(readBookFold()).toEqual({ left: 476, gap: 0 });
+    expect(readLaptopFold()).toBeNull();
+    (window as { __GROVE_FOLD__?: unknown }).__GROVE_FOLD__ = { posture: "tent", at: 0, gap: 0 };
+    // Only the outer screen stands as a tent.
+    expect(readTentFold()).toBe(false);
+    vi.stubGlobal("innerWidth", 678);
+    vi.stubGlobal("innerHeight", 466);
+    expect(readTentFold()).toBe(true);
+    expect(readBookFold()).toBeNull();
+  });
+
+  it("calls back when the iOS app reports the hinge", () => {
+    const listener = vi.fn();
+    const stop = onFoldChange(listener);
+    window.dispatchEvent(new Event(NATIVE_FOLD_EVENT));
+    stop();
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it("reads as not folded where the APIs are missing", () => {

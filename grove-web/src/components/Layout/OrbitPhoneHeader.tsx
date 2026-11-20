@@ -19,21 +19,23 @@ interface OrbitPhoneHeaderProps {
   onMenu: () => void;
   onNew: () => void;
   newDisabled?: boolean;
+  /** iPhone Duo in the iOS app: menu and New live on the rail beside the screen. */
+  railed?: boolean;
 }
 
 /** Orbit's phone top bar: drawer button, page / Session title, New. */
-export function OrbitPhoneHeader({ title, onMenu, onNew, newDisabled }: OrbitPhoneHeaderProps) {
+export function OrbitPhoneHeader({ title, onMenu, onNew, newDisabled, railed }: OrbitPhoneHeaderProps) {
   return (
     // Empty header space drags the desktop window (App's mousedown handler skips buttons).
-    <header className={`orbit-phone-header${hasMacControls ? " has-mac-controls" : ""}`} data-tauri-drag-region="deep" data-window-drag-strip>
-      <button type="button" className="orbit-phone-button" aria-label="Open menu" onClick={onMenu}><Menu size={20} strokeWidth={1.8} /></button>
+    <header className={`orbit-phone-header${hasMacControls ? " has-mac-controls" : ""}${railed ? " is-railed" : ""}`} data-tauri-drag-region="deep" data-window-drag-strip>
+      {!railed && <button type="button" className="orbit-phone-button" aria-label="Open menu" onClick={onMenu}><Menu size={20} strokeWidth={1.8} /></button>}
       <div className="orbit-phone-title">
         <div id={ORBIT_PHONE_TITLE_SLOT} className="orbit-phone-title-slot" />
         <span className="orbit-phone-title-fallback">{title}</span>
       </div>
       <div className="orbit-phone-actions">
         <div id={ORBIT_PHONE_ACTIONS_SLOT} className="orbit-phone-actions-slot" />
-        <button type="button" className="orbit-phone-button" aria-label="New session" title="New session" disabled={newDisabled} onClick={onNew}><SquarePen size={18} strokeWidth={1.8} /></button>
+        {!railed && <button type="button" className="orbit-phone-button" aria-label="New session" title="New session" disabled={newDisabled} onClick={onNew}><SquarePen size={18} strokeWidth={1.8} /></button>}
       </div>
     </header>
   );

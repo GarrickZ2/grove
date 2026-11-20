@@ -10,7 +10,7 @@
 .oui-dlg-frame>*{min-height:0}
 
 /* Bottom sheet (phones): the sheet is the surface; panels inside go flat. */
-.oui-dlg-sheet{position:relative;width:100%;max-height:100%;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;border-radius:18px 18px 0 0;background:color-mix(in oklab,var(--o-bg) 92%,transparent);-webkit-backdrop-filter:blur(24px) saturate(1.6);backdrop-filter:blur(24px) saturate(1.6);border-top:1px solid var(--o-border);box-shadow:0 -20px 60px -24px rgb(0 0 0 / 40%);padding-bottom:env(safe-area-inset-bottom)}
+.oui-dlg-sheet{position:relative;width:100%;max-height:100%;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;border-radius:18px 18px 0 0;background:color-mix(in oklab,var(--o-bg) 92%,transparent);-webkit-backdrop-filter:blur(24px) saturate(1.6);backdrop-filter:blur(24px) saturate(1.6);border-top:1px solid var(--o-border);box-shadow:0 -20px 60px -24px rgb(0 0 0 / 40%);padding-bottom:var(--grove-safe-bottom,env(safe-area-inset-bottom))}
 .oui-dlg-grip{display:flex;justify-content:center;padding:10px 0 2px}
 .oui-dlg-grip.is-swipe{touch-action:none;cursor:grab;padding:12px 0}
 .oui-dlg-grip span{width:36px;height:4px;border-radius:999px;background:var(--o-track)}
@@ -280,13 +280,13 @@
 
 /* Phone: 16px gutters, touch-sized footers; a narrowed macOS window keeps its
    traffic lights clear (they sit over the top-left 54px). */
-@media (max-width:767px){
+@media (pointer: coarse){
   .oui-dlg-root:not(.is-sheet){padding:16px}
   .oui-dlg-root.has-mac-controls:not(.is-sheet){padding-top:54px}
   .oui-dlg-root.is-sheet.has-mac-controls{padding-top:54px}
   .oui-dlg-head{padding:18px 16px 6px}
   .oui-dlg-body{padding:10px 16px 6px}
-  .oui-dlg-foot{padding:14px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+  .oui-dlg-foot{padding:14px 16px calc(16px + var(--grove-safe-bottom,env(safe-area-inset-bottom,0px)))}
   .oui-dlg-foot .oui-btn{height:40px;padding:0 14px}
   .oui-dlg-foot .oui-btn-sm{height:36px}
   .oui-dlg-hint{flex-basis:100%;white-space:normal}

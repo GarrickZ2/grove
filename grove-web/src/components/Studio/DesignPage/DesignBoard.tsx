@@ -3,7 +3,8 @@ import { ArrowUpRight, ChevronDown, Circle, Download, Frame, Hand, Maximize, Mes
 import { designFilesBase, getDesignPage, isChangedSince, updateDesignPage, updateDesignStyle, type Design, type DesignMark, type DesignComment, type DesignPage, type LabelChange, type PageChange } from "../../../api/designs";
 import { usePopover } from "../../../orbit/ui";
 import { MarkdownRenderer } from "../../ui/MarkdownRenderer";
-import { DesignFrame, type AnchorBoxes, type DesignFrameHandle, type DesignVariable, type FrameWheel, type PickedElement, type TreeNode } from "./DesignFrame";
+import { isTouchClient } from "../../../hooks/useIsMobile";
+import { DesignFrame, type AnchorBoxes, type DesignFrameHandle, type DesignVariable, type FrameTouch, type FrameWheel, type PickedElement, type TreeNode } from "./DesignFrame";
 import { DesignMarks } from "./DesignMarks";
 import { DesignCommentList, DesignInspector } from "./DesignInspector";
 import { applyEdits, checkOf, setCssVariable, setPageVariable, type DesignEdit } from "./designEdit";
@@ -118,15 +119,18 @@ function newMarkId(): string {
   return `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-const INSPECTOR_PREF = "grove:design-inspector";
+// A touch screen keeps its own choice: the inspector takes half a phone, so it
+// starts closed there, and opening it on a phone says nothing about a desktop.
+const INSPECTOR_PREF = isTouchClient() ? "grove:design-inspector:touch" : "grove:design-inspector";
 /** How long edits wait for more before the file is written. */
 const SAVE_DELAY_MS = 350;
 
 function inspectorPref(): boolean {
   try {
-    return localStorage.getItem(INSPECTOR_PREF) !== "closed";
+    const stored = localStorage.getItem(INSPECTOR_PREF);
+    return stored ? stored !== "closed" : !isTouchClient();
   } catch {
-    return true;
+    return !isTouchClient();
   }
 }
 
@@ -262,6 +266,65 @@ export function DesignBoard({
       current, wheel.deltaX, wheel.deltaY, wheel.zoom,
       current.x + (page.x + wheel.x) * current.k, current.y + (page.y + wheel.y) * current.k,
     ));
+  };
+
+  // Fingers on the board ("b:") and on its pages ("f:"), in panel pixels. Two
+  // fingers zoom around their middle; one finger on a page pans (one on the
+  // board itself pans through the ordinary drag).
+  const fingers = useRef(new Map<string, Point>());
+  const touchGesture = useRef<{ key: string; view: BoardView; points: Point[] } | null>(null);
+  const runTouchGesture = () => {
+    const entries = [...fingers.current.entries()];
+    const points = entries.map(([, point]) => point);
+    const onPage = entries.some(([id]) => id.startsWith("f:"));
+    if (points.length === 0 || (points.length < 2 && !onPage)) {
+      touchGesture.current = null;
+      return;
+    }
+    const key = entries.map(([id]) => id).join(",");
+    const started = touchGesture.current;
+    // A finger added or lifted starts over from where the board is now.
+    if (!started || started.key !== key) {
+      touchGesture.current = { key, view: viewRef.current, points };
+      return;
+    }
+    if (points.length >= 2) {
+      const [a, b] = started.points;
+      const [c, d] = points;
+      const before = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const zoomed = zoomAt(started.view, Math.hypot(c.x - d.x, c.y - d.y) / before, middle.x, middle.y);
+      setUserView({ ...zoomed, x: zoomed.x + (c.x + d.x) / 2 - middle.x, y: zoomed.y + (c.y + d.y) / 2 - middle.y });
+    } else {
+      setUserView({ ...started.view, x: started.view.x + points[0].x - started.points[0].x, y: started.view.y + points[0].y - started.points[0].y });
+    }
+  };
+  /** The fingers on one page, which its frame hands over in page pixels. */
+  const touchOver = (page: DesignPage, touches: FrameTouch) => {
+    const current = viewRef.current;
+    for (const id of [...fingers.current.keys()]) if (id.startsWith(`f:${page.file}:`)) fingers.current.delete(id);
+    for (const touch of touches) {
+      fingers.current.set(`f:${page.file}:${touch.id}`, { x: current.x + (page.x + touch.x) * current.k, y: current.y + (page.y + touch.y) * current.k });
+    }
+    if (touches.length > 1) drag.current = null;
+    runTouchGesture();
+  };
+  const boardFinger = (event: ReactPointerEvent, phase: "down" | "move" | "up") => {
+    if (event.pointerType !== "touch") return false;
+    const id = `b:${event.pointerId}`;
+    if (phase === "up") fingers.current.delete(id);
+    else if (phase === "move" && !fingers.current.has(id)) return false;
+    else {
+      const rect = rootRef.current?.getBoundingClientRect();
+      fingers.current.set(id, { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) });
+    }
+    const pinching = fingers.current.size >= 2;
+    if (pinching) {
+      drag.current = null;
+      setDraft(null);
+    }
+    runTouchGesture();
+    return pinching;
   };
 
   /** Bring a point of a page near the top of the panel; with `center`, the page to the middle. */
@@ -505,6 +568,10 @@ export function DesignBoard({
         }
       }}
       onPointerDownCapture={(event) => {
+        if (boardFinger(event, "down")) {
+          event.stopPropagation();
+          return;
+        }
         if (!isDrawTool(tool) || event.button !== 0 || (event.target as HTMLElement).closest(".design-tools, .design-zoom")) return;
         event.stopPropagation();
         event.preventDefault();
@@ -517,7 +584,12 @@ export function DesignBoard({
         setMarkChosen(null);
         begin(event, { kind: "pan", startX: event.clientX, startY: event.clientY, view });
       }}
+      onPointerMoveCapture={(event) => {
+        if (boardFinger(event, "move")) event.stopPropagation();
+      }}
       onPointerMove={onPointerMove}
+      onPointerUpCapture={(event) => { boardFinger(event, "up"); }}
+      onPointerCancelCapture={(event) => { boardFinger(event, "up"); }}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
@@ -564,6 +636,7 @@ export function DesignBoard({
             onWrote={(before, after) => record({ kind: "page", file: page.file, before, after })}
             onUndo={undo}
             onWheel={(wheel) => wheelOver(page, wheel)}
+            onTouch={(touches) => touchOver(page, touches)}
             onNavigate={follow}
             onScrollTo={(y) => focus(page, y, false)}
             onComment={(element, at) => onComment(page.file, element, at, () => {})}
@@ -752,6 +825,7 @@ interface ArtboardProps {
   onClearSelection: () => void;
   onEscape: () => void;
   onWheel: (wheel: FrameWheel) => void;
+  onTouch: (touches: FrameTouch) => void;
   onNavigate: (design: string, file: string) => void;
   onScrollTo: (y: number) => void;
   onComment: (element: PickedElement, at: { x: number; y: number }) => void;
@@ -829,7 +903,7 @@ function queueEdit(waiting: DesignEdit[], op: DesignEdit): DesignEdit[] {
 
 function Artboard({
   ref, projectId, taskId, filesBase, design, page, refreshes, zoom, selected, tool, readOnly, selection, comments, onPointerDown, playing, onPlay, onExport, onOpenThread,
-  onSelected, onClearSelection, onEscape, onWheel, onNavigate, onScrollTo, onComment,
+  onSelected, onClearSelection, onEscape, onWheel, onTouch, onNavigate, onScrollTo, onComment,
   onTree, onVariables, onMoved, onWrote, onUndo, onStyle, onDuplicate, onRemove, onSaved, onNotice,
 }: ArtboardProps) {
   const frame = useRef<DesignFrameHandle>(null);
@@ -968,6 +1042,7 @@ function Artboard({
             onScrollTo={onScrollTo}
             onEscape={onEscape}
             onWheel={onWheel}
+            onTouch={onTouch}
           />
         ) : null}
       </div>

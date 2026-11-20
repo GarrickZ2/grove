@@ -72,7 +72,7 @@ export function useOrbitDrawerSwipe({ enabled, open, onOpenChange, drawerRef, pa
         ? drawerRef.current?.contains(target) || scrimRef.current?.contains(target)
         : pageRef.current?.contains(target);
       // Text fields keep their own swipes (cursor moves, selection).
-      if (!inArea || target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (!inArea || target.closest('input, textarea, select, [contenteditable="true"], [data-no-swipe]')) return;
       const touch = event.touches[0];
       start = { x: touch.clientX, y: touch.clientY, target };
       lastX = touch.clientX;

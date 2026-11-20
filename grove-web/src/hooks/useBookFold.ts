@@ -8,7 +8,32 @@ export interface BookFold {
   gap: number;
 }
 
-type FoldWindow = Window & { viewport?: { segments?: readonly DOMRectReadOnly[] | null } };
+/**
+ * What the iOS app's native shell reports from the hinge (`UIHingeInteraction`,
+ * iOS 27.1+). It arrives as soon as the hinge moves, without Safari's feature
+ * flags or the second-long wait on Viewport Segments. `undefined` outside the app.
+ */
+export interface NativeFold {
+  /** `flat`: one screen, nothing to split around. `tent`: half open with the outer screen lit. */
+  posture: "flat" | "book" | "laptop" | "tent";
+  /** Where the first screen ends: from the left for `book`, from the top for `laptop`. */
+  at: number;
+  gap: number;
+  /** `tent` only: degrees the page turns its board to stand upright when the app doesn't rotate. */
+  turn?: number;
+}
+
+/** Fired by the native shell after it updates `window.__GROVE_FOLD__`. */
+export const NATIVE_FOLD_EVENT = "grove:fold";
+
+type FoldWindow = Window & {
+  viewport?: { segments?: readonly DOMRectReadOnly[] | null };
+  __GROVE_FOLD__?: NativeFold;
+};
+
+function nativeFold(): NativeFold | undefined {
+  return typeof window === "undefined" ? undefined : (window as FoldWindow).__GROVE_FOLD__;
+}
 type FoldNavigator = Navigator & { devicePosture?: EventTarget & { type?: string } };
 
 /** A phone half-folded like a laptop: the crease runs side to side. */
@@ -34,7 +59,19 @@ function foldSegments(): readonly [DOMRectReadOnly, DOMRectReadOnly] | null {
  * so a flat phone never counts as folded. Browsers without these APIs, Safari
  * with its feature flags off among them, read as not folded.
  */
+/**
+ * The app reports half open; which way the crease runs follows the window as
+ * it is now, since a rotation can reach the page before the app's next report.
+ */
+function nativeHalfOpen(): "book" | "laptop" | null {
+  const native = nativeFold();
+  if (!native || (native.posture !== "book" && native.posture !== "laptop")) return null;
+  return window.innerWidth > window.innerHeight ? "book" : "laptop";
+}
+
 export function readBookFold(): BookFold | null {
+  const native = nativeFold();
+  if (native) return nativeHalfOpen() === "book" ? { left: Math.round(window.innerWidth / 2), gap: native.gap } : null;
   const segments = foldSegments();
   if (!segments) return null;
   const [first, second] = segments;
@@ -43,6 +80,8 @@ export function readBookFold(): BookFold | null {
 }
 
 export function readLaptopFold(): LaptopFold | null {
+  const native = nativeFold();
+  if (native) return nativeHalfOpen() === "laptop" ? { top: Math.round(window.innerHeight / 2), gap: native.gap } : null;
   const segments = foldSegments();
   if (!segments) return null;
   const [first, second] = segments;
@@ -79,10 +118,12 @@ export function onFoldChange(listener: () => void): () => void {
     }
   };
   window.addEventListener("resize", listener);
+  window.addEventListener(NATIVE_FOLD_EVENT, listener);
   segments.forEach((query) => query?.addEventListener?.("change", listener));
   posture?.addEventListener("change", onPosture);
   return () => {
     window.removeEventListener("resize", listener);
+    window.removeEventListener(NATIVE_FOLD_EVENT, listener);
     segments.forEach((query) => query?.removeEventListener?.("change", listener));
     posture?.removeEventListener("change", onPosture);
     timers.forEach(clearTimeout);
@@ -110,4 +151,21 @@ export function useBookFold(): BookFold | null {
 
 export function useLaptopFold(): LaptopFold | null {
   return useFold(readLaptopFold);
+}
+
+/** Half open and stood on a table, the outer screen facing out. Only the iOS app can tell. */
+// Only the outer screen stands as a tent: on the inner screen a stale value never counts.
+export function readTentFold(): boolean {
+  return nativeFold()?.posture === "tent" && Math.max(window.innerWidth, window.innerHeight) < 800;
+}
+
+const readTentObject = () => (readTentFold() ? { turn: nativeFold()?.turn ?? 0 } : null);
+
+/** Whether the tent board shows, and the quarter turn it needs, if any. */
+export function useTent(): { turn: number } | null {
+  return useFold(readTentObject);
+}
+
+export function useTentFold(): boolean {
+  return !!useTent();
 }

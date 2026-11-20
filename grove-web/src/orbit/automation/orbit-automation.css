@@ -136,11 +136,11 @@ input.oau-title-in:focus{background:var(--o-bg);box-shadow:0 0 0 1px var(--o-bor
 }
 
 /* Phone: the managed note's action drops under its copy. */
-@media (max-width:767px){
+@media (pointer: coarse){
   .oau-managed{flex-wrap:wrap}
   .oau-managed>span{flex:1 1 calc(100% - 30px)}
   .oau-managed>.oui-btn{margin-left:auto}
-  .oau-foot{flex-wrap:wrap;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+  .oau-foot{flex-wrap:wrap;padding:10px 12px calc(10px + var(--grove-safe-bottom,env(safe-area-inset-bottom,0px)))}
 }
 
 @media (prefers-reduced-motion:reduce){

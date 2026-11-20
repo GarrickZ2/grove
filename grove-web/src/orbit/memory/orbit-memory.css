@@ -174,7 +174,7 @@
 
 /* Phone: one card at a time (map, list or an open memory), sized to the
    screen; the map's controls dock in a bar under it instead of over it. */
-@media (max-width:767px){
+@media (pointer: coarse){
   .om-stage-hit{min-height:44px}
   .om-phone-switch{width:100%}
   .om-grid.is-phone .om-col{display:none}

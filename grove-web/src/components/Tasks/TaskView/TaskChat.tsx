@@ -14,6 +14,8 @@ import { PlanDocumentsPanel, type PlanMarkdownOptions } from "./PlanDocumentsPan
 import { buildRenderItems, buildSequentialRenderItems, buildToolTimelineRows, backgroundToolLabel, timelineToolLabel, finalFailedTool, toolTimelineLegacyDiff, toolTimelineExpansionKey, toggleToolTimelineDetail, toolTimelineRowState, shellTimelineDisplay, toolTimelineWindow, type ToolTimelineRow, type RenderItem, type WorkSummaryItem, type ToolSectionItem } from "./chatRenderItems";
 import { SubagentsPanel } from "./SubagentsPanel";
 import { SubagentAvatar } from "./SubagentAvatar";
+import { OrbitLaptopBench } from "./OrbitLaptopBench";
+import { LaptopBenchContext } from "../IDELayout/LaptopBenchContext";
 import { SubagentCard } from "./SubagentCard";
 import { SessionExchangeCard } from "./SessionExchangeCard";
 import { flattenSubagentMessages, mapSubagentMessages, reduceSubagentEvent, resetSubagentActivity, sessionExchangeExpansionKey, sessionExchangeLabel, sessionExchangePreview, sessionExchangeText, subagentStatus, type SubagentMessage, type SessionExchangeMessage } from "./subagents";
@@ -1476,7 +1478,11 @@ const ORBIT_BOTTOM_FADE_PX = 24;
 function TaskChatVirtuosoHeader({
   context,
 }: ContextProp<TaskChatVirtuosoContext>) {
-  return context.hiddenMessageCount > 0 || context.limitedHistoryTurns > 0 ? (
+  return (
+    <>
+      {/* On a phone the header floats over the conversation: start the first message below it. */}
+      <div className="task-chat-top-inset" aria-hidden="true" />
+      {context.hiddenMessageCount > 0 || context.limitedHistoryTurns > 0 ? (
     <div className="px-4 pt-4">
       <div className="mx-auto max-w-[720px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-center text-xs text-[var(--color-text-muted)]">
         {context.limitedHistoryTurns > 0 && <>Loading at most the latest {context.limitedHistoryTurns} turns on this device. </>}
@@ -1486,6 +1492,8 @@ function TaskChatVirtuosoHeader({
     </div>
   ) : (
     <div className="h-4" />
+      )}
+    </>
   );
 }
 
@@ -1500,8 +1508,9 @@ function TaskChatVirtuosoFooter({
         </div>
       )}
       <div
+        className="task-chat-composer-spacer"
         style={{
-          height: `calc(${context.inputAreaHeight + 16 + (context.bottomFadePad ?? 0)}px + max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom, 0px)))`,
+          height: `calc(${context.inputAreaHeight + 16 + (context.bottomFadePad ?? 0)}px + max(var(--grove-kb-inset, 0px), var(--grove-safe-bottom,env(safe-area-inset-bottom, 0px))))`,
         }}
       />
     </div>
@@ -2485,6 +2494,7 @@ export function TaskChat({
   onBusyStateChange,
 }: TaskChatProps) {
   const canManageSessions = sessionManagement;
+  const laptopBench = useContext(LaptopBenchContext);
   const { isMobile, isTablet } = useIsMobile();
   const isPhoneLayout = isMobile && !isTablet;
   // Three sub-concerns have been extracted into their own hooks
@@ -11523,6 +11533,8 @@ export function TaskChat({
         <span className="orbit-phone-session-title">
           {AgentIcon ? <AgentIcon size={15} className="shrink-0 text-[var(--color-text-muted)]" /> : <MessageSquare className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />}
           <span>{activeChat.title || "New Chat"}</span>
+          {/* Where the session lives: shown under the title where the header has room for two lines. */}
+          <small className="orbit-phone-session-place">{taskId === "_local" ? taskProject?.name : taskProject?.tasks.find((t) => t.id === taskId)?.name ?? taskProject?.name}</small>
         </span>,
         orbitPhoneTitleTarget,
       )}
@@ -12236,7 +12248,7 @@ export function TaskChat({
             <div
               ref={inputAreaRef}
               className="pointer-events-none absolute inset-x-0 z-10 px-3 pb-4 pt-2"
-              style={{ bottom: "max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom))" }}
+              style={{ bottom: "max(var(--grove-kb-inset, 0px), var(--grove-safe-bottom,env(safe-area-inset-bottom)))" }}
             >
               {orbitShell && activeReadOnly && activeChat ? (
                 <>
@@ -12312,7 +12324,7 @@ export function TaskChat({
             style={{
               bottom: showMobileComposerPill
                 ? "0px"
-                : "max(var(--grove-kb-inset, 0px), env(safe-area-inset-bottom))",
+                : "max(var(--grove-kb-inset, 0px), var(--grove-safe-bottom,env(safe-area-inset-bottom)))",
             }}
           >
             {orbitComposer ? (
@@ -12437,7 +12449,7 @@ export function TaskChat({
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 6, scale: 0.98 }}
                     transition={{ duration: 0.16, ease: "easeOut" }}
-                    className="pointer-events-none absolute inset-x-0 top-0 z-20 -translate-y-[132%] flex justify-center"
+                    className="task-chat-jump pointer-events-none absolute inset-x-0 top-0 z-20 -translate-y-[132%] flex justify-center"
                   >
                     <button
                       type="button"
@@ -12449,7 +12461,7 @@ export function TaskChat({
                         beginBottomReattachment("auto");
                       }}
                       aria-label="Scroll to bottom"
-                      className={`pointer-events-auto group inline-flex ${orbitPhoneShell ? "h-10 w-10 justify-center" : "h-8 gap-1.5 px-3"} items-center rounded-full border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_86%,transparent)] text-xs font-medium text-[var(--color-text-muted)] shadow-[0_1px_2px_rgba(0,0,0,0.08),0_6px_20px_rgba(0,0,0,0.10)] backdrop-blur-xl transition-[color,background-color,border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-[color-mix(in_srgb,var(--color-highlight)_24%,var(--color-border))] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] hover:shadow-[0_2px_4px_rgba(0,0,0,0.10),0_8px_24px_rgba(0,0,0,0.14)] active:translate-y-0 select-none`}
+                      className={`pointer-events-auto group inline-flex ${orbitPhoneShell ? "grove-glass h-10 w-10 justify-center" : "h-8 gap-1.5 px-3"} items-center rounded-full border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_86%,transparent)] text-xs font-medium text-[var(--color-text-muted)] shadow-[0_1px_2px_rgba(0,0,0,0.08),0_6px_20px_rgba(0,0,0,0.10)] backdrop-blur-xl transition-[color,background-color,border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-[color-mix(in_srgb,var(--color-highlight)_24%,var(--color-border))] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] hover:shadow-[0_2px_4px_rgba(0,0,0,0.10),0_8px_24px_rgba(0,0,0,0.14)] active:translate-y-0 select-none`}
                     >
                       <ArrowDown className="h-3.5 w-3.5 text-[var(--color-highlight)] transition-transform duration-150 group-hover:translate-y-0.5" />
                       {!orbitPhoneShell && <span>Scroll to bottom</span>}
@@ -12524,6 +12536,27 @@ export function TaskChat({
 
               {orbitShell ? (
                 <OrbitConversationContext.Provider value>
+                {laptopBench && orbitPhoneShell && !isReadOnlyHistory && createPortal(
+                  <OrbitLaptopBench
+                    bench={laptopBench}
+                    planEntries={displayedPlanEntries}
+                    running={isBusy}
+                    connected={isConnected}
+                    agentLabel={agentLabel}
+                    AgentIcon={AgentIcon}
+                    contextPercent={contextUsage && contextUsage.size > 0 ? contextUsagePercent(contextUsage) : null}
+                    modeLabel={(() => {
+                      const mode = orbitSetup.fields.find((field) => field.id === "mode");
+                      return mode ? mode.options.find((option) => option.value === mode.value)?.label ?? null : null;
+                    })()}
+                    subagents={orbitComposerStatus?.subagents ? subagents.map((agent) => ({ sessionId: agent.sessionId, status: subagentStatus(agent, isConnected) })) : []}
+                    askLabel={orbitAskKind ? ({ auth: "Sign in required", permission: "Permission request", survey: "Question for you", external: "External request" } as const)[orbitAskKind] : null}
+                    onOpenPlan={() => setOrbitTray("plan")}
+                    onOpenSubagents={() => setOrbitTray("subagents")}
+                    onOpenAsk={() => setOrbitTray("ask")}
+                  />,
+                  laptopBench.slot,
+                )}
                 <OrbitComposer
                   shellRef={setChatboxContainer}
                   className="chatbox-bubble"

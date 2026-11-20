@@ -146,7 +146,7 @@ html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area .oc-bod
   .ows-tb.is-primary{padding:0 12px 0 10px;font-size:13px}
   /* The home bar needs clearance, not its full inset plus padding. */
   .ide-workbench.is-orbit .task-chat-input-area:not(:has(.mobile-composer-pill)),
-  .orbit-free-layout .task-chat-input-area{bottom:max(var(--grove-kb-inset,0px),calc(env(safe-area-inset-bottom,0px) * .5))!important;padding-bottom:4px}
+  .orbit-free-layout .task-chat-input-area{bottom:max(var(--grove-kb-inset,0px),calc(var(--grove-safe-bottom,env(safe-area-inset-bottom,0px)) * .5))!important;padding-bottom:4px}
 }
 
 /* ── One header height ── The Agent's header matches the PanelShell header

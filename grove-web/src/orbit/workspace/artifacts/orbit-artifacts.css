@@ -192,3 +192,24 @@
 .oar-drag-ghost{position:fixed;top:0;left:0;z-index:-1;display:inline-flex;align-items:center;gap:8px;max-width:280px;padding:6px 6px 6px 11px;border-radius:9px;background:var(--color-bg);box-shadow:0 0 0 1px color-mix(in oklab,var(--color-text) 12%,transparent),0 10px 24px -10px rgb(0 0 0 / 35%);color:var(--color-text);font:500 12.5px/18px system-ui,-apple-system,sans-serif;white-space:nowrap;pointer-events:none}
 .oar-drag-ghost-name{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .oar-drag-ghost-count{flex:none;padding:1px 7px;border-radius:999px;background:var(--color-text);color:var(--color-bg);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+
+/* A touch screen has no hover: what a pointer reveals on hover is simply there
+   (actions in place of size · time), the checkbox only while selecting, and a
+   hover changes nothing — iOS otherwise spends the first tap on the hover. */
+@media (hover:none),(pointer:coarse){
+  .oar-row .oar-acts,.oar-row:hover .oar-acts{opacity:1;pointer-events:auto}
+  .oar-row .oar-meta,.oar-row:hover .oar-meta,.oar-row:focus-within .oar-meta{opacity:0;visibility:hidden}
+  .oar-row:hover .oar-lead .oar-check,.oar-row:focus-within .oar-lead .oar-check{opacity:0}
+  .oar-row:hover .oar-lead .oar-glyph,.oar-row:focus-within .oar-lead .oar-glyph{opacity:1}
+  .oar-row.is-selecting .oar-lead .oar-check{opacity:1}
+  .oar-row.is-selecting .oar-lead .oar-glyph{opacity:0}
+  .oar-row.is-dir:hover .oar-chev{transform:none;color:var(--o-muted)}
+  .oar-tile .oar-tile-more,.oar-tile:hover .oar-tile-more{opacity:1;transform:none}
+  .oar-tile:hover .oar-check.is-tile,.oar-tile:focus-within .oar-check.is-tile{opacity:0}
+  .oar-tile.is-selecting .oar-check.is-tile{opacity:1}
+  .oar-tile:hover .osd-thumb-icon{transform:none}
+  /* Wide docks have room for both: size · time stays. */
+  @container (min-width:560px){
+    .oar-row .oar-meta,.oar-row:hover .oar-meta,.oar-row:focus-within .oar-meta{opacity:1;visibility:visible}
+  }
+}

@@ -23,10 +23,13 @@ import type {
 } from "./IDELayout.types";
 import { AUX_PANEL_TYPES } from "./IDELayout.types";
 import { MultiTabTerminalPanel } from "./MultiTabTerminalPanel";
-import { OrbitFoldPanelPicker, OrbitPhonePanels, type OrbitPhonePanel } from "./OrbitPhonePanels";
+import { LaptopBenchContext, type LaptopBench } from "./LaptopBenchContext";
+import { OrbitFoldPanelPicker, OrbitLaptopStrip, OrbitPhonePanels, type OrbitPhonePanel } from "./OrbitPhonePanels";
 import { ORBIT_FOLD_MENU_EVENT, useBookFold, useLaptopFold } from "../../../hooks/useBookFold";
 import { OrbitWorkspaceBar, OrbitDock, OrbitGrip, OrbitFoldDeck, type OrbitToolItem } from "./OrbitWorkspace";
 import { useSlotElement } from "./useSlotElement";
+import { ORBIT_DUO_RAIL_SLOT, rightInset, useDuoRail } from "../../../hooks/useDuoRail";
+import { OrbitDuoRailTools } from "../../Layout/OrbitDuoRail";
 import {
   orbitSlotFor,
   toggleOrbitPanel,
@@ -57,6 +60,7 @@ import { useConfig, useProject } from "../../../context";
 import { useIsMobile } from "../../../hooks";
 import { useLinkedReviewProjects } from "../../../hooks/useLinkedReviewProjects";
 import { apiClient } from "../../../api/client";
+import { studioArtifactResolves } from "../TaskInfoPanel/tabs/artifactsModel";
 import { listActivePlugins, type Plugin } from "../../../api/plugins";
 import {
   OPEN_PLUGIN_PANEL_EVENT,
@@ -505,6 +509,34 @@ function PanelSlot({
   );
 }
 
+type SplitMode = "split" | "chat" | "panel";
+const SPLIT_MODE_KEY = "grove:phone-split-mode";
+const WIDE_SCREEN_QUERY = "(min-width: 760px)";
+const SPLIT_RATIO_KEY = "grove:phone-split-ratio";
+const clampSplit = (ratio: number) => Math.min(.7, Math.max(.3, ratio));
+function readSplitRatio(): number {
+  try {
+    const value = Number(localStorage.getItem(SPLIT_RATIO_KEY));
+    if (value > 0 && value < 1) return clampSplit(value);
+  } catch { /* private mode */ }
+  return .5;
+}
+function readSplitMode(): SplitMode {
+  try {
+    const value = localStorage.getItem(SPLIT_MODE_KEY);
+    if (value === "chat" || value === "panel") return value;
+  } catch { /* private mode */ }
+  return "split";
+}
+function subscribeWideScreen(onChange: () => void) {
+  const query = window.matchMedia(WIDE_SCREEN_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+function readWideScreen() {
+  return window.matchMedia(WIDE_SCREEN_QUERY).matches;
+}
+
 export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainerProps>(
   function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing, phoneActions, isActive = true, onToggleLayoutMode, toolbarMenu }, ref) {
     const { selectedProject, projects } = useProject();
@@ -526,12 +558,25 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     // Folded like a laptop: the Agent or a panel above, the toolbar and Composer below.
     const laptopFold = useLaptopFold();
     const foldLaptop = orbitDesk ? laptopFold : null;
+    // The same folds on a touch screen, which always has the phone layout: two
+    // panes split at the crease instead of one at a time.
+    const phoneBook = orbitPhone ? bookFold : null;
+    const phoneLaptop = orbitPhone ? laptopFold : null;
+    // Laptop fold, no panel open: the place on the lower screen the chat fills with its workbench.
+    const [benchSlot, setBenchSlot] = useState<HTMLElement | null>(null);
     const terminalPosition = foldable || foldLaptop ? "left" : terminalPositionOf(config?.web?.terminal_position);
-    const orbitSlotId = orbitPhone ? ORBIT_PHONE_ACTIONS_SLOT : "orbit-workspace-toolbar";
+    // iPhone Duo in the iOS app: the panel toggles go onto the rail beside the
+    // screen and the header keeps the Session's title. Not on a laptop fold,
+    // whose bottom deck holds them.
+    const duoRail = useDuoRail();
+    // A phone's panel button sits in the header, or in iPhone Duo's column when there is one.
+    const orbitSlotId = orbitPhone ? (duoRail ? ORBIT_DUO_RAIL_SLOT : ORBIT_PHONE_ACTIONS_SLOT) : "orbit-workspace-toolbar";
     // The header slot can mount after this layout (config / page transitions):
     // keep resolving it until it exists.
     const orbitToolbarSlot = useSlotElement(orbitLayout ? orbitSlotId : null, isActive);
     const orbitToolbarTarget = orbitLayout && isActive ? orbitToolbarSlot : null;
+    const duoRailSlot = useSlotElement(orbitDesk && duoRail ? ORBIT_DUO_RAIL_SLOT : null, isActive);
+    const duoRailTarget = orbitDesk && duoRail && isActive && !foldLaptop ? duoRailSlot : null;
     const resizerWidth = orbitLayout ? 1 : RESIZER_PX;
     // Resolve the project this task actually belongs to by its projectId,
     // not the globally-selected project. Blitz lets the user open a task
@@ -626,6 +671,82 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       ro.observe(el);
       return () => ro.disconnect();
     }, [orbitDesk]);
+    // Where the shell starts on screen, to place the crease inside it.
+    const [shellOrigin, setShellOrigin] = useState({ x: 0, y: 0 });
+    const phoneFolded = !!phoneBook || !!phoneLaptop;
+    /** A phone not folded shows the chat or one panel, never both. */
+    const phoneSingle = orbitPhone && !phoneFolded;
+    // iPhone Duo opened flat (or any touch screen this wide): a panel opens
+    // beside the conversation. One switch picks split, chat only or panel
+    // only, and is remembered.
+    const wideScreen = useSyncExternalStore(subscribeWideScreen, readWideScreen, () => false);
+    const phoneWide = phoneSingle && wideScreen;
+    const [splitMode, setSplitModeState] = useState<SplitMode>(readSplitMode);
+    const setSplitMode = useCallback((mode: SplitMode) => {
+      setSplitModeState(mode);
+      try { localStorage.setItem(SPLIT_MODE_KEY, mode); } catch { /* private mode */ }
+    }, []);
+    // Split view: the panel's share of the width, dragged at the divider and remembered.
+    const [splitRatio, setSplitRatio] = useState(readSplitRatio);
+    const applySplit = useCallback((ratio: number) => {
+      const el = shellRef.current;
+      if (!el) return;
+      el.style.setProperty("--split-left", `${ratio}fr`);
+      el.style.setProperty("--split-right", `${1 - ratio}fr`);
+      const rect = el.getBoundingClientRect();
+      document.documentElement.style.setProperty("--grove-split-x", `${Math.round(rect.left + rect.width * ratio)}px`);
+    }, []);
+    const startSplitDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+      const el = shellRef.current;
+      if (!el) return;
+      event.preventDefault();
+      const handle = event.currentTarget;
+      handle.setPointerCapture(event.pointerId);
+      handle.classList.add("is-dragging");
+      const rect = el.getBoundingClientRect();
+      let ratio = splitRatio;
+      const move = (e: PointerEvent) => {
+        ratio = clampSplit((e.clientX - rect.left) / rect.width);
+        applySplit(ratio);
+        handle.style.left = `${ratio * 100}%`;
+      };
+      const end = () => {
+        handle.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+        handle.removeEventListener("lostpointercapture", end);
+        handle.classList.remove("is-dragging");
+        setSplitRatio(ratio);
+        try { localStorage.setItem(SPLIT_RATIO_KEY, String(ratio)); } catch { /* private mode */ }
+      };
+      handle.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+      handle.addEventListener("lostpointercapture", end);
+    }, [applySplit, splitRatio]);
+    useLayoutEffect(() => {
+      const el = shellRef.current;
+      if (!phoneFolded || !el) return;
+      const measure = () => {
+        const rect = el.getBoundingClientRect();
+        const x = Math.round(rect.left);
+        const y = Math.round(rect.top);
+        setShellOrigin((prev) => (prev.x === x && prev.y === y ? prev : { x, y }));
+      };
+      measure();
+      const ro = new ResizeObserver(measure);
+      ro.observe(el);
+      window.addEventListener("resize", measure);
+      return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
+    }, [phoneFolded]);
+    // A book fold centres the floating title over the Agent's screen.
+    const bookLeft = phoneBook ? Math.max(0, phoneBook.left - shellOrigin.x) : null;
+    useEffect(() => {
+      if (bookLeft === null || !isActive) return;
+      const root = document.documentElement;
+      root.style.setProperty("--grove-fold-left", `${bookLeft}px`);
+      return () => { root.style.removeProperty("--grove-fold-left"); };
+    }, [bookLeft, isActive]);
     // Tracks which side panel was most recently focused so Cmd+W /
     // closeActiveTab closes *that* one instead of always preferring info.
     // Defaults to "info" so behavior matches the previous hardcoded rule
@@ -785,6 +906,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           // Network failure (offline, dev server restart) — don't punish
           // the user; open the panel and let its content fetch fall back.
         }
+        // The file server reaches more than the Artifacts panel lists; a
+        // Studio link the panel can't open falls back to plain text.
+        if (isStudio && !(await studioArtifactResolves(projectId, task.id, filePath))) return false;
         navSeqRef.current += 1;
         const seq = navSeqRef.current;
         if (isStudio) {
@@ -818,12 +942,12 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         if (detail.projectId !== projectId || detail.taskId !== task.id) return;
         setStateTagged((prev) => {
           if (prev.auxVisible && prev.auxType === "sketch") return prev;
-          return { ...prev, auxType: "sketch", auxVisible: true };
+          return { ...prev, auxType: "sketch", auxVisible: true, ...(phoneSingle ? { chatVisible: false, infoVisible: false } : {}) };
         });
       };
       window.addEventListener(OPEN_SKETCH_EVENT, handler);
       return () => window.removeEventListener(OPEN_SKETCH_EVENT, handler);
-    }, [isStudio, projectId, task.id, setStateTagged]);
+    }, [isStudio, projectId, task.id, setStateTagged, phoneSingle]);
 
     // Likewise for a design:// chip and the Design panel; the panel itself
     // picks which design and page to show.
@@ -833,13 +957,14 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         const detail = (e as CustomEvent<OpenDesignDetail>).detail;
         if (!detail || detail.projectId !== projectId || detail.taskId !== task.id) return;
         setStateTagged((prev) => {
-          if (prev.auxVisible && prev.auxType === "design") return prev;
-          return { ...prev, auxType: "design", auxVisible: true };
+          if (prev.auxVisible && prev.auxType === "design" && !(phoneSingle && prev.chatVisible)) return prev;
+          // The phone shows one thing at a time: the design replaces the chat.
+          return { ...prev, auxType: "design", auxVisible: true, ...(phoneSingle ? { chatVisible: false, infoVisible: false } : {}) };
         });
       };
       window.addEventListener(OPEN_DESIGN_EVENT, handler);
       return () => window.removeEventListener(OPEN_DESIGN_EVENT, handler);
-    }, [isStudio, projectId, task.id, setStateTagged]);
+    }, [isStudio, projectId, task.id, setStateTagged, phoneSingle]);
 
     // An agent started using the browser: show it unless another panel is open.
     useEffect(() => {
@@ -855,7 +980,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     useEffect(() => {
       const handler = (e: Event) => {
         const detail = (e as CustomEvent<{ chatId?: string }>).detail;
-        update({ chatVisible: true });
+        // The phone shows one thing at a time (a fold shows a panel beside
+        // the chat): unfolded, the chat replaces the panel that opened it.
+        update(orbitPhone && !phoneFolded ? { chatVisible: true, auxVisible: false, infoVisible: false } : { chatVisible: true });
         if (detail?.chatId) {
           setTimeout(() => {
             window.dispatchEvent(
@@ -866,7 +993,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       };
       window.addEventListener("grove:open-chat", handler);
       return () => window.removeEventListener("grove:open-chat", handler);
-    }, [update]);
+    }, [update, orbitPhone, phoneFolded]);
 
     // Global listener: a plugin keybinding opens its panel in the column its
     // manifest chose (`side`: right → info column, else aux column).
@@ -1214,12 +1341,12 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           tabs={state.terminalTabs}
           activeId={state.terminalActiveId}
           onTabsChange={(tabs, activeId) => update({ terminalTabs: tabs, terminalActiveId: activeId })}
-          onClose={() => update({ auxVisible: false })}
+          onClose={orbitPhone ? undefined : () => update({ auxVisible: false })}
         />
       ),
       plugins: panelPlugins,
       linkedReviewProjects,
-    }), [projectId, task, isStudio, isGitRepo, terminalAvailable, orbitLayout, isActive, state.fileNavRequest, state.artifactPreviewRequest, state.lastChatIdleAt, state.isChatBusy, handleChatBecameIdle, handleBusyStateChange, state.terminalTabs, state.terminalActiveId, update, panelPlugins, linkedReviewProjects]);
+    }), [projectId, task, isStudio, isGitRepo, terminalAvailable, orbitLayout, isActive, state.fileNavRequest, state.artifactPreviewRequest, state.lastChatIdleAt, state.isChatBusy, handleChatBecameIdle, handleBusyStateChange, state.terminalTabs, state.terminalActiveId, update, panelPlugins, linkedReviewProjects, orbitPhone]);
 
     // Aux column. Terminal renders its own multi-tab header (no slot);
     // everything else is wrapped in PanelSlot with the registry's label/icon.
@@ -1232,12 +1359,12 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           title={d?.label ?? "Panel"}
           icon={(d?.icon ?? Puzzle) as typeof Terminal}
           side="left"
-          onClose={closeAux}
+          onClose={orbitPhone ? undefined : closeAux}
         >
           {renderPanel(type, buildCtx(closeAux))}
         </PanelSlot>
       );
-    }, [buildCtx, panelPlugins, update]);
+    }, [buildCtx, panelPlugins, update, orbitPhone]);
 
     // Chat is the only panel that needs file navigation — inject it here (kept
     // out of the shared ctx so aux/info panels don't capture the ref-reader).
@@ -1254,16 +1381,29 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           title={d?.label ?? "Panel"}
           icon={(d?.icon ?? BarChart3) as typeof Terminal}
           side="right"
-          onClose={closeInfo}
+          onClose={orbitPhone ? undefined : closeInfo}
         >
           <div className="ide-info-content">{renderPanel(type, buildCtx(closeInfo))}</div>
         </PanelSlot>
       );
-    }, [buildCtx, panelPlugins, update]);
+    }, [buildCtx, panelPlugins, update, orbitPhone]);
 
-    const showAux = Boolean(state.auxVisible && state.auxType);
-    const showInfo = Boolean(state.infoVisible && state.infoType);
-    const showChat = state.chatVisible || (!showAux && !showInfo);
+    const panelAux = Boolean(state.auxVisible && state.auxType);
+    const panelInfo = Boolean(state.infoVisible && state.infoType);
+    const wideSplit = phoneWide && (panelAux || panelInfo);
+    const showAux = panelAux && !(wideSplit && splitMode === "chat");
+    const showInfo = panelInfo && !(wideSplit && splitMode === "chat");
+    const showChat = wideSplit ? splitMode !== "panel" : state.chatVisible || (!showAux && !showInfo);
+    const splitOn = wideSplit && showChat && (showAux || showInfo);
+    useLayoutEffect(() => {
+      if (!splitOn) { document.documentElement.style.removeProperty("--grove-split-x"); return; }
+      applySplit(splitRatio);
+      const el = shellRef.current;
+      if (!el) return;
+      const ro = new ResizeObserver(() => applySplit(splitRatio));
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, [splitOn, splitRatio, applySplit]);
     const isAuxChatPair = showAux && showChat && !showInfo;
     const isChatInfoPair = !showAux && showChat && showInfo;
     const useDefaultAuxPairRatio = isAuxChatPair && !auxWasResized;
@@ -1337,6 +1477,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         actions={phoneActions}
         onShowChat={() => update({ chatVisible: true, auxVisible: false, infoVisible: false })}
         onOpen={openPhonePanel}
+        compact={orbitPhone && duoRail}
+        layout={wideSplit ? { mode: splitMode, onChange: setSplitMode } : undefined}
       />
     );
 
@@ -1390,7 +1532,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       const orbitShowAux = Boolean(state.auxVisible && state.auxType && slotOf(state.auxType) === "aux");
       // With the sidebar open the workspace no longer starts at the screen's
       // edge, so the crease means nothing to it: back to the plain layout.
-      const foldBook = foldable && shellSize.w >= window.innerWidth - 1 ? foldable : null;
+      // Spans the page (sidebar closed); the page itself stops short of iPhone Duo's column.
+      const foldBook = foldable && shellSize.w >= window.innerWidth - rightInset() - 1 ? foldable : null;
       // Two screens show two of the three: the Agent keeps its place if it was
       // open, and the hidden dock returns when the phone flattens.
       const orbitShowDock = Boolean(state.infoVisible && state.infoType)
@@ -1482,20 +1625,21 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         ? { auxType: d.key, auxVisible: true }
         : { infoType: d.key, infoVisible: true });
 
+      const railGroups: OrbitToolItem[][] = [
+        agentTool ? [agentTool] : [],
+        [
+          ...leftPanels.map(toolFor),
+          ...(terminalPanel ? [toolFor(terminalPanel)] : []),
+        ],
+        dockPanels.map(toolFor),
+      ];
       const bar = (
         <OrbitWorkspaceBar
           title={task.name}
           branch={task.branch || undefined}
           state={state.isChatBusy ? "working" : task.status === "archived" ? "archived" : undefined}
           leading={toolbarLeading}
-          groups={[
-            agentTool ? [agentTool] : [],
-            [
-              ...leftPanels.map(toolFor),
-              ...(terminalPanel ? [toolFor(terminalPanel)] : []),
-            ],
-            dockPanels.map(toolFor),
-          ]}
+          groups={duoRailTarget ? [] : railGroups}
           trailing={toolbarTrailing}
           menu={[...workspaceMenu, ...toolbarRows]}
           foldRight={foldBook ? shellSize.w - foldBook.left : undefined}
@@ -1505,6 +1649,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       return (
         <div className="ide-workbench is-orbit is-orbit-desk">
           {orbitToolbarTarget && !foldLaptop && createPortal(bar, orbitToolbarTarget)}
+          {duoRailTarget && createPortal(<OrbitDuoRailTools groups={railGroups} />, duoRailTarget)}
           <div
             ref={shellRef}
             className={`ows-shell orbit-ui${foldBook ? " is-fold" : ""}${foldDockLeft ? " is-fold-dock-left" : ""}${foldLaptop ? " is-fold-laptop" : ""}`}
@@ -1591,10 +1736,23 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       );
     }
 
+    const laptopBench: LaptopBench | null = phoneLaptop && benchSlot && !showAux && !showInfo
+      ? { slot: benchSlot, projectId, taskId: task.id, branch: task.branch, actions: phoneActions ?? [] }
+      : null;
+
     return (
-      <div className={`ide-workbench${orbitLayout ? " is-orbit" : ""}${orbitPhone ? " is-phone" : ""}${isMobile ? " is-stacked" : ""}`}>
+      <LaptopBenchContext.Provider value={laptopBench}>
+      <div
+        className={`ide-workbench${orbitLayout ? " is-orbit" : ""}${orbitPhone ? " is-phone" : ""}${orbitPhone && duoRail ? " is-rail" : ""}${isMobile ? " is-stacked" : ""}${phoneBook ? " is-fold-book" : ""}${phoneLaptop ? " is-fold-laptop" : ""}${phoneLaptop && !showAux && !showInfo ? " is-laptop-idle" : ""}${splitOn ? " is-split" : ""}`}
+        style={phoneBook
+          ? ({ "--fold-left": `${Math.max(0, phoneBook.left - shellOrigin.x)}px`, "--fold-gap": `${phoneBook.gap}px` } as React.CSSProperties)
+          : phoneLaptop
+            ? ({ "--fold-top": `${Math.max(0, phoneLaptop.top - shellOrigin.y)}px`, "--fold-gap": `${phoneLaptop.gap}px`, "--fold-deck-top": `${phoneLaptop.top + phoneLaptop.gap}px` } as React.CSSProperties)
+            : undefined}
+      >
         {/* In Orbit the toolbar lives in the window header; a hidden page renders none. */}
-        {orbitLayout ? orbitToolbarTarget && createPortal(orbitPhone ? phonePanels : toolbar, orbitToolbarTarget) : toolbar}
+        {/* Laptop fold: the panels live in the lower screen's work bar, not the header. */}
+        {orbitLayout ? orbitToolbarTarget && createPortal(orbitPhone ? (phoneLaptop ? null : phonePanels) : toolbar, orbitToolbarTarget) : toolbar}
         <div
           ref={shellRef}
           className="ide-layout"
@@ -1626,9 +1784,26 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           {showAux && (showChat || showInfo) && (
             <div className="ide-resizer ide-resizer--aux" onPointerDown={(event) => startResize("aux", event)} />
           )}
+          {/* A fold's panel screen while no panel is open: pick one for it. */}
+          {phoneBook && !showAux && !showInfo && <OrbitFoldPanelPicker panels={phonePanelList} onOpen={openPhonePanel} />}
+          {phoneLaptop && (
+            <OrbitLaptopStrip
+              panels={phonePanelList}
+              openPanel={phoneOpenPanel}
+              onOpen={openPhonePanel}
+              onClose={() => update({ chatVisible: true, auxVisible: false, infoVisible: false })}
+              actions={phoneActions}
+            />
+          )}
+          {phoneLaptop && !showAux && !showInfo && <div ref={setBenchSlot} className="orbit-laptop-bench" />}
+          {splitOn && (
+            <div className="orbit-split-handle" data-no-swipe="" style={{ left: `${splitRatio * 100}%` }} role="separator" aria-orientation="vertical" aria-label="Resize" onPointerDown={startSplitDrag}>
+              <i />
+            </div>
+          )}
           <div
             className="ide-chat-surface"
-            style={{ display: showChat ? "block" : "none" }}
+            style={{ display: showChat || phoneFolded ? "block" : "none" }}
             onFocusCapture={() => { lastSurfaceRef.current = "chat"; }}
             onMouseDownCapture={() => { lastSurfaceRef.current = "chat"; }}
           >
@@ -1660,6 +1835,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           )}
         </div>
       </div>
+      </LaptopBenchContext.Provider>
     );
   },
 );

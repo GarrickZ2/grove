@@ -100,7 +100,7 @@
 .ose-swatch:hover,.ose-icon:hover{transform:translateY(-2px) scale(1.08)}
 .ose-swatch[aria-checked="true"],.ose-icon[aria-checked="true"]{border-color:color-mix(in oklab,var(--o-accent) 55%,var(--o-border));box-shadow:var(--o-ring-selected)}
 
-@media (max-width:767px){
+@media (pointer: coarse){
   .ose-step h1{font-size:23px}
   .ose-step.is-welcome h1{font-size:30px}
   .ose-steps{padding:8px 14px}

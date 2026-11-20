@@ -417,9 +417,24 @@
     Promise.race([fonts, new Promise(function (resolve) { setTimeout(resolve, 3000); })]).then(finish, finish);
   }
 
+  // A frame that is not shown yet (a panel still hidden, WebKit before the
+  // first layout) has no viewport: the page is laid out 0px wide and far too
+  // tall. Nothing is measured until it has a size.
+  function whenSized(then) {
+    if (window.innerWidth) { then(); return; }
+    function sized() {
+      if (!window.innerWidth) return;
+      window.removeEventListener('resize', sized);
+      then();
+    }
+    window.addEventListener('resize', sized);
+  }
+
   function reportReady() {
     settled(function () {
-      setTimeout(function () { post('ready', { report: check() }); }, 150);
+      whenSized(function () {
+        setTimeout(function () { post('ready', { report: check() }); }, 150);
+      });
     });
   }
   if (document.readyState === 'complete') reportReady();
@@ -431,6 +446,7 @@
     if (!window.ResizeObserver || !document.body) return;
     var last = 0;
     var observer = new ResizeObserver(function () {
+      if (!window.innerWidth) return;
       var height = pageHeight();
       if (chosenElement && chosen) place(chosen, chosenElement);
       if (Math.abs(height - last) > 1) {
@@ -763,6 +779,25 @@
       y: event.clientY + window.scrollY,
     });
   }, { passive: false, capture: true });
+
+  // On a touch screen the same goes for fingers: one pans the board, two zoom
+  // it. The panel gets every finger in page pixels and does the moving. A
+  // finger dragging the chosen element keeps doing that.
+  function forwardTouches(event) {
+    if (!forwardWheel) return;
+    if (event.touches.length < 2 && gesture) return;
+    if (event.touches.length > 1) gesture = null;
+    if (event.type === 'touchmove' || event.touches.length > 1) event.preventDefault();
+    var points = [];
+    for (var i = 0; i < event.touches.length; i++) {
+      var touch = event.touches[i];
+      points.push({ id: touch.identifier, x: touch.clientX + window.scrollX, y: touch.clientY + window.scrollY });
+    }
+    post('touch', { points: points });
+  }
+  ['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach(function (type) {
+    window.addEventListener(type, forwardTouches, { passive: false, capture: true });
+  });
 
   // ── Requests from the panel ───────────────────────────────────────────────
   var screenshotLoaded = false;

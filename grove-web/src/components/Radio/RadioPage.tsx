@@ -500,7 +500,7 @@ export function RadioPage() {
 
   return (
     <div className="h-[100dvh] w-full overflow-hidden" style={{ backgroundColor: "var(--color-bg)" }}>
-      <div className="mx-auto flex h-full w-full max-w-[34rem] flex-col p-2.5 pb-[env(safe-area-inset-bottom)] sm:p-4 sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+      <div className="mx-auto flex h-full w-full max-w-[34rem] flex-col p-2.5 pb-[var(--grove-safe-bottom,env(safe-area-inset-bottom))] sm:p-4 sm:pb-[calc(var(--grove-safe-bottom,env(safe-area-inset-bottom))+1rem)]">
         <div
           className="flex flex-1 flex-col rounded-2xl border p-2 sm:p-3"
           style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-bg-secondary)" }}

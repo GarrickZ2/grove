@@ -150,7 +150,7 @@
 }
 /* Phone: the list, then the picked item on its own with Back (usePhoneSplit);
    section heads stack their switch, the facts table reads as rows. */
-@media (max-width:767px){
+@media (pointer: coarse){
   .oex .oex-split.is-phone-list,.oex .oex-split.is-phone-detail{display:flex;flex-direction:column;flex:none;height:max(460px,calc(100dvh - 210px))}
   .oex .oex-split.is-phone-list>.oex-detail,.oex .oex-split.is-phone-detail>.oex-master{display:none}
   .oex .oex-split.is-phone-list>.oex-master{flex:1;border-bottom:0}
@@ -159,7 +159,7 @@
   .oex-phone-back .oui-btn{padding:0 10px 0 6px;color:var(--o-text)}
   .oex-ext{min-height:56px}
   .oex-dbody{padding:16px 16px 18px}
-  .oex-dfoot{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));flex-wrap:wrap}
+  .oex-dfoot{padding:10px 12px calc(10px + var(--grove-safe-bottom,env(safe-area-inset-bottom,0px)));flex-wrap:wrap}
   .oex-ident{gap:12px}
   .oex-ident h2{flex-wrap:wrap;row-gap:2px;font-size:18px}
   .oex-ident h2>*{min-width:0}

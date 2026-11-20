@@ -133,7 +133,7 @@
 }
 /* Phone: the list, then the picked project on its own with Back. The
    header's search and type switch take full rows. */
-@media (max-width:767px){
+@media (pointer: coarse){
   .opj .oui-page-actions{width:100%}
   .opj .opj-search{width:100%;flex-basis:100%}
   .opj .oui-page-actions>.oui-seg{flex:1 1 auto}

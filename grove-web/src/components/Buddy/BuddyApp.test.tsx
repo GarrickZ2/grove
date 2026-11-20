@@ -131,7 +131,10 @@ describe("Buddy shell and creation", () => {
     expect([...host.querySelectorAll(".buddy-list-item")].map((node) => node.textContent?.includes("Inbox"))[0]).toBe(true);
   });
   const atWidth = async (width: number) => {
-    act(() => root.unmount()); vi.stubGlobal("innerWidth", width); root = createRoot(host);
+    act(() => root.unmount()); vi.stubGlobal("innerWidth", width);
+    // A phone-width screen here stands for a touch phone: touch, not width, picks the phone layout.
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: width < 860 && query === "(pointer: coarse)", addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    root = createRoot(host);
     await act(async () => root.render(<BuddyApp />));
   };
   it.each([0, 1, 3])("exposes native and fallback titlebar dragging with %i Buddies while keeping controls clickable", async (count) => {

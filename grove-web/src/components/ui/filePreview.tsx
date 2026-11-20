@@ -594,7 +594,7 @@ export function FilePreviewDrawer({
             }
           }
         }}
-        className={`outline-none ${fullscreen || groveFullscreen ? 'fixed inset-0 z-[9998] flex flex-col shadow-2xl' : `absolute inset-y-0 right-0 z-30 ${wide ? 'w-[min(96vw,1100px)]' : 'w-[min(92vw,780px)]'} max-w-full flex flex-col shadow-2xl`}`}
+        className={`outline-none ${fullscreen || groveFullscreen ? 'fixed inset-0 z-[9998] flex flex-col shadow-2xl' : `file-preview-drawer absolute inset-y-0 right-0 z-30 ${wide ? 'w-[min(96vw,1100px)]' : 'w-[min(92vw,780px)]'} max-w-full flex flex-col shadow-2xl`}`}
         style={{
           background: "var(--color-bg)",
           ...(fullscreen || groveFullscreen ? {} : { borderLeft: "1px solid var(--color-border)" }),

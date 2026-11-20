@@ -59,6 +59,9 @@ export interface DesignFrameHandle {
 }
 
 /** A scroll over the page; `x` and `y` are page pixels. */
+/** The fingers on a page, in page pixels; empty once the last one lifts. */
+export type FrameTouch = { id: number; x: number; y: number }[];
+
 export interface FrameWheel {
   deltaX: number;
   deltaY: number;
@@ -105,6 +108,7 @@ interface DesignFrameProps {
   onEscape?: () => void;
   onLocated?: (boxes: AnchorBoxes) => void;
   onWheel?: (wheel: FrameWheel) => void;
+  onTouch?: (points: FrameTouch) => void;
   onTree?: (tree: TreeNode[]) => void;
   /** An edit was made; the element chosen afterwards, if any. */
   onEdited?: (element: PickedElement | null) => void;
@@ -135,13 +139,13 @@ function accentColor(): string {
  */
 export function DesignFrame({
   ref, html, version, filesBase, title, width, height, interactive, picking = false, forwardWheel = false, tree = false, editable = false, scale = 1, anchors,
-  onReady, onHeight, onSelected, onNavigate, onScrollTo, onEscape, onLocated, onWheel, onTree, onEdited, onVariables, onChanged, onMoved, onUndo,
+  onReady, onHeight, onSelected, onNavigate, onScrollTo, onEscape, onLocated, onWheel, onTouch, onTree, onEdited, onVariables, onChanged, onMoved, onUndo,
 }: DesignFrameProps) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const frameId = useId();
   const ready = useRef(false);
   const pending = useRef(new Map<string, (capture: FrameCapture) => void>());
-  const handlers = useRef({ onReady, onHeight, onSelected, onNavigate, onScrollTo, onEscape, onLocated, onWheel, onTree, onEdited, onVariables, onChanged, onMoved, onUndo });
+  const handlers = useRef({ onReady, onHeight, onSelected, onNavigate, onScrollTo, onEscape, onLocated, onWheel, onTouch, onTree, onEdited, onVariables, onChanged, onMoved, onUndo });
   const state = useRef({ picking, forwardWheel, tree, editable, scale, anchors });
 
   const srcDoc = useMemo(
@@ -155,7 +159,7 @@ export function DesignFrame({
   const sendRef = useRef(send);
 
   useEffect(() => {
-    handlers.current = { onReady, onHeight, onSelected, onNavigate, onScrollTo, onEscape, onLocated, onWheel, onTree, onEdited, onVariables, onChanged, onMoved, onUndo };
+    handlers.current = { onReady, onHeight, onSelected, onNavigate, onScrollTo, onEscape, onLocated, onWheel, onTouch, onTree, onEdited, onVariables, onChanged, onMoved, onUndo };
     state.current = { picking, forwardWheel, tree, editable, scale, anchors };
     sendRef.current = send;
   });
@@ -205,6 +209,9 @@ export function DesignFrame({
           break;
         case "grove-design:wheel":
           on.onWheel?.(data as unknown as FrameWheel);
+          break;
+        case "grove-design:touch":
+          if (Array.isArray(data.points)) on.onTouch?.(data.points as FrameTouch);
           break;
         case "grove-design:tree":
           on.onTree?.(data.tree as TreeNode[]);

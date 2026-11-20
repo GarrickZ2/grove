@@ -3,6 +3,7 @@ import { useRadioEvents, refreshRadioActivity } from '../hooks/useRadioEvents';
 import { getTask, listChats } from '../api/tasks';
 import { loadActivitySnapshot } from './activitySnapshot';
 import { activityContent, reduceActivity, type ActivityState } from './activityState';
+import { publishActivity } from './activityFeed';
 
 /** One controller for the authenticated server, independent of the current page. */
 export function IosLiveActivity() {
@@ -15,6 +16,8 @@ export function IosLiveActivity() {
   const snapshotUnavailable = useRef(false);
   const metadataRequests = useRef(new Set<string>());
   const send = (stale = disconnected.current, diagnostic?: string) => {
+    // The tent view on iPhone Duo shows the same sessions, straight from this state.
+    publishActivity([...state.current.values()]);
     const metadata = (window as Window & { __GROVE_IOS_SERVER__?: { token?: string } }).__GROVE_IOS_SERVER__;
     if (!metadata?.token || !alive.current) return;
     const content = activityContent(state.current, window.location.origin);

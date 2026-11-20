@@ -15,6 +15,9 @@ export function buildDesignDocument(html: string, options: { frameId: string; fi
   const config = JSON.stringify(options).replace(/</g, "\\u003c");
   const head = [
     /<base[\s>]/i.test(html) ? "" : `<base href="${options.filesBase.replace(/"/g, "&quot;")}">`,
+    // iOS enlarges text in blocks wider than the phone (text autosizing); a
+    // design page is drawn at its own width, so it must keep its sizes.
+    `<style>html{-webkit-text-size-adjust:100%;text-size-adjust:100%}</style>`,
     `<script>window.__groveDesign=${config};</script>`,
     `<script>${ANCHOR_SCRIPT}${bridgeSource}</script>`,
   ].join("");

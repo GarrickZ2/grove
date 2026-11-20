@@ -66,7 +66,7 @@ function ActionSheet({ items, isOpen, onClose }: { items: ContextMenuItem[]; isO
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed inset-x-0 bottom-0 z-[9999] pb-[env(safe-area-inset-bottom)]"
+            className="fixed inset-x-0 bottom-0 z-[9999] pb-[var(--grove-safe-bottom,env(safe-area-inset-bottom))]"
           >
             <div className="glass-overlay rounded-t-2xl">
               {/* Drag indicator */}

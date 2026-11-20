@@ -79,6 +79,8 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
   const [expansionByProject, setExpansionByProject] = useState<Record<string, ExpansionState>>({});
   const [moreExpanded, setMoreExpanded] = useState(false);
   const [sessions, setSessions] = useState<Record<string, ChatSessionResponse[]>>({});
+  const [sessionLoadFailed, setSessionLoadFailed] = useState<Record<string, boolean>>({});
+  const [sessionRetry, setSessionRetry] = useState<{ taskId: string } | null>(null);
   const sessionRefreshGeneration = useRef<Record<string, number>>({});
   const [activity, dispatchActivity] = useReducer(sessionActivityReducer, {});
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -134,16 +136,26 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
       const chats = await listChats(pid, tid);
       if (sessionRefreshGeneration.current[key] !== generation) return;
       setSessions((previous) => ({ ...previous, [key]: chats }));
+      setSessionLoadFailed((previous) => (previous[key] ? { ...previous, [key]: false } : previous));
     } catch (err) {
       if (sessionRefreshGeneration.current[key] !== generation) return;
       console.error("Failed to load Orbit sessions", err);
-      setError("Could not load sessions. Try refreshing the project.");
+      setSessionLoadFailed((previous) => ({ ...previous, [key]: true }));
     }
   }, []);
   useEffect(() => {
+    if (!projectId || !sessionRetry) return;
+    void Promise.resolve().then(() => refreshSessions(projectId, sessionRetry.taskId));
+  }, [projectId, sessionRetry, refreshSessions]);
+  // Opened folders first: the browser runs only a few requests at once.
+  const expandedRef = useRef(expandedTasks);
+  useEffect(() => { expandedRef.current = expandedTasks; }, [expandedTasks]);
+  useEffect(() => {
     if (!projectId) return;
     void Promise.resolve().then(() => {
-      for (const tid of taskKey.split("\u0000").filter(Boolean)) void refreshSessions(projectId, tid);
+      const open = new Set(["_local", ...expandedRef.current]);
+      const ids = taskKey.split("\u0000").filter(Boolean);
+      for (const tid of [...ids.filter((id) => open.has(id)), ...ids.filter((id) => !open.has(id))]) void refreshSessions(projectId, tid);
     });
   }, [projectId, taskKey, refreshSessions]);
   useEffect(() => {
@@ -300,7 +312,31 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
       setError(null);
     } catch (err) { showError((err as { message?: string })?.message || "Could not update the pin."); }
   };
-  const renderSessions = (taskId: string) => (sessions[`${projectId}:${taskId}`] ?? []).map((chat) => {
+  const retrySessions = (taskId: string) => {
+    if (!projectId) return;
+    setSessionLoadFailed((previous) => ({ ...previous, [`${projectId}:${taskId}`]: false }));
+    setSessionRetry({ taskId });
+  };
+  // An opened folder whose sessions haven't arrived yet shows that they are on the way.
+  const renderSessions = (taskId: string) => {
+    const key = `${projectId}:${taskId}`;
+    if (sessions[key]) return renderSessionRows(taskId);
+    const nested = taskId === "_local" ? "" : " orbit-session-nested";
+    if (sessionLoadFailed[key]) {
+      return (
+        <div className={`orbit-row orbit-session orbit-session-status${nested}`}>
+          <span className="orbit-truncate">Couldn't load sessions</span>
+          <button type="button" className="orbit-session-retry" onClick={() => retrySessions(taskId)}>Retry</button>
+        </div>
+      );
+    }
+    return (
+      <div className={`orbit-row orbit-session orbit-session-status${nested}`} role="status" aria-label="Loading sessions">
+        <span className="orbit-session-placeholder" />
+      </div>
+    );
+  };
+  const renderSessionRows = (taskId: string) => (sessions[`${projectId}:${taskId}`] ?? []).map((chat) => {
     const sessionActivity = activity[`${projectId}:${taskId}:${chat.id}`];
     const status = sessionActivity?.status;
     const waiting = status === "permission_required" || sessionActivity?.waitingForInput;

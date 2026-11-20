@@ -1,0 +1,126 @@
+/* iPhone Duo's column in the iOS app (OrbitDuoRail). The page pads itself by
+   the column's inset; the rail fills that strip. The system pill sits at its
+   top: ~157pt tall on the outer screen in portrait, ~86pt on the inner screen
+   in landscape. */
+.orbit-duo-rail {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 70;
+  display: flex;
+  width: env(safe-area-inset-right);
+  flex-direction: column;
+  align-items: center;
+  padding: 172px 0 calc(var(--grove-safe-bottom,env(safe-area-inset-bottom)) + 8px);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+@media (orientation: landscape) {
+  .orbit-duo-rail { padding-top: 104px; }
+}
+.orbit-duo-rail > * { pointer-events: auto; }
+
+.orbit-duo-new {
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  /* Tinted glass: the one primary control, dark but still a pane of glass. */
+  background: color-mix(in oklab, var(--color-text) 78%, transparent);
+  color: var(--color-bg);
+  box-shadow: inset 0 1px .5px rgb(255 255 255 / 28%), inset 0 0 0 .5px rgb(255 255 255 / 16%), var(--glass-lift, 0 6px 18px -6px rgb(0 0 0 / 35%));
+  -webkit-backdrop-filter: var(--glass-filter, blur(12px));
+  backdrop-filter: var(--glass-filter, blur(12px));
+  cursor: pointer;
+  transition: transform var(--o-dur-fast, 150ms) var(--o-ease-out, ease-out), opacity var(--o-dur-fast, 150ms);
+}
+.orbit-duo-new:active { transform: scale(.94); }
+.orbit-duo-new:disabled { background: var(--glass-fill); box-shadow: var(--glass-rim), var(--glass-lift); color: color-mix(in oklab, var(--color-text) 35%, transparent); cursor: default; }
+
+.orbit-duo-dock {
+  display: flex;
+  margin-top: auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  /* A column of controls, not a second sidebar: about six buttons tall,
+     the panels scrolling inside. */
+  max-height: min(calc(100% - 64px), 300px);
+  min-height: 0;
+  padding: 6px;
+  overflow: hidden;
+  border-radius: 28px;
+  scrollbar-width: none;
+}
+.orbit-duo-slot, .orbit-duo-tools { display: contents; }
+/* The menu and Agent above, the actions below, stay where the thumb expects
+   them; the panels between scroll when the column runs out, fading at the cut. */
+.orbit-duo-scroll {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  margin: -6px -6px;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+}
+.orbit-duo-scroll::-webkit-scrollbar { display: none; }
+.orbit-duo-slot:empty { display: none; }
+
+.orbit-duo-tool {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--o-muted, var(--color-text-muted));
+  cursor: pointer;
+  transition: background var(--o-dur-fast, 150ms), color var(--o-dur-fast, 150ms), transform var(--o-dur-fast, 150ms);
+}
+.orbit-duo-tool:active { transform: scale(.94); }
+.orbit-duo-tool:disabled { opacity: .4; cursor: default; }
+.orbit-duo-sep { width: 24px; height: 1px; flex: none; background: color-mix(in oklab, var(--color-text) 12%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .orbit-duo-new, .orbit-duo-tool { transition: none; }
+}
+
+/* The drawer and the panel sheet dim the page; the column beside it dims with
+   them, or it stays bright and reads as a different surface. */
+.orbit-duo-rail::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: rgba(0, 0, 0, .32);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .32s ease;
+}
+html.grove-drawer-open .orbit-duo-rail::after,
+html.grove-sheet-open .orbit-duo-rail::after { opacity: 1; }
+html.grove-drawer-open .orbit-duo-rail > *,
+html.grove-sheet-open .orbit-duo-rail > * { pointer-events: none; }
+
+/* The outer screen turned sideways: the column, and the rail, are on the left. */
+.orbit-duo-rail.is-left { right: auto; left: 0; width: env(safe-area-inset-left); }
+
+/* The layout switch (split / chat / panel): one group, pressed in like a segmented control. */
+.orbit-duo-layout { display: flex; flex: none; flex-direction: column; align-items: center; gap: 2px; padding: 2px; border-radius: 24px; background: color-mix(in oklab, var(--color-text) 6%, transparent); }
+.orbit-duo-layout .orbit-duo-tool { width: 40px; height: 40px; }

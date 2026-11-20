@@ -4,7 +4,8 @@
 }
 .orbit-window-header {
   position: fixed;
-  inset: 0 0 auto;
+  /* Below the status bar and clear of iPhone Duo's column in a full-bleed iOS window. */
+  inset: env(safe-area-inset-top) env(safe-area-inset-right) auto 0;
   height: var(--orbit-header-height, 40px);
   /* Above the App-level drag strip (z-45); the toolbar host carries its own drag attributes. */
   z-index: 50;
@@ -87,7 +88,7 @@
   --orbit-list-row-gap: 2px;
   position: fixed;
   z-index: 50;
-  inset: 0 auto 0 0;
+  inset: env(safe-area-inset-top) auto var(--grove-safe-bottom,env(safe-area-inset-bottom)) 0;
   display: flex;
   flex-direction: column;
   width: var(--orbit-sidebar-width, 256px);
@@ -174,6 +175,13 @@
 .orbit-session { min-height: 32px; }
 .orbit-session-readonly { flex: none; color: var(--color-text-muted); opacity: .75; }
 .orbit-session-nested { padding-left: 32px; }
+.orbit-session-status { cursor: default; color: var(--color-text-muted); }
+.orbit-session-status:hover { background: transparent; }
+.orbit-session-placeholder { width: 58%; height: 9px; border-radius: 999px; background: color-mix(in oklab, var(--color-text) 10%, transparent); animation: orbit-session-pulse 1.2s ease-in-out infinite; }
+@keyframes orbit-session-pulse { 50% { opacity: .45; } }
+.orbit-session-retry { flex: none; padding: 2px 8px; border-radius: 6px; color: var(--color-highlight); font-size: 12.5px; }
+.orbit-session-retry:hover { background: var(--color-bg-tertiary, color-mix(in oklab, var(--color-text) 6%, transparent)); }
+@media (prefers-reduced-motion: reduce) { .orbit-session-placeholder { animation: none; } }
 .orbit-truncate { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .orbit-task { position: relative; margin-top: var(--orbit-list-row-gap); }
 .orbit-task.is-dragging { opacity: .4; }
@@ -234,7 +242,7 @@
 .orbit-rename-dialog button:disabled { opacity: .45; cursor: default; }
 /* Notifications: hangs from the header and stays inside the sidebar, like the project switcher's menu. */
 .orbit-notification-menu { position: absolute; z-index: 60; top: 100%; right: 8px; left: 8px; display: flex; flex-direction: column; max-height: 460px; padding: 5px; border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent); border-radius: 14px; background: var(--color-bg); box-shadow: 0 4px 18px rgba(0, 0, 0, .10); }
-.orbit-notification-sheet { position: fixed; z-index: 90; inset: auto 0 0; display: flex; flex-direction: column; max-height: 70vh; padding: 0 8px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent); border-radius: 18px 18px 0 0; background: var(--color-bg); box-shadow: 0 -8px 28px rgba(0, 0, 0, .12); }
+.orbit-notification-sheet { position: fixed; z-index: 90; inset: auto 0 0; display: flex; flex-direction: column; max-height: 70vh; padding: 0 8px calc(8px + var(--grove-safe-bottom,env(safe-area-inset-bottom))); border-top: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent); border-radius: 18px 18px 0 0; background: var(--color-bg); box-shadow: 0 -8px 28px rgba(0, 0, 0, .12); }
 .orbit-notification-scrim { position: fixed; z-index: 89; inset: 0; background: rgba(0, 0, 0, .32); }
 .orbit-notification-grabber { width: 36px; height: 4px; flex: none; margin: 8px auto 2px; border-radius: 999px; background: color-mix(in oklab, var(--color-text) 18%, transparent); }
 .orbit-notification-header { display: flex; flex: none; align-items: center; gap: 7px; min-height: 32px; padding: 0 4px 0 9px; font-size: 13px; font-weight: 600; }
@@ -288,7 +296,7 @@
 /* Phone: the drawer slides in over the page. Above the page (z 2), below dialogs and menus (z 50+). */
 .orbit-phone-drawer { --orbit-drawer-width: min(84vw, 320px); position: fixed; inset: 0 auto 0 0; z-index: 40; width: var(--orbit-drawer-width); visibility: hidden; transform: translateX(-100%); transition: transform .32s cubic-bezier(.25, 1, .5, 1), box-shadow .32s ease, visibility 0s .32s; }
 .orbit-phone-drawer.is-open { visibility: visible; transform: none; box-shadow: 1px 0 0 color-mix(in oklab, var(--color-border) 70%, transparent), 18px 0 40px rgba(0, 0, 0, .22); transition: transform .32s cubic-bezier(.25, 1, .5, 1), box-shadow .32s ease; }
-.orbit-sidebar.is-drawer { position: absolute; inset: 0; width: 100%; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+.orbit-sidebar.is-drawer { position: absolute; inset: 0; width: 100%; padding-top: env(safe-area-inset-top); padding-bottom: var(--grove-safe-bottom,env(safe-area-inset-bottom)); }
 .orbit-sidebar.is-drawer::after { display: none; }
 .orbit-sidebar.is-drawer .orbit-header { height: 56px; padding: 0 10px 0 16px; }
 .orbit-sidebar.is-drawer .orbit-icon-button { width: 40px; height: 40px; border-radius: 50%; }
@@ -317,6 +325,13 @@
 .orbit-phone-header { display: grid; flex: none; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; height: 56px; padding: 0 12px; }
 /* Menu button sits just right of the traffic lights (they end ~81px in, centered at ~28px like this bar). */
 .orbit-phone-header.has-mac-controls { padding-left: 92px; }
+/* iPhone Duo's column holds every button, so the header is only the title: a
+   pill floating over the page, the conversation fading out beneath it. In a
+   book fold it centres over the Agent's screen. */
+.orbit-phone-header.is-railed { display: flex; justify-content: center; padding: 0 12px 0 calc(12px + var(--grove-fold-left, 0px)); }
+.orbit-phone-header.is-railed .orbit-phone-title { max-width: min(80%, 460px); height: 40px; align-items: center; padding: 0 16px; border-radius: 20px; background: color-mix(in oklab, var(--color-bg) 82%, transparent); box-shadow: 0 1px 3px rgb(0 0 0 / 8%), 0 0 0 .5px color-mix(in oklab, var(--color-text) 12%, transparent); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+.orbit-phone-header.is-railed .orbit-phone-actions { display: none; }
+
 .orbit-phone-button { display: inline-flex; width: 40px; height: 40px; flex: none; align-items: center; justify-content: center; border: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent); border-radius: 50%; background: color-mix(in oklab, var(--color-text) 5%, var(--color-bg)); color: var(--color-text); cursor: pointer; }
 .orbit-phone-button:active { background: color-mix(in oklab, var(--color-text) 12%, var(--color-bg)); }
 .orbit-phone-button:disabled { opacity: .4; cursor: default; }
@@ -327,15 +342,13 @@
 .orbit-phone-title-fallback, .orbit-phone-session-title { overflow: hidden; color: var(--color-text); font-size: 15px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .orbit-phone-session-title { display: flex; min-width: 0; align-items: center; gap: 6px; }
 .orbit-phone-session-title > span { overflow: hidden; text-overflow: ellipsis; }
+.orbit-phone-session-place { display: none; }
 .orbit-phone-actions { display: flex; align-items: center; gap: 8px; }
 .orbit-phone-actions-slot { display: flex; align-items: center; }
 .orbit-phone-actions-slot:empty { display: none; }
-/* An open panel shows as a closable chip next to New. */
-.orbit-phone-panel-chip { display: inline-flex; max-width: 140px; height: 40px; align-items: center; gap: 6px; padding: 0 10px 0 12px; border: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent); border-radius: 999px; background: color-mix(in oklab, var(--color-text) 9%, var(--color-bg)); color: var(--color-text); font-size: 13px; font-weight: 500; cursor: pointer; }
-.orbit-phone-panel-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .orbit-phone-sheet { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-end; }
 .orbit-phone-sheet__backdrop { position: absolute; inset: 0; padding: 0; border: 0; background: rgba(0, 0, 0, .32); cursor: default; animation: orbit-sheet-fade .2s ease; }
-.orbit-phone-sheet__panel { position: relative; width: 100%; max-height: 80%; overflow-y: auto; padding: 8px 14px calc(16px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; background: var(--color-bg); box-shadow: 0 -10px 40px rgba(0, 0, 0, .18); animation: orbit-sheet-up .28s cubic-bezier(.25, 1, .5, 1); }
+.orbit-phone-sheet__panel { position: relative; width: 100%; max-height: 80%; overflow-y: auto; padding: 8px 14px calc(16px + var(--grove-safe-bottom,env(safe-area-inset-bottom))); border-radius: 22px 22px 0 0; background: var(--color-bg); box-shadow: 0 -10px 40px rgba(0, 0, 0, .18); animation: orbit-sheet-up .28s cubic-bezier(.25, 1, .5, 1); }
 @keyframes orbit-sheet-fade { from { opacity: 0; } }
 @keyframes orbit-sheet-up { from { transform: translateY(40%); opacity: 0; } }
 .orbit-phone-sheet__grabber { width: 36px; height: 4px; margin: 0 auto 14px; border-radius: 2px; background: color-mix(in oklab, var(--color-text) 20%, transparent); }
@@ -350,8 +363,19 @@
 .orbit-phone-sheet__action:disabled { opacity: .4; cursor: default; }
 .orbit-phone-sheet__action.is-warning { color: var(--color-warning); }
 .orbit-phone-sheet__action.is-danger { color: var(--color-error); }
-/* Phone: the header chip names and closes the open panel, so the panel drops its own title bar. */
-.ide-workbench.is-orbit.is-phone .ide-panel-slot__header { display: none; }
+/* Phone: the header chip names and closes the open panel, so the panel drops
+   its own title bar. In iPhone Duo's column there is no chip: the panel keeps it. */
+.ide-workbench.is-orbit.is-phone:not(.is-rail) .ide-panel-slot__header { display: none; }
+/* iPhone Duo: the rail opens and closes panels, so a panel has no title bar of
+   its own; it starts under the floating title pill, one surface with it, as
+   the chat does. */
+.ide-workbench.is-orbit.is-phone.is-rail .ide-panel-slot__header { display: none; }
+.ide-workbench.is-orbit.is-phone.is-rail :is(.ide-aux-host, .ide-info-host) { background: var(--color-bg); }
+/* Phone: the conversation is the page itself, edge to edge in the page's colour,
+   not a card inside it. */
+.ide-workbench.is-orbit.is-phone { padding: 0; }
+.ide-workbench.is-orbit.is-phone .ide-chat-surface,
+.ide-workbench.is-orbit.is-phone .ide-chat-surface > div > div:first-child { background: var(--color-bg); }
 /* Same height as the desktop sidebar's macOS title bar. */
 .orbit-drawer-titlebar { height: 44px; flex: none; }
 
@@ -384,7 +408,7 @@
   grid-template-columns: 232px minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   column-gap: 6px;
-  padding: 14px 8px env(safe-area-inset-bottom, 0px);
+  padding: 14px 8px var(--grove-safe-bottom,env(safe-area-inset-bottom, 0px));
   border-radius: 22px 22px 0 0;
   box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.16);
   animation: orbit-fold-sheet-in 260ms cubic-bezier(0.25, 1, 0.5, 1) both;
@@ -402,3 +426,137 @@
 .orbit-fold-grab::after { content: ""; position: absolute; left: 24px; right: 24px; top: 6px; height: 5px; border-radius: 3px; background: color-mix(in oklab, var(--color-text) 22%, transparent); }
 @keyframes orbit-fold-sheet-in { from { transform: translateY(40px); opacity: 0; } }
 @keyframes orbit-fold-scrim-in { from { opacity: 0; } }
+/* iPhone Duo's inner screen upright: the header fills the status strip, short
+   of the system pill at its right end. */
+html.grove-duo-top .grove-app-shell { padding-top: 0 !important; }
+/* The system pill sits below the strip's middle (its centre ~48pt down an 82pt
+   strip): line the header up with it rather than with the strip. */
+html.grove-duo-top .orbit-phone-header { box-sizing: border-box; height: env(safe-area-inset-top); padding-top: 14px; padding-right: 180px; grid-template-columns: auto minmax(0, auto) 1fr; }
+/* The strip's controls float like the system pill beside them: a round menu
+   button, the title as a two-line pill (session over where it lives) and one
+   capsule for the actions, all glass over the page. */
+html.grove-duo-top .orbit-phone-header .orbit-phone-button { width: 44px; height: 44px; }
+html.grove-duo-top .orbit-phone-header .orbit-phone-title { justify-content: flex-start; align-items: center; height: 44px; padding: 0 18px; border-radius: 22px; }
+html.grove-duo-top .orbit-phone-header .orbit-phone-title-slot { justify-content: flex-start; }
+html.grove-duo-top .orbit-phone-header .orbit-phone-session-title { display: grid; grid-template-columns: auto minmax(0, auto); justify-content: center; column-gap: 6px; row-gap: 0; align-items: center; line-height: 1.2; }
+html.grove-duo-top .orbit-phone-header .orbit-phone-session-title > svg { grid-row: 1; }
+html.grove-duo-top .orbit-phone-header .orbit-phone-session-place:not(:empty) { display: block; grid-column: 1 / -1; overflow: hidden; color: var(--color-text-muted); font-size: 12px; font-weight: 400; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+html.grove-duo-top .orbit-phone-header .orbit-phone-actions { justify-self: end; gap: 0; height: 44px; padding: 0 4px; border-radius: 22px; }
+html.grove-duo-top .orbit-phone-header .orbit-phone-actions .orbit-phone-button { width: 40px; height: 40px; border: 0; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* A wide touch screen (iPhone Duo's inner screen, an iPad on its side) keeps
+   the phone layout; the conversation keeps a readable width in the middle. */
+@media (pointer: coarse) and (min-width: 860px) {
+  /* Narrow the columns, not the surface: the composer's backdrop still runs edge to edge. */
+  .ide-workbench.is-phone:not(.is-fold-book):not(.is-fold-laptop) .ide-chat-surface :is(.chat-selection-layout.max-w-\[920px\], .chatbox-cq-root, .task-chat-input-area .max-w-\[920px\]) { max-width: 760px; }
+  .orbit-new.is-phone .orbit-new__inner { max-width: 760px; margin-inline: auto; }
+}
+/* On a wide touch screen the panel sheet stays phone-sized, centred. */
+@media (pointer: coarse) and (min-width: 860px) {
+  .orbit-phone-sheet { justify-content: center; }
+  .orbit-phone-sheet__panel { max-width: 560px; }
+}
+/* The strip's pill sits at the far right, well clear of the drawer: the drawer
+   starts at the top instead of below the whole strip. */
+html.grove-duo-top .orbit-sidebar.is-drawer { padding-top: 12px; }
+
+/* Liquid Glass: one material for every control that floats over the page on a
+   touch screen — clear enough to see the page through, a bright rim where the
+   light catches its edge, and a soft lift. */
+:root {
+  --glass-fill: color-mix(in oklab, var(--color-bg) 40%, transparent);
+  --glass-fill-strong: color-mix(in oklab, var(--color-bg) 62%, transparent);
+  --glass-filter: blur(12px) saturate(190%) brightness(1.05);
+  --glass-rim: inset 0 1px .5px rgb(255 255 255 / 70%), inset 0 -.5px .5px rgb(255 255 255 / 30%), inset 0 0 0 .5px rgb(255 255 255 / 40%);
+  --glass-lift: 0 0 0 .5px rgb(0 0 0 / 7%), 0 8px 22px -8px rgb(0 0 0 / 22%);
+}
+:root[data-theme="dark"] {
+  --glass-fill: color-mix(in oklab, var(--color-bg) 36%, transparent);
+  --glass-fill-strong: color-mix(in oklab, var(--color-bg) 58%, transparent);
+  --glass-filter: blur(12px) saturate(170%) brightness(.92);
+  --glass-rim: inset 0 1px .5px rgb(255 255 255 / 22%), inset 0 0 0 .5px rgb(255 255 255 / 12%);
+  --glass-lift: 0 0 0 .5px rgb(0 0 0 / 45%), 0 8px 22px -8px rgb(0 0 0 / 55%);
+}
+.grove-glass,
+.orbit-phone-header .orbit-phone-button,
+.orbit-phone-header .orbit-phone-switch,
+.orbit-phone-header.is-railed .orbit-phone-title,
+html.grove-duo-top .orbit-phone-header :is(.orbit-phone-button, .orbit-phone-title, .orbit-phone-actions),
+.orbit-duo-dock {
+  border: 0;
+  background: var(--glass-fill);
+  box-shadow: var(--glass-rim), var(--glass-lift);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+}
+html.grove-duo-top .orbit-phone-header .orbit-phone-actions .orbit-phone-button { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* The bottom sheet is a thicker pane of the same glass. */
+.orbit-phone-sheet__panel { background: var(--glass-fill-strong); box-shadow: var(--glass-rim), 0 -10px 40px rgb(0 0 0 / 18%); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); }
+/* Pressed: the glass gathers more light rather than turning solid. */
+.orbit-phone-header .orbit-phone-button:active { background: var(--glass-fill-strong); transform: scale(.96); }
+.orbit-duo-tool.is-on {
+  background: var(--glass-fill-strong);
+  color: var(--color-text);
+  box-shadow: var(--glass-rim), 0 0 0 .5px rgb(0 0 0 / 6%), 0 4px 12px -6px rgb(0 0 0 / 22%);
+}
+/* The phone Composer floats over the conversation too: the same glass, a
+   little denser so what's typed stays easy to read. The blur sits on a layer
+   of its own so the Composer's popovers keep the screen as their frame. */
+/* Glass behind the Composer: the fill alone, so the edge gradient stays on the edge. */
+.oc-shell.is-phone, .oc-shell.is-phone:focus-within { --oc-panel: var(--glass-fill-strong); background: var(--oc-panel) padding-box; border-color: color-mix(in oklab, var(--color-text) 10%, transparent); }
+.oc-shell.is-phone:focus-within { border-color: color-mix(in oklab, var(--oc-green) 45%, transparent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--oc-green) 10%, transparent), var(--glass-lift); }
+.oc-shell.is-phone::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  box-shadow: var(--glass-rim);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  pointer-events: none;
+}
+
+/* The header floats: its controls are glass over the page, and the page runs
+   up underneath them, softened by a short blurred fade instead of a bar.
+   Scrolling pages pad their scroller by the header's height, so their first
+   line starts below it and scrolls up under it. */
+.orbit-phone-stage { --orbit-top-inset: 56px; }
+html.grove-duo-top .orbit-phone-stage { --orbit-top-inset: env(safe-area-inset-top); }
+.orbit-phone-stage > .orbit-phone-header { position: absolute; inset: 0 0 auto; z-index: 30; pointer-events: none; }
+.orbit-phone-stage > .orbit-phone-header > * { pointer-events: auto; }
+.orbit-phone-stage > .orbit-phone-header::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -18px;
+  z-index: -1;
+  background: linear-gradient(to bottom, var(--color-bg) 0%, color-mix(in oklab, var(--color-bg) 72%, transparent) 55%, transparent 100%);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent);
+  mask-image: linear-gradient(to bottom, #000 60%, transparent);
+  pointer-events: none;
+}
+.orbit-phone-main { padding-top: var(--orbit-top-inset); }
+.orbit-phone-main.is-workspace { padding-top: 0; }
+.orbit-phone-main .task-chat-top-inset { height: var(--orbit-top-inset); }
+/* Panels beside or instead of the conversation start below the header too. */
+.orbit-phone-main .ide-workbench.is-phone:not(.is-fold-laptop) :is(.ide-aux-host, .ide-info-host, .orbit-fold-picker) { padding-top: var(--orbit-top-inset); }
+.orbit-phone-main .ide-workbench.is-fold-laptop .orbit-laptop-strip { margin-top: var(--fold-gap, 0px); }
+/* Split view: the title belongs to the conversation, over its own column;
+   the panel column has no header above it and starts near the top. */
+.orbit-phone-stage:has(.ide-workbench.is-split) > .orbit-phone-header.is-railed { padding-left: calc(var(--grove-split-x, 50%) + 12px); }
+.orbit-phone-main .ide-workbench.is-phone.is-split:not(.is-fold-laptop) :is(.ide-aux-host, .ide-info-host) { padding-top: 10px; }
+
+/* A Design board runs up under the floating header and the status bar, so
+   there is no band of page colour above it; its own controls start below. */
+.orbit-phone-main .ide-workbench.is-phone:not(.is-fold-laptop):not(.is-split) :is(.ide-aux-host, .ide-info-host):has(.design-board-wrap) { padding-top: 0; --panel-top-inset: var(--orbit-top-inset); }
+.orbit-phone-stage:has(.ide-workbench.is-phone:not(.is-split) :is(.ide-aux-host, .ide-info-host)[style*="flex"] > [style*="flex"] .design-board-wrap) > .orbit-phone-header::before { display: none; }
+/* Agent | the open panel: which one shows, and the way back, without a close button. */
+.orbit-phone-switch { display: inline-flex; height: 40px; flex: none; align-items: center; gap: 2px; padding: 3px; border-radius: 20px; }
+.orbit-phone-switch > button { display: inline-flex; height: 34px; min-width: 34px; max-width: 128px; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 0; border-radius: 17px; background: transparent; color: color-mix(in oklab, var(--color-text) 62%, transparent); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.orbit-phone-switch > button.is-on { background: var(--glass-fill-strong); box-shadow: 0 0 0 .5px rgb(0 0 0 / 6%), 0 2px 6px -2px rgb(0 0 0 / 18%); color: var(--color-text); }
+.orbit-phone-switch > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html.grove-duo-top .orbit-phone-header .orbit-phone-actions .orbit-phone-switch { height: 36px; padding: 2px; background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+html.grove-duo-top .orbit-phone-header .orbit-phone-actions .orbit-phone-switch > button { height: 32px; }
+/* Split view: the header's fade belongs to the conversation's column only. */
+.orbit-phone-stage:has(.ide-workbench.is-split) > .orbit-phone-header::before { left: var(--grove-split-x, 50%); }

@@ -75,6 +75,9 @@ import { listMarketplace } from "./api/marketplace";
 import { setMarketplaceIcons } from "./utils/agentIcon";
 import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
 import { TabletAsDesktopContext } from "./hooks/useIsMobile";
+import { useDuoRail, useDuoTopStrip } from "./hooks/useDuoRail";
+import { OrbitDuoRail } from "./components/Layout/OrbitDuoRail";
+import { OrbitTentView } from "./components/Layout/OrbitTentView";
 import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
 import { readLastProjectView, writeLastProjectView } from "./utils/lastProjectView";
@@ -218,6 +221,18 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   const orbitPhone = orbit && isMobile;
   const laptopFold = useLaptopFold();
   const laptopFolded = !!laptopFold && orbit && !isMobile;
+  // iPhone Duo in the iOS app: Grove's controls move onto the column beside the screen.
+  const duoRail = useDuoRail() && orbit && !laptopFolded;
+  // iPhone Duo's inner screen upright: its column is a strip across the top;
+  // the phone header moves up into it instead of starting below it.
+  const duoTopStrip = useDuoTopStrip() && orbitPhone;
+  useEffect(() => {
+    document.documentElement.classList.toggle("grove-duo-top", duoTopStrip);
+    return () => document.documentElement.classList.remove("grove-duo-top");
+  }, [duoTopStrip]);
+  // Both shells pad by the side safe-area insets, which keeps content out of a
+  // sideways iPhone's Dynamic Island and iPhone Duo's column; the page's own
+  // background still fills them.
   const foldGrabY = useRef(0);
   const [preferredTasksMode, setTasksMode] = useState<TasksMode>(restoredNavigation?.tasksMode ?? "zen");
   const tasksMode: TasksMode = isMobile || orbit ? "zen" : preferredTasksMode;
@@ -397,6 +412,11 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Lets what sits outside the page (iPhone Duo's column) dim with the drawer.
+  useEffect(() => {
+    document.documentElement.classList.toggle("grove-drawer-open", drawerOpen);
+    return () => document.documentElement.classList.remove("grove-drawer-open");
+  }, [drawerOpen]);
   const orbitDrawerRef = useRef<HTMLDivElement>(null);
   const orbitStageRef = useRef<HTMLDivElement>(null);
   const orbitScrimRef = useRef<HTMLButtonElement>(null);
@@ -536,13 +556,15 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       // Composer moves, and what's above it can still be read and scrolled.
       const viewportKeyboardHeight = stableAppHeight - vv.height;
       const overlayKeyboardHeight = virtualKeyboard?.boundingRect.height ?? 0;
-      const keyboardHeight = Math.max(viewportKeyboardHeight, overlayKeyboardHeight);
+      // The iOS app measures the keyboard itself and keeps the page from panning.
+      const nativeKeyboard = (window as Window & { __GROVE_KEYBOARD__?: number }).__GROVE_KEYBOARD__;
+      const keyboardHeight = typeof nativeKeyboard === "number" ? nativeKeyboard : Math.max(viewportKeyboardHeight, overlayKeyboardHeight);
       const keyboardOpen = editing && keyboardHeight > 50;
 
       root.classList.toggle("grove-keyboard-open", keyboardOpen);
       root.style.setProperty("--grove-kb-inset", `${keyboardOpen ? keyboardHeight : 0}px`);
       if (keyboardOpen && window.scrollY !== 0) window.scrollTo(0, 0);
-      root.style.setProperty("--grove-vv-offset", `${keyboardOpen ? Math.max(0, Math.round(vv.offsetTop)) : 0}px`);
+      root.style.setProperty("--grove-vv-offset", `${keyboardOpen && typeof nativeKeyboard !== "number" ? Math.max(0, Math.round(vv.offsetTop)) : 0}px`);
 
       // focusout precedes the keyboard closing animation on iOS. Do not adopt
       // that transient short viewport as the new application height.
@@ -558,6 +580,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
     vv.addEventListener("scroll", recompute);
     virtualKeyboard?.addEventListener("geometrychange", recompute);
     window.addEventListener("resize", recompute);
+    window.addEventListener("grove:keyboard", recompute);
     // Recompute on focus changes so the inset drops to 0 the moment the
     // composer blurs (keyboard dismissed), even if no viewport event fires.
     // focusout fires before activeElement settles in Safari, so defer that
@@ -577,6 +600,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
       vv.removeEventListener("scroll", recompute);
       virtualKeyboard?.removeEventListener("geometrychange", recompute);
       window.removeEventListener("resize", recompute);
+      window.removeEventListener("grove:keyboard", recompute);
       window.removeEventListener("focusin", recompute);
       window.removeEventListener("focusout", recomputeAfterFocusOut);
       if (focusOutFrame !== null) cancelAnimationFrame(focusOutFrame);
@@ -1807,7 +1831,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // One page tree across breakpoints keeps task/workspace state alive.
   return (
     <TabletAsDesktopContext.Provider value={orbit}>
-    <div className={isMobile ? "grove-app-shell flex flex-col bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)]" : "flex h-screen bg-[var(--color-bg)] overflow-hidden"}>
+    <div className={isMobile ? "grove-app-shell flex flex-col bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]" : "flex h-screen bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"}>
       {/* Invisible top-edge drag strip — Tauri Overlay title-bar mode hides
           the OS title bar, so the user expects to drag the window from
           anywhere along the top edge (Raycast / Tahoe convention).
@@ -1853,11 +1877,21 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
           />
         </div>
       )}
-      <div ref={orbitStageRef} className={orbitPhone ? "orbit-phone-stage" : "contents"}>
+      <div ref={orbitStageRef} className={orbitPhone ? `orbit-phone-stage${duoRail ? " has-floating-header" : ""}` : "contents"}>
       {orbitPhone && (
         <OrbitPhoneHeader
           title={orbitPhoneTitle}
           onMenu={() => setDrawerOpen(true)}
+          onNew={() => handleNavigate("new")}
+          newDisabled={activeItem === "new"}
+          railed={duoRail}
+        />
+      )}
+      {duoRail && (
+        <OrbitDuoRail
+          phone={orbitPhone}
+          sidebarOpen={effectiveSidebarMode !== "collapsed"}
+          onMenu={() => (orbitPhone ? setDrawerOpen(true) : setSidebarMode(effectiveSidebarMode === "collapsed" ? "expanded" : "collapsed"))}
           onNew={() => handleNavigate("new")}
           newDisabled={activeItem === "new"}
         />
@@ -1923,7 +1957,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
                window edges. left tracks the sidebar collapsed state so
                the gap stays visually consistent in both modes. */}
             <main
-              className={isMobile ? `relative min-h-0 flex-1 ${activeItem === "tasks" || activeItem === "work" || activeItem === "ai" || activeItem === "new" ? "overflow-hidden" : "overflow-y-auto"}` : `fixed ${orbit ? "inset-y-0 right-0" : "top-3 right-3 bottom-3 rounded-2xl"} bg-[var(--color-bg)] transition-[left] duration-200 ease-in-out ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}
+              className={isMobile ? `relative min-h-0 flex-1${orbitPhone ? ` orbit-phone-main${activeItem === "tasks" || activeItem === "work" ? " is-workspace" : ""}` : ""} ${activeItem === "tasks" || activeItem === "work" || activeItem === "ai" || activeItem === "new" ? "overflow-hidden" : "overflow-y-auto"}` : `fixed ${orbit ? "inset-y-0 right-0" : "top-3 right-3 bottom-3 rounded-2xl"} bg-[var(--color-bg)] transition-[left] duration-200 ease-in-out ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}
               style={isMobile ? undefined : {
                 // Three-tier left: island → 12px (pill is at top-center, sidebar is
                 // effectively absent on the left edge so main uses full width);
@@ -1935,7 +1969,9 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
                   : (effectiveSidebarMode === "collapsed" ? "96px" : "280px"),
                 boxShadow: orbit ? "none" :
                   "0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06), 0 0 0 1px color-mix(in oklab, var(--color-border) 35%, transparent)",
-                top: orbit ? (orbitHeaderVisible ? (shouldAvoidTrafficLightsInIsland ? "54px" : "var(--orbit-header-height, 40px)") : "0px") : undefined,
+                top: orbit ? `calc(${orbitHeaderVisible ? (shouldAvoidTrafficLightsInIsland ? "54px" : "var(--orbit-header-height, 40px)") : "0px"} + env(safe-area-inset-top))` : undefined,
+                // A full-bleed iOS window: stay clear of iPhone Duo's column and the home indicator.
+                ...(orbit ? { right: "env(safe-area-inset-right)", bottom: "var(--grove-safe-bottom,env(safe-area-inset-bottom))" } : {}),
               }}
             >
               {/* TasksPage always mounted to preserve workspace state across tab switches.
@@ -2073,6 +2109,7 @@ function App() {
                         <OrbitFirstRun />
                         <BuddyOverlay open={buddyOpen} onOpen={openBuddies} onExit={closeBuddies}><AppContent pageVisible={!buddyOpen} /></BuddyOverlay>
                         {isIosClient && <IosLiveActivity />}
+                        {isIosClient && <OrbitTentView />}
                         <TransferDock />
                       </OptionalPerfProfiler>
                     </PreviewCommentProvider>

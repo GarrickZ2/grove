@@ -416,7 +416,7 @@ body.grove-resizing .conv-sidebar {
 
 /* TOC outline button: TocPanel itself is `hidden md:flex`, so hide the
    toggle below the same breakpoint to avoid a no-op click. */
-@media (max-width: 767px) {
+@media (pointer: coarse) {
   .diff-file-preview-btn-md-only {
     display: none;
   }

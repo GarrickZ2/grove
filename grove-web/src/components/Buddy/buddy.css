@@ -8,7 +8,7 @@
 .buddy-icon-button svg{width:18px;height:18px}
 .buddy-search{display:flex;align-items:center;gap:8px;height:34px;margin:4px 12px 12px;padding:0 10px;border:1px solid var(--buddy-border);border-radius:9px;color:var(--color-text-muted);background:var(--color-bg)}
 .buddy-search input{width:100%;min-width:0;background:transparent;outline:none;font-size:13px;color:var(--color-text)}
-.buddy-list{flex:1;min-height:0;overflow:auto;padding:0 8px max(8px,env(safe-area-inset-bottom,0px))}
+.buddy-list{flex:1;min-height:0;overflow:auto;padding:0 8px max(8px,var(--grove-safe-bottom,env(safe-area-inset-bottom,0px)))}
 .buddy-list-item{display:flex;align-items:center;gap:12px;padding:10px;width:100%;border-radius:12px;text-align:left;margin-bottom:2px}
 .buddy-list-item.is-selected,.buddy-list-item:hover{background:var(--buddy-selected)}
 .buddy-list-avatar{position:relative;flex-shrink:0}
@@ -80,13 +80,13 @@
 .buddy-memory-list>div:first-child{display:none}.buddy-memory-list button{display:block;padding:12px 0}.buddy-memory-list button>span:not(:first-child){display:none}.buddy-memory-document{overflow-wrap:anywhere}
 .buddy-form select{display:block;width:100%;padding:8px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-bg);margin-top:6px}
 
-.buddy-sheet{color:var(--color-text);background:var(--color-bg);padding-bottom:env(safe-area-inset-bottom,0px)}
+.buddy-sheet{color:var(--color-text);background:var(--color-bg);padding-bottom:var(--grove-safe-bottom,env(safe-area-inset-bottom,0px))}
 .buddy-sheet .buddy-side-panel{width:100%!important;min-width:0;max-height:80dvh;height:80dvh;border-left:0}
 .buddy-sheet .buddy-panel-resizer{display:none}
 .buddy-app.is-phone>.buddy-main{display:none}
 .buddy-app.is-phone.is-conversation-open>.buddy-main{display:flex}
 .buddy-app.is-phone.is-conversation-open>.buddy-sidebar{display:none}
-@media(max-width:767px){
+@media (pointer: coarse){
   .buddy-app{padding-top:env(safe-area-inset-top,0px)}
   .buddy-sidebar{width:100%;border:0}
   .buddy-sidebar-top{height:72px;min-height:72px;padding:12px 16px 8px 20px}
@@ -99,7 +99,7 @@
   .buddy-list-title{font-size:16px}
   .buddy-conversation-header{height:64px;min-height:64px;padding:0 8px;gap:6px}
   .buddy-header-status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .buddy-composer-wrap{width:calc(100% - 24px);margin:8px auto calc(20px + env(safe-area-inset-bottom,0px))}
+  .buddy-composer-wrap{width:calc(100% - 24px);margin:8px auto calc(20px + var(--grove-safe-bottom,env(safe-area-inset-bottom,0px)))}
   .buddy-composer{padding:10px 10px 8px 14px}
   .buddy-composer textarea{font-size:16px}
   .buddy-composer-circle{width:44px;height:44px}
@@ -280,7 +280,7 @@
 @keyframes buddy-hello-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.buddy-hello *,.buddy-hello.is-arriving *{animation:none!important}.buddy-hello-ring,.buddy-hello-spark{display:none}.buddy-hello-glow{opacity:.55}}
 /* Phone rules follow the shared Orbit chrome so desktop sizes cannot override them. */
-@media(max-width:767px){
+@media (pointer: coarse){
   .buddy-app.is-phone>.buddy-sidebar{width:100%;border:0}
   .buddy-app.is-phone .buddy-sidebar-top{height:56px;min-height:56px;padding:0 16px}
   .buddy-app.is-phone .buddy-sidebar-heading{height:48px;padding:0 20px}
@@ -411,7 +411,7 @@
 .buddy-oc-orb-ic.is-spin svg{animation:buddy-spin 900ms linear infinite}
 .buddy-oc-orb[data-icon=arrow] .is-arrow,.buddy-oc-orb[data-icon=stop] .is-stop,.buddy-oc-orb[data-icon=spin] .is-spin{opacity:1;transform:none}
 .buddy-composer.is-orbit :is(.buddy-oc-tool,.buddy-oc-orb):focus-visible{outline:2px solid var(--color-highlight);outline-offset:2px}
-@media(max-width:767px){.buddy-app.is-phone .buddy-composer.is-orbit{padding:0;border-radius:22px}.buddy-app.is-phone .buddy-composer.is-orbit>.buddy-oc-orbit{border-radius:22px}.buddy-app.is-phone .buddy-oc-orb{width:40px;height:40px;margin:2px}.buddy-app.is-phone .buddy-oc-orb-ic svg{width:17px;height:17px}.buddy-app.is-phone .buddy-oc-orb-ic.is-stop svg{width:12px;height:12px}.buddy-app.is-phone .buddy-composer.is-orbit textarea{font-size:16px}.buddy-app.is-phone .buddy-oc-hint{display:none}.buddy-app.is-phone .buddy-oc-tool{width:44px;height:44px}.buddy-app.is-phone .buddy-oc-tool svg{width:19px;height:19px}}
+@media (pointer: coarse){.buddy-app.is-phone .buddy-composer.is-orbit{padding:0;border-radius:22px}.buddy-app.is-phone .buddy-composer.is-orbit>.buddy-oc-orbit{border-radius:22px}.buddy-app.is-phone .buddy-oc-orb{width:40px;height:40px;margin:2px}.buddy-app.is-phone .buddy-oc-orb-ic svg{width:17px;height:17px}.buddy-app.is-phone .buddy-oc-orb-ic.is-stop svg{width:12px;height:12px}.buddy-app.is-phone .buddy-composer.is-orbit textarea{font-size:16px}.buddy-app.is-phone .buddy-oc-hint{display:none}.buddy-app.is-phone .buddy-oc-tool{width:44px;height:44px}.buddy-app.is-phone .buddy-oc-tool svg{width:19px;height:19px}}
 @media(prefers-reduced-motion:reduce){.buddy-composer.is-orbit,.buddy-composer.is-orbit *,.buddy-composer.is-orbit::before{animation:none!important;transition:none!important}}
 .buddy-overlay:focus{outline:none}
 /* Inline code wraps at spaces first and only splits a token longer than the line (the shared renderer uses break-all). */

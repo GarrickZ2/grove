@@ -19,7 +19,7 @@
 .orbit-new__hint { color: var(--color-text-muted); }
 .orbit-new__error { color: var(--color-error); }
 /* Phone: the composer docks at the bottom like a chat app; the title centers in the space above. */
-.orbit-new.is-phone { display: block; min-height: 0; padding: 0 16px calc(10px + env(safe-area-inset-bottom)); }
+.orbit-new.is-phone { display: block; min-height: 0; padding: 0 16px calc(10px + var(--grove-safe-bottom,env(safe-area-inset-bottom))); }
 .orbit-new.is-phone .orbit-new__inner { display: flex; height: 100%; flex-direction: column; }
 .orbit-new.is-phone .orbit-new__title { margin: auto 0; padding: 0 12px; font-size: 22px; }
 /* Narrow footer: drop the "Model" / "Mode" prefixes and cap long values.
@@ -107,3 +107,21 @@
    onto the keyboard like TaskChat's, and drop the recent list that no longer fits above it. */
 html.grove-keyboard-open .orbit-new.is-phone { padding-bottom: calc(var(--grove-kb-inset, 0px) + 8px); overscroll-behavior: none; }
 html.grove-keyboard-open .orbit-new.is-phone .orbit-new__recent { display: none; }
+
+/* iPhone Duo folded like a laptop: the title alone on the upper screen; the
+   lower screen is the deck — the recent sessions to pick from, and the
+   Composer at its foot. Typing brings the keyboard up over the deck and the
+   Composer moves to the foot of the upper screen. */
+.orbit-new.is-phone.is-laptop { position: relative; }
+.orbit-new.is-phone.is-laptop::before { content: ""; position: absolute; inset: var(--new-fold, 50%) 0 0; border-radius: 26px 26px 0 0; background: color-mix(in oklab, var(--color-text) 5%, var(--color-bg)); pointer-events: none; }
+.orbit-new.is-phone.is-laptop .orbit-new__inner { position: relative; display: grid; height: 100%; grid-template-rows: calc(var(--new-fold, 50%) + 14px) minmax(0, 1fr) auto; row-gap: 10px; }
+.orbit-new.is-phone.is-laptop .orbit-new__title { grid-row: 1; align-self: center; margin: 0; }
+.orbit-new.is-phone.is-laptop .orbit-new__recent { grid-row: 2; display: flex; min-height: 0; margin: 0; padding: 6px; overflow-y: auto; align-self: start; max-height: 100%; border-radius: 20px; background: var(--color-bg); box-shadow: 0 0 0 .5px color-mix(in oklab, var(--color-text) 10%, transparent); }
+.orbit-new.is-phone.is-laptop .orbit-new__stack { grid-row: 3; }
+/* Typing: the keyboard covers the deck; the Composer moves to the foot of the upper screen. */
+html.grove-keyboard-open .orbit-new.is-phone.is-laptop { padding-bottom: 0; }
+html.grove-keyboard-open .orbit-new.is-phone.is-laptop .orbit-new__stack { grid-row: 1; align-self: end; margin-bottom: 26px; }
+html.grove-keyboard-open .orbit-new.is-phone.is-laptop .orbit-new__title { align-self: start; margin-top: 24px; }
+
+/* Touch: the tray under the composer is the same glass as the composer. */
+.orbit-new.is-phone .orbit-new__context { background: var(--glass-fill); box-shadow: var(--glass-rim); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); }

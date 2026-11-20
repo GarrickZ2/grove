@@ -69,7 +69,7 @@
   .osf-info.is-tl,.osf-info.is-tr{top:8px}
 }
 @media (max-width:520px){
-  .osf-full .osf-tools{left:0;right:0;bottom:0;justify-content:center;gap:4px;padding:4px calc(4px + env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) calc(4px + env(safe-area-inset-left));border-width:1px 0 0;border-radius:0}
+  .osf-full .osf-tools{left:0;right:0;bottom:0;justify-content:center;gap:4px;padding:4px calc(4px + env(safe-area-inset-right)) calc(4px + var(--grove-safe-bottom,env(safe-area-inset-bottom))) calc(4px + env(safe-area-inset-left));border-width:1px 0 0;border-radius:0}
   .osf-full .osf-tools button{width:44px;height:44px}
   .osf-full .osf-info{width:auto;left:8px!important;right:8px!important}
   .osf-full .osf-info.is-tl,.osf-full .osf-info.is-tr{top:calc(8px + env(safe-area-inset-top))}

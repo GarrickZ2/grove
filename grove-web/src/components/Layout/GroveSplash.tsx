@@ -3,6 +3,8 @@ import { GroveHeroBackground } from "./GroveHeroBackground";
 import { GroveIcon } from "./GroveIcon";
 import { OrbitSplash } from "../../orbit/firstrun/OrbitAuthScreens";
 import { useOrbitLook } from "../../orbit/ui/interfaceContext";
+import { isIosClient } from "../../utils/platform";
+import { IosSplash } from "../../ios/IosSplash";
 import "./grove-splash.css";
 
 /**
@@ -12,6 +14,8 @@ import "./grove-splash.css";
  */
 export function GroveSplash({ label, children }: { label: string; children?: ReactNode }) {
   const orbit = useOrbitLook();
+  // The iOS app keeps one loading screen from launch to the workspace.
+  if (isIosClient) return <IosSplash />;
   if (orbit) return <div className="grove-splash__reveal"><OrbitSplash label={label}>{children}</OrbitSplash></div>;
   return (
     <div className="grove-splash__reveal relative flex min-h-dvh items-center justify-center overflow-hidden bg-[var(--color-bg)] p-4">

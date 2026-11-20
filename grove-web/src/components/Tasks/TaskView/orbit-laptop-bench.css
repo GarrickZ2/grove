@@ -1,0 +1,96 @@
+/* iPhone Duo laptop fold: the workbench on the lower screen (OrbitLaptopBench).
+   Three cards fill the deck between the panel tabs and the input line. */
+.olb {
+  display: grid;
+  height: 100%;
+  box-sizing: border-box;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 0 12px;
+}
+.olb-card {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px 15px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 20px;
+  background: var(--color-bg);
+  box-shadow: 0 0 0 .5px color-mix(in oklab, var(--color-text) 10%, transparent), 0 1px 2px rgb(0 0 0 / 4%);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  animation: olb-in 420ms cubic-bezier(.25, 1, .5, 1) both;
+}
+button.olb-card { cursor: pointer; }
+button.olb-card:active { transform: scale(.985); }
+.olb-todo { grid-row: 1 / 3; }
+.olb-git { animation-delay: 40ms; }
+.olb-agent { animation-delay: 80ms; }
+@keyframes olb-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+
+.olb-head { display: flex; min-width: 0; align-items: center; gap: 6px; color: var(--color-text-muted); font-size: 13px; font-weight: 500; }
+.olb-head > svg { flex: none; }
+.olb-head b { display: inline-flex; flex: none; align-items: center; gap: 5px; margin-left: auto; color: var(--color-text); font-weight: 600; }
+.olb-branch { overflow: hidden; color: var(--color-text); text-overflow: ellipsis; white-space: nowrap; }
+.olb-head b.is-clean { color: var(--color-success); }
+.olb-head b.is-dirty { color: var(--color-warning); }
+
+.olb-bar { display: block; height: 4px; flex: none; overflow: hidden; border-radius: 2px; background: color-mix(in oklab, var(--color-text) 8%, transparent); }
+.olb-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--color-success); transition: width 400ms cubic-bezier(.25, 1, .5, 1); }
+.olb-bar.is-accent > i { background: var(--color-accent, var(--color-info)); }
+
+.olb-list { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 10px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.olb-step { display: flex; align-items: flex-start; gap: 9px; color: var(--color-text-muted); font-size: 14px; line-height: 1.35; }
+.olb-step > svg, .olb-step > .olb-live { flex: none; margin-top: 2px; }
+.olb-step.is-completed > svg { color: var(--color-success); }
+.olb-step.is-in_progress { color: var(--color-text); font-weight: 500; }
+.olb-live { width: 9px; height: 9px; margin: 4px 2px 0; border-radius: 50%; background: var(--color-accent, var(--color-info)); box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-accent, var(--color-info)) 18%, transparent); animation: olb-pulse 1.4s ease-in-out infinite; }
+@keyframes olb-pulse { 50% { box-shadow: 0 0 0 7px color-mix(in oklab, var(--color-accent, var(--color-info)) 6%, transparent); } }
+
+.olb-commit { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; row-gap: 1px; font-size: 13.5px; line-height: 1.35; }
+.olb-commit code { color: var(--color-highlight); font-size: 12px; }
+.olb-commit > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.olb-commit small { grid-column: 2; color: var(--color-text-muted); font-size: 11.5px; }
+
+.olb-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--color-text-muted); font-size: 13px; }
+.olb-row b { color: var(--color-text); font-weight: 500; }
+
+.olb-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.olb-action { display: inline-flex; height: 32px; align-items: center; gap: 6px; padding: 0 12px; border: 0; border-radius: 16px; background: color-mix(in oklab, var(--color-text) 6%, transparent); color: var(--color-text); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.olb-action:active { background: color-mix(in oklab, var(--color-text) 12%, transparent); }
+.olb-action.is-warning { color: var(--color-warning); }
+.olb-action.is-danger { color: var(--color-error); }
+.olb-action:disabled { opacity: .4; cursor: default; }
+
+.olb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-muted); }
+.olb-dot.is-idle { background: var(--color-success); }
+.olb-dot.is-running { background: var(--color-accent, var(--color-info)); animation: olb-pulse 1.4s ease-in-out infinite; }
+.olb-dot.is-ask { background: var(--color-warning); }
+
+.olb-agent.is-ask { background: color-mix(in oklab, var(--color-warning) 10%, var(--color-bg)); box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-warning) 38%, transparent); animation: olb-in 420ms cubic-bezier(.25, 1, .5, 1) both, olb-ask 900ms ease-out 1; }
+@keyframes olb-ask { 30% { box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-warning) 30%, transparent); } }
+.olb-ask { display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 10px 12px; border: 0; border-radius: 14px; background: var(--color-warning); color: #fff; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+
+.olb-subagents { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding: 0; border: 0; background: none; color: var(--color-text-muted); font: inherit; font-size: 13px; cursor: pointer; }
+.olb-stack { display: flex; }
+.olb-stack > * + * { margin-left: -5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .olb-card, .olb-live, .olb-dot.is-running { animation: none !important; }
+}
+
+.olb-file { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; column-gap: 8px; font-size: 13.5px; line-height: 1.3; }
+.olb-file > i { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 5px; background: color-mix(in oklab, var(--color-warning) 14%, transparent); color: var(--color-warning); font-size: 10.5px; font-style: normal; font-weight: 700; }
+.olb-file.is-added > i, .olb-file.is-untracked > i { background: color-mix(in oklab, var(--color-success) 14%, transparent); color: var(--color-success); }
+.olb-file.is-deleted > i, .olb-file.is-conflicted > i { background: color-mix(in oklab, var(--color-error) 14%, transparent); color: var(--color-error); }
+.olb-file > span { display: flex; min-width: 0; align-items: baseline; gap: 6px; overflow: hidden; white-space: nowrap; }
+.olb-file > span b { flex: none; font-weight: 500; }
+.olb-file > span small { overflow: hidden; color: var(--color-text-muted); font-size: 12px; text-overflow: ellipsis; }
+.olb-file > em, .olb-row b { font-style: normal; font-size: 12px; white-space: nowrap; }
+.olb-card ins { color: var(--color-success); text-decoration: none; }
+.olb-card del { color: var(--color-error); text-decoration: none; }

@@ -28,7 +28,7 @@
 .oplg-glyph img.oplg-glyph-icon { border-radius: 6px; }
 .oplg-body { position: relative; flex: 1; min-height: 0; border-top: 1px solid var(--o-border); }
 /* Phone: the phone title bar already names the page, so the in-page header goes. */
-@media (max-width: 767px) {
+@media (pointer: coarse) {
   .oplg-page .oplg-head { display: none; }
   .oplg-body { border-top: 0; }
 }

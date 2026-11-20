@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useRef, useState, type ComponentType, type DragEvent, type ReactNode } from "react";
+import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type DragEvent, type ReactNode } from "react";
 import { Plus, Sparkle, BookOpen, ChevronDown, FileText, FlaskConical, Folder, FolderTree, GitBranch, Globe, Laptop, ListChecks, Mic, Paperclip, PenLine, Terminal, type LucideIcon } from "lucide-react";
 import { createChat, listChats } from "../../api";
 import type { AgentConfigSelection } from "../../api/agentConfig";
@@ -6,6 +6,7 @@ import { listInstalledAgentConfigs, type InstalledAgentConfig } from "../../api/
 import type { SessionConfigOption } from "../../api/tasks";
 import { useProject, useTheme } from "../../context";
 import { useIsMobile } from "../../hooks";
+import { useLaptopFold } from "../../hooks/useBookFold";
 import { useAgentCatalogRevision } from "../../hooks/useAgentCatalogRevision";
 import { MarketplaceModal } from "../Config/MarketplaceModal";
 import { agentOptions, type AgentOption } from "../../data/agents";
@@ -204,6 +205,18 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   const [inputFocused, setInputFocused] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+  // Folded like a laptop: the title and recent sessions above the crease, the Composer on the deck below.
+  const laptopFold = useLaptopFold();
+  const onLaptop = phone && !!laptopFold;
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root || !onLaptop || !laptopFold) return;
+    const place = () => root.style.setProperty("--new-fold", `${Math.round(laptopFold.top + laptopFold.gap - root.getBoundingClientRect().top)}px`);
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [onLaptop, laptopFold]);
   const inputRef = useRef<MentionEditableHandle>(null);
 
   useEffect(() => {
@@ -458,7 +471,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   );
 
   return (
-    <div ref={rootRef} className={`orbit-new${phone ? " is-phone" : ""}${handoffOffset !== null ? " is-handing-off" : ""}`}>
+    <div ref={rootRef} className={`orbit-new${phone ? " is-phone" : ""}${onLaptop ? " is-laptop" : ""}${handoffOffset !== null ? " is-handing-off" : ""}`}>
       {!phone && <div className="orbit-new__glow" aria-hidden="true"><i /><i /><i /></div>}
       <div className="orbit-new__inner">
         <h1 className="orbit-new__title">What should we work on?</h1>

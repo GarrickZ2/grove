@@ -9,6 +9,11 @@ import { useConfig } from "../../context";
 import { requestAt, setMachineApiBase } from "../../api/client";
 import { isTauriShell, signInToMachine } from "../../utils/tauriShell";
 import { homeNote, MACHINE_ICONS, machineAddress, machineNote, parseHeaders } from "./orbitMachines";
+import { isIosClient } from "../../utils/platform";
+import {
+  forgetIosServer, iosServerHost, iosServerOrigin, listIosServers, openIosServer, probeIosServer, renameIosServer,
+  type IosServer, type IosServers,
+} from "../../ios/servers";
 import "./orbit-machine-menu.css";
 
 const REFRESH_MS = 10_000;
@@ -143,6 +148,81 @@ function MachineDialog({ state, onClose, onChanged }: {
   );
 }
 
+type IosDialogState = { mode: "add" } | { mode: "edit"; server: IosServer };
+
+/** Add, rename or remove one of the servers the iOS app keeps. */
+function IosServerDialog({ state, onClose, onChanged }: {
+  state: IosDialogState;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const editing = state.mode === "edit" ? state.server : null;
+  const [address, setAddress] = useState("");
+  const [name, setName] = useState(editing?.name ?? "");
+  const [found, setFound] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Check the address as it is typed, so a typo shows before Connect.
+  useEffect(() => {
+    if (editing) return;
+    const server = iosServerOrigin(address);
+    let live = true;
+    const timer = window.setTimeout(() => {
+      if (!server) { setFound(null); return; }
+      void probeIosServer(server).then((reachable) => { if (live) setFound(reachable); });
+    }, 500);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [address, editing]);
+
+  const run = async (work: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try { await work(); } catch (reason) { setError(message(reason)); setBusy(false); }
+  };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    void run(async () => {
+      if (editing) {
+        await renameIosServer(editing.id, name);
+        onChanged();
+        onClose();
+      } else await openIosServer(iosServerOrigin(address), name.trim());
+    });
+  };
+  const remove = () => {
+    if (!editing) return;
+    void run(async () => {
+      await forgetIosServer(editing.id);
+      onChanged();
+      onClose();
+    });
+  };
+
+  return (
+    <OrbitDialogLayer open onClose={onClose} label={editing ? "Edit server" : "Add a server"}>
+      <DialogPanel onSubmit={submit}>
+        <DialogHead title={editing ? "Edit server" : "Add a server"} description={editing ? iosServerHost(editing.server) : <>Run <code>grove remote</code> on the computer, then enter the address it shows.</>} />
+        <DialogBody>
+          {editing ? null : (
+            <DialogField label="Address" note={found === null ? undefined : found ? "Found Grove" : "No Grove answers here yet"}>
+              <input className="oui-field" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="192.168.1.20:3001" autoFocus autoComplete="off" autoCapitalize="off" spellCheck={false} inputMode="url" />
+            </DialogField>
+          )}
+          <DialogField label="Name">
+            <input className="oui-field" value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder={editing ? undefined : "Optional"} autoFocus={!!editing} autoComplete="off" />
+          </DialogField>
+          {error ? <p className="orbit-machine-error" role="alert">{error}</p> : null}
+        </DialogBody>
+        <DialogFoot lead={editing ? <HoldButton onConfirm={remove} disabled={busy} holdingLabel="Keep holding…">Hold to remove</HoldButton> : undefined}>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={busy || (editing ? !name.trim() : !address.trim())}>{editing ? "Save" : busy ? "Connecting…" : "Connect"}</Button>
+        </DialogFoot>
+      </DialogPanel>
+    </OrbitDialogLayer>
+  );
+}
+
 function MachineRow({ machine, tone, note, current, disabled, onOpen, onEdit }: {
   machine: MachineProfile;
   tone: StatusTone;
@@ -167,7 +247,8 @@ function MachineRow({ machine, tone, note, current, disabled, onOpen, onEdit }: 
 /** The sidebar's slot for the switcher, there only for those who turned it on. */
 export function OrbitMachineEntry() {
   const { config } = useConfig();
-  return config?.web?.multi_machine === true ? <OrbitMachineMenu /> : null;
+  // The iOS app always offers its own servers here, in the same list.
+  return config?.web?.multi_machine === true || isIosClient ? <OrbitMachineMenu /> : null;
 }
 
 /** The sidebar's machine switcher: which machine this window shows, and the others it can reach. */
@@ -178,19 +259,44 @@ export function OrbitMachineMenu({ pairedOnly = false }: {
   const [overview, setOverview] = useState<MachinesOverview | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [ios, setIos] = useState<IosServers | null>(null);
+  const [reach, setReach] = useState<Record<string, boolean>>({});
+  const [iosDialog, setIosDialog] = useState<IosDialogState | null>(null);
   const { open, close, toggle, rootRef } = usePopover<HTMLDivElement>();
 
-  const refresh = useCallback(() => { getMachines().then(setOverview).catch(() => {}); }, []);
+  const refresh = useCallback(() => {
+    getMachines().then(setOverview).catch(() => {});
+    if (isIosClient) listIosServers().then(setIos).catch(() => {});
+  }, []);
   useEffect(() => {
     refresh();
     const timer = window.setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  if (!overview || (pairedOnly && overview.machines.length === 0)) return null;
-  const { current, this: home, machines } = overview;
-  const shown = current === home.id ? home : machines.find((machine) => machine.id === current) ?? home;
-  const shownStatus = current === home.id ? "online" : machines.find((machine) => machine.id === current)?.status ?? "offline";
+  // Each open of the list checks which of the app's servers answer.
+  useEffect(() => {
+    if (!open || !ios) return;
+    let live = true;
+    for (const server of ios.servers) {
+      if (server.id === ios.current) continue;
+      void probeIosServer(server.server).then((reachable) => { if (live) setReach((all) => ({ ...all, [server.id]: reachable })); });
+    }
+    return () => { live = false; };
+  }, [open, ios]);
+
+  if (isIosClient ? !ios : !overview || (pairedOnly && overview.machines.length === 0)) return null;
+  const home = overview?.this ?? { id: "", name: "", description: "", icon: "server" as MachineIcon };
+  const current = overview?.current ?? home.id;
+  const machines = overview?.machines ?? [];
+  const atHome = current === home.id;
+  const thisServer = ios?.servers.find((server) => server.id === ios.current);
+  const shown = atHome ? (thisServer ? { ...home, name: thisServer.name } : home) : machines.find((machine) => machine.id === current) ?? home;
+  const shownStatus = atHome ? "online" : machines.find((machine) => machine.id === current)?.status ?? "offline";
+  const switchServer = (server: IosServer) => {
+    setFailure(null);
+    openIosServer(server.server, server.name).catch(() => setFailure(`Can't reach ${server.name}`));
+  };
 
   const goHome = () => setMachineApiBase(null);
   const switchTo = async (machine: PairedMachine) => {
@@ -228,7 +334,24 @@ export function OrbitMachineMenu({ pairedOnly = false }: {
     <div ref={rootRef} className="orbit-machine">
       {open ? (
         <div className="orbit-machine-pop" role="menu" aria-label="Machines">
-          <MachineRow machine={home} tone="ok" note={homeNote(home)} current={current === home.id} disabled={current === home.id} onOpen={goHome} onEdit={() => { close(); setDialog({ mode: "edit", machine: home, isThis: true }); }} />
+          {ios ? ios.servers.map((server) => {
+            const here = server.id === ios.current;
+            const reachable = here || reach[server.id];
+            return (
+              <MachineRow
+                key={`ios-${server.id}`}
+                machine={{ ...home, id: server.id, name: server.name, icon: here ? home.icon : "server" }}
+                tone={reachable ? "ok" : "off"}
+                note={reachable === false ? `Can't reach · ${iosServerHost(server.server)}` : iosServerHost(server.server)}
+                current={here && atHome}
+                disabled={here && atHome}
+                onOpen={() => (here ? goHome() : switchServer(server))}
+                onEdit={() => { close(); setIosDialog({ mode: "edit", server }); }}
+              />
+            );
+          }) : (
+            <MachineRow machine={home} tone="ok" note={homeNote(home)} current={current === home.id} disabled={current === home.id} onOpen={goHome} onEdit={() => { close(); setDialog({ mode: "edit", machine: home, isThis: true }); }} />
+          )}
           {machines.map((machine) => (
             <MachineRow
               key={machine.id}
@@ -243,7 +366,11 @@ export function OrbitMachineMenu({ pairedOnly = false }: {
           ))}
           {failure ? <p className="orbit-machine-error orbit-machine-failure" role="alert">{failure}</p> : null}
           <div className="orbit-machine-sep" />
-          <button type="button" role="menuitem" className="orbit-machine-add" onClick={() => { close(); setDialog({ mode: "connect" }); }}><Plus size={15} strokeWidth={1.7} /><span>Connect a machine</span></button>
+          {ios ? (
+            <button type="button" role="menuitem" className="orbit-machine-add" onClick={() => { close(); setIosDialog({ mode: "add" }); }}><Plus size={15} strokeWidth={1.7} /><span>Add a server</span></button>
+          ) : (
+            <button type="button" role="menuitem" className="orbit-machine-add" onClick={() => { close(); setDialog({ mode: "connect" }); }}><Plus size={15} strokeWidth={1.7} /><span>Connect a machine</span></button>
+          )}
         </div>
       ) : null}
       <button type="button" className="orbit-row orbit-nav-row orbit-machine-entry" aria-haspopup="menu" aria-expanded={open} aria-label={`Machine: ${shown.name}`} onClick={toggle}>
@@ -253,6 +380,7 @@ export function OrbitMachineMenu({ pairedOnly = false }: {
         <ChevronsUpDown size={14} strokeWidth={1.6} className="orbit-machine-chevron" />
       </button>
       {dialog ? <MachineDialog state={dialog} onClose={() => setDialog(null)} onChanged={refresh} /> : null}
+      {iosDialog ? <IosServerDialog state={iosDialog} onClose={() => setIosDialog(null)} onChanged={refresh} /> : null}
     </div>
   );
 }

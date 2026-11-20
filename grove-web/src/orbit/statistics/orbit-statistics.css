@@ -181,7 +181,7 @@
 @media (hover:none){.ostat-top-row.is-link .ostat-top-go{opacity:1;transform:none}}
 
 /* Phone: controls stack in full-width rows; tiles wrap their footnotes. */
-@media (max-width:767px){
+@media (pointer: coarse){
   .ostat .oui-page-actions{display:grid;grid-template-columns:minmax(0,1fr) auto auto;width:100%;gap:8px}
   .ostat .oui-page-actions>.oui-seg{grid-column:1/-1;width:100%;display:grid}
   .ostat .oui-page-actions>.ostat-measure{grid-column:1/3;justify-self:start}

@@ -188,6 +188,37 @@ describe("Orbit sidebar", () => {
     act(() => snapshot(false));
     expect(container.querySelector(".orbit-status")).toBeNull();
   });
+  it("shows an opened folder loading until its sessions arrive, and offers a retry when they fail", async () => {
+    let resolveTask!: (chats: ReturnType<typeof chat>[]) => void;
+    vi.mocked(listChats).mockImplementation((_project, task) => task === "_local" ? Promise.resolve([]) : new Promise((resolve) => { resolveTask = resolve; }));
+    await act(async () => root.render(<OrbitSidebar activeItem="new" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));
+    act(() => container.querySelector<HTMLButtonElement>(".orbit-task-toggle")!.click());
+    expect(container.querySelector('[aria-label="Loading sessions"]')).not.toBeNull();
+    await act(async () => resolveTask([chat("t", "Task conversation")]));
+    expect(container.querySelector('[aria-label="Loading sessions"]')).toBeNull();
+    expect(container.textContent).toContain("Task conversation");
+
+    vi.mocked(listChats).mockRejectedValueOnce(new Error("offline"));
+    await act(async () => radio.callbacks.onChatListChanged?.("p1", "task-a"));
+    // A failed refresh keeps the sessions already shown.
+    expect(container.textContent).toContain("Task conversation");
+  });
+  it("offers a retry when an opened folder's first load fails", async () => {
+    let attempts = 0;
+    vi.mocked(listChats).mockImplementation(async (_project, task) => {
+      if (task === "_local") return [];
+      attempts += 1;
+      if (attempts === 1) throw new Error("offline");
+      return [chat("t", "Task conversation")];
+    });
+    await act(async () => root.render(<OrbitSidebar activeItem="new" collapsed={false} onCollapse={vi.fn()} onItemClick={vi.fn()} onNavigate={navigate} onSearch={vi.fn()} onProjectSwitch={vi.fn()} onManageProjects={vi.fn()} onAddProject={vi.fn()} />));
+    act(() => container.querySelector<HTMLButtonElement>(".orbit-task-toggle")!.click());
+    expect(container.textContent).toContain("Couldn't load sessions");
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent === "Retry")!;
+    await act(async () => retry.click());
+    expect(container.textContent).not.toContain("Couldn't load sessions");
+    expect(container.textContent).toContain("Task conversation");
+  });
   it("keeps the newest session order when refresh requests finish out of order", async () => {
     let resolveOlder!: (chats: ReturnType<typeof chat>[]) => void;
     let resolveNewer!: (chats: ReturnType<typeof chat>[]) => void;

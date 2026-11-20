@@ -40,6 +40,9 @@ export function OrbitSplash({ label, children }: { label: string; children?: Rea
 const SHAKE: Keyframe[] = [0, -1, 3, -6, 6, -6, 6, -6, 3, -1, 0].map((x) => ({ transform: `translateX(${x}px)` }));
 
 function serverLabel(): string {
+  // In the iOS app the page's own address is a local relay; name the server instead.
+  const ios = (window as Window & { __GROVE_IOS_SERVER__?: { name?: string | null } }).__GROVE_IOS_SERVER__;
+  if (ios?.name) return ios.name;
   try {
     return new URL(getApiBaseUrl() || window.location.origin, window.location.origin).host;
   } catch {

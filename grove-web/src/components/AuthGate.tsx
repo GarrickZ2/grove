@@ -206,7 +206,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (authState === 'loading') return (
     <GroveSplash label="Connecting to Grove…">
-      {isIosClient && <a href="/_grove/" className="py-3 text-sm text-[var(--color-text-muted)]">Switch server</a>}
+      {isIosClient && <a href="/_grove/?pick=1" className="py-3 text-sm text-[var(--color-text-muted)]">Switch server</a>}
     </GroveSplash>
   );
   if (authState === 'authenticated') return <>{children}</>;
@@ -225,7 +225,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       errorTick={errorTick}
       onSubmit={event => { void handleSubmit(event); }}
       onRetry={() => { void initialize(); }}
-      switchServerHref={isIosClient ? '/_grove/' : undefined}
+      switchServerHref={isIosClient ? '/_grove/?pick=1' : undefined}
     />
   );
 
@@ -263,7 +263,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             </button>
           </form>
         )}
-        {isIosClient && <a href="/_grove/" className="mt-5 block py-3 text-center text-sm text-[var(--color-text-muted)]">Switch or add server</a>}
+        {isIosClient && <a href="/_grove/?pick=1" className="mt-5 block py-3 text-center text-sm text-[var(--color-text-muted)]">Switch or add server</a>}
       </div>
     </div>
   );

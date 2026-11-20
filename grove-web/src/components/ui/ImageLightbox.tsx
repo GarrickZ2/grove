@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X, Minimize2 } from "lucide-react";
 import { useEscapeScope } from "../../keyboard/useEscapeScope";
 import { wheelZoomFactor } from "./wheelZoom";
+import { usePinchZoom } from "../../hooks/usePinchZoom";
 
 interface ImageLightboxProps {
   imageUrl?: string | null;
@@ -69,6 +70,23 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
     return () => el.removeEventListener("wheel", handler);
   }, [imageUrl, svgContent]);
 
+  // A touch screen: two fingers zoom, one moves the image once it is zoomed in.
+  usePinchZoom(containerRef, {
+    onPinch: ({ factor, dx, dy }) => {
+      setEasing(false);
+      panMovedRef.current = true;
+      setZoom((z) => Math.min(10, Math.max(0.2, z * factor)));
+      setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+    },
+    onPan: ({ dx, dy }) => {
+      if (zoomRef.current <= 1) return false;
+      setEasing(false);
+      panMovedRef.current = true;
+      setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+      return true;
+    },
+  }, lightboxOpen);
+
   const lightbox = (
     <AnimatePresence>
       {(imageUrl || svgContent) && (
@@ -80,7 +98,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
           transition={{ duration: 0.15 }}
           data-lightbox-active="true"
           data-hotkeys-dialog="true"
-          className={`fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm select-none ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+          className={`fixed inset-0 z-[9999] flex touch-none items-center justify-center bg-black/70 backdrop-blur-sm select-none ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
           onClick={(e) => {
             if (panMovedRef.current) {
               e.preventDefault();
@@ -112,7 +130,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
           {/* Close button */}
           <button
             onClick={(e) => { e.stopPropagation(); handleClose(); }}
-            className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center transition-colors z-10"
+            className="absolute top-[max(1rem,env(safe-area-inset-top))] right-4 w-9 h-9 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center transition-colors z-10"
           >
             <X className="w-5 h-5" />
           </button>
@@ -121,7 +139,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
           {isResetVisible && (
             <button
               onClick={(e) => { e.stopPropagation(); reset(); }}
-              className="absolute top-4 left-4 h-9 px-3 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center gap-1.5 text-xs font-medium transition-colors z-10"
+              className="absolute top-[max(1rem,env(safe-area-inset-top))] left-4 h-9 px-3 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center gap-1.5 text-xs font-medium transition-colors z-10"
             >
               <Minimize2 className="w-3.5 h-3.5" />
               {Math.round(zoom * 100)}%
