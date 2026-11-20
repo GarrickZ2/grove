@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.3] - 2026-11-20
+
+### Added
+
+- **iPhone, iPhone Duo and iPad** — Touch layouts for phones and tablets. On iPhone Duo the panel buttons sit in the column beside the screen; folded like a laptop, the upper screen shows the conversation and the lower screen is a workbench with the plan, the branch and the agent; opened flat or on a wide screen, a panel and the chat sit side by side, with a divider you can drag.
+- **iOS app** — Its own launch screen and icon, and the page follows the keyboard and safe areas.
+- **Math in Markdown** — LaTeX with `$…$` and `$$…$$`, following Typora and Obsidian's rules.
+- **Routines from a Task** — A task's chat can schedule a Routine that runs back in the same Task.
+- **Faster PWA start** — The app's own files stay on the device.
+
+### Improved
+
+- **Floating controls on touch** — The header floats over the page, content scrolls under it, and buttons share one glass look.
+- **Pinch zoom** — In file previews, the Memory graph and the Agent Graph.
+- **Forms** — Next instead of Submit until the last question.
+
+### Fixed
+
+- **Design panel** — A task with no designs shows that, with its Project's design system one tap away.
+- **Subagents in chat** — Messages to a subagent fold into its card, and its cards stay outside the work summary.
+- **Pasting** — Text pasted together with files is kept.
+- **Previews** — Fullscreen header, comment pins and a steady reading position.
+- **Markdown** — The blank line between paragraphs that start in bold is kept.
+- **Artifacts links** — Links the Artifacts panel can't open stay plain text.
+- **Memory tools** — A slow memory tool times out on its own instead of cancelling the turn.
+
 ## [0.15.2] - 2026-11-18
 
 ### Added
