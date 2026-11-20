@@ -1,6 +1,6 @@
 // Pure helpers behind the task Artifacts panel. Shared by the Workbench
 // ArtifactsTab and the Orbit artifacts body.
-import type { ArtifactFile } from "../../../../api";
+import { listArtifacts, type ArtifactFile } from "../../../../api";
 
 import { dragCarriesGroveFiles } from "../../../../utils/groveFileDrag";
 
@@ -99,4 +99,24 @@ export function resolvePreviewTarget(
   }
 
   return target ?? null;
+}
+
+/**
+ * Whether the Artifacts panel can open `requestedPath` for a Studio task. A
+ * file link in chat checks this before opening the panel, so a path the panel
+ * cannot show (an absolute path elsewhere, a file outside input/output) falls
+ * back to plain text instead of a dead chip. If the listing cannot be read,
+ * the link is let through and the panel reports what it finds.
+ */
+export async function studioArtifactResolves(
+  projectId: string,
+  taskId: string,
+  requestedPath: string,
+): Promise<boolean> {
+  try {
+    const { input, output } = await listArtifacts(projectId, taskId);
+    return resolvePreviewTarget(requestedPath, input, output) !== null;
+  } catch {
+    return true;
+  }
 }

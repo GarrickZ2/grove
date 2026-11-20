@@ -21,6 +21,7 @@ import type { PanelType, TabNodeConfig } from './types';
 import type { FileNavRequest } from '../../Review';
 import { TaskTerminal } from '../TaskView/TaskTerminal';
 import type { ArtifactPreviewRequest } from '../TaskInfoPanel/tabs';
+import { studioArtifactResolves } from '../TaskInfoPanel/tabs/artifactsModel';
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from '../../ui/sketchChipCache';
 import { OPEN_DESIGN_EVENT, type OpenDesignDetail } from '../../Studio/DesignPage/designModel';
 import { OPEN_BROWSER_EVENT, type OpenBrowserDetail } from '../../../api/browser';
@@ -707,6 +708,9 @@ export const FlexLayoutContainer = forwardRef<
       // Network failure (offline, dev server restart) — don't punish the
       // user; open the panel and let its content fetch fall back.
     }
+    // The file server reaches more than the Artifacts panel lists; a Studio
+    // link the panel can't open falls back to plain text.
+    if (isStudio && !(await studioArtifactResolves(projectId, task.id, filePath))) return false;
     const seq = ++navSeqRef.current;
     const allTabs = getAllTabs();
     if (isStudio) {
