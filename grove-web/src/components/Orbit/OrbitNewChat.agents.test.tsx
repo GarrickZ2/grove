@@ -56,7 +56,7 @@ const chip = () => host.querySelector<HTMLButtonElement>(".oc-setup-chip")!;
 const marketplace = () => host.querySelector('[data-testid="marketplace"]');
 const openAgents = async () => {
   await act(async () => chip().click());
-  await act(async () => host.querySelector<HTMLButtonElement>('[data-row="agent"]')!.click());
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-row="grove:agent"]')!.click());
 };
 const item = (label: string) => [...host.querySelectorAll<HTMLButtonElement>(".oc-sub-item")].find((option) => option.textContent === label);
 const catalogChanges = async (...agents: typeof claude[]) => {
