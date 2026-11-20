@@ -144,10 +144,14 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
   const { showBanner } = useBanner();
 
   const here = showing.scope === scope ? showing : { scope, design: null, page: null };
+  // A task with no designs of its own shows its empty state, not the
+  // Project's design system; the system is one tap away from there. A board
+  // that is only the system (the Studio page's card) shows it as before.
   const design = designs?.find((entry) => entry.slug === here.design)
     ?? designs?.find((entry) => !entry.is_system)
-    ?? designs?.[0]
+    ?? (bare ? designs?.[0] : undefined)
     ?? null;
+  const system = designs?.find((entry) => entry.is_system) ?? null;
 
   const hasDesign = designs ? design !== null : null;
   useEffect(() => {
@@ -303,7 +307,12 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
         <PanelEmpty
           icon={Frame}
           title="No designs yet"
-          action={<Button variant="ghost" size="sm" disabled={importing} onClick={() => picker.current?.click()}><Upload />Import a zip</Button>}
+          action={(
+            <>
+              {system && <Button variant="ghost" size="sm" onClick={() => show(system.slug)}><Shapes />Design system</Button>}
+              {shared ? null : <Button variant="ghost" size="sm" disabled={importing} onClick={() => picker.current?.click()}><Upload />Import a zip</Button>}
+            </>
+          )}
         >
           Ask the agent for a UI design, a prototype or a design system. The pages it builds appear here as artboards you can open, click through and comment on.
         </PanelEmpty>
