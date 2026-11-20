@@ -63,7 +63,7 @@ if [[ ! -d gen/apple ]]; then
 fi
 python3 ../scripts/prepare-ios-xcode.py
 # Refresh native icons even when the Xcode project already exists.
-pnpm exec tauri icon ../src-tauri/icons/icon.png --output build/icons --ios-color '#111111'
+pnpm exec tauri icon icon.png --output build/icons --ios-color '#ffffff'
 python3 - <<'ICONS'
 from pathlib import Path
 import json

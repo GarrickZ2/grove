@@ -4,12 +4,16 @@ targets:
       - path: ../../native/ActivityAttributes.swift
       - path: ../../native/ActivityBridge.swift
       - path: ../../native/TransportLifecycle.swift
+      - path: ../../native/ShellBridge.swift
+      - path: ../../native/GroveLaunch.storyboard
+      - path: ../../native/Launch.xcassets
     settings:
       base:
         SWIFT_VERSION: '5.0'
     info:
       properties:
         NSSupportsLiveActivities: true
+        UILaunchStoryboardName: GroveLaunch
         CFBundleURLTypes:
           - CFBundleURLName: Grove Activity
             CFBundleURLSchemes: [grove]

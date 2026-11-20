@@ -32,6 +32,14 @@ pub fn run() {
             .build()?;
             #[cfg(target_os = "ios")]
             lifecycle::install(app.handle().clone(), transport);
+            #[cfg(target_os = "ios")]
+            {
+                extern "C" {
+                    fn grove_shell_install();
+                }
+                // Full-bleed web view and iPhone Duo's hinge, see native/ShellBridge.swift.
+                unsafe { grove_shell_install() };
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

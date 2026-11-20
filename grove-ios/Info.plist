@@ -8,6 +8,13 @@
   <string>Connect to Grove running on your computer to view tasks and chat with agents.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Use the microphone for Grove voice input.</string>
+  <key>UILaunchStoryboardName</key>
+  <string>GroveLaunch</string>
+  <key>UIApplicationSceneManifest</key>
+  <dict>
+    <key>UIApplicationSupportsMultipleScenes</key><false/>
+    <key>UISceneConfigurations</key><dict/>
+  </dict>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key><true/>

@@ -40,9 +40,22 @@ struct ServerProfile {
     port: u16,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct SavedServers {
     servers: Vec<ServerProfile>,
+    /// The server opened last; the app goes straight back to it on launch.
+    #[serde(default)]
+    last: Option<String>,
+    /// Ports of removed servers. Never handed out again: the web view's storage
+    /// for that origin still holds the old server's sign-in.
+    #[serde(default)]
+    retired: Vec<u16>,
+}
+
+impl SavedServers {
+    fn taken(&self, port: u16) -> bool {
+        self.servers.iter().any(|p| p.port == port) || self.retired.contains(&port)
+    }
 }
 
 struct Manager {
@@ -51,6 +64,8 @@ struct Manager {
     legacy: PathBuf,
     allowed: Arc<SyncRwLock<HashSet<String>>>,
     token: String,
+    /// The server manager's own origin, where the launcher lives.
+    home: String,
     active_origin: SyncRwLock<String>,
     http: reqwest::Client,
     listeners: Mutex<HashMap<SocketAddr, LocalListener>>,
@@ -216,6 +231,11 @@ impl ClientTransport {
     }
 
     pub fn allows_navigation(&self, url: &Url) -> bool {
+        // Frames the page builds itself (design pages, previews) load as
+        // about:srcdoc or about:blank: nothing comes from outside.
+        if url.scheme() == "about" && matches!(url.path(), "srcdoc" | "blank") {
+            return true;
+        }
         self.allowed
             .read()
             .unwrap()
@@ -248,6 +268,10 @@ fn spawn_listener(
         .route("/_grove/", get(launcher))
         .route("/_grove/connect", post(connect))
         .route("/_grove/activity", post(activity))
+        .route("/_grove/servers", post(list_servers))
+        .route("/_grove/probe", post(probe))
+        .route("/_grove/rename", post(rename))
+        .route("/_grove/forget", post(forget))
         .fallback(serve)
         .layer(axum::Extension(websocket_stop))
         .with_state(Arc::new(state));
@@ -275,11 +299,7 @@ pub async fn start(legacy: PathBuf) -> Result<ClientTransport, Box<dyn std::erro
     let mut reserved = Vec::new();
     let listener = loop {
         let candidate = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        if !saved
-            .servers
-            .iter()
-            .any(|p| p.port == candidate.local_addr().unwrap().port())
-        {
+        if !saved.taken(candidate.local_addr().unwrap().port()) {
             break candidate;
         }
         reserved.push(candidate);
@@ -293,6 +313,7 @@ pub async fn start(legacy: PathBuf) -> Result<ClientTransport, Box<dyn std::erro
         legacy,
         allowed: allowed.clone(),
         token: uuid::Uuid::new_v4().to_string(),
+        home: origin.clone(),
         active_origin: SyncRwLock::new(String::new()),
         http: reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
@@ -329,16 +350,21 @@ async fn launcher(State(state): State<Arc<ClientState>>, headers: HeaderMap) -> 
         .ok()
         .or_else(|| option_env!("GROVE_IOS_SERVER_URL").map(str::to_owned))
         .unwrap_or_default();
+    let saved = state.manager.saved.lock().await.clone();
     let config = serde_json::json!({
         "server": server, "token": state.manager.token,
-        "servers": state.manager.saved.lock().await.servers,
+        "servers": saved.servers, "last": saved.last,
         "current": state.profile.as_ref().map(|p| &p.id),
     })
     .to_string()
     .replace('<', "\\u003c");
     (
         [("Cache-Control", "no-store"), ("X-Frame-Options", "DENY")],
-        Html(include_str!("../launcher/index.html").replace("__CONFIGURATION__", &config)),
+        Html(
+            include_str!("../launcher/index.html")
+                .replace("__CONFIGURATION__", &config)
+                .replace("</head>", &format!("{}</head>", icon_style())),
+        ),
     )
         .into_response()
 }
@@ -479,12 +505,7 @@ async fn connect(
                 Err(_) => return error(StatusCode::CONFLICT,
                     "This saved connection is busy. Close and reopen Grove, then try again. Your sign-in has been kept."),
             };
-            if profile.port != 0
-                || !saved
-                    .servers
-                    .iter()
-                    .any(|p| p.port == candidate.local_addr().unwrap().port())
-            {
+            if profile.port != 0 || !saved.taken(candidate.local_addr().unwrap().port()) {
                 break candidate;
             }
             reserved.push(candidate);
@@ -493,24 +514,16 @@ async fn connect(
         origin = format!("http://127.0.0.1:{}", profile.port);
         Some(listener)
     };
-    let mut next = SavedServers {
-        servers: saved.servers.clone(),
-    };
+    let mut next = saved.clone();
+    if !input.save_only {
+        next.last = Some(profile.id.clone());
+    }
     if let Some(entry) = next.servers.iter_mut().find(|p| p.id == profile.id) {
         *entry = profile.clone();
     } else {
         next.servers.push(profile.clone());
     }
-    let persist = async {
-        if let Some(parent) = state.manager.preferences.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let temporary = state.manager.preferences.with_extension("json.tmp");
-        tokio::fs::write(&temporary, serde_json::to_vec(&next).unwrap()).await?;
-        tokio::fs::rename(temporary, &state.manager.preferences).await
-    }
-    .await;
-    if persist.is_err() {
+    if persist(&state.manager, &next).await.is_err() {
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Could not save this server. Try again.",
@@ -536,6 +549,222 @@ async fn connect(
         .await;
     }
     Json(serde_json::json!({ "connected": true, "location": format!("{origin}/") })).into_response()
+}
+
+/// Grove's icon for the loading screen, inline so it shows on the first frame
+/// rather than after a request. Light and dark, as the page's colour scheme picks.
+fn icon_style() -> &'static str {
+    static STYLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    STYLE.get_or_init(|| {
+        let uri = |path: &str| {
+            Assets::get(path)
+                .map(|asset| format!("url(data:image/png;base64,{})", base64(&asset.data)))
+                .unwrap_or_default()
+        };
+        let (light, dark) = (uri("app-icons/pwa/classic-light-512.png"), uri("app-icons/pwa/classic-dark-512.png"));
+        if light.is_empty() || dark.is_empty() {
+            return String::new();
+        }
+        format!("<style>:root{{--grove-ios-icon:{light}}}@media (prefers-color-scheme: dark){{:root{{--grove-ios-icon:{dark}}}}}</style>")
+    })
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (chunk[0] as u32) << 16
+            | (*chunk.get(1).unwrap_or(&0) as u32) << 8
+            | *chunk.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// The page's root, filled with the app's loading screen until the web app
+/// renders over it: the launcher's screen continues without a blank frame.
+/// Same markup as grove-web/src/ios/IosSplash.tsx, same stylesheet.
+fn splash_root(name: &str) -> String {
+    let name = name
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+    format!(
+        concat!(
+            "<div id=\"root\"><style>{css}</style>",
+            "<div class=\"ios-splash\" role=\"status\"><main>",
+            "<a class=\"ios-splash__pill\" href=\"/_grove/?pick=1\"><i class=\"ios-splash__dot\"></i><span>{name}</span>",
+            "<svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><path d=\"M3 4.5l3 3 3-3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg></a>",
+            "<div class=\"ios-splash__stage\"><div class=\"ios-splash__mark\" role=\"img\" aria-label=\"Grove\"></div>",
+            "<div><div class=\"ios-splash__bar\"><i></i></div><p class=\"ios-splash__label\">Connecting to {name}</p></div>",
+            "</div></main></div></div>"
+        ),
+        css = include_str!("../../grove-web/src/ios/ios-splash.css"),
+        name = name
+    )
+}
+
+async fn persist(manager: &Manager, saved: &SavedServers) -> std::io::Result<()> {
+    if let Some(parent) = manager.preferences.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let temporary = manager.preferences.with_extension("json.tmp");
+    tokio::fs::write(&temporary, serde_json::to_vec(saved).unwrap()).await?;
+    tokio::fs::rename(temporary, &manager.preferences).await
+}
+
+/// Server management calls come only from Grove's own pages in this app.
+fn trusted(state: &ClientState, headers: &HeaderMap) -> bool {
+    headers.get("X-Grove-Setup").and_then(|v| v.to_str().ok()) == Some(state.manager.token.as_str())
+        && headers.get("Origin").and_then(|v| v.to_str().ok()) == Some(state.origin.as_str())
+}
+
+async fn list_servers(State(state): State<Arc<ClientState>>, headers: HeaderMap) -> Response {
+    if !trusted(&state, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let saved = state.manager.saved.lock().await;
+    let servers: Vec<_> = saved
+        .servers
+        .iter()
+        .map(|p| serde_json::json!({ "id": p.id, "name": p.name, "server": p.server }))
+        .collect();
+    Json(serde_json::json!({
+        "servers": servers, "last": saved.last,
+        "current": state.profile.as_ref().map(|p| &p.id), "home": state.manager.home,
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+struct ProbeRequest {
+    server: String,
+}
+
+/// Whether a Grove answers at an address, for the dots beside each server.
+async fn probe(
+    State(state): State<Arc<ClientState>>,
+    headers: HeaderMap,
+    Json(input): Json<ProbeRequest>,
+) -> Response {
+    if !trusted(&state, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Ok(url) = normalize_server(&input.server) else {
+        return Json(serde_json::json!({ "reachable": false })).into_response();
+    };
+    let info = state
+        .manager
+        .http
+        .get(url.join("api/v1/auth/info").unwrap())
+        .timeout(Duration::from_secs(4))
+        .send()
+        .await;
+    let info = match info {
+        Ok(response) if response.status().is_success() => {
+            response.json::<serde_json::Value>().await.ok()
+        }
+        _ => None,
+    };
+    let required = info
+        .as_ref()
+        .and_then(|value| value.get("required"))
+        .and_then(serde_json::Value::as_bool);
+    Json(serde_json::json!({ "reachable": required.is_some(), "required": required }))
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct RenameRequest {
+    id: String,
+    name: String,
+}
+
+async fn rename(
+    State(state): State<Arc<ClientState>>,
+    headers: HeaderMap,
+    Json(input): Json<RenameRequest>,
+) -> Response {
+    if !trusted(&state, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let name: String = input.name.trim().chars().take(80).collect();
+    if name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "Give the server a name.");
+    }
+    let mut saved = state.manager.saved.lock().await;
+    let mut next = saved.clone();
+    let Some(profile) = next.servers.iter_mut().find(|p| p.id == input.id) else {
+        return error(StatusCode::NOT_FOUND, "This server is no longer saved.");
+    };
+    profile.name = name;
+    if persist(&state.manager, &next).await.is_err() {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not save. Try again.",
+        );
+    }
+    *saved = next;
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+struct ForgetRequest {
+    id: String,
+}
+
+/// Remove a saved server. Its local port is retired for good, so no other
+/// server ever inherits the sign-in its web storage still holds.
+async fn forget(
+    State(state): State<Arc<ClientState>>,
+    headers: HeaderMap,
+    Json(input): Json<ForgetRequest>,
+) -> Response {
+    if !trusted(&state, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let mut saved = state.manager.saved.lock().await;
+    let mut next = saved.clone();
+    let Some(index) = next.servers.iter().position(|p| p.id == input.id) else {
+        return StatusCode::NO_CONTENT.into_response();
+    };
+    let profile = next.servers.remove(index);
+    if profile.port != 0 {
+        next.retired.push(profile.port);
+    }
+    if next.last.as_deref() == Some(profile.id.as_str()) {
+        next.last = None;
+    }
+    if persist(&state.manager, &next).await.is_err() {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not remove it. Try again.",
+        );
+    }
+    *saved = next;
+    drop(saved);
+    let origin = format!("http://127.0.0.1:{}", profile.port);
+    state.manager.allowed.write().unwrap().remove(&origin);
+    // The request may have come through that very listener: answer first.
+    let manager = state.manager.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let mut listeners = manager.listeners.lock().await;
+        let address = listeners.keys().find(|a| a.port() == profile.port).copied();
+        if let Some(address) = address {
+            if let Some(mut entry) = listeners.remove(&address) {
+                entry.stop().await;
+            }
+        }
+    });
+    StatusCode::NO_CONTENT.into_response()
 }
 
 // Remove hop-by-hop headers, including names nominated by Connection.
@@ -599,9 +828,12 @@ async fn serve(
                 ],
                 if asset_path == "index.html" {
                     *state.manager.active_origin.write().unwrap() = state.origin.clone();
-                    let metadata = serde_json::json!({ "token": state.manager.token, "name": state.profile.as_ref().map(|p| &p.name), "server": state.server.as_ref().map(Url::as_str) })
+                    let metadata = serde_json::json!({ "token": state.manager.token, "id": state.profile.as_ref().map(|p| &p.id), "name": state.profile.as_ref().map(|p| &p.name), "server": state.server.as_ref().map(Url::as_str), "home": state.manager.home })
                         .to_string().replace('<', "\\u003c");
-                    String::from_utf8_lossy(&asset.data).replace("<head>", &format!("<head><script>window.__GROVE_IOS_SERVER__={metadata};</script>")).into_bytes()
+                    String::from_utf8_lossy(&asset.data)
+                        .replace("<head>", &format!("<head><script>window.__GROVE_IOS_SERVER__={metadata};</script>{}", icon_style()))
+                        .replace("<div id=\"root\"></div>", &splash_root(state.profile.as_ref().map_or("Grove", |p| p.name.as_str())))
+                        .into_bytes()
                 } else { asset.data.into_owned() },
             )
                 .into_response();
@@ -1223,6 +1455,10 @@ mod tests {
             2
         );
         assert!(!transport.allows_navigation(&Url::parse(&servers[0]).unwrap()));
+        // Frames the page builds itself still load; other about: pages do not.
+        assert!(transport.allows_navigation(&Url::parse("about:srcdoc").unwrap()));
+        assert!(transport.allows_navigation(&Url::parse("about:blank").unwrap()));
+        assert!(!transport.allows_navigation(&Url::parse("about:config").unwrap()));
         assert_eq!(
             select_profile(&client, &a, &b, false).await.status(),
             StatusCode::BAD_REQUEST
@@ -1278,6 +1514,82 @@ mod tests {
         .unwrap();
         assert_eq!(value["servers"].as_array().unwrap().len(), 1);
         assert_eq!(value["servers"][0].as_object().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn rename_and_forget_keep_removed_ports_retired() {
+        let client = reqwest::Client::new();
+        let temp = tempfile::tempdir().unwrap();
+        let transport = start(temp.path().join("server.txt")).await.unwrap();
+        let manager = format!("http://{}", transport.address);
+        let token = configuration(&client, &manager).await["token"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let call = |path: &str, body: serde_json::Value| {
+            client
+                .post(format!("{manager}{path}"))
+                .header("origin", &manager)
+                .header("x-grove-setup", &token)
+                .json(&body)
+                .send()
+        };
+        assert_eq!(
+            client
+                .post(format!("{manager}/_grove/servers"))
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        select_profile(&client, &manager, "http://offline-server:3001", true).await;
+        let list: serde_json::Value = call("/_grove/servers", serde_json::json!({}))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let id = list["servers"][0]["id"].as_str().unwrap().to_owned();
+        assert!(list["servers"][0].get("port").is_none());
+        assert_eq!(
+            call(
+                "/_grove/rename",
+                serde_json::json!({"id": id, "name": " Home "})
+            )
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            configuration(&client, &manager).await["servers"][0]["name"],
+            "Home"
+        );
+        let port = transport.manager.saved.lock().await.servers[0].port;
+        assert_eq!(
+            call("/_grove/forget", serde_json::json!({"id": id}))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        let saved = transport.manager.saved.lock().await.clone();
+        assert!(saved.servers.is_empty());
+        assert_eq!(saved.retired, vec![port]);
+        assert!(!transport
+            .allows_navigation(&Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap()));
+        let probe: serde_json::Value = call(
+            "/_grove/probe",
+            serde_json::json!({"server": "http://127.0.0.1:9"}),
+        )
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert_eq!(probe["reachable"], false);
     }
 
     #[tokio::test]

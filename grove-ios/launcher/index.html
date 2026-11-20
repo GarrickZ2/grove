@@ -3,131 +3,261 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Grove · Servers</title>
+  <title>Grove</title>
   <style>
-    :root { color-scheme: light dark; font: 16px -apple-system, BlinkMacSystemFont, sans-serif; --bg:#f5f5f7; --card:#fff; --text:#17191d; --muted:#686e78; --border:#dedfe4; --accent:#087f5b; background:var(--bg); color:var(--text); }
-    @media (prefers-color-scheme: dark) { :root { --bg:#101114; --card:#1b1d22; --text:#f3f4f6; --muted:#a0a5b0; --border:#32353d; --accent:#64d9a5; } }
-    * { box-sizing:border-box; }
-    body { margin:0; padding: max(20px, env(safe-area-inset-top)) max(22px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(22px, env(safe-area-inset-left)); }
-    main { max-width:480px; margin:0 auto; }
-    header { display:flex; align-items:center; justify-content:space-between; min-height:44px; }
-    .brand { font-weight:700; letter-spacing:-.04em; font-size:22px; }
-    h1 { margin:38px 0 8px; font-size:32px; letter-spacing:-.04em; }
-    p { color:var(--muted); line-height:1.55; margin:0 0 24px; font-size:14px; }
-    button, input { font:inherit; }
-    button, a { -webkit-tap-highlight-color:transparent; }
-    button { cursor:pointer; color:inherit; }
-    a { color:var(--accent); text-decoration:none; padding:12px 0 12px 12px; }
-    #servers { display:grid; gap:10px; }
-    .server { display:flex; align-items:center; gap:14px; width:100%; text-align:left; border:1px solid var(--border); border-radius:16px; background:var(--card); padding:18px 16px; min-height:80px; }
-    .server.current { border-color:var(--accent); }
-    .symbol { width:40px; height:40px; border-radius:12px; background:var(--bg); display:grid; place-items:center; color:var(--accent); flex:none; }
-    .detail { min-width:0; flex:1; }
-    .detail strong { display:block; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .address { display:block; color:var(--muted); margin-top:5px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .status { color:var(--accent); font-size:12px; }
-    #add { width:100%; border:1px dashed var(--border); background:transparent; border-radius:16px; min-height:56px; color:var(--accent); margin:14px 0; }
-    form { margin-top:20px; padding:20px; background:var(--card); border:1px solid var(--border); border-radius:18px; }
-    h2 { margin:0 0 22px; font-size:18px; }
-    label { display:block; font-size:13px; margin:16px 0 8px; color:var(--muted); }
-    input { width:100%; padding:13px 12px; min-height:48px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--text); }
-    input:focus-visible, button:focus-visible, a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
-    .primary { width:100%; margin-top:20px; border:0; padding:14px; border-radius:10px; background:var(--accent); color:var(--bg); font-weight:600; }
-    button:disabled { opacity:.55; cursor:wait; }
-    #error { color:#d95353; margin-top:18px; }
-    .hint { margin-top:24px; font-size:12px; }
+    :root { color-scheme: light dark; --bg:#ffffff; --text:#18181b; --muted:#71717a; --border:#e4e4e7; --soft:#f4f4f5; --row:#fafafa; --ink:#18181b; --on-ink:#fff; --ok:#22c55e; --off:#d4d4d8; --bad:#dc2626; --icon:var(--grove-ios-icon, url(/app-icons/pwa/classic-light-512.png)); }
+    @media (prefers-color-scheme: dark) { :root { --bg:#0f1012; --text:#f4f4f5; --muted:#a1a1aa; --border:#2e3036; --soft:#1d1f23; --row:#17181b; --ink:#f4f4f5; --on-ink:#18181b; --off:#52525b; --bad:#f87171; --icon:var(--grove-ios-icon, url(/app-icons/pwa/classic-dark-512.png)); } }
+    * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    html, body { height:100%; }
+    body { margin:0; background:var(--bg); color:var(--text); font:16px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; -webkit-font-smoothing:antialiased;
+      padding: max(16px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
+    main { display:flex; flex-direction:column; min-height:100%; max-width:440px; margin:0 auto; }
+    button, input { font:inherit; color:inherit; }
+    button { cursor:pointer; }
+    button:focus-visible, input:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
     [hidden] { display:none !important; }
+    .pill { align-self:flex-start; display:flex; align-items:center; gap:7px; max-width:100%; height:40px; padding:0 12px; border:1px solid var(--border); border-radius:20px; background:var(--row); font-size:14px; color:var(--muted); }
+    .pill span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .dot { width:8px; height:8px; flex:none; border-radius:50%; background:var(--off); }
+    .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); }
+    .stage { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px; text-align:center; padding:24px 0; }
+    .mark { width:96px; height:96px; border-radius:22px; background:var(--icon) center/cover; box-shadow:0 10px 30px rgb(0 0 0 / 10%); transition:opacity .3s; }
+    .dim .mark { opacity:.45; }
+    .bar { width:120px; height:3px; border-radius:2px; background:var(--soft); overflow:hidden; }
+    .bar i { display:block; width:40%; height:100%; border-radius:2px; background:var(--ink); animation:load 1.1s ease-in-out infinite; }
+    @keyframes load { from { transform:translateX(-100%); } to { transform:translateX(260%); } }
+    .label { font-size:14px; color:var(--muted); margin:0; }
+    h1 { margin:0; font-size:21px; font-weight:650; letter-spacing:-.02em; }
+    .reason { margin:6px 0 0; font-size:14px; line-height:1.5; color:var(--muted); max-width:320px; }
+    .actions { display:flex; flex-direction:column; gap:10px; width:100%; }
+    .primary, .secondary { height:50px; border:0; border-radius:14px; font-size:16px; }
+    .primary { background:var(--ink); color:var(--on-ink); font-weight:600; }
+    .secondary { background:var(--soft); }
+    button:disabled { opacity:.5; cursor:default; }
+    .head { display:flex; align-items:center; justify-content:space-between; min-height:44px; margin:8px 0 14px; }
+    .head h1 { font-size:24px; }
+    .icon-button { width:44px; height:44px; display:grid; place-items:center; border:0; border-radius:22px; background:var(--soft); }
+    .text-button { height:44px; padding:0 4px; border:0; background:none; color:var(--muted); font-size:16px; }
+    .list { display:flex; flex-direction:column; border-radius:16px; background:var(--row); overflow:hidden; }
+    .row { display:flex; align-items:center; border-bottom:1px solid var(--border); }
+    .row:last-child { border-bottom:0; }
+    .open { flex:1; min-width:0; display:flex; align-items:center; gap:12px; min-height:64px; padding:0 4px 0 16px; border:0; background:none; text-align:left; }
+    .text { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+    .text b { font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .text small { font-size:13px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .edit { width:48px; height:64px; flex:none; border:0; background:none; color:var(--muted); display:grid; place-items:center; }
+    .editor { display:flex; flex-direction:column; gap:10px; padding:4px 16px 16px; }
+    .field { display:flex; flex-direction:column; gap:8px; text-align:left; }
+    .field span { font-size:13px; color:var(--muted); }
+    .field input { height:50px; padding:0 14px; border:1px solid var(--border); border-radius:14px; background:var(--bg); font-size:16px; }
+    .found { min-height:18px; font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+    .danger { height:44px; border:0; background:none; color:var(--bad); font-size:15px; }
+    .form { display:flex; flex-direction:column; gap:18px; }
+    .grow { flex:1; min-height:24px; }
+    #error { min-height:20px; margin:12px 0 0; font-size:14px; line-height:1.5; color:var(--bad); }
+    @media (prefers-reduced-motion: reduce) { .bar i { animation:none; width:100%; } }
   </style>
 </head>
 <body>
-  <main>
-    <header><span class="brand">Grove</span><a id="back" href="/" hidden>Done</a></header>
-    <h1>Your servers</h1>
-    <p>Choose a workspace to continue. Each server keeps its own sign-in.</p>
-    <div id="servers" aria-label="Saved servers"></div>
-    <button id="add" type="button" aria-expanded="false">＋ Add server</button>
-    <form id="connect" hidden>
-      <h2>Add a server</h2>
-      <label for="name">Name</label>
-      <input id="name" autocomplete="off" maxlength="80" placeholder="Home Mac, Work…">
-      <label for="server">Server address</label>
-      <input id="server" type="url" inputmode="url" autocomplete="url" autocapitalize="off" spellcheck="false" placeholder="http://192.168.1.10:3001" required>
-      <button class="primary" type="submit">Save &amp; connect</button>
-      <button id="save" type="button" style="width:100%;min-height:44px;margin-top:8px;border:0;background:transparent;color:var(--muted)">Save for later</button>
-    </form>
+<main>
+  <!-- Opening a server: straight to it, or why it can't be reached. -->
+  <section id="opening" hidden>
+    <button class="pill" type="button" data-pick><i class="dot" id="opening-dot"></i><span id="opening-name"></span>
+      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+  </section>
+  <div class="stage" id="stage" hidden>
+    <div class="mark" role="img" aria-label="Grove"></div>
+    <div id="busy"><div class="bar"><i></i></div><p class="label" id="busy-label">Connecting…</p></div>
+    <div id="failed" hidden><h1 id="failed-title"></h1><p class="reason" id="failed-reason"></p></div>
+  </div>
+  <div class="actions" id="failed-actions" hidden>
+    <button class="primary" type="button" id="retry">Try again</button>
+    <button class="secondary" type="button" data-pick>Other servers</button>
+  </div>
+
+  <!-- The servers this app knows. -->
+  <section id="servers" hidden>
+    <div class="head"><h1>Servers</h1>
+      <button class="icon-button" type="button" id="add" aria-label="Add a server"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 3v12M3 9h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>
+    <div class="list" id="list"></div>
     <p id="error" role="alert"></p>
-    <a id="sign-out" href="/?ios-sign-out=1" hidden style="display:block;margin-top:20px;padding:12px 0;font-size:13px;color:var(--muted)">Sign out of this server</a>
-    <p class="hint">Run Grove Mobile on your computer. Connecting to another server does not sign you out of this one.</p>
-  </main>
-  <script id="configuration" type="application/json">__CONFIGURATION__</script>
-  <script>
-    const config = JSON.parse(document.getElementById('configuration').textContent);
-    const form = document.getElementById('connect');
-    const input = document.getElementById('server');
-    const name = document.getElementById('name');
-    const error = document.getElementById('error');
-    const add = document.getElementById('add');
-    let busy = false;
-    input.value = config.servers.length ? '' : (config.server || '');
-    document.getElementById('back').hidden = !config.current;
-    document.getElementById('sign-out').hidden = !config.current;
-    function showForm(show) { form.hidden = !show; add.setAttribute('aria-expanded', String(show)); }
-    showForm(!config.servers.length);
-    add.addEventListener('click', () => { showForm(form.hidden); if (!form.hidden) name.focus(); });
-    async function connect(server, label, button, saveOnly = false) {
-      if (busy) return;
-      busy = true;
-      const original = button.textContent;
-      button.textContent = saveOnly ? 'Saving…' : 'Connecting…';
-      document.querySelectorAll('button').forEach(b => b.disabled = true);
-      error.textContent = '';
-      try {
-        const response = await fetch('/_grove/connect', {
-          method:'POST', headers:{'Content-Type':'application/json', 'X-Grove-Setup':config.token},
-          body:JSON.stringify({server, name:label, save_only:saveOnly}),
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || 'Could not connect.');
-        // Navigate to the server's own origin: credentials, drafts and UI state
-        // remain scoped to that server. Never clear another server's storage.
-        location.replace(saveOnly ? "/_grove/" : result.location);
-      } catch (e) {
-        error.textContent = e.message || 'Connection failed. Please try again.';
-        button.textContent = original;
-        document.querySelectorAll('button').forEach(b => b.disabled = false);
-        busy = false;
-        renderServers();
-      }
+  </section>
+
+  <!-- Adding one: the address, then sign in on the server's own page. -->
+  <form id="adding" class="form" hidden novalidate>
+    <div class="head"><button class="text-button" type="button" id="cancel">Cancel</button><h1 style="font-size:17px">Add a server</h1><span style="width:52px"></span></div>
+    <label class="field"><span>Address</span>
+      <input id="address" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="192.168.1.10:3001"></label>
+    <div class="found" id="found"></div>
+    <label class="field"><span>Name</span><input id="name" autocomplete="off" maxlength="80" placeholder="Optional"></label>
+    <p id="add-error" role="alert" style="margin:0;font-size:14px;color:var(--bad)"></p>
+    <div class="grow"></div>
+    <button class="primary" type="submit" id="connect">Connect</button>
+  </form>
+</main>
+<script id="configuration" type="application/json">__CONFIGURATION__</script>
+<script>
+  const config = JSON.parse(document.getElementById('configuration').textContent);
+  const $ = (id) => document.getElementById(id);
+  const servers = config.servers;
+  const reach = new Map();
+
+  async function call(path, body) {
+    const response = await fetch(path, { method:'POST', headers:{ 'Content-Type':'application/json', 'X-Grove-Setup':config.token }, body:JSON.stringify(body || {}) });
+    if (response.status === 204) return {};
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Something went wrong.');
+    return result;
+  }
+
+  // Lets the address be typed the short way: 192.168.1.10 or host:port.
+  function origin(value) {
+    let text = value.trim();
+    if (!text) return '';
+    const bare = !/^https?:\/\//i.test(text);
+    if (bare) text = 'http://' + text;
+    try {
+      const url = new URL(text);
+      if (bare && !url.port) url.port = '3001';
+      return url.origin;
+    } catch { return text; }
+  }
+
+  function show(view) {
+    for (const id of ['opening', 'stage', 'failed-actions', 'servers', 'adding']) $(id).hidden = true;
+    if (view === 'opening' || view === 'failed') { $('opening').hidden = false; $('stage').hidden = false; }
+    if (view === 'failed') $('failed-actions').hidden = false;
+    if (view === 'servers') { $('servers').hidden = false; render(); probeAll(); }
+    if (view === 'adding') { $('adding').hidden = false; $('cancel').hidden = !servers.length; $('address').focus(); }
+    $('stage').classList.toggle('dim', view === 'failed');
+    $('busy').hidden = view !== 'opening';
+    $('failed').hidden = view !== 'failed';
+  }
+
+  let target = null;
+  async function open(profile) {
+    target = profile;
+    $('opening-name').textContent = profile.name;
+    $('opening-dot').className = 'dot';
+    $('busy-label').textContent = 'Connecting to ' + profile.name;
+    show('opening');
+    try {
+      const result = await call('/_grove/connect', { server:profile.server, name:profile.name });
+      location.replace(result.location);
+    } catch (error) {
+      $('opening-dot').className = 'dot bad';
+      $('failed-title').textContent = "Can't reach " + profile.name;
+      $('failed-reason').textContent = new URL(profile.server).host + ' — is Grove running there (grove remote), and on the same network?';
+      show('failed');
     }
-    function renderServers() {
-      const list = document.getElementById('servers');
-      list.replaceChildren();
-      for (const profile of config.servers) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'server' + (profile.id === config.current ? ' current' : '');
-        const symbol = document.createElement('span'); symbol.className = 'symbol'; symbol.textContent = '▤'; symbol.setAttribute('aria-hidden','true');
-        const detail = document.createElement('span'); detail.className = 'detail';
-        const title = document.createElement('strong'); title.textContent = profile.name;
-        const address = document.createElement('span'); address.className = 'address'; address.textContent = profile.server;
-        detail.append(title, address);
-        const status = document.createElement('span'); status.className = 'status'; status.textContent = profile.id === config.current ? 'Current' : '›';
-        button.append(symbol, detail, status);
-        button.addEventListener('click', () => {
-          if (profile.id === config.current) location.replace('/');
-          else connect(profile.server, profile.name, button);
+  }
+  $('retry').addEventListener('click', () => target && open(target));
+  document.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => show('servers')));
+
+  let editing = null;
+  function render() {
+    const list = $('list');
+    list.replaceChildren();
+    for (const profile of servers) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      if (editing === profile.id) {
+        const editor = document.createElement('div');
+        editor.className = 'editor';
+        editor.innerHTML = '<label class="field"><span>Name</span><input maxlength="80"></label><button class="primary" type="button">Save</button><button class="danger" type="button">Remove this server</button>';
+        const [input] = editor.getElementsByTagName('input');
+        const [save, remove] = editor.getElementsByTagName('button');
+        input.value = profile.name;
+        save.addEventListener('click', async () => {
+          try { await call('/_grove/rename', { id:profile.id, name:input.value }); profile.name = input.value.trim(); editing = null; render(); }
+          catch (error) { $('error').textContent = error.message; }
         });
-        list.append(button);
+        remove.addEventListener('click', async () => {
+          if (!confirm('Remove ' + profile.name + '? You will need to sign in again if you add it back.')) return;
+          try {
+            await call('/_grove/forget', { id:profile.id });
+            servers.splice(servers.indexOf(profile), 1);
+            editing = null;
+            servers.length ? render() : show('adding');
+          } catch (error) { $('error').textContent = error.message; }
+        });
+        row.append(editor);
+        list.append(row);
+        setTimeout(() => input.focus());
+        continue;
       }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'open';
+      const dot = document.createElement('i');
+      const state = reach.get(profile.id);
+      dot.className = 'dot' + (state === true ? ' ok' : '');
+      const text = document.createElement('span'); text.className = 'text';
+      const title = document.createElement('b'); title.textContent = profile.name;
+      const detail = document.createElement('small');
+      detail.textContent = (state === false ? "Can't reach · " : '') + new URL(profile.server).host;
+      text.append(title, detail);
+      button.append(dot, text);
+      if (profile.id === config.current) {
+        button.insertAdjacentHTML('beforeend', '<svg width="20" height="20" viewBox="0 0 20 20" aria-label="Current"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+      }
+      button.addEventListener('click', () => open(profile));
+      const edit = document.createElement('button');
+      edit.type = 'button'; edit.className = 'edit'; edit.setAttribute('aria-label', 'Edit ' + profile.name);
+      edit.innerHTML = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="4" cy="9" r="1.5" fill="currentColor"/><circle cx="9" cy="9" r="1.5" fill="currentColor"/><circle cx="14" cy="9" r="1.5" fill="currentColor"/></svg>';
+      edit.addEventListener('click', () => { editing = profile.id; render(); });
+      row.append(button, edit);
+      list.append(row);
     }
-    renderServers();
-    document.getElementById('save').addEventListener('click', (event) => {
-      if (form.reportValidity()) connect(input.value.trim(), name.value.trim(), event.currentTarget, true);
-    });
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      connect(input.value.trim(), name.value.trim(), form.querySelector('button'));
-    });
-  </script>
+  }
+  function probeAll() {
+    for (const profile of servers) {
+      call('/_grove/probe', { server:profile.server })
+        .then((result) => { reach.set(profile.id, !!result.reachable); if (!editing) render(); })
+        .catch(() => {});
+    }
+  }
+  $('add').addEventListener('click', () => show('adding'));
+  $('cancel').addEventListener('click', () => show('servers'));
+
+  // Check the address while it is typed, so a typo shows before Connect.
+  let probing = 0;
+  $('address').addEventListener('input', () => {
+    const value = origin($('address').value);
+    const ticket = ++probing;
+    $('found').textContent = '';
+    if (!value) return;
+    setTimeout(async () => {
+      if (ticket !== probing) return;
+      $('found').innerHTML = '<i class="dot"></i>Looking for Grove…';
+      const result = await call('/_grove/probe', { server:value }).catch(() => ({}));
+      if (ticket !== probing) return;
+      $('found').innerHTML = result.reachable ? '<i class="dot ok"></i>Found Grove' : "<i class=\"dot\"></i>No Grove answers here yet";
+    }, 500);
+  });
+  $('adding').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const server = origin($('address').value);
+    if (!server) { $('add-error').textContent = 'Enter the address Grove shows on your computer.'; return; }
+    $('connect').disabled = true;
+    $('connect').textContent = 'Connecting…';
+    $('add-error').textContent = '';
+    try {
+      const result = await call('/_grove/connect', { server, name:$('name').value.trim() });
+      location.replace(result.location);
+    } catch (error) {
+      $('add-error').textContent = error.message;
+      $('connect').disabled = false;
+      $('connect').textContent = 'Connect';
+    }
+  });
+
+  // Launch: back to the last server, unless asked to pick another.
+  const picking = new URLSearchParams(location.search).has('pick') || config.current;
+  const last = servers.find((p) => p.id === config.last) || (servers.length === 1 ? servers[0] : null);
+  if (!servers.length) { $('address').value = config.server || ''; show('adding'); }
+  else if (last && !picking) open(last);
+  else show('servers');
+</script>
 </body>
 </html>
