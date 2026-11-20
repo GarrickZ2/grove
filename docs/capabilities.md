@@ -84,6 +84,7 @@ Claude Code · Codex · Gemini CLI · GitHub Copilot · Cursor Agent · Junie ·
 - `grove_read_notes` / `grove_edit_note` — task spec
 - `grove_read_review` / `grove_reply_review` / `grove_add_comment` — code review
 - `grove_complete_task` — commit → rebase → merge → archive
+- `grove_create_routine` / `grove_list_routines` / `grove_update_routine` / `grove_delete_routine` — schedule a prompt back into this Task: one-time or cron (with start/end), to this chat or a new chat with the same Agent
 - `grove_sketch_read_me` / `grove_sketch_list` / `grove_sketch_read` / `grove_sketch_draw` — checkpoint-driven sketch control
 
 **Browser tools** (in a Working Session):

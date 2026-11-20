@@ -9,6 +9,7 @@ pub mod cron_util;
 pub mod events;
 pub mod executor;
 pub mod scheduler;
+pub mod task_routines;
 
 /// Subsystem-wide warning log. Routes through `tracing::warn!` when the
 /// `perf-monitor` feature is on (so the in-memory trace collector picks it

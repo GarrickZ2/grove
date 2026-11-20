@@ -53,7 +53,7 @@ pub struct RoutinePatch {
 }
 
 /// Tells an explicit null (clear it) from a field left out (keep it).
-fn present<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn present<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<Option<Option<i64>>, D::Error> {
     Option::deserialize(deserializer).map(Some)

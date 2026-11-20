@@ -470,6 +470,13 @@ fn filter_tools_for(kind: TaskEnvKind, all: Vec<Tool>) -> Vec<Tool> {
     // Skill-authoring tools — available while working inside any real task
     // (Coding or Studio) so an agent can capture a skill mid-flow.
     let authoring: HashSet<&'static str> = HashSet::from(["skill_create", "skill_list"]);
+    // Routines delivered back into this Task — any real task (Coding or Studio).
+    let routines: HashSet<&'static str> = HashSet::from([
+        "create_routine",
+        "list_routines",
+        "update_routine",
+        "delete_routine",
+    ]);
     // Union of every in-task tool (used to carve out the orchestrator surface
     // — orchestrator never sees any in-task tool, including sketch).
     let any_in_task: HashSet<&str> = common_in_task
@@ -477,6 +484,7 @@ fn filter_tools_for(kind: TaskEnvKind, all: Vec<Tool>) -> Vec<Tool> {
         .chain(coding_only.iter())
         .chain(studio_only.iter())
         .chain(authoring.iter())
+        .chain(routines.iter())
         .copied()
         .collect();
 
@@ -494,6 +502,7 @@ fn filter_tools_for(kind: TaskEnvKind, all: Vec<Tool>) -> Vec<Tool> {
                 common_in_task.contains(t.name.as_ref())
                     || coding_only.contains(t.name.as_ref())
                     || authoring.contains(t.name.as_ref())
+                    || routines.contains(t.name.as_ref())
             })
             .collect(),
         TaskEnvKind::Studio => all
@@ -503,6 +512,7 @@ fn filter_tools_for(kind: TaskEnvKind, all: Vec<Tool>) -> Vec<Tool> {
                     || studio_only.contains(t.name.as_ref())
                     || studio_shared.contains(t.name.as_ref())
                     || authoring.contains(t.name.as_ref())
+                    || routines.contains(t.name.as_ref())
             })
             .collect(),
         TaskEnvKind::InTaskUnknown => all
@@ -685,6 +695,22 @@ pub struct EditNoteParams {
     pub task_id: String,
     /// New note content (markdown). Replaces entire note. Pass empty string to clear.
     pub content: String,
+}
+
+/// Identifies one Routine of the current Task.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RoutineIdParams {
+    /// Routine id from create_routine or list_routines.
+    pub id: String,
+}
+
+/// Edit one Routine of the current Task.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RoutineUpdateParams {
+    /// Routine id from create_routine or list_routines.
+    pub id: String,
+    #[serde(flatten)]
+    pub patch: crate::automation::task_routines::TaskRoutinePatch,
 }
 
 /// Create a local skill entry (in-task authoring tool)
@@ -1279,6 +1305,83 @@ impl GroveMcpServer {
         let json = serde_json::to_string_pretty(&result)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
+    }
+
+    #[tool(
+        name = "create_routine",
+        description = "Schedule a prompt to be delivered later in this Task. One-time by default (run_once_at, unix seconds), or recurring with schedule_cron (5-field cron, machine local time), optionally bounded by starts_at / ends_at. target `self` (default) delivers it back to this chat as a new message once its turn is free; `new_chat` starts a new chat in this Task with your Agent on each run. Use it to come back to something later (check CI, follow up after a wait) instead of sleeping or polling. Get the current time with `date +%s`."
+    )]
+    async fn grove_create_routine(
+        &self,
+        params: Parameters<crate::automation::task_routines::TaskRoutineInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let input = params.0;
+        blocking_json_result(move || {
+            let caller = routine_caller()?;
+            let routine = crate::automation::task_routines::create(&caller, input)
+                .map_err(|e| mcp_err(&e.to_string()))?;
+            Ok(crate::automation::task_routines::describe(
+                &caller, &routine,
+            ))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "list_routines",
+        description = "List the Routines that deliver into this Task, including ones the user set up. `target` is self (this chat), new_chat, or chat:<id> for another chat in this Task."
+    )]
+    async fn grove_list_routines(&self) -> Result<CallToolResult, McpError> {
+        blocking_json_result(move || {
+            let caller = routine_caller()?;
+            let routines = crate::automation::task_routines::list(&caller)
+                .map_err(|e| mcp_err(&e.to_string()))?;
+            Ok(json!({
+                "routines": routines
+                    .iter()
+                    .map(|r| crate::automation::task_routines::describe(&caller, r))
+                    .collect::<Vec<_>>()
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "update_routine",
+        description = "Change a Routine of this Task. Pass only what changes; everything else stays as it is. Set enabled to turn it on or off. Pass null for run_once_at, starts_at or ends_at to clear it. target `self` points it at this chat."
+    )]
+    async fn grove_update_routine(
+        &self,
+        params: Parameters<RoutineUpdateParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        blocking_json_result(move || {
+            let caller = routine_caller()?;
+            let routine = crate::automation::task_routines::update(&caller, &p.id, p.patch)
+                .map_err(|e| mcp_err(&e.to_string()))?;
+            Ok(crate::automation::task_routines::describe(
+                &caller, &routine,
+            ))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "delete_routine",
+        description = "Delete a Routine of this Task."
+    )]
+    async fn grove_delete_routine(
+        &self,
+        params: Parameters<RoutineIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = params.0.id;
+        blocking_json_result(move || {
+            let caller = routine_caller()?;
+            crate::automation::task_routines::delete(&caller, &id)
+                .map_err(|e| mcp_err(&e.to_string()))?;
+            Ok(json!({ "deleted": true }))
+        })
+        .await
     }
 
     /// Create a new skill entry in a local package, then author it with your own tools
@@ -2288,6 +2391,24 @@ fn resolve_current_task() -> Result<(String, String), McpError> {
         .ok_or_else(|| mcp_err("Not inside a Grove task: GROVE_TASK_ID / GROVE_PROJECT not set"))?;
     let project_key = workspace::project_hash(&project_path);
     Ok((project_key, task_id))
+}
+
+/// The calling chat for the Routine tools: this Task and this chat only.
+fn routine_caller() -> Result<crate::automation::task_routines::Caller, McpError> {
+    let (project, task_id) = resolve_current_task()?;
+    let project = env::var("GROVE_PROJECT_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .unwrap_or(project);
+    let chat_id = env::var("GROVE_CHAT_ID")
+        .ok()
+        .filter(|c| !c.is_empty())
+        .ok_or_else(|| mcp_err("Routines are only available in a Grove chat"))?;
+    Ok(crate::automation::task_routines::Caller {
+        project,
+        task_id,
+        chat_id,
+    })
 }
 
 fn broadcast_index_changed(project: &str, task_id: &str) {
