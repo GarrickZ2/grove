@@ -9,19 +9,11 @@ import { errorMessage } from "../../utils/errorMessage";
 import { readBuddyPreference, writeBuddyPreference } from "./buddyStorage";
 import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
 import { playTextareaSendOut } from "../Tasks/TaskView/composer/sendOut";
+import { readPastedContent } from "../Tasks/TaskView/composer/pastedContent";
 
 /** Pasted text longer than this becomes an attachment instead of filling the box. */
 const LONG_PASTE_CHARS = 10 * 1024;
 
-/** Files a paste carries: Finder copies expose `files`; screenshots often only a file item. */
-function pastedFiles(event: ClipboardEvent): File[] {
-  const files = Array.from(event.clipboardData.files);
-  if (files.length) return files;
-  return Array.from(event.clipboardData.items).flatMap((item) => {
-    const file = item.kind === "file" ? item.getAsFile() : null;
-    return file ? [file] : [];
-  });
-}
 
 /** Thumbnail for a picked image; the blob URL lives exactly as long as the <img>. */
 function ImageThumb({ file }: { file: File }) {
@@ -78,18 +70,20 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, men
   const { send, stop, sending, connected } = transport ?? session;
   const addFiles = (added: File[]) => { if (added.length) setFiles((current) => [...current, ...added]); };
   const paste = (event: ClipboardEvent) => {
-    const pasted = pastedFiles(event);
-    if (pasted.length) {
-      // Keep the file, not the filename text a Finder copy also carries.
-      event.preventDefault();
-      if (!sending) addFiles(pasted);
-      return;
-    }
+    // Files are attached and text pasted with them kept; a Finder copy's
+    // file-name text is dropped (see readPastedContent).
+    const { files: pasted, text: pastedText } = readPastedContent(event.clipboardData);
     // Long pastes (logs, documents) go as a .txt file, as in TaskChat.
-    const pastedText = event.clipboardData.getData("text/plain");
     if (pastedText.length > LONG_PASTE_CHARS) {
       event.preventDefault();
-      if (!sending) addFiles([new File([pastedText], `pasted-text-${Date.now()}.txt`, { type: "text/plain" })]);
+      if (!sending) addFiles([...pasted, new File([pastedText], `pasted-text-${Date.now()}.txt`, { type: "text/plain" })]);
+      return;
+    }
+    if (pasted.length) {
+      event.preventDefault();
+      if (sending) return;
+      addFiles(pasted);
+      if (pastedText) document.execCommand("insertText", false, pastedText);
     }
   };
   const hasContent = !!text.trim() || files.length > 0;

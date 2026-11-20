@@ -5,6 +5,7 @@ import { nextMentionIndex } from "../../../../utils/fileMention";
 import { useProjectMentions } from "../useProjectMentions";
 import { createMentionChip, filterComposerMentions, getPromptFromEditable, isComposerChip, mentionCategorySelectors, mentionStartIndex, parseMentionQuery } from "../composerMentions";
 import type { MentionSources } from "./useMentionSources";
+import { readPastedContent } from "./pastedContent";
 
 export interface MentionEditableHandle {
   element: HTMLDivElement | null;
@@ -238,13 +239,11 @@ export const MentionEditable = forwardRef<MentionEditableHandle, MentionEditable
 
   const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
     event.preventDefault();
-    const files = Array.from(event.clipboardData.files);
-    if (files.length > 0) {
-      onPasteFiles?.(files);
-      return;
-    }
+    // Files are attached and text pasted with them kept (see readPastedContent).
+    const { files, text } = readPastedContent(event.clipboardData);
+    if (files.length > 0) onPasteFiles?.(files);
     // Plain text only: pasted markup would bypass the chip serialization.
-    document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
+    if (text) document.execCommand("insertText", false, text);
   };
 
   return (

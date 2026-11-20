@@ -165,7 +165,7 @@ describe("Buddy composer and header", () => {
     act(() => root.render(<BuddyComposer buddy={buddy} onSent={vi.fn()} />));
     const shot = new File(["png"], "shot.png", { type: "image/png" });
     const paste = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(paste, "clipboardData", { value: { files: [], items: [{ kind: "file", getAsFile: () => shot }] } });
+    Object.defineProperty(paste, "clipboardData", { value: { files: [], items: [{ kind: "file", getAsFile: () => shot }], getData: () => "" } });
     act(() => { host.querySelector("textarea")!.dispatchEvent(paste); });
     expect(paste.defaultPrevented).toBe(true);
     expect(host.querySelector<HTMLImageElement>(".buddy-attachment-thumb")?.src).toBe("blob:shot");

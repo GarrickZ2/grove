@@ -261,6 +261,7 @@ import { useOrbitInterface } from "../../../orbit/ui/interfaceContext";
 import { OrbitComposer, OrbitPlanSteps, OrbitSendOrb, OrbitStatusBar, OrbitTrayHead } from "./composer/OrbitComposer";
 import { OrbitBackgroundTray, OrbitCommentsTray, OrbitMemoryTray, OrbitQueueTray } from "./composer/OrbitTrays";
 import { OrbitComposerSheet } from "./composer/OrbitSheet";
+import { readPastedContent } from "./composer/pastedContent";
 import { OrbitSetupChip, type SetupField, type SetupToggle } from "./composer/OrbitSetupChip";
 import { OrbitUsageRing } from "./composer/OrbitUsageRing";
 import { orbitTrayForPanel, resolveOrbAction, useComposerStatus, type AskKind, type OrbitTray } from "./composer/composerStatus";
@@ -9480,37 +9481,13 @@ export function TaskChat({
   /** Strip HTML on paste — upload copied files/images or insert plain text. */
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
-      if (pendingQueueEditRef.current?.attemptId) { e.preventDefault(); return; }
-      const items = Array.from(e.clipboardData.items);
-      // Finder/Explorer file copy commonly includes both a real File and a
-      // text/plain filename. Handle the file payload first so the browser's
-      // default paste does not leave only that filename in the composer.
-      const clipboardFiles = Array.from(e.clipboardData.files);
-      if (clipboardFiles.length === 0) {
-        for (const item of items) {
-          if (item.kind !== "file") continue;
-          const file = item.getAsFile();
-          if (file) clipboardFiles.push(file);
-        }
-      }
-      if (clipboardFiles.length > 0) {
-        e.preventDefault();
-        clipboardFiles.forEach((file) => void addFileAsAttachment(file));
-        return;
-      }
-
-      // Some screenshot clipboard payloads expose only a DataTransferItem,
-      // not clipboardData.files.
-      const imageItem = items.find((i) => i.type.startsWith("image/"));
-      if (imageItem && promptCaps.image) {
-        e.preventDefault();
-        const file = imageItem.getAsFile();
-        if (file) addFileAsAttachment(file);
-        return;
-      }
-      // Default: plain text paste
       e.preventDefault();
-      const text = e.clipboardData.getData("text/plain");
+      if (pendingQueueEditRef.current?.attemptId) return;
+      // Files become attachments; text pasted with them (a copied page or
+      // doc with images) is kept, except the file names a Finder copy carries.
+      const { files, text } = readPastedContent(e.clipboardData);
+      files.forEach((file) => void addFileAsAttachment(file));
+      if (!text) return;
       // Large text: convert to .txt attachment to avoid freezing contentEditable
       if (text.length > 10 * 1024) {
         const blob = new Blob([text], { type: "text/plain" });
@@ -9521,7 +9498,7 @@ export function TaskChat({
       document.execCommand("insertText", false, text);
       checkContent();
     },
-    [checkContent, promptCaps.image, addFileAsAttachment],
+    [checkContent, addFileAsAttachment],
   );
 
   /** Handle file input selection */
