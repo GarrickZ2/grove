@@ -24,4 +24,14 @@ describe("normalizeStrongEmphasis", () => {
       "<strong>商家上下文分散：</strong>集成方案",
     );
   });
+
+  it("keeps the blank line between consecutive bold-led paragraphs", () => {
+    const markdown = "**S1 划分样本组：** 按标签划分，参见 S2。\n\n**S2 计算组级利用率：** 选取模型";
+    expect(normalizeStrongEmphasis(markdown)).toBe(markdown);
+  });
+
+  it("does not pair delimiters across a line break", () => {
+    const markdown = "**a：** 正文\n**b：** 正文";
+    expect(normalizeStrongEmphasis(markdown)).toBe(markdown);
+  });
 });

@@ -11,8 +11,11 @@ export function normalizeStrongEmphasis(content: string): string {
     const inlineParts = fencedParts[i].split(/(`[^`]*`)/g);
     for (let j = 0; j < inlineParts.length; j += 2) {
       inlineParts[j] = inlineParts[j]
-        .replace(/\*\*\s+([^*\n]*?\S)\*\*/g, "**$1**")
-        .replace(/\*\*([^*\n]*?\S)\s+\*\*/g, "**$1** ")
+        // Horizontal whitespace only: `\s` would also match newlines and pair
+        // a closing `**` with the next paragraph's opening `**`, deleting the
+        // blank line between them.
+        .replace(/\*\*[ \t]+([^*\n]*?\S)\*\*/g, "**$1**")
+        .replace(/\*\*([^*\n]*?\S)[ \t]+\*\*/g, "**$1** ")
         // micromark does not consistently recognize `**` as a closing
         // delimiter when the content ends in CJK/full-width punctuation and
         // Chinese text follows immediately (e.g. `**标题：**正文`). Convert
