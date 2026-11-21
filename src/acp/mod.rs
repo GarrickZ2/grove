@@ -13607,7 +13607,7 @@ mod tests {
         Arc::new(AcpClientState {
             handle,
             configured_agent_name: "test".to_string(),
-            working_dir: PathBuf::from("/tmp"),
+            working_dir: std::env::temp_dir(),
             terminals,
             project_key: "project".to_string(),
             task_id: "task".to_string(),

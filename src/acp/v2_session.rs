@@ -1502,6 +1502,13 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    /// The Python that runs the fixture Agents: Windows has no /usr/bin.
+    const PYTHON: &str = if cfg!(windows) {
+        "python"
+    } else {
+        "/usr/bin/python3"
+    };
+
     #[tokio::test]
     async fn v1_new_and_restored_sessions_carry_their_config() {
         let _lock = crate::storage::database::test_lock().lock().await;
@@ -1592,7 +1599,7 @@ for line in sys.stdin:
 
         for chat in ["fresh", "restored"] {
             let config = AcpStartConfig {
-                agent_command: "/usr/bin/python3".into(),
+                agent_command: PYTHON.into(),
                 agent_name: "options-fixture".into(),
                 agent_args: vec![
                     script.to_string_lossy().into_owned(),
@@ -1725,7 +1732,7 @@ for line in sys.stdin:
         reply(ident, error={'code':-32601, 'message':'unexpected ' + method})
 "#).unwrap();
         let config = AcpStartConfig {
-            agent_command: "/usr/bin/python3".into(),
+            agent_command: PYTHON.into(),
             agent_name: "status-fixture".into(),
             agent_args: vec![
                 script.to_string_lossy().into_owned(),
@@ -1838,7 +1845,7 @@ for line in sys.stdin:
         )
         .unwrap();
         let config = AcpStartConfig {
-            agent_command: "/usr/bin/python3".into(),
+            agent_command: PYTHON.into(),
             agent_name: "bg-fixture".into(),
             agent_args: vec![script.to_string_lossy().into_owned()],
             working_dir: dir.path().into(),
@@ -2050,7 +2057,7 @@ for line in sys.stdin:
         )
         .unwrap();
         let config = AcpStartConfig {
-            agent_command: "/usr/bin/python3".into(),
+            agent_command: PYTHON.into(),
             agent_name: "v2-fixture".into(),
             agent_args: vec![script.to_string_lossy().into_owned()],
             working_dir: dir.path().into(),
@@ -2250,7 +2257,7 @@ for line in sys.stdin:
     elif method == 'session/close': send({'jsonrpc':'2.0','id':ident,'result':{}})
 "#).unwrap();
         let config = AcpStartConfig {
-            agent_command: "/usr/bin/python3".into(),
+            agent_command: PYTHON.into(),
             agent_name: "resume-v2-fixture".into(),
             agent_args: vec![script.to_string_lossy().into_owned()],
             working_dir: dir.path().into(),
@@ -2346,7 +2353,7 @@ for line in sys.stdin:
 "#).unwrap();
         let key = format!("v1-only-{}", uuid::Uuid::new_v4());
         let config = AcpStartConfig {
-            agent_command: "/usr/bin/python3".into(),
+            agent_command: PYTHON.into(),
             agent_name: "v1-only-fixture".into(),
             agent_args: vec![
                 script.to_string_lossy().into_owned(),
