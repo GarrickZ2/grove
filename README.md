@@ -9,7 +9,7 @@
 
 ### Grove is a Context Harness for every coding agent.
 
-Ten agents can work in parallel, each in its own worktree. You steer them by capturing, organizing and injecting the context they work from.
+Every coding agent can work in parallel, each in its own worktree. You steer them by capturing, organizing and injecting the context they work from.
 
 [![Website](https://img.shields.io/badge/website-grove-3f6b3f?style=flat&logo=github)](https://garrickz2.github.io/grove/)
 [![Crates.io](https://img.shields.io/crates/v/grove-rs.svg)](https://crates.io/crates/grove-rs)
@@ -36,7 +36,7 @@ ACP standardized how software talks to AI. Grove is the layer above it: it repla
 | **Inject** | Context reaches the agent. You push it, or the agent pulls it. | The composer (files, sketches, memories), Agent context, Grove's MCP tools |
 | **Negotiate** | Review comments, surveys and permission requests settle the result. | Code Review, the Dashboard's *Needs you* list, commit → rebase → merge → archive |
 
-Running ten agents at once is how you lay the work out. Shipping fast is what you get when you feed them good context.
+Running many agents at once is how you lay the work out. Shipping fast is what you get when you feed them good context.
 
 ---
 
@@ -55,7 +55,7 @@ Start each day here. **Needs you** lists the permission requests and surveys age
 
 ### Every coding agent, in parallel
 
-Ten agents are built in: Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor, Junie, Trae, Kimi, Qwen and OpenCode. Hermes, Kiro and OpenClaw are ACP-ready, and anything that speaks ACP over stdio or HTTP plugs in with one entry. Each task gets its own git worktree and terminal session, so agents don't collide. **Custom Agents** are reusable personas: a base agent, a system prompt and an effort level.
+Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor, Grok Build, Junie, Kimi, Kiro, OpenCode and dozens more install from the ACP agent registry, and anything else that speaks ACP over stdio or HTTP plugs in with one entry. Each task gets its own git worktree and terminal session, so agents don't collide. **Custom Agents** are reusable personas: a base agent, a system prompt and an effort level.
 
 When agents need each other, they delegate through the **[Agent Graph](https://garrickz2.github.io/grove/#results)**. A planner spawns a coder, the coder spawns a reviewer, and replies route back as typed `<grove-meta>` messages, not strings glued through prompts. Cycles are caught at spawn and only one message is in flight per edge. The graph is exposed as MCP tools, so an orchestrator agent can drive it in code.
 
@@ -80,7 +80,7 @@ Expand the mind map and the same memories become a sky you can turn, zoom and pi
 
 ### Buddy: a teammate that stays on
 
-A Buddy is a long-lived assistant with a name, a role and its own Memory, in one continuous conversation. It does small things itself and hands session-sized work to task agents, then follows that work back to you. It runs routines on a schedule, and you can bind it to Feishu, Lark or WeChat to talk to it from there.
+A Buddy is a long-lived assistant with a name, a role and its own Memory, in one continuous conversation. It does small things itself and hands session-sized work to task agents, then follows that work back to you. It runs routines on a schedule, and you can bind it to Feishu, Lark, WeChat, Telegram or Slack to talk to it from there. Buddies message each other and meet in group chats.
 
 <p align="center">
   <picture>
@@ -96,7 +96,14 @@ Studio is a project type for briefs, brand guides, specs and layouts, with no gi
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/shots/studio-dark.jpg">
-  <img alt="The Studio page: shared files for a brand project and the instructions every agent reads." src="docs/shots/studio-light.jpg" width="100%">
+  <img alt="The Studio page: shared files for a brand project, the instructions every agent reads, and the Project's design system." src="docs/shots/studio-light.jpg" width="100%">
+</picture>
+
+**Design** boards are where agents draw UI. Each design is plain HTML pages, laid out as artboards you can play, rearrange and annotate. Pick an element to change its text, size, layout or colors, and the edit lands in the page's file. Comment on an element and send the thread to the agent. Every task shares the Project's one design system, and designs go in and out as zips in the layout Claude Design and Open Design use.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/shots/design-dark.jpg">
+  <img alt="The Design panel: a landing page and its phone version as artboards, the hero headline selected in the inspector, beside the agent's chat." src="docs/shots/design-light.jpg" width="100%">
 </picture>
 
 ### Code Review: settle the work in context
@@ -107,6 +114,14 @@ Line-level threaded comments on each task's diff, resolvable by you or the agent
   <source media="(prefers-color-scheme: dark)" srcset="docs/shots/review-dark.jpg">
   <img alt="Code Review: a new OrderSummary component with a threaded comment about a duplicated free-shipping threshold." src="docs/shots/review-light.jpg" width="100%">
 </picture>
+
+### Share a task
+
+Send a link to someone outside Grove. They see the task's changes, files and design boards, read every comment thread and reply, the agent's included, without an account. Each link carries its own scope (the whole task, or the reviews, boards, sketches and files you pick), its own expiry, and read-only or comment access. Their comments reach your review as they write them.
+
+### Browsers and the computer
+
+Agents drive a browser through [agent-browser](https://github.com/vercel-labs/agent-browser): a test browser per task, with logins kept per project, or your own browser once you approve it in the chat. With computer use on, they can work the desktop too. The Browser panel shows the live page, so you can watch and take over.
 
 ### Extensions and plugins
 
@@ -123,27 +138,36 @@ The same tasks, agents and worktrees everywhere:
 
 - **Web** (`grove web`): the main surface, with FlexLayout panels, an IDE Layout mode and a ⌘K palette.
 - **GUI** (`grove gui`): the same app in a native Tauri window, with a system tray and OS notifications.
-- **TUI** (`grove tui`): the original keyboard-first surface, with the full review workflow.
-- **Mobile** (`grove mobile`): scan a QR code from your phone; every request is HMAC-SHA256 signed.
+- **Terminal** (`grove tui`): projects, tasks and sessions in a sidebar, with the chat beside them. `grove cli` runs sessions from scripts and other agents.
+- **Remote** (`grove remote`): scan a QR code from your phone or tablet; every request is HMAC-SHA256 signed. Touch layouts for iPhone, iPad and iPhone Duo, installable as an app.
 - **Radio**: hold to talk from your phone. Nine channels, each bound to a task's chat or terminal.
+
+Pair other machines running Grove and switch between them from the sidebar.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/shots/web-dark.jpg">
   <img alt="Grove in the browser with the ⌘K command palette open." src="docs/shots/web-light.jpg" width="100%">
 </picture>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/shots/tui-dark.png">
-  <img alt="The Grove TUI: the task list and the review comments of the selected task." src="docs/shots/tui-light.png" width="100%">
-</picture>
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/shots/mobile-dark.jpg">
-    <img alt="Grove on a phone, showing the Dashboard." src="docs/shots/mobile-light.jpg" width="30%">
+    <img alt="Grove on an iPhone: a finished agent turn with its tool calls." src="docs/shots/mobile-light.jpg" width="30%">
   </picture>
   &nbsp;&nbsp;
   <img alt="Grove Radio on a phone: nine channels bound to the project's tasks." src="docs/shots/radio-light.jpg" width="30%">
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/shots/duo-dark.jpg">
+    <img alt="Grove on an iPhone Duo held open: the Design board beside the chat." src="docs/shots/duo-light.jpg" width="62%">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/shots/duo-laptop-dark.jpg">
+    <img alt="Grove on an iPhone Duo folded like a laptop: the chat above, the Design board below." src="docs/shots/duo-laptop-light.jpg" width="31%">
+  </picture>
 </p>
 
 ---
@@ -162,7 +186,7 @@ Then, inside any directory:
 grove        # resumes your last surface
 grove web    # browser IDE at http://localhost:3001
 grove gui    # native desktop window
-grove tui    # terminal UI
+grove tui    # terminal app
 ```
 
 ---

@@ -18,14 +18,17 @@ const AGENTS = [
    ones get an ink/white filter per theme via .ag-ic.is-mono */
 const AGENT_ICON = {
   "Claude Code": "claude-color", "Codex": "openai", "Gemini CLI": "gemini-color", "GitHub Copilot": "githubcopilot",
-  "Cursor Agent": "cursor", "Junie": "junie-color", "Trae CLI": "trae-color", "Kimi": "kimi-color", "Qwen": "qwen-color",
+  "Cursor Agent": "cursor", "Junie": "junie-color", "Trae CLI": "trae-color", "Kimi": "kimi-ink", "Qwen": "qwen-color",
   "OpenCode": "opencode", "Hermes": "hermes", "Kiro": "kiro", "OpenClaw": "openclaw-color",
+  "Cursor": "cursor", "Qwen Code": "qwen-color", "Grok Build": "grok", "Amp": "amp", "Cline": "cline", "goose": "goose",
 };
-const MONO_ICONS = new Set(["openai", "githubcopilot", "cursor", "opencode", "hermes"]);
+const MONO_ICONS = new Set(["openai", "githubcopilot", "cursor", "opencode", "hermes", "grok", "amp", "cline", "goose"]);
+/* two-tone icons drawn for light chips; the dark theme flips their ink and keeps the hue */
+const INK_ICONS = new Set(["kimi-ink"]);
 const agentIconSrc = name => AGENT_ICON[name] ? `agent-icon/${AGENT_ICON[name]}.svg` : null;
 function agentIcon(name) {
   const f = AGENT_ICON[name];
-  return f ? `<img class="ag-ic${MONO_ICONS.has(f) ? " is-mono" : ""}" src="agent-icon/${f}.svg" alt="" width="16" height="16" decoding="async">` : "";
+  return f ? `<img class="ag-ic${MONO_ICONS.has(f) ? " is-mono" : INK_ICONS.has(f) ? " is-ink" : ""}" src="agent-icon/${f}.svg" alt="" width="16" height="16" decoding="async">` : "";
 }
 function setAgentIcon(el, name) {
   const f = AGENT_ICON[name]; if (!el || !f) return;
@@ -671,8 +674,8 @@ const Graph = (() => {
   const DESC = {
     web: "The main surface: FlexLayout with 10 panel types, an IDE Layout mode, a ⌘K palette, and live D2, Mermaid and HTML preview.",
     gui: "The same Web IDE in a native Tauri window, with a system tray and OS notifications when an agent needs you.",
-    tui: "The original keyboard-first surface. j/k to move, the full review workflow, no mouse required.",
-    phone: "grove mobile prints a QR code. Scan it from your phone; every request is HMAC-SHA256 signed with the secret inside it.",
+    tui: "Projects, tasks and sessions in a sidebar, the chat beside them. grove cli runs sessions from scripts and other agents.",
+    phone: "grove remote prints a QR code. Scan it from your phone or tablet; every request is HMAC-SHA256 signed. Touch layouts for iPhone, iPad and iPhone Duo, installable as an app.",
     voice: "Radio: hold to talk from your phone. The transcript lands in a Chat or Terminal slot, nine slots, each bound to a task.",
   };
   let idx = 0, timer = 0, visible = false, manual = false, hover = false;

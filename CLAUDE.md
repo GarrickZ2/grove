@@ -23,7 +23,7 @@ Everything else people call Grove — "the multi-agent IDE", "parallel agent man
 **Plugins** (next phase) open the policy layer: users and the community build new context pipes and organizing templates on top of the stable OS — turning Grove from a tool into a platform.
 
 **Headline features**:
-- **Every coding agent in parallel** — 10 built-in (Claude Code, Codex, Gemini CLI, Copilot, Cursor, Junie, Trae, Kimi, Qwen, OpenCode), 3 more ACP-ready (Hermes, Kiro, OpenClaw), plus BYO via ACP-over-stdio or HTTP. Each task = its own git worktree + terminal session, so agents don't collide.
+- **Every coding agent in parallel** — installed from the bundled ACP agent registry (Claude Code, Codex, Gemini CLI, Copilot, Cursor, Grok Build, Junie, Kimi, Kiro, OpenCode and dozens more), plus BYO via ACP-over-stdio or HTTP. Each task = its own git worktree + terminal session, so agents don't collide.
 - **Agent Graph** — typed DAG of agents exchanging structured `<grove-meta>` messages. Planner spawns coder; coder spawns reviewer. Exposed as MCP tools so any agent can drive it.
 - **Studio** — first-class surface for non-coders (designers, PMs, brand). Excalidraw canvases agents can read, shared assets hard-linked across worktrees, Project Memory + Workspace Instructions editor.
 - **Code Review** — threaded resolvable comments, AI batch-fixer, commit → rebase → merge → archive in one step with squash-merge detection.

@@ -81,8 +81,8 @@ Or pick a mode explicitly:
 ```bash
 grove web      # Browser IDE on http://localhost:3001
 grove gui      # Native desktop window (Tauri)
-grove mobile   # LAN access for phone / tablet with HMAC auth
-grove tui      # Keyboard-first terminal UI
+grove remote   # LAN access for phone / tablet with HMAC auth
+grove tui      # Terminal app: projects, tasks, sessions and chat
 ```
 
 The first run registers the current directory as a project under `~/.grove/projects/<hash>/`. Tasks, AI summaries, and notes live there — **do not hand-edit those files**, use the UI or Grove's MCP server instead.

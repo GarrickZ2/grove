@@ -26,8 +26,8 @@ Reflects version 0.9.0 (2026-04-19).
 
 ## 2. Multi-Agent Support (ACP)
 
-### 2.1 Built-in agents
-Claude Code · Codex · Gemini CLI · GitHub Copilot · Cursor Agent · Junie · Trae CLI · Kimi · Qwen · OpenCode · Hermes · Kiro · OpenClaw (13 total)
+### 2.1 Agents
+Installed from the bundled ACP agent registry: Claude Code · Codex · Gemini CLI · GitHub Copilot · Cursor · Grok Build · Junie · Kimi · Kiro · OpenCode · Qwen Code · Amp · Cline · goose and dozens more
 
 ### 2.2 ACP protocol
 - Full ACP client (JSON-RPC over stdio), tracks `ProtocolVersion::V1`
@@ -232,7 +232,7 @@ Terminal · Chat · Review · Editor · Stats · Git · Notes · Comments · Art
 
 ---
 
-## 8. Remote Access (`grove mobile`)
+## 8. Remote Access (`grove remote`)
 
 ### 8.1 Authentication
 - **HMAC-SHA256 request signing** — secret key never sent over the wire
@@ -334,7 +334,7 @@ Tauri 2 native window. macOS included in `.dmg`; Linux via `GROVE_GUI=1`; Window
 - Daemonize on startup (releases terminal)
 - In-app updates with progress + restart dialog (AppBundle)
 
-### 11.4 `grove mobile`
+### 11.4 `grove remote` (formerly `grove mobile`)
 LAN access with HMAC auth — see §8.
 
 ### 11.5 Smart launch resume
