@@ -97,6 +97,11 @@ textarea,
 .grove-app-shell {
   height: var(--grove-app-height, 100dvh);
 }
+/* View zoom is CSS zoom on the body, which scales viewport units too: a page
+   100vh tall is taller than the window. Dividing by the zoom fits it again. */
+.grove-desktop-shell {
+  height: calc(100vh / var(--grove-zoom, 1));
+}
 /* Touch screens hide the Home indicator until it's swiped, so nothing keeps
    room for it: controls sit just off the bottom edge. Read through this variable
    wherever env(safe-area-inset-bottom) used to be. */

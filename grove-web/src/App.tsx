@@ -1353,6 +1353,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
     if (typeof document === "undefined") return;
     const clamped = Math.max(0.5, Math.min(2, z));
     (document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom = String(clamped);
+    document.documentElement.style.setProperty("--grove-zoom", String(clamped));
     try {
       window.localStorage.setItem("grove:view.zoom", String(clamped));
     } catch {
@@ -1865,7 +1866,7 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // One page tree across breakpoints keeps task/workspace state alive.
   return (
     <TabletAsDesktopContext.Provider value={orbit}>
-    <div className={isMobile ? "grove-app-shell flex flex-col bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]" : "flex h-screen bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"}>
+    <div className={isMobile ? "grove-app-shell flex flex-col bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]" : "grove-desktop-shell flex h-screen bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"}>
       {/* Invisible top-edge drag strip — Tauri Overlay title-bar mode hides
           the OS title bar, so the user expects to drag the window from
           anywhere along the top edge (Raycast / Tahoe convention).

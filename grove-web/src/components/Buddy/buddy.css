@@ -1,5 +1,6 @@
 :where(.buddy-app,.buddy-dialog,.buddy-sheet){--buddy-sidebar-bg:color-mix(in oklab,var(--color-bg) 94%,var(--color-text) 6%);--buddy-border:color-mix(in oklab,var(--color-border) 70%,transparent);--buddy-selected:color-mix(in oklab,var(--color-text) 10%,transparent);--buddy-waiting-text:color-mix(in oklab,var(--color-warning) 58%,var(--color-text) 42%)}
-.buddy-app{display:flex;height:100dvh;width:100%;overflow:hidden;background:var(--color-bg);color:var(--color-text)}
+/* View zoom scales viewport units: see .grove-desktop-shell. */
+.buddy-app{display:flex;height:calc(100dvh / var(--grove-zoom,1));width:100%;overflow:hidden;background:var(--color-bg);color:var(--color-text)}
 .buddy-app svg,.buddy-dialog svg{stroke-width:1.8}
 .buddy-sidebar{display:flex;flex-direction:column;width:280px;flex-shrink:0;background:var(--buddy-sidebar-bg);border-right:1px solid var(--buddy-border)}
 .buddy-sidebar-top{height:54px;min-height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 12px 0 20px}
