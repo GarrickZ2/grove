@@ -9,7 +9,8 @@ import {
   type ShareInfo,
 } from "../../api/shares";
 import { SharedTaskView } from "./SharedTaskView";
-import { copyText, initials, stateMessage, untilText } from "./shareFormat";
+import { AgentAvatar } from "../Review/AgentAvatar";
+import { copyText, stateMessage, untilText } from "./shareFormat";
 import "../../orbit/tokens.css";
 import "../../orbit/ui/orbit-ui.css";
 import "./share.css";
@@ -131,7 +132,7 @@ function Landing({ info, token, link, onJoined }: {
     <div className="share-landing">
       <div className="share-landing-card">
         <div className="share-landing-who">
-          <span className="shared-owner-avatar" aria-hidden="true">{initials(info.owner)}</span>
+          <AgentAvatar agent={info.owner} size={30} person />
           <div>
             <b>{info.owner} shared “{info.title}”</b>
             <span>{facts}</span>

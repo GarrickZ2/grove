@@ -1257,6 +1257,9 @@ td.diff-code.diff-line-highlighted::before {
   white-space: pre-wrap;
 }
 
+.diff-comment-content { padding: 0 12px 10px 12px; white-space: normal; }
+.diff-comment-reply-content { white-space: normal; }
+
 .diff-comment-reply {
   border-top: 1px solid var(--color-border);
   background: color-mix(in srgb, var(--color-bg) 50%, var(--color-bg-secondary));

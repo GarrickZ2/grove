@@ -18,8 +18,10 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { SketchAnchor, SketchBox, SketchComment, SketchMeta } from "../../../api";
 import { usePopover } from "../../../orbit/ui";
 import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
-import { DesignCommentList } from "../DesignPage/DesignInspector";
-import { Avatar, DesignThread } from "../DesignPage/DesignThread";
+import { CommentList, reviewEntry } from "../DesignPage/CommentList";
+import { AgentAvatar } from "../../Review/AgentAvatar";
+import { commentAuthor } from "../../Review/commentAuthor";
+import { DesignThread } from "../DesignPage/DesignThread";
 import { BoardRefresh } from "../DesignPage/BoardRefresh";
 import type { ThreadChanges } from "../DesignPage/threadChanges";
 import { SketchCanvas } from "./SketchCanvas";
@@ -226,12 +228,15 @@ export function SketchBoard({
               <span className="design-play-gap" />
               <button type="button" className="design-icon-btn" onClick={() => setListOpen(false)} title="Hide" aria-label="Hide the comments"><X size={14} /></button>
             </div>
-            <DesignCommentList
+            <CommentList
               comments={comments.filter((comment) => comment.sketch === activeId)}
               placeOf={(comment) => placeLabel(comment.anchor)}
               agent={agent}
               canSend={canSend}
               onSend={onSend}
+              onStatus={onResolve ? (list, status) => list.filter((comment) => comment.status !== status).forEach(onResolve) : undefined}
+              onReply={onReply ? (comment, text) => onReply(comment.id, text) : undefined}
+              changes={changes}
               onOpen={(comment, at) => {
                 const ids = new Set((comment.anchor?.items ?? []).map((item) => item.id));
                 const targets = api?.getSceneElements().filter((entry) => ids.has(entry.id)) ?? [];
@@ -246,7 +251,6 @@ export function SketchBoard({
         <DesignThread
           at={thread.at}
           target={`${name} · ${placeLabel(thread.anchor)}`}
-          agent={agent}
           canSend={canSend}
           onClose={() => setThread(null)}
           onSubmit={async (text) => {
@@ -258,9 +262,8 @@ export function SketchBoard({
       {thread?.kind === "existing" && existing ? (
         <DesignThread
           at={thread.at}
-          comment={existing}
+          comment={reviewEntry(existing, (replyId) => changes?.canChange(existing, replyId) ?? false)}
           target={`${name} · ${placeLabel(existing.anchor)}`}
-          agent={agent}
           canSend={canSend}
           compose={Boolean(onReply)}
           onClose={() => setThread(null)}
@@ -275,7 +278,6 @@ export function SketchBoard({
           onSubmit={async (text) => {
             if (onReply) await onReply(existing.id, text);
           }}
-          canChange={changes ? (replyId) => changes.canChange(existing, replyId) : undefined}
           onEdit={changes ? (text, replyId) => changes.edit(existing, text, replyId) : undefined}
           onDelete={changes ? (replyId) => changes.remove(existing, replyId) : undefined}
         />
@@ -522,7 +524,7 @@ function SketchPins({ api, comments, commenting, onPick, onOpen, shown }: {
             onClick={(event) => onOpen(comment, { x: event.clientX, y: event.clientY })}
             title={`${comment.author}: ${comment.content}${place.stale ? " · Its elements are no longer on the sketch" : ""}`}
           >
-            <Avatar name={comment.author} size={24} />
+            <AgentAvatar agent={commentAuthor(comment.author).agent} size={24} className="design-pin-avatar" />
           </button>
         );
       })}

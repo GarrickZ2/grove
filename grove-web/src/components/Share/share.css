@@ -97,7 +97,6 @@
 /* ── Shared task viewer ─────────────────────────────────────────────────── */
 .shared-view{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--o-bg);color:var(--o-text)}
 .shared-head{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--o-border);flex-shrink:0;flex-wrap:wrap}
-.shared-owner-avatar{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;background:var(--o-accent-soft);color:color-mix(in oklab,var(--o-accent) 80%,var(--o-text));font-size:13px;font-weight:700;flex-shrink:0}
 .shared-title{display:flex;flex-direction:column;min-width:0;margin-right:4px}
 .shared-title>b{font-size:14px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shared-title>span{font-size:12px;color:var(--o-muted)}
@@ -128,7 +127,7 @@
 /* No "new chat" button beside it, unlike a Task row: ⋯ sits at the edge. */
 .orbit-shared-item>.orbit-task-row>.orbit-row-menu{right:3px}
 .orbit-shared-item>.orbit-task-row:hover .orbit-task-toggle,.orbit-shared-item>.orbit-task-row:focus-within .orbit-task-toggle{padding-right:36px}
-.orbit-shared-row .share-avatar{width:18px;height:18px;font-size:10px;box-shadow:none}
+.orbit-shared-row .share-avatar{box-shadow:none}
 .orbit-shared-row .orbit-shared-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
 .orbit-shared-row .orbit-shared-tag{font-size:10.5px;color:var(--o-muted);flex-shrink:0}
 .orbit-shared-row .orbit-shared-dot{width:7px;height:7px;border-radius:999px;background:var(--o-info);flex-shrink:0}

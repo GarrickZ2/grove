@@ -9,6 +9,7 @@ import { useFileMention } from '../../hooks';
 import type { MentionItem } from '../../utils/fileMention';
 import { useGlobalActiveChatId } from '../Tasks/TaskView/useActiveChatId';
 import { useBanner } from '../../context';
+import { relativeText } from '../../orbit/ui';
 
 
 /** Format ISO timestamp to human-readable local time, e.g. "2026-02-10 08:37:24" */
@@ -38,11 +39,15 @@ interface CommentCardProps {
   onEdit?: (id: number, content: string) => void;
   onEditReply?: (commentId: number, replyId: number, content: string) => void;
   onDeleteReply?: (commentId: number, replyId: number) => void;
+  /** Send it to the agent, instead of through the chat event; null where there is no agent. */
+  onSend?: (() => void) | null;
   isCollapsed?: boolean;
+  /** For a narrow popover: one line of head, the text under the name. */
+  compact?: boolean;
   mentionItems?: MentionItem[] | null;
 }
 
-export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, onCollapse, onExpand, onEdit, onEditReply, onDeleteReply, isCollapsed, mentionItems }: CommentCardProps) {
+export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, onCollapse, onExpand, onEdit, onEditReply, onDeleteReply, onSend, isCollapsed, compact = false, mentionItems }: CommentCardProps) {
   const [editingComment, setEditingComment] = useState(false);
   const [editCommentText, setEditCommentText] = useState('');
   const [editingReplyId, setEditingReplyId] = useState<number | null>(null);
@@ -98,18 +103,18 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
   };
 
   return (
-    <div className="diff-comment-card">
+    <div className={`diff-comment-card${compact ? " is-compact" : ""}`}>
       {/* Header: avatar + author + time + line range + status badge + actions */}
       <div className="diff-comment-header">
-        <AgentAvatar agent={comment.agent || '?'} size={24} className="diff-comment-avatar" />
+        <AgentAvatar agent={comment.agent} size={compact ? 22 : 24} className="diff-comment-avatar" />
         <span className="diff-comment-author"><AgentDisplay agent={comment.agent} role={comment.role} model={comment.model} /></span>
         {comment.via_share && <span className="diff-comment-id" title="Written by someone you shared this task with">via share link</span>}
-        <span className="diff-comment-id">#{comment.id}</span>
-        <span className="diff-comment-time">{formatTime(comment.timestamp)}</span>
+        {!compact && <span className="diff-comment-id">#{comment.id}</span>}
+        <span className="diff-comment-time" title={formatTime(comment.timestamp)}>{compact ? relativeText(comment.timestamp) : formatTime(comment.timestamp)}</span>
         {lineRange && (
           <span style={{ fontSize: 10, color: 'var(--color-text-muted)', fontFamily: 'monospace' }}>{lineRange}</span>
         )}
-        <span
+        {!(compact && comment.status === 'open') && <span
           className="diff-comment-status-badge"
           style={{
             color: statusColor,
@@ -117,7 +122,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
           }}
         >
           {statusLabel}
-        </span>
+        </span>}
         <span className="diff-comment-actions">
           {onResolve && (comment.status === 'open' || comment.status === 'outdated') && (
             <button
@@ -128,11 +133,12 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
               <CheckCircle style={{ width: 13, height: 13 }} />
             </button>
           )}
-          {activeChatId && (
+          {activeChatId && onSend !== null && (
             <button
               className="diff-comment-action-btn"
               onClick={() => {
-                window.dispatchEvent(new CustomEvent("grove-send-comment-to-chat", { detail: comment }));
+                if (onSend) onSend();
+                else window.dispatchEvent(new CustomEvent("grove-send-comment-to-chat", { detail: comment }));
                 showBanner("Comment sent to active Agent Chat Session", "success");
               }}
               title="Send to active Agent Chat Session"
@@ -252,7 +258,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
               </div>
             </div>
           ) : (
-            <div style={{ padding: '0 12px 10px 12px', whiteSpace: 'normal' }}>
+            <div className="diff-comment-content">
               <MarkdownRenderer content={comment.content} />
             </div>
           )}
@@ -261,11 +267,11 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
           {comment.replies.map((reply) => (
             <div key={reply.id} className="diff-comment-reply">
               <div className="diff-comment-header">
-                <AgentAvatar agent={reply.agent} size={18} className="diff-comment-avatar small" />
-                <span className="diff-comment-author" style={{ fontSize: 11 }}><AgentDisplay agent={reply.agent} role={reply.role} model={reply.model} /></span>
-                <span className="diff-comment-time">{formatTime(reply.timestamp)}</span>
+                <AgentAvatar agent={reply.agent} size={compact ? 22 : 18} className="diff-comment-avatar small" />
+                <span className="diff-comment-author" style={compact ? undefined : { fontSize: 11 }}><AgentDisplay agent={reply.agent} role={reply.role} model={reply.model} /></span>
+                <span className="diff-comment-time" title={formatTime(reply.timestamp)}>{compact ? relativeText(reply.timestamp) : formatTime(reply.timestamp)}</span>
                 <span className="diff-comment-actions">
-                  {onReply && (
+                  {onReply && !compact && (
                     <button
                       className="diff-comment-action-btn"
                       onClick={() => onReply(comment.id)}
@@ -343,7 +349,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
                   </div>
                 </div>
               ) : (
-                <div style={{ padding: 0, whiteSpace: 'normal' }}>
+                <div className="diff-comment-reply-content">
                   <MarkdownRenderer content={reply.content} />
                 </div>
               )}
@@ -378,7 +384,7 @@ export function ReplyForm({ commentId, onSubmit, onCancel, mentionItems }: Reply
         className="diff-reply-textarea"
         value={message}
         onChange={(e) => { setMessage(e.target.value); mention.handleChange(); }}
-        placeholder="Write a reply... (type @ to mention files)"
+        placeholder={mentionItems ? 'Write a reply... (type @ to mention files)' : 'Reply'}
         autoFocus
         onKeyDown={(e) => {
           if (mention.handleKeyDown(e, setMessage)) return;

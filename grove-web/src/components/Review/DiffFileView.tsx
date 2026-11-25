@@ -2275,7 +2275,7 @@ function ExpandedContextRows({
                 >
                   <span className="diff-gutter-content">
                     {collapsedLeftCount > 0 && (
-                      <GutterAvatar agent={leftComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? '?'} />
+                      <GutterAvatar agent={leftComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? ''} />
                     )}
                     {oldLine}
                   </span>
@@ -2297,7 +2297,7 @@ function ExpandedContextRows({
                 >
                   <span className="diff-gutter-content">
                     {collapsedRightCount > 0 && (
-                      <GutterAvatar agent={rightComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? '?'} />
+                      <GutterAvatar agent={rightComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? ''} />
                     )}
                     {newLine}
                   </span>
@@ -2413,7 +2413,7 @@ function ExpandedContextRows({
               >
                 <span className="diff-gutter-content">
                   {collapsedLeftCount > 0 && (
-                    <GutterAvatar agent={leftComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? '?'} />
+                    <GutterAvatar agent={leftComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? ''} />
                   )}
                   {oldLine}
                 </span>
@@ -2433,7 +2433,7 @@ function ExpandedContextRows({
               >
                 <span className="diff-gutter-content">
                   {collapsedRightCount > 0 && (
-                    <GutterAvatar agent={rightComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? '?'} />
+                    <GutterAvatar agent={rightComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? ''} />
                   )}
                   {newLine}
                 </span>
@@ -2837,7 +2837,7 @@ function HunkRows({
               >
                 <span className="diff-gutter-content">
                   {collapsedCount > 0 && (
-                    <GutterAvatar agent={lineComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? '?'} />
+                    <GutterAvatar agent={lineComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? ''} />
                   )}
                   {line.new_line ?? ''}
                 </span>
@@ -3192,7 +3192,7 @@ function SplitHunkRows({
               >
                 <span className="diff-gutter-content">
                   {collapsedLeftCount > 0 && (
-                    <GutterAvatar agent={leftComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? '?'} />
+                    <GutterAvatar agent={leftComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? ''} />
                   )}
                   {leftLineNum ?? ''}
                 </span>
@@ -3234,7 +3234,7 @@ function SplitHunkRows({
               >
                 <span className="diff-gutter-content">
                   {collapsedRightCount > 0 && (
-                    <GutterAvatar agent={rightComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? '?'} />
+                    <GutterAvatar agent={rightComments.find((c) => collapsedCommentIds?.has(c.id))?.agent ?? ''} />
                   )}
                   {rightLineNum ?? ''}
                 </span>
@@ -3468,7 +3468,7 @@ function FullFileView({ content, language, ...commentProps }: FullFileViewProps)
                 >
                   <span className="diff-gutter-content">
                     {collapsedCount > 0 && (
-                      <GutterAvatar agent={lineComments.find((c) => commentProps.collapsedCommentIds?.has(c.id))?.agent ?? '?'} />
+                      <GutterAvatar agent={lineComments.find((c) => commentProps.collapsedCommentIds?.has(c.id))?.agent ?? ''} />
                     )}
                     {lineNum}
                   </span>

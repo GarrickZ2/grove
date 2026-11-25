@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { Trash2 } from 'lucide-react';
 import type { PreviewCommentLocator } from '../../context';
 import { useDefineCommand, useKeyboardScope } from '../../keyboard';
-import { locateAnchor, selectorOf, xpathOf } from '../../utils/commentAnchor';
+import { selectorOf, xpathOf } from '../../utils/commentAnchor';
+import { locateComment, SELECTION_CONTEXT, type LocatedComment } from './previewAnchor';
 import { rectInViewport, rectRelativeTo } from './previewCommentGeometry';
 
 export interface MarkdownCommentMarker {
@@ -11,7 +12,7 @@ export interface MarkdownCommentMarker {
   label: string;
   selector?: string;
   xpath?: string;
-  extraBlocks?: Array<{ selector: string; xpath: string }>;
+  extraBlocks?: PreviewCommentLocator['extraBlocks'];
   locator?: PreviewCommentLocator;
   comment?: string;
 }
@@ -29,6 +30,8 @@ interface ResolvedMarker {
   id: string;
   label: string;
   rects: DOMRect[];
+  /** What the comment was on has been rewritten. */
+  stale: boolean;
   marker: MarkdownCommentMarker;
 }
 
@@ -183,6 +186,7 @@ function describeBlocks(blocks: Element[], stop: Element): PreviewCommentLocator
   const extras = blocks.slice(1).map((b) => ({
     selector: selectorOf(b, stop),
     xpath: xpathOf(b, stop),
+    text: clean((b as HTMLElement).innerText || b.textContent || '', 300),
   }));
   // Concatenate text across blocks (separated by newline) for agent context.
   const fullText = blocks
@@ -203,6 +207,7 @@ function describeBlocks(blocks: Element[], stop: Element): PreviewCommentLocator
       : clean(html.outerHTML || '', 300),
     rect: { x: r.x, y: r.y, width: r.width, height: r.height },
     extraBlocks: extras.length > 0 ? extras : undefined,
+    blockText: extras.length > 0 ? clean(html.innerText || html.textContent || '', 300) : undefined,
   };
 }
 
@@ -255,62 +260,6 @@ export function textSelectionAnchor(range: Range, stop: Element): Element | null
     ? range.commonAncestorContainer as Element
     : range.commonAncestorContainer.parentElement;
   return pickBlock(ancestor, stop);
-}
-
-function textRangeForOffsets(element: Element, start: number, end: number): Range | null {
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  let offset = 0;
-  let startNode: Text | null = null;
-  let endNode: Text | null = null;
-  let startOffset = 0;
-  let endOffset = 0;
-  let node = walker.nextNode() as Text | null;
-  while (node) {
-    const next = offset + node.data.length;
-    if (!startNode && start >= offset && start <= next) {
-      startNode = node;
-      startOffset = start - offset;
-    }
-    if (end >= offset && end <= next) {
-      endNode = node;
-      endOffset = end - offset;
-      break;
-    }
-    offset = next;
-    node = walker.nextNode() as Text | null;
-  }
-  if (!startNode || !endNode) return null;
-  const range = document.createRange();
-  range.setStart(startNode, startOffset);
-  range.setEnd(endNode, endOffset);
-  return range;
-}
-
-/** Resolve an exact text marker and verify its quote. Older drafts may point
- * at a non-unique inline wrapper; walk upward and relocate by quote so those
- * comments repair themselves without being deleted and recreated. */
-// eslint-disable-next-line react-refresh/only-export-components -- exported for legacy locator recovery coverage
-export function textRangeForLocator(
-  element: Element,
-  locator: PreviewCommentLocator,
-  stop: Element,
-): Range | null {
-  const textRange = locator.textRange;
-  if (!textRange) return null;
-  const direct = textRangeForOffsets(element, textRange.start, textRange.end);
-  if (direct?.toString() === textRange.quote) return direct;
-
-  let cur: Element | null = element;
-  while (cur && stop.contains(cur)) {
-    const offset = (cur.textContent ?? '').indexOf(textRange.quote);
-    if (offset >= 0) {
-      const recovered = textRangeForOffsets(cur, offset, offset + textRange.quote.length);
-      if (recovered?.toString() === textRange.quote) return recovered;
-    }
-    if (cur === stop) break;
-    cur = cur.parentElement;
-  }
-  return null;
 }
 
 export function PreviewCommentHost({ previewComment, children, fill = false }: Props) {
@@ -577,6 +526,7 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
       setSelectionAction({
         locator: {
           ...describe(block, content),
+          blockText: clean((block as HTMLElement).innerText || block.textContent || '', 300),
           text,
           html: `[text selection] ${text}`,
           rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
@@ -584,6 +534,8 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
             start: startOffset,
             end: startOffset + rawSelection.length,
             quote: text,
+            before: prefix.toString().slice(-SELECTION_CONTEXT),
+            after: (block.textContent ?? '').slice(startOffset + rawSelection.length, startOffset + rawSelection.length + SELECTION_CONTEXT),
           },
         },
         rect,
@@ -635,20 +587,9 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
     if (!content || !host) return;
     const markers = JSON.parse(markersKey) as MarkdownCommentMarker[];
 
-    const lookupOne = (selector?: string, xp?: string, text?: string): Element | null =>
-      locateAnchor({ selector, xpath: xp, text }, content)?.element ?? null;
-
-    const resolveAll = (m: MarkdownCommentMarker): Element[] => {
-      // A comment on one element is found by how it read too; one over several blocks keeps their joined text.
-      const head = lookupOne(m.selector, m.xpath, m.extraBlocks?.length ? undefined : m.locator?.text);
-      if (!head) return [];
-      const out = [head];
-      for (const eb of m.extraBlocks ?? []) {
-        const el = lookupOne(eb.selector, eb.xpath);
-        if (el) out.push(el);
-      }
-      return out;
-    };
+    // Finding the elements reads the whole content, so it is done again only
+    // when the content changed; scrolling and resizing only move the boxes.
+    let located: Array<LocatedComment | null> | null = null;
 
     const resolve = () => {
       // Marker and host must come from the same layout snapshot. Keeping raw
@@ -656,19 +597,18 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
       // animation frames, which made markers wrong only on initial open.
       const hostSnapshot = host.getBoundingClientRect();
       const resolved: ResolvedMarker[] = [];
-      for (const m of markers) {
-        const els = resolveAll(m);
-        if (els.length === 0) continue;
-        const exactRange = m.locator?.textRange && els[0]
-          ? textRangeForLocator(els[0], m.locator, content)
-          : null;
-        const viewportRects = exactRange
-          ? Array.from(exactRange.getClientRects()).filter((r) => r.width > 0 && r.height > 0)
-          : els.map((el) => el.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
+      located ??= markers.map((m) => locateComment(m, content));
+      for (const [index, m] of markers.entries()) {
+        const found = located[index];
+        if (!found) continue;
+        const viewportRects = found.range
+          ? Array.from(found.range.getClientRects()).filter((r) => r.width > 0 && r.height > 0)
+          : found.elements.map((el) => el.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
         if (viewportRects.length > 0) {
           resolved.push({
             id: m.id,
             label: m.label,
+            stale: found.stale,
             rects: viewportRects.map((rect) => rectRelativeTo(rect, hostSnapshot)),
             marker: m,
           });
@@ -691,7 +631,10 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
     const ro = new ResizeObserver(schedule);
     ro.observe(content);
     ro.observe(host);
-    const mo = new MutationObserver(schedule);
+    const mo = new MutationObserver(() => {
+      located = null;
+      schedule();
+    });
     mo.observe(content, { subtree: true, childList: true, attributes: true, characterData: true });
     window.addEventListener('scroll', schedule, true);
     window.addEventListener('resize', schedule);
@@ -760,7 +703,8 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
         </button>
         );
       })()}
-      {hostRect && markerRects.map(({ id, label, rects, marker }) => {
+      {hostRect && markerRects.map(({ id, label, rects, stale, marker }) => {
+        const color = stale ? 'var(--color-text-muted)' : 'var(--color-highlight)';
         const u = unionRect(rects)!;
         const anchor = rects[rects.length - 1] ?? u;
         return (
@@ -774,8 +718,8 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
                 top: rect.top,
                 width: rect.width,
                 height: rect.height,
-                border: '1.5px dashed color-mix(in srgb, var(--color-highlight) 85%, transparent)',
-                background: 'color-mix(in srgb, var(--color-highlight) 12%, transparent)',
+                border: `1.5px dashed color-mix(in srgb, ${color} 85%, transparent)`,
+                background: `color-mix(in srgb, ${color} 12%, transparent)`,
                 boxShadow: '0 0 0 1px rgba(255,255,255,.7)',
                 borderRadius: 3,
               }}
@@ -791,12 +735,12 @@ export function PreviewCommentHost({ previewComment, children, fill = false }: P
               height: 18,
               padding: '0 5px',
               borderRadius: 9,
-              background: 'var(--color-highlight)',
+              background: color,
               boxShadow: '0 1px 3px rgba(0,0,0,.25)',
               pointerEvents: 'auto',
               cursor: 'pointer',
             }}
-            title={`Click to edit or delete comment #${label}`}
+            title={stale ? `Comment #${label}: this part has changed since` : `Click to edit or delete comment #${label}`}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();

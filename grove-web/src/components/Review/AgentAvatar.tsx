@@ -1,11 +1,12 @@
 // Agent avatar component — delegates to resolveAgentIcon() from agentIcon.ts
-// so icon resolution is unified across TaskGraph, TaskChat, and Review panels.
-// Unknown agents get a Boring Avatars marble pattern instead of the generic Sparkle icon.
+// so icon resolution is unified across TaskGraph, TaskChat, and every comment surface
+// (Review, Design, Sketch, previews, share links). People and unknown agents get a
+// Boring Avatars face instead of the generic Sparkle icon.
 
 import { type CSSProperties, useMemo } from 'react';
 import Avatar from 'boring-avatars';
 import { Sparkle } from 'lucide-react';
-import { resolveAgentIcon } from '../../utils/agentIcon';
+import { resolveAgentIcon, usePersonaRegistry } from '../../utils/agentIcon';
 
 // Boring-Avatars renders into SVG `fill` attributes, so CSS vars don't resolve there —
 // we hash a name to one of these fixed palettes. Hues are picked to look acceptable on
@@ -30,15 +31,20 @@ function hashPalette(name: string): string[] {
 interface AgentAvatarProps {
   agent: string;
   size: number;
+  /** Known to be a person: always a face, even when the name reads like an agent's. */
+  person?: boolean;
   className?: string;
   style?: CSSProperties;
 }
 
-export function AgentAvatar({ agent, size, className, style }: AgentAvatarProps) {
+export function AgentAvatar({ agent, size, person, className, style }: AgentAvatarProps) {
+  // Icons of personas and Marketplace agents arrive after the first render.
+  usePersonaRegistry();
+  const name = agent || 'Unknown';
   const info = resolveAgentIcon(agent);
-  const isFallback = info.Component === Sparkle;
+  const isFallback = person || info.Component === Sparkle;
 
-  const colors = useMemo(() => hashPalette(agent || 'unknown'), [agent]);
+  const colors = useMemo(() => hashPalette(name), [name]);
 
   return (
     <span
@@ -56,7 +62,7 @@ export function AgentAvatar({ agent, size, className, style }: AgentAvatarProps)
       }}
     >
       {isFallback ? (
-        <Avatar variant="beam" name={agent || 'unknown'} colors={colors} size={size} square={false} />
+        <Avatar variant="beam" name={name} colors={colors} size={size} square={false} />
       ) : (
         <info.Component size={Math.round(size * 0.8)} />
       )}

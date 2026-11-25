@@ -2,11 +2,11 @@ import { useState, type DragEvent, type ReactNode } from "react";
 import {
   AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignLeft, AlignRight, AlignStartHorizontal,
   AlignStartVertical, ArrowDown, ArrowRight, ChevronDown, ChevronRight, Columns3, Copy, Frame, Image, LayoutGrid, Link2, Palette,
-  RectangleHorizontal, Rows3, Send, Shapes, TextCursorInput, Trash2, Type, X,
+  RectangleHorizontal, Rows3, Shapes, TextCursorInput, Trash2, Type, X,
 } from "lucide-react";
 import type { Design, DesignComment } from "../../../api/designs";
-import { relativeText } from "../../../orbit/ui";
-import { Avatar, type ThreadComment } from "./DesignThread";
+import { CommentList } from "./CommentList";
+import type { ThreadChanges } from "./threadChanges";
 import type { DesignVariable, PickedElement, TreeNode } from "./DesignFrame";
 import { length, px, toHex } from "./designEdit";
 import { usePageHtml } from "./useDesignData";
@@ -44,76 +44,11 @@ interface Props {
   agent: string | null;
   canSend: boolean;
   onSendComments: (comments: DesignComment[]) => void;
+  onCommentStatus: (comments: DesignComment[], status: "open" | "resolved") => void;
+  onReplyComment: (comment: DesignComment, text: string) => Promise<void>;
+  commentChanges: ThreadChanges<DesignComment>;
   onOpenThread: (comment: DesignComment, at: { x: number; y: number }) => void;
   onClose: () => void;
-}
-
-/** A design's open comments; with `onSend`, the way to hand them all to the agent. */
-export function DesignCommentList<C extends ThreadComment & { id: number }>({ comments, placeOf, agent, canSend, onSend, onOpen }: {
-  /** Open and resolved: the resolved ones wait folded under the open ones. */
-  comments: C[];
-  /** Where the comment is, shown beside its author: a page's title, an element. */
-  placeOf: (comment: C) => string;
-  agent?: string | null;
-  canSend?: boolean;
-  onSend?: (comments: C[]) => void;
-  onOpen: (comment: C, at: { x: number; y: number }) => void;
-}) {
-  const [showResolved, setShowResolved] = useState(false);
-  const open = comments.filter((comment) => comment.status !== "resolved");
-  const resolved = comments.filter((comment) => comment.status === "resolved");
-  const row = (comment: C) => (
-    <button
-      key={comment.id}
-      type="button"
-      className={`design-comment-row${comment.status === "resolved" ? " is-resolved" : ""}`}
-      onClick={(event) => {
-        const box = event.currentTarget.getBoundingClientRect();
-        onOpen(comment, { x: box.left - 342, y: box.top + 12 });
-      }}
-    >
-      <Avatar name={comment.author} />
-      <span className="design-comment-text">
-        <span className="design-comment-meta">
-          <b>{comment.author}</b>
-          <span>{placeOf(comment)}</span>
-          <span>{relativeText(comment.timestamp)}</span>
-        </span>
-        <span className="design-comment-body">{comment.content}</span>
-        {comment.replies.length ? <span className="design-comment-replies">{comment.replies.length} {comment.replies.length === 1 ? "reply" : "replies"}</span> : null}
-      </span>
-    </button>
-  );
-  return (
-    <div className="design-comments">
-      <div className="design-comments-list">
-        {open.length ? open.map(row) : <div className="design-comments-none">No open comments</div>}
-        {resolved.length ? (
-          <>
-            <button type="button" className="design-comments-fold" aria-expanded={showResolved} onClick={() => setShowResolved((shown) => !shown)}>
-              <ChevronRight size={13} className={showResolved ? "is-open" : undefined} />
-              Resolved · {resolved.length}
-            </button>
-            {showResolved ? resolved.map(row) : null}
-          </>
-        ) : null}
-      </div>
-      {onSend && open.length ? (
-        <div className="design-comments-foot">
-          <button
-            type="button"
-            className="design-btn is-primary"
-            disabled={!canSend}
-            title={canSend ? undefined : "Open the task's chat to send comments to its agent"}
-            onClick={() => onSend(open)}
-          >
-            <Send size={13} />
-            Send {open.length} to {agent || "the agent"}
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 const KIND_ICON: Record<string, typeof Type> = {
@@ -127,7 +62,7 @@ const KIND_ICON: Record<string, typeof Type> = {
  */
 export function DesignInspector({
   projectId, taskId, design, trees, variables, onTweak, selected, picked, readOnly,
-  onSelectPage, onSelectNode, onStyle, onText, onDuplicate, onRemove, onMove, comments, agent, canSend, onSendComments, onOpenThread, onClose,
+  onSelectPage, onSelectNode, onStyle, onText, onDuplicate, onRemove, onMove, comments, agent, canSend, onSendComments, onCommentStatus, onReplyComment, commentChanges, onOpenThread, onClose,
 }: Props) {
   const [tab, setTab] = useState<"properties" | "code" | "tweaks" | "comments">("properties");
   const designComments = comments.filter((comment) => comment.design === design.slug);
@@ -215,12 +150,15 @@ export function DesignInspector({
         <button type="button" className="design-icon-btn" onClick={onClose} title="Hide" aria-label="Hide the inspector"><X size={14} /></button>
       </div>
       {tab === "comments" ? (
-        <DesignCommentList
+        <CommentList
           comments={designComments}
           placeOf={(comment) => design.pages.find((page) => page.file === comment.page)?.title ?? comment.page}
           agent={agent}
           canSend={canSend}
           onSend={onSendComments}
+          onStatus={onCommentStatus}
+          onReply={onReplyComment}
+          changes={commentChanges}
           onOpen={(comment, at) => {
             onSelectPage(comment.page);
             onOpenThread(comment, at);

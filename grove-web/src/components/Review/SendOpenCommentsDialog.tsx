@@ -6,11 +6,13 @@ import { sendCommentsToChat } from './sendOpenComments';
 interface SendOpenCommentsDialogProps {
   comments: ReviewCommentEntry[];
   agent: string | null;
+  /** How to send them; by default through the chat event. */
+  onSend?: () => void;
   onClose: () => void;
 }
 
 /** "Send N comments to <agent>?" — mounted only while open. */
-export function SendOpenCommentsDialog({ comments, agent, onClose }: SendOpenCommentsDialogProps) {
+export function SendOpenCommentsDialog({ comments, agent, onSend, onClose }: SendOpenCommentsDialogProps) {
   const { showBanner } = useBanner();
   const n = comments.length;
   const noun = n === 1 ? 'comment' : 'comments';
@@ -20,11 +22,12 @@ export function SendOpenCommentsDialog({ comments, agent, onClose }: SendOpenCom
       isOpen
       variant="info"
       title={`Send ${n} ${noun} to ${who}?`}
-      message={`${who} gets ${n === 1 ? 'the open comment' : `all ${n} open comments`} in one message, with file and line, and is asked to reply to each in Code Review once it's addressed.`}
+      message={`${who} gets ${n === 1 ? 'the open comment' : `all ${n} open comments`} in one message, with where each is, and is asked to reply to each once it's addressed.`}
       confirmLabel={`Send ${n} ${noun}`}
       onCancel={onClose}
       onConfirm={() => {
-        sendCommentsToChat(comments);
+        if (onSend) onSend();
+        else sendCommentsToChat(comments);
         showBanner(`${n} ${noun} sent to ${who}`, 'success');
         onClose();
       }}

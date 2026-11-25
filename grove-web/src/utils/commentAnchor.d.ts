@@ -12,5 +12,8 @@ export function anchorText(element: Element): string;
 export function selectorOf(element: Element, root: Document | Element): string;
 export function xpathOf(element: Element, root: Document | Element): string;
 export function describeAnchor(element: Element, root: Document | Element): Required<CommentAnchor>;
-/** `changed`: the element no longer reads as it did when the comment was made. */
-export function locateAnchor(anchor: CommentAnchor, root: Document | Element): { element: Element; changed: boolean } | null;
+/** How alike two texts are, 0 to 1. */
+export function likeness(a: string, b: string): number;
+/** `changed`: the element no longer reads as it did when the comment was made.
+ *  `guess`: nothing like it is left; this is what stands in its place. */
+export function locateAnchor(anchor: CommentAnchor, root: Document | Element): { element: Element; changed: boolean; guess?: boolean } | null;

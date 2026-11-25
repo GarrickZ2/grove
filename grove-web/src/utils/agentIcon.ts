@@ -191,8 +191,9 @@ const TABLE_BY_KEY: Record<string, AgentRow> = (() => {
 // UI — those names are their own naming space and rarely equal our canonical keys,
 // so exact lookup Sparkle-fallbacks on perfectly recognizable agents. The name almost
 // always still *contains* the brand word, so a contained-substring pass recovers it.
-// Longest-first so "opencode"/"openclaw" win before a bare "open"-style prefix, and
-// the words are distinctive enough that false positives aren't a real concern.
+// Longest-first so "opencode"/"openclaw" win before a bare "open"-style prefix. The
+// brand must be a word of the name: comments go through here with people's names too,
+// and "Kimiko" is not Kimi.
 const BRAND_MATCHERS: Array<{ needle: string; key: string }> = [
   { needle: "opencode", key: "opencode" },
   { needle: "openclaw", key: "openclaw" },
@@ -214,9 +215,24 @@ const BRAND_MATCHERS: Array<{ needle: string; key: string }> = [
 function fuzzyBrandRow(key: string): AgentRow | undefined {
   const lower = key.toLowerCase();
   for (const { needle, key: rowKey } of BRAND_MATCHERS) {
-    if (lower.includes(needle)) return TABLE_BY_KEY[rowKey];
+    for (let at = lower.indexOf(needle); at >= 0; at = lower.indexOf(needle, at + 1)) {
+      if (isWord(key, at, at + needle.length)) return TABLE_BY_KEY[rowKey];
+    }
   }
   return undefined;
+}
+
+const LETTER = /\p{Script=Latin}/u;
+
+/** Whether `key[start..end]` is a word: at a separator, a camelCase seam
+ *  ("GeminiCLI"), or before a suffix agents glue on ("claudecode"). */
+function isWord(key: string, start: number, end: number): boolean {
+  const isLower = (char: string) => char !== char.toUpperCase();
+  const before = key[start - 1];
+  const after = key[end];
+  const opens = !before || !LETTER.test(before) || (isLower(before) && !isLower(key[start]));
+  const closes = !after || !LETTER.test(after) || (isLower(key[end - 1]) && !isLower(after)) || /^(code|cli|acp|agent)(?![a-z])/i.test(key.slice(end));
+  return opens && closes;
 }
 
 const FALLBACK: AgentIconInfo = {

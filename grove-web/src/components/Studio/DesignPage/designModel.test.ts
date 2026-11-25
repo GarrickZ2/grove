@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Design } from "../../../api/designs";
-import { boardBounds, fitView, initials, pageComments, parseDesignRef, pinPosition, zoomAt } from "./designModel";
+import { boardBounds, fitView, pageComments, parseDesignRef, pinPosition, zoomAt } from "./designModel";
 
 const design: Design = {
   slug: "insight",
@@ -60,12 +60,6 @@ describe("comments", () => {
     expect(pinPosition(anchor, { x: 120, y: 260, width: 300, height: 40 }, { width: 1440 }, 0)).toEqual({ x: 420, y: 260 });
     // No element: stacked in the page's corner.
     expect(pinPosition(null, undefined, { width: 1440 }, 1)).toEqual({ x: 1440 - 28 - 34, y: 28 });
-  });
-
-  it("initials", () => {
-    expect(initials("Ada Byron King")).toBe("AK");
-    expect(initials("garrick")).toBe("G");
-    expect(initials("  ")).toBe("?");
   });
 });
 

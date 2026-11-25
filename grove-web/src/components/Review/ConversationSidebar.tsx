@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback, type ReactNode } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, type MouseEvent, type ReactNode } from 'react';
 import { MessageSquare, CheckCircle, RotateCcw, Reply, Send, FileCode, ChevronDown, ChevronRight, Trash2, Maximize2 } from 'lucide-react';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import { AgentAvatar } from './AgentAvatar';
@@ -33,6 +33,14 @@ interface ConversationSidebarProps {
   sendAllTitle?: string;
   /** Orbit: commit / merge readiness under the comment box. */
   footer?: ReactNode;
+  /** One list, not grouped by file: the comments are all on one thing. */
+  flat?: boolean;
+  /** Where a comment is, instead of its lines. */
+  locationOf?: (comment: ReviewCommentEntry) => string;
+  /** Open a comment where it is, instead of navigating to its line; replaces Expand. */
+  onOpenComment?: (comment: ReviewCommentEntry, box: DOMRect) => void;
+  /** Send one comment to the agent, instead of through the chat event; null where there is no agent. */
+  onSendComment?: ((comment: ReviewCommentEntry) => void) | null;
 }
 
 export function ConversationSidebar({
@@ -53,6 +61,10 @@ export function ConversationSidebar({
   sendAllDisabled = false,
   sendAllTitle,
   footer,
+  flat = false,
+  locationOf,
+  onOpenComment,
+  onSendComment,
 }: ConversationSidebarProps) {
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
@@ -237,8 +249,23 @@ export function ConversationSidebar({
           </div>
         )}
 
+        {flat && filtered.map((comment) => (
+          <ConversationItem
+            key={comment.id}
+            comment={comment}
+            location={locationOf?.(comment)}
+            onClick={(event) => onOpenComment?.(comment, event.currentTarget.getBoundingClientRect())}
+            onResolve={onResolveComment}
+            onReopen={onReopenComment}
+            onReply={onReplyComment}
+            onDelete={onDeleteComment}
+            onSend={onSendComment}
+            mentionItems={mentionItems}
+          />
+        ))}
+
         {/* Project-level comments */}
-        {projectComments.length > 0 && (
+        {!flat && projectComments.length > 0 && (
           <div className="conv-section">
             <div className="conv-section-title">
               <MessageSquare style={{ width: 12, height: 12 }} />
@@ -261,7 +288,7 @@ export function ConversationSidebar({
         )}
 
         {/* File-level comments */}
-        {fileGrouped.size > 0 && (
+        {!flat && fileGrouped.size > 0 && (
           <div className="conv-section">
             <div className="conv-section-title">
               <FileCode style={{ width: 12, height: 12 }} />
@@ -303,7 +330,7 @@ export function ConversationSidebar({
         )}
 
         {/* Inline code comments */}
-        {inlineGrouped.size > 0 && (
+        {!flat && inlineGrouped.size > 0 && (
           <div className="conv-section">
             <div className="conv-section-title">
               <FileCode style={{ width: 12, height: 12 }} />
@@ -405,21 +432,25 @@ export function ConversationSidebar({
 
 function ConversationItem({
   comment,
+  location,
   onClick,
   onResolve,
   onReopen,
   onReply,
   onDelete,
   onExpand,
+  onSend,
   mentionItems,
 }: {
   comment: ReviewCommentEntry;
-  onClick: () => void;
+  location?: string;
+  onClick: (event: MouseEvent<HTMLDivElement>) => void;
   onResolve?: (id: number) => void;
   onReopen?: (id: number) => void;
   onReply?: (commentId: number, status: string, message: string) => void;
   onDelete?: (id: number) => void;
   onExpand?: () => void;
+  onSend?: ((comment: ReviewCommentEntry) => void) | null;
   mentionItems?: MentionItem[] | null;
 }) {
   const [showReplyForm, setShowReplyForm] = useState(false);
@@ -461,7 +492,7 @@ function ConversationItem({
         : 'Open';
 
   // Generate location label based on comment type
-  const locationLabel = (() => {
+  const locationLabel = location ?? (() => {
     const type = comment.comment_type || 'inline';
     if (type === 'project') {
       return 'Project-level';
@@ -544,12 +575,13 @@ function ConversationItem({
             <Maximize2 style={{ width: 12, height: 12 }} />
           </button>
         )}
-        {activeChatId && (
+        {activeChatId && onSend !== null && (
           <button
             className="conv-item-resolve-btn"
             onClick={(e) => {
               e.stopPropagation();
-              window.dispatchEvent(new CustomEvent("grove-send-comment-to-chat", { detail: comment }));
+              if (onSend) onSend(comment);
+              else window.dispatchEvent(new CustomEvent("grove-send-comment-to-chat", { detail: comment }));
               showBanner("Comment sent to active Agent Chat Session", "success");
             }}
             title="Send to active Agent Chat Session"
@@ -616,7 +648,7 @@ function ConversationItem({
             className="conv-reply-textarea"
             value={replyText}
             onChange={(e) => { setReplyText(e.target.value); replyMention.handleChange(); }}
-            placeholder="Write a reply... (type @ to mention files)"
+            placeholder={mentionItems ? 'Write a reply... (type @ to mention files)' : 'Reply'}
             autoFocus
             onKeyDown={(e) => {
               if (replyMention.handleKeyDown(e, setReplyText)) return;
@@ -679,7 +711,7 @@ function CleanupPanel({
 
   // Click outside to close
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
+    const handler = (e: globalThis.MouseEvent) => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
         onClose();
       }

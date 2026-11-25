@@ -37,8 +37,17 @@ describe("comment anchors", () => {
   it("says when the element reads differently, and when it is gone", () => {
     const anchor = { selector: "body > p:nth-of-type(2)", xpath: "/html[1]/body[1]/p[2]", text: "Bravo" };
     const reworded = page("<p>Alpha</p><p>Bravo, reworded</p>");
-    expect(locateAnchor(anchor, reworded)).toEqual({ element: reworded.querySelectorAll("p")[1], changed: true });
+    expect(locateAnchor(anchor, reworded)).toEqual({ element: reworded.querySelectorAll("p")[1], changed: true, guess: true });
     expect(locateAnchor(anchor, page("<p>Alpha</p>"))).toBeNull();
+  });
+
+  it("follows an element that was rewritten and moved, and says when nothing like it is left", () => {
+    const text = "One tenant has one JSON configuration, edited and published online.";
+    const anchor = { selector: "p:nth-of-type(2)", xpath: "/html[1]/body[1]/p[2]", text };
+    const after = page("<p>Alpha</p><p>A new introduction nobody commented on.</p><p>One tenant has one JSON configuration in TCC, edited and published online.</p>");
+    expect(locateAnchor(anchor, after)).toEqual({ element: after.querySelectorAll("p")[2], changed: true });
+    const gone = page("<p>Alpha</p><p>A new introduction nobody commented on.</p>");
+    expect(locateAnchor(anchor, gone)).toEqual({ element: gone.querySelectorAll("p")[1], changed: true, guess: true });
   });
 
   it("takes an anchor without text, or with text cut short, as found", () => {

@@ -6,10 +6,13 @@ import { MarkdownRenderer } from "../../ui/MarkdownRenderer";
 import { isTouchClient } from "../../../hooks/useIsMobile";
 import { DesignFrame, type AnchorBoxes, type DesignFrameHandle, type DesignVariable, type FrameTouch, type FrameWheel, type PickedElement, type TreeNode } from "./DesignFrame";
 import { DesignMarks } from "./DesignMarks";
-import { DesignCommentList, DesignInspector } from "./DesignInspector";
+import { CommentList } from "./CommentList";
+import type { ThreadChanges } from "./threadChanges";
+import { DesignInspector } from "./DesignInspector";
 import { applyEdits, checkOf, setCssVariable, setPageVariable, type DesignEdit } from "./designEdit";
 import { DesignSelectBar } from "./DesignSelectBar";
-import { Avatar } from "./DesignThread";
+import { AgentAvatar } from "../../Review/AgentAvatar";
+import { commentAuthor } from "../../Review/commentAuthor";
 import { BoardRefresh } from "./BoardRefresh";
 import {
   GUIDE_WIDTH, LABEL_SIZE, boardBounds, fitView, guidePosition, pageComments, pageHeight, pinPosition, zoomAt,
@@ -50,6 +53,9 @@ interface Props {
   agent?: string | null;
   canSend?: boolean;
   onSendComments?: (comments: DesignComment[]) => void;
+  onCommentStatus?: (comments: DesignComment[], status: "open" | "resolved") => void;
+  onReplyComment?: (comment: DesignComment, text: string) => Promise<void>;
+  commentChanges: ThreadChanges<DesignComment>;
   /** Read the designs, their pages and comments again. */
   onRefresh?: () => Promise<void>;
   /** Times the board was refreshed; each loads every page and its files again. */
@@ -188,7 +194,7 @@ function wheelView(view: BoardView, deltaX: number, deltaY: number, zoom: boolea
  */
 export function DesignBoard({
   projectId, taskId, token, design, guide, comments, focusPage, onMove, onOpenThread, onOpenDesign, onComment,
-  readOnly, onSaved, onNotice, onMarks, onFrame, viewer, onExportPage, agent, canSend, onSendComments, onRefresh, refreshes = 0,
+  readOnly, onSaved, onNotice, onMarks, onFrame, viewer, onExportPage, agent, canSend, onSendComments, onCommentStatus, onReplyComment, commentChanges, onRefresh, refreshes = 0,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -748,9 +754,11 @@ export function DesignBoard({
           <span className="design-play-gap" />
           <button type="button" className="design-icon-btn" onClick={() => setViewerComments(false)} title="Hide" aria-label="Hide the comments"><X size={14} /></button>
         </div>
-        <DesignCommentList
+        <CommentList
           placeOf={(comment) => design.pages.find((page) => page.file === comment.page)?.title ?? comment.page}
           comments={comments.filter((comment) => comment.design === design.slug)}
+          onReply={onReplyComment}
+          changes={commentChanges}
           onOpen={(comment, at) => {
             const target = placed.pages.find((page) => page.file === comment.page);
             if (target) focus(target, 0, true);
@@ -789,6 +797,9 @@ export function DesignBoard({
         agent={agent ?? null}
         canSend={Boolean(canSend)}
         onSendComments={(list) => onSendComments?.(list)}
+        onCommentStatus={(list, status) => onCommentStatus?.(list, status)}
+        onReplyComment={async (comment, text) => { await onReplyComment?.(comment, text); }}
+        commentChanges={commentChanges}
         onOpenThread={onOpenThread}
         onClose={() => showInspector(false)}
       />
@@ -1061,7 +1072,7 @@ function Artboard({
             onClick={(event) => onOpenThread(comment, { x: event.clientX, y: event.clientY })}
             title={`${comment.author}: ${comment.content}${stale ? ` · ${stale}` : ""}`}
           >
-            <Avatar name={comment.author} size={26} />
+            <AgentAvatar agent={commentAuthor(comment.author).agent} size={26} className="design-pin-avatar" />
           </button>
         );
       })}

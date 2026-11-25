@@ -1,4 +1,4 @@
-import { resolveAgentIcon } from "../../utils/agentIcon";
+import { resolveAgentIcon, usePersonaRegistry } from "../../utils/agentIcon";
 
 /**
  * Render "Name (role)" at the host font size, with the model as a smaller,
@@ -7,6 +7,7 @@ import { resolveAgentIcon } from "../../utils/agentIcon";
  * font-size each caller's container uses.
  */
 export function AgentDisplay({ agent, role, model }: { agent: string; role: string; model?: string }) {
+  usePersonaRegistry();
   const info = resolveAgentIcon(agent);
   const name = info.label || agent || 'Unknown';
 

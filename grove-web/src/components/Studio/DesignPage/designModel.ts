@@ -99,21 +99,6 @@ export function pinPosition(
   return { x: Math.min(page.width, box.x + box.width), y: Math.max(0, box.y) };
 }
 
-/** `AB` from "Ada Byron"; one letter for a single name. */
-export function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return "?";
-  const letters = words.length === 1 ? words[0].slice(0, 1) : words[0].slice(0, 1) + words[words.length - 1].slice(0, 1);
-  return letters.toUpperCase();
-}
-
-/** A stable hue per author so pins of one person look alike. */
-export function authorHue(name: string): number {
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) % 360;
-  return hash;
-}
-
 // ── design:// references ────────────────────────────────────────────────────
 
 export const OPEN_DESIGN_EVENT = "grove:open-design";

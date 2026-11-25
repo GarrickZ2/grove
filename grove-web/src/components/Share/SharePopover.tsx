@@ -18,7 +18,8 @@ import {
 import { ScopeButton, ScopeDialog } from "./ScopePicker";
 import { scopeSummary } from "./scopeItems";
 import { useShareItems } from "./useShareItems";
-import { copyText, initials, untilText } from "./shareFormat";
+import { AgentAvatar } from "../Review/AgentAvatar";
+import { copyText, untilText } from "./shareFormat";
 import "./share.css";
 
 type Expiry = "1" | "7" | "30" | "never";
@@ -225,7 +226,7 @@ function LinkRow({ link, items, onChanged }: {
       <div className="share-link-main">
         <button type="button" className="share-link-body" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} disabled={link.visitors.length === 0}>
           <span className="share-avatars" aria-hidden="true">
-            {link.visitors.slice(0, 3).map((visitor) => <span key={visitor.id} className="share-avatar">{initials(visitor.name)}</span>)}
+            {link.visitors.slice(0, 3).map((visitor) => <AgentAvatar key={visitor.id} agent={visitor.name} size={22} person className="share-avatar" />)}
             {link.visitors.length === 0 && <span className="share-avatar is-empty">?</span>}
           </span>
           <span className="share-link-text">
@@ -261,7 +262,7 @@ function LinkRow({ link, items, onChanged }: {
         <ul className="share-visitors">
           {link.visitors.map((visitor) => (
             <li key={visitor.id} className="share-visitor">
-              <span className="share-avatar">{initials(visitor.name)}</span>
+              <AgentAvatar agent={visitor.name} size={22} person className="share-avatar" />
               <span className="share-visitor-name">
                 <b>{visitor.name}</b>
                 <span>

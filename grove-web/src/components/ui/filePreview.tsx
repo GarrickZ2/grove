@@ -29,9 +29,10 @@ import {
 } from "../../context";
 import type { ReviewCommentEntry } from "../../api/tasks";
 import { usePopover } from "../../orbit/ui";
-import { sendCommentsToChat, useActiveChatTarget } from "../Review/sendOpenComments";
+import { SendOpenCommentsDialog } from "../Review/SendOpenCommentsDialog";
+import { openCommentsOf, sendCommentsToChat, useActiveChatTarget } from "../Review/sendOpenComments";
 import { DesignThread } from "../Studio/DesignPage/DesignThread";
-import { DesignCommentList } from "../Studio/DesignPage/DesignInspector";
+import { CommentList } from "../Studio/DesignPage/CommentList";
 import type { ThreadChanges } from "../Studio/DesignPage/threadChanges";
 import "../Studio/DesignPage/design.css";
 import { useKeyboardScope, useCommand, useContextKey } from "../../keyboard";
@@ -166,7 +167,7 @@ interface FilePreviewDrawerProps {
 }
 
 /** The file's open comments, and the way to hand them all to the agent. */
-function PreviewCommentList({ comments, agent, canSend, sendable, onOpen }: {
+function PreviewCommentList({ comments, agent, canSend, sendable, onOpen, onStatus, onReply, changes }: {
   /** Open and resolved: the list folds the resolved ones under the open ones. */
   comments: ReviewCommentEntry[];
   agent: string | null;
@@ -174,8 +175,12 @@ function PreviewCommentList({ comments, agent, canSend, sendable, onOpen }: {
   /** False for a reader with no agent of their own. */
   sendable: boolean;
   onOpen: (comment: ReviewCommentEntry, at: { x: number; y: number }) => void;
+  onStatus?: (id: number, status: "open" | "resolved") => void;
+  onReply?: (id: number, text: string) => Promise<void>;
+  changes?: ThreadChanges<ReviewCommentEntry>;
 }) {
   const { open, close, toggle, rootRef } = usePopover();
+  const [sendingAll, setSendingAll] = useState(false);
   const rows = comments.map((entry) => ({ ...threadOf(entry), id: entry.id, entry }));
   const openCount = rows.filter((row) => row.status === "open").length;
   return (
@@ -195,28 +200,55 @@ function PreviewCommentList({ comments, agent, canSend, sendable, onOpen }: {
       </button>
       {open ? (
         <div className="comment-pop" role="dialog" aria-label="Comments">
-          <DesignCommentList
+          <CommentList
             comments={rows}
             placeOf={() => ""}
             agent={agent}
             canSend={canSend}
             onSend={sendable ? (list) => { close(); sendCommentsToChat(list.map((row) => row.entry)); } : undefined}
             onOpen={(row, at) => { close(); onOpen(row.entry, at); }}
+            onStatus={onStatus ? (list, status) => list.forEach((row) => onStatus(row.id, status)) : undefined}
+            onReply={onReply ? (row, text) => onReply(row.id, text) : undefined}
+            changes={changes ? {
+              canChange: (row, replyId) => changes.canChange(row.entry, replyId),
+              edit: (row, text, replyId) => changes.edit(row.entry, text, replyId),
+              remove: (row, replyId) => changes.remove(row.entry, replyId),
+            } : undefined}
+            entryOf={(row) => cardOf(row.entry, changes)}
+            onSendAll={() => { close(); setSendingAll(true); }}
           />
         </div>
+      ) : null}
+      {sendingAll ? (
+        <SendOpenCommentsDialog comments={openCommentsOf(comments)} agent={agent} onClose={() => setSendingAll(false)} />
       ) : null}
     </span>
   );
 }
 
+/** The file's comment as a card shows it: open or resolved, and only what the reader may change is theirs. */
+function cardOf(comment: ReviewCommentEntry, changes?: ThreadChanges<ReviewCommentEntry>): ReviewCommentEntry {
+  return {
+    ...comment,
+    status: comment.status === "resolved" ? "resolved" : "open",
+    mine: changes?.canChange(comment) ?? false,
+    replies: comment.replies.map((reply) => ({ ...reply, mine: changes?.canChange(comment, reply.id) ?? false })),
+  };
+}
+
+function authorOf({ agent, role }: { agent: string; role: string }): string {
+  if (!agent) return "You";
+  return role ? `${agent} (${role})` : agent;
+}
+
 /** A file comment as a thread shows it. Outdated reads as open. */
 function threadOf(comment: ReviewCommentEntry) {
   return {
-    author: comment.agent || "You",
+    author: authorOf(comment),
     content: comment.content,
     timestamp: comment.timestamp,
     status: comment.status === "resolved" ? "resolved" as const : "open" as const,
-    replies: comment.replies.map((reply) => ({ id: reply.id, author: reply.agent || "You", content: reply.content, timestamp: reply.timestamp })),
+    replies: comment.replies.map((reply) => ({ id: reply.id, author: authorOf(reply), content: reply.content, timestamp: reply.timestamp })),
   };
 }
 
@@ -695,6 +727,9 @@ export function FilePreviewDrawer({
                 agent={chat.agent}
                 canSend={Boolean(chat.chatId)}
                 sendable={previewCommentsToAgent}
+                onStatus={onResolvePreviewComment}
+                onReply={onReplyPreviewComment}
+                changes={previewCommentChanges}
                 onOpen={(comment, at) => {
                   // Open the thread beside its marker, as clicking the marker does.
                   const marker = drawerRef.current?.querySelector(`[data-grove-comment-marker="${comment.id}"]`);
@@ -920,9 +955,8 @@ export function FilePreviewDrawer({
       {thread && openThread ? (
         <DesignThread
           at={thread.at}
-          comment={threadOf(openThread)}
+          comment={cardOf(openThread, previewCommentChanges)}
           target={fileName}
-          agent={chat.agent}
           canSend={Boolean(chat.chatId)}
           compose={Boolean(onReplyPreviewComment)}
           onClose={() => setThread(null)}
@@ -933,7 +967,6 @@ export function FilePreviewDrawer({
           } : undefined}
           onSend={onReplyPreviewComment && previewCommentsToAgent ? () => { sendCommentsToChat([openThread]); setThread(null); } : undefined}
           onSubmit={async (text) => { await onReplyPreviewComment?.(openThread.id, text); }}
-          canChange={previewCommentChanges ? (replyId) => previewCommentChanges.canChange(openThread, replyId) : undefined}
           onEdit={previewCommentChanges ? (text, replyId) => previewCommentChanges.edit(openThread, text, replyId) : undefined}
           onDelete={previewCommentChanges ? (replyId) => previewCommentChanges.remove(openThread, replyId) : undefined}
         />

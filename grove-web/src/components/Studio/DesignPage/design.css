@@ -321,7 +321,8 @@
   padding: 0;
   border: 2px solid #fff;
   border-radius: 50% 50% 50% 4px;
-  background: #fff;
+  background: var(--color-bg);
+  color: var(--color-text);
   box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
   cursor: pointer;
   line-height: 0;
@@ -331,18 +332,7 @@
 .design-pin:hover { z-index: 2; filter: brightness(1.08); }
 /* Its element changed or is gone: the pin is where the element was. */
 .design-pin.is-stale { border-style: dashed; border-color: var(--d-muted); background: var(--color-bg); }
-.design-pin.is-stale .design-avatar { opacity: .45; }
-
-.design-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  border-radius: 50%;
-  color: #fff;
-  font-weight: 650;
-  line-height: 1;
-}
+.design-pin.is-stale .design-pin-avatar { opacity: .45; }
 
 /* View controls float in the board's top right corner, the tools along its
    bottom: they never share an edge, and both are the same surface. */
@@ -430,8 +420,6 @@
 .design-btn.is-on { border-color: var(--color-highlight); background: color-mix(in oklab, var(--color-highlight) 14%, var(--color-bg)); color: var(--color-highlight); }
 .design-btn.is-primary { border-color: transparent; background: var(--color-text); color: var(--color-bg); }
 .design-btn.is-primary:hover:not(:disabled) { background: color-mix(in oklab, var(--color-text) 88%, var(--color-bg)); }
-.design-btn.is-danger { border-color: transparent; background: var(--color-error); color: #fff; }
-.design-btn.is-danger:hover:not(:disabled) { background: color-mix(in oklab, var(--color-error) 88%, #000); }
 
 .design-play-meta { flex: none; color: var(--d-muted); font-variant-numeric: tabular-nums; }
 .design-play-gap { flex: 1; }
@@ -500,33 +488,7 @@
   color: var(--color-text-muted);
 }
 
-.design-thread-list { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 2px; }
-.design-thread-item { display: flex; gap: 8px; margin-bottom: 10px; }
-.design-thread-text { min-width: 0; flex: 1; }
-.design-thread-meta { display: flex; align-items: baseline; gap: 6px; }
-.design-thread-meta span { color: var(--color-text-muted); font-size: 11px; }
-.design-thread-text p { margin: 2px 0 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-.design-thread-actions { display: inline-flex; gap: 0; margin-left: auto; opacity: 0; transition: opacity .12s; }
-.design-thread-item:hover .design-thread-actions,
-.design-thread-actions:focus-within { opacity: 1; }
-.design-thread-actions .design-icon-btn { width: 20px; height: 20px; }
-.design-thread-edit textarea {
-  display: block;
-  width: 100%;
-  margin-top: 4px;
-  padding: 5px 7px;
-  resize: none;
-  border: 1px solid var(--color-highlight);
-  border-radius: 7px;
-  background: var(--color-bg);
-  color: var(--color-text);
-  font: inherit;
-  line-height: 1.4;
-}
-.design-thread-edit textarea:focus { outline: 0; box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-highlight) 16%, transparent); }
-.design-thread-edit-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
-.design-thread-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; color: var(--color-text-muted); }
-.design-thread-confirm span { flex: 1 1 100%; }
+.design-thread-list { flex: 1; min-height: 0; overflow-y: auto; }
 .design-thread-pad { padding: 0 12px 10px; }
 
 .design-thread-compose { flex: none; padding: 10px 12px 12px; }
@@ -547,57 +509,6 @@
 .design-thread-compose textarea:focus { outline: 0; border-color: var(--color-highlight); box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-highlight) 16%, transparent); }
 .design-thread-error { margin-top: 6px; color: var(--color-error); }
 .design-thread-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
-.design-thread-foot .design-btn { min-width: 0; flex: 0 1 auto; }
-.design-thread-send { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* The open comments of a design, beside the board. */
-.design-comments { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-.design-comments-list { flex: 1; min-height: 0; overflow: auto; padding: 4px; }
-.design-comments-none { padding: 28px 16px; color: var(--d-muted); text-align: center; }
-.design-comments-foot { display: flex; flex: none; padding: 8px; border-top: 1px solid var(--d-line); }
-.design-comments-foot .design-btn { flex: 1; justify-content: center; min-width: 0; }
-
-.design-comment-row {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-  padding: 8px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.design-comment-row:hover { background: color-mix(in oklab, var(--color-text) 5%, transparent); }
-.design-comment-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
-.design-comment-meta { display: flex; align-items: baseline; gap: 6px; min-width: 0; color: var(--d-muted); font-size: 11px; white-space: nowrap; }
-.design-comment-meta b { color: var(--color-text); font-size: 12px; font-weight: 600; }
-.design-comment-meta span { overflow: hidden; text-overflow: ellipsis; }
-.design-comment-body { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
-.design-comment-replies { color: var(--d-muted); font-size: 11px; }
-.design-comment-row.is-resolved { opacity: .62; }
-.design-comments-fold {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  margin-top: 4px;
-  padding: 8px 8px 6px;
-  border: 0;
-  border-top: 1px solid var(--d-line);
-  background: none;
-  color: var(--d-muted);
-  font: inherit;
-  font-size: 11.5px;
-  text-align: left;
-  cursor: pointer;
-}
-.design-comments-fold:hover { color: var(--color-text); }
-.design-comments-fold svg { transition: transform .12s; }
-.design-comments-fold svg.is-open { transform: rotate(90deg); }
 
 /* ── Tools ───────────────────────────────────────────────────────────────── */
 .design-tools {
@@ -881,8 +792,9 @@
   z-index: 60;
   display: flex;
   flex-direction: column;
-  width: 320px;
-  max-height: min(60vh, 480px);
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  max-height: min(70vh, 560px);
   border: 1px solid var(--d-line);
   border-radius: 10px;
   background: var(--color-bg);

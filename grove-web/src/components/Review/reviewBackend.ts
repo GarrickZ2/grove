@@ -25,6 +25,7 @@ import {
 } from '../../api/tasks';
 import type { CommitsResponse, DirEntriesResponse, ReviewCommentsResponse } from '../../api/tasks';
 import type { ShareSource, SharedComment } from '../../api/shares';
+import { commentAuthor } from './commentAuthor';
 
 type Comments = Promise<ReviewCommentsResponse>;
 
@@ -105,9 +106,8 @@ function reviewComments(comments: SharedComment[]): ReviewCommentsResponse {
     content: comment.content,
     // Comment cards show `agent` as the author's name, the same as in the
     // owner's own review.
-    agent: comment.author,
+    ...commentAuthor(comment.author),
     model: '',
-    role: '',
     timestamp: comment.timestamp,
     status: comment.status,
     // Only what the reader wrote can be changed by them.
@@ -115,9 +115,8 @@ function reviewComments(comments: SharedComment[]): ReviewCommentsResponse {
     replies: comment.replies.map((reply) => ({
       id: reply.id,
       content: reply.content,
-      agent: reply.author,
+      ...commentAuthor(reply.author),
       model: '',
-      role: '',
       timestamp: reply.timestamp,
       mine: reply.mine,
     })),

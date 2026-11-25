@@ -3,7 +3,7 @@ import { ChevronDown, Link2, Trash2, WifiOff } from "lucide-react";
 import { DropdownMenu } from "../ui/DropdownMenu";
 import { listReceivedShares, removeReceivedShare, type ReceivedShare } from "../../api/shares";
 import { hasNews, openShareLink, receivedStatus, sharedListChanged } from "./shareEvents";
-import { initials } from "./shareFormat";
+import { AgentAvatar } from "../Review/AgentAvatar";
 import "./share.css";
 
 /** Sidebar "Shared with me": Tasks other people shared with this Grove. */
@@ -62,7 +62,7 @@ export function OrbitSharedSection({ activeItem, onOpen }: { activeItem: string;
                 title={`${share.owner} · ${share.title}`}
                 onClick={() => onOpen(id)}
               >
-                <span className="share-avatar">{initials(share.owner)}</span>
+                <AgentAvatar agent={share.owner} size={18} person className="share-avatar" />
                 <span className="orbit-shared-name">{share.title || "Shared task"}</span>
                 {status === "offline" && <WifiOff size={12} aria-label={`${share.owner}'s Grove is offline`} />}
                 {status === "live" && hasNews(share) && <span className="orbit-shared-dot" aria-label="New activity" />}

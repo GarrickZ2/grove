@@ -20,12 +20,6 @@ export function untilText(at: string, now: number = Date.now()): string {
   return `in ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
 }
 
-/** First letter of a name, for avatars ("周远" → "周", "Garrick" → "G"). */
-export function initials(name: string): string {
-  const trimmed = name.trim();
-  return trimmed ? Array.from(trimmed)[0].toUpperCase() : "?";
-}
-
 /** Put text on the clipboard; says whether it worked. Pass a promise when the
  *  text is still being made: the clipboard is claimed right away, while the
  *  click still counts, which Safari and the macOS app need. */

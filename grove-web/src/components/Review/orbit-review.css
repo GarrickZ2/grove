@@ -269,7 +269,7 @@
 .diff-review-page.is-orbit .diff-hunk-header { background: var(--o-group); color: var(--o-muted); font-size: 11.5px; border-bottom-color: var(--o-border); }
 
 /* ── Inline comment threads ───────────────────────────────────────────── */
-.diff-review-page.is-orbit .diff-comment-card {
+:is(.diff-review-page, .review-comments).is-orbit .diff-comment-card {
   margin: 6px 14px 8px 60px;
   border: 1px solid var(--o-border);
   border-radius: var(--o-radius-lg);
@@ -280,20 +280,20 @@
   animation: orv-thread-in 360ms var(--o-ease-slide) both;
 }
 .diff-review-page.is-orbit .diff-split-comment-row .diff-comment-card { margin-left: 14px; }
-.diff-review-page.is-orbit .diff-comment-header { padding: 10px 12px 4px; gap: 8px; }
-.diff-review-page.is-orbit .diff-comment-author { font-size: 12.5px; }
-.diff-review-page.is-orbit .diff-comment-time { font-size: 11.5px; color: var(--o-muted); }
-.diff-review-page.is-orbit .diff-comment-status-badge { font-size: 11px; font-weight: 500; line-height: 18px; padding: 0 8px; border-radius: 999px; }
-.diff-review-page.is-orbit .diff-comment-action-btn { width: 26px; height: 26px; border-radius: var(--o-radius-xs); color: var(--o-muted); }
-.diff-review-page.is-orbit .diff-comment-action-btn:hover { background: var(--o-hover); color: var(--o-text); }
-.diff-review-page.is-orbit .diff-comment-body { padding: 0 12px 10px; font-size: 13px; }
-.diff-review-page.is-orbit .diff-comment-reply { border-top: 1px solid var(--o-border); background: none; padding: 10px 12px; }
-.diff-review-page.is-orbit .diff-comment-reply .diff-comment-body { color: var(--o-text); }
+:is(.diff-review-page, .review-comments).is-orbit .diff-comment-header { padding: 10px 12px 4px; gap: 8px; }
+:is(.diff-review-page, .review-comments).is-orbit .diff-comment-author { font-size: 12.5px; }
+:is(.diff-review-page, .review-comments).is-orbit .diff-comment-time { font-size: 11.5px; color: var(--o-muted); }
+:is(.diff-review-page, .review-comments).is-orbit .diff-comment-status-badge { font-size: 11px; font-weight: 500; line-height: 18px; padding: 0 8px; border-radius: 999px; }
+:is(.diff-review-page, .review-comments).is-orbit .diff-comment-action-btn { width: 26px; height: 26px; border-radius: var(--o-radius-xs); color: var(--o-muted); }
+:is(.diff-review-page, .review-comments).is-orbit .diff-comment-action-btn:hover { background: var(--o-hover); color: var(--o-text); }
+:is(.diff-review-page, .review-comments).is-orbit .diff-comment-body { padding: 0 12px 10px; font-size: 13px; }
+:is(.diff-review-page, .review-comments).is-orbit .diff-comment-reply { border-top: 1px solid var(--o-border); background: none; padding: 10px 12px; }
+:is(.diff-review-page, .review-comments).is-orbit .diff-comment-reply .diff-comment-body { color: var(--o-text); }
 
-.diff-review-page.is-orbit .diff-reply-form { border-top: 1px solid var(--o-border); padding: 10px 12px; background: var(--o-group); }
-.diff-review-page.is-orbit .diff-reply-textarea,
-.diff-review-page.is-orbit .conv-reply-textarea,
-.diff-review-page.is-orbit .project-comment-form textarea {
+:is(.diff-review-page, .review-comments).is-orbit .diff-reply-form { border-top: 1px solid var(--o-border); padding: 10px 12px; background: var(--o-group); }
+:is(.diff-review-page, .review-comments).is-orbit .diff-reply-textarea,
+:is(.diff-review-page, .review-comments).is-orbit .conv-reply-textarea,
+:is(.diff-review-page, .review-comments).is-orbit .project-comment-form textarea {
   border: 1px solid var(--o-border);
   border-radius: var(--o-radius);
   background: var(--o-bg);
@@ -301,12 +301,12 @@
   color: var(--o-text);
   transition: border-color var(--o-dur-fast), box-shadow var(--o-dur-fast);
 }
-.diff-review-page.is-orbit .diff-reply-textarea:focus,
-.diff-review-page.is-orbit .conv-reply-textarea:focus,
-.diff-review-page.is-orbit .project-comment-form textarea:focus { border-color: var(--o-border-strong); box-shadow: var(--o-ring-selected); }
+:is(.diff-review-page, .review-comments).is-orbit .diff-reply-textarea:focus,
+:is(.diff-review-page, .review-comments).is-orbit .conv-reply-textarea:focus,
+:is(.diff-review-page, .review-comments).is-orbit .project-comment-form textarea:focus { border-color: var(--o-border-strong); box-shadow: var(--o-ring-selected); }
 
 /* Buttons in threads: ink primary, quiet secondary (Orbit buttons). */
-.diff-review-page.is-orbit :is(.diff-reply-submit-btn, .conv-reply-submit, .project-comment-submit) {
+:is(.diff-review-page, .review-comments).is-orbit :is(.diff-reply-submit-btn, .conv-reply-submit, .project-comment-submit) {
   height: 26px;
   padding: 0 10px;
   border: 0;
@@ -318,7 +318,7 @@
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%), 0 1px 2px rgb(0 0 0 / 18%);
   transition: transform 140ms var(--o-ease-toggle), opacity 200ms;
 }
-.diff-review-page.is-orbit :is(.diff-reply-resolve-btn, .conv-reply-cancel, .conv-item-resolve-btn) {
+:is(.diff-review-page, .review-comments).is-orbit :is(.diff-reply-resolve-btn, .conv-reply-cancel, .conv-item-resolve-btn) {
   height: 26px;
   padding: 0 9px;
   border: 1px solid var(--o-border);
@@ -330,16 +330,16 @@
   box-shadow: var(--o-shadow-1);
   transition: transform 140ms var(--o-ease-toggle), border-color var(--o-dur-fast);
 }
-.diff-review-page.is-orbit :is(.diff-reply-resolve-btn, .conv-reply-cancel, .conv-item-resolve-btn):hover { border-color: var(--o-border-strong); background: var(--o-bg); opacity: 1; }
-.diff-review-page.is-orbit :is(.diff-reply-submit-btn, .conv-reply-submit, .project-comment-submit, .diff-reply-resolve-btn, .conv-reply-cancel, .conv-item-resolve-btn):active:not(:disabled) { transform: scale(.96); }
+:is(.diff-review-page, .review-comments).is-orbit :is(.diff-reply-resolve-btn, .conv-reply-cancel, .conv-item-resolve-btn):hover { border-color: var(--o-border-strong); background: var(--o-bg); opacity: 1; }
+:is(.diff-review-page, .review-comments).is-orbit :is(.diff-reply-submit-btn, .conv-reply-submit, .project-comment-submit, .diff-reply-resolve-btn, .conv-reply-cancel, .conv-item-resolve-btn):active:not(:disabled) { transform: scale(.96); }
 
 /* ── Comments sidebar ─────────────────────────────────────────────────── */
-.diff-review-page.is-orbit .conv-sidebar { background: var(--o-group); border-left: 1px solid var(--o-border); }
-.diff-review-page.is-orbit .conv-sidebar-header { padding: 12px 14px 8px; border-bottom: 0; font-size: 13.5px; color: var(--o-text); }
-.diff-review-page.is-orbit .conv-sidebar-header > svg { display: none; }
-.diff-review-page.is-orbit .conv-sidebar-count { font-size: 11px; padding: 0 6px; line-height: 17px; border-radius: 999px; background: var(--o-selected); color: var(--o-muted); }
-.diff-review-page.is-orbit .conv-cleanup-btn { border-radius: var(--o-radius-xs); }
-.diff-review-page.is-orbit .conv-send-all-btn {
+:is(.diff-review-page, .review-comments).is-orbit .conv-sidebar { background: var(--o-group); border-left: 1px solid var(--o-border); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-sidebar-header { padding: 12px 14px 8px; border-bottom: 0; font-size: 13.5px; color: var(--o-text); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-sidebar-header > svg { display: none; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-sidebar-count { font-size: 11px; padding: 0 6px; line-height: 17px; border-radius: 999px; background: var(--o-selected); color: var(--o-muted); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-cleanup-btn { border-radius: var(--o-radius-xs); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-send-all-btn {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
@@ -357,19 +357,19 @@
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%), 0 1px 2px rgb(0 0 0 / 18%);
   transition: transform 140ms var(--o-ease-toggle), opacity 200ms;
 }
-.diff-review-page.is-orbit .conv-send-all-btn svg { width: 12px; height: 12px; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-send-all-btn svg { width: 12px; height: 12px; }
 /* A narrow sidebar keeps just the icon (the title says what it does). */
-.diff-review-page.is-orbit .conv-sidebar { container-type: inline-size; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-sidebar { container-type: inline-size; }
 @container (max-width: 250px) {
-  .diff-review-page.is-orbit .conv-send-all-label { display: none; }
-  .diff-review-page.is-orbit .conv-send-all-btn { width: 26px; padding: 0; justify-content: center; }
+  :is(.diff-review-page, .review-comments).is-orbit .conv-send-all-label { display: none; }
+  :is(.diff-review-page, .review-comments).is-orbit .conv-send-all-btn { width: 26px; padding: 0; justify-content: center; }
 }
-.diff-review-page.is-orbit .conv-send-all-btn:active:not(:disabled) { transform: scale(.96); }
-.diff-review-page.is-orbit .conv-send-all-btn:disabled { opacity: .4; cursor: default; }
-.diff-review-page.is-orbit .conv-send-all-btn:focus-visible { outline: 2px solid var(--o-accent); outline-offset: 2px; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-send-all-btn:active:not(:disabled) { transform: scale(.96); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-send-all-btn:disabled { opacity: .4; cursor: default; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-send-all-btn:focus-visible { outline: 2px solid var(--o-accent); outline-offset: 2px; }
 
 /* Filters read as one segmented control */
-.diff-review-page.is-orbit .conv-filter-bar {
+:is(.diff-review-page, .review-comments).is-orbit .conv-filter-bar {
   margin: 0 12px 8px;
   padding: 2px;
   gap: 0;
@@ -379,7 +379,7 @@
   box-shadow: inset 0 0 0 .5px var(--o-border);
   flex-wrap: nowrap;
 }
-.diff-review-page.is-orbit .conv-filter-btn {
+:is(.diff-review-page, .review-comments).is-orbit .conv-filter-btn {
   flex: 1;
   min-width: 0;
   height: 24px;
@@ -392,23 +392,23 @@
   text-overflow: ellipsis;
   transition: color 200ms, background-color 200ms, box-shadow 200ms;
 }
-.diff-review-page.is-orbit .conv-filter-btn:hover { background: none; color: var(--o-text); }
-.diff-review-page.is-orbit .conv-filter-btn.active {
+:is(.diff-review-page, .review-comments).is-orbit .conv-filter-btn:hover { background: none; color: var(--o-text); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-filter-btn.active {
   background: var(--o-bg);
   color: var(--o-text);
   font-weight: 500;
   box-shadow: 0 1px 3px var(--o-shadow), 0 0 0 .5px var(--o-border);
 }
 
-.diff-review-page.is-orbit .conv-sidebar-list { padding: 0 8px 8px; scrollbar-width: thin; scrollbar-color: var(--o-track) transparent; }
-.diff-review-page.is-orbit .conv-section { margin-bottom: 10px; }
-.diff-review-page.is-orbit .conv-section-title { padding: 6px 6px 4px; margin-bottom: 2px; font-size: 12px; font-weight: 500; color: var(--o-muted); text-transform: none; letter-spacing: 0; }
-.diff-review-page.is-orbit .conv-file-group { border-bottom: 0; }
-.diff-review-page.is-orbit .conv-file-header { padding: 6px; border-radius: var(--o-radius-sm); background: none; color: var(--o-muted); }
-.diff-review-page.is-orbit .conv-file-header:hover { background: var(--o-hover); color: var(--o-text); }
-.diff-review-page.is-orbit .conv-file-name { font-family: var(--o-font-mono); font-size: 11.5px; }
-.diff-review-page.is-orbit .conv-file-count { border-radius: 999px; background: var(--o-selected); color: var(--o-muted); font-variant-numeric: tabular-nums; }
-.diff-review-page.is-orbit .conv-item {
+:is(.diff-review-page, .review-comments).is-orbit .conv-sidebar-list { padding: 0 8px 8px; scrollbar-width: thin; scrollbar-color: var(--o-track) transparent; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-section { margin-bottom: 10px; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-section-title { padding: 6px 6px 4px; margin-bottom: 2px; font-size: 12px; font-weight: 500; color: var(--o-muted); text-transform: none; letter-spacing: 0; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-file-group { border-bottom: 0; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-file-header { padding: 6px; border-radius: var(--o-radius-sm); background: none; color: var(--o-muted); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-file-header:hover { background: var(--o-hover); color: var(--o-text); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-file-name { font-family: var(--o-font-mono); font-size: 11.5px; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-file-count { border-radius: 999px; background: var(--o-selected); color: var(--o-muted); font-variant-numeric: tabular-nums; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-item {
   margin: 2px 0;
   padding: 10px;
   border-bottom: 0;
@@ -416,14 +416,14 @@
   animation: oui-rowin 320ms var(--o-ease-out) both;
   transition: background-color var(--o-dur-fast), box-shadow var(--o-dur-fast);
 }
-.diff-review-page.is-orbit .conv-item:hover { background: var(--o-bg); box-shadow: var(--o-shadow-1), inset 0 0 0 1px var(--o-border); }
-.diff-review-page.is-orbit .conv-item-author { font-size: 12px; font-weight: 500; }
-.diff-review-page.is-orbit .conv-item-meta { font-family: var(--o-font-mono); font-size: 11px; }
-.diff-review-page.is-orbit .conv-item-status { font-size: 10.5px; font-weight: 500; line-height: 17px; padding: 0 7px; border-radius: 999px; }
-.diff-review-page.is-orbit .conv-item-content { font-size: 12.5px; line-height: 1.45; color: var(--o-text); }
-.diff-review-page.is-orbit .conv-item-replies { border-top-color: var(--o-border); }
-.diff-review-page.is-orbit .conv-empty { color: var(--o-muted); font-size: 12.5px; }
-.diff-review-page.is-orbit .conv-sidebar-footer { border-top: 1px solid var(--o-border); background: var(--o-group); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-item:hover { background: var(--o-bg); box-shadow: var(--o-shadow-1), inset 0 0 0 1px var(--o-border); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-item-author { font-size: 12px; font-weight: 500; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-item-meta { font-family: var(--o-font-mono); font-size: 11px; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-item-status { font-size: 10.5px; font-weight: 500; line-height: 17px; padding: 0 7px; border-radius: 999px; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-item-content { font-size: 12.5px; line-height: 1.45; color: var(--o-text); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-item-replies { border-top-color: var(--o-border); }
+:is(.diff-review-page, .review-comments).is-orbit .conv-empty { color: var(--o-muted); font-size: 12.5px; }
+:is(.diff-review-page, .review-comments).is-orbit .conv-sidebar-footer { border-top: 1px solid var(--o-border); background: var(--o-group); }
 
 /* Commit / merge readiness (foot of the comments sidebar) */
 /* Wraps instead of truncating: when the sidebar is narrow the copy takes its
@@ -489,7 +489,7 @@
 
 /* ── Narrow panels ────────────────────────────────────────────────────── */
 @container (max-width: 640px) {
-  .diff-review-page.is-orbit .diff-comment-card { margin-left: 16px; }
+  :is(.diff-review-page, .review-comments).is-orbit .diff-comment-card { margin-left: 16px; }
 }
 
 @keyframes orv-thread-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } }

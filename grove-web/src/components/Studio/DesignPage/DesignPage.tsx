@@ -29,7 +29,9 @@ import { SEND_COMMENT_TO_CHAT_EVENT, type ChatReviewComment } from "../../Tasks/
 import { DesignBoard } from "./DesignBoard";
 import { DesignCaptureHost } from "./DesignCaptureHost";
 import type { PickedElement } from "./DesignFrame";
+import { reviewEntry } from "./CommentList";
 import { DesignThread } from "./DesignThread";
+import type { ThreadChanges } from "./threadChanges";
 import { OPEN_DESIGN_EVENT, takePendingOpen, type OpenDesignDetail } from "./designModel";
 import { forgetDesignPages, useDesignData } from "./useDesignData";
 import "./design.css";
@@ -320,6 +322,27 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
     );
   }
 
+  const setStatus = (list: DesignComment[], status: "open" | "resolved") => {
+    const ids = new Set(list.map((comment) => comment.id));
+    patch(({ comments: all }) => ({ comments: all.map((comment) => (ids.has(comment.id) ? { ...comment, status } : comment)) }));
+    Promise.all(list.map((comment) => updateCommentStatus(projectId, taskId, comment.id, status))).catch(() => void reload());
+  };
+  const canReply = shared ? shared.canComment && canReplyToDesignComments(projectId) : true;
+  const reply = async (id: number, text: string) => {
+    await replyDesignComment(projectId, taskId, id, text);
+    await reload();
+  };
+  const changes: ThreadChanges<DesignComment> = {
+    canChange: (comment, replyId) => canChangeDesignComment(projectId, comment, replyId),
+    edit: async (comment, text, replyId) => {
+      await editDesignComment(projectId, taskId, comment.id, text, replyId);
+      await reload();
+    },
+    remove: async (comment, replyId) => {
+      await deleteDesignComment(projectId, taskId, comment.id, replyId);
+      await reload();
+    },
+  };
   const existing = thread?.kind === "existing" ? comments.find((comment) => comment.id === thread.id) : undefined;
   const titleOf = (slug: string, file: string) =>
     designs.find((entry) => entry.slug === slug)?.pages.find((entry) => entry.file === file)?.title ?? file;
@@ -361,6 +384,9 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
             agent={chat.agent}
             canSend={Boolean(chat.chatId)}
             onSendComments={sendToAgent}
+            onCommentStatus={shared ? undefined : setStatus}
+            onReplyComment={canReply ? (comment, text) => reply(comment.id, text) : undefined}
+            commentChanges={changes}
             onExportPage={shared ? undefined : (file, format) => {
               const stem = file.replace(/\.html?$/i, "");
               downloadViaIframe(designPageExportUrl(projectId, taskId, design.slug, file, format), `${design.slug}-${stem}.${format}`);
@@ -385,7 +411,6 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
         <DesignThread
           at={thread.at}
           target={`${titleOf(thread.design, thread.page)} · ${elementLabel(thread.element)}`}
-          agent={chat.agent}
           canSend={Boolean(chat.chatId)}
           onClose={() => setThread(null)}
           onSubmit={async (text) => {
@@ -405,35 +430,23 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
       {thread?.kind === "existing" && existing ? (
         <DesignThread
           at={thread.at}
-          comment={existing}
+          comment={reviewEntry(existing, (replyId) => changes.canChange(existing, replyId))}
           target={`${titleOf(existing.design, existing.page)} · ${elementLabel(existing.anchor)}`}
-          agent={chat.agent}
           canSend={Boolean(chat.chatId)}
-          compose={shared ? shared.canComment && canReplyToDesignComments(projectId) : true}
+          compose={canReply}
           onClose={() => setThread(null)}
           onResolve={shared ? undefined : () => {
             const status = existing.status === "open" ? "resolved" : "open";
-            patch(({ comments: list }) => ({ comments: list.map((comment) => comment.id === existing.id ? { ...comment, status } : comment) }));
+            setStatus([existing], status);
             if (status === "resolved") setThread(null);
-            updateCommentStatus(projectId, taskId, existing.id, status).catch(() => void reload());
           }}
           onSend={shared ? undefined : () => {
             sendToAgent([existing]);
             setThread(null);
           }}
-          onSubmit={async (text) => {
-            await replyDesignComment(projectId, taskId, existing.id, text);
-            await reload();
-          }}
-          canChange={(replyId) => canChangeDesignComment(projectId, existing, replyId)}
-          onEdit={async (text, replyId) => {
-            await editDesignComment(projectId, taskId, existing.id, text, replyId);
-            await reload();
-          }}
-          onDelete={async (replyId) => {
-            await deleteDesignComment(projectId, taskId, existing.id, replyId);
-            await reload();
-          }}
+          onSubmit={(text) => reply(existing.id, text)}
+          onEdit={(text, replyId) => changes.edit(existing, text, replyId)}
+          onDelete={(replyId) => changes.remove(existing, replyId)}
         />
       ) : null}
     </div>

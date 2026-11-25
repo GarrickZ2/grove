@@ -1233,6 +1233,24 @@ fn normalize_agent_name(raw: &str) -> String {
     raw.to_string()
 }
 
+/// The Registry name of the Agent the chat was opened with, ahead of the name the
+/// Agent gives itself: TraeX's replies were signed "Trae".
+fn chat_agent_name(project_key: &str, task_id: &str, chat_id: &str) -> Option<String> {
+    let chat = crate::storage::tasks::get_chat_session(project_key, task_id, chat_id)
+        .ok()
+        .flatten()?;
+    let base = match crate::storage::custom_agent::get(&chat.agent) {
+        Ok(Some(persona)) => persona.base_agent,
+        _ => chat.agent,
+    };
+    let id = crate::storage::installed_agents::canonicalize_agent_id(&base);
+    crate::storage::agent_registry::get()
+        .agents
+        .into_iter()
+        .find(|agent| agent.id == id)
+        .map(|agent| agent.name)
+}
+
 /// Tries to resolve agent identity from session.json (ACP mode).
 /// Falls back to params if env vars are missing or session.json not found.
 /// Returns (agent, model, role).
@@ -1247,7 +1265,8 @@ fn resolve_agent_identity(
 
     if let (Some(pk), Some(tid), Some(cid)) = (project_key, task_id, chat_id) {
         if let Some(meta) = crate::acp::read_session_metadata(&pk, &tid, &cid) {
-            let agent = normalize_agent_name(&meta.agent_name);
+            let agent = chat_agent_name(&pk, &tid, &cid)
+                .unwrap_or_else(|| normalize_agent_name(&meta.agent_name));
             let model = meta
                 .current_model_id
                 .clone()

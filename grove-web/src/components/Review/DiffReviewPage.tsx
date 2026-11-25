@@ -1539,9 +1539,19 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
   const lightboxNotOpen = useCallback(() => !document.querySelector('[data-lightbox-active]'), []);
 
+  // Cmd/Ctrl+F only when focus is inside this page: the diffReview scope sits
+  // above the workspace scope, so an ungated handler would take the key from
+  // a chat (or any panel) beside an open Code Review.
+  const pageRootRef = useRef<HTMLDivElement | null>(null);
   useCommand('diffReview.openSearch', () => {
     setCodeSearchVisible(true);
     setCodeSearchFocusTrigger((n) => n + 1);
+  }, {
+    enabled: () => {
+      const root = pageRootRef.current;
+      const active = document.activeElement;
+      return !!(root && active && root.contains(active));
+    },
   }, []);
 
   useCommand(
@@ -2039,6 +2049,10 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const orbit = useOrbitReview();
   const [rootEl, setRootEl] = useState<HTMLDivElement | null>(null);
   const density = reviewHeaderDensity(useElementWidth(orbit ? rootEl : null));
+  const setOrbitPageRoot = useCallback((el: HTMLDivElement | null) => {
+    pageRootRef.current = el;
+    setRootEl(el);
+  }, []);
   const handleOpenSearch = useCallback(() => {
     setCodeSearchVisible(true);
     setCodeSearchFocusTrigger((n) => n + 1);
@@ -2141,12 +2155,23 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
   return (
     <div
-      ref={orbit ? setRootEl : undefined}
+      ref={orbit ? setOrbitPageRoot : pageRootRef}
+      tabIndex={-1}
       className={`diff-review-page ${isEmbedded ? 'embedded' : ''}${orbit ? ' is-orbit' : ''}`}
       style={{
         '--diff-font-size': `${fontSize}px`,
         '--diff-line-height': `${fontSize + 8}px`,
+        outline: 'none',
       } as React.CSSProperties}
+      onPointerDown={(e) => {
+        // Clicking plain diff text leaves focus on <body>; anchor it to this
+        // page so Cmd/Ctrl+F (gated on focus above) still opens code search.
+        const root = pageRootRef.current;
+        if (!root || root.contains(document.activeElement)) return;
+        if (!(e.target as Element).closest?.('input,textarea,select,button,a,iframe,[contenteditable=true]')) {
+          root.focus({ preventScroll: true });
+        }
+      }}
     >
       {orbit ? (
         <>

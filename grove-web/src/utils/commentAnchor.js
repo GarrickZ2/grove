@@ -115,12 +115,65 @@ function byText(anchor, root) {
   return same.length === 1 ? same[0] : null;
 }
 
+/** How alike two texts are, 0 to 1, by the letter pairs they share. */
+export function likeness(a, b) {
+  a = a.toLowerCase();
+  b = b.toLowerCase();
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  var pairs = {};
+  for (var i = 0; i < a.length - 1; i += 1) {
+    var pair = a.substr(i, 2);
+    pairs[pair] = (pairs[pair] || 0) + 1;
+  }
+  var shared = 0;
+  for (var j = 0; j < b.length - 1; j += 1) {
+    var other = b.substr(j, 2);
+    if (pairs[other] > 0) {
+      pairs[other] -= 1;
+      shared += 1;
+    }
+  }
+  return (2 * shared) / (a.length + b.length - 2);
+}
+
+// How much of the anchor's text must be left for a rewritten element to count
+// as the same one, and how far ahead of the next best it must be.
+var REWRITTEN = 0.5;
+var AHEAD = 0.05;
+
+/** The element of the anchor's tag that is most clearly its text rewritten. */
+function byLikeness(anchor, root, candidates) {
+  var tag = /([a-z][a-z0-9-]*)\[\d+\]$/i.exec(anchor.xpath || '');
+  if (!tag || !anchor.text) return null;
+  var best = null;
+  var bestScore = 0;
+  var second = 0;
+  Array.prototype.forEach.call(root.getElementsByTagName(tag[1]), function (element) {
+    var now = cleanText(element.innerText || element.textContent);
+    if (!now) return;
+    // Cut short when it was recorded: only its start can be compared.
+    if (anchor.text.length >= ANCHOR_TEXT_LIMIT) now = now.slice(0, anchor.text.length);
+    var score = anchor.text.length >= 8 && now.indexOf(anchor.text) >= 0 ? 1 : likeness(anchor.text, now);
+    if (score > bestScore || (score === bestScore && candidates.indexOf(element) >= 0)) {
+      second = element === best ? second : bestScore;
+      best = element;
+      bestScore = score;
+    } else if (score > second) {
+      second = score;
+    }
+  });
+  if (bestScore < REWRITTEN) return null;
+  return bestScore - second >= AHEAD || candidates.indexOf(best) >= 0 ? best : null;
+}
+
 /**
  * Where an anchor's element is now, or null when nothing is left of it. The
  * path and the selector were both recorded; after the content changes either
  * may lead to another element, so the one that still reads as it did is
- * taken. `changed` says none does: the element was rewritten, or this is a
- * different one in its place. An anchor with no `text` is taken as found.
+ * taken. `changed` says none does: the element was rewritten, and the one
+ * most like it is taken. `guess` says none is like it either: this is only
+ * what stands in its place now. An anchor with no `text` is taken as found.
  */
 export function locateAnchor(anchor, root) {
   var candidates = [byXPath(anchor, root), bySelector(anchor, root)].filter(Boolean);
@@ -130,5 +183,7 @@ export function locateAnchor(anchor, root) {
   }
   var moved = byText(anchor, root);
   if (moved) return { element: moved, changed: false };
-  return candidates.length ? { element: candidates[0], changed: true } : null;
+  var rewritten = byLikeness(anchor, root, candidates);
+  if (rewritten) return { element: rewritten, changed: true };
+  return candidates.length ? { element: candidates[0], changed: true, guess: true } : null;
 }

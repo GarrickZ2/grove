@@ -33,9 +33,12 @@ export interface PreviewCommentLocator {
   html?: string;
   role?: string;
   rect?: { x: number; y: number; width: number; height: number };
-  extraBlocks?: Array<{ selector: string; xpath: string }>;
+  extraBlocks?: Array<{ selector: string; xpath: string; text?: string }>;
+  /** How the block itself read, where `text` is something else: a selection in
+   *  it, or the joined text of several blocks. Absent on old comments. */
+  blockText?: string;
   /** Character offsets inside the resolved Markdown block for exact text selections. */
-  textRange?: { start: number; end: number; quote: string };
+  textRange?: { start: number; end: number; quote: string; before?: string; after?: string };
 }
 
 export interface PreviewCommentDraft {

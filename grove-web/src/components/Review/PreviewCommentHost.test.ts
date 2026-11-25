@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PreviewCommentLocator } from '../../context';
-import { textRangeForLocator, textSelectionAnchor } from './PreviewCommentHost';
+import { textSelectionAnchor } from './PreviewCommentHost';
+import { textRangeForLocator } from './previewAnchor';
 import { rectInViewport, rectRelativeTo } from './previewCommentGeometry';
 
 describe('PreviewCommentHost text marker anchoring', () => {

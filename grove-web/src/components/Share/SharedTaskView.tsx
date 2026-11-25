@@ -23,7 +23,9 @@ import {
   type ShareInfo,
   type ShareSource,
 } from "../../api/shares";
-import { initials, stateMessage, untilText } from "./shareFormat";
+import { AgentAvatar } from "../Review/AgentAvatar";
+import { commentAuthor } from "../Review/commentAuthor";
+import { stateMessage, untilText } from "./shareFormat";
 import "./share.css";
 
 type Tab = "changes" | "files" | "designs" | "sketches";
@@ -88,13 +90,12 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
       comment_type: comment.commentType,
       file_path: comment.filePath ?? undefined,
       content: comment.content,
-      agent: comment.author,
+      ...commentAuthor(comment.author),
       model: "",
-      role: "",
       timestamp: comment.timestamp,
       status: comment.status,
       mine: comment.mine,
-      replies: comment.replies.map((reply) => ({ id: reply.id, content: reply.content, agent: reply.author, model: "", role: "", timestamp: reply.timestamp, mine: reply.mine })),
+      replies: comment.replies.map((reply) => ({ id: reply.id, content: reply.content, ...commentAuthor(reply.author), model: "", timestamp: reply.timestamp, mine: reply.mine })),
       anchor: comment.anchor ?? undefined,
     }));
     return {
@@ -220,7 +221,7 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
     <OrbitInterfaceContext.Provider value>
       <div className="shared-view">
         <header className="shared-head">
-          <span className="shared-owner-avatar" aria-hidden="true">{initials(info.owner)}</span>
+          <AgentAvatar agent={info.owner} size={30} person />
           <div className="shared-title">
             <b>{info.title}</b>
             <span>{facts}</span>
