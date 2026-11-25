@@ -59,7 +59,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
       { id: "history", label: "Chat history" },
       { id: "render", label: "Render window" },
     ],
-    keywords: ["coding agent", "marketplace", "custom agents", "persona", "agent servers", "acp", "messages", "media", "tool calls", "browser control", "chrome", "companion", "extension", "tab groups", "browser automation", "web"],
+    keywords: ["coding agent", "marketplace", "custom agents", "persona", "agent servers", "acp", "messages", "agent replies", "narration", "media", "tool calls", "browser control", "chrome", "companion", "extension", "tab groups", "browser automation", "web"],
   },
   {
     id: "general",

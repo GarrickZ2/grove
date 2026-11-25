@@ -36,6 +36,8 @@ export function AgentsPage({ settings }: SettingsPageProps) {
     setChatHistoryIncludeMedia,
     chatHistoryIncludeToolDetails,
     setChatHistoryIncludeToolDetails,
+    showAgentNarration,
+    setShowAgentNarration,
     chatRenderWindowLimit,
     chatRenderWindowLimitDraft,
     setChatRenderWindowLimitDraft,
@@ -121,6 +123,17 @@ export function AgentsPage({ settings }: SettingsPageProps) {
       </Group>
 
       <Group title="Chat history" anchorId="history">
+        <Row title="Agent replies">
+          <Segmented
+            ariaLabel="Agent replies"
+            value={showAgentNarration ? "all" : "final"}
+            options={[
+              { value: "final", label: "Final", title: "Finished turns show the final reply; the rest folds into the work summary" },
+              { value: "all", label: "All", title: "Every reply stays in view; thinking and tool calls fold" },
+            ]}
+            onChange={(next) => setShowAgentNarration(next === "all")}
+          />
+        </Row>
         <Row title="Messages to load">
           <Segmented
             ariaLabel="Messages to load"
