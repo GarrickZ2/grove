@@ -1,5 +1,5 @@
-//! Moves installed Registry channels to the Registry's version after the
-//! background refresh. Upgrading only rewrites the stored version (and, for
+//! Moves installed Registry channels to the Registry's version, at startup and
+//! after every Registry refresh. Upgrading only rewrites the stored version (and, for
 //! binaries, the extracted install): running Sessions keep what they started
 //! with and new connections read the new version. A channel that fails keeps
 //! its record and is tried again after the next refresh.
@@ -84,8 +84,11 @@ async fn apply(id: &str, upgrade: Upgrade) -> Result<()> {
     Ok(())
 }
 
-/// Upgrade every Agent that has auto update on.
+/// Upgrade every Agent that has auto update on. One run at a time: a manual
+/// refresh can land while the background one is downloading.
 pub async fn run(registry: &RegistryDocument) {
+    static RUNNING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _running = RUNNING.lock().await;
     let agents = match installed_agents::list() {
         Ok(agents) => agents,
         Err(e) => {

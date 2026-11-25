@@ -544,24 +544,23 @@ pub fn update_installation_version(
 
 /// Build the version-pinned package string for `npx -y <pkg>` / `uvx <pkg>`.
 ///
-/// The ACP registry sometimes ships `npx.package` / `uvx.package` already
-/// suffixed with `@<version>` (e.g. `@agentclientprotocol/claude-agent-acp@0.44.0`)
-/// and sometimes bare (e.g. `opencode`). Re-appending `@<version>` blindly
-/// produces malformed `pkg@ver@ver` strings that npx resolves to the wrong
-/// package — so we only append when the registry shipped a bare name.
+/// The installed version decides what runs, so one the registry's package
+/// already carries (`@scope/pkg@0.44.0`, or `pkg==0.10.65` for uvx) is
+/// replaced: the registry moves ahead of an Agent that has auto update off.
+/// With no installed version the package is used as the registry ships it.
 ///
-/// Detection rule: scoped packages start with `@`, so we only treat an `@`
-/// AFTER index 0 as a version suffix delimiter. Bare `pkg@ver` and scoped
-/// `@scope/pkg@ver` are both correctly identified.
+/// Scoped packages start with `@`, so only an `@` after index 0 starts a
+/// version.
 pub fn pin_package_version(package: &str, version: &str) -> String {
     if version.is_empty() {
         return package.to_string();
     }
-    if package.char_indices().skip(1).any(|(_, c)| c == '@') {
-        package.to_string()
-    } else {
-        format!("{}@{}", package, version)
-    }
+    let name_end = package
+        .char_indices()
+        .skip(1)
+        .find(|(_, c)| matches!(c, '@' | '='))
+        .map_or(package.len(), |(at, _)| at);
+    format!("{}@{}", &package[..name_end], version)
 }
 
 /// Resolve the spawn command + args for a launched agent using the selected
@@ -1351,6 +1350,16 @@ mod tests {
             pin_package_version("@agentclientprotocol/claude-agent-acp@0.44.0", "0.44.0"),
             "@agentclientprotocol/claude-agent-acp@0.44.0",
         );
+        assert_eq!(
+            pin_package_version("@agentclientprotocol/codex-acp@2.10.0", "2.7.0"),
+            "@agentclientprotocol/codex-acp@2.7.0",
+        );
+        assert_eq!(pin_package_version("cline@3.0.75", "3.0.1"), "cline@3.0.1");
+        assert_eq!(
+            pin_package_version("fast-agent-acp==0.10.65", "0.10.60"),
+            "fast-agent-acp@0.10.60",
+        );
+        assert_eq!(pin_package_version("cline@3.0.75", ""), "cline@3.0.75");
         assert_eq!(pin_package_version("opencode", "1.17.3"), "opencode@1.17.3");
         assert_eq!(
             pin_package_version("@zed-industries/codex-acp", "0.16.0"),

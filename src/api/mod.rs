@@ -2461,7 +2461,7 @@ pub async fn initialize_local_server_runtime(port: u16) -> std::io::Result<()> {
     // Keep the registry fresh for long-running servers. Startup already has a
     // usable cache-backed snapshot, so these refreshes are non-blocking.
     tokio::spawn(async {
-        crate::storage::agent_registry::refresh_if_stale().await;
+        crate::storage::agent_registry::update_at_startup().await;
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         ticker.tick().await;

@@ -250,7 +250,7 @@ pub async fn list_marketplace() -> Result<Json<MarketplaceResponse>, Marketplace
 
 /// POST /api/v1/agents/marketplace/refresh
 pub async fn refresh_registry() -> Result<Json<MarketplaceResponse>, MarketplaceError> {
-    agent_registry::refresh()
+    agent_registry::refresh_and_update()
         .await
         .map_err(|e| MarketplaceError::internal(format!("registry refresh failed: {}", e)))?;
     // User asked for fresh data — invalidate the auto-scan TTL AND run

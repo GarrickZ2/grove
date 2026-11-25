@@ -512,15 +512,32 @@ fn inject_one_synthetic(doc: &mut RegistryDocument, a: SyntheticAgent, platform:
     });
 }
 
+/// Refresh, then upgrade the Agents that have auto update on. The registry is
+/// fresh even when an upgrade fails; that Agent keeps its version.
+pub async fn refresh_and_update() -> Result<()> {
+    refresh().await?;
+    crate::storage::agent_auto_update::run(&get()).await;
+    Ok(())
+}
+
+/// At startup: refresh if due, then upgrade whatever is still behind the cached
+/// registry. Never the copy shipped with Grove, which may be older than what is
+/// installed.
+pub async fn update_at_startup() {
+    refresh_if_stale().await;
+    if let Ok(Some(cached)) = load_cached() {
+        crate::storage::agent_auto_update::run(&with_grove_entries(cached)).await;
+    }
+}
+
 /// Background-refresh helper. Fire-and-forget; logs but doesn't propagate
 /// errors (offline-safe). Caller should spawn this on a tokio runtime.
 pub async fn refresh_if_stale() {
     if !is_stale() {
         return;
     }
-    match refresh().await {
-        Ok(_) => crate::storage::agent_auto_update::run(&get()).await,
-        Err(e) => eprintln!("[agent_registry] background refresh failed: {}", e),
+    if let Err(e) = refresh_and_update().await {
+        eprintln!("[agent_registry] background refresh failed: {}", e);
     }
 }
 
