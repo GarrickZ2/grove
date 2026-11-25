@@ -9,6 +9,7 @@ import { errorMessage } from "../../utils/errorMessage";
 import { readBuddyPreference, writeBuddyPreference } from "./buddyStorage";
 import { useOrbitInterface } from "../../orbit/ui/interfaceContext";
 import { playTextareaSendOut } from "../Tasks/TaskView/composer/sendOut";
+import { attachmentErrorMessage, checkAttachable } from "../Tasks/TaskView/chatAttachments";
 import { readPastedContent } from "../Tasks/TaskView/composer/pastedContent";
 
 /** Pasted text longer than this becomes an attachment instead of filling the box. */
@@ -68,7 +69,17 @@ export function BuddyComposer({ buddy, onSent, initialText = "", promptCaps, men
   }, [text, orbit]);
   const session = useBuddyComposer(buddy, onSent, promptCaps);
   const { send, stop, sending, connected } = transport ?? session;
-  const addFiles = (added: File[]) => { if (added.length) setFiles((current) => [...current, ...added]); };
+  const addFiles = (added: File[]) => {
+    if (!added.length) return;
+    setError(null);
+    setFiles((current) => [...current, ...added]);
+    // Shown at once; a file that can't be read is taken back out with the reason.
+    for (const file of added) void checkAttachable(file).catch((reason) => {
+      const message = attachmentErrorMessage(file, reason);
+      setFiles((current) => current.filter((item) => item !== file));
+      setError((previous) => previous ? `${previous}\n${message}` : message);
+    });
+  };
   const paste = (event: ClipboardEvent) => {
     // Files are attached and text pasted with them kept; a Finder copy's
     // file-name text is dropped (see readPastedContent).

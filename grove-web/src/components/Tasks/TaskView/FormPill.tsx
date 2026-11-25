@@ -151,15 +151,19 @@ export function FormPill({
         </div>
         {(error || externalError) && <p className="oc-tray-error" role="alert">{error || externalError}</p>}
         {currentQuestion && (
-          <div className="oc-form-question">
-            <div className="oc-form-qhead">
-              <span className="oc-form-step">{currentTab + 1}/{total}</span>
-              <span className="oc-form-qtitle">{currentQuestion.title}</span>
-              {currentQuestion.required && <span className="oc-form-required">Required</span>}
-            </div>
-            {currentQuestion.description && <p className="oc-ask-body">{currentQuestion.description}</p>}
-            <QuestionControls question={currentQuestion} answer={answers[currentQuestion.id]} onChange={(next) => updateAnswer(currentQuestion.id, next)} />
+          <div className="oc-form-qhead">
+            <span className="oc-form-step">{currentTab + 1}/{total}</span>
+            <span className="oc-form-qtitle">{currentQuestion.title}</span>
+            {currentQuestion.required && <span className="oc-form-required">Required</span>}
           </div>
+        )}
+        {currentQuestion && (
+          <FormScrollBody resetKey={currentTab}>
+            <div className="oc-form-question">
+              {currentQuestion.description && <p className="oc-ask-body">{currentQuestion.description}</p>}
+              <QuestionControls question={currentQuestion} answer={answers[currentQuestion.id]} onChange={(next) => updateAnswer(currentQuestion.id, next)} />
+            </div>
+          </FormScrollBody>
         )}
         <div className="ocv-decision-actions">
           <button type="button" className="ocv-btn is-quiet" disabled={disabled} onClick={fireDismiss}>Cancel</button>
@@ -271,6 +275,47 @@ export function FormPill({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/* ────────────────── Scrolling middle (Orbit) ──────────────────────────── */
+
+/** The only part of the Orbit form that scrolls: the head and the buttons
+ *  stay put. Marks which edges have more content so CSS can fade them. */
+function FormScrollBody({ resetKey, children }: { resetKey: number; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ top: false, bottom: false });
+
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const top = el.scrollTop > 1;
+    const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+    setEdges((prev) => (prev.top === top && prev.bottom === bottom ? prev : { top, bottom }));
+  }, []);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollTop = 0;
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    for (const child of Array.from(el.children)) ro.observe(child);
+    return () => ro.disconnect();
+  }, [resetKey, measure]);
+
+  return (
+    <div
+      ref={ref}
+      className="oc-form-body"
+      data-more-above={edges.top || undefined}
+      data-more-below={edges.bottom || undefined}
+      onScroll={measure}
+    >
+      {children}
     </div>
   );
 }

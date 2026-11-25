@@ -250,6 +250,10 @@
 
 /* Narrow chat column: the setup chip gives way first. */
 @container chatbox (max-width: 560px) {
+  .oc-tools { flex: 1 0 auto; }
+  .oc-who { flex: 0 1 auto; min-width: 0; }
+  .oc-setup-chip { overflow: hidden; }
+  .oc-setup-risk { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .oc-setup-dim { max-width: 90px; }
   .oc-hint { display: none; }
 }
@@ -306,7 +310,7 @@
 .oc-tray-head .oui-seg { margin-right: 4px; }
 .oc-row-text.is-single { display: block; white-space: nowrap; text-overflow: ellipsis; }
 .oc-row-text.is-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
-.oc-row-meta.is-error { color: var(--oc-rose); }
+.oc-row-meta.is-error { display: block; overflow-wrap: anywhere; color: var(--oc-rose); white-space: normal; }
 .oc-row.is-failed .oc-row-n { background: color-mix(in oklab, var(--oc-rose) 15%, transparent); color: var(--oc-rose); }
 .oc-row-actions.is-pinned { opacity: 1; }
 .oc-row > .flex { flex: none; align-self: center; }
@@ -367,8 +371,34 @@ button.oc-plan-uri { display: block; max-width: 100%; text-align: left; }
 .oc-option-copy small { color: inherit; font-size: 11px; opacity: .7; }
 .oc-ask-terminal { display: flex; flex-direction: column; gap: 6px; margin-left: 38px; }
 .oc-ask-terminal-frame { height: 280px; overflow: hidden; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--oc-line2); }
+/* Form: head and buttons stay, only the options between them scroll. */
+.oc-form { flex: 0 1 auto; }
+.oc-form > :not(.oc-form-body) { flex: none; }
+.oc-form-body {
+  --oc-fade: 18px;
+  flex: 0 1 auto;
+  min-height: 72px;
+  margin: -4px -12px -4px 0;
+  padding: 4px 8px 4px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.oc-form-body:is(:hover, :focus-within) { scrollbar-color: color-mix(in oklab, var(--color-text) 22%, transparent) transparent; }
+.oc-form-body::-webkit-scrollbar { width: 10px; }
+.oc-form-body::-webkit-scrollbar-track { background: transparent; }
+.oc-form-body::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 999px; background: transparent; background-clip: padding-box; }
+.oc-form-body:is(:hover, :focus-within)::-webkit-scrollbar-thumb { background-color: color-mix(in oklab, var(--color-text) 20%, transparent); }
+.oc-form-body::-webkit-scrollbar-thumb:hover { background-color: color-mix(in oklab, var(--color-text) 34%, transparent); }
+.oc-form-body[data-more-above] { mask-image: linear-gradient(to bottom, transparent, #000 var(--oc-fade)); }
+.oc-form-body[data-more-below] { mask-image: linear-gradient(to bottom, #000 calc(100% - var(--oc-fade)), transparent); }
+.oc-form-body[data-more-above][data-more-below] { mask-image: linear-gradient(to bottom, transparent, #000 var(--oc-fade), #000 calc(100% - var(--oc-fade)), transparent); }
 .oc-form-question { display: flex; flex-direction: column; gap: 8px; margin-left: 38px; }
-.oc-form-qhead { display: flex; align-items: baseline; gap: 8px; }
+.oc-form-qhead { display: flex; align-items: baseline; gap: 8px; margin-left: 38px; }
+.oc-form-qtitle { min-width: 0; overflow-wrap: anywhere; }
+.oc-form > .ocv-decision-actions { padding-top: 2px; }
 .oc-form-step { flex: none; color: var(--oc-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
 .oc-form-qtitle { font-size: 13.5px; font-weight: 600; }
 .oc-form-required { color: var(--oc-rose); font-size: 11px; }

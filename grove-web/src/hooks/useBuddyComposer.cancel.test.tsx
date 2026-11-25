@@ -10,7 +10,8 @@ import type { PromptCapabilities } from "../api/buddySessionConnection";
 
 vi.mock("../api/chatSockets", () => ({ getChatSocket: vi.fn(), subscribeChatSockets: () => () => {}, sendSessionInput: vi.fn() }));
 vi.mock("../api/tasks", () => ({ uploadChatAttachment: vi.fn() }));
-vi.mock("../components/Tasks/TaskView/chatAttachments", () => ({
+vi.mock("../components/Tasks/TaskView/chatAttachments", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../components/Tasks/TaskView/chatAttachments")>(),
   prepareFileAttachment: async (file: File) => file.type.startsWith("image/")
     ? { type: "image", data: "aW1n", mimeType: file.type, name: file.name }
     : { type: "resource", data: "", mimeType: file.type, name: file.name, pendingFile: file },

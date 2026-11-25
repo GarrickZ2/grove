@@ -156,7 +156,8 @@ export interface OrbitQueueRow {
   key: string;
   text: string;
   title?: string;
-  failed: boolean;
+  /** Why the row failed to send. */
+  error?: string;
   attachments?: ReactNode;
   /** The row's existing actions (send now, edit, delete, or the retry/edit menu). */
   actions: ReactNode;
@@ -188,14 +189,14 @@ export function OrbitQueueTray({ rows, mode, onModeChange, error, onClose }: {
       {rows.length === 0 ? <p className="oc-tray-empty">No queued messages.</p> : (
         <ul className="oc-rows" aria-label="Queued messages">
           {rows.map((row, index) => (
-            <li key={row.key} className={`oc-row${row.failed ? " is-failed" : ""}`}>
-              <span className="oc-row-n">{row.failed ? "!" : index + 1}</span>
+            <li key={row.key} className={`oc-row${row.error ? " is-failed" : ""}`}>
+              <span className="oc-row-n">{row.error ? "!" : index + 1}</span>
               {row.attachments}
               <div className="oc-row-main">
                 <span className="oc-row-text is-single" title={row.title ?? row.text}>{row.text}</span>
-                {row.failed && <span className="oc-row-meta is-error">Failed to send</span>}
+                {row.error && <span className="oc-row-meta is-error">{row.error}</span>}
               </div>
-              <span className={`oc-row-actions${row.failed ? " is-pinned" : ""}`}>{row.actions}</span>
+              <span className={`oc-row-actions${row.error ? " is-pinned" : ""}`}>{row.actions}</span>
             </li>
           ))}
         </ul>

@@ -61,14 +61,50 @@ async function compressImageViaCanvas(source: File | Blob): Promise<Blob> {
 /** A file that can't be attached, with a message meant for the user. */
 export class AttachmentError extends Error {}
 
+export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024; // the server's upload limit
+
 function readAsBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve((reader.result as string).split(",")[1]);
+    reader.onload = () => resolve((reader.result as string).split(",")[1] ?? "");
     reader.onerror = () => reject(reader.error ?? new Error("Read failed"));
     reader.onabort = () => reject(new Error("Read aborted"));
     reader.readAsDataURL(blob);
   });
+}
+
+const unreadable = (file: File) =>
+  new AttachmentError(`Couldn't read ${file.name}. Save it to another folder and attach it again.`);
+
+/** Read a whole File; a failure names the file instead of the browser's bare "I/O read operation failed". */
+export async function readFileAsBase64(file: File): Promise<string> {
+  try {
+    return await readAsBase64(file);
+  } catch {
+    throw unreadable(file);
+  }
+}
+
+/**
+ * Refuse a file that can't be sent while the user is still choosing it. A
+ * dropped file has a name and size even when the system won't let us read it
+ * (macOS guards other apps' folders, e.g. a drag out of WeChat), so only
+ * reading from it tells.
+ */
+export async function checkAttachable(file: File): Promise<void> {
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    throw new AttachmentError(`${file.name} is too large. Maximum file size is 100 MiB.`);
+  }
+  try {
+    await readAsBase64(file.slice(0, 1));
+  } catch {
+    throw unreadable(file);
+  }
+}
+
+/** A failed attachment as text for the user. */
+export function attachmentErrorMessage(file: File, error: unknown): string {
+  return error instanceof AttachmentError ? error.message : unreadable(file).message;
 }
 
 const jpegName = (name: string) => name.replace(/\.[^.]+$/, ".jpg");
@@ -88,14 +124,15 @@ async function compressedImage(file: File, failure: string): Promise<Omit<Attach
  * inlined as base64 — compressed or converted to JPEG when too large, too big
  * in pixels, or in an unsupported format; audio is inlined; anything else is
  * kept as a File and uploaded when the prompt is sent. Throws AttachmentError
- * (user-facing message) for files that can't be attached.
+ * (user-facing message) for files that can't be attached or read.
  */
 export async function prepareFileAttachment(file: File): Promise<Omit<Attachment, "label">> {
+  await checkAttachable(file);
   if (!file.type.startsWith("image/") && !file.type.startsWith("audio/")) {
     return { type: "resource", data: "", mimeType: file.type || "application/octet-stream", name: file.name, size: file.size, pendingFile: file };
   }
   if (file.type.startsWith("audio/")) {
-    return { type: "audio", data: await readAsBase64(file), mimeType: file.type, name: file.name };
+    return { type: "audio", data: await readFileAsBase64(file), mimeType: file.type, name: file.name };
   }
   if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
     return compressedImage(file, `Unsupported image format (${file.name}). Please convert to JPEG or PNG and try again.`);
@@ -116,5 +153,5 @@ export async function prepareFileAttachment(file: File): Promise<Omit<Attachment
   if (dimImg.naturalWidth > MAX_IMAGE_DIMENSION || dimImg.naturalHeight > MAX_IMAGE_DIMENSION) {
     return compressedImage(file, `Image is too large and resizing failed (${file.name}). Please resize it manually and try again.`);
   }
-  return { type: "image", data: await readAsBase64(file), mimeType: file.type, name: file.name, previewUrl: URL.createObjectURL(file) };
+  return { type: "image", data: await readFileAsBase64(file), mimeType: file.type, name: file.name, previewUrl: URL.createObjectURL(file) };
 }

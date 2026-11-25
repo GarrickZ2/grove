@@ -448,6 +448,7 @@
 
 /* @-mentioning another Buddy: the picker above the composer, and the chip a sent mention becomes. */
 .buddy-composer-wrap{position:relative}
+.buddy-composer-wrap>[role=alert]{overflow-wrap:anywhere;white-space:pre-line}
 .buddy-mention-menu{position:absolute;left:0;bottom:calc(100% - 4px);z-index:30;min-width:240px;max-width:min(360px,100%);max-height:280px;overflow:auto;margin:0;padding:4px;list-style:none;border:1px solid var(--buddy-border);border-radius:12px;background:var(--color-bg);box-shadow:0 10px 30px rgb(0 0 0/.14)}
 .buddy-mention-menu li{display:flex;align-items:center;gap:8px;min-width:0;padding:6px 8px;border-radius:8px;font-size:13.5px;cursor:pointer}
 .buddy-mention-menu li.is-active{background:var(--buddy-selected)}

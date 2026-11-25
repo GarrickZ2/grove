@@ -4,15 +4,10 @@ import { BUDDIES_MOCK_ENABLED, buddiesMock } from "../api/buddies.mock";
 import { getChatSocket, sendSessionInput, subscribeChatSockets } from "../api/chatSockets";
 import { uploadChatAttachment } from "../api/tasks";
 import type { PromptCapabilities } from "../api/buddySessionConnection";
-import { prepareFileAttachment, type Attachment } from "../components/Tasks/TaskView/chatAttachments";
+import { prepareFileAttachment, readFileAsBase64, type Attachment } from "../components/Tasks/TaskView/chatAttachments";
 import { sentPops } from "../components/Tasks/TaskView/conversation/sentPop";
 import { createClientMessageId } from "../utils/clientMessageId";
 
-export function fileData(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(new Error("Could not read attachment")); reader.readAsDataURL(file);
-  });
-}
 /** Whether a prepared image/audio block can go inline; unknown capabilities are treated as supported. */
 function inlineAllowed(type: Attachment["type"], caps: PromptCapabilities | null | undefined): boolean {
   if (type === "resource") return false;
@@ -41,7 +36,7 @@ export function useBuddyComposer(buddy: ComposerTarget, onSent: () => void, caps
         if (inlineAllowed(prepared.type, caps)) attachments.push({ type: prepared.type, data: prepared.data, mime_type: prepared.mimeType, name: prepared.name });
         else {
           // Every ACP agent reads resource links, so media it can't take inline still arrives as a file it can open.
-          const saved = await uploadChatAttachment(buddy.project_hash, buddy.local_task_id, buddy.active_session_id, { name: file.name, mime_type: file.type || "application/octet-stream", data: await fileData(file) });
+          const saved = await uploadChatAttachment(buddy.project_hash, buddy.local_task_id, buddy.active_session_id, { name: file.name, mime_type: file.type || "application/octet-stream", data: await readFileAsBase64(file) });
           attachments.push({ type: "resource_link", uri: saved.uri, name: saved.name, mime_type: saved.mime_type, size: saved.size });
         }
       }

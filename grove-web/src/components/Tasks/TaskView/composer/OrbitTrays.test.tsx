@@ -96,8 +96,8 @@ describe("Orbit trays", () => {
         mode="separate"
         onModeChange={onModeChange}
         rows={[
-          { key: "a", text: "Also check the dark theme", failed: false, actions: <button type="button">Now</button> },
-          { key: "b", text: "Run the visual diff", failed: true, actions: <button type="button">Retry</button> },
+          { key: "a", text: "Also check the dark theme", actions: <button type="button">Now</button> },
+          { key: "b", text: "Run the visual diff", error: "Failed to send", actions: <button type="button">Retry</button> },
         ]}
       />,
     ));

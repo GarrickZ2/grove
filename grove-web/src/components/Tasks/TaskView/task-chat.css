@@ -118,8 +118,9 @@
     padding-bottom: 10px;
   }
 
-  /* Reduce bubble padding and border-radius */
-  .chatbox-bubble {
+  /* Reduce bubble padding and border-radius. Orbit's composer lays out its own
+     zones edge to edge. */
+  .chatbox-bubble:not(.oc-shell) {
     padding-left: 10px;
     padding-right: 10px;
     padding-top: 6px;
@@ -185,7 +186,7 @@
     padding-bottom: 8px;
   }
 
-  .chatbox-bubble {
+  .chatbox-bubble:not(.oc-shell) {
     padding-left: 8px;
     padding-right: 8px;
     border-radius: 16px;
@@ -709,3 +710,7 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-history-loading i { animation: none; opacity: .5; }
 }
+
+/* What the session has to say, over the top of the conversation, one under the other. */
+.task-chat-notices { position: absolute; inset: 8px 12px auto; z-index: 20; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.task-chat-notices > * { pointer-events: auto; }

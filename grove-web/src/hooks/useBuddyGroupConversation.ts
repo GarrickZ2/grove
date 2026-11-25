@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listBuddyGroupMessages, sendBuddyGroupMessage, stopBuddyGroup, type BuddyGroup, type BuddyGroupMessage } from "../api/buddyGroups";
 import { friendlyStep } from "../components/Buddy/timeline/activityLabels";
 import type { useBuddyComposer } from "./useBuddyComposer";
-import { fileData } from "./useBuddyComposer";
+import { readFileAsBase64 } from "../components/Tasks/TaskView/chatAttachments";
 import { errorMessage } from "../utils/errorMessage";
 import { useRadioEvents } from "./useRadioEvents";
 
@@ -61,7 +61,7 @@ export function useBuddyGroupConversation(group: BuddyGroup, onSent: () => void)
     send: async (text, files) => {
       setSending(true);
       try {
-        const attachments = await Promise.all(files.map(async (file) => ({ name: file.name, mime_type: file.type || "application/octet-stream", data: await fileData(file) })));
+        const attachments = await Promise.all(files.map(async (file) => ({ name: file.name, mime_type: file.type || "application/octet-stream", data: await readFileAsBase64(file) })));
         await sendBuddyGroupMessage(id, text, attachments);
         await refresh();
         onSent();

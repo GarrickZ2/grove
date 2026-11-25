@@ -93,6 +93,8 @@ export const OrbitStatusBar = memo(function OrbitStatusBar({ status, activeTray,
   const toggle = (tray: OrbitTray) => onTrayChange(activeTray === tray ? null : tray);
   const chip = (tray: OrbitTray) => `oc-chip${activeTray === tray ? " is-on" : ""}`;
   const { plan, subagents, background, queue, memory, comments, ask } = status;
+  // The open request is all there is: its own panel shows it, and the bar would be empty.
+  if (ask && activeTray === "ask" && !plan && !subagents && background === null && !queue && memory === null && comments === null) return null;
   return (
     <div className="oc-status" role="toolbar" aria-label="Session status">
       {plan?.kind === "steps" && (

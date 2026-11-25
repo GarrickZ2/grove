@@ -119,7 +119,7 @@ import { agentOptions } from "../../../data/agents";
 import { invalidateAgentCatalog } from "../../../api/agentCatalogChanges";
 import { createClientMessageId } from "../../../utils/clientMessageId";
 import { takeOrbitFirstMessage } from "../../Orbit/orbitFirstMessage";
-import { AttachmentError, attachmentLabel, prepareFileAttachment, type Attachment } from "./chatAttachments";
+import { attachmentErrorMessage, attachmentLabel, prepareFileAttachment, readFileAsBase64, type Attachment } from "./chatAttachments";
 import { DropdownSelect, SessionSettingsMenu, type ChatDropdownOption } from "./ChatConfigMenus";
 import {
   buildMentionItems,
@@ -1451,22 +1451,6 @@ function defaultPerChatState(): PerChatState {
   };
 }
 
-function fileToBase64(file: File): Promise<string> {
-  if (file.size > 100 * 1024 * 1024) {
-    return Promise.reject(new Error("Attachment is too large. Maximum file size is 100 MiB."));
-  }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      resolve(dataUrl.split(",")[1] ?? "");
-    };
-    reader.onerror = () =>
-      reject(reader.error ?? new Error("Failed to read file"));
-    reader.readAsDataURL(file);
-  });
-}
-
 // ─── Render grouping types ───────────────────────────────────────────────────
 
 function renderItemKey(item: RenderItem): string {
@@ -1520,7 +1504,7 @@ function TaskChatVirtuosoFooter({
   return (
     <div>
       {context.showThinking && (
-        <div className="mx-auto w-full max-w-[920px] px-4 py-2 sm:px-6">
+        <div className="task-chat-thinking mx-auto w-full max-w-[920px] px-4 py-2 sm:px-6">
           <ThinkingStatus label="Thinking" active />
         </div>
       )}
@@ -3167,6 +3151,8 @@ export function TaskChat({
   const [editingPendingId, setEditingPendingId] = useState<string | null>(null);
   const [isSavingPendingEdit, setIsSavingPendingEdit] = useState(false);
   const [pendingEditError, setPendingEditError] = useState<string | null>(null);
+  // Files the composer refused; shown until the next attach or send.
+  const [attachErrors, setAttachErrors] = useState<{ chatId: string | null; messages: string[] } | null>(null);
   const [pendingEditGone, setPendingEditGone] = useState(false);
   const [pendingEditImporting, setPendingEditImporting] = useState(false);
   // Compact/Separate queue send mode — global flat localStorage key, not
@@ -7750,11 +7736,21 @@ export function TaskChat({
         setAttachments((prev) => [...prev, { ...prepared, label }]);
       } catch (error) {
         finishImport();
-        if (error instanceof AttachmentError) setMessages((prev) => appendSystemMessage(prev, error.message));
+        if (!canAttach()) return;
+        const message = attachmentErrorMessage(file, error);
+        setAttachErrors((prev) => ({
+          chatId,
+          messages: prev?.chatId === chatId ? [...prev.messages.filter((item) => item !== message), message] : [message],
+        }));
       }
     },
     [getActiveChatId],
   );
+  const addFilesAsAttachments = useCallback((files: File[]) => {
+    if (files.length === 0) return;
+    setAttachErrors(null);
+    files.forEach((file) => void addFileAsAttachment(file));
+  }, [addFileAsAttachment]);
 
   const removeAttachment = useCallback((index: number) => {
     setAttachments((prev) => {
@@ -7987,7 +7983,7 @@ export function TaskChat({
           return attachment;
         }
         const file = attachment.pendingFile;
-        const data = await fileToBase64(file);
+        const data = await readFileAsBase64(file);
         if (!attemptIsCurrent()) return attachment;
         const result = await uploadChatAttachment(projectId, taskId, chatId, {
           name: file.name,
@@ -8151,7 +8147,7 @@ export function TaskChat({
           return attachment;
         }
         const file = attachment.pendingFile;
-        const data = await fileToBase64(file);
+        const data = await readFileAsBase64(file);
         if (!stillCurrent()) return attachment;
         const result = await uploadChatAttachment(projectId, taskId, edit.chatId, {
           name: file.name,
@@ -8215,6 +8211,7 @@ export function TaskChat({
       clearChatDraft(activeChatId);
       setHasContent(false);
       setAttachments([]);
+      setAttachErrors(null);
       setIsTerminalMode(false);
       setIsInputExpanded(false);
       finishComposerAfterSend(el);
@@ -8258,6 +8255,7 @@ export function TaskChat({
     }
     attachmentsRef.current = [];
     setAttachments([]);
+    setAttachErrors(null);
     setHasContent(false);
     setShowSlashMenu(false);
     setShowFileMenu(false);
@@ -9552,7 +9550,7 @@ export function TaskChat({
       // Files become attachments; text pasted with them (a copied page or
       // doc with images) is kept, except the file names a Finder copy carries.
       const { files, text } = readPastedContent(e.clipboardData);
-      files.forEach((file) => void addFileAsAttachment(file));
+      addFilesAsAttachments(files);
       if (!text) return;
       // Large text: convert to .txt attachment to avoid freezing contentEditable
       if (text.length > 10 * 1024) {
@@ -9564,24 +9562,17 @@ export function TaskChat({
       document.execCommand("insertText", false, text);
       checkContent();
     },
-    [checkContent, addFileAsAttachment],
+    [checkContent, addFileAsAttachment, addFilesAsAttachments],
   );
 
   /** Handle file input selection */
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(e.target.files ?? []);
-      files.forEach((file) => {
-        if (file.type.startsWith("image/") && promptCaps.image)
-          void addFileAsAttachment(file);
-        else if (file.type.startsWith("audio/") && promptCaps.audio)
-          void addFileAsAttachment(file);
-        else void addFileAsAttachment(file);
-      });
+      addFilesAsAttachments(Array.from(e.target.files ?? []));
       // Reset input so same file can be selected again
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
-    [promptCaps.image, promptCaps.audio, addFileAsAttachment],
+    [addFilesAsAttachments],
   );
 
   /**
@@ -9687,16 +9678,9 @@ export function TaskChat({
         return;
       }
 
-      const files = Array.from(e.dataTransfer.files);
-      files.forEach((file) => {
-        if (file.type.startsWith("image/") && promptCaps.image)
-          void addFileAsAttachment(file);
-        else if (file.type.startsWith("audio/") && promptCaps.audio)
-          void addFileAsAttachment(file);
-        else void addFileAsAttachment(file);
-      });
+      addFilesAsAttachments(Array.from(e.dataTransfer.files));
     },
-    [promptCaps.image, promptCaps.audio, addFileAsAttachment, insertFileChipsAtPoint],
+    [addFilesAsAttachments, insertFileChipsAtPoint],
   );
 
   // Re-check hasContent when attachments change
@@ -10560,7 +10544,6 @@ export function TaskChat({
       const input = clientMessageId
         ? pendingInputs.find((pending) => pending.id === clientMessageId)
         : undefined;
-      const waiting = input?.status === "sending";
       return (
         <MeasuredTaskChatRow
           className={rowClassName}
@@ -10595,7 +10578,7 @@ export function TaskChat({
             onD2Click={setLightboxSvg}
             onInsertReference={insertAttachmentReference}
             delivery={input ? renderPendingInputActions(input) : undefined}
-            deliveryError={waiting ? undefined : input?.error}
+            deliveryError={input?.status === "failed" ? input.error || "Send failed." : undefined}
           />
         </MeasuredTaskChatRow>
       );
@@ -10754,7 +10737,7 @@ export function TaskChat({
   );
 
   const composerPanelBody = (
-                    <div className={`${activeComposerPanel === "permission" ? "flex max-h-[min(360px,48vh)] flex-col overflow-hidden" : mobileDetailsPanelOpen ? "mobile-composer-sheet-content" : activeComposerPanel === "subagents" && selectedSubagentId ? "max-h-[min(560px,58vh)] overflow-y-auto overscroll-contain" : "max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain"} ${activeComposerPanel === "previewComments" || activeComposerPanel === "subagents" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
+                    <div className={`${activeComposerPanel === "permission" || (orbitShell && activeComposerPanel === "ask_form") ? "flex max-h-[min(360px,48vh)] flex-col overflow-hidden" : mobileDetailsPanelOpen ? "mobile-composer-sheet-content" : orbitActiveTray === "subagents" ? "" /* .oc-tray scrolls */ : activeComposerPanel === "subagents" && selectedSubagentId ? "max-h-[min(560px,58vh)] overflow-y-auto overscroll-contain" : "max-h-[min(360px,48vh)] overflow-y-auto overscroll-contain"} ${activeComposerPanel === "previewComments" || activeComposerPanel === "subagents" ? "" : activeComposerPanel === "pending" ? "px-2.5 py-1.5" : "px-3 py-3"}`}>
                       {activeComposerPanel === "quota" && (
                         agentQuota ? <AgentQuotaCard usage={agentQuota} refreshing={quotaRefreshing} onRefresh={refreshAgentQuota} /> : <p className="py-4 text-center text-sm text-[var(--color-text-muted)]">Quota data is unavailable.</p>
                       )}
@@ -10910,13 +10893,16 @@ export function TaskChat({
                                   />
                                   <span
                                     className={`flex-1 min-w-0 text-[var(--color-text)] ${isPhoneLayout ? "whitespace-pre-wrap break-words leading-5" : "truncate"}`}
-                                    title={msg.input?.error ?? compactConversationText(msg.text, Infinity)}
+                                    title={compactConversationText(msg.text, Infinity)}
                                   >
                                     {compactConversationText(msg.text) || (msg.attachments?.length === 1
                                       ? msg.attachments[0].name || msg.attachments[0].label || "Attachment"
                                       : msg.attachments?.every((attachment) => attachment.type === "image") && msg.attachments.length > 0
                                         ? `${msg.attachments.length} images`
                                         : `${msg.attachments?.length ?? 0} attachments`)}
+                                    {msg.input?.status === "failed" && (
+                                      <span className="block whitespace-normal text-xs text-[var(--color-error)] [overflow-wrap:anywhere]">{msg.input.error || "Send failed."}</span>
+                                    )}
                                   </span>
                                   <div className="flex items-center gap-1 shrink-0">
                                     {editingPendingId === msg.id ? (
@@ -11334,6 +11320,12 @@ export function TaskChat({
                   </div>
                 )}
 
+                {attachErrors && attachErrors.chatId === activeChatId && (
+                  <div role="alert" className="mb-2 px-3 text-xs text-[var(--color-error)] [overflow-wrap:anywhere]">
+                    {attachErrors.messages.map((message) => <div key={message}>{message}</div>)}
+                  </div>
+                )}
+
                 {attachments.length > 0 && (
                   <div className="mb-2 flex gap-2 flex-wrap select-none">
                     {attachments.map((att, i) => (
@@ -11399,7 +11391,7 @@ export function TaskChat({
                       </div>
                     ) : !hasContent && !isInputFocused && (
                       <div
-                        className={`pointer-events-none absolute top-2 text-sm leading-7 text-[var(--color-text-muted)] select-none ${
+                        className={`pointer-events-none absolute top-2 truncate text-sm leading-7 text-[var(--color-text-muted)] select-none ${
                           isTerminalMode ? "left-0 right-4" : "left-4 right-4"
                         }`}
                       >
@@ -11412,8 +11404,8 @@ export function TaskChat({
                               : isTerminalMode
                                 ? "Enter shell command\u2026"
                                 : isBusy
-                                  ? interruptOnSend ? "Send a message \u2014 it stops this turn" : steers ? "Steer\u2026" : orbitShell ? "Add a follow-up \u2014 it queues until this turn ends" : "Queue a message\u2026"
-                                  : "Ask anything… use @ for mentions, / for commands"}
+                                  ? interruptOnSend ? "Interrupt\u2026" : steers ? "Steer\u2026" : "Queue a message\u2026"
+                                  : "Ask anything…"}
                       </div>
                     )}
                     <div
@@ -11484,8 +11476,8 @@ export function TaskChat({
       onClose={() => setOrbitTray(null)}
       rows={pendingQueueRows.map((msg, i) => ({
         key: pendingMessageKeys[i] ?? `idx-${i}`,
-        failed: msg.input?.status === "failed",
-        title: msg.input?.error ?? compactConversationText(msg.text, Infinity),
+        error: msg.input?.status === "failed" ? msg.input.error || "Failed to send" : undefined,
+        title: compactConversationText(msg.text, Infinity),
         text: compactConversationText(msg.text) || (msg.attachments?.length === 1
           ? msg.attachments[0].name || msg.attachments[0].label || "Attachment"
           : msg.attachments?.every((attachment) => attachment.type === "image") && msg.attachments.length > 0
@@ -11628,7 +11620,7 @@ export function TaskChat({
           onNext={chatSearch.next}
           onPrev={chatSearch.prev}
           onClose={() => { setChatSearchOpen(false); setChatSearchQuery(""); }}
-          className="absolute right-3 top-12 z-[60]"
+          className="task-chat-find absolute right-3 top-12 z-[60]"
         />
       )}
       {/* Header */}
@@ -12246,24 +12238,26 @@ export function TaskChat({
           onWheelCapture={handleChatWheelCapture}
           onPointerDownCapture={handleChatPointerDownCapture}
         >
-          {activeChatId && !isReadOnlyHistory && connectionErrors[activeChatId] && (
-            <div role="alert" className="absolute inset-x-3 top-2 z-20 flex items-start gap-3 rounded-lg border border-[var(--color-error)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-error)]">
-              <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{connectionErrors[activeChatId]}</span>
-              <button type="button" className="shrink-0 underline disabled:opacity-50" disabled={isReconnecting} onClick={handleReconnect}>Reconnect</button>
-            </div>
-          )}
-          {activeChatId && !isReadOnlyHistory && (mcpWarnings[activeChatId]?.length ?? 0) > 0 && (
-            <div role="alert" className="absolute inset-x-3 top-2 z-20 rounded-lg border border-amber-500 bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text)] shadow-sm">
-              <div className="flex items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="font-semibold">Some MCP servers were skipped</div>
-                  <ul className="mt-1 space-y-1">{mcpWarnings[activeChatId].map((warning, index) => <li key={`${warning.name}-${index}`}><strong>{warning.name}</strong>: {warning.message} <button type="button" className="underline" onClick={() => { sessionStorage.setItem("grove:mcp-warning-search", warning.name); window.dispatchEvent(new CustomEvent("grove:navigate", { detail: { route: "skills" } })); }}>Open in Extensions</button></li>)}</ul>
-                  <p className="mt-1">The Agent is connected without these tools. After fixing the connection, use Reconnect to load them.</p>
-                </div>
-                <button type="button" aria-label="Dismiss MCP warning" className="shrink-0 underline" onClick={() => { dismissedMcpWarningsRef.current.add(activeChatId); setMcpWarnings((previous) => ({ ...previous, [activeChatId]: [] })); }}>Dismiss</button>
+          <div className="task-chat-notices">
+            {activeChatId && !isReadOnlyHistory && connectionErrors[activeChatId] && (
+              <div role="alert" className="flex items-start gap-3 rounded-lg border border-[var(--color-error)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-error)]">
+                <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{connectionErrors[activeChatId]}</span>
+                <button type="button" className="shrink-0 underline disabled:opacity-50" disabled={isReconnecting} onClick={handleReconnect}>Reconnect</button>
               </div>
-            </div>
-          )}
+            )}
+            {activeChatId && !isReadOnlyHistory && (mcpWarnings[activeChatId]?.length ?? 0) > 0 && (
+              <div role="alert" className="rounded-lg border border-amber-500 bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text)] shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold">Some MCP servers were skipped</div>
+                    <ul className="mt-1 space-y-1">{mcpWarnings[activeChatId].map((warning, index) => <li key={`${warning.name}-${index}`}><strong>{warning.name}</strong>: {warning.message} <button type="button" className="underline" onClick={() => { sessionStorage.setItem("grove:mcp-warning-search", warning.name); window.dispatchEvent(new CustomEvent("grove:navigate", { detail: { route: "skills" } })); }}>Open in Extensions</button></li>)}</ul>
+                    <p className="mt-1">The Agent is connected without these tools. After fixing the connection, use Reconnect to load them.</p>
+                  </div>
+                  <button type="button" aria-label="Dismiss MCP warning" className="shrink-0 underline" onClick={() => { dismissedMcpWarningsRef.current.add(activeChatId); setMcpWarnings((previous) => ({ ...previous, [activeChatId]: [] })); }}>Dismiss</button>
+                </div>
+              </div>
+            )}
+          </div>
           {orbitComposer ? (
             <OrbitTurnRail
               turns={conversationTurns}
@@ -13974,7 +13968,7 @@ const MessageItem = memo(function MessageItem({
             })()}
             <div ref={userBubbleRef} className={orbitConversation ? "ocv-user-bubble" : "relative rounded-2xl px-3.5 py-2.5 bg-[color-mix(in_srgb,var(--color-bg-tertiary)_78%,transparent)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-sm text-[var(--color-text)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]"}>
               {delivery && (
-                <div className="absolute right-full top-1/2 mr-1 -translate-y-1/2" title={deliveryError}>
+                <div className="absolute right-full top-1/2 mr-1 -translate-y-1/2">
                   {delivery}
                 </div>
               )}
@@ -14037,7 +14031,7 @@ const MessageItem = memo(function MessageItem({
                           {att.label || att.name}
                         </div>
                         {att.name !== att.label && (
-                          <div className="text-[10px] text-[var(--color-text-muted)]">
+                          <div className="text-[10px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
                             {att.name}{typeof att.size === "number"
                               ? ` • ${Math.max(1, Math.round(att.size / 1024))} KB`
                               : ""}
@@ -14062,6 +14056,11 @@ const MessageItem = memo(function MessageItem({
                 <UserMessageBody content={message.content} />
               )}
             </div>
+            {deliveryError && (
+              <div role="alert" className="mt-1 px-1 text-right text-xs text-[var(--color-error)] [overflow-wrap:anywhere]">
+                {deliveryError}
+              </div>
+            )}
             <MessageActions text={readableConversationText(message.content)} timestamp={message.sentAt} now={hoverTime} alignRight />
           </div>
         </div>

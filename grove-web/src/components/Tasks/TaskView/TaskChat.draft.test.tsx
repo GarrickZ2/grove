@@ -412,6 +412,42 @@ describe("TaskChat draft isolation during session completion", () => {
     expect([...editor().querySelectorAll<HTMLElement>("[data-file]")].map((chip) => chip.dataset.file)).toEqual(["output/a.md", "output/b.png", "output/c.txt"]);
   });
 
+  it("says why a file can't be attached or sent, where the user is looking", async () => {
+    let readable = false;
+    vi.stubGlobal("FileReader", class {
+      result = "data:;base64,aGk=";
+      error = new DOMException("The I/O read operation failed.", "NotReadableError");
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { const ok = readable; queueMicrotask(() => (ok ? this.onload : this.onerror)?.()); }
+    });
+    await act(async () => root.render(<OrbitInterfaceContext.Provider value><TaskChat projectId="project" taskId="task" /></OrbitInterfaceContext.Provider>));
+    const drop = async (...names: string[]) => {
+      const event = new Event("drop", { bubbles: true, cancelable: true });
+      const files = names.map((name) => new File(["hi"], name));
+      Object.defineProperty(event, "dataTransfer", { value: { types: ["Files"], files, items: [], getData: () => "" } });
+      await act(async () => { editor().dispatchEvent(event); await new Promise((resolve) => setTimeout(resolve)); });
+    };
+    const alerts = () => [...container.querySelectorAll('[role="alert"]')].map((element) => element.textContent);
+    const reason = (name: string) => `Couldn't read ${name}. Save it to another folder and attach it again.`;
+
+    await drop("a.doc", "b.doc");
+    expect(alerts()).toEqual([reason("a.doc") + reason("b.doc")]);
+    expect(container.textContent).not.toContain("File #1");
+
+    readable = true;
+    await drop("c.doc");
+    expect(alerts()).toEqual([]);
+    expect(container.textContent).toContain("File #1");
+
+    // Still listed, but gone by the time it is sent.
+    readable = false;
+    typeDraft("Read it");
+    await act(async () => { container.querySelector<HTMLButtonElement>(".oc-orb.is-send")!.click(); await new Promise((resolve) => setTimeout(resolve)); });
+    expect(alerts()).toEqual([reason("c.doc")]);
+    expect(ChatSocket.instances.get("A")!.sent.some((data) => JSON.parse(data).type === "prompt")).toBe(false);
+  });
+
   it("answers a permission once and keeps the next request when a stale response errors", async () => {
     await render();
     const socket = ChatSocket.instances.get("A")!;
