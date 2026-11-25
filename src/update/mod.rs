@@ -228,10 +228,12 @@ pub fn upgrade() -> Result<(), String> {
     Version::parse(latest.trim_start_matches('v'))
         .map_err(|error| format!("invalid latest release version {latest}: {error}"))?;
 
-    let mut config = crate::storage::config::load_config();
-    config.update.latest_version = Some(latest.to_string());
-    config.update.last_check = update_info.check_time.map(|time| time.to_rfc3339());
-    if let Err(error) = crate::storage::config::save_config(&config) {
+    let saved = crate::storage::config::edit_config().and_then(|mut config| {
+        config.update.latest_version = Some(latest.to_string());
+        config.update.last_check = update_info.check_time.map(|time| time.to_rfc3339());
+        config.save()
+    });
+    if let Err(error) = saved {
         eprintln!("Could not save update check: {error}");
     }
 

@@ -155,8 +155,9 @@ pub struct ThemeColors {
 /// Save `theme` the way the GUI reads it: `mode` plus the light / dark slot
 /// (`Auto` only sets the mode), keeping the other slot and custom themes.
 pub fn save_theme(theme: Theme) {
-    use crate::storage::config::{load_config, save_config};
-    let mut config = load_config();
+    let Ok(mut config) = crate::storage::config::edit_config() else {
+        return;
+    };
     config.theme.name = theme.label().to_string();
     match (theme, theme.web_id()) {
         (Theme::Auto, _) | (_, None) => config.theme.mode = "auto".to_string(),
@@ -169,7 +170,7 @@ pub fn save_theme(theme: Theme) {
             config.theme.dark_theme = id.to_string();
         }
     }
-    let _ = save_config(&config);
+    let _ = config.save();
 }
 
 /// 解析配置里的主题：优先按 mode + 对应 slot(Web 端写的就是

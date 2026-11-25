@@ -206,9 +206,10 @@ fn ensure_storage_version() {
     }
 
     // Update version
-    let mut config = storage::config::load_config();
-    config.storage_version = Some(CURRENT_STORAGE_VERSION.to_string());
-    let _ = storage::config::save_config(&config);
+    let _ = storage::config::edit_config().and_then(|mut config| {
+        config.storage_version = Some(CURRENT_STORAGE_VERSION.to_string());
+        config.save()
+    });
 
     storage::database::run_agent_graph_startup_maintenance();
 
@@ -276,9 +277,10 @@ fn main() -> io::Result<()> {
                     );
                     // 保存 last_launch
                     if let Some(last_launch) = command.to_last_launch() {
-                        let mut cfg = storage::config::load_config();
-                        cfg.last_launch = Some(last_launch);
-                        let _ = storage::config::save_config(&cfg);
+                        let _ = storage::config::edit_config().and_then(|mut config| {
+                            config.last_launch = Some(last_launch);
+                            config.save()
+                        });
                     }
                     // 直接执行 GUI
                     tokio::runtime::Runtime::new()
@@ -317,9 +319,10 @@ fn main() -> io::Result<()> {
     // 如果是新的启动模式命令（非重放），保存到配置
     if !from_replay {
         if let Some(last_launch) = command.to_last_launch() {
-            let mut config = storage::config::load_config();
-            config.last_launch = Some(last_launch);
-            let _ = storage::config::save_config(&config);
+            let _ = storage::config::edit_config().and_then(|mut config| {
+                config.last_launch = Some(last_launch);
+                config.save()
+            });
         }
     }
 
@@ -338,10 +341,11 @@ fn main() -> io::Result<()> {
         // If a new check was performed, save the results to the config cache
         if update::should_check(config.update.last_check.as_deref()) {
             if let Some(ref check_time) = update_info.check_time {
-                let mut new_config = config.clone();
-                new_config.update.last_check = Some(check_time.to_rfc3339());
-                new_config.update.latest_version = update_info.latest_version.clone();
-                let _ = storage::config::save_config(&new_config);
+                let _ = storage::config::edit_config().and_then(|mut config| {
+                    config.update.last_check = Some(check_time.to_rfc3339());
+                    config.update.latest_version = update_info.latest_version.clone();
+                    config.save()
+                });
             }
         }
 

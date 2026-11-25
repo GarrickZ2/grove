@@ -243,11 +243,12 @@ pub async fn get_profile() -> Json<Value> {
 
 /// PUT /api/v1/share-profile
 pub async fn put_profile(Json(input): Json<ProfileInput>) -> Result<Json<Value>, ShareError> {
-    let mut config = config::load_config();
     if let Some(name) = input.name {
-        config.share.name = Some(shares::clean_name(&name).map_err(grove_error)?);
+        let name = shares::clean_name(&name).map_err(grove_error)?;
+        let mut config = config::edit_config().map_err(grove_error)?;
+        config.share.name = Some(name);
+        config.save().map_err(grove_error)?;
     }
-    config::save_config(&config).map_err(grove_error)?;
     Ok(get_profile().await)
 }
 

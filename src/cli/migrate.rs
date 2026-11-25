@@ -266,7 +266,7 @@ pub fn execute(dry_run: bool) {
 
     // Update storage version to 1.1
     if !dry_run && task_modes_migrated > 0 {
-        if let Err(e) = update_storage_version("1.1") {
+        if let Err(e) = storage::config::set_storage_version("1.1") {
             eprintln!("Warning: failed to update storage version: {}", e);
         }
     }
@@ -867,31 +867,4 @@ fn migrate_tasks_file(project_key: &str, filename: &str, dry_run: bool) -> u32 {
     }
 
     migrated_count
-}
-
-fn update_storage_version(version: &str) -> std::io::Result<()> {
-    let config_path = storage::grove_dir().join("config.toml");
-
-    let content = if config_path.exists() {
-        fs::read_to_string(&config_path)?
-    } else {
-        String::new()
-    };
-
-    let mut data: toml::Value = if content.is_empty() {
-        toml::Value::Table(toml::map::Map::new())
-    } else {
-        toml::from_str(&content).unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()))
-    };
-
-    if let Some(table) = data.as_table_mut() {
-        table.insert(
-            "storage_version".to_string(),
-            toml::Value::String(version.to_string()),
-        );
-    }
-
-    let new_content = toml::to_string_pretty(&data).map_err(std::io::Error::other)?;
-
-    fs::write(&config_path, new_content)
 }

@@ -939,20 +939,113 @@ pub fn load_config() -> Config {
     config
 }
 
-/// 保存配置
-pub fn save_config(config: &Config) -> Result<()> {
-    // 确保 ~/.grove 目录存在
+/// The config opened for a change. Nothing else, in this process or another,
+/// changes it until this is saved or dropped, so a save can't undo someone
+/// else's. Keep it short, hold it across no `.await`, and open only one.
+pub struct ConfigEdit {
+    config: Config,
+    _lock: Option<fs::File>,
+}
+
+impl std::ops::Deref for ConfigEdit {
+    type Target = Config;
+    fn deref(&self) -> &Config {
+        &self.config
+    }
+}
+
+impl std::ops::DerefMut for ConfigEdit {
+    fn deref_mut(&mut self) -> &mut Config {
+        &mut self.config
+    }
+}
+
+impl ConfigEdit {
+    pub fn save(self) -> Result<Config> {
+        save_config(&self.config)?;
+        Ok(self.config)
+    }
+}
+
+/// Open the config to change it: `let mut config = edit_config()?; ...; config.save()?`.
+pub fn edit_config() -> Result<ConfigEdit> {
+    let lock = lock_config()?;
+    let path = config_path();
+    if path.exists() {
+        // A file that can't be read stays as it is; one that doesn't parse is
+        // kept beside the new one, for the user to take settings back from.
+        let content = fs::read_to_string(&path)?;
+        if toml::from_str::<Config>(&content).is_err() {
+            let kept = path.with_extension("toml.broken");
+            fs::copy(&path, &kept)?;
+            eprintln!(
+                "[config] config.toml could not be parsed; kept a copy at {}",
+                kept.display()
+            );
+        }
+    }
+    Ok(ConfigEdit {
+        config: load_config(),
+        _lock: lock,
+    })
+}
+
+/// Held until the file is dropped. `None` where the disk has no file locks.
+fn lock_config() -> Result<Option<fs::File>> {
     let dir = grove_dir();
     fs::create_dir_all(&dir)?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join("config.lock"))?;
+    Ok(file.lock().is_ok().then_some(file))
+}
 
+/// Put the new content in place in one step, so a reader gets the old file or
+/// the new one, never a part of either. Callers hold the config lock.
+fn replace_config_file(content: &str) -> std::io::Result<()> {
+    let path = config_path();
+    // A linked config.toml keeps its link.
+    let target = dunce::canonicalize(&path).unwrap_or(path);
+    let temporary = target.with_extension(format!("toml.{}.tmp", std::process::id()));
+    let write = || -> std::io::Result<()> {
+        fs::write(&temporary, content)?;
+        if let Ok(existing) = fs::metadata(&target) {
+            fs::set_permissions(&temporary, existing.permissions())?;
+        }
+        fs::rename(&temporary, &target)
+    };
+    write().inspect_err(|_| {
+        let _ = fs::remove_file(&temporary);
+    })
+}
+
+/// Record the storage version without touching anything else in the file.
+pub fn set_storage_version(version: &str) -> Result<()> {
+    let _lock = lock_config()?;
+    let path = config_path();
+    let content = if path.exists() {
+        fs::read_to_string(&path)?
+    } else {
+        String::new()
+    };
+    let mut data: toml::Table = toml::from_str(&content)?;
+    data.insert(
+        "storage_version".to_string(),
+        toml::Value::String(version.to_string()),
+    );
+    replace_config_file(&toml::to_string_pretty(&data)?)?;
+    Ok(())
+}
+
+fn save_config(config: &Config) -> Result<()> {
     // 规范化配置(去重、去空)
     let mut normalized_config = config.clone();
     normalized_config.auto_link.normalize();
     normalized_config.acp.normalize();
 
-    let path = config_path();
-    let content = toml::to_string_pretty(&normalized_config)?;
-    fs::write(path, content)?;
+    replace_config_file(&toml::to_string_pretty(&normalized_config)?)?;
     Ok(())
 }
 
@@ -986,7 +1079,7 @@ mod fresh_install_tests {
 
         // No config.toml yet: Orbit, and it persists with the first save.
         assert_eq!(load_config().web.interface.as_deref(), Some("orbit"));
-        save_config(&load_config()).unwrap();
+        edit_config().unwrap().save().unwrap();
         assert_eq!(load_config().web.interface.as_deref(), Some("orbit"));
 
         // An existing config without the key is left alone (upgraders).
@@ -998,5 +1091,101 @@ mod fresh_install_tests {
         assert_eq!(load_config().web.interface.as_deref(), Some("workbench"));
 
         crate::storage::set_grove_dir_override(None);
+    }
+}
+
+#[cfg(test)]
+mod concurrent_edit_tests {
+    use super::*;
+
+    /// Several windows saving at once: no save loses another's setting.
+    #[test]
+    fn concurrent_edits_keep_every_setting() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+        let mut first = edit_config().unwrap();
+        first.web.setup_done = true;
+        first.auto_link.patterns = (0..2000).map(|i| format!("pattern-{i}")).collect();
+        first.save().unwrap();
+
+        std::thread::scope(|scope| {
+            for worker in 0..4 {
+                let path = dir.path().to_path_buf();
+                scope.spawn(move || {
+                    crate::storage::set_grove_dir_override(Some(path));
+                    for round in 0..40 {
+                        let mut config = edit_config().unwrap();
+                        match worker {
+                            0 => config.web.ide = Some(round.to_string()),
+                            1 => config.web.terminal = Some(round.to_string()),
+                            2 => config.update.last_check = Some(round.to_string()),
+                            _ => config.share.name = Some(round.to_string()),
+                        }
+                        config.save().unwrap();
+                        // A reader never sees a part of the file.
+                        assert!(load_config().web.setup_done);
+                    }
+                });
+            }
+        });
+
+        let config = load_config();
+        crate::storage::set_grove_dir_override(None);
+        assert!(config.web.setup_done);
+        assert_eq!(config.web.interface.as_deref(), Some("orbit"));
+        assert_eq!(config.auto_link.patterns.len(), 2000);
+        let last = Some("39");
+        assert_eq!(config.web.ide.as_deref(), last);
+        assert_eq!(config.web.terminal.as_deref(), last);
+        assert_eq!(config.update.last_check.as_deref(), last);
+        assert_eq!(config.share.name.as_deref(), last);
+    }
+
+    #[test]
+    fn a_config_that_does_not_parse_is_kept() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+        fs::write(config_path(), "[web\nide = 1").unwrap();
+
+        let mut config = edit_config().unwrap();
+        config.web.setup_done = true;
+        config.save().unwrap();
+        let saved = load_config();
+        let kept = fs::read_to_string(dir.path().join("config.toml.broken")).unwrap();
+        let left: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        crate::storage::set_grove_dir_override(None);
+        assert!(saved.web.setup_done);
+        assert_eq!(kept, "[web\nide = 1");
+        assert!(left.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_keeps_a_linked_config_and_its_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles.toml");
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+        fs::write(&real, "[web]\nide = \"zed\"\n").unwrap();
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink(&real, config_path()).unwrap();
+
+        edit_config().unwrap().save().unwrap();
+        let linked = fs::symlink_metadata(config_path()).unwrap().is_symlink();
+        let ide = load_config().web.ide;
+        crate::storage::set_grove_dir_override(None);
+        assert!(linked);
+        assert_eq!(ide.as_deref(), Some("zed"));
+        assert_eq!(
+            fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

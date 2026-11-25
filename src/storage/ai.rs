@@ -405,7 +405,7 @@ pub fn save_audio_global(data: &AudioSettingsGlobal) -> Result<()> {
     let conn = crate::storage::database::connection();
 
     // 1. Save settings to config.toml
-    let mut config = crate::storage::config::load_config();
+    let mut config = crate::storage::config::edit_config()?;
     config.audio.enabled = data.enabled;
     config.audio.transcribe_provider = data.transcribe_provider.clone();
     config.audio.toggle_shortcut = data.toggle_shortcut.clone();
@@ -419,7 +419,7 @@ pub fn save_audio_global(data: &AudioSettingsGlobal) -> Result<()> {
     config.audio.transcribe_mode = data.transcribe_mode.clone();
     config.audio.global_mode_enabled = data.global_mode_enabled;
     config.audio.ptt_activation_delay_ms = data.ptt_activation_delay_ms;
-    crate::storage::config::save_config(&config)?;
+    config.save()?;
 
     // 2. Save terms to SQLite
     let tx = conn.unchecked_transaction()?;

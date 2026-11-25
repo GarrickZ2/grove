@@ -12,10 +12,6 @@ use std::path::{Path, PathBuf};
 
 use crate::storage::config::{self, Config, CustomAgentServer, CustomLayoutConfig};
 
-/// M6: serialize PATCH /api/v1/config 调用，避免并发 PATCH 互相覆盖
-/// (load → mutate → save 三段不是原子的)。
-static CONFIG_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 /// GET /api/v1/config response
 #[derive(Debug, Serialize)]
 pub struct ConfigResponse {
@@ -398,8 +394,7 @@ pub async fn patch_config(
     {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let _guard = CONFIG_WRITE_LOCK.lock().await;
-    let mut config = config::load_config();
+    let mut config = config::edit_config().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let previous_agents =
         serde_json::to_value(&config.acp).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -671,7 +666,9 @@ pub async fn patch_config(
     }
 
     // Save config
-    config::save_config(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let config = config
+        .save()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if serde_json::to_value(&config.acp).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         != previous_agents
     {

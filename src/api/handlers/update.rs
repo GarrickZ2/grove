@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::io::{Read, Write};
 use std::sync::Mutex;
 
-use crate::storage::config::{load_config, save_config};
+use crate::storage::config::{edit_config, load_config};
 use crate::update::{check_for_updates, UpdateInfo as InternalUpdateInfo};
 
 #[derive(Serialize)]
@@ -67,11 +67,12 @@ pub async fn check_update() -> Json<UpdateCheckResponse> {
     // Update config cache if we performed a fresh check
     if let (Some(latest), Some(check_time)) = (&update_info.latest_version, &update_info.check_time)
     {
-        let mut config = load_config();
-        config.update.latest_version = Some(latest.clone());
-        config.update.last_check =
-            Some(check_time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
-        let _ = save_config(&config);
+        let _ = edit_config().and_then(|mut config| {
+            config.update.latest_version = Some(latest.clone());
+            config.update.last_check =
+                Some(check_time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            config.save()
+        });
     }
 
     Json(update_info.into())

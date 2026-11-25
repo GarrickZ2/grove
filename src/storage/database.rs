@@ -2492,22 +2492,20 @@ pub fn normalize_windows_project_paths() {
 }
 
 pub fn migrate_config_agent_command_ids() {
-    let mut config = crate::storage::config::load_config();
-    let mut changed = false;
-
-    if let Some(name) = config.acp.agent_command.as_deref() {
-        let canon = crate::storage::installed_agents::canonicalize_agent_id(name);
-        if canon != name {
-            config.acp.agent_command = Some(canon);
-            changed = true;
-        }
+    let Some(name) = crate::storage::config::load_config().acp.agent_command else {
+        return;
+    };
+    let canon = crate::storage::installed_agents::canonicalize_agent_id(&name);
+    if canon == name {
+        return;
     }
-    if changed {
-        if let Err(e) = crate::storage::config::save_config(&config) {
-            eprintln!("[migrate] config agent_command canonicalize failed: {}", e);
-        } else {
-            eprintln!("  [migrate] config.toml: agent_command(s) canonicalized");
-        }
+    let saved = crate::storage::config::edit_config().and_then(|mut config| {
+        config.acp.agent_command = Some(canon);
+        config.save()
+    });
+    match saved {
+        Ok(_) => eprintln!("  [migrate] config.toml: agent_command(s) canonicalized"),
+        Err(e) => eprintln!("[migrate] config agent_command canonicalize failed: {}", e),
     }
 }
 
@@ -3651,22 +3649,23 @@ pub fn migrate_audio_to_config_toml() {
         ptt_activation_delay_ms,
     )) = db_audio
     {
-        let mut config = super::config::load_config();
-        config.audio.enabled = enabled;
-        config.audio.transcribe_provider = transcribe_provider;
-        config.audio.toggle_shortcut = toggle_shortcut;
-        config.audio.push_to_talk_key = push_to_talk_key;
-        config.audio.max_duration = max_duration;
-        config.audio.min_duration = min_duration;
-        config.audio.revise_enabled = revise_enabled;
-        config.audio.revise_provider = revise_provider;
-        config.audio.revise_prompt_global = revise_prompt_global;
-        config.audio.preferred_languages = preferred_languages;
-        config.audio.transcribe_mode = transcribe_mode;
-        config.audio.global_mode_enabled = global_mode_enabled;
-        config.audio.ptt_activation_delay_ms = ptt_activation_delay_ms;
-
-        if let Err(e) = super::config::save_config(&config) {
+        let saved = super::config::edit_config().and_then(|mut config| {
+            config.audio.enabled = enabled;
+            config.audio.transcribe_provider = transcribe_provider;
+            config.audio.toggle_shortcut = toggle_shortcut;
+            config.audio.push_to_talk_key = push_to_talk_key;
+            config.audio.max_duration = max_duration;
+            config.audio.min_duration = min_duration;
+            config.audio.revise_enabled = revise_enabled;
+            config.audio.revise_provider = revise_provider;
+            config.audio.revise_prompt_global = revise_prompt_global;
+            config.audio.preferred_languages = preferred_languages;
+            config.audio.transcribe_mode = transcribe_mode;
+            config.audio.global_mode_enabled = global_mode_enabled;
+            config.audio.ptt_activation_delay_ms = ptt_activation_delay_ms;
+            config.save()
+        });
+        if let Err(e) = saved {
             eprintln!(
                 "[migrate] failed to save migrated audio settings to config.toml: {}",
                 e

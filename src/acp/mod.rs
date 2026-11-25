@@ -12297,8 +12297,7 @@ pub fn pick_first_available_acp_agent() -> Option<String> {
 /// the currently-installed agents. Runs once at server startup. Silent no-op
 /// if the configured agent is already valid (resolve_agent returns Some).
 pub fn init_agent_defaults() {
-    let mut config = crate::storage::config::load_config();
-    let mut changed = false;
+    let config = crate::storage::config::load_config();
 
     let acp_valid = match &config.acp.agent_command {
         Some(name) if !name.is_empty() => {
@@ -12308,17 +12307,16 @@ pub fn init_agent_defaults() {
     };
     if !acp_valid {
         if let Some(picked) = pick_first_available_acp_agent() {
-            config.acp.agent_command = Some(picked);
-            changed = true;
-        }
-    }
-
-    if changed {
-        if let Err(e) = crate::storage::config::save_config(&config) {
-            eprintln!(
-                "[warning] Failed to persist auto-selected agent defaults: {}",
-                e
-            );
+            let saved = crate::storage::config::edit_config().and_then(|mut config| {
+                config.acp.agent_command = Some(picked);
+                config.save()
+            });
+            if let Err(e) = saved {
+                eprintln!(
+                    "[warning] Failed to persist auto-selected agent defaults: {}",
+                    e
+                );
+            }
         }
     }
 }
