@@ -1,7 +1,8 @@
 /* iPhone Duo's column in the iOS app (OrbitDuoRail). The page pads itself by
-   the column's inset; the rail fills that strip. The system pill sits at its
-   top: ~157pt tall on the outer screen in portrait, ~86pt on the inner screen
-   in landscape. */
+   the column's inset; the rail fills that strip. The system's own status sits
+   at its top and grows with what the phone is doing (navigation, location,
+   charging: ~207pt seen), and nothing tells the page how tall it is. So every
+   control gathers at the foot, and the top is left to the system. */
 .orbit-duo-rail {
   position: fixed;
   top: 0;
@@ -12,19 +13,19 @@
   width: env(safe-area-inset-right);
   flex-direction: column;
   align-items: center;
-  padding: 172px 0 calc(var(--grove-safe-bottom,env(safe-area-inset-bottom)) + 8px);
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 224px 0 calc(var(--grove-safe-bottom,env(safe-area-inset-bottom)) + 8px);
   box-sizing: border-box;
   pointer-events: none;
-}
-@media (orientation: landscape) {
-  .orbit-duo-rail { padding-top: 104px; }
 }
 .orbit-duo-rail > * { pointer-events: auto; }
 
 .orbit-duo-new {
   display: inline-flex;
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
+  flex: none;
   align-items: center;
   justify-content: center;
   padding: 0;
@@ -44,13 +45,12 @@
 
 .orbit-duo-dock {
   display: flex;
-  margin-top: auto;
   flex-direction: column;
   align-items: center;
   gap: 6px;
   /* A column of controls, not a second sidebar: about six buttons tall,
      the panels scrolling inside. */
-  max-height: min(calc(100% - 64px), 300px);
+  max-height: min(calc(100% - 66px), 300px);
   min-height: 0;
   padding: 6px;
   overflow: hidden;
@@ -118,8 +118,9 @@ html.grove-sheet-open .orbit-duo-rail::after { opacity: 1; }
 html.grove-drawer-open .orbit-duo-rail > *,
 html.grove-sheet-open .orbit-duo-rail > * { pointer-events: none; }
 
-/* The outer screen turned sideways: the column, and the rail, are on the left. */
-.orbit-duo-rail.is-left { right: auto; left: 0; width: env(safe-area-inset-left); }
+/* The outer screen turned sideways: the column, and the rail, are on the left,
+   with only the camera above, and less height to share. */
+.orbit-duo-rail.is-left { right: auto; left: 0; width: env(safe-area-inset-left); padding-top: 116px; }
 
 /* The layout switch (split / chat / panel): one group, pressed in like a segmented control. */
 .orbit-duo-layout { display: flex; flex: none; flex-direction: column; align-items: center; gap: 2px; padding: 2px; border-radius: 24px; background: color-mix(in oklab, var(--color-text) 6%, transparent); }

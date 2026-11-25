@@ -513,7 +513,12 @@ type SplitMode = "split" | "chat" | "panel";
 const SPLIT_MODE_KEY = "grove:phone-split-mode";
 const WIDE_SCREEN_QUERY = "(min-width: 760px)";
 const SPLIT_RATIO_KEY = "grove:phone-split-ratio";
-const clampSplit = (ratio: number) => Math.min(.7, Math.max(.3, ratio));
+/** Each side keeps room for its own controls. */
+const SPLIT_PANE_MIN = 320;
+const clampSplit = (ratio: number, width = 0) => {
+  const min = Math.min(.5, Math.max(.3, width ? SPLIT_PANE_MIN / width : 0));
+  return Math.min(1 - min, Math.max(min, ratio));
+};
 function readSplitRatio(): number {
   try {
     const value = Number(localStorage.getItem(SPLIT_RATIO_KEY));
@@ -688,13 +693,18 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     }, []);
     // Split view: the panel's share of the width, dragged at the divider and remembered.
     const [splitRatio, setSplitRatio] = useState(readSplitRatio);
-    const applySplit = useCallback((ratio: number) => {
+    const applySplit = useCallback((wanted: number) => {
       const el = shellRef.current;
       if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const ratio = clampSplit(wanted, rect.width);
+      el.style.setProperty("--split-at", `${ratio * 100}%`);
       el.style.setProperty("--split-left", `${ratio}fr`);
       el.style.setProperty("--split-right", `${1 - ratio}fr`);
-      const rect = el.getBoundingClientRect();
-      document.documentElement.style.setProperty("--grove-split-x", `${Math.round(rect.left + rect.width * ratio)}px`);
+      // Where the conversation's column starts, for the header over it. Only the
+      // page on screen says so: sessions kept alive behind it have splits too.
+      const stage = el.closest(".orbit-phone-stage")?.getBoundingClientRect();
+      if (rect.width > 0) document.documentElement.style.setProperty("--grove-split-x", `${Math.round(rect.left - (stage?.left ?? 0) + rect.width * ratio)}px`);
     }, []);
     const startSplitDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
       const el = shellRef.current;
@@ -706,9 +716,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       const rect = el.getBoundingClientRect();
       let ratio = splitRatio;
       const move = (e: PointerEvent) => {
-        ratio = clampSplit((e.clientX - rect.left) / rect.width);
+        ratio = clampSplit((e.clientX - rect.left) / rect.width, rect.width);
         applySplit(ratio);
-        handle.style.left = `${ratio * 100}%`;
       };
       const end = () => {
         handle.removeEventListener("pointermove", move);
@@ -741,12 +750,13 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     }, [phoneFolded]);
     // A book fold centres the floating title over the Agent's screen.
     const bookLeft = phoneBook ? Math.max(0, phoneBook.left - shellOrigin.x) : null;
+    const bookGap = phoneBook?.gap ?? 0;
     useEffect(() => {
       if (bookLeft === null || !isActive) return;
       const root = document.documentElement;
-      root.style.setProperty("--grove-fold-left", `${bookLeft}px`);
+      root.style.setProperty("--grove-fold-left", `${bookLeft + bookGap}px`);
       return () => { root.style.removeProperty("--grove-fold-left"); };
-    }, [bookLeft, isActive]);
+    }, [bookLeft, bookGap, isActive]);
     // Tracks which side panel was most recently focused so Cmd+W /
     // closeActiveTab closes *that* one instead of always preferring info.
     // Defaults to "info" so behavior matches the previous hardcoded rule
@@ -1396,14 +1406,14 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const showChat = wideSplit ? splitMode !== "panel" : state.chatVisible || (!showAux && !showInfo);
     const splitOn = wideSplit && showChat && (showAux || showInfo);
     useLayoutEffect(() => {
-      if (!splitOn) { document.documentElement.style.removeProperty("--grove-split-x"); return; }
+      if (!splitOn || !isActive) return;
       applySplit(splitRatio);
       const el = shellRef.current;
       if (!el) return;
       const ro = new ResizeObserver(() => applySplit(splitRatio));
       ro.observe(el);
       return () => ro.disconnect();
-    }, [splitOn, splitRatio, applySplit]);
+    }, [splitOn, isActive, splitRatio, applySplit]);
     const isAuxChatPair = showAux && showChat && !showInfo;
     const isChatInfoPair = !showAux && showChat && showInfo;
     const useDefaultAuxPairRatio = isAuxChatPair && !auxWasResized;
@@ -1743,7 +1753,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     return (
       <LaptopBenchContext.Provider value={laptopBench}>
       <div
-        className={`ide-workbench${orbitLayout ? " is-orbit" : ""}${orbitPhone ? " is-phone" : ""}${orbitPhone && duoRail ? " is-rail" : ""}${isMobile ? " is-stacked" : ""}${phoneBook ? " is-fold-book" : ""}${phoneLaptop ? " is-fold-laptop" : ""}${phoneLaptop && !showAux && !showInfo ? " is-laptop-idle" : ""}${splitOn ? " is-split" : ""}`}
+        className={`ide-workbench${orbitLayout ? " is-orbit" : ""}${orbitPhone ? " is-phone" : ""}${orbitPhone && duoRail ? " is-rail" : ""}${isMobile ? " is-stacked" : ""}${phoneBook ? " is-fold-book" : ""}${phoneLaptop ? " is-fold-laptop" : ""}${phoneLaptop && !showAux && !showInfo ? " is-laptop-idle" : ""}${splitOn ? " is-split" : ""}${isActive ? " is-shown" : ""}`}
         style={phoneBook
           ? ({ "--fold-left": `${Math.max(0, phoneBook.left - shellOrigin.x)}px`, "--fold-gap": `${phoneBook.gap}px` } as React.CSSProperties)
           : phoneLaptop
@@ -1797,7 +1807,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           )}
           {phoneLaptop && !showAux && !showInfo && <div ref={setBenchSlot} className="orbit-laptop-bench" />}
           {splitOn && (
-            <div className="orbit-split-handle" data-no-swipe="" style={{ left: `${splitRatio * 100}%` }} role="separator" aria-orientation="vertical" aria-label="Resize" onPointerDown={startSplitDrag}>
+            <div className="orbit-split-handle" data-no-swipe="" role="separator" aria-orientation="vertical" aria-label="Resize" onPointerDown={startSplitDrag}>
               <i />
             </div>
           )}

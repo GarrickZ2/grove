@@ -143,7 +143,7 @@ export function UpdateBanner({ onClose }: UpdateBannerProps) {
   return (
     <>
       <div
-        className="fixed top-2 left-1/2 -translate-x-1/2 z-50 shadow-lg rounded-lg animate-[slideDown_0.3s_ease-out]"
+        className="fixed top-[calc(env(safe-area-inset-top)+0.5rem)] left-1/2 -translate-x-1/2 z-50 shadow-lg rounded-lg animate-[slideDown_0.3s_ease-out]"
         style={{
           backgroundColor: "var(--color-bg-secondary)",
           border: "1px solid var(--color-highlight)",

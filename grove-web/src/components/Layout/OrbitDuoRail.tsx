@@ -13,8 +13,8 @@ interface OrbitDuoRailProps {
 }
 
 /**
- * iPhone Duo's column beside the screen, in the iOS app: New under the
- * system pill, and at the bottom the sidebar plus the open Session's panels
+ * iPhone Duo's column beside the screen, in the iOS app: at its foot, clear of
+ * the system's status, New over the sidebar and the open Session's panels
  * (portalled into the slot by the workspace).
  */
 export function OrbitDuoRail({ phone, sidebarOpen, onMenu, onNew, newDisabled }: OrbitDuoRailProps) {

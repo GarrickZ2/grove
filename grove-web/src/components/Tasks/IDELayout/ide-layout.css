@@ -773,7 +773,7 @@ html:not(.grove-keyboard-open) .ide-workbench.is-fold-laptop.is-laptop-idle .tas
 .ide-workbench.is-stacked.is-split .ide-layout { position: relative; grid-template-columns: minmax(0, var(--split-left, 1fr)) minmax(0, var(--split-right, 1fr)) !important; }
 .ide-workbench.is-stacked.is-split :is(.ide-aux-host, .ide-info-host) { grid-column: 1; border-right: .5px solid color-mix(in oklab, var(--color-text) 12%, transparent); }
 /* The divider: a wide touch target on the seam, a small grabber in the middle. */
-.orbit-split-handle { position: absolute; top: 0; bottom: 0; z-index: 20; width: 28px; margin-left: -14px; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: col-resize; }
+.orbit-split-handle { position: absolute; left: var(--split-at, 50%); top: 0; bottom: 0; z-index: 20; width: 28px; margin-left: -14px; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: col-resize; }
 .orbit-split-handle > i { width: 5px; height: 44px; border-radius: 3px; background: color-mix(in oklab, var(--color-text) 22%, transparent); transition: height 160ms cubic-bezier(.25, 1, .5, 1), background 160ms; }
 .orbit-split-handle.is-dragging > i { height: 64px; background: color-mix(in oklab, var(--color-text) 45%, transparent); }
 .ide-workbench.is-stacked.is-split .ide-chat-surface { grid-column: 2; }

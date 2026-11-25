@@ -34,6 +34,23 @@ const LAYOUTS = [
   { mode: "panel", label: "Panel only", Icon: AppWindow },
 ] as const;
 
+/** A wide screen's split, chat only or panel only. */
+function LayoutSwitch({ layout, className, buttonClassName }: {
+  layout: NonNullable<OrbitPhonePanelsProps["layout"]>;
+  className: string;
+  buttonClassName?: string;
+}) {
+  return (
+    <div className={className} role="radiogroup" aria-label="Layout">
+      {LAYOUTS.map(({ mode, label, Icon }) => (
+        <button key={mode} type="button" role="radio" aria-checked={layout.mode === mode} aria-label={label} title={label} className={[buttonClassName, layout.mode === mode && "is-on"].filter(Boolean).join(" ")} onClick={() => layout.onChange(mode)}>
+          <Icon size={18} strokeWidth={1.8} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Orbit on a phone: the header's workspace controls. Panels open full screen
  * in place of the chat; the open one shows as a chip that closes back to it.
@@ -62,7 +79,8 @@ export function OrbitPhonePanels({ panels, openPanel, onOpen, onShowChat, action
 
   return (
     <>
-      {!compact && openPanel && OpenIcon && (
+      {!compact && layout && <LayoutSwitch layout={layout} className="orbit-phone-switch is-layout" />}
+      {!compact && !layout && openPanel && OpenIcon && (
         <div className="orbit-phone-switch" role="radiogroup" aria-label="Show">
           <button type="button" role="radio" aria-checked={false} aria-label="Agent" title="Agent" onClick={onShowChat}>
             <MessageSquare size={16} strokeWidth={1.8} />
@@ -75,13 +93,7 @@ export function OrbitPhonePanels({ panels, openPanel, onOpen, onShowChat, action
       {compact ? (
         <>
           {layout ? (
-            <div className="orbit-duo-layout" role="radiogroup" aria-label="Layout">
-              {LAYOUTS.map(({ mode, label, Icon }) => (
-                <button key={mode} type="button" role="radio" aria-checked={layout.mode === mode} aria-label={label} title={label} className={`orbit-duo-tool${layout.mode === mode ? " is-on" : ""}`} onClick={() => layout.onChange(mode)}>
-                  <Icon size={19} strokeWidth={1.8} />
-                </button>
-              ))}
-            </div>
+            <LayoutSwitch layout={layout} className="orbit-duo-layout" buttonClassName="orbit-duo-tool" />
           ) : (
             <button type="button" className={`orbit-duo-tool${!openPanel ? " is-on" : ""}`} aria-label="Agent" title="Agent" aria-pressed={!openPanel} onClick={onShowChat}>
               <MessageSquare size={20} strokeWidth={1.8} />

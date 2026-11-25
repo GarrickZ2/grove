@@ -39,7 +39,7 @@ export function BannerProvider({ children }: { children: ReactNode }) {
           flow children so they truly stack instead of overlapping on the same
           fixed coordinates. AnimatePresence reads exit props off the direct
           PopBanner (motion.div), so exit animations fire correctly. */}
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[10001] flex flex-col items-center gap-2 pointer-events-none">
+      <div className="fixed top-[calc(env(safe-area-inset-top)+1rem)] left-1/2 -translate-x-1/2 z-[10001] flex flex-col items-center gap-2 pointer-events-none">
         <AnimatePresence>
           {banners.map((b) => (
             <PopBanner
