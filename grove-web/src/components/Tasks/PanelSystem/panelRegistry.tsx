@@ -13,7 +13,8 @@
 import type { CSSProperties, ElementType, ReactNode } from "react";
 import {
   Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText,
-  MessageCircle, FolderOpen, Pencil, Network, Info, Eye, Puzzle, Sparkle, Globe, Frame,
+  MessageCircle, FolderOpen, Pencil, Network, Info, Puzzle, Sparkle, Globe, Frame,
+  FileDiff, LineSquiggle, Notebook, Palette,
 } from "lucide-react";
 import { PanelShell, PanelEmpty, PANEL_HUES, type PanelHue } from "../../../orbit/ui";
 import type { Task } from "../../../data/types";
@@ -100,6 +101,8 @@ export interface OrbitPanelMeta {
   hue: PanelHue;
   /** Replaces `icon` in Orbit (toolbar button + glyph tile). */
   glyph?: ElementType;
+  /** Replaces `label` where the panel is one name in a row of them. */
+  short?: string;
   /** Default muted context after the title (a body can override it with PanelHeaderContext). */
   context?: (ctx: PanelRenderCtx) => ReactNode;
   /** `scroll` (padded, scrolls) or `fill` (edge to edge). Default `fill`. */
@@ -187,7 +190,8 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     available: () => true,
     orbit: {
       hue: PANEL_HUES.violet,
-      glyph: Eye,
+      glyph: FileDiff,
+      short: "Review",
       context: (ctx) => (!ctx.isStudio && ctx.task.branch ? `${ctx.task.branch} → ${ctx.task.target}` : undefined),
     },
     render: (ctx) => (
@@ -269,7 +273,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-accent)",
     category: "aux",
     available: (c) => c.isStudio,
-    orbit: { hue: PANEL_HUES.teal },
+    orbit: { hue: PANEL_HUES.teal, glyph: LineSquiggle },
     render: (ctx) => (
       <SketchPage
         projectId={ctx.projectId}
@@ -286,7 +290,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-info)",
     category: "aux",
     available: (c) => c.isStudio,
-    orbit: { hue: PANEL_HUES.indigo },
+    orbit: { hue: PANEL_HUES.indigo, glyph: Palette },
     render: (ctx) => (
       <DesignPage
         projectId={ctx.projectId}
@@ -323,7 +327,7 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     color: "var(--color-info)",
     category: "info",
     available: always,
-    orbit: { hue: PANEL_HUES.blue, context: () => "Shared with agents", body: "scroll" },
+    orbit: { hue: PANEL_HUES.blue, glyph: Notebook, context: () => "Shared with agents", body: "scroll" },
     render: (ctx) => <NotesTab projectId={ctx.projectId} task={ctx.task} />,
   },
   {
@@ -457,4 +461,9 @@ export function renderOrbitPanel(key: string, ctx: PanelRenderCtx, frame: OrbitP
 /** The icon a panel shows in the current interface. */
 export function panelGlyph(d: PanelDescriptor, orbit: boolean): ElementType {
   return orbit ? d.orbit?.glyph ?? d.icon : d.icon;
+}
+
+/** A panel's name in Orbit's toolbar and panel lists. */
+export function panelShortLabel(d: PanelDescriptor): string {
+  return d.orbit?.short ?? d.label;
 }

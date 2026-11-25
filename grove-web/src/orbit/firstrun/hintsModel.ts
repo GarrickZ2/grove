@@ -30,7 +30,9 @@ export function visibleBar(): HTMLElement | null {
 
 export function findHintAnchor(bar: ParentNode, hint: TurnHint): HTMLElement | null {
   const el = bar.querySelector<HTMLElement>(`[data-orbit-tool="${hint.tool}"]`)
-    ?? bar.querySelector<HTMLElement>(`.ows-tb[aria-label="${hint.label}"]`);
+    ?? bar.querySelector<HTMLElement>(`.ows-tb[aria-label="${hint.label}"]`)
+    // A panel that isn't on the toolbar is under its More.
+    ?? bar.querySelector<HTMLElement>("[data-tool-more]");
   return el && !(el as HTMLButtonElement).disabled ? el : null;
 }
 

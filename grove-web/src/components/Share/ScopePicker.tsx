@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Check, ChevronRight, Eye, FileText, Folder, Frame, Layers, ListChecks, Minus, Pencil, type LucideIcon } from "lucide-react";
+import { Check, ChevronRight, FileDiff, FileText, Folder, Layers, LineSquiggle, ListChecks, Minus, Palette, type LucideIcon } from "lucide-react";
 import { Button, DialogFoot, DialogHead, DialogPanel, SearchField } from "../../orbit/ui";
 import { DialogShell } from "../ui/DialogShell";
 import { useEscapeScope } from "../../keyboard/useEscapeScope";
@@ -7,9 +7,9 @@ import type { ShareItems, ShareScope, ShareScopeKind } from "../../api/shares";
 import { SCOPE_KINDS, chosenCount, finishScope, scopeItemsOf, scopeKindsText, scopeSummary, type ScopeItem } from "./scopeItems";
 
 const ICONS: Record<ShareScopeKind, LucideIcon> = {
-  reviews: Eye,
-  designs: Frame,
-  sketches: Pencil,
+  reviews: FileDiff,
+  designs: Palette,
+  sketches: LineSquiggle,
   files: FileText,
 };
 

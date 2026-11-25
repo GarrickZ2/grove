@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Eye, FolderOpen, Frame, Pencil, RefreshCw } from "lucide-react";
+import { FileDiff, FolderOpen, LineSquiggle, Palette, RefreshCw } from "lucide-react";
 import { DiffReviewPage } from "../Review/DiffReviewPage";
 import { shareBackend } from "../Review/reviewBackend";
 import { OrbitArtifactsPanel } from "../../orbit/workspace/artifacts/OrbitArtifactsPanel";
@@ -232,7 +232,7 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
         </header>
         <div className="shared-body">
           {shown === "changes" ? (
-            <PanelShell glyph={Eye} hue={PANEL_HUES.violet} title="Code Review" body="fill">
+            <PanelShell glyph={FileDiff} hue={PANEL_HUES.violet} title="Code Review" body="fill">
               <DiffReviewPage
                 key={reviewTarget?.projectId ?? ""}
                 projectId="share"
@@ -245,7 +245,7 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
               />
             </PanelShell>
           ) : shown === "designs" ? (
-            <PanelShell glyph={Frame} hue={PANEL_HUES.indigo} title="Design" body="fill">
+            <PanelShell glyph={Palette} hue={PANEL_HUES.indigo} title="Design" body="fill">
               <BannerProvider>
                 <PreviewCommentProvider>
                   <DesignPage projectId={designKey} taskId="shared" shared={{ canComment }} />
@@ -253,7 +253,7 @@ export function SharedTaskView({ source, shareKey, headerAside, onInfo }: Shared
               </BannerProvider>
             </PanelShell>
           ) : shown === "sketches" ? (
-            <PanelShell glyph={Pencil} hue={PANEL_HUES.teal} title="Sketch" body="fill">
+            <PanelShell glyph={LineSquiggle} hue={PANEL_HUES.teal} title="Sketch" body="fill">
               <SharedSketchPage source={sketches} />
             </PanelShell>
           ) : (

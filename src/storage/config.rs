@@ -661,6 +661,14 @@ pub struct WebConfig {
     /// Where the Orbit terminal docks: "bottom" (default) or "left".
     #[serde(default)]
     pub terminal_position: Option<String>,
+    /// Order of the Orbit workspace's panels in Coding tasks: panel keys, and
+    /// "more" where the toolbar ends and its More menu begins. Unset is
+    /// Grove's own order.
+    #[serde(default)]
+    pub panel_order_coding: Option<Vec<String>>,
+    /// Same, for Studio tasks.
+    #[serde(default)]
+    pub panel_order_studio: Option<Vec<String>>,
     /// Show the machine switcher in the sidebar. Off unless turned on.
     #[serde(default)]
     pub multi_machine: bool,

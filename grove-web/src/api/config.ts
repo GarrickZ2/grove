@@ -56,6 +56,9 @@ export interface WebConfig {
   send_mode?: "queue" | "interrupt";
   /** Where the Orbit terminal docks: "bottom" (default) or "left". */
   terminal_position?: "bottom" | "left";
+  /** Order of the Orbit workspace's panels (panel keys, and "more" where the toolbar's More begins); unset is Grove's own. */
+  panel_order_coding?: string[] | null;
+  panel_order_studio?: string[] | null;
   /** Show the machine switcher in the sidebar. Off by default. */
   multi_machine?: boolean;
   /** First-run setup was finished or skipped on this machine. */

@@ -1,4 +1,4 @@
-import { Frame, Shapes } from "lucide-react";
+import { Palette, Shapes } from "lucide-react";
 import { requestOpenDesign } from "../Studio/DesignPage/designModel";
 
 interface Props {
@@ -29,7 +29,7 @@ export function DesignChip({ projectId, taskId, design, page }: Props) {
         transition-colors align-middle"
       title={`Open ${label} in the Design panel`}
     >
-      {system ? <Shapes size={13} /> : <Frame size={13} />}
+      {system ? <Shapes size={13} /> : <Palette size={13} />}
       <span>{label}</span>
     </button>
   );

@@ -14,9 +14,11 @@
 .ows-state.is-archived{background:var(--o-selected);color:var(--o-muted)}
 @keyframes ows-live{50%{box-shadow:0 0 0 3px var(--o-accent-soft)}}
 .ows-bar-spacer{flex:1 1 auto;min-width:8px}
-/* Buttons that don't fit move under ⋯ (OrbitWorkspaceBar), so the strip keeps its width. */
+/* Panels that don't fit move under More (OrbitWorkspaceBar), so the strip keeps its width. */
 .ows-tools{display:flex;align-items:center;flex:0 0 auto;min-width:0;padding:3px;border-radius:10px;background:var(--o-selected);overflow-x:auto;scrollbar-width:none}
 .ows-tools::-webkit-scrollbar{display:none}
+/* Nothing to scroll, and the More menu hangs out of it. */
+.ows-tools.has-names{overflow:visible}
 .ows-tools-group{display:flex;align-items:center;gap:2px;flex-shrink:0}
 .ows-tsep{width:1px;height:16px;margin:0 3px;background:var(--o-border);flex-shrink:0}
 .ows-tb{position:relative;width:30px;height:24px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:7px;background:none;color:var(--o-muted);cursor:pointer;transition:color var(--o-dur-fast),background-color var(--o-dur-fast),box-shadow 200ms,transform 140ms var(--o-ease-toggle)}
@@ -24,8 +26,26 @@
 .ows-tb:active:not(:disabled){transform:scale(.92)}
 .ows-tb.is-on{background:var(--o-bg);color:var(--o-text);box-shadow:0 1px 2px var(--o-shadow),inset 0 0 0 .5px var(--o-border)}
 .ows-tb:disabled{cursor:default}
-/* The Agent: first, labelled, accent-tinted while shown. */
-.ows-tb.is-primary{width:auto;gap:5px;padding:0 9px 0 7px;font:inherit;font-size:12px;font-weight:500}
+:is(.ows-tools.has-names,.ows-measure) .ows-tb,.ows-tb.is-primary{width:auto;gap:5px;padding:0 8px 0 7px;font:inherit;font-size:12px;font-weight:500;white-space:nowrap}
+.ows-tools .ows-more,.ows-measure .ows-more{gap:3px!important;padding:0 6px 0 8px!important}
+.ows-more.is-open{background:var(--o-hover);color:var(--o-text)}
+.ows-more.is-target{background:var(--o-accent-soft);color:var(--o-accent);box-shadow:inset 0 0 0 1.5px var(--o-accent)}
+.ows-more-chevron{flex-shrink:0;opacity:.7;transition:transform var(--o-dur-fast)}
+.ows-more.is-open .ows-more-chevron{transform:rotate(180deg)}
+/* Every tool at its full width, to find out how many fit. */
+.ows-measure{position:absolute;top:0;left:0;display:flex;height:0;overflow:hidden;visibility:hidden;pointer-events:none}
+/* Dragging a panel to another place. */
+body.ows-dragging,body.ows-dragging *{cursor:grabbing!important}
+:is(.ows-tb,.oui-panel-menu-item).is-dragged{opacity:.35}
+/* Placed by screen coordinates, so view zoom must not move them. */
+.ows-drag-layer,.ows-tip{zoom:calc(1 / var(--grove-zoom,1))}
+.ows-drag-layer{position:fixed;inset:0;z-index:300;pointer-events:none;background:none}
+/* Below the pointer, clear of the line that shows where it lands. */
+.ows-drag{position:fixed;transform:translate(8px,14px);display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px 0 8px;border-radius:8px;background:var(--o-bg);color:var(--o-text);font-size:12px;font-weight:500;white-space:nowrap;box-shadow:var(--o-shadow-2),inset 0 0 0 .5px var(--o-border)}
+.ows-drop{position:fixed;border-radius:2px;background:var(--o-accent)}
+.ows-drop.is-x{width:2px;transform:translateX(-1px)}
+.ows-drop.is-y{height:2px;transform:translateY(-1px)}
+/* The Agent: first, accent-tinted while shown. */
 .ows-tb.is-primary.is-on{background:var(--o-accent-soft);color:color-mix(in oklab,var(--o-accent) 82%,var(--o-text));box-shadow:inset 0 0 0 .5px color-mix(in oklab,var(--o-accent) 30%,transparent)}
 .ows-tb.is-primary.is-on:hover:not(:disabled){color:var(--o-accent)}
 .ows-tb.is-primary>:first-child{filter:none}
@@ -122,7 +142,7 @@ html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area .oc-bod
 .ows-bar.is-quiet{padding-right:4px;--ows-pane:color-mix(in oklab,var(--color-bg-secondary) 78%,transparent)}
 .ows-bar.is-quiet .ows-tools{padding:3px;border-radius:999px;background:var(--ows-pane);box-shadow:0 0 0 1px color-mix(in oklab,var(--color-border) 62%,transparent),0 10px 24px -14px rgb(0 0 0/28%);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 .ows-bar.is-quiet .ows-tsep{height:12px;margin:0 5px;background:color-mix(in oklab,var(--color-text) 12%,transparent)}
-.ows-bar.is-quiet .ows-tb{width:28px;height:24px;border-radius:999px;color:color-mix(in oklab,var(--color-text) 50%,transparent)}
+.ows-bar.is-quiet .ows-tb{height:24px;border-radius:999px;color:color-mix(in oklab,var(--color-text) 50%,transparent)}
 .ows-bar.is-quiet .ows-tb-icon{width:14px;height:14px;stroke-width:1.7}
 .ows-bar.is-quiet .ows-tb:hover:not(:disabled){background:color-mix(in oklab,var(--color-text) 7%,transparent);color:var(--color-text)}
 .ows-bar.is-quiet .ows-tb.is-on{background:var(--color-bg);color:var(--color-text);box-shadow:0 0 0 .5px color-mix(in oklab,var(--color-text) 12%,transparent),0 1px 3px rgb(0 0 0/10%)}
@@ -163,7 +183,7 @@ html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area .oc-bod
   .ows-bar-spacer{display:none}
   .ows-tb{width:40px;height:34px}
   .ows-tb-icon{width:18px;height:18px}
-  .ows-tb.is-primary{padding:0 12px 0 10px;font-size:13px}
+  :is(.ows-tools.has-names,.ows-measure) .ows-tb,.ows-tb.is-primary{padding:0 12px 0 10px;font-size:13px}
   /* The home bar needs clearance, not its full inset plus padding. */
   .ide-workbench.is-orbit .task-chat-input-area:not(:has(.mobile-composer-pill)),
   .orbit-free-layout .task-chat-input-area{bottom:max(var(--grove-kb-inset,0px),calc(var(--grove-safe-bottom,env(safe-area-inset-bottom,0px)) * .5))!important;padding-bottom:4px}

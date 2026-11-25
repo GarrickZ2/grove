@@ -56,6 +56,7 @@ import { OPEN_DESIGN_EVENT, type OpenDesignDetail } from "../../Studio/DesignPag
 import { OPEN_BROWSER_EVENT, type OpenBrowserDetail } from "../../../api/browser";
 import { useOpenReviewRequests, type OpenReviewRequest } from "../../../orbit/workspace/openReview";
 import { useConfig, useProject } from "../../../context";
+import { usePanelOrder } from "../PanelSystem/usePanelOrder";
 import { useIsMobile } from "../../../hooks";
 import { useLinkedReviewProjects } from "../../../hooks/useLinkedReviewProjects";
 import { apiClient } from "../../../api/client";
@@ -70,6 +71,7 @@ import {
   renderPanel,
   renderOrbitPanel,
   panelGlyph,
+  panelShortLabel,
   getPanelDescriptor,
   buildPanelCatalog,
   panelShortcutDisplay,
@@ -591,6 +593,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const isStudio = taskProject?.projectType === "studio";
     const isGitRepo = taskProject?.isGitRepo;
     const linkedReviewProjects = useLinkedReviewProjects(projectId, task.id);
+    const panelOrder = usePanelOrder(isStudio);
 
     // Read persisted state once at mount via useState lazy initializer (avoids repeated localStorage reads)
     const [persisted] = useState<Partial<PersistedIDEState>>(() =>
@@ -1498,10 +1501,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       />
     );
 
-    const phonePanelList: OrbitPhonePanel[] = [
-      ...auxPanels.map((d) => ({ d, kind: "aux" as const })),
-      ...infoPanels.map((d) => ({ d, kind: "info" as const })),
-    ];
+    const phonePanelList: OrbitPhonePanel[] = panelOrder
+      .order([...auxPanels, ...infoPanels])
+      .map((d) => ({ d, kind: d.category === "info" ? "info" : "aux" }));
     const phoneOpenPanel = phonePanelList.find((panel) => panel.kind === "aux"
       ? state.auxVisible && state.auxType === panel.d.key
       : state.infoVisible && state.infoType === panel.d.key) ?? null;
@@ -1522,19 +1524,13 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     );
 
     if (orbitDesk) {
-      const dockable = catalog.filter((d) => d.category !== "chat");
-      const dockPanels = dockable
-        .filter((d) => slotOf(d.key) === "dock")
-        .map((d, i) => ({ d, rank: d.key.startsWith(PLUGIN_PANEL_PREFIX) ? 2 : d.key === "graph" ? 1 : 0, i }))
-        .sort((a, b) => a.rank - b.rank || a.i - b.i)
-        .map((x) => x.d);
-      const leftPanels = dockable.filter((d) => slotOf(d.key) === "aux");
-      const terminalPanel = dockable.find((d) => slotOf(d.key) === "bottom");
+      const dockable = panelOrder.order(catalog.filter((d) => d.category !== "chat"));
       const toolFor = (d: PanelDescriptor): OrbitToolItem => {
         const slot = slotOf(d.key);
         return {
           key: d.key,
           label: d.label,
+          name: panelShortLabel(d),
           icon: panelGlyph(d, true),
           shortcut: panelShortcutDisplay(d.key),
           active: (foldBook || foldLaptop) && slot === "dock" ? orbitShowDock && state.infoType === d.key : isOrbitPanelOpen(state, d.key, slot),
@@ -1654,21 +1650,17 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         ? { auxType: d.key, auxVisible: true }
         : { infoType: d.key, infoVisible: true });
 
-      const railGroups: OrbitToolItem[][] = [
-        agentTool ? [agentTool] : [],
-        [
-          ...leftPanels.map(toolFor),
-          ...(terminalPanel ? [toolFor(terminalPanel)] : []),
-        ],
-        dockPanels.map(toolFor),
-      ];
+      const agentGroup = agentTool ? [agentTool] : [];
+      const { shown, more } = panelOrder.split(dockable);
       const bar = (
         <OrbitWorkspaceBar
           title={writingNew ? undefined : task.name}
           branch={writingNew ? undefined : task.branch || undefined}
           state={writingNew ? undefined : state.isChatBusy ? "working" : task.status === "archived" ? "archived" : undefined}
           leading={toolbarLeading}
-          groups={duoRailTarget ? [] : railGroups}
+          groups={duoRailTarget ? [] : [agentGroup, shown.map(toolFor)]}
+          more={duoRailTarget ? [] : panelOrder.group(more).map((group) => group.map(toolFor))}
+          onMove={(move) => panelOrder.move(dockable.map((d) => d.key), move)}
           trailing={writingNew ? undefined : toolbarTrailing}
           menu={[...workspaceMenu, ...toolbarRows]}
           foldRight={foldBook ? shellSize.w - foldBook.left : undefined}
@@ -1679,7 +1671,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       return (
         <div className="ide-workbench is-orbit is-orbit-desk">
           {orbitToolbarTarget && !foldLaptop && createPortal(bar, orbitToolbarTarget)}
-          {duoRailTarget && createPortal(<OrbitDuoRailTools groups={railGroups} />, duoRailTarget)}
+          {duoRailTarget && createPortal(<OrbitDuoRailTools groups={[agentGroup, dockable.map(toolFor)]} />, duoRailTarget)}
           <div
             ref={shellRef}
             className={`ows-shell orbit-ui${foldBook ? " is-fold" : ""}${writingNew && !foldBook && !foldLaptop ? " is-new" : ""}${foldDockLeft ? " is-fold-dock-left" : ""}${foldLaptop ? " is-fold-laptop" : ""}`}
@@ -1692,9 +1684,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
                 state={state.isChatBusy ? "working" : undefined}
                 tools={[
                   ...(agentTool ? [agentTool] : []),
-                  ...leftPanels.map(toolFor),
-                  ...(terminalPanel ? [toolFor(terminalPanel)] : []),
-                  ...dockPanels.map(toolFor),
+                  ...dockable.map(toolFor),
                 ]}
                 menu={[...workspaceMenu.filter((item) => item.id !== "hide-agent" && item.id !== "show-agent"), ...toolbarRows]}
                 onOpenSidebar={() => window.dispatchEvent(new Event(ORBIT_FOLD_MENU_EVENT))}

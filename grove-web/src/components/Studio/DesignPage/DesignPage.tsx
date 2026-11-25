@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, Download, Frame, Shapes, Upload } from "lucide-react";
+import { Check, ChevronDown, Download, Palette, Shapes, Upload } from "lucide-react";
 import {
   createDesignComment,
   canChangeDesignComment,
@@ -90,7 +90,7 @@ function DesignPicker({ designs, current, onShow, onImport, importing, onExport 
   return (
     <div ref={rootRef} className="design-picker" onPointerDown={(event) => event.stopPropagation()}>
       <button type="button" className="design-picker-btn" aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
-        {current.is_system ? <Shapes size={13} /> : <Frame size={13} />}
+        {current.is_system ? <Shapes size={13} /> : <Palette size={13} />}
         <span>{current.name}</span>
         <ChevronDown size={12} />
       </button>
@@ -98,7 +98,7 @@ function DesignPicker({ designs, current, onShow, onImport, importing, onExport 
         <div className="design-menu" role="menu" aria-label="Designs">
           {designs.map((entry) => (
             <button key={entry.slug} type="button" role="menuitemradio" aria-checked={entry.slug === current.slug} onClick={() => { close(); onShow(entry.slug); }}>
-              {entry.is_system ? <Shapes size={13} /> : <Frame size={13} />}
+              {entry.is_system ? <Shapes size={13} /> : <Palette size={13} />}
               <span>{entry.name}</span>
               {entry.slug === current.slug ? <Check size={14} className="design-menu-check" /> : null}
             </button>
@@ -307,7 +307,7 @@ export function DesignPage({ projectId, taskId, isChatBusy, lastChatIdleAt, shar
         {importer}
         {systemPrompt}
         <PanelEmpty
-          icon={Frame}
+          icon={Palette}
           title="No designs yet"
           action={(
             <>

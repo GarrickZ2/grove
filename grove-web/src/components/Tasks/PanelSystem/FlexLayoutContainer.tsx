@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { OrbitWorkspaceBar, type OrbitToolItem } from '../IDELayout/OrbitWorkspace';
 import { orbitTabTitle } from './orbitTabs';
+import { usePanelOrder } from './usePanelOrder';
 import { flexLayoutStorageKey, ORBIT_FREE_MIN_HEIGHT, ORBIT_FREE_MIN_WIDTH, ORBIT_FREE_SPLITTER, stripTabsetMins, tabsetHoldsAgent } from './orbitFit';
 import { ORBIT_CHAT_MIN } from '../IDELayout/orbitDock';
 import { useNewSession } from '../../Orbit/newSessionDrafts';
@@ -42,6 +43,7 @@ import {
   renderPanel,
   renderOrbitPanel,
   panelGlyph,
+  panelShortLabel,
   flexWrapStyle,
   buildPanelCatalog,
   getPanelDescriptor,
@@ -298,6 +300,7 @@ export const FlexLayoutContainer = forwardRef<
   const isStudio = taskProject?.projectType === 'studio';
   const taskIsGitRepo = taskProject?.isGitRepo;
   const linkedReviewProjects = useLinkedReviewProjects(projectId, task.id);
+  const panelOrder = usePanelOrder(isStudio);
 
   const layoutStorageKey = flexLayoutStorageKey(projectId, task.id);
 
@@ -936,17 +939,24 @@ export const FlexLayoutContainer = forwardRef<
   // the registry makes it appear here automatically (no per-layout list).
   const addPanelItems = useCallback((): DropdownItem[] => {
     const catalog = buildPanelCatalog(plugins, { isStudio, terminalAvailable });
-    let prevCategory: string | null = null;
-    return catalog.map((d) => {
+    const panels = catalog.filter((d) => d.key !== 'chat');
+    // Orbit lists them as its toolbar does; Workbench in catalog order, by category.
+    const groups = orbit
+      ? [catalog.filter((d) => d.key === 'chat'), ...panelOrder.group(panelOrder.order(panels))]
+      : catalog.reduce<(typeof catalog)[]>((all, d) => {
+        const last = all[all.length - 1];
+        if (last?.[0].category === d.category) last.push(d);
+        else all.push([d]);
+        return all;
+      }, []);
+    return groups.flatMap((group, gi) => group.map((d, i) => {
       const isPlugin = d.key.startsWith(PLUGIN_PANEL_PREFIX);
-      const separator = prevCategory !== null && d.category !== prevCategory;
-      prevCategory = d.category;
       return {
         id: d.key,
         label: d.label,
-        icon: d.icon as typeof Plus,
+        icon: panelGlyph(d, orbit) as typeof Plus,
         shortcut: panelShortcutDisplay(d.key),
-        separator,
+        separator: gi > 0 && i === 0,
         onClick: () => {
           if (isPlugin) {
             const plugin = plugins.find((p) => `${PLUGIN_PANEL_PREFIX}${p.id}` === d.key);
@@ -956,8 +966,8 @@ export const FlexLayoutContainer = forwardRef<
           }
         },
       };
-    });
-  }, [plugins, isStudio, terminalAvailable, addPanel, addPluginPanel]);
+    }));
+  }, [plugins, isStudio, terminalAvailable, addPanel, addPluginPanel, orbit, panelOrder]);
 
   // Custom TabSet rendering ([+] add panel + maximize button)
   // Orbit: one element per tab in its tabset's strip, where that tab's
@@ -1132,8 +1142,9 @@ export const FlexLayoutContainer = forwardRef<
   // Clicking selects (or adds) that panel; clicking the selected one closes it.
   const orbitBar = (() => {
     if (!orbit || !isActive || !orbitToolbarSlot) return null;
-    void modelVersion;
-    const tabs = getAllTabs();
+    // The model changes in place. The compiler keeps this result until a value
+    // it reads changes, so the version has to be read, not just mentioned.
+    const tabs = modelVersion >= 0 ? getAllTabs() : [];
     const keyOf = (t: TabNode) => {
       const cfg = t.getConfig() as TabNodeConfig | undefined;
       return t.getComponent() === 'plugin' ? `${PLUGIN_PANEL_PREFIX}${cfg?.pluginId ?? ''}` : t.getComponent() ?? '';
@@ -1146,6 +1157,7 @@ export const FlexLayoutContainer = forwardRef<
       return {
         key: d.key,
         label: d.label,
+        name: panelShortLabel(d),
         icon: panelGlyph(d, true),
         shortcut: panelShortcutDisplay(d.key),
         active: open.length > 0,
@@ -1161,14 +1173,9 @@ export const FlexLayoutContainer = forwardRef<
         },
       };
     };
-    // Same order as the docked layout: info panels, then Graph, then plugins.
-    const info = catalog
-      .filter((d) => d.category === 'info' || d.key === 'graph')
-      .map((d, i) => ({ d, i, rank: d.key.startsWith(PLUGIN_PANEL_PREFIX) ? 2 : d.key === 'graph' ? 1 : 0 }))
-      .sort((a, b) => a.rank - b.rank || a.i - b.i)
-      .map((x) => x.d);
     const agent = catalog.filter((d) => d.key === 'chat');
-    const rest = catalog.filter((d) => d.category !== 'info' && d.key !== 'graph' && d.key !== 'chat');
+    const panels = catalog.filter((d) => d.key !== 'chat');
+    const { shown, more } = panelOrder.split(panels);
     return createPortal(
       <OrbitWorkspaceBar
         title={writingNew ? undefined : task.name}
@@ -1178,11 +1185,12 @@ export const FlexLayoutContainer = forwardRef<
         groups={[
           agent.map((d) => {
             const item = toolFor(d);
-            return { ...item, label: 'Agent', primary: true, tip: item.active ? 'Agent · click to show or close' : 'Open Agent' };
+            return { ...item, label: 'Agent', name: 'Agent', primary: true, tip: item.active ? 'Agent · click to show or close' : 'Open Agent' };
           }),
-          rest.map(toolFor),
-          info.map(toolFor),
+          shown.map(toolFor),
         ]}
+        more={panelOrder.group(more).map((group) => group.map(toolFor))}
+        onMove={(move) => panelOrder.move(panels.map((d) => d.key), move)}
         trailing={writingNew ? undefined : toolbarTrailing}
         menu={[
           ...(writingNew ? [] : toolbarMenu ?? []),

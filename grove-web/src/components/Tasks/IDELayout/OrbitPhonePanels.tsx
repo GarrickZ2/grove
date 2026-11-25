@@ -1,7 +1,7 @@
-import { useEffect, useState, type ElementType, type ReactNode } from "react";
+import { createElement, useEffect, useState, type ElementType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AppWindow, Columns2, LayoutGrid, MessageSquare, MoreHorizontal } from "lucide-react";
-import type { PanelDescriptor } from "../PanelSystem/panelRegistry";
+import { AppWindow, Columns2, LayoutGrid, MessageSquare, MoreHorizontal, Sparkle } from "lucide-react";
+import { panelGlyph, panelShortLabel, type PanelDescriptor } from "../PanelSystem/panelRegistry";
 
 export type OrbitPhonePanel = { d: PanelDescriptor; kind: "aux" | "info" };
 /** A workspace action (Commit / Merge / …), listed under the panels. */
@@ -69,7 +69,6 @@ export function OrbitPhonePanels({ panels, openPanel, onOpen, onShowChat, action
     };
   }, [sheetOpen]);
 
-  const OpenIcon = openPanel?.d.icon;
   const tile = (key: string, label: string, icon: ReactNode, active: boolean, onClick: () => void) => (
     <button key={key} type="button" className={`orbit-phone-sheet__tile${active ? " is-active" : ""}`} onClick={() => { onClick(); setSheetOpen(false); }}>
       <span className="orbit-phone-sheet__tile-icon">{icon}</span>
@@ -80,13 +79,13 @@ export function OrbitPhonePanels({ panels, openPanel, onOpen, onShowChat, action
   return (
     <>
       {!compact && layout && <LayoutSwitch layout={layout} className="orbit-phone-switch is-layout" />}
-      {!compact && !layout && openPanel && OpenIcon && (
+      {!compact && !layout && openPanel && (
         <div className="orbit-phone-switch" role="radiogroup" aria-label="Show">
           <button type="button" role="radio" aria-checked={false} aria-label="Agent" title="Agent" onClick={onShowChat}>
-            <MessageSquare size={16} strokeWidth={1.8} />
+            <Sparkle size={16} strokeWidth={1.8} />
           </button>
           <button type="button" role="radio" aria-checked className="is-on" aria-label={openPanel.d.label}>
-            <OpenIcon size={15} strokeWidth={1.8} /><span>{openPanel.d.label}</span>
+            {createElement(panelGlyph(openPanel.d, true), { size: 15, strokeWidth: 1.8 })}<span>{panelShortLabel(openPanel.d)}</span>
           </button>
         </div>
       )}
@@ -96,13 +95,13 @@ export function OrbitPhonePanels({ panels, openPanel, onOpen, onShowChat, action
             <LayoutSwitch layout={layout} className="orbit-duo-layout" buttonClassName="orbit-duo-tool" />
           ) : (
             <button type="button" className={`orbit-duo-tool${!openPanel ? " is-on" : ""}`} aria-label="Agent" title="Agent" aria-pressed={!openPanel} onClick={onShowChat}>
-              <MessageSquare size={20} strokeWidth={1.8} />
+              <Sparkle size={20} strokeWidth={1.8} />
             </button>
           )}
           {/* Agent and the actions stay put; only the panels scroll between them. */}
           <div className="orbit-duo-scroll">
             {panels.map((panel) => {
-              const Icon = panel.d.icon;
+              const Icon = panelGlyph(panel.d, true);
               const on = openPanel?.d.key === panel.d.key && openPanel.kind === panel.kind;
               return (
                 <button key={`${panel.kind}:${panel.d.key}`} type="button" className={`orbit-duo-tool${on ? " is-on" : ""}`} aria-label={panel.d.label} title={panel.d.label} aria-pressed={on} onClick={() => (on ? onShowChat() : onOpen(panel))}>
@@ -128,10 +127,10 @@ export function OrbitPhonePanels({ panels, openPanel, onOpen, onShowChat, action
           <div className="orbit-phone-sheet__panel">
             <div className="orbit-phone-sheet__grabber" />
             {!compact && <div className="orbit-phone-sheet__grid">
-              {tile("chat", "Agent", <MessageSquare size={18} />, !openPanel, onShowChat)}
+              {tile("chat", "Agent", <Sparkle size={18} />, !openPanel, onShowChat)}
               {panels.map((panel) => {
-                const Icon = panel.d.icon;
-                return tile(panel.d.key, panel.d.label, <Icon size={18} />, openPanel?.d.key === panel.d.key && openPanel.kind === panel.kind, () => onOpen(panel));
+                const Icon = panelGlyph(panel.d, true);
+                return tile(panel.d.key, panelShortLabel(panel.d), <Icon size={18} />, openPanel?.d.key === panel.d.key && openPanel.kind === panel.kind, () => onOpen(panel));
               })}
             </div>}
             {!!actions?.length && (
@@ -166,7 +165,7 @@ export function OrbitLaptopStrip({ panels, openPanel, onOpen, onClose, actions }
   return (
     <div className="orbit-laptop-strip" role="toolbar" aria-label="Panels">
       {panels.map((panel) => {
-        const Icon = panel.d.icon;
+        const Icon = panelGlyph(panel.d, true);
         const on = openPanel?.d.key === panel.d.key && openPanel.kind === panel.kind;
         return (
           <button
@@ -178,7 +177,7 @@ export function OrbitLaptopStrip({ panels, openPanel, onOpen, onClose, actions }
             onClick={() => (on ? onClose() : onOpen(panel))}
           >
             <Icon size={16} strokeWidth={1.8} />
-            <span>{panel.d.label}</span>
+            <span>{panelShortLabel(panel.d)}</span>
           </button>
         );
       })}
@@ -200,11 +199,11 @@ export function OrbitFoldPanelPicker({ panels, onOpen }: { panels: OrbitPhonePan
       <p className="orbit-fold-picker__hint">Open a panel beside the Agent</p>
       <div className="orbit-fold-picker__grid">
         {panels.map((panel) => {
-          const Icon = panel.d.icon;
+          const Icon = panelGlyph(panel.d, true);
           return (
             <button key={panel.d.key} type="button" className="orbit-phone-sheet__tile" onClick={() => onOpen(panel)}>
               <span className="orbit-phone-sheet__tile-icon"><Icon size={18} /></span>
-              <span className="orbit-phone-sheet__tile-label">{panel.d.label}</span>
+              <span className="orbit-phone-sheet__tile-label">{panelShortLabel(panel.d)}</span>
             </button>
           );
         })}

@@ -112,6 +112,8 @@ pub struct WebConfigDto {
     pub buddy_motion: Option<String>,
     pub send_mode: Option<String>,
     pub terminal_position: Option<String>,
+    pub panel_order_coding: Option<Vec<String>>,
+    pub panel_order_studio: Option<Vec<String>>,
     pub multi_machine: bool,
     pub setup_done: bool,
     pub show_hide_window_shortcut: Option<String>,
@@ -173,6 +175,8 @@ impl From<&Config> for ConfigResponse {
                 buddy_motion: config.web.buddy_motion.clone(),
                 send_mode: config.web.send_mode.clone(),
                 terminal_position: config.web.terminal_position.clone(),
+                panel_order_coding: config.web.panel_order_coding.clone(),
+                panel_order_studio: config.web.panel_order_studio.clone(),
                 multi_machine: config.web.multi_machine,
                 setup_done: config.web.setup_done,
                 show_hide_window_shortcut: config.web.show_hide_window_shortcut.clone(),
@@ -341,6 +345,8 @@ pub struct WebConfigPatch {
     pub interface: Option<String>,
     pub buddy_motion: Option<String>,
     pub terminal_position: Option<String>,
+    pub panel_order_coding: Option<Vec<String>>,
+    pub panel_order_studio: Option<Vec<String>>,
     pub multi_machine: Option<bool>,
     pub setup_done: Option<bool>,
     pub send_mode: Option<String>,
@@ -501,6 +507,12 @@ pub async fn patch_config(
         }
         if let Some(position) = web_patch.terminal_position {
             config.web.terminal_position = Some(position);
+        }
+        if let Some(order) = web_patch.panel_order_coding {
+            config.web.panel_order_coding = Some(order);
+        }
+        if let Some(order) = web_patch.panel_order_studio {
+            config.web.panel_order_studio = Some(order);
         }
         if let Some(mode) = web_patch.send_mode {
             config.web.send_mode = Some(mode);
@@ -1150,6 +1162,25 @@ mod tests {
         assert_eq!(
             patch_config(Json(patch("top"))).await.err(),
             Some(StatusCode::BAD_REQUEST)
+        );
+    }
+
+    #[tokio::test]
+    async fn panel_orders_are_kept_apart_for_coding_and_studio() {
+        let _lock = database::test_lock().lock().await;
+        let _store = Store::new();
+        let patch = |value: serde_json::Value| serde_json::from_value(value).unwrap();
+        let coding = serde_json::json!({"web":{"panel_order_coding":["terminal","review"]}});
+        patch_config(Json(patch(coding))).await.unwrap();
+        let studio = serde_json::json!({"web":{"panel_order_studio":["sketch","design"]}});
+        let saved = patch_config(Json(patch(studio))).await.unwrap();
+        assert_eq!(
+            saved.0.web.panel_order_coding,
+            Some(vec!["terminal".to_string(), "review".to_string()])
+        );
+        assert_eq!(
+            saved.0.web.panel_order_studio,
+            Some(vec!["sketch".to_string(), "design".to_string()])
         );
     }
 

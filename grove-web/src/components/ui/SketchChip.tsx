@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Palette } from "lucide-react";
+import { LineSquiggle } from "lucide-react";
 import {
   OPEN_SKETCH_EVENT,
   type OpenSketchDetail,
@@ -83,7 +83,7 @@ export function SketchChip({ projectId, taskId, sketchId }: Props) {
             : `Open sketch ${label}`
       }
     >
-      <Palette size={13} />
+      <LineSquiggle size={13} />
       <span>{label}</span>
     </button>
   );

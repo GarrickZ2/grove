@@ -37,11 +37,13 @@ use crate::storage::machines as store;
 /// `/config` sections that follow the person.
 const PERSONAL_SECTIONS: [&str; 4] = ["theme", "layout", "hooks", "notifications"];
 /// `/config` `web` fields that follow the person; the rest belong to a machine.
-const PERSONAL_WEB_FIELDS: [&str; 7] = [
+const PERSONAL_WEB_FIELDS: [&str; 9] = [
     "interface",
     "buddy_motion",
     "send_mode",
     "terminal_position",
+    "panel_order_coding",
+    "panel_order_studio",
     "workspace_layout",
     "show_hide_window_shortcut",
     // The way back to this machine: a machine that never turned it on must not

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pencil } from "lucide-react";
+import { LineSquiggle } from "lucide-react";
 import type { SharedSketches, SketchComment, SketchMeta } from "../../../api";
 import { PanelEmpty, PanelError, PanelLoading } from "../../../orbit/ui";
 import { SketchBoard } from "./SketchBoard";
@@ -89,7 +89,7 @@ export function SharedSketchPage({ source }: { source: SharedSketches }) {
       }}
       agent={null}
       canSend={false}
-      empty={<PanelEmpty icon={Pencil} title="No sketches" />}
+      empty={<PanelEmpty icon={LineSquiggle} title="No sketches" />}
     />
   );
 }

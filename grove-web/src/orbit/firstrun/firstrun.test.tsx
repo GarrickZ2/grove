@@ -52,6 +52,8 @@ describe("first-turn hint model", () => {
     expect(findHintAnchor(bar, TURN_HINTS[1])?.getAttribute("aria-label")).toBe("Notes");
     bar.querySelector<HTMLButtonElement>('[aria-label="Notes"]')!.disabled = true;
     expect(findHintAnchor(bar, TURN_HINTS[1])).toBeNull();
+    bar.innerHTML = `<button class="ows-tb" data-tool-more="">More</button>`;
+    expect(findHintAnchor(bar, TURN_HINTS[1])?.textContent).toBe("More");
   });
 });
 
