@@ -193,7 +193,7 @@ grove tui    # terminal app
 
 ## Install
 
-Single binary. Web IDE embedded. Requires Git and a terminal multiplexer (tmux or Zellij) on Unix.
+Single binary. Web IDE embedded. See [Requirements](#requirements).
 
 ### For humans
 
@@ -245,8 +245,9 @@ The guide covers OS detection, package-manager choice, PATH setup, and post-inst
 
 ## Requirements
 
-- Git 2.20+
-- tmux 3.0+ or Zellij *(not required on Windows)*
+- Git 2.20+, for coding projects
+- Node.js, for agents that run through `npx`
+- tmux or Zellij *(optional, macOS and Linux)*: keeps task terminals running across restarts
 - macOS 12+, Linux, or Windows 10/11
 
 **Linux GUI runtime deps** (Debian/Ubuntu):

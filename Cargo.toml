@@ -2,10 +2,10 @@
 name = "grove-rs"
 version = "0.15.3"
 edition = "2021"
-description = "A Kanban-style TUI for parallel AI coding. Manage Git worktrees as tasks, run multiple agents in isolated tmux sessions, get notified via hooks."
+description = "A Context Harness for every coding agent. Run agents in parallel, each in its own Git worktree, and steer them by capturing, organizing and injecting context."
 license = "MIT"
 repository = "https://github.com/GarrickZ2/grove"
-keywords = ["git", "worktree", "tmux", "tui", "cli"]
+keywords = ["git", "worktree", "ai", "agents", "acp"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
 include = [

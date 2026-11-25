@@ -31,7 +31,7 @@ use crate::storage::config::LastLaunch;
 #[derive(Parser)]
 #[command(name = "grove")]
 #[command(version)]
-#[command(about = "Git Worktree + tmux manager")]
+#[command(about = "A Context Harness for every coding agent")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,

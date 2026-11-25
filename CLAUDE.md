@@ -85,7 +85,7 @@ src/
 │   ├── perf_middleware.rs # ⓘ perf-monitor: per-route timing histogram
 │   └── perf_tracing.rs    # ⓘ perf-monitor: tracing collector
 ├── git/                   # Git CLI wrappers
-├── tmux/                  # tmux session management
+├── tmux/                  # Optional tmux terminals; also the npx launcher (browser, computer use, MCP)
 ├── acp/                   # ACP (Agent Client Protocol) integration
 ├── agent_graph/           # Inter-agent spawn / send / reply tools
 ├── browser/               # Browser control: agent-browser driver, per-Task sessions, Companion relay
@@ -114,7 +114,7 @@ grove-web/src/
 ### Hierarchy
 
 ```
-Workspace (multiple projects) → Project (git repo) → Task (worktree + tmux session)
+Workspace (multiple projects) → Project (git repo) → Task (worktree + agent sessions + terminals)
 ```
 
 ### Entry Logic
@@ -125,7 +125,7 @@ Workspace (multiple projects) → Project (git repo) → Task (worktree + tmux s
 
 ### Task States
 
-- `Live (●)` — tmux session running
+- `Live (●)` — the task's session is running
 - `Idle (○)` — no active session
 - `Merged (✓)` — merged to target branch
 - `Conflict / Broken / Archived` — see `model/worktree.rs`
@@ -284,7 +284,7 @@ Reset the histogram before measuring an isolated operation; otherwise the cold-s
 ## AI Integration Flow (per-task)
 
 1. Task is created → git worktree (Coding) or `~/.grove/studios/<project>/tasks/<task>/` (Studio)
-2. tmux/Zellij session is launched with env vars: `GROVE_PROJECT`, `GROVE_TASK_ID`, `GROVE_TASK_NAME`, `GROVE_BRANCH`, `GROVE_TARGET`, `GROVE_PROJECT_NAME`
+2. Agents and terminals start with env vars: `GROVE_PROJECT`, `GROVE_TASK_ID`, `GROVE_TASK_NAME`, `GROVE_BRANCH`, `GROVE_TARGET`, `GROVE_PROJECT_NAME`
 3. Agents in the task call back to Grove via the built-in MCP server (read notes, reply to reviews, complete the task)
 
 ## Development Guidelines
@@ -346,6 +346,14 @@ A change to the plugin API ships with its docs in the same commit:
 and the SDK in `src/api/handlers/plugins.rs`. New host calls go in
 `src/plugins/host_api.rs` with a permission; `src/plugins/e2e_tests.rs` runs real
 sandboxed node processes against them.
+
+### Terminals
+
+A task terminal is either a plain shell (`direct`) or a tmux / Zellij session (`multiplexer`), by `web.terminal_mode`. tmux and Zellij are optional: never write that Grove requires them. Windows is always `direct`.
+
+### Config
+
+Change `config.toml` only through `storage::config::edit_config()` … `.save()`: it locks the file across processes and replaces it in one step. Never load, change and write it yourself.
 
 ### Git / tmux
 

@@ -9,7 +9,7 @@ Reflects version 0.9.0 (2026-04-19).
 
 ### 1.1 Isolation model
 - Per-task **Git worktree** — each task lives on its own branch in its own directory
-- Per-task **tmux / Zellij session** — persistent, independent terminal environment (Unix)
+- Per-task **terminal** — a plain shell in the task's directory, or a tmux / Zellij session that survives restarts (optional, macOS and Linux)
 - Per-task **spec** (`Task Notes`) — agents read intent before touching code
 - Per-task storage directory `~/.grove/projects/<hash>/tasks/<id>/` for chats, notes, reviews, activity, sketches, artifacts
 
@@ -267,7 +267,7 @@ Terminal · Chat · Review · Editor · Stats · Git · Notes · Comments · Art
 
 ### 9.1 Spec
 - Task Notes markdown editor, auto-save on navigation
-- `GROVE_*` env vars exported into the task's tmux/Zellij session (`GROVE_PROJECT`, `GROVE_TASK_ID`, `GROVE_TASK_NAME`, `GROVE_BRANCH`, `GROVE_TARGET`, `GROVE_PROJECT_NAME`)
+- `GROVE_*` env vars exported into the task's terminals and agents (`GROVE_PROJECT`, `GROVE_TASK_ID`, `GROVE_TASK_NAME`, `GROVE_BRANCH`, `GROVE_TARGET`, `GROVE_PROJECT_NAME`)
 - Agents read their own spec via MCP `grove_status` + `grove_read_notes`
 - For Studio tasks, per-project `instructions.md` is linked into every task; Project Memory is exposed through the managed Memory lifecycle rather than a shared writable `memory.md`
 

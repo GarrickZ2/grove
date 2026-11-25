@@ -2,7 +2,7 @@
 
 This guide is written so an LLM agent (Claude Code, Cursor, AmpCode, …) can install Grove end-to-end without a human in the loop. Humans can read it too.
 
-Grove ships as a single binary with the Web IDE embedded. The only runtime requirements on Unix are **Git** and a **terminal multiplexer** (tmux or Zellij). Windows uses ConPTY directly.
+Grove ships as a single binary with the Web IDE embedded. It needs **Git** for coding projects and **Node.js** for agents that run through `npx`. tmux and Zellij are **not required**: on macOS and Linux either one is optional, and keeps task terminals running across restarts. Do not install them unless the user asks.
 
 ---
 
