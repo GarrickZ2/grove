@@ -19,6 +19,9 @@ function toolOutput(raw: unknown): ToolCallContentData[] {
     if (item.type === "terminal" && typeof item.terminalId === "string") {
       return [{ type: "terminal", terminal_id: item.terminalId }];
     }
+    if (item.type === "session" && typeof item.sessionId === "string") {
+      return [{ type: "session", session_id: item.sessionId }];
+    }
     if (item.type === "diff" && Array.isArray(item.changes)) {
       const patch = object(item.patch);
       return item.changes.flatMap((value, index): ToolCallContentData[] => {

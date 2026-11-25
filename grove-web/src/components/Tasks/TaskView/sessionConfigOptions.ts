@@ -30,7 +30,7 @@ export const configDropdownValues = (
 
 export const configCategoryMatches = (
   option: SessionConfigOption,
-  category: "model" | "mode" | "thought_level",
+  category: "model" | "mode" | "thought_level" | "speed",
 ) => {
   const value = option.category?.toLowerCase();
   if (category === "thought_level") {
@@ -46,4 +46,10 @@ export const quickConfigOptions = (options: SessionConfigOption[]) => {
     configCategoryMatches(option, "thought_level"),
   );
   return { model, mode, thinking };
+};
+
+/** Speed options (such as Fast mode) first, so they sit next to the model. */
+export const speedFirst = (options: SessionConfigOption[]) => {
+  const isSpeed = (option: SessionConfigOption) => configCategoryMatches(option, "speed");
+  return [...options.filter(isSpeed), ...options.filter((option) => !isSpeed(option))];
 };

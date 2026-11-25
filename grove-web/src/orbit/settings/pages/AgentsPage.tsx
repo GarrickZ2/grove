@@ -112,7 +112,7 @@ export function AgentsPage({ settings }: SettingsPageProps) {
             ariaLabel="While the agent is working"
             value={sendMode}
             options={[
-              { value: "queue", label: "Queue", title: "Your message waits until the turn ends" },
+              { value: "queue", label: "Queue", title: "Your message joins the turn where the agent supports it, and otherwise waits until it ends" },
               { value: "interrupt", label: "Interrupt", title: "Your message stops the current turn" },
             ]}
             onChange={setSendMode}

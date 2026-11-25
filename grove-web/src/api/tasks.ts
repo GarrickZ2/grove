@@ -831,16 +831,18 @@ export async function remindGraphEdge(
 }
 
 /**
- * Fork a chat: 调用后端 ACP `session/fork` 派生新会话,返回新 chat 行
+ * Fork a chat: 调用后端 ACP `session/fork` 派生新会话,返回新 chat 行。
+ * `cursorId` 指定从哪条消息之前分叉,不传则派生整段会话。
  */
 export async function forkChat(
   projectId: string,
   taskId: string,
-  chatId: string
+  chatId: string,
+  cursorId?: string,
 ): Promise<ChatSessionResponse> {
-  return apiClient.post<Record<string, never>, ChatSessionResponse>(
+  return apiClient.post<{ cursor_id?: string }, ChatSessionResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/fork`,
-    {}
+    { cursor_id: cursorId },
   );
 }
 

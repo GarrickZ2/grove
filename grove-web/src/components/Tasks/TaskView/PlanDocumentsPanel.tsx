@@ -35,8 +35,17 @@ function PlanContent({ plan, allowLocalFiles, onFileClick, markdownProps, fileCo
     {entry.status === "completed" ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-success)]" /> : entry.status === "in_progress" ? <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-highlight)] motion-reduce:animate-none" /> : <Circle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />}
     <span className={entry.status === "completed" ? "text-[var(--color-text-muted)] line-through" : ""}>{entry.content}</span>
   </li>)}</ul>;
-  if (plan.type === "markdown" && orbit) return <div className="ocv-prose"><MarkdownRenderer content={plan.content} onFileClick={onFileClick} {...markdownProps} /></div>;
-  if (plan.type === "markdown") return <MarkdownRenderer content={plan.content} onFileClick={onFileClick} {...markdownProps} />;
+  if (plan.type === "markdown") {
+    const planPath = plan.path;
+    const pathLine = planPath && (allowLocalFiles && onFileClick
+      ? <button type="button" className={`${orbit ? "oc-plan-uri" : "break-all text-left font-mono text-[11px] text-[var(--color-text-muted)]"} hover:underline`} onClick={() => void onFileClick(planPath)}>{planPath}</button>
+      : <p className={orbit ? "oc-plan-uri" : "break-all font-mono text-[11px] text-[var(--color-text-muted)]"}>{planPath}</p>);
+    if (orbit) return <div className={planPath ? "oc-plan-file" : undefined}>
+      {pathLine}
+      <div className="ocv-prose"><MarkdownRenderer content={plan.content} onFileClick={onFileClick} {...markdownProps} /></div>
+    </div>;
+    return <div className="space-y-2">{pathLine}<MarkdownRenderer content={plan.content} onFileClick={onFileClick} {...markdownProps} /></div>;
+  }
   const path = planFilePath(plan.uri);
   const current = file?.uri === plan.uri ? file : null;
   if (orbit) return <div className="oc-plan-file">

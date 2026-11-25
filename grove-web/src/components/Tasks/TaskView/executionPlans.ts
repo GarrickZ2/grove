@@ -3,7 +3,7 @@ import { normalizePlanEntries, type PlanEntry } from "./planEntries";
 
 export type PlanDocument =
   | { type: "items"; plan_id: string; entries: PlanEntry[] }
-  | { type: "markdown"; plan_id: string; content: string }
+  | { type: "markdown"; plan_id: string; content: string; /** Absolute path of the file that holds the plan. */ path?: string }
   | { type: "file"; plan_id: string; uri: string };
 export type PlanDocumentMessage = { type: "plan_document"; plan: PlanDocument };
 
@@ -12,7 +12,7 @@ function normalizePlan(value: unknown): PlanDocument | null {
   const plan = value as Record<string, unknown>;
   if (typeof plan.plan_id !== "string") return null;
   if (plan.type === "items" && Array.isArray(plan.entries)) return { type: "items", plan_id: plan.plan_id, entries: normalizePlanEntries(plan.entries) };
-  if (plan.type === "markdown" && typeof plan.content === "string") return { type: "markdown", plan_id: plan.plan_id, content: plan.content };
+  if (plan.type === "markdown" && typeof plan.content === "string") return { type: "markdown", plan_id: plan.plan_id, content: plan.content, ...(typeof plan.path === "string" && plan.path ? { path: plan.path } : {}) };
   if (plan.type === "file" && typeof plan.uri === "string") return { type: "file", plan_id: plan.plan_id, uri: plan.uri };
   return null;
 }

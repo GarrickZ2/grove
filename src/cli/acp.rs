@@ -422,6 +422,8 @@ pub async fn execute(agent: String, cwd: String) {
                 Ok(
                     AcpUpdate::SubagentUpdate { .. }
                     | AcpUpdate::BackgroundWork { .. }
+                    | AcpUpdate::ForkPoint { .. }
+                    | AcpUpdate::PromptSuggestions { .. }
                     | AcpUpdate::SubagentEvent { .. }
                     | AcpUpdate::SessionMessage { .. }
                     | AcpUpdate::Busy { .. }

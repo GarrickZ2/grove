@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Box, Brain, ChevronDown, ChevronLeft, ChevronRight, Loader2, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Box, Brain, ChevronDown, ChevronLeft, ChevronRight, Loader2, Search, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react";
 import { useEscapeScope } from "../../../keyboard/useEscapeScope";
 import { PickerMenu } from "../../ui/PickerMenu";
 import type { SessionConfigOption, SessionConfigSelectValue } from "../../../api/tasks";
@@ -90,6 +90,7 @@ export const SessionSettingsMenu = ({
     if (configCategoryMatches(option, "model")) return <Box className="h-3.5 w-3.5" />;
     if (configCategoryMatches(option, "mode")) return <ShieldCheck className="h-3.5 w-3.5" />;
     if (configCategoryMatches(option, "thought_level")) return <Brain className="h-3.5 w-3.5" />;
+    if (configCategoryMatches(option, "speed")) return <Zap className="h-3.5 w-3.5" />;
     return <SlidersHorizontal className="h-3.5 w-3.5" />;
   };
 

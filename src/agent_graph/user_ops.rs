@@ -316,6 +316,7 @@ pub async fn user_send_message(
             .await
             .map_err(|error| error.to_string())?;
         handle.emit(AcpUpdate::QueueUpdate { messages });
+        handle.steer_queue();
         return Ok(());
     }
 

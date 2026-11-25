@@ -32,6 +32,23 @@ where
             },
             agent_client_protocol::on_receive_notification!(),
         )
+        .on_receive_notification(
+            {
+                let state = Arc::clone(&state);
+                async move |notification: v2::AuthStatusUpdateNotification, _connection| {
+                    if let Some(authenticated) = auth_state_signed_in(&notification.state) {
+                        // A full queue drops the update; the next prompt still
+                        // reports auth_required on its own.
+                        let _ = state
+                            .handle
+                            .cmd_tx
+                            .try_send(AcpCommand::AuthStatusChanged { authenticated });
+                    }
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_notification!(),
+        )
         .on_receive_request(
             {
                 let state = Arc::clone(&state);
@@ -156,6 +173,10 @@ async fn drive(
         .clone()
         .unwrap_or_else(|| initialized.info.name.clone());
     let agent_version = initialized.info.version.clone();
+    state.handle.steering_capable.store(
+        super::steering::advertised(initialized.meta.as_ref()),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let auth_methods = auth_methods(&initialized.auth_methods, config.agent_type != "remote");
     *state.handle.auth_methods.lock().unwrap() = auth_methods.clone();
     state.handle.logout_capable.store(
@@ -189,7 +210,7 @@ async fn drive(
         Vec::new()
     };
     let servers = v2_wire::mcp_servers(configured, capabilities.mcp.as_ref())?;
-    let saved_id = match config.chat_id.as_ref() {
+    let mut saved_id = match config.chat_id.as_ref() {
         Some(chat_id) => {
             crate::storage::tasks::get_chat_session(&config.project_key, &config.task_id, chat_id)
                 .map_err(acp::Error::into_internal_error)?
@@ -215,7 +236,68 @@ async fn drive(
     } else {
         None
     };
+    let store = |flag: &std::sync::atomic::AtomicBool, value: bool| {
+        flag.store(value, std::sync::atomic::Ordering::Relaxed)
+    };
+    store(
+        &state.handle.archive_capable,
+        capabilities.archive.is_some(),
+    );
+    store(&state.handle.title_capable, capabilities.title.is_some());
+    // Read before anything below writes session.json with the Agent's own values.
+    let persisted = config
+        .chat_id
+        .as_ref()
+        .and_then(|chat| super::read_session_metadata(&config.project_key, &config.task_id, chat));
+    // A stale ID alone must not make an empty Chat unusable. Never replace an
+    // imported session or one with an existing Grove conversation this way.
+    let can_recreate_empty = !config.import_session
+        && config.chat_id.as_ref().is_some_and(|chat| {
+            super::chat_history_is_empty(&config.project_key, &config.task_id, chat)
+        });
+    if let Some(id) = saved_id.clone().filter(|_| capabilities.archive.is_some()) {
+        // A session archived through Grove (or the Agent's own UI) must be
+        // unarchived before it is continued.
+        let _ = tokio::time::timeout(
+            SETUP_REQUEST_TIMEOUT,
+            connection
+                .send_request(v2::UnarchiveSessionRequest::new(id))
+                .block_task(),
+        )
+        .await;
+    }
+    if let Some(id) = saved_id
+        .clone()
+        .filter(|_| capabilities.status.is_some() && !config.import_session)
+    {
+        if let Ok(Err(error)) = tokio::time::timeout(
+            SETUP_REQUEST_TIMEOUT,
+            connection
+                .send_request(v2::SessionStatusRequest::new(id))
+                .block_task(),
+        )
+        .await
+        {
+            if i32::from(error.code) == -32002 {
+                if !can_recreate_empty {
+                    super::retire_missing_session(&config, &error);
+                    return Err(acp::Error::internal_error()
+                        .data(format!("The Agent no longer has this session: {error}")));
+                }
+                saved_id = None;
+            }
+        }
+    }
+    let accepts_config = capabilities.options.is_some();
+    let new_config = super::new_session_config(&config);
     let opened = loop {
+        // Settings go out with the request when the Agent accepts them there;
+        // otherwise they are set one by one once the session is open (below).
+        let initial = if saved_id.is_some() {
+            super::restored_config_options(accepts_config, persisted.as_ref())
+        } else {
+            super::initial_config_options(accepts_config, new_config.as_ref())
+        };
         let phase = if saved_id.is_some() {
             "session/resume"
         } else {
@@ -232,10 +314,18 @@ async fn drive(
             servers.clone(),
             directories.clone(),
             system_prompt.clone(),
+            super::v2_config::initial(initial),
         )
         .await
         {
             Ok(opened) => break opened,
+            Err(error) if saved_id.is_some() && super::missing_saved_session(&error) => {
+                if !can_recreate_empty {
+                    super::retire_missing_session(&config, &error);
+                    return Err(error);
+                }
+                saved_id = None;
+            }
             Err(error) if i32::from(error.code) == -32000 => {
                 *state.handle.pending_auth.lock().unwrap() = Some(super::PendingAuthState {
                     methods: auth_methods.clone(),
@@ -263,7 +353,28 @@ async fn drive(
         .map_err(acp::Error::into_internal_error)?;
     }
     state.handle.set_session_restore_capabilities(false, true);
-    let options = super::v2_config::options(&opened.config_options);
+    *state.handle.current_config_options.lock().unwrap() =
+        super::v2_config::options(&opened.config_options);
+    if saved_id.is_some() {
+        restore_settings(&connection, &state, &opened.id, persisted.as_ref()).await;
+    } else {
+        let applied = accepts_config
+            && matches!(
+                new_config,
+                Some(crate::agent_config::AgentConfigSelection::ConfigOptions { .. })
+            );
+        if !applied {
+            apply_new_session_config(
+                &connection,
+                &state,
+                &opened.id,
+                new_config.as_ref(),
+                config.persona_injection.as_ref(),
+            )
+            .await;
+        }
+    }
+    let options = state.handle.current_config_options.lock().unwrap().clone();
     let (modes, current_mode, _, mode_descriptions) = super::extract_modes(&None, &options, true);
     let (models, current_model, model_config_id) = super::extract_config_select(
         &options,
@@ -271,7 +382,6 @@ async fn drive(
         &["model"],
     );
     let (thoughts, current_thought, thought_config_id) = super::extract_thought_level(&options);
-    *state.handle.current_config_options.lock().unwrap() = options.clone();
     *state.handle.current_mode_id.lock().unwrap() = current_mode.clone();
     *state.handle.current_model_id.lock().unwrap() = current_model.clone();
     *state.handle.model_config_id.lock().unwrap() = model_config_id;
@@ -342,6 +452,15 @@ async fn drive(
         }
         .await?;
     }
+    super::save_capability_snapshot(
+        &config.agent_name,
+        &agent_version,
+        &options,
+        true,
+        &modes,
+        current_mode.as_deref(),
+    );
+    let auth_agent_name = agent_name.clone();
     state.handle.emit(super::AcpUpdate::SessionReady {
         session_id: opened.id.to_string(),
         protocol_version: Some(2),
@@ -360,6 +479,10 @@ async fn drive(
         uses_config_options: true,
         prompt_capabilities: prompt_capabilities.clone(),
         fork_capable,
+        steering_capable: state
+            .handle
+            .steering_capable
+            .load(std::sync::atomic::Ordering::Relaxed),
         import_capable: true,
         delete_capable,
         auth_methods,
@@ -370,6 +493,28 @@ async fn drive(
     }
     state.handle.finish_terminal_auth_reconnect();
     emit_commands(&state, opened.commands.clone());
+    // Some Agents open sessions while signed out and only reject the first
+    // prompt. Ask up front so the sign-in banner shows before that.
+    if initialized
+        .capabilities
+        .auth
+        .as_ref()
+        .is_some_and(|auth| auth.status.is_some())
+    {
+        if let Ok(Ok(status)) = tokio::time::timeout(
+            SETUP_REQUEST_TIMEOUT,
+            connection
+                .send_request(v2::AuthStatusRequest::new())
+                .block_task(),
+        )
+        .await
+        {
+            let pending = state.handle.pending_auth.lock().unwrap().is_some();
+            if auth_state_signed_in(&status.state) == Some(false) && !pending {
+                super::show_auth_required(&state.handle, &auth_agent_name);
+            }
+        }
+    }
     let (prompt_tx, mut prompt_rx) = mpsc::unbounded_channel::<acp::Result<v2::PromptResponse>>();
     let mut turn: Option<Turn> = None;
     let mut terminals = super::v2_terminal::Terminals::default();
@@ -438,6 +583,9 @@ async fn drive(
                             v2::SessionUpdate::UserMessageChunk(message) => message.message_id.to_string(),
                             _ => unreachable!(),
                         };
+                        if turn.is_some() || config.import_session {
+                            state.handle.cursors.lock().unwrap().user_message(&message_id);
+                        }
                         if accepted_user_messages.contains(&message_id) {
                             state.handle.emit(super::AcpUpdate::V2MessageUpdate { update });
                         } else if let Some(turn) = turn.as_mut() {
@@ -521,6 +669,7 @@ async fn drive(
                             queued.message_ids = message_ids;
                             state.handle.pending_queue.lock().unwrap().push(queued);
                             state.handle.emit(super::AcpUpdate::QueueUpdate { messages: state.handle.get_queue() });
+                            state.handle.steer_queue();
                             continue;
                         }
                         if let Err(message) = super::validate_prompt_content(&prompt_capabilities, &attachments) {
@@ -557,6 +706,7 @@ async fn drive(
                             let raw = serde_json::to_value(super::to_acp_content_block(attachment)).map_err(acp::Error::into_internal_error)?;
                             content.push(serde_json::from_value(raw).map_err(acp::Error::into_internal_error)?);
                         }
+                        state.handle.prompt_started();
                         state.handle.emit(super::AcpUpdate::PromptStarted { message_ids: message_ids.clone() });
                         let local_message_id = if message_ids.len() == 1 { message_ids[0].clone() } else { format!("v2-{}", message_ids.first().cloned().unwrap_or_else(|| uuid::Uuid::new_v4().to_string())) };
                         if !is_retry {
@@ -604,14 +754,123 @@ async fn drive(
                 .emit_child(session, terminal_event(terminal, true));
         }
     }
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        connection
-            .send_request(v2::CloseSessionRequest::new(opened.id))
-            .block_task(),
-    )
-    .await;
+    let load =
+        |flag: &std::sync::atomic::AtomicBool| flag.load(std::sync::atomic::Ordering::Relaxed);
+    if load(&state.handle.archive_on_close) && load(&state.handle.archive_capable) {
+        // Archiving closes an active session too, then hides it from the
+        // Agent's default session list.
+        let _ = tokio::time::timeout(
+            SETUP_REQUEST_TIMEOUT,
+            connection
+                .send_request(v2::ArchiveSessionRequest::new(opened.id))
+                .block_task(),
+        )
+        .await;
+    } else {
+        let _ = tokio::time::timeout(
+            SETUP_REQUEST_TIMEOUT,
+            connection
+                .send_request(v2::CloseSessionRequest::new(opened.id))
+                .block_task(),
+        )
+        .await;
+    }
     Ok(())
+}
+
+/// Requests around a session's setup and teardown that must not hold it up.
+const SETUP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// `Some(true)` signed in, `Some(false)` signed out; `None` when the state says
+/// nothing Grove should act on.
+fn auth_state_signed_in(state: &v2::AuthState) -> Option<bool> {
+    match state {
+        v2::AuthState::Authenticated => Some(true),
+        v2::AuthState::Unauthenticated => Some(false),
+        _ => None,
+    }
+}
+
+/// Re-apply the settings Grove last confirmed for a resumed session, so the UI
+/// and the Agent cannot diverge. Values the Agent no longer offers are skipped.
+async fn restore_settings(
+    connection: &V2ConnectionTo<Agent>,
+    state: &AcpClientState,
+    session_id: &v2::SessionId,
+    persisted: Option<&super::SessionMetadata>,
+) {
+    let Some(persisted) = persisted else { return };
+    let advertised = state.handle.current_config_options.lock().unwrap().clone();
+    for (id, value) in super::config_options_to_restore(&persisted.config_options, &advertised) {
+        if let Err(error) = set_option(connection, state, session_id, id.clone(), value).await {
+            state.handle.emit(super::AcpUpdate::ConfigOptionError {
+                message: format!(
+                    "Could not restore saved session setting '{id}'; using the Agent's current value. {error}"
+                ),
+                config_id: id,
+            });
+        }
+    }
+}
+
+/// Settings chosen for a new session: from the New page or a Custom Agent.
+/// Best-effort, so a stale choice never blocks the session.
+async fn apply_new_session_config(
+    connection: &V2ConnectionTo<Agent>,
+    state: &AcpClientState,
+    session_id: &v2::SessionId,
+    selection: Option<&crate::agent_config::AgentConfigSelection>,
+    persona: Option<&super::PersonaInjection>,
+) {
+    use crate::agent_config::AgentConfigSelection;
+    let advertised = state.handle.current_config_options.lock().unwrap().clone();
+    let mode_id = || super::extract_modes(&None, &advertised, true).2;
+    let mut chosen: Vec<(String, super::ConfigOptionValue)> = Vec::new();
+    match selection {
+        Some(selection @ AgentConfigSelection::ConfigOptions { .. }) => {
+            let mut values: std::collections::HashMap<_, _> =
+                selection.ordered_config_values().into_iter().collect();
+            // The Agent's own order keeps dependent options deterministic.
+            for option in &advertised {
+                let id = option.id.to_string();
+                if let Some(value) = values.remove(&id) {
+                    chosen.push((id, value));
+                }
+            }
+        }
+        Some(AgentConfigSelection::Modes { mode_id: mode, .. }) => {
+            if let Some(id) = mode_id() {
+                chosen.push((id, super::ConfigOptionValue::Select(mode.clone())));
+            }
+        }
+        // Custom Agents made before settings came from a capability snapshot.
+        _ => {
+            if let Some(persona) = persona {
+                let (models, _, model_id) = super::extract_config_select(
+                    &advertised,
+                    acp::SessionConfigOptionCategory::Model,
+                    &["model"],
+                );
+                let (modes, _, _, _) = super::extract_modes(&None, &advertised, true);
+                let (efforts, _, effort_id) = super::extract_thought_level(&advertised);
+                for (id, query, values) in [
+                    (model_id, &persona.model, models),
+                    (mode_id(), &persona.mode, modes),
+                    (effort_id, &persona.effort, efforts),
+                ] {
+                    let value = query
+                        .as_deref()
+                        .and_then(|query| super::fuzzy_pick_id(query, &values));
+                    if let (Some(id), Some(value)) = (id, value) {
+                        chosen.push((id, super::ConfigOptionValue::Select(value)));
+                    }
+                }
+            }
+        }
+    }
+    for (id, value) in chosen {
+        let _ = set_option(connection, state, session_id, id, value).await;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -693,7 +952,11 @@ async fn handle_command(
                 .map_err(|error| error.to_string());
             let _ = reply.send(result);
         }
-        AcpCommand::ForkSession { cwd, reply } => {
+        AcpCommand::ForkSession {
+            cursor_id,
+            cwd,
+            reply,
+        } => {
             if !state
                 .handle
                 .fork_capable
@@ -703,6 +966,7 @@ async fn handle_command(
                 return;
             }
             let request = v2::ForkSessionRequest::new(session_id.clone(), cwd)
+                .cursor_id(cursor_id.clone().map(v2::CursorId::new))
                 .mcp_servers(servers.to_vec())
                 .additional_directories(directories.to_vec())
                 .system_prompt(system_prompt.clone());
@@ -711,7 +975,12 @@ async fn handle_command(
                 .block_task()
                 .await
                 .map(|response| response.session_id.to_string())
-                .map_err(|error| error.to_string());
+                .map_err(|error| {
+                    state
+                        .handle
+                        .drop_rejected_cursor(cursor_id, i32::from(error.code));
+                    error.to_string()
+                });
             let _ = reply.send(result);
         }
         AcpCommand::Logout { reply } => {
@@ -764,12 +1033,38 @@ async fn handle_command(
             }
         }
         AcpCommand::RetryAuthentication => {
+            *state.handle.pending_auth.lock().unwrap() = None;
+            state.handle.emit(super::AcpUpdate::AuthSucceeded);
             if let Some(retry) = state.handle.pending_auth_retry.lock().unwrap().take() {
                 state.handle.retry_prompt_after_auth(retry);
             }
         }
-        // Grove reads auth/status on the v1 connection only.
-        AcpCommand::AuthStatusChanged { .. } => {}
+        // While the Agent works, the turn itself settles whether it is signed in.
+        AcpCommand::AuthStatusChanged { .. }
+            if state
+                .handle
+                .is_busy
+                .load(std::sync::atomic::Ordering::Relaxed) => {}
+        AcpCommand::AuthStatusChanged { authenticated } => {
+            let pending = state.handle.pending_auth.lock().unwrap().is_some();
+            if authenticated && pending {
+                // Signed in outside Grove's login flow: same as a retry.
+                let _ = state
+                    .handle
+                    .cmd_tx
+                    .try_send(AcpCommand::RetryAuthentication);
+            } else if !authenticated && !pending {
+                let name = state
+                    .handle
+                    .agent_info
+                    .read()
+                    .unwrap()
+                    .as_ref()
+                    .map(|(_, name, _)| name.clone())
+                    .unwrap_or_default();
+                super::show_auth_required(&state.handle, &name);
+            }
+        }
         AcpCommand::Prompt { .. }
         | AcpCommand::Cancel
         | AcpCommand::CancelPrompts(_)
@@ -847,6 +1142,13 @@ async fn await_start_auth(
                 }
             }
             AcpCommand::RetryAuthentication => return Ok(true),
+            AcpCommand::AuthStatusChanged {
+                authenticated: true,
+            } => {
+                // Signed in outside Grove's login flow (a terminal or browser).
+                state.handle.emit(super::AcpUpdate::AuthSucceeded);
+                return Ok(true);
+            }
             AcpCommand::AuthStatusChanged { .. } => {}
             AcpCommand::Kill => return Ok(false),
             AcpCommand::Prompt {
@@ -1331,10 +1633,7 @@ fn handle_update(
                 v2::PlanUpdateContent::Markdown(plan) => Some(super::PlanDocument::Markdown {
                     plan_id: plan.plan_id.to_string(),
                     content: plan.content,
-                }),
-                v2::PlanUpdateContent::File(plan) => Some(super::PlanDocument::File {
-                    plan_id: plan.plan_id.to_string(),
-                    uri: plan.uri,
+                    path: plan.path.map(|path| path.0.to_string_lossy().into_owned()),
                 }),
                 _ => None,
             };
@@ -1385,9 +1684,7 @@ fn handle_update(
             });
         }
         SessionUpdate::CompactionUpdate(update) => {
-            if let Ok(update) = serde_json::to_value(update)
-                .and_then(serde_json::from_value::<acp::CompactionUpdate>)
-            {
+            if let Some(update) = state.compaction_from_v2("", update) {
                 state.handle_compaction_update(update);
             }
         }
@@ -1398,6 +1695,22 @@ fn handle_update(
                 state.handle_compaction_summary_chunk(chunk);
             }
         }
+        SessionUpdate::CursorUpdate(update) => {
+            if let Ok(update) =
+                serde_json::to_value(update).and_then(serde_json::from_value::<acp::CursorUpdate>)
+            {
+                state.handle.apply_cursor_update(&update);
+            }
+        }
+        SessionUpdate::PromptSuggestionsUpdate(update) => {
+            if let Ok(update) = serde_json::to_value(update)
+                .and_then(serde_json::from_value::<acp::PromptSuggestionsUpdate>)
+            {
+                state.handle.apply_prompt_suggestions(update);
+            }
+        }
+        // Replayed history is told apart by the resume response.
+        SessionUpdate::ReplayComplete(_) => {}
         SessionUpdate::SessionInfoUpdate(update) => {
             if let Ok(update) = serde_json::to_value(update)
                 .and_then(serde_json::from_value::<acp::SessionInfoUpdate>)
@@ -1478,6 +1791,18 @@ fn handle_child_update(
                 state
                     .handle
                     .emit_child(session, terminal_event(terminal, false));
+            }
+        }
+        // Grove forks whole Chats, and takes prompts for the main session only.
+        v2::SessionUpdate::CursorUpdate(_)
+        | v2::SessionUpdate::PromptSuggestionsUpdate(_)
+        | v2::SessionUpdate::ReplayComplete(_) => {}
+        v2::SessionUpdate::CompactionUpdate(update) => {
+            if let Some(update) = state.compaction_from_v2(session, update) {
+                let _ = state.handle_child_notification(acp::SessionNotification::new(
+                    session.to_string(),
+                    acp::SessionUpdate::CompactionUpdate(update),
+                ));
             }
         }
         other => {
@@ -1663,6 +1988,299 @@ for line in sys.stdin:
                 .any(|request| request["method"] == "session/set_config_option"),
             "{requests:?}"
         );
+    }
+
+    /// A v2 Agent that records its requests. `argv[2]`: `options` advertises
+    /// every optional session method; `plain` none; `gone` has lost its session.
+    const V2_FIXTURE: &str = r#"
+import json, sys
+mode = sys.argv[2]
+current = {'model': 'sonnet', 'fast': False}
+def send(msg): print(json.dumps(msg), flush=True)
+def options():
+    return [{'configId':'model','name':'Model','category':'model','type':'select','currentValue':current['model'],
+             'options':[{'value':'sonnet','name':'Sonnet'},{'value':'opus','name':'Opus'}]},
+            {'configId':'fast','name':'Fast','category':'speed','type':'boolean','currentValue':current['fast']}]
+for line in sys.stdin:
+    req = json.loads(line); method = req.get('method'); ident = req.get('id'); params = req.get('params') or {}
+    if ident is None: continue
+    with open(sys.argv[1], 'a') as f: f.write(json.dumps({'method':method,'params':params}) + '\n')
+    for o in params.get('configOptions') or []: current[o['configId']] = o['value']
+    if method == 'initialize':
+        session = {} if mode == 'plain' else {'options':{}, 'status':{}, 'archive':{}, 'title':{}}
+        result = {'protocolVersion':2, 'info':{'name':'fixture','version':'1'},
+                  'capabilities':{'session':session, 'auth':{} if mode == 'plain' else {'status':{}}}}
+    elif method == 'session/new':
+        result = {'sessionId':'new-session', 'configOptions':options()}
+    elif method == 'session/resume':
+        send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':params['sessionId'],'update':{'sessionUpdate':'state_update','state':'idle'}}})
+        result = {'configOptions':options()}
+    elif method == 'session/set_config_option':
+        current[params['configId']] = params['value']
+        result = {'configOptions':options()}
+    elif method == 'session/status' and mode == 'gone':
+        send({'jsonrpc':'2.0','id':ident,'error':{'code':-32002,'message':'Resource not found','data':{'sessionId':params['sessionId']}}})
+        continue
+    elif method == 'auth/status':
+        result = {'state':'unauthenticated'}
+    else:
+        result = {}
+    send({'jsonrpc':'2.0','id':ident,'result':result})
+"#;
+
+    fn v2_fixture_config(
+        dir: &std::path::Path,
+        key: &str,
+        chat: &str,
+        mode: &str,
+    ) -> (AcpStartConfig, std::path::PathBuf) {
+        let script = dir.join("agent.py");
+        std::fs::write(&script, V2_FIXTURE).unwrap();
+        let trace = dir.join(format!("requests-{chat}"));
+        let config = AcpStartConfig {
+            agent_command: PYTHON.into(),
+            agent_name: "v2-fixture".into(),
+            agent_args: vec![
+                script.to_string_lossy().into_owned(),
+                trace.to_string_lossy().into_owned(),
+                mode.into(),
+            ],
+            working_dir: dir.into(),
+            env_vars: HashMap::from([("GROVE_AGENT_ID".into(), "v2-fixture".into())]),
+            project_key: key.into(),
+            task_id: "task".into(),
+            chat_id: Some(chat.into()),
+            artifact_dir: Some(dir.join("artifacts")),
+            additional_mcp_servers: Vec::new(),
+            mcp_server_policy: super::super::McpServerPolicy::ExplicitOnly,
+            agent_type: "local".into(),
+            remote_url: None,
+            remote_auth: None,
+            suppress_initial_connecting: false,
+            import_session: false,
+            persona_injection: None,
+        };
+        crate::storage::installed_agents::patch_or_create("v2-fixture", None, None, None, None)
+            .unwrap();
+        crate::storage::installed_agents::set_acp_protocol_version("v2-fixture", 2).unwrap();
+        (config, trace)
+    }
+
+    fn add_v2_chat(key: &str, chat: &str, acp: Option<&str>) {
+        crate::storage::tasks::add_chat_session(
+            key,
+            "task",
+            crate::storage::tasks::ChatSession {
+                id: chat.into(),
+                title: chat.into(),
+                agent: "v2-fixture".into(),
+                acp_session_id: acp.map(str::to_owned),
+                created_at: chrono::Utc::now(),
+                duty: None,
+            },
+        )
+        .unwrap();
+    }
+
+    fn recorded(trace: &std::path::Path) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(trace)
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    async fn wait_for_request(trace: &std::path::Path, method: &str) -> serde_json::Value {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if let Some(found) = recorded(trace)
+                    .into_iter()
+                    .find(|request| request["method"] == method)
+                {
+                    return found["params"].clone();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("no {method} in {:?}", recorded(trace)))
+    }
+
+    #[tokio::test]
+    async fn v2_sessions_carry_their_settings_and_use_the_optional_methods() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                crate::storage::set_grove_dir_override(None);
+            }
+        }
+        let _reset = Reset;
+        for mode in ["options", "plain"] {
+            let key = format!("v2-{mode}-{}", uuid::Uuid::new_v4());
+            let (fresh, restored) = (format!("fresh-{mode}"), format!("restored-{mode}"));
+            add_v2_chat(&key, &fresh, None);
+            crate::storage::tasks::set_chat_initial_config(
+                &key,
+                "task",
+                &fresh,
+                &[(
+                    "model".to_string(),
+                    super::super::ConfigOptionValue::Select("opus".into()),
+                )]
+                .into_iter()
+                .collect(),
+            )
+            .unwrap();
+            add_v2_chat(&key, &restored, Some("old-session"));
+            let session_json = super::super::session_json_path(&key, "task", &restored);
+            std::fs::create_dir_all(session_json.parent().unwrap()).unwrap();
+            std::fs::write(&session_json, serde_json::json!({
+                "pid": 1, "agent_name": "fixture", "agent_version": "1",
+                "available_modes": [], "current_mode_id": null, "available_models": [], "current_model_id": null,
+                "uses_config_options": true,
+                "config_options": [
+                    {"id":"model","name":"Model","category":"model","type":"select","currentValue":"opus",
+                     "options":[{"value":"sonnet","name":"Sonnet"},{"value":"opus","name":"Opus"}]},
+                    {"id":"fast","name":"Fast","category":"speed","type":"boolean","currentValue":true}]
+            }).to_string()).unwrap();
+
+            for chat in [&fresh, &restored] {
+                let (config, trace) = v2_fixture_config(dir.path(), &key, chat, mode);
+                let (handle, mut events) =
+                    super::super::get_or_start_session(format!("{key}:task:{chat}"), config)
+                        .await
+                        .unwrap();
+                tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                    let mut ready = false;
+                    let mut signed_out = mode == "plain";
+                    while !ready || !signed_out {
+                        match events.recv().await.unwrap() {
+                            super::super::AcpUpdate::SessionReady {
+                                current_model_id,
+                                config_options,
+                                ..
+                            } => {
+                                assert_eq!(current_model_id.as_deref(), Some("opus"), "{chat}");
+                                let fast =
+                                    serde_json::to_value(&config_options).unwrap()[1].clone();
+                                assert_eq!(fast["currentValue"], chat == &restored, "{chat}");
+                                ready = true;
+                            }
+                            super::super::AcpUpdate::AuthRequired { .. } => signed_out = true,
+                            super::super::AcpUpdate::Error { message } => {
+                                panic!("{chat}: {message}")
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+                .await
+                .unwrap_or_else(|_| panic!("{chat} did not get ready: {:?}", recorded(&trace)));
+                let methods: Vec<String> = recorded(&trace)
+                    .iter()
+                    .map(|request| request["method"].as_str().unwrap().to_owned())
+                    .collect();
+                let has = |method: &str| methods.iter().any(|sent| sent == method);
+                if mode == "options" {
+                    assert!(!has("session/set_config_option"), "{methods:?}");
+                    assert_eq!(has("session/status"), chat == &restored);
+                    assert_eq!(has("session/unarchive"), chat == &restored);
+                    handle.push_user_title("Renamed");
+                    let title = wait_for_request(&trace, "session/set_title").await;
+                    assert_eq!(title["title"], "Renamed");
+                    handle.archive_and_kill().await.unwrap();
+                    wait_for_request(&trace, "session/archive").await;
+                    assert!(!recorded(&trace)
+                        .iter()
+                        .any(|request| request["method"] == "session/close"));
+                } else {
+                    assert!(has("session/set_config_option"), "{methods:?}");
+                    for method in ["session/status", "session/unarchive", "auth/status"] {
+                        assert!(!has(method), "{method} in {methods:?}");
+                    }
+                    handle.archive_and_kill().await.unwrap();
+                    wait_for_request(&trace, "session/close").await;
+                }
+            }
+        }
+        // What the session offered is kept for choosing settings before one exists.
+        let snapshot = crate::storage::installed_agents::get_capability_snapshot("v2-fixture")
+            .unwrap()
+            .unwrap();
+        assert_eq!(snapshot["config_options"][0]["id"], "model");
+        assert_eq!(snapshot["agent_version"], "1");
+    }
+
+    #[tokio::test]
+    async fn v2_missing_session_is_retired_or_recreated_when_empty() {
+        let _lock = crate::storage::database::test_lock().lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::set_grove_dir_override(Some(dir.path().to_path_buf()));
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                crate::storage::set_grove_dir_override(None);
+            }
+        }
+        let _reset = Reset;
+        let key = format!("v2-gone-{}", uuid::Uuid::new_v4());
+        let kept = format!("kept-{}", uuid::Uuid::new_v4());
+        add_v2_chat(&key, &kept, Some("gone-session"));
+        crate::storage::chat_history::append_event(
+            &key,
+            "task",
+            &kept,
+            &super::super::AcpUpdate::UserMessage {
+                message_id: None,
+                text: "earlier request".into(),
+                client_message_id: None,
+                attachments: vec![],
+                sender: None,
+                terminal: false,
+            },
+        );
+        let (config, trace) = v2_fixture_config(dir.path(), &key, &kept, "gone");
+        let started = super::super::get_or_start_session(format!("{key}:kept"), config).await;
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while crate::storage::tasks::chat_readonly(&kept)
+                .unwrap()
+                .is_none()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the Chat was not marked read-only");
+        if let Ok((handle, _)) = started {
+            handle.request_shutdown();
+        }
+        assert!(!recorded(&trace)
+            .iter()
+            .any(|request| request["method"] == "session/resume"));
+
+        let empty = format!("empty-{}", uuid::Uuid::new_v4());
+        add_v2_chat(&key, &empty, Some("gone-session"));
+        let (config, _trace) = v2_fixture_config(dir.path(), &key, &empty, "gone");
+        let (handle, mut events) =
+            super::super::get_or_start_session(format!("{key}:empty"), config)
+                .await
+                .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            loop {
+                if let super::super::AcpUpdate::SessionReady { session_id, .. } =
+                    events.recv().await.unwrap()
+                {
+                    assert_eq!(session_id, "new-session");
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        handle.request_shutdown();
     }
 
     #[tokio::test]

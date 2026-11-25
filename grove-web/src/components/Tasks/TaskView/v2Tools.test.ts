@@ -18,3 +18,10 @@ it("renders a raw tool result when structured content is absent", () => {
   } });
   expect(messages[0]).toMatchObject({ output: [{ type: "content", content: { type: "text", text: '{\n  "result": "done"\n}' } }] });
 });
+
+it("keeps the child session a tool call works with", () => {
+  const messages = reduceV2Tool([], { type: "v2_tool_update", update: {
+    sessionUpdate: "tool_call_update", toolCallId: "t", title: "Delegate", content: [{ type: "session", sessionId: "child" }],
+  } });
+  expect(messages[0]).toMatchObject({ output: [{ type: "session", session_id: "child" }] });
+});

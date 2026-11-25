@@ -1,5 +1,5 @@
-import { createElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ArrowLeft, Box, Brain, Check, ChevronDown, ChevronRight, Loader2, Search, ShieldCheck, SlidersHorizontal, Sparkle, UserRound } from "lucide-react";
+import { createElement, Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { ArrowLeft, Box, Brain, Check, ChevronDown, ChevronRight, Loader2, Search, ShieldCheck, SlidersHorizontal, Sparkle, UserRound, Zap } from "lucide-react";
 import { OrbitComposerSheet } from "./OrbitSheet";
 import { useEscapeScope } from "../../../../keyboard/useEscapeScope";
 import { Toggle } from "../../../../orbit/ui/Toggle";
@@ -17,7 +17,7 @@ export interface SetupFieldOption {
 /** One select-style setting in the setup menu (Agent, Model, Mode, Effort, other options). */
 export interface SetupField {
   id: string;
-  kind: "agent" | "model" | "mode" | "thinking" | "option";
+  kind: "agent" | "model" | "mode" | "thinking" | "speed" | "option";
   label: string;
   options: SetupFieldOption[];
   value: string;
@@ -30,6 +30,8 @@ export interface SetupField {
 /** A boolean session option: a toggle right in its menu row. */
 export interface SetupToggle {
   id: string;
+  /** A speed toggle sits right under the model. */
+  kind?: "speed";
   label: string;
   description?: string | null;
   value: boolean;
@@ -51,7 +53,11 @@ interface OrbitSetupChipProps {
   sheet?: boolean;
 }
 
-const FIELD_ICON = { agent: UserRound, model: Box, mode: ShieldCheck, thinking: Brain, option: SlidersHorizontal } as const;
+const FIELD_ICON = { agent: UserRound, model: Box, mode: ShieldCheck, thinking: Brain, speed: Zap, option: SlidersHorizontal } as const;
+/** Whether a speed setting is faster than the slowest value; ACP lists values from slowest to fastest. */
+const isFast = (fields: SetupField[], toggles: SetupToggle[]) =>
+  toggles.some((toggle) => toggle.kind === "speed" && toggle.value)
+  || fields.some((field) => field.kind === "speed" && field.options.findIndex((option) => option.value === field.value) > 0);
 const SEARCH_MIN = 9;
 /** Hover a row this long before its submenu opens, so a diagonal move to an open submenu doesn't switch it. */
 const HOVER_OPEN_MS = 110;
@@ -158,7 +164,23 @@ export const OrbitSetupChip = memo(function OrbitSetupChip({ agentLabel, agentIc
   const modelLabel = selectedLabel(model);
   const risky = !!mode && isRiskyMode({ value: mode.value, label: modeLabel ?? undefined });
   const loading = fields.some((field) => field.loading) || toggles.some((toggle) => toggle.loading);
-  const summary = [agentLabel, modelLabel, modeLabel].filter(Boolean).join(" · ");
+  const fast = isFast(fields, toggles);
+  const summary = [agentLabel, modelLabel, fast && "Fast", modeLabel].filter(Boolean).join(" · ");
+  const speedToggles = model ? toggles.filter((toggle) => toggle.kind === "speed") : [];
+  const otherToggles = toggles.filter((toggle) => !speedToggles.includes(toggle));
+  const renderToggle = (toggle: SetupToggle) => {
+    const Icon = FIELD_ICON[toggle.kind ?? "option"];
+    return (
+      <div key={toggle.id} className="oc-menu-row is-toggle" onMouseEnter={() => hoverRow(null)} title={toggle.description ?? undefined}>
+        <Icon className="oc-menu-ic" size={14} aria-hidden="true" />
+        <span className="oc-menu-label">{toggle.label}</span>
+        {toggle.loading && <Loader2 className="animate-spin" size={12} aria-label="Updating" />}
+        <span data-row={toggle.id} className="oc-menu-toggle">
+          <Toggle checked={toggle.value} label={toggle.label} disabled={disabled || toggle.loading} onChange={toggle.onToggle} />
+        </span>
+      </div>
+    );
+  };
   const subField = sub ? fields.find((field) => field.id === sub.id) ?? null : null;
 
   const openSub = (id: string, focus: boolean) => {
@@ -208,6 +230,7 @@ export const OrbitSetupChip = memo(function OrbitSetupChip({ agentLabel, agentIc
         <span className="oc-setup-ag" aria-hidden="true">{agentIcon ?? (agentIconType ? createElement(agentIconType, { size: 11 }) : <Sparkle size={11} />)}</span>
         <span className="oc-setup-name">{agentLabel || "Agent"}</span>
         {modelLabel && <><i className="oc-setup-dot" aria-hidden="true" /><span className="oc-setup-dim is-model">{shortSettingLabel(modelLabel, "model")}</span></>}
+        {fast && <Zap className="oc-setup-fast" size={11} aria-hidden="true" />}
         {modeLabel && <><i className="oc-setup-dot" aria-hidden="true" /><span className={risky ? "oc-setup-risk" : "oc-setup-dim"}>{shortSettingLabel(modeLabel, "mode")}</span></>}
         {loading ? <Loader2 className="oc-setup-caret animate-spin" size={12} /> : <ChevronDown className="oc-setup-caret" size={12} />}
       </button>
@@ -226,8 +249,8 @@ export const OrbitSetupChip = memo(function OrbitSetupChip({ agentLabel, agentIc
             const lockedOut = disabled && field.kind !== "agent";
             const expanded = sub?.id === field.id;
             return (
+              <Fragment key={field.id}>
               <button
-                key={field.id}
                 type="button"
                 role="menuitem"
                 data-row={field.id}
@@ -245,19 +268,12 @@ export const OrbitSetupChip = memo(function OrbitSetupChip({ agentLabel, agentIc
                 <span className="oc-menu-value">{selectedLabel(field) ?? "Default"}</span>
                 {field.loading ? <Loader2 className="oc-menu-chev animate-spin" size={12} aria-label="Updating" /> : <ChevronRight className="oc-menu-chev" size={13} aria-hidden="true" />}
               </button>
+              {field === model && speedToggles.map(renderToggle)}
+              </Fragment>
             );
           })}
-          {toggles.length > 0 && fields.length > 0 && <div className="oc-menu-sep" role="separator" />}
-          {toggles.map((toggle) => (
-            <div key={toggle.id} className="oc-menu-row is-toggle" onMouseEnter={() => hoverRow(null)} title={toggle.description ?? undefined}>
-              <SlidersHorizontal className="oc-menu-ic" size={14} aria-hidden="true" />
-              <span className="oc-menu-label">{toggle.label}</span>
-              {toggle.loading && <Loader2 className="animate-spin" size={12} aria-label="Updating" />}
-              <span data-row={toggle.id} className="oc-menu-toggle">
-                <Toggle checked={toggle.value} label={toggle.label} disabled={disabled || toggle.loading} onChange={toggle.onToggle} />
-              </span>
-            </div>
-          ))}
+          {otherToggles.length > 0 && fields.length > 0 && <div className="oc-menu-sep" role="separator" />}
+          {otherToggles.map(renderToggle)}
           {disabled && fields.some((field) => field.kind !== "agent") && <p className="oc-menu-note">Settings can change once the session is connected.</p>}
           {subField && (
             <SubMenu
@@ -465,6 +481,20 @@ function SheetMenu({ fields, toggles, disabled, emptyNote, subId, onOpen, onBack
       </div>
     );
   }
+  const model = fields.find((candidate) => candidate.kind === "model");
+  const speedToggles = model ? toggles.filter((toggle) => toggle.kind === "speed") : [];
+  const otherToggles = toggles.filter((toggle) => !speedToggles.includes(toggle));
+  const renderToggle = (toggle: SetupToggle) => {
+    const Icon = FIELD_ICON[toggle.kind ?? "option"];
+    return (
+      <div key={toggle.id} className="oc-menu-row is-toggle oc-sheet-item">
+        <Icon className="oc-menu-ic" size={16} aria-hidden="true" />
+        <span className="oc-menu-label">{toggle.label}</span>
+        {toggle.loading && <Loader2 className="animate-spin" size={14} aria-label="Updating" />}
+        <span className="oc-menu-toggle"><Toggle checked={toggle.value} label={toggle.label} disabled={disabled || toggle.loading} onChange={toggle.onToggle} /></span>
+      </div>
+    );
+  };
   return (
     <div className="oc-sheet-menu is-level-1">
       <div className="oc-sheet-head"><b>Session setup</b></div>
@@ -473,23 +503,19 @@ function SheetMenu({ fields, toggles, disabled, emptyNote, subId, onOpen, onBack
         {fields.map((candidate) => {
           const Icon = FIELD_ICON[candidate.kind];
           return (
-            <button key={candidate.id} type="button" role="menuitem" data-row={candidate.id} aria-haspopup="menu" disabled={disabled && candidate.kind !== "agent"} className="oc-menu-row oc-sheet-item" onClick={() => onOpen(candidate.id)}>
+            <Fragment key={candidate.id}>
+            <button type="button" role="menuitem" data-row={candidate.id} aria-haspopup="menu" disabled={disabled && candidate.kind !== "agent"} className="oc-menu-row oc-sheet-item" onClick={() => onOpen(candidate.id)}>
               <Icon className="oc-menu-ic" size={16} aria-hidden="true" />
               <span className="oc-menu-label">{candidate.label}</span>
               <span className="oc-menu-value">{selectedLabel(candidate) ?? "Default"}</span>
               {candidate.loading ? <Loader2 className="oc-menu-chev animate-spin" size={14} aria-label="Updating" /> : <ChevronRight className="oc-menu-chev" size={15} aria-hidden="true" />}
             </button>
+            {candidate === model && speedToggles.map(renderToggle)}
+            </Fragment>
           );
         })}
-        {toggles.length > 0 && fields.length > 0 && <div className="oc-menu-sep" role="separator" />}
-        {toggles.map((toggle) => (
-          <div key={toggle.id} className="oc-menu-row is-toggle oc-sheet-item">
-            <SlidersHorizontal className="oc-menu-ic" size={16} aria-hidden="true" />
-            <span className="oc-menu-label">{toggle.label}</span>
-            {toggle.loading && <Loader2 className="animate-spin" size={14} aria-label="Updating" />}
-            <span className="oc-menu-toggle"><Toggle checked={toggle.value} label={toggle.label} disabled={disabled || toggle.loading} onChange={toggle.onToggle} /></span>
-          </div>
-        ))}
+        {otherToggles.length > 0 && fields.length > 0 && <div className="oc-menu-sep" role="separator" />}
+        {otherToggles.map(renderToggle)}
       </div>
       {disabled && fields.some((candidate) => candidate.kind !== "agent") && <p className="oc-menu-note">Settings can change once the session is connected.</p>}
     </div>

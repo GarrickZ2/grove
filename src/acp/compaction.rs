@@ -2,6 +2,7 @@
 //! to local history and the frontend; they are not model message content.
 use super::{acp, content_block_to_data, AcpClientState, AcpUpdate, ContentBlockData};
 pub use agent_client_protocol::schema::MaybeUndefined;
+use agent_client_protocol::v2::schema as v2;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompactionUpdateData {
@@ -48,6 +49,27 @@ pub(super) fn compaction_chunk(chunk: acp::CompactionSummaryChunk) -> Option<Acp
 impl AcpClientState {
     pub(super) fn handle_compaction_update(&self, update: acp::CompactionUpdate) {
         self.handle.emit(compaction_update(update));
+    }
+    /// v2 patches `status`; fill in the value it leaves unchanged. `session`
+    /// is the child session, empty for the main one.
+    pub(super) fn compaction_from_v2(
+        &self,
+        session: &str,
+        update: v2::CompactionUpdate,
+    ) -> Option<acp::CompactionUpdate> {
+        let mut value = serde_json::to_value(update).ok()?;
+        let id = value.get("compactionId")?.as_str()?.to_owned();
+        let mut statuses = self.compaction_status.lock().unwrap();
+        let known = statuses
+            .entry((session.to_owned(), id))
+            .or_insert_with(|| "in_progress".to_owned());
+        match value.get("status") {
+            Some(serde_json::Value::String(status)) => known.clone_from(status),
+            Some(_) => *known = "in_progress".to_owned(),
+            None => {}
+        }
+        value["status"] = known.clone().into();
+        serde_json::from_value(value).ok()
     }
     pub(super) fn handle_compaction_summary_chunk(&self, chunk: acp::CompactionSummaryChunk) {
         if let Some(event) = compaction_chunk(chunk) {

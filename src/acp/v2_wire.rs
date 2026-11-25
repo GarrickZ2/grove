@@ -72,6 +72,10 @@ pub async fn initialize(
             .form(v2::ElicitationFormCapabilities::new())
             .url(v2::ElicitationUrlCapabilities::new()),
     );
+    capabilities = capabilities.session(
+        v2::ClientSessionCapabilities::new()
+            .prompt_suggestions(v2::PromptSuggestionsCapabilities::new()),
+    );
     if local {
         capabilities = capabilities
             .auth(v2::ClientAuthCapabilities::new().terminal(v2::TerminalAuthCapabilities::new()));
@@ -82,7 +86,7 @@ pub async fn initialize(
     )
     .capabilities(capabilities);
     match connection.send_initialize(request).block_task().await? {
-        InitializeOutcome::Initialized(response) => Ok(response),
+        InitializeOutcome::Initialized(response) => Ok(*response),
         InitializeOutcome::LowerVersion(mismatch) => Err(acp::Error::new(
             -32022,
             format!(
@@ -95,6 +99,7 @@ pub async fn initialize(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn open_session(
     connection: &V2ConnectionTo<Agent>,
     cwd: PathBuf,
@@ -103,13 +108,15 @@ pub async fn open_session(
     servers: Vec<v2::McpServer>,
     directories: Vec<PathBuf>,
     system_prompt: Option<v2::SystemPrompt>,
+    config_options: Vec<v2::InitialSessionConfigOption>,
 ) -> acp::Result<OpenedSession> {
     if let Some(id) = saved_id {
         let session_id = v2::SessionId::new(id);
         let mut request = v2::ResumeSessionRequest::new(session_id.clone(), cwd)
             .mcp_servers(servers)
             .additional_directories(directories)
-            .system_prompt(system_prompt);
+            .system_prompt(system_prompt)
+            .config_options(config_options);
         if replay {
             request = request.replay_from(v2::ReplayFrom::Start(v2::ReplayFromStart::new()));
         }
@@ -125,7 +132,8 @@ pub async fn open_session(
                 v2::NewSessionRequest::new(cwd)
                     .mcp_servers(servers)
                     .additional_directories(directories)
-                    .system_prompt(system_prompt),
+                    .system_prompt(system_prompt)
+                    .config_options(config_options),
             )
             .block_task()
             .await?;

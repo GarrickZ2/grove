@@ -163,6 +163,13 @@ enum ServerMessage {
     BackgroundWork {
         items: Vec<crate::acp::BackgroundItem>,
     },
+    ForkPoint {
+        cursor_id: String,
+        available: bool,
+    },
+    PromptSuggestions {
+        suggestions: Vec<String>,
+    },
     SubagentUpdate {
         #[serde(flatten)]
         update: crate::acp::SubagentUpdateData,
@@ -204,6 +211,8 @@ enum ServerMessage {
         prompt_capabilities: PromptCapabilitiesData,
         /// agent 是否声明了 `session.fork` 能力 — 前端据此显示 Fork 按钮
         fork_capable: bool,
+        /// Messages sent while the agent works join the running turn.
+        steering_capable: bool,
         import_capable: bool,
         delete_capable: bool,
         #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -583,6 +592,14 @@ impl From<AcpUpdate> for ServerMessage {
         match update {
             AcpUpdate::SubagentUpdate { update } => Self::SubagentUpdate { update },
             AcpUpdate::BackgroundWork { items } => Self::BackgroundWork { items },
+            AcpUpdate::ForkPoint {
+                cursor_id,
+                available,
+            } => Self::ForkPoint {
+                cursor_id,
+                available,
+            },
+            AcpUpdate::PromptSuggestions { suggestions } => Self::PromptSuggestions { suggestions },
             AcpUpdate::SubagentEvent { session_id, event } => Self::SubagentEvent {
                 session_id,
                 event: Box::new((*event).into()),
@@ -618,6 +635,7 @@ impl From<AcpUpdate> for ServerMessage {
                 uses_config_options,
                 prompt_capabilities,
                 fork_capable,
+                steering_capable,
                 import_capable,
                 delete_capable,
                 auth_methods,
@@ -652,6 +670,7 @@ impl From<AcpUpdate> for ServerMessage {
                 uses_config_options,
                 prompt_capabilities,
                 fork_capable,
+                steering_capable,
                 import_capable,
                 delete_capable,
                 auth_methods: auth_methods
@@ -1278,6 +1297,9 @@ async fn handle_acp_ws(
                     fork_capable: handle
                         .fork_capable
                         .load(std::sync::atomic::Ordering::Relaxed),
+                    steering_capable: handle
+                        .steering_capable
+                        .load(std::sync::atomic::Ordering::Relaxed),
                     import_capable: handle
                         .import_capable
                         .load(std::sync::atomic::Ordering::Relaxed),
@@ -1333,6 +1355,9 @@ async fn handle_acp_ws(
                     prompt_capabilities: PromptCapabilitiesData::default(),
                     fork_capable: handle
                         .fork_capable
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    steering_capable: handle
+                        .steering_capable
                         .load(std::sync::atomic::Ordering::Relaxed),
                     import_capable: handle
                         .import_capable
@@ -1432,6 +1457,13 @@ async fn handle_acp_ws(
     let background = handle.background.lock().unwrap().clone();
     if !background.is_empty() {
         let event = AcpUpdate::BackgroundWork { items: background };
+        if let Ok(json) = serde_json::to_string(&ServerMessage::from(event)) {
+            let _ = ws_sender.send(Message::Text(json.into())).await;
+        }
+    }
+    let suggestions = handle.prompt_suggestions.lock().unwrap().clone();
+    if !suggestions.is_empty() {
+        let event = AcpUpdate::PromptSuggestions { suggestions };
         if let Ok(json) = serde_json::to_string(&ServerMessage::from(event)) {
             let _ = ws_sender.send(Message::Text(json.into())).await;
         }
@@ -1711,6 +1743,7 @@ async fn handle_acp_ws(
                                 match messages {
                                     Ok(messages) => {
                                         handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                                        handle_for_input.steer_queue();
                                         if let Some(id) = client_message_id {
                                             handle_for_input.emit(AcpUpdate::InputAccepted {
                                                 client_message_id: id,
@@ -2568,6 +2601,13 @@ pub async fn delete_chat(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct ForkChatRequest {
+    /// Fork at this session cursor; the whole session when absent.
+    #[serde(default)]
+    cursor_id: Option<String>,
+}
+
 /// Fork a chat: 调用 ACP `session/fork` 让 agent 派生新会话,然后在 grove 侧
 /// 创建一个新的 chat 行(同 task,标题加 " (Fork)"),复制 history.jsonl,
 /// 写入 fork 出来的 acp_session_id。新 chat 不立即 spawn 进程 — 用户首次打开
@@ -2577,8 +2617,11 @@ pub async fn delete_chat(
 /// 前置条件:被 fork 的 chat 当前必须有 in-memory ACP handle 在跑(必要条件,
 /// session/fork 是个 RPC,得有人能发);并且 agent 在 init 阶段声明了 fork
 /// capability(`fork_capable=true`),否则 RPC 会被 agent 拒。
+///
+/// 带 `cursor_id` 时从该位置分叉:新 chat 只有那条 user message 之前的历史。
 pub async fn fork_chat(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
+    Json(request): Json<ForkChatRequest>,
 ) -> Result<Json<ChatSessionResponse>, AcpError> {
     let (project_key, _, _) = resolve_project_key(&project_id)?;
     require_chat_namespace(&project_key, &task_id)?;
@@ -2602,9 +2645,20 @@ pub async fn fork_chat(
         ));
     }
 
+    let history = crate::storage::chat_history::history_for_fork(
+        &project_key,
+        &task_id,
+        &chat_id,
+        request.cursor_id.as_deref(),
+    )
+    .ok_or(AcpError::BadRequest(
+        "The chat can't be forked here anymore".to_string(),
+    ))?;
+
     let cwd = std::path::PathBuf::from(&handle.working_dir);
+    let forked_at_cursor = request.cursor_id.is_some();
     let new_acp_session_id = handle
-        .fork_session(cwd)
+        .fork_session(cwd, request.cursor_id)
         .await
         .map_err(|e| AcpError::Internal(e.to_string()))?;
 
@@ -2621,13 +2675,9 @@ pub async fn fork_chat(
     tasks::add_chat_session(&project_key, &task_id, new_chat.clone())
         .map_err(|e| AcpError::Internal(e.to_string()))?;
 
-    // 复制 history.jsonl(失败不致命 — 新 chat 从空历史起步,
+    // 写入分叉点之前的历史(失败不致命 — 新 chat 从空历史起步,
     // 用户首次打开仍能通过 load_session 让 agent 端回放)
-    if let Err(e) =
-        crate::storage::chat_history::copy_history(&project_key, &task_id, &chat_id, &new_chat.id)
-    {
-        eprintln!("[fork_chat] copy_history failed (non-fatal): {}", e);
-    }
+    crate::storage::chat_history::write_history(&project_key, &task_id, &new_chat.id, &history);
 
     // 同步 copy session.json:usage / mode / model / available_commands 等元数据
     // 让新 chat 首次打开时 ContextUsagePill / mode-picker 直接展示父 chat 的快照,
@@ -2636,6 +2686,10 @@ pub async fn fork_chat(
     // 覆盖整个文件。
     if let Some(mut meta) = acp::read_session_metadata(&project_key, &task_id, &chat_id) {
         meta.pid = 0;
+        // 截断后的上下文用量要等 agent 重新上报。
+        if forked_at_cursor {
+            meta.current_usage = None;
+        }
         let dst = acp::session_json_path(&project_key, &task_id, &new_chat.id);
         if let Some(parent) = dst.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -3846,6 +3900,7 @@ mod tests {
             plan: acp::PlanDocument::Markdown {
                 plan_id: id.into(),
                 content: content.into(),
+                path: None,
             },
         };
         let events = vec![

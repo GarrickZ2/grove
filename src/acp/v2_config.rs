@@ -27,6 +27,28 @@ pub fn options(values: &[v2::SessionConfigOption]) -> Vec<v1::SessionConfigOptio
         .collect()
 }
 
+/// Settings to open a session with.
+pub fn initial(values: Vec<v1::InitialSessionConfigOption>) -> Vec<v2::InitialSessionConfigOption> {
+    values
+        .into_iter()
+        .filter_map(|option| {
+            let value = match option.value {
+                v1::SessionConfigOptionValue::Boolean { value } => {
+                    v2::SessionConfigOptionValue::boolean(value)
+                }
+                v1::SessionConfigOptionValue::ValueId { value } => {
+                    v2::SessionConfigOptionValue::id(value.to_string())
+                }
+                _ => return None,
+            };
+            Some(v2::InitialSessionConfigOption::new(
+                option.config_id.to_string(),
+                value,
+            ))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

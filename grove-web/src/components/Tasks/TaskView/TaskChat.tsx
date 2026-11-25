@@ -17,6 +17,8 @@ import { SubagentAvatar } from "./SubagentAvatar";
 import { OrbitLaptopBench } from "./OrbitLaptopBench";
 import { LaptopBenchContext } from "../IDELayout/LaptopBenchContext";
 import { SubagentCard } from "./SubagentCard";
+import { SubagentLink } from "./SubagentLink";
+import { SubagentLinkContext } from "./SubagentLinkContext";
 import { SessionExchangeCard } from "./SessionExchangeCard";
 import { flattenSubagentMessages, mapSubagentMessages, reduceSubagentEvent, resetSubagentActivity, sessionExchangeExpansionKey, sessionExchangeLabel, sessionExchangePreview, sessionExchangeText, subagentStatus, type SubagentMessage, type SessionExchangeMessage } from "./subagents";
 import { CompactionDivider } from "./CompactionDivider";
@@ -168,8 +170,10 @@ import {
 } from "../../../utils/agentVoice";
 import type { SessionConfigOption } from "../../../api/tasks";
 import {
+  configCategoryMatches,
   configDropdownValues,
   quickConfigOptions,
+  speedFirst,
 } from "./sessionConfigOptions";
 import { listExtensionTabs, getExtensionStatus } from "../../../api/extension";
 import { OPEN_BROWSER_EVENT, isBrowserToolCall, type OpenBrowserDetail } from "../../../api/browser";
@@ -211,7 +215,7 @@ import { useInitialChatLoad } from "./useInitialChatLoad";
 import { useActiveChatId } from "./useActiveChatId";
 import { useLiveSessionMessages } from "./useLiveSessionMessages";
 import { useTypewriter } from "./useTypewriter";
-import { showMessageActions } from "./messageActions";
+import { forkTarget, reduceForkPoint, showMessageActions } from "./messageActions";
 import { MessageActions } from "./MessageActionsBar";
 import { useIsMobile } from "../../../hooks/useIsMobile";
 import { CHAT_HISTORY_PREFERENCES_CHANGED, CHAT_HISTORY_PREFERENCES_KEY, loadChatHistoryPreferences } from "./chatHistoryPreferences";
@@ -555,6 +559,8 @@ export type ChatMessage =
       clientMessageId?: string;
       sentAt?: number;
       messageId?: string;
+      /** Session cursor right before this message: the Agent can fork here. */
+      forkCursor?: string;
       v2EchoPending?: boolean;
       v2OriginalAttachments?: Attachment[];
       v2EchoAttachments?: Attachment[];
@@ -1006,11 +1012,15 @@ interface PerChatState {
   showPlan: boolean;
   slashCommands: SlashCommand[];
   backgroundWork: BackgroundWorkItem[];
+  /** Prompts the Agent suggests sending next. */
+  promptSuggestions: string[];
   isConnected: boolean;
   promptCaps: PromptCaps;
   /** Agent 是否声明 ACP `session/fork` 能力(`unstable_session_fork`)。
    * true → 在 chat 菜单的当前 chat 行显示 Fork 按钮。 */
   forkCapable: boolean;
+  /** Messages sent while the Agent works join the running turn. */
+  steeringCapable: boolean;
   importCapable: boolean;
   deleteCapable: boolean;
   authMethods: AuthMethodOption[];
@@ -1149,6 +1159,7 @@ function reduceChatEventForCache(
         };
       }
       state.forkCapable = !!msg.fork_capable;
+      state.steeringCapable = !!msg.steering_capable;
       state.importCapable = !!msg.import_capable;
       state.deleteCapable = !!msg.delete_capable;
       state.authMethods = msg.auth_methods ?? [];
@@ -1267,6 +1278,7 @@ function reduceChatEventForCache(
     case "complete":
     case "user_message":
     case "user_message_time":
+    case "fork_point":
     case "turn_interrupted":
     case "terminal_execute":
     case "terminal_chunk":
@@ -1340,6 +1352,9 @@ function reduceChatEventForCache(
       break;
     case "background_work":
       state.backgroundWork = normalizeBackgroundWork(msg.items);
+      break;
+    case "prompt_suggestions":
+      state.promptSuggestions = msg.suggestions ?? [];
       break;
     case "auth_logged_out":
       state.messages = [
@@ -1417,11 +1432,13 @@ function defaultPerChatState(): PerChatState {
     showPlan: false,
     slashCommands: [],
     backgroundWork: [],
+    promptSuggestions: [],
     isConnected: false,
     isRemoteSession: false,
     remoteOwnerName: "",
     promptCaps: { image: false, audio: false, embeddedContext: false },
     forkCapable: false,
+    steeringCapable: false,
     importCapable: false,
     deleteCapable: false,
     authMethods: [],
@@ -2375,6 +2392,8 @@ function reduceHistoryMessages(
     }
     case "user_message":
       return reduceUserMessage(messages, msg, msg.attachments?.map(attachmentFromContent) ?? []);
+    case "fork_point":
+      return reduceForkPoint(messages, msg);
     case "user_message_time": {
       let index = messages.length - 1;
       while (index >= 0) {
@@ -2923,7 +2942,7 @@ export function TaskChat({
         matchedSessionConfig.thinking?.id,
       ].filter((id): id is string => !!id),
     );
-    return sessionConfigOptions.filter((option) => !matchedIds.has(option.id));
+    return speedFirst(sessionConfigOptions.filter((option) => !matchedIds.has(option.id)));
   }, [matchedSessionConfig, sessionConfigOptions]);
   const [showPermissionPanel, setShowPermissionPanel] = useState(false);
   const [showFormPanel, setShowFormPanel] = useState(false);
@@ -2931,6 +2950,7 @@ export function TaskChat({
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const [backgroundWork, setBackgroundWork] = useState<BackgroundWorkItem[]>([]);
+  const [promptSuggestions, setPromptSuggestions] = useState<string[]>([]);
   const [showBackground, setShowBackground] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
@@ -3204,9 +3224,14 @@ export function TaskChat({
   const taskFilesLoadingRef = useRef(false);
   const { selectedProject, projects } = useProject();
   const { config: appConfig } = useConfig();
+  const [steeringCapable, setSteeringCapable] = useState(false);
   const interruptOnSend = appConfig?.web?.send_mode === "interrupt";
   const interruptOnSendRef = useRef(interruptOnSend);
   useEffect(() => { interruptOnSendRef.current = interruptOnSend; }, [interruptOnSend]);
+  /** A message sent now joins the running turn; behind a queued one, it waits with it. */
+  const steers = steeringCapable && !interruptOnSend && pendingMessages.length === 0;
+  const steersRef = useRef(steers);
+  useEffect(() => { steersRef.current = steers; }, [steers]);
   /** Call before queueing: with "Interrupt" on, the message goes out as soon as this stops the turn. */
   const interruptTurn = useCallback((ws: WebSocket) => {
     if (interruptOnSendRef.current) ws.send(JSON.stringify({ type: "cancel" }));
@@ -3371,6 +3396,7 @@ export function TaskChat({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const attachmentsRef = useRef(attachments);
   useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
+  const forkingRef = useRef(false);
   const attachCountersRef = useRef<AttachmentCounters>({ image: 0, audio: 0, resource: 0 });
   useEffect(() => {
     attachCountersRef.current = reservePendingAttachmentLabels(
@@ -3384,6 +3410,8 @@ export function TaskChat({
   const [dragFileCount, setDragFileCount] = useState(1);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
+  /** Nothing typed at all, not even a space: `hasContent` ignores those. */
+  const [inputBlank, setInputBlank] = useState(true);
   const [mobileComposerOpen, setMobileComposerOpen] = useState(false);
   const closeMobileComposer = useCallback(() => {
     editableRef.current?.blur();
@@ -3857,6 +3885,7 @@ export function TaskChat({
     setShowPreviewComments(false);
     if (isPhoneLayout) openMobileDetails("subagents");
   }, [activeChatId, isPhoneLayout, openMobileDetails]);
+  const subagentLink = useMemo(() => ({ open: openSubagentPanel, titles: new Map(subagents.map((agent) => [agent.sessionId, agent.title ?? ""])) }), [openSubagentPanel, subagents]);
 
   // ─── Orbit composer (desktop) ─────────────────────────────────────────
   // Same panel state as Workbench, presented as one status zone with trays.
@@ -3953,10 +3982,10 @@ export function TaskChat({
     }
     for (const option of additionalSessionConfigOptions) {
       if (option.type === "boolean") {
-        toggles.push({ id: option.id, label: option.name, description: option.description, value: option.currentValue, loading: pendingConfigIds.has(option.id), onToggle: (value) => requestConfigOptionChange(option, value) });
+        toggles.push({ id: option.id, kind: configCategoryMatches(option, "speed") ? "speed" : undefined, label: option.name, description: option.description, value: option.currentValue, loading: pendingConfigIds.has(option.id), onToggle: (value) => requestConfigOptionChange(option, value) });
       } else {
         fields.push({
-          id: option.id, kind: "option", label: option.name,
+          id: option.id, kind: configCategoryMatches(option, "speed") ? "speed" : "option", label: option.name,
           options: configDropdownValues(option).map((value) => ({ value: value.value, label: value.name, description: value.description, group: value.group })),
           value: option.currentValue, loading: pendingConfigIds.has(option.id), onSelect: (value) => requestConfigOptionChange(option, value),
         });
@@ -4956,9 +4985,11 @@ export function TaskChat({
       showPlan,
       slashCommands,
       backgroundWork,
+      promptSuggestions,
       isConnected,
       promptCaps,
       forkCapable,
+      steeringCapable,
       importCapable,
       deleteCapable,
       authMethods,
@@ -4992,9 +5023,11 @@ export function TaskChat({
     showPlan,
     slashCommands,
     backgroundWork,
+    promptSuggestions,
     isConnected,
     promptCaps,
     forkCapable,
+    steeringCapable,
     importCapable,
     deleteCapable,
     authMethods,
@@ -5046,12 +5079,14 @@ export function TaskChat({
       setShowPlan(cached.showPlan ?? false);
       setSlashCommands(cached.slashCommands);
       setBackgroundWork(cached.backgroundWork ?? []);
+      setPromptSuggestions(cached.promptSuggestions ?? []);
       setIsConnected(chatIsConnected);
       setPromptCaps(cached.promptCaps);
       // Each live WebSocket keeps its own initialized Agent capabilities.
       // Switching chats does not trigger another session_ready, so restore
       // the matching chat's snapshot; a later session_ready overwrites it.
       setForkCapable(cached.forkCapable);
+      setSteeringCapable(cached.steeringCapable ?? false);
       setImportCapable(cached.importCapable);
       setDeleteCapable(cached.deleteCapable);
       setAuthMethods(cached.authMethods);
@@ -5083,12 +5118,14 @@ export function TaskChat({
       setContextUsage(null);
       setSlashCommands([]);
       setBackgroundWork([]);
+      setPromptSuggestions([]);
       setIsConnected(chatIsConnected);
       setConnectPhase(null);
       setConnectPhaseStartedAt(null);
       setIsTerminalMode(false);
       setPromptCaps({ image: false, audio: false, embeddedContext: false });
       setForkCapable(false);
+      setSteeringCapable(false);
       setDeleteCapable(false);
       setAuthMethods([]);
       setLogoutCapable(false);
@@ -6281,6 +6318,7 @@ export function TaskChat({
                 });
               }
               setForkCapable(!!evt.fork_capable);
+              setSteeringCapable(!!evt.steering_capable);
               setImportCapable(!!evt.import_capable);
               setDeleteCapable(!!evt.delete_capable);
               setAuthMethods(evt.auth_methods ?? []);
@@ -6326,6 +6364,7 @@ export function TaskChat({
                   };
                 }
                 state.forkCapable = !!evt.fork_capable;
+                state.steeringCapable = !!evt.steering_capable;
                 state.importCapable = !!evt.import_capable;
                 state.deleteCapable = !!evt.delete_capable;
                 state.authMethods = evt.auth_methods ?? [];
@@ -6621,6 +6660,7 @@ export function TaskChat({
             });
           }
           setForkCapable(!!msg.fork_capable);
+          setSteeringCapable(!!msg.steering_capable);
           setImportCapable(!!msg.import_capable);
           setDeleteCapable(!!msg.delete_capable);
           setAuthMethods(msg.auth_methods ?? []);
@@ -6672,6 +6712,7 @@ export function TaskChat({
                 };
               }
               state.forkCapable = !!msg.fork_capable;
+              state.steeringCapable = !!msg.steering_capable;
               state.importCapable = !!msg.import_capable;
               state.deleteCapable = !!msg.delete_capable;
               state.authMethods = msg.auth_methods ?? [];
@@ -6907,6 +6948,7 @@ export function TaskChat({
           break;
         }
         case "user_message_time":
+        case "fork_point":
         case "turn_interrupted":
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           break;
@@ -7056,6 +7098,9 @@ export function TaskChat({
           break;
         case "background_work":
           setBackgroundWork(normalizeBackgroundWork(msg.items));
+          break;
+        case "prompt_suggestions":
+          setPromptSuggestions(msg.suggestions ?? []);
           break;
         case "usage_update":
           // ACP v1 `usage_update` — context window pill data.
@@ -7549,9 +7594,11 @@ export function TaskChat({
   /** 调用 ACP `session/fork` 派生新 chat:成功后切到新 chat,新 chat 会通过
    * 标准 reconnect 路径 + load_session(forked_id) 把对话上下文复活。 */
   const handleForkChat = useCallback(
-    async (chatId: string) => {
+    async (chatId: string, cursorId?: string) => {
+      if (forkingRef.current) return;
+      forkingRef.current = true;
       try {
-        const created = await forkChat(projectId, taskId, chatId);
+        const created = await forkChat(projectId, taskId, chatId, cursorId);
         setChats((prev) => promoteSession([created, ...prev], created.id));
         setActiveChatId(created.id);
         writeLastActiveTab("chat", projectId, taskId, created.id);
@@ -7560,17 +7607,26 @@ export function TaskChat({
         // Fork 通常因 source agent 进程已退出 / agent busy / agent 拒绝
         // 而失败。把错误以 system 消息推到当前 chat 让用户能看到 — 之前
         // 只 console.error,UI 上完全无反馈。
-        const message = err instanceof Error ? err.message : String(err);
+        const message = apiErrorMessage(err);
         console.error("Failed to fork chat:", err);
         setMessages((prev) => [
           ...prev,
           { type: "system", content: `Fork failed: ${message}` },
         ]);
+      } finally {
+        forkingRef.current = false;
       }
       setShowChatMenu(false);
     },
     [projectId, taskId, restoreChatState, setActiveChatId],
   );
+
+  /** Fork at the end of a reply: `null` is the whole session so far. */
+  const handleForkAt = useCallback(
+    (cursorId: string | null) => { if (activeChatId) void handleForkChat(activeChatId, cursorId ?? undefined); },
+    [activeChatId, handleForkChat],
+  );
+  const canForkAtMessage = forkCapable && canManageSessions && isConnected && !isBusy && !isReadOnlyHistory && !isRemoteSession;
 
   const loadImportSessions = useCallback(async (cursor?: string) => {
     if (!activeChatId || importLoading) return;
@@ -7958,7 +8014,7 @@ export function TaskChat({
       // actual dispatch, including Retry, rather than reuse the original mode.
       const mode = pendingInputMode(chatId, id);
       const location = mode === "queue_message" ? "queue" : "timeline";
-      if (location === "queue" && chatId === getActiveChatId() && !interruptOnSendRef.current) openInputQueue();
+      if (location === "queue" && chatId === getActiveChatId() && !interruptOnSendRef.current && !steersRef.current) openInputQueue();
       updatePendingInputs(chatId, (items) => items.map((item) => item.id === id
         ? { ...item, attachments: contentAttachments, mode, dispatched: true, sentAt: Date.now() }
         : item));
@@ -8182,7 +8238,7 @@ export function TaskChat({
     sentPops.record(input.id, { queued: input.mode === "queue_message" });
     if (inputLocation(input) === "timeline") {
       updateLocalInputPlacements(activeChatId, (items) => [...items, { id: input.id, position: messageTimeline.endPosition }]);
-    } else if (!interruptOnSendRef.current) {
+    } else if (!interruptOnSendRef.current && !steersRef.current) {
       openInputQueue();
     }
     updatePendingInputs(activeChatId, (items) => [...items, input]);
@@ -8269,7 +8325,7 @@ export function TaskChat({
       ...items.filter((item) => item.id !== input.id),
       { ...input, id, mode, status: "sending", serverAccepted: false, serverQueued: false, dispatched: false, cancelled: false, sentAt: Date.now(), submittedAt: id === input.id ? input.submittedAt ?? input.sentAt : Date.now(), error: undefined },
     ]);
-    if (mode === "queue_message" && !interruptOnSendRef.current) openInputQueue();
+    if (mode === "queue_message" && !interruptOnSendRef.current && !steersRef.current) openInputQueue();
     requestBottom("auto");
     void dispatchPendingInput(activeChatId, id, id === input.id);
   }, [activeChatId, updatePendingInputs, updateLocalInputPlacements, messageTimeline.endPosition, requestBottom, dispatchPendingInput, pendingInputMode, openInputQueue]);
@@ -9650,6 +9706,18 @@ export function TaskChat({
     checkContent();
   }, [attachments.length, checkContent]);
 
+  // The Agent's suggested next prompt shows in the empty input; accepting it
+  // takes a keyboard, so touch devices don't show it.
+  const promptSuggestion =
+    !hasContent && inputBlank && !isMobile && isConnected && !isBusy && !isTerminalMode &&
+    !isRemoteSession && !activePermissionMessage && !editingPendingId
+      ? promptSuggestions[0]
+      : undefined;
+  // Clearing the editor from code fires no input event.
+  useLayoutEffect(() => {
+    setInputBlank(!editableRef.current?.textContent);
+  }, [promptSuggestions, hasContent, activeChatId]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       // Skip during IME composition (e.g. Chinese/Japanese input)
@@ -9887,6 +9955,26 @@ export function TaskChat({
         handleCancelPendingEdit();
         return;
       }
+      // Tab / → takes the Agent's suggested prompt into the empty input.
+      if (
+        promptSuggestion !== undefined &&
+        (e.key === "Tab" || e.key === "ArrowRight") &&
+        !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey &&
+        editableRef.current && !editableRef.current.textContent
+      ) {
+        e.preventDefault();
+        const el = editableRef.current;
+        el.textContent = promptSuggestion;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        setInputBlank(false);
+        checkContent();
+        return;
+      }
       // Shift+Tab → permission cycle and Cmd+Opt+Backspace → clear queue
       // both moved to the keyboard catalog (chat.permission.cycle /
       // chat.pending.clear). KeyboardManager handles them in a window
@@ -9907,6 +9995,7 @@ export function TaskChat({
       // KeyboardManager handles them via passThroughTextInput.
     },
     [
+      promptSuggestion,
       isTerminalMode,
       isPhoneLayout,
       isInputExpanded,
@@ -10484,6 +10573,8 @@ export function TaskChat({
             message={item.message}
             index={item.sourceIndex ?? item.index}
             showActions={showMessageActions(messageTimeline.messages, item.index, isBusy)}
+            onFork={canForkAtMessage ? handleForkAt : undefined}
+            forkCursor={canForkAtMessage ? forkTarget(messages, item.sourceIndex ?? item.index) : undefined}
             isBusy={isBusy}
             agentLabel={agentLabel}
             projectId={projectId}
@@ -11298,7 +11389,15 @@ export function TaskChat({
                     </span>
                   )}
                   <div className="relative flex-1">
-                    {!hasContent && !isInputFocused && (
+                    {promptSuggestion !== undefined ? (
+                      <div
+                        data-prompt-suggestion
+                        className="pointer-events-none absolute left-4 right-4 top-2 line-clamp-2 whitespace-pre-wrap text-sm leading-6 text-[var(--color-text-muted)] select-none"
+                        style={{ overflowWrap: "anywhere" }}
+                      >
+                        {promptSuggestion}
+                      </div>
+                    ) : !hasContent && !isInputFocused && (
                       <div
                         className={`pointer-events-none absolute top-2 text-sm leading-7 text-[var(--color-text-muted)] select-none ${
                           isTerminalMode ? "left-0 right-4" : "left-4 right-4"
@@ -11313,7 +11412,7 @@ export function TaskChat({
                               : isTerminalMode
                                 ? "Enter shell command\u2026"
                                 : isBusy
-                                  ? interruptOnSend ? "Send a message \u2014 it stops this turn" : orbitShell ? "Add a follow-up \u2014 it queues until this turn ends" : "Queue a message\u2026"
+                                  ? interruptOnSend ? "Send a message \u2014 it stops this turn" : steers ? "Steer\u2026" : orbitShell ? "Add a follow-up \u2014 it queues until this turn ends" : "Queue a message\u2026"
                                   : "Ask anything… use @ for mentions, / for commands"}
                       </div>
                     )}
@@ -11323,7 +11422,10 @@ export function TaskChat({
                         !isRemoteSession && !activePermissionMessage && !isSavingPendingEdit
                       }
                       suppressContentEditableWarning
-                      onInput={handleInput}
+                      onInput={() => {
+                        setInputBlank(!editableRef.current?.textContent);
+                        handleInput();
+                      }}
                       onKeyDown={handleKeyDown}
                       onMouseDown={handleEditableMouseDown}
                       onFocus={() => setIsInputFocused(true)}
@@ -11489,6 +11591,7 @@ export function TaskChat({
 
   return (
     <OrbitConversationContext.Provider value={orbitComposer}>
+    <SubagentLinkContext.Provider value={subagentLink}>
     <SentPopContext.Provider value={orbitShell ? sentPops : null}>
     <ToolTimelineExpansionContext.Provider value={timelineExpansion}>
     <motion.div
@@ -12574,7 +12677,7 @@ export function TaskChat({
                   hint={orbitPhoneShell ? null : orbitComposerHint}
                   setup={<OrbitSetupChip agentLabel={agentLabel} agentIconType={AgentIcon} fields={orbitSetup.fields} toggles={orbitSetup.toggles} disabled={!isConnected} sheet={orbitPhoneShell} />}
                   usage={<OrbitUsageRing contextUsage={contextUsage} quota={agentQuota} quotaRefreshing={quotaRefreshing} onRefreshQuota={refreshAgentQuota} hasCompactCommand={hasCompactCommand} onCompact={handleCompact} sheet={orbitPhoneShell} />}
-                  orb={<OrbitSendOrb action={orbitOrbAction} disabled={orbitOrbDisabled} busy={orbitOrbBusy} onSend={handleSendButtonClick} onStop={handleStopAgent} onSendNow={handleSendNow} onPointerDown={handleSendButtonPointerDown} />}
+                  orb={<OrbitSendOrb action={orbitOrbAction} steer={steers} disabled={orbitOrbDisabled} busy={orbitOrbBusy} onSend={handleSendButtonClick} onStop={handleStopAgent} onSendNow={handleSendNow} onPointerDown={handleSendButtonPointerDown} />}
                 >
                   {composerDropOverlay}
                   {composerAttachments}
@@ -13250,6 +13353,7 @@ export function TaskChat({
     </motion.div>
     </ToolTimelineExpansionContext.Provider>
     </SentPopContext.Provider>
+    </SubagentLinkContext.Provider>
     </OrbitConversationContext.Provider>
   );
 }
@@ -13704,8 +13808,13 @@ const MessageItem = memo(function MessageItem({
   delivery,
   deliveryError,
   showActions = true,
+  onFork,
+  forkCursor,
 }: {
   message: ChatMessage;
+  onFork?: (cursorId: string | null) => void;
+  /** Where to fork at the end of this reply; `undefined` when it can't be. */
+  forkCursor?: string | null;
   delivery?: ReactNode;
   deliveryError?: string;
   showActions?: boolean;
@@ -14011,7 +14120,7 @@ const MessageItem = memo(function MessageItem({
                 comments={markdownComments}
               />
             )}
-            {message.complete && showActions && <MessageActions text={message.content} timestamp={message.endTs == null ? undefined : message.endTs * 1000} usage={message.usage} startTs={message.startTs} endTs={message.endTs} now={hoverTime} />}
+            {message.complete && showActions && <MessageActions text={message.content} timestamp={message.endTs == null ? undefined : message.endTs * 1000} usage={message.usage} startTs={message.startTs} endTs={message.endTs} now={hoverTime} onFork={onFork && forkCursor !== undefined ? () => onFork(forkCursor) : undefined} />}
           </div>
         </div>
       );
@@ -14479,6 +14588,7 @@ function ToolContentBlocks({ content }: { content: ToolCallContentData[] }) {
         if (item.type === "diff") {
           return <DiffPreview key={index} diff={item.display_text} />;
         }
+        if (item.type === "session") return <SubagentLink key={index} sessionId={item.session_id} />;
         const hasSnapshot = item.output !== undefined || item.exit_status !== undefined;
         const exitLabel = item.exit_status
           ? item.exit_status.signal

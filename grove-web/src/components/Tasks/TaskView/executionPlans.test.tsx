@@ -91,4 +91,17 @@ describe("native execution plans", () => {
       expect(host.textContent).not.toContain("Stale plan");
     } finally { await act(async () => root.unmount()); env.IS_REACT_ACT_ENVIRONMENT = previous; }
   });
+
+  it("opens the file that holds a Markdown plan", async () => {
+    const env = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const previous = env.IS_REACT_ACT_ENVIRONMENT; env.IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement("div"); const root = createRoot(host);
+    const open = vi.fn().mockResolvedValue(true);
+    const plans = sessionPlanDocuments(reducePlanDocumentEvent([], { type: "plan_document_update", plan: { ...markdown("p", "# Plan"), path: "/work/PLAN.md" } }));
+    try {
+      await act(async () => root.render(<PlanDocumentsPanel plans={plans} allowLocalFiles onFileClick={open} />));
+      await act(async () => [...host.querySelectorAll("button")].find((button) => button.textContent === "/work/PLAN.md")?.click());
+      expect(open).toHaveBeenCalledWith("/work/PLAN.md");
+    } finally { await act(async () => root.unmount()); env.IS_REACT_ACT_ENVIRONMENT = previous; }
+  });
 });

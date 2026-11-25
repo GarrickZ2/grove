@@ -9,11 +9,13 @@ pub mod adapter;
 mod adapter_terminal;
 mod buddy_config;
 mod compaction;
+mod cursors;
 mod idle;
 mod input_attention;
 pub(crate) use idle::ActivityGuard;
 mod plans;
 mod session_info;
+mod steering;
 pub use plans::PlanDocument;
 mod subagents;
 pub use compaction::CompactionUpdateData;
@@ -283,6 +285,16 @@ pub struct AcpSessionHandle {
     pub title_capable: std::sync::atomic::AtomicBool,
     /// Latest background-work snapshot (ACP v2), for reconnects and cancel.
     pub background: Mutex<Vec<BackgroundItem>>,
+    /// Where the Agent's session cursors lie, for forking at a message.
+    pub(crate) cursors: Mutex<cursors::CursorTracker>,
+    /// Prompts the Agent suggests sending next, for reconnects.
+    pub prompt_suggestions: Mutex<Vec<String>>,
+    /// The Agent takes messages into a running turn.
+    pub steering_capable: std::sync::atomic::AtomicBool,
+    steer_lock: tokio::sync::Mutex<()>,
+    /// A stop was asked for since the latest prompt started. Set where the stop
+    /// is requested, before the command loop gets to it.
+    stop_requested: std::sync::atomic::AtomicBool,
     /// session/new 阶段被 -32000 卡住后,记录当前 banner 状态(methods + agent_name)。
     /// 用途:WS 重连时,如果还没登录成功,跳过假的 SessionReady,改发 AuthRequired
     /// 让前端继续显示 banner;避免"刷新后看起来连上了但消息发不出去"。
@@ -362,6 +374,8 @@ enum AcpCommand {
     /// 调用 ACP `session/fork`(`unstable_session_fork`),要求 agent 基于当前
     /// session 派生一个新的会话副本。reply 回传 fork 后的 acp session_id。
     ForkSession {
+        /// Where to fork; the whole session when absent.
+        cursor_id: Option<String>,
         cwd: PathBuf,
         reply: tokio::sync::oneshot::Sender<std::result::Result<String, String>>,
     },
@@ -549,6 +563,9 @@ pub enum AcpUpdate {
         /// (`unstable_session_fork`)。老 history.jsonl 没这个字段时反序列化为 false。
         #[serde(default)]
         fork_capable: bool,
+        /// The Agent takes messages into a running turn.
+        #[serde(default)]
+        steering_capable: bool,
         #[serde(default)]
         import_capable: bool,
         #[serde(default)]
@@ -772,6 +789,16 @@ pub enum AcpUpdate {
     /// snapshot each time; transient, resent when a browser reconnects.
     BackgroundWork {
         items: Vec<BackgroundItem>,
+    },
+    /// The Agent can fork the session right before the user message that
+    /// precedes this event, at `cursor_id`. `available: false` withdraws it.
+    ForkPoint {
+        cursor_id: String,
+        available: bool,
+    },
+    /// Prompts the Agent suggests sending next; empty withdraws them. Transient.
+    PromptSuggestions {
+        suggestions: Vec<String>,
     },
     /// Native ACP `elicitation/create`. Kept transient; the live pending
     /// snapshot is replayed directly when the browser reconnects.
@@ -1139,6 +1166,10 @@ pub enum ToolCallContentData {
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         exit_status: Option<TerminalExitStatusData>,
+    },
+    /// The child session this tool call works with.
+    Session {
+        session_id: String,
     },
 }
 
@@ -2591,6 +2622,8 @@ struct AcpClientState {
     tool_identities: Mutex<HashMap<String, ToolIdentity>>,
     agent_terminals: Mutex<adapter_terminal::AgentTerminalCache>,
     native_plans_seen: std::sync::atomic::AtomicBool,
+    /// ACP v2 compactions patch their status; keyed by session and compaction ID.
+    compaction_status: Mutex<HashMap<(String, String), String>>,
 }
 
 /// Build a richer permission description by extracting the most useful
@@ -3367,7 +3400,18 @@ async fn handle_session_notification(
     if !session_notification_targets_handle(&state.handle, &args.session_id) {
         return Ok(());
     }
+    state.handle.cursors.lock().unwrap().observe(
+        &args.update,
+        state
+            .handle
+            .replay_user_messages
+            .load(std::sync::atomic::Ordering::Relaxed),
+    );
     match args.update {
+        acp::SessionUpdate::CursorUpdate(update) => state.handle.apply_cursor_update(&update),
+        acp::SessionUpdate::PromptSuggestionsUpdate(update) => {
+            state.handle.apply_prompt_suggestions(update)
+        }
         acp::SessionUpdate::SubagentUpdate(update) => state
             .handle
             .register_subagent(&args.session_id.to_string(), update),
@@ -3981,6 +4025,9 @@ fn tool_contents_to_data(
                 new_text: diff.new_text.clone(),
                 display_text: adapter.tool_call_content_to_text(item),
             }),
+            acp::ToolCallContent::Session(session) => Some(ToolCallContentData::Session {
+                session_id: session.session_id.to_string(),
+            }),
             acp::ToolCallContent::Terminal(terminal) => {
                 let terminal_id = terminal.terminal_id.to_string();
                 let snapshot = terminals.and_then(|terminals| {
@@ -4157,6 +4204,8 @@ fn tool_output_display_text(output: &[ToolCallContentData]) -> Option<String> {
             ToolCallContentData::Terminal { terminal_id, .. } => {
                 format!("Terminal {terminal_id}")
             }
+            // Shown as a link to the child session.
+            ToolCallContentData::Session { .. } => String::new(),
         })
         .filter(|text| !text.trim().is_empty())
         .collect::<Vec<_>>()
@@ -4628,6 +4677,83 @@ fn legacy_mode_to_restore(
         .then(|| persisted.to_string())
 }
 
+/// Lowercase fuzzy-match a free-text query against `(id, name)` pairs.
+/// Used by the Custom Agent (persona) layer to translate the user's
+/// free-text `model` / `mode` / `effort` strings into the live session's
+/// real ids.
+///
+/// Resolution order:
+///   1. Exact lowercase id or name → return immediately (deterministic).
+///   2. Substring match: collect all hits. If exactly one, return it.
+///      If two or more (e.g. user typed "sonnet" and the agent advertises
+///      both "claude-sonnet-4-5" and "claude-3-5-sonnet"), return `None`
+///      — caller falls back to the agent's default rather than rolling
+///      the dice on an order-sensitive pick. A warn is logged so the
+///      ambiguity is debuggable from logs.
+fn fuzzy_pick_id(query: &str, options: &[(String, String)]) -> Option<String> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return None;
+    }
+    for (id, name) in options {
+        if id.to_lowercase() == q || name.to_lowercase() == q {
+            return Some(id.clone());
+        }
+    }
+    let hits: Vec<&String> = options
+        .iter()
+        .filter(|(id, name)| id.to_lowercase().contains(&q) || name.to_lowercase().contains(&q))
+        .map(|(id, _)| id)
+        .collect();
+    match hits.len() {
+        0 => None,
+        1 => Some(hits[0].clone()),
+        _ => {
+            eprintln!(
+                "[ACP] Persona config: query '{}' matched {} options ambiguously \
+                 ({}); leaving agent default.",
+                query,
+                hits.len(),
+                hits.iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            None
+        }
+    }
+}
+
+/// Keep what a live session offers, for choosing settings before one exists.
+fn save_capability_snapshot(
+    agent_name: &str,
+    agent_version: &str,
+    config_options: &[acp::SessionConfigOption],
+    uses_config_options: bool,
+    available_modes: &[(String, String)],
+    current_mode_id: Option<&str>,
+) {
+    let installed = crate::storage::installed_agents::get(agent_name)
+        .ok()
+        .flatten();
+    let selected = installed
+        .as_ref()
+        .and_then(|agent| agent.selected_installation());
+    let snapshot = serde_json::json!({
+        "agent_id": crate::storage::installed_agents::canonicalize_agent_id(agent_name),
+        "agent_version": agent_version,
+        "install_method": installed.as_ref().map(|agent| agent.selected_install_method.as_str()),
+        "install_version": selected.map(|installation| installation.version.as_str()),
+        "config_options": config_options,
+        "uses_config_options": uses_config_options,
+        "modes": {
+            "available": available_modes,
+            "current": current_mode_id,
+        }
+    });
+    let _ = crate::storage::installed_agents::save_capability_snapshot(agent_name, &snapshot);
+}
+
 fn replace_config_snapshot(
     handle: &AcpSessionHandle,
     config_options: Vec<acp::SessionConfigOption>,
@@ -4836,6 +4962,8 @@ fn grove_client_capabilities_for_transport(local: bool) -> acp::ClientCapabiliti
             acp::ClientSessionCapabilities::new()
                 .notices(acp::NoticeCapabilities::new())
                 .compaction(acp::CompactionCapabilities::new())
+                .cursors(acp::SessionCursorsCapabilities::new())
+                .prompt_suggestions(acp::PromptSuggestionsCapabilities::new())
                 .config_options(
                     acp::SessionConfigOptionsCapabilities::new()
                         .boolean(acp::BooleanConfigOptionCapabilities::new()),
@@ -5402,6 +5530,11 @@ pub async fn get_or_start_session(
                     archive_on_close: std::sync::atomic::AtomicBool::new(false),
                     title_capable: std::sync::atomic::AtomicBool::new(false),
                     background: Mutex::default(),
+                    cursors: Mutex::default(),
+                    prompt_suggestions: Mutex::default(),
+steering_capable: std::sync::atomic::AtomicBool::new(false),
+steer_lock: Default::default(),
+stop_requested: std::sync::atomic::AtomicBool::new(false),
                 });
 
                 // 注册到全局表
@@ -5911,6 +6044,7 @@ async fn run_acp_connection(
         tool_identities: Mutex::new(HashMap::new()),
         agent_terminals: Mutex::default(),
         native_plans_seen: std::sync::atomic::AtomicBool::new(false),
+        compaction_status: Mutex::default(),
     });
 
     let canonical_agent =
@@ -6237,53 +6371,6 @@ async fn drive_session(
     cmd_rx: &mut mpsc::Receiver<AcpCommand>,
     conn: acp::ConnectionTo<acp::Agent>,
 ) -> acp::Result<(), acp::Error> {
-    /// Lowercase fuzzy-match a free-text query against `(id, name)` pairs.
-    /// Used by the Custom Agent (persona) layer to translate the user's
-    /// free-text `model` / `mode` / `effort` strings into the live session's
-    /// real ids.
-    ///
-    /// Resolution order:
-    ///   1. Exact lowercase id or name → return immediately (deterministic).
-    ///   2. Substring match: collect all hits. If exactly one, return it.
-    ///      If two or more (e.g. user typed "sonnet" and the agent advertises
-    ///      both "claude-sonnet-4-5" and "claude-3-5-sonnet"), return `None`
-    ///      — caller falls back to the agent's default rather than rolling
-    ///      the dice on an order-sensitive pick. A warn is logged so the
-    ///      ambiguity is debuggable from logs.
-    fn fuzzy_pick_id(query: &str, options: &[(String, String)]) -> Option<String> {
-        let q = query.trim().to_lowercase();
-        if q.is_empty() {
-            return None;
-        }
-        for (id, name) in options {
-            if id.to_lowercase() == q || name.to_lowercase() == q {
-                return Some(id.clone());
-            }
-        }
-        let hits: Vec<&String> = options
-            .iter()
-            .filter(|(id, name)| id.to_lowercase().contains(&q) || name.to_lowercase().contains(&q))
-            .map(|(id, _)| id)
-            .collect();
-        match hits.len() {
-            0 => None,
-            1 => Some(hits[0].clone()),
-            _ => {
-                eprintln!(
-                    "[ACP] Persona config: query '{}' matched {} options ambiguously \
-                     ({}); leaving agent default.",
-                    query,
-                    hits.len(),
-                    hits.iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                );
-                None
-            }
-        }
-    }
-
     fn extract_models(
         config_options: &[acp::SessionConfigOption],
     ) -> (Vec<(String, String)>, Option<String>, Option<String>) {
@@ -6359,6 +6446,10 @@ async fn drive_session(
     )?;
 
     validate_v1_protocol_version(init_resp.protocol_version)?;
+    handle.steering_capable.store(
+        steering::advertised(init_resp.meta.as_ref()),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Retain terminal launch descriptors only for local agents. Remote transports
     // cannot reproduce the Agent invocation in its execution environment.
@@ -7466,27 +7557,13 @@ async fn drive_session(
         }
     }
 
-    let installed = crate::storage::installed_agents::get(&config.agent_name)
-        .ok()
-        .flatten();
-    let selected = installed
-        .as_ref()
-        .and_then(|agent| agent.selected_installation());
-    let capability_snapshot = serde_json::json!({
-        "agent_id": crate::storage::installed_agents::canonicalize_agent_id(&config.agent_name),
-        "agent_version": agent_version,
-        "install_method": installed.as_ref().map(|agent| agent.selected_install_method.as_str()),
-        "install_version": selected.map(|installation| installation.version.as_str()),
-        "config_options": config_options,
-        "uses_config_options": uses_config_options,
-        "modes": {
-            "available": available_modes,
-            "current": current_mode_id,
-        }
-    });
-    let _ = crate::storage::installed_agents::save_capability_snapshot(
+    save_capability_snapshot(
         &config.agent_name,
-        &capability_snapshot,
+        &agent_version,
+        &config_options,
+        uses_config_options,
+        &available_modes,
+        current_mode_id.as_deref(),
     );
 
     handle.emit(AcpUpdate::SessionReady {
@@ -7507,6 +7584,9 @@ async fn drive_session(
         uses_config_options,
         prompt_capabilities: prompt_capabilities.clone(),
         fork_capable,
+        steering_capable: handle
+            .steering_capable
+            .load(std::sync::atomic::Ordering::Relaxed),
         import_capable,
         delete_capable,
         auth_methods: handle
@@ -7901,6 +7981,7 @@ async fn drive_session(
                     sender,
                     terminal,
                 });
+                handle.prompt_started();
                 handle.emit_user_message_time(
                     &message_ids,
                     (message_ids.len() == 1).then(|| message_ids[0].clone()),
@@ -7987,6 +8068,7 @@ async fn drive_session(
                                     handle.emit(AcpUpdate::QueueUpdate {
                                         messages: handle.get_queue(),
                                     });
+                                    handle.steer_queue();
                                 }
                                 AcpCommand::Kill => {
                                     // Intentionally drops `prompt_fut`'s oneshot Receiver
@@ -8521,7 +8603,11 @@ async fn drive_session(
                 }
                 let _ = reply.send(result);
             }
-            AcpCommand::ForkSession { cwd, reply } => {
+            AcpCommand::ForkSession {
+                cursor_id,
+                cwd,
+                reply,
+            } => {
                 // Agent 必须声明 fork capability;否则 send_request 会被 agent
                 // 直接拒绝。这里不再二次校验,直接发出 — 失败会通过 reply 透传
                 // 给上层(API handler 把错误传回前端)。
@@ -8545,6 +8631,7 @@ async fn drive_session(
                             match conn
                                 .send_request(
                                     acp::ForkSessionRequest::new(session_id_arc.clone(), cwd)
+                                        .cursor_id(cursor_id.clone().map(acp::CursorId::new))
                                         .additional_directories(fork_directories)
                                         .mcp_servers(mcp_servers)
                                         .system_prompt(system_prompt.clone()),
@@ -8553,7 +8640,10 @@ async fn drive_session(
                                 .await
                             {
                                 Ok(resp) => Ok(resp.session_id.to_string()),
-                                Err(e) => Err(format!("session/fork failed: {}", e)),
+                                Err(e) => {
+                                    handle.drop_rejected_cursor(cursor_id, i32::from(e.code));
+                                    Err(format!("session/fork failed: {}", e))
+                                }
                             }
                         }
                         Err(e) => Err(format!("session/fork MCP setup failed: {}", e)),
@@ -10142,6 +10232,10 @@ impl AcpSessionHandle {
             if !background.is_empty() {
                 self.emit_unsuppressed(AcpUpdate::BackgroundWork { items: background });
             }
+            let suggestions = self.prompt_suggestions.lock().unwrap().clone();
+            if !suggestions.is_empty() {
+                self.emit_unsuppressed(AcpUpdate::PromptSuggestions { suggestions });
+            }
         }
 
         if should_compact {
@@ -10353,6 +10447,7 @@ impl AcpSessionHandle {
             };
             let messages = self.submit_queued_message(queued).await?;
             self.emit(AcpUpdate::QueueUpdate { messages });
+            self.steer_queue();
             Ok(id)
         }
     }
@@ -10488,6 +10583,8 @@ impl AcpSessionHandle {
     /// 取消当前处理
     pub async fn cancel(&self) -> crate::error::Result<()> {
         let _activity = self.begin_activity()?;
+        self.stop_requested
+            .store(true, std::sync::atomic::Ordering::Release);
         self.cmd_tx
             .send(AcpCommand::Cancel)
             .await
@@ -10501,6 +10598,13 @@ impl AcpSessionHandle {
         message_ids: Vec<String>,
     ) -> crate::error::Result<()> {
         let _activity = self.begin_activity()?;
+        if self
+            .active_turn_ids()
+            .is_some_and(|active| active.iter().any(|id| message_ids.contains(id)))
+        {
+            self.stop_requested
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
         self.cmd_tx
             .send(AcpCommand::CancelPrompts(message_ids))
             .await
@@ -10648,9 +10752,6 @@ impl AcpSessionHandle {
         {
             return;
         }
-        let Some(conn) = self.subagent_connection.lock().unwrap().clone() else {
-            return;
-        };
         let Some(session_id) = self
             .agent_info
             .read()
@@ -10660,6 +10761,24 @@ impl AcpSessionHandle {
             return;
         };
         let title = title.to_string();
+        if let Some(conn) = self.subagent_connection_v2.lock().unwrap().clone() {
+            tokio::spawn(async move {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    conn.send_request(
+                        agent_client_protocol::v2::schema::SetSessionTitleRequest::new(
+                            session_id, title,
+                        ),
+                    )
+                    .block_task(),
+                )
+                .await;
+            });
+            return;
+        }
+        let Some(conn) = self.subagent_connection.lock().unwrap().clone() else {
+            return;
+        };
         tokio::spawn(async move {
             let _ = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
@@ -10691,11 +10810,16 @@ impl AcpSessionHandle {
     /// 通过 ACP `session/fork` 派生新会话(`unstable_session_fork`)。
     /// 成功返回 fork 后的 acp session_id;调用方据此创建新 chat 行,
     /// 用户首次打开新 chat 时走 `load_session(new_id)` 复活。
-    pub async fn fork_session(&self, cwd: PathBuf) -> crate::error::Result<String> {
+    pub async fn fork_session(
+        &self,
+        cwd: PathBuf,
+        cursor_id: Option<String>,
+    ) -> crate::error::Result<String> {
         let _activity = self.begin_activity()?;
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         self.cmd_tx
             .send(AcpCommand::ForkSession {
+                cursor_id,
                 cwd,
                 reply: reply_tx,
             })
@@ -10855,7 +10979,8 @@ impl AcpSessionHandle {
         skip
     }
 
-    /// Admission path for every externally submitted queued Prompt.
+    /// Admission path for every externally submitted queued Prompt. The caller
+    /// shows the returned queue, and then may offer it with `steer_queue`.
     pub async fn submit_queued_message(
         &self,
         mut msg: QueuedMessage,
@@ -11316,6 +11441,7 @@ impl AcpSessionHandle {
         self.queue_paused
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.drain_queue_if_ready();
+        self.steer_queue();
     }
 
     /// 用户直接执行终端命令（Shell 模式，不经过 AI agent）
@@ -11690,6 +11816,11 @@ pub fn new_handle_for_test(
         archive_on_close: std::sync::atomic::AtomicBool::new(false),
         title_capable: std::sync::atomic::AtomicBool::new(false),
         background: Mutex::default(),
+        cursors: Mutex::default(),
+        prompt_suggestions: Mutex::default(),
+        steering_capable: std::sync::atomic::AtomicBool::new(false),
+        steer_lock: Default::default(),
+        stop_requested: std::sync::atomic::AtomicBool::new(false),
     });
 
     if let Ok(mut sessions) = ACP_SESSIONS.write() {
@@ -13618,6 +13749,7 @@ mod tests {
             tool_identities: Mutex::new(HashMap::new()),
             agent_terminals: Mutex::default(),
             native_plans_seen: std::sync::atomic::AtomicBool::new(false),
+            compaction_status: Mutex::default(),
         })
     }
 

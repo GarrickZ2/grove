@@ -121,6 +121,7 @@ fn truncate_tool_output(output: &mut [ToolCallContentData]) {
                     truncate_string_to_budget(old_text, &mut budget);
                 }
             }
+            ToolCallContentData::Session { .. } => {}
             ToolCallContentData::Terminal {
                 output, truncated, ..
             } => {
@@ -261,6 +262,7 @@ pub fn should_persist(update: &AcpUpdate) -> bool {
         update,
         AcpUpdate::Busy { .. }
             | AcpUpdate::BackgroundWork { .. }
+            | AcpUpdate::PromptSuggestions { .. }
             | AcpUpdate::Error { .. }
             | AcpUpdate::PromptStarted { .. }
             | AcpUpdate::InputAccepted { .. }
@@ -596,28 +598,85 @@ pub fn unresolved_permission_ids(history: &[AcpUpdate]) -> Vec<String> {
     unresolved
 }
 
-/// 把一个 chat 的 history.jsonl 完整复制到另一个 chat 目录（fork 场景）。
-/// 源不存在时静默成功 — 老 chat 还没产生过持久化事件即可 fork,新 chat
-/// 直接以空 history 起步。
-pub fn copy_history(
+/// The history a fork of the chat starts with: everything, or what precedes
+/// the user message that `cursor_id` lies before. `None` when the chat cannot
+/// be forked at that cursor. Cursors belong to the source session only.
+pub fn history_for_fork(
     project: &str,
     task_id: &str,
-    src_chat_id: &str,
-    dst_chat_id: &str,
-) -> std::io::Result<()> {
-    let src = history_file_path(project, task_id, src_chat_id);
-    if !src.exists() {
-        return Ok(());
+    chat_id: &str,
+    cursor_id: Option<&str>,
+) -> Option<Vec<AcpUpdate>> {
+    let path = history_file_path(project, task_id, chat_id);
+    cut_for_fork(load_history_from_path(&path, None), cursor_id)
+}
+
+fn cut_for_fork(mut events: Vec<AcpUpdate>, cursor_id: Option<&str>) -> Option<Vec<AcpUpdate>> {
+    if let Some(cursor_id) = cursor_id {
+        let cut = fork_position(&events, cursor_id)?;
+        events.truncate(cut);
     }
-    let conn = super::database::connection();
-    super::buddies::ensure_session_writable_on(&conn, dst_chat_id)
-        .map_err(std::io::Error::other)?;
-    let dst = history_file_path(project, task_id, dst_chat_id);
-    if let Some(parent) = dst.parent() {
-        fs::create_dir_all(parent)?;
+    events.retain(|event| !matches!(event, AcpUpdate::ForkPoint { .. }));
+    Some(events)
+}
+
+/// Index of the user message that the cursor lies before.
+fn fork_position(events: &[AcpUpdate], cursor: &str) -> Option<usize> {
+    let mut point = None;
+    for (index, event) in events.iter().enumerate() {
+        if let AcpUpdate::ForkPoint {
+            cursor_id,
+            available,
+        } = event
+        {
+            if cursor_id == cursor {
+                point = available.then_some(index);
+            }
+        }
     }
-    fs::copy(&src, &dst)?;
-    Ok(())
+    let user = events[..point?]
+        .iter()
+        .rposition(|event| user_message_id(event).is_some())?;
+    // One message can span several events: the prompt as Grove sent it, the
+    // Agent's report of it, and one event per replayed content block.
+    let (id, agent_id) = user_message_id(&events[user])?;
+    let client = id.or_else(|| {
+        events.iter().find_map(|event| match event {
+            AcpUpdate::V2MessageBind {
+                client_message_id,
+                message_id,
+            } if Some(message_id.as_str()) == agent_id => Some(client_message_id.as_str()),
+            _ => None,
+        })
+    });
+    events[..=user]
+        .iter()
+        .position(|event| {
+            user_message_id(event).is_some_and(|(other_client, other_agent)| {
+                (client.is_some() && other_client == client)
+                    || (agent_id.is_some() && other_agent == agent_id)
+            })
+        })
+        .or(Some(user))
+}
+
+/// Client and Agent IDs of a user message event; `None` for other events.
+fn user_message_id(event: &AcpUpdate) -> Option<(Option<&str>, Option<&str>)> {
+    use agent_client_protocol::v2::schema::SessionUpdate;
+    match event {
+        AcpUpdate::UserMessage {
+            client_message_id,
+            message_id,
+            ..
+        } => Some((client_message_id.as_deref(), message_id.as_deref())),
+        AcpUpdate::V2MessageUpdate {
+            update: SessionUpdate::UserMessage(message),
+        } => Some((None, Some(&message.message_id.0))),
+        AcpUpdate::V2MessageUpdate {
+            update: SessionUpdate::UserMessageChunk(chunk),
+        } => Some((None, Some(&chunk.message_id.0))),
+        _ => None,
+    }
 }
 
 /// 清空 chat 历史文件（新 session 时调用）
@@ -649,7 +708,7 @@ pub fn compact_history(project: &str, task_id: &str, chat_id: &str) {
 }
 
 /// 原子性重写 history.jsonl
-fn write_history(project: &str, task_id: &str, chat_id: &str, events: &[AcpUpdate]) {
+pub fn write_history(project: &str, task_id: &str, chat_id: &str, events: &[AcpUpdate]) {
     let conn = super::database::connection();
     if super::buddies::ensure_session_writable_on(&conn, chat_id).is_err() {
         return;
@@ -1023,6 +1082,70 @@ mod tests {
             &events[0],
             AcpUpdate::UserMessage { text, .. } if text == "first prompt"
         ));
+    }
+
+    fn history(values: serde_json::Value) -> Vec<AcpUpdate> {
+        serde_json::from_value(values).unwrap()
+    }
+
+    fn reply_texts(events: &[AcpUpdate]) -> Vec<&str> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                AcpUpdate::MessageChunk { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_fork_keeps_what_precedes_the_user_message_of_its_cursor() {
+        let events = || {
+            history(serde_json::json!([
+                {"type": "user_message", "text": "one"},
+                {"type": "message_chunk", "text": "first"},
+                {"type": "user_message", "text": "two"},
+                {"type": "fork_point", "cursor_id": "c2", "available": true},
+                {"type": "message_chunk", "text": "second"},
+                {"type": "user_message", "text": "three"},
+                {"type": "fork_point", "cursor_id": "c3", "available": true},
+                {"type": "message_chunk", "text": "third"},
+                {"type": "fork_point", "cursor_id": "c3", "available": false},
+            ]))
+        };
+        let cut = cut_for_fork(events(), Some("c2")).unwrap();
+        assert_eq!(cut.len(), 2);
+        assert_eq!(reply_texts(&cut), ["first"]);
+        // Withdrawn and unknown cursors fork nothing.
+        assert!(cut_for_fork(events(), Some("c3")).is_none());
+        assert!(cut_for_fork(events(), Some("other")).is_none());
+        let whole = cut_for_fork(events(), None).unwrap();
+        assert_eq!(reply_texts(&whole), ["first", "second", "third"]);
+        assert!(!whole
+            .iter()
+            .any(|event| matches!(event, AcpUpdate::ForkPoint { .. })));
+    }
+
+    #[test]
+    fn a_fork_cuts_before_every_event_of_its_user_message() {
+        // v2: the prompt Grove sent, then the Agent's report of it.
+        let v2 = history(serde_json::json!([
+            {"type": "user_message", "text": "one", "client_message_id": "l1"},
+            {"type": "message_chunk", "text": "first"},
+            {"type": "user_message", "text": "two", "client_message_id": "l2"},
+            {"type": "v2_message_bind", "client_message_id": "l2", "message_id": "u2"},
+            {"type": "v2_message_update", "update": {"sessionUpdate": "user_message", "messageId": "u2", "content": []}},
+            {"type": "fork_point", "cursor_id": "c", "available": true},
+        ]));
+        assert_eq!(cut_for_fork(v2, Some("c")).unwrap().len(), 2);
+        // Import: one event per content block of the message.
+        let replay = history(serde_json::json!([
+            {"type": "message_chunk", "text": "first"},
+            {"type": "user_message", "text": "a", "message_id": "u2"},
+            {"type": "user_message", "text": "b", "message_id": "u2"},
+            {"type": "fork_point", "cursor_id": "c", "available": true},
+        ]));
+        assert_eq!(cut_for_fork(replay, Some("c")).unwrap().len(), 1);
     }
 
     #[test]

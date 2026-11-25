@@ -18,7 +18,9 @@ export type ToolCallContentData =
       exit_status?: { exit_code?: number; signal?: string };
       command?: string;
       cwd?: string;
-    };
+    }
+  /** The child session the tool call works with. */
+  | { type: "session"; session_id: string };
 
 export type ToolCallInputData = { label: string; value: string };
 
@@ -72,6 +74,7 @@ export function hasReadableToolOutput(
     if (item.type === "diff") {
       return Boolean(item.display_text.trim() || item.new_text.trim() || item.path.trim());
     }
+    if (item.type === "session") return true;
     return item.terminal_id.trim().length > 0;
   });
   return Boolean(hasStructuredOutput) || legacyContent.trim().length > 0;
@@ -216,6 +219,7 @@ function displayText(content: ToolCallContentData[]): string | undefined {
   const parts = content.flatMap((item): string[] => {
     if (item.type === "diff") return item.display_text ? [item.display_text] : [];
     if (item.type === "terminal") return [`Terminal ${item.terminal_id}`];
+    if (item.type === "session") return [];
     const block = item.content;
     if (block.type === "text") return block.text ? [block.text] : [];
     if (block.type === "image") return [block.label || "<image>"];

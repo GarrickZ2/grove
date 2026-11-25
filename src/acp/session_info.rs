@@ -2,8 +2,28 @@
 use super::*;
 use agent_client_protocol::schema::MaybeUndefined;
 
+/// `_meta.promptSuggestions`; `None` when the update carries none.
+fn meta_prompt_suggestions(meta: Option<&acp::Meta>) -> Option<Vec<String>> {
+    let suggestions = meta?.get("promptSuggestions")?.get("suggestions")?;
+    Some(
+        suggestions
+            .as_array()?
+            .iter()
+            .filter_map(|suggestion| suggestion.get("text")?.as_str())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
 impl AcpSessionHandle {
     pub(super) fn apply_session_info(&self, update: acp::SessionInfoUpdate) -> acp::Result<()> {
+        // codex-acp sends its predicted next prompt this way, to a client with
+        // the namespace Grove negotiates child sessions with (adapter.rs).
+        if let Some(suggestions) = meta_prompt_suggestions(update.meta.as_ref()) {
+            self.set_prompt_suggestions(suggestions);
+        }
         let Some(chat_id) = self.chat_id.as_deref() else {
             return Ok(());
         };
@@ -60,6 +80,38 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn codex_predictions_arrive_as_prompt_suggestions() {
+        let (handle, mut updates, _guard) =
+            new_handle_for_test(&uuid::Uuid::new_v4().to_string(), "project", "task", "chat");
+        let state = super::super::tests::client_state_for_test(handle, Default::default());
+        let mut send = async |meta: Value| {
+            notify(
+                &state,
+                "session-test",
+                json!({"sessionUpdate": "session_info_update", "_meta": meta}),
+            )
+            .await;
+            std::iter::from_fn(|| updates.try_recv().ok())
+                .filter_map(|event| match event {
+                    AcpUpdate::PromptSuggestions { suggestions } => Some(suggestions),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let suggest = |texts: Value| json!({"promptSuggestions": {"suggestions": texts}});
+        assert_eq!(
+            send(suggest(
+                json!([{"text": " Run the tests "}, {"text": "  "}])
+            ))
+            .await,
+            [vec!["Run the tests".to_string()]]
+        );
+        // Other metadata says nothing about suggestions; an empty list withdraws them.
+        assert!(send(json!({"other": true})).await.is_empty());
+        assert_eq!(send(suggest(json!([]))).await, [Vec::<String>::new()]);
     }
 
     #[tokio::test]

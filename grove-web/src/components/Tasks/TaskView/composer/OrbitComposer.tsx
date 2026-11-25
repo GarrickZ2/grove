@@ -200,6 +200,8 @@ const ORB_LABEL: Record<OrbAction, string> = {
 
 interface OrbitSendOrbProps {
   action: OrbAction;
+  /** A queued message joins the running turn. */
+  steer?: boolean;
   disabled: boolean;
   /** Spinner instead of the icon (stopping, saving, creating the session). */
   busy?: boolean;
@@ -212,11 +214,11 @@ interface OrbitSendOrbProps {
 }
 
 /** The one send / stop button. The arrow morphs into a square while the agent can be stopped. */
-export const OrbitSendOrb = memo(function OrbitSendOrb({ action, disabled, busy = false, onSend, onStop, onSendNow, onPointerDown, sendTitle }: OrbitSendOrbProps) {
+export const OrbitSendOrb = memo(function OrbitSendOrb({ action, steer = false, disabled, busy = false, onSend, onStop, onSendNow, onPointerDown, sendTitle }: OrbitSendOrbProps) {
   const icon = busy ? "spin" : action === "stop" ? "stop" : action === "save" ? "check" : action === "sendNow" ? "skip" : "arrow";
   const onClick = action === "stop" ? onStop : action === "sendNow" ? onSendNow : onSend;
   const sendsText = action === "send" || action === "queue" || action === "save";
-  const label = ORB_LABEL[action];
+  const label = action === "queue" && steer ? "Steer — joins the running turn" : ORB_LABEL[action];
   return (
     <button
       type="button"

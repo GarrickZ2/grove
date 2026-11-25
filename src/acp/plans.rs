@@ -12,11 +12,12 @@ pub enum PlanDocument {
     Markdown {
         plan_id: String,
         content: String,
+        /// The file that holds the plan, when it has one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
     },
-    File {
-        plan_id: String,
-        uri: String,
-    },
+    /// Only in older history: ACP dropped file plans.
+    File { plan_id: String, uri: String },
 }
 
 impl PlanDocument {
@@ -46,10 +47,7 @@ pub(super) fn convert(plan: acp::PlanUpdateContent) -> Option<PlanDocument> {
         acp::PlanUpdateContent::Markdown(plan) => PlanDocument::Markdown {
             plan_id: plan.plan_id.to_string(),
             content: plan.content,
-        },
-        acp::PlanUpdateContent::File(plan) => PlanDocument::File {
-            plan_id: plan.plan_id.to_string(),
-            uri: plan.uri,
+            path: plan.path.map(|path| path.to_string_lossy().into_owned()),
         },
         _ => return None,
     })
@@ -96,7 +94,7 @@ mod tests {
             ),
             (
                 "session-test",
-                json!({"sessionUpdate":"plan_update", "plan":{"type":"file", "planId":"file", "uri":"file:///workspace/plan.md"}}),
+                json!({"sessionUpdate":"plan_update", "plan":{"type":"markdown", "planId":"file", "content":"# Plan", "path":"/workspace/plan.md"}}),
             ),
             (
                 "child",
@@ -121,8 +119,9 @@ mod tests {
             .native_plans_seen
             .load(std::sync::atomic::Ordering::Relaxed));
         let live: Vec<_> = std::iter::from_fn(|| updates.try_recv().ok()).collect();
-        assert!(live.iter().any(|event| matches!(event, AcpUpdate::PlanDocumentUpdate { plan: PlanDocument::Markdown { plan_id, content } } if plan_id == "same" && content == "# Parent plan")));
+        assert!(live.iter().any(|event| matches!(event, AcpUpdate::PlanDocumentUpdate { plan: PlanDocument::Markdown { plan_id, content, .. } } if plan_id == "same" && content == "# Parent plan")));
         assert!(live.iter().any(|event| matches!(event, AcpUpdate::SubagentEvent { session_id, event } if session_id == "child" && matches!(event.as_ref(), AcpUpdate::PlanDocumentRemoved { plan_id } if plan_id == "same"))));
+        assert!(live.iter().any(|event| matches!(event, AcpUpdate::PlanDocumentUpdate { plan: PlanDocument::Markdown { path: Some(path), .. } } if path == "/workspace/plan.md")));
         let stored = crate::storage::chat_history::load_history("project", "task", "chat");
         assert_eq!(
             stored

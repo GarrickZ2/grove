@@ -17,7 +17,7 @@ import { formatTimeAgo } from "../../utils/notificationFormat";
 import { PickerMenu, type PickerMenuItem } from "../ui/PickerMenu";
 import { useACPAvailability } from "../Tasks/TaskView/useACPAvailability";
 import type { ChatDropdownOption } from "../Tasks/TaskView/ChatConfigMenus";
-import { configDropdownValues, quickConfigOptions } from "../Tasks/TaskView/sessionConfigOptions";
+import { configCategoryMatches, configDropdownValues, quickConfigOptions, speedFirst } from "../Tasks/TaskView/sessionConfigOptions";
 import { buildDefaultSessionTitle } from "../Tasks/TaskView/useInitialChatLoad";
 import { AttachmentError, attachmentLabel, prepareFileAttachment, type Attachment } from "../Tasks/TaskView/chatAttachments";
 import { promptConfigFromSelection, readSavedSelection, saveSelection } from "./orbitDraftConfig";
@@ -294,7 +294,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     setSelection(next);
     saveSelection(next);
   };
-  const configOptions = selection.source === "config_options" ? snapshot?.config_options ?? [] : [];
+  const configOptions = speedFirst(selection.source === "config_options" ? snapshot?.config_options ?? [] : []);
   const quick = quickConfigOptions(configOptions);
   const quickIds = new Set([quick.model, quick.mode, quick.thinking].flatMap((option) => option ? [option.id] : []));
   const valueOf = (option: SessionConfigOption | undefined) => {
@@ -322,11 +322,11 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
       onSelect: (modeId: string) => { changeSelection({ ...selection, mode_id: modeId }); },
     }] : []),
     ...configOptions.filter((option) => !quickIds.has(option.id) && option.type === "select").map((option): SetupField => ({
-      id: option.id, kind: "option", label: option.name, options: dropdownValues(option), value: valueOf(option), onSelect: (value) => setOption(option, value),
+      id: option.id, kind: configCategoryMatches(option, "speed") ? "speed" : "option", label: option.name, options: dropdownValues(option), value: valueOf(option), onSelect: (value) => setOption(option, value),
     })),
   ];
   const setupToggles: SetupToggle[] = configOptions.filter((option) => !quickIds.has(option.id) && option.type === "boolean").map((option) => ({
-    id: option.id, label: option.name, description: option.description,
+    id: option.id, kind: configCategoryMatches(option, "speed") ? "speed" as const : undefined, label: option.name, description: option.description,
     value: selection.source === "config_options" && option.id in selection.values ? !!selection.values[option.id] : !!option.currentValue,
     onToggle: (value) => setOption(option, value),
   }));

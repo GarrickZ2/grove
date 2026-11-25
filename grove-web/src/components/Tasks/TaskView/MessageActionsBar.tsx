@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, GitFork } from "lucide-react";
 import { formatDuration, formatTokens } from "../../Stats/formatters";
 
 /** Hover row under a chat message: relative time, token usage, turn duration (seconds) and copy. Shared by TaskChat and Buddy. */
-export function MessageActions({ text, timestamp, usage, startTs, endTs, now, alignRight = false }: {
+export function MessageActions({ text, timestamp, usage, startTs, endTs, now, alignRight = false, onFork }: {
   text: string; timestamp?: number; usage?: { inputTokens: number; outputTokens: number; totalTokens: number }; startTs?: number; endTs?: number; now: number; alignRight?: boolean;
+  /** Fork the session at the end of this message. */
+  onFork?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const date = timestamp == null ? undefined : new Date(timestamp);
@@ -33,5 +35,6 @@ export function MessageActions({ text, timestamp, usage, startTs, endTs, now, al
     {usage && <span title={`Input ${usage.inputTokens.toLocaleString()}, output ${usage.outputTokens.toLocaleString()} tokens`}>{formatTokens(usage.totalTokens)} tokens</span>}
     {duration && <span>{duration}</span>}
     <button type="button" title={copied ? "Copied" : "Copy message"} aria-label={copied ? "Copied" : "Copy message"} className="rounded p-1 hover:text-[var(--color-text)] focus-visible:opacity-100" onClick={() => void copy()}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+    {onFork && <button type="button" title="Fork from here" aria-label="Fork from here" className="rounded p-1 hover:text-[var(--color-text)] focus-visible:opacity-100" onClick={onFork}><GitFork size={14} /></button>}
   </div>;
 }
