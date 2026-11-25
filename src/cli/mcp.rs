@@ -1279,6 +1279,7 @@ fn resolve_agent_identity(
 impl GroveMcpServer {
     /// Check if running inside a Grove task and get task context
     #[tool(
+        annotations(read_only_hint = true),
         name = "status",
         description = "Return the authoritative current Grove task context, including task id and name, project name, branch, and target branch. Use it when task identity or branch context needs to be verified."
     )]
@@ -1328,6 +1329,7 @@ impl GroveMcpServer {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "list_routines",
         description = "List the Routines that deliver into this Task, including ones the user set up. `target` is self (this chat), new_chat, or chat:<id> for another chat in this Task."
     )]
@@ -1406,6 +1408,7 @@ impl GroveMcpServer {
 
     /// List skill packages and their skills, flagging which are writable
     #[tool(
+        annotations(read_only_hint = true),
         name = "skill_list",
         description = "List all skill packages and the skills inside each. Every package is flagged `writable`: true for local packages you can create/edit/delete skills in, false for read-only git packages. Call this before creating a skill to see what already exists, to pick a package, or to locate a skill to edit."
     )]
@@ -1433,6 +1436,7 @@ impl GroveMcpServer {
 
     /// List all registered projects
     #[tool(
+        annotations(read_only_hint = true),
         name = "list_projects",
         description = "List registered projects. Use `query` to fuzzy-filter by path."
     )]
@@ -1461,6 +1465,7 @@ impl GroveMcpServer {
 
     /// List active tasks under a project
     #[tool(
+        annotations(read_only_hint = true),
         name = "list_tasks",
         description = "List active tasks under a project. Use `query` to fuzzy-filter by name or branch."
     )]
@@ -1490,6 +1495,7 @@ impl GroveMcpServer {
 
     /// List available agents
     #[tool(
+        annotations(read_only_hint = true),
         name = "list_agents",
         description = "List available agents that can be used to start chat sessions. Returns built-in and custom agents with their capabilities."
     )]
@@ -1528,6 +1534,7 @@ impl GroveMcpServer {
 
     /// Query chat status (auto-connects the session if not running)
     #[tool(
+        annotations(read_only_hint = true),
         name = "chat_status",
         description = "Get the current state of a chat session. Auto-connects the agent if not already running. Returns: state (idle/busy/permission_needed), available_modes, available_models, available_thought_levels (+ current_thought_level_id / thought_level_config_id when the agent exposes one), turn_count, last_message, plan, and permission details. Always call this before grove_send_prompt to know the session state and available selectors."
     )]
@@ -1542,6 +1549,7 @@ impl GroveMcpServer {
 
     /// List chats for a task
     #[tool(
+        annotations(read_only_hint = true),
         name = "list_chats",
         description = "List all chat sessions under a task. Returns id, title, agent, creation time and history_path for each chat. A chat with `readonly` set cannot be resumed or sent to; read its history_path (a JSONL file) instead."
     )]
@@ -1556,6 +1564,7 @@ impl GroveMcpServer {
 
     /// How designs are stored, laid out and checked.
     #[tool(
+        annotations(read_only_hint = true),
         name = "design_read_me",
         description = "Return the Grove design reference: where HTML design pages and the Project's design system live, the `design.json` board format, how to lay pages out, and how to check your work. Call this ONCE before you create or change a UI design, mockup, prototype or design system in this Studio task. Designs are plain files you write with your own file tools."
     )]
@@ -1571,6 +1580,7 @@ impl GroveMcpServer {
 
     /// Look at designs in the current Studio task.
     #[tool(
+        annotations(read_only_hint = true),
         name = "design_read",
         description = "Look at the designs in the current Studio task. With no arguments: list the designs and their pages. With `design`: the board layout (each page's position and size, labels, overlapping artboards). With `design` and `page`: the page as Grove's Design panel rendered it (an image, when the user has the panel open), a check of the page (overflow, clipped or overlapping text, broken images, script errors) and its open comments. Call it after writing or changing a page."
     )]
@@ -1628,6 +1638,7 @@ impl GroveMcpServer {
 
     /// Return the Grove sketch element-format reference (cheat sheet).
     #[tool(
+        annotations(read_only_hint = true),
         name = "sketch_read_me",
         description = "Return the Grove sketch drawing reference: Excalidraw element format, color palette, Grove pseudo-elements (restoreCheckpoint / delete / cameraUpdate), camera sizing rules, and worked examples. Call this ONCE before your first `grove_sketch_draw` in a conversation. Do not call it repeatedly — the content does not change."
     )]
@@ -1640,6 +1651,7 @@ impl GroveMcpServer {
 
     /// List Excalidraw sketches in the current Studio task.
     #[tool(
+        annotations(read_only_hint = true),
         name = "sketch_list",
         description = "List sketches in the current Studio task. Returns [{id, name, created_at, updated_at}]. No arguments — task is taken from GROVE_* env. Call this before `grove_sketch_read` to find sketches by name."
     )]
@@ -1658,6 +1670,7 @@ impl GroveMcpServer {
 
     /// Read a sketch summary (and optionally the full scene) from the current task.
     #[tool(
+        annotations(read_only_hint = true),
         name = "sketch_read",
         description = "Read a sketch in the current Studio task. Returns a rendered image (if the web client has uploaded a fresh thumbnail), a summary (element count, type breakdown, content bounds), and a FRESH checkpoint_id you can pass back via `restoreCheckpoint` in grove_sketch_draw. Set detail_full=true to also include the full Excalidraw scene JSON (costs more tokens)."
     )]
@@ -1805,6 +1818,7 @@ impl GroveMcpServer {
 
     /// Read user-written notes for the current task
     #[tool(
+        annotations(read_only_hint = true),
         name = "read_notes",
         description = "Read user-written notes for the current Grove task. Notes contain important context, requirements, and instructions set by the user."
     )]
@@ -1830,6 +1844,7 @@ impl GroveMcpServer {
 
     /// Read review comments for the current task
     #[tool(
+        annotations(read_only_hint = true),
         name = "read_review",
         description = "Read code review comments for the current Grove task and its linked projects. Returns review groups, one per project, each with a project_id, its root path, and comments with IDs, locations (relative to that path), content, and status (open/resolved/outdated). Use grove_reply_review to respond to comments; pass the group's project_id for comments in linked projects."
     )]

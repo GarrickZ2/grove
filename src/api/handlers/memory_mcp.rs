@@ -142,6 +142,7 @@ const ORGANIZATION_TOOLS: &[&str] = &[
 #[tool_router]
 impl MemoryMcpService {
     #[tool(
+        annotations(read_only_hint = true),
         name = "memory_get_directory",
         description = "Return the absolute path of this Project's managed long-term Memory directory. Read existing Markdown files and edit their bodies with filesystem tools, preserving frontmatter unchanged. Update titles, descriptions and tags only through memory_update_entity_metadata. Create and delete Entity files only through memory_create_entity and memory_delete_entity.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<DirectoryOutput>()
@@ -229,6 +230,7 @@ impl MemoryMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "memory_get_pending_logs",
         description = "Page through append-only Memory Logs captured in this Run's fixed snapshot. Logs appended after the Run began are excluded and remain for the next Run. cursor is opaque; limit defaults to 100 and accepts 1 through 200.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<memory::Page<MemoryLogItem>>()
@@ -262,6 +264,7 @@ impl MemoryMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "memory_get_recent_chats",
         description = "List task chat-history files relevant to this Deep organization Run. Each item provides human-readable Task and Session names, an absolute JSONL path, a one-based suggested line where evidence since the previous successful organization begins, and the current total line count. Start at new_content_start_line for efficiency, but freely read earlier context and use rg, jq, sed, scripts, or other filesystem tools as appropriate. review_window explains the time range in plain language. cursor is opaque; limit defaults to 50 and accepts 1 through 100.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<RecentChatsOutput>()
@@ -319,6 +322,7 @@ impl MemoryMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "memory_get_relations",
         description = "Page through current Project Memory Relations, optionally filtering to Relations incident to one entity_id. Results are ordered by effective score and do not change access counts. cursor is opaque; limit defaults to 50 and accepts 1 through 100.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<RelationPageOutput>()

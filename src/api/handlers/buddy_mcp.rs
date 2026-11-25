@@ -361,6 +361,7 @@ impl BuddyMcpService {
         success(crate::buddy::routines::save(&buddy, None, input).map_err(internal)?)
     }
     #[tool(
+        annotations(read_only_hint = true),
         name = "list_routines",
         description = "List this Buddy's user-managed Routines. Memory organization is managed separately."
     )]
@@ -478,6 +479,7 @@ impl BuddyMcpService {
         success(result)
     }
     #[tool(
+        annotations(read_only_hint = true),
         name = "list_buddies",
         description = "List the user's other Buddies, including those on their other connected machines: id, name, role, whether each is idle, running or waiting, and the machine when it is another one."
     )]
@@ -511,6 +513,7 @@ impl BuddyMcpService {
         )
     }
     #[tool(
+        annotations(read_only_hint = true),
         name = "list_followups",
         description = "List the Sessions you are following and their last status/result. After a Grove restart, unfinished ones are marked interrupted; check the Session and send again if needed."
     )]
@@ -609,13 +612,18 @@ impl BuddyMcpService {
         )
     }
     #[tool(
+        annotations(read_only_hint = true),
         name = "list_projects",
         description = "List all registered ordinary Projects, including archived Projects, each with the id other tools take. Buddy Projects are hidden."
     )]
     async fn list_projects(&self) -> Result<CallToolResult, McpError> {
         success(crate::buddy::tools::list_projects().map_err(internal)?)
     }
-    #[tool(name = "list_tasks", description = "List active Tasks in a Project.")]
+    #[tool(
+        annotations(read_only_hint = true),
+        name = "list_tasks",
+        description = "List active Tasks in a Project."
+    )]
     async fn list_tasks(
         &self,
         Parameters(input): Parameters<ProjectInput>,
@@ -624,6 +632,7 @@ impl BuddyMcpService {
         success(crate::storage::tasks::load_tasks(&project).map_err(internal)?)
     }
     #[tool(
+        annotations(read_only_hint = true),
         name = "list_sessions",
         description = "List a Task's Sessions and their idle, running or waiting status."
     )]
@@ -636,6 +645,7 @@ impl BuddyMcpService {
         success(crate::buddy::tools::list_sessions(&project, &task).map_err(internal)?)
     }
     #[tool(
+        annotations(read_only_hint = true),
         name = "read_session",
         description = "Read a Session you can reach as numbered entries (user and assistant messages; Grove envelopes removed), newest page first. Page with before/after using the returned cursors. include_tools adds one line per tool call and the files touched. Entries list their images and files with paths; the page's newest images are shown to you. history_path is the raw event log for grep when you need detail. status says whether the Session is idle, running or waiting; current_prompt is what it is working on; queue lists the prompts waiting behind it, next to run first. This is not a way to wait for a reply: replies come as your next message after you end your turn."
     )]
@@ -648,6 +658,7 @@ impl BuddyMcpService {
         session_mcp::read_session(&SessionScope::Buddy(buddy), input)
     }
     #[tool(
+        annotations(read_only_hint = true),
         name = "search_sessions",
         description = "Find messages containing some words in one Session, or across the Sessions of a Project you can reach. Each match gives the Session and entry index; read around it with read_session (before = index + 1)."
     )]

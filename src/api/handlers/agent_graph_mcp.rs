@@ -375,6 +375,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "memory_recall",
         description = "Find relevant long-term Project Memory summaries by query terms, structured tags, or current score. Query text is split on spaces and common list punctuation; it is not semantic or embedding search. Any term may match title, description, or tags, and results rank by the number of distinct matched terms. This returns metadata only and never changes access counts. Call memory_read before relying on full contents.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<memory::Page<MemoryRecallItem>>()
@@ -388,6 +389,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "memory_read",
         description = "Read one long-term Memory's full Markdown body. Every successful read increments that Entity's access count. related_limit defaults to 3 and accepts 0 through 10; returned related Memories contain summaries only and are not reinforced. If via_relation_id names a Relation connected to this Entity, that Relation's access count also increments; an invalid or unrelated id is ignored and never blocks the read.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<MemoryReadOutput>()
@@ -401,6 +403,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "memory_get_related",
         description = "Page through summary-only Memories related to one Entity, ordered by Relation score. Candidate discovery does not change Entity or Relation access counts; call memory_read with the returned entity_id and Relation id only when following a useful connection. cursor is opaque; limit defaults to 10 and accepts 1 through 50.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<memory::Page<RelatedMemoryItem>>()
@@ -414,6 +417,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "memory_get_recent_logs",
         description = "Page through recent unorganized short-term Memory Logs. Optional query text is split on spaces and common list punctuation; it is not semantic or embedding search. Any term may match title, description, or tags, and results rank by distinct matched terms before recency. Reading results does not change access counts. Treat Logs as recent evidence rather than established long-term Memory. limit defaults to 20 and accepts 1 through 100.",
         output_schema = rmcp::handler::server::tool::schema_for_type::<memory::Page<MemoryLogItem>>()
@@ -459,6 +463,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "graph_contacts",
         description = "Return your own metadata, who you can contact (outgoing edges), messages still awaiting a reply, and all spawnable targets (base agents, custom servers, personas) via can_spawn[]. Replies never show up here: they come as your next message after you end your turn, so do not use this to wait for one."
     )]
@@ -475,6 +480,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "read_session",
         description = "Read a Session you can reach as numbered entries (user and assistant messages; Grove envelopes removed), newest page first. Page with before/after using the returned cursors. include_tools adds one line per tool call and the files touched. Entries list their images and files with paths; the page's newest images are shown to you. history_path is the raw event log for grep when you need detail. status says whether the Session is idle, running or waiting; current_prompt is what it is working on; queue lists the prompts waiting behind it, next to run first. This is not a way to wait for a reply: replies come as your next message after you end your turn."
     )]
@@ -490,6 +496,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "search_sessions",
         description = "Find messages containing some words in one Session, or across the Sessions of a Project you can reach. Each match gives the Session and entry index; read around it with read_session (before = index + 1)."
     )]
@@ -520,6 +527,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
+        annotations(read_only_hint = true),
         name = "graph_capability",
         description = "Inspect a session's available models, modes, and thought_levels. The session must be in your task and currently online (its session.json exists). NOTE: this tool does NOT auto-spawn — if you get AgentOffline, send the target a message via graph_send first to wake it, then re-query."
     )]
@@ -598,6 +606,7 @@ impl AgentGraphMcpService {
 
     /// Explain the browser tools
     #[tool(
+        annotations(read_only_hint = true),
         name = "browser_help",
         description = "List the tools `browser` accepts. Pass `topic` as a tool name for its arguments, or \"guide\" for the full workflow."
     )]
@@ -628,6 +637,7 @@ impl AgentGraphMcpService {
 
     /// Explain the computer tools
     #[tool(
+        annotations(read_only_hint = true),
         name = "computer_help",
         description = "List the tools `computer` accepts. Pass `topic` as a tool name for its arguments, or \"guide\" for the full workflow."
     )]
