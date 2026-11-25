@@ -71,8 +71,16 @@ personal team may be used subject to Apple's limits.
 - The native profile file contains no credentials. Remembered sign-in uses the
   existing revocable device-key flow in each origin's WKWebView storage. The
   iOS sign-in screen defaults to remembering when supported; users can opt out.
-  Remote logout/revocation clears only that server's credential. Proxy cookies
-  are suppressed because cookies, unlike Web Storage, are not isolated by port.
+  Remote logout/revocation clears only that server's credential. The page's own
+  cookies are suppressed because cookies, unlike Web Storage, are not isolated
+  by port.
+- A server behind a sign-in page (an access proxy such as Cloudflare Access) is
+  signed in to on a native sheet (`native/AccessLogin.swift`, `src/access.rs`).
+  The cookies its own host ends up with are kept in this device's Keychain and
+  sent with every request to that server; removing the server removes them. When
+  they run out the transport answers 511 and the page offers to sign in again.
+  The sheet is a web view: passkeys, and providers that refuse web views such as
+  Google, do not work in it.
 - HTTP and WebSocket forwarding preserve authentication, query strings,
   streaming bodies and error status. TLS certificate validation stays enabled;
   self-signed Grove TLS is not silently trusted. Use LAN HTTP for the first test

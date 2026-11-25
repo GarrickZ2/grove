@@ -12,7 +12,7 @@ import { homeNote, MACHINE_ICONS, machineAddress, machineNote, parseHeaders } fr
 import { isIosClient } from "../../utils/platform";
 import {
   forgetIosServer, iosServerHost, iosServerOrigin, listIosServers, openIosServer, probeIosServer, renameIosServer,
-  type IosServer, type IosServers,
+  type IosReach, type IosServer, type IosServers,
 } from "../../ios/servers";
 import "./orbit-machine-menu.css";
 
@@ -159,7 +159,7 @@ function IosServerDialog({ state, onClose, onChanged }: {
   const editing = state.mode === "edit" ? state.server : null;
   const [address, setAddress] = useState("");
   const [name, setName] = useState(editing?.name ?? "");
-  const [found, setFound] = useState<boolean | null>(null);
+  const [found, setFound] = useState<IosReach | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -170,7 +170,7 @@ function IosServerDialog({ state, onClose, onChanged }: {
     let live = true;
     const timer = window.setTimeout(() => {
       if (!server) { setFound(null); return; }
-      void probeIosServer(server).then((reachable) => { if (live) setFound(reachable); });
+      void probeIosServer(server).then((answer) => { if (live) setFound(answer); });
     }, 500);
     return () => { live = false; window.clearTimeout(timer); };
   }, [address, editing]);
@@ -205,7 +205,7 @@ function IosServerDialog({ state, onClose, onChanged }: {
         <DialogHead title={editing ? "Edit server" : "Add a server"} description={editing ? iosServerHost(editing.server) : <>Run <code>grove remote</code> on the computer, then enter the address it shows.</>} />
         <DialogBody>
           {editing ? null : (
-            <DialogField label="Address" note={found === null ? undefined : found ? "Found Grove" : "No Grove answers here yet"}>
+            <DialogField label="Address" note={found === null ? undefined : found === "grove" ? "Found Grove" : found === "sign_in" ? "Found a sign-in page" : "No Grove answers here yet"}>
               <input className="oui-field" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="192.168.1.20:3001" autoFocus autoComplete="off" autoCapitalize="off" spellCheck={false} inputMode="url" />
             </DialogField>
           )}
@@ -260,7 +260,7 @@ export function OrbitMachineMenu({ pairedOnly = false }: {
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [ios, setIos] = useState<IosServers | null>(null);
-  const [reach, setReach] = useState<Record<string, boolean>>({});
+  const [reach, setReach] = useState<Record<string, IosReach>>({});
   const [iosDialog, setIosDialog] = useState<IosDialogState | null>(null);
   const { open, close, toggle, rootRef } = usePopover<HTMLDivElement>();
 
@@ -280,7 +280,7 @@ export function OrbitMachineMenu({ pairedOnly = false }: {
     let live = true;
     for (const server of ios.servers) {
       if (server.id === ios.current) continue;
-      void probeIosServer(server.server).then((reachable) => { if (live) setReach((all) => ({ ...all, [server.id]: reachable })); });
+      void probeIosServer(server.server).then((answer) => { if (live) setReach((all) => ({ ...all, [server.id]: answer })); });
     }
     return () => { live = false; };
   }, [open, ios]);
@@ -295,7 +295,7 @@ export function OrbitMachineMenu({ pairedOnly = false }: {
   const shownStatus = atHome ? "online" : machines.find((machine) => machine.id === current)?.status ?? "offline";
   const switchServer = (server: IosServer) => {
     setFailure(null);
-    openIosServer(server.server, server.name).catch(() => setFailure(`Can't reach ${server.name}`));
+    openIosServer(server.server, server.name).catch((reason) => setFailure(`Can't reach ${server.name}: ${message(reason)}`));
   };
 
   const goHome = () => setMachineApiBase(null);
@@ -336,13 +336,13 @@ export function OrbitMachineMenu({ pairedOnly = false }: {
         <div className="orbit-machine-pop" role="menu" aria-label="Machines">
           {ios ? ios.servers.map((server) => {
             const here = server.id === ios.current;
-            const reachable = here || reach[server.id];
+            const answer = here ? "grove" : reach[server.id];
             return (
               <MachineRow
                 key={`ios-${server.id}`}
                 machine={{ ...home, id: server.id, name: server.name, icon: here ? home.icon : "server" }}
-                tone={reachable ? "ok" : "off"}
-                note={reachable === false ? `Can't reach · ${iosServerHost(server.server)}` : iosServerHost(server.server)}
+                tone={answer === "grove" ? "ok" : answer === "sign_in" ? "warn" : "off"}
+                note={`${answer === "none" ? "Can't reach · " : answer === "sign_in" ? "Sign in · " : ""}${iosServerHost(server.server)}`}
                 current={here && atHome}
                 disabled={here && atHome}
                 onOpen={() => (here ? goHome() : switchServer(server))}

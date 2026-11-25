@@ -1,0 +1,9 @@
+.ios-sign-in-notice {
+  position: fixed; z-index: 1001; left: 50%; top: calc(env(safe-area-inset-top) + 64px); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; box-sizing: border-box; width: max-content; max-width: calc(100vw - 24px); padding: 8px 8px 8px 18px;
+  border-radius: 26px; background: var(--color-text, #18181b); color: var(--color-bg, #fff); box-shadow: 0 10px 30px rgb(0 0 0 / 24%);
+  font: 500 14px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+}
+.ios-sign-in-notice > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ios-sign-in-notice > button { flex: none; height: 36px; padding: 0 16px; border: 0; border-radius: 18px; background: var(--color-bg, #fff); color: var(--color-text, #18181b); font: inherit; font-weight: 600; }
+.ios-sign-in-notice > button:disabled { opacity: .5; }

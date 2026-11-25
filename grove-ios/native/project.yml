@@ -5,6 +5,7 @@ targets:
       - path: ../../native/ActivityBridge.swift
       - path: ../../native/TransportLifecycle.swift
       - path: ../../native/ShellBridge.swift
+      - path: ../../native/AccessLogin.swift
       - path: ../../native/GroveLaunch.storyboard
       - path: ../../native/Launch.xcassets
     settings:

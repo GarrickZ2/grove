@@ -7,6 +7,8 @@ import { installExternalLinkInterceptor, installGlobalDragDropInterceptor } from
 import { commandRegistry, initUserKeymap } from './keyboard'
 import { COMMAND_CATALOG } from './keyboard/catalog'
 import { getVersion } from './api/version'
+import { IosSignInNotice } from './ios/IosSignInNotice'
+import { watchForSignIn } from './ios/signInWatch'
 import { GlobalErrorBoundary } from './errors/GlobalErrorBoundary'
 import {
   installGlobalErrorHandlers,
@@ -16,7 +18,7 @@ import {
 
 if (isIosClient) {
   document.documentElement.dataset.groveIos = 'true'
-
+  watchForSignIn()
 }
 
 // On a touch screen the layout already fits the screen (and each half of a
@@ -84,6 +86,7 @@ createRoot(document.getElementById('root')!, {
   <GlobalErrorBoundary>
     <StrictMode>
       <App />
+      {isIosClient && <IosSignInNotice />}
     </StrictMode>
   </GlobalErrorBoundary>,
 )

@@ -35,19 +35,28 @@ export function openExternalUrl(url: string): void {
 
 /**
  * Install a document-level click interceptor that routes any <a href="http(s)://…">
- * click through `openExternalUrl`, so OS-default browser handles the URL.
+ * click, and any `window.open("http(s)://…")`, through `openExternalUrl`, so
+ * OS-default browser handles the URL.
  *
  * Tauri-only: in a regular browser, native <a> behavior is already correct.
  *
  * Why this is needed: Tauri's webview swallows `target="_blank"` /
  * `window.open` calls, leaving plain markdown / 3rd-party-rendered links
  * dead. Intercepting at capture phase covers every component without each
- * one having to wire up its own handler. Components that render to canvas
+ * one having to wire up its own handler. `window.open` covers libraries that
+ * open links themselves (Monaco's Cmd+click). Components that render to canvas
  * (e.g. xterm) still need their own integration since they don't emit real
  * <a> elements.
  */
 export function installExternalLinkInterceptor(): void {
   if (!getTauriInternals()) return;
+
+  const openWindow = window.open.bind(window);
+  window.open = (url, ...rest) => {
+    if (url === undefined || !/^https?:\/\//i.test(String(url))) return openWindow(url, ...rest);
+    openExternalUrl(String(url));
+    return null;
+  };
 
   document.addEventListener(
     "click",

@@ -68,8 +68,137 @@ struct Manager {
     home: String,
     active_origin: SyncRwLock<String>,
     http: reqwest::Client,
+    sessions: crate::access::Sessions,
+    sign_in: SyncRwLock<SignIn>,
     listeners: Mutex<HashMap<SocketAddr, LocalListener>>,
     foreground: AtomicBool,
+}
+
+/// The sign-in shown last: which one it was, and how it went.
+#[derive(Clone, Default, Serialize)]
+struct SignIn {
+    id: u64,
+    /// `open`, `done` or `failed`.
+    state: &'static str,
+    error: Option<&'static str>,
+}
+
+/// What answers at an address.
+enum Answer {
+    Grove {
+        required: bool,
+    },
+    /// Something in front of it wants a person to sign in.
+    SignIn,
+    Nothing,
+}
+
+impl Manager {
+    /// Ask an address for Grove, past its front door when `cookie` opens it.
+    /// Comes back with the https address when http only redirects there.
+    async fn ask(&self, url: &Url, cookie: Option<&str>, seconds: u64) -> (Url, Answer) {
+        let mut url = url.clone();
+        let get = |url: &Url, cookie: Option<&str>| {
+            let mut request = self
+                .http
+                .get(url.join("api/v1/auth/info").unwrap())
+                .timeout(Duration::from_secs(seconds));
+            if let Some(cookie) = cookie {
+                request = request.header("cookie", cookie);
+            }
+            request.send()
+        };
+        let mut response = match get(&url, cookie).await {
+            Ok(response) => response,
+            Err(_) => return (url, Answer::Nothing),
+        };
+        if let Some(secure) = secure_version(&url, location(&response)) {
+            url = secure;
+            let kept = self.sessions.get(url.as_str());
+            response = match get(&url, cookie.or(kept.as_deref())).await {
+                Ok(response) => response,
+                Err(_) => return (url, Answer::Nothing),
+            };
+        }
+        let status = response.status();
+        // Grove answers this path to anyone: a refusal is not Grove's.
+        if status.is_redirection()
+            || matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+        {
+            return (url, Answer::SignIn);
+        }
+        let required = match response.json::<serde_json::Value>().await {
+            Ok(info) if status.is_success() => {
+                info.get("required").and_then(serde_json::Value::as_bool)
+            }
+            _ => None,
+        };
+        match required {
+            Some(required) => (url, Answer::Grove { required }),
+            None => (url, Answer::Nothing),
+        }
+    }
+
+    async fn ask_with_session(&self, url: &Url, seconds: u64) -> (Url, Answer) {
+        let session = self.sessions.get(url.as_str());
+        self.ask(url, session.as_deref(), seconds).await
+    }
+
+    fn sign_in_ended(&self, id: u64, error: Option<&'static str>) {
+        let mut sign_in = self.sign_in.write().unwrap();
+        if sign_in.id == id {
+            sign_in.state = if error.is_some() { "failed" } else { "done" };
+            sign_in.error = error;
+        }
+    }
+
+    fn sign_in_current(&self, id: u64) -> bool {
+        self.sign_in.read().unwrap().id == id
+    }
+}
+
+fn location(response: &reqwest::Response) -> Option<&str> {
+    response.headers().get("location")?.to_str().ok()
+}
+
+/// The https address when a server's only objection is plain http.
+fn secure_version(url: &Url, location: Option<&str>) -> Option<Url> {
+    let mut to = Url::parse(location?).ok()?;
+    if url.scheme() != "http" || to.scheme() != "https" || url.host_str() != to.host_str() {
+        return None;
+    }
+    to.set_path("/");
+    to.set_query(None);
+    to.set_fragment(None);
+    Some(to)
+}
+
+/// A redirect from a server that is a front door's, not Grove's own.
+fn leads_to_sign_in(
+    server: &Url,
+    path: &str,
+    status: StatusCode,
+    location: Option<&axum::http::HeaderValue>,
+) -> bool {
+    if !status.is_redirection() || status == StatusCode::NOT_MODIFIED {
+        return false;
+    }
+    let elsewhere = location
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| server.join(value).ok())
+        .is_some_and(|to| to.host_str() != server.host_str());
+    elsewhere || path.starts_with("/api/")
+}
+
+/// 511 is the one status that means exactly this, and Grove never sends it.
+fn sign_in_needed() -> Response {
+    (
+        StatusCode::NETWORK_AUTHENTICATION_REQUIRED,
+        Json(
+            serde_json::json!({ "error": "Sign in again to reach this server.", "sign_in": true }),
+        ),
+    )
+        .into_response()
 }
 
 #[derive(Clone)]
@@ -272,6 +401,8 @@ fn spawn_listener(
         .route("/_grove/probe", post(probe))
         .route("/_grove/rename", post(rename))
         .route("/_grove/forget", post(forget))
+        .route("/_grove/sign-in", post(sign_in))
+        .route("/_grove/sign-in/state", post(sign_in_state))
         .fallback(serve)
         .layer(axum::Extension(websocket_stop))
         .with_state(Arc::new(state));
@@ -319,6 +450,8 @@ pub async fn start(legacy: PathBuf) -> Result<ClientTransport, Box<dyn std::erro
             .connect_timeout(Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())
             .build()?,
+        sessions: Default::default(),
+        sign_in: Default::default(),
         listeners: Mutex::new(HashMap::new()),
         foreground: AtomicBool::new(true),
     });
@@ -435,7 +568,7 @@ async fn connect(
             "Open the connection screen in Grove.",
         );
     }
-    let url = match normalize_server(&input.server) {
+    let mut url = match normalize_server(&input.server) {
         Ok(url)
             if !state
                 .manager
@@ -454,27 +587,22 @@ async fn connect(
         }
     };
     if !input.save_only {
-        let response = state
-            .manager
-            .http
-            .get(url.join("api/v1/auth/info").unwrap())
-            .timeout(Duration::from_secs(12))
-            .send()
-            .await;
-        let valid = match response {
-            Ok(response) if response.status().is_success() => response
-                .json::<serde_json::Value>()
-                .await
-                .is_ok_and(|value| {
-                    value
-                        .get("required")
-                        .is_some_and(serde_json::Value::is_boolean)
-                }),
-            _ => false,
-        };
-        if !valid {
-            return error(StatusCode::BAD_GATEWAY,
-            "Could not reach Grove. Check the address, Wi-Fi, local network permission and that Grove Mobile is running. HTTPS needs a trusted certificate; use the LAN HTTP address for this test.");
+        let (answered, answer) = state.manager.ask_with_session(&url, 12).await;
+        url = answered;
+        match answer {
+            Answer::Grove { .. } => {}
+            Answer::SignIn => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({
+                        "error": "This server is behind a sign-in page.",
+                        "sign_in": true, "server": url.as_str(),
+                    })),
+                )
+                    .into_response()
+            }
+            Answer::Nothing => return error(StatusCode::BAD_GATEWAY,
+            "Could not reach Grove. Check the address, Wi-Fi, local network permission and that Grove Mobile is running. HTTPS needs a trusted certificate; use the LAN HTTP address for this test."),
         }
     }
     let mut saved = state.manager.saved.lock().await;
@@ -660,25 +788,92 @@ async fn probe(
     let Ok(url) = normalize_server(&input.server) else {
         return Json(serde_json::json!({ "reachable": false })).into_response();
     };
-    let info = state
-        .manager
-        .http
-        .get(url.join("api/v1/auth/info").unwrap())
-        .timeout(Duration::from_secs(4))
-        .send()
-        .await;
-    let info = match info {
-        Ok(response) if response.status().is_success() => {
-            response.json::<serde_json::Value>().await.ok()
-        }
+    let (url, answer) = state.manager.ask_with_session(&url, 4).await;
+    let required = match answer {
+        Answer::Grove { required } => Some(required),
         _ => None,
     };
-    let required = info
-        .as_ref()
-        .and_then(|value| value.get("required"))
-        .and_then(serde_json::Value::as_bool);
-    Json(serde_json::json!({ "reachable": required.is_some(), "required": required }))
-        .into_response()
+    Json(serde_json::json!({
+        "reachable": required.is_some(), "required": required,
+        "sign_in": matches!(answer, Answer::SignIn), "server": url.as_str(),
+    }))
+    .into_response()
+}
+
+/// How long a person has to get through the sign-in page.
+const SIGN_IN_PATIENCE: Duration = Duration::from_secs(600);
+
+/// Show the sign-in page in front of a server. Answers at once: the page asks
+/// `sign_in_state` how it went, since the app may be left for a code meanwhile.
+async fn sign_in(
+    State(state): State<Arc<ClientState>>,
+    headers: HeaderMap,
+    Json(input): Json<ProbeRequest>,
+) -> Response {
+    if !trusted(&state, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Ok(server) = normalize_server(&input.server) else {
+        return error(StatusCode::BAD_REQUEST, "That is not a server address.");
+    };
+    let manager = state.manager.clone();
+    let id = {
+        let mut sign_in = manager.sign_in.write().unwrap();
+        *sign_in = SignIn {
+            id: sign_in.id + 1,
+            state: "open",
+            error: None,
+        };
+        sign_in.id
+    };
+    // A page of Grove's own that is only a few bytes: the sheet never shows it.
+    let page = server.join("api/v1/auth/info").unwrap();
+    let mut sheet = crate::access::open_sheet(page.as_str());
+    tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + SIGN_IN_PATIENCE;
+        let ended = loop {
+            match tokio::time::timeout_at(deadline, sheet.recv()).await {
+                Ok(Some(Some(cookie))) => {
+                    // Its own host may serve the sign-in page too: through only
+                    // once Grove answers.
+                    if opens(&manager, &server, &cookie).await {
+                        if manager.sign_in_current(id) {
+                            manager.sessions.set(server.as_str(), &cookie);
+                        }
+                        break None;
+                    }
+                }
+                Ok(_) => break Some("Sign-in was closed"),
+                Err(_) => break Some("Sign-in timed out"),
+            }
+        };
+        if manager.sign_in_current(id) {
+            crate::access::close_sheet();
+        }
+        manager.sign_in_ended(id, ended);
+    });
+    Json(serde_json::json!({ "id": id })).into_response()
+}
+
+async fn opens(manager: &Manager, server: &Url, cookie: &str) -> bool {
+    let cookie = (!cookie.is_empty()).then_some(cookie);
+    for wait in [0, 1, 2] {
+        tokio::time::sleep(Duration::from_secs(wait)).await;
+        match manager.ask(server, cookie, 8).await.1 {
+            Answer::Grove { .. } => return true,
+            Answer::SignIn => return false,
+            // Coming back to the app, the network can take a moment.
+            Answer::Nothing => {}
+        }
+    }
+    false
+}
+
+async fn sign_in_state(State(state): State<Arc<ClientState>>, headers: HeaderMap) -> Response {
+    if !trusted(&state, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    Json(state.manager.sign_in.read().unwrap().clone()).into_response()
 }
 
 #[derive(Deserialize)]
@@ -750,6 +945,7 @@ async fn forget(
     }
     *saved = next;
     drop(saved);
+    state.manager.sessions.set(&profile.server, "");
     let origin = format!("http://127.0.0.1:{}", profile.port);
     state.manager.allowed.write().unwrap().remove(&origin);
     // The request may have come through that very listener: answer first.
@@ -855,13 +1051,21 @@ async fn serve(
             .map(|pq| pq.as_str())
             .unwrap_or("/")
     );
+    // Only the front door's session goes along: the page's own cookies are
+    // shared by every server's loopback origin.
+    let session = state.manager.sessions.get(server.as_str());
+    let session = session.and_then(|cookie| axum::http::HeaderValue::from_str(&cookie).ok());
     if let Ok(ws) = ws {
-        return proxy_websocket(ws, &target, request.headers(), &server, stop).await;
+        return proxy_websocket(ws, &target, request.headers(), &server, session, stop).await;
     }
+    let path = request.uri().path().to_owned();
     let (parts, body) = request.into_parts();
     let mut headers = parts.headers;
     strip_transport_headers(&mut headers);
     headers.remove("cookie");
+    if let Some(session) = session {
+        headers.insert("cookie", session);
+    }
     if headers.contains_key("origin") {
         headers.insert(
             "origin",
@@ -879,6 +1083,9 @@ async fn serve(
     {
         Ok(upstream) => {
             let status = upstream.status();
+            if leads_to_sign_in(&server, &path, status, upstream.headers().get("location")) {
+                return sign_in_needed();
+            }
             let mut headers = upstream.headers().clone();
             strip_transport_headers(&mut headers);
             headers.remove("set-cookie");
@@ -899,6 +1106,7 @@ async fn proxy_websocket(
     target: &str,
     headers: &HeaderMap,
     server: &Url,
+    session: Option<axum::http::HeaderValue>,
     mut stop: watch::Receiver<bool>,
 ) -> Response {
     let mut url = Url::parse(target).unwrap();
@@ -920,6 +1128,9 @@ async fn proxy_websocket(
         "origin",
         server.origin().ascii_serialization().parse().unwrap(),
     );
+    if let Some(session) = session {
+        request.headers_mut().insert("cookie", session);
+    }
     let result = tokio::time::timeout(
         Duration::from_secs(12),
         tokio_tungstenite::connect_async(request),
@@ -927,11 +1138,19 @@ async fn proxy_websocket(
     .await;
     let (upstream, response) = match result {
         Ok(Ok(value)) => value,
-        _ => {
+        failed => {
+            let reason = match failed {
+                Ok(Err(error)) => error.to_string(),
+                _ => "timed out".into(),
+            };
+            crate::lifecycle::record(
+                &format!("websocket_failed {}: {reason}", url.path()),
+                server.port_or_known_default().unwrap_or(0),
+            );
             return error(
                 StatusCode::BAD_GATEWAY,
                 "Could not connect to Grove WebSocket.",
-            )
+            );
         }
     };
     let ws = if let Some(protocol) = response
@@ -1759,5 +1978,182 @@ mod tests {
         assert_eq!(reply, UpstreamMessage::Binary(vec![1, 2, 3].into()));
         websocket.close(None).await.unwrap();
         upstream_task.abort();
+    }
+
+    #[test]
+    fn only_a_front_doors_redirect_asks_for_a_sign_in() {
+        let server = Url::parse("https://grove.example.com/").unwrap();
+        let to = |value: &str| value.parse::<axum::http::HeaderValue>().unwrap();
+        let leads = |path: &str, status: u16, location: &str| {
+            leads_to_sign_in(
+                &server,
+                path,
+                StatusCode::from_u16(status).unwrap(),
+                Some(&to(location)),
+            )
+        };
+        assert!(leads("/plugins/x", 302, "https://team.example.net/login"));
+        assert!(leads("/api/v1/config", 302, "/login"));
+        assert!(!leads("/design-files/a", 302, "/design-files/b"));
+        assert!(!leads(
+            "/api/v1/config",
+            304,
+            "https://team.example.net/login"
+        ));
+        assert!(!leads(
+            "/api/v1/config",
+            200,
+            "https://team.example.net/login"
+        ));
+
+        let http = Url::parse("http://grove.example.com/").unwrap();
+        assert_eq!(
+            secure_version(
+                &http,
+                Some("https://grove.example.com/api/v1/auth/info?x=1")
+            )
+            .unwrap()
+            .as_str(),
+            "https://grove.example.com/"
+        );
+        assert!(secure_version(&http, Some("https://team.example.net/login")).is_none());
+        assert!(secure_version(&server, Some("https://grove.example.com/login")).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_server_behind_a_sign_in_page_connects_once_signed_in() {
+        use axum::response::Redirect;
+        // A front door: without its cookie everything is sent to sign in.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = format!("http://{}", listener.local_addr().unwrap());
+        let door = |request: Request, next: axum::middleware::Next| async move {
+            let cookie = request.headers().get("cookie").cloned();
+            if cookie.as_ref().is_some_and(|value| value == "door=open") {
+                next.run(request).await
+            } else {
+                Redirect::to("https://team.example.net/login").into_response()
+            }
+        };
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/info",
+                get(|| async { Json(serde_json::json!({"required": true})) }),
+            )
+            .route("/api/v1/who", get(|| async { "through" }))
+            .route(
+                "/ws",
+                get(|ws: WebSocketUpgrade| async move {
+                    ws.on_upgrade(|mut socket| async move {
+                        let _ = socket.send(Message::Text("through".into())).await;
+                    })
+                }),
+            )
+            .layer(axum::middleware::from_fn(door));
+        let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let dir = tempfile::tempdir().unwrap();
+        let transport = start(dir.path().join("server.txt")).await.unwrap();
+        let manager = format!("http://{}", transport.address);
+        let client = reqwest::Client::new();
+        let token = configuration(&client, &manager).await["token"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let call = |path: &str, body: serde_json::Value| {
+            client
+                .post(format!("{manager}{path}"))
+                .header("origin", &manager)
+                .header("x-grove-setup", &token)
+                .json(&body)
+                .send()
+        };
+        let ask = || async {
+            let answer = call("/_grove/sign-in/state", serde_json::json!({}))
+                .await
+                .unwrap();
+            answer.json::<serde_json::Value>().await.unwrap()
+        };
+        let settled = || async {
+            for _ in 0..100 {
+                let state = ask().await;
+                if state["state"] != "open" {
+                    return state;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            panic!("the sign-in never ended");
+        };
+
+        let refused = select_profile(&client, &manager, &server, false).await;
+        assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+        let refused: serde_json::Value = refused.json().await.unwrap();
+        assert_eq!(refused["sign_in"], true);
+        let probe = call("/_grove/probe", serde_json::json!({"server": server}))
+            .await
+            .unwrap();
+        let probe: serde_json::Value = probe.json().await.unwrap();
+        assert_eq!(
+            (&probe["reachable"], &probe["sign_in"]),
+            (&false.into(), &true.into())
+        );
+
+        // Closing the sheet ends it.
+        let body = serde_json::json!({"server": server});
+        call("/_grove/sign-in", body.clone()).await.unwrap();
+        crate::access::report_from_sheet(None);
+        assert_eq!(settled().await["state"], "failed");
+
+        // A page of the host that isn't through yet keeps waiting, also while
+        // the app is in the background and its listeners are gone.
+        call("/_grove/sign-in", body).await.unwrap();
+        crate::access::report_from_sheet(Some("door=wrong".into()));
+        assert_eq!(ask().await["state"], "open");
+        transport.set_foreground(false).await.unwrap();
+        crate::access::report_from_sheet(Some("door=open".into()));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        transport.set_foreground(true).await.unwrap();
+        assert_eq!(settled().await["state"], "done");
+
+        let connected = select_profile(&client, &manager, &server, false).await;
+        assert_eq!(connected.status(), StatusCode::OK);
+        let connected: serde_json::Value = connected.json().await.unwrap();
+        let origin = connected["location"]
+            .as_str()
+            .unwrap()
+            .trim_end_matches('/');
+        let who = || {
+            client
+                .get(format!("{origin}/api/v1/who"))
+                .header("cookie", "mine=1")
+                .send()
+        };
+        assert_eq!(who().await.unwrap().text().await.unwrap(), "through");
+        let socket = format!("{}/ws", origin.replacen("http:", "ws:", 1));
+        let (mut socket, _) = tokio_tungstenite::connect_async(socket).await.unwrap();
+        assert_eq!(
+            socket.next().await.unwrap().unwrap().into_text().unwrap(),
+            "through"
+        );
+        // The session is not written beside the server list.
+        let saved = std::fs::read_to_string(dir.path().join("servers.json")).unwrap();
+        assert!(!saved.contains("door"));
+
+        // It expires: the page is told, instead of being sent to another site.
+        let url = normalize_server(&server).unwrap();
+        transport.manager.sessions.set(url.as_str(), "door=expired");
+        let expired = who().await.unwrap();
+        assert_eq!(
+            expired.status(),
+            StatusCode::NETWORK_AUTHENTICATION_REQUIRED
+        );
+
+        // Removing the server forgets it.
+        transport.manager.sessions.set(url.as_str(), "door=open");
+        let id = transport.manager.saved.lock().await.servers[0].id.clone();
+        call("/_grove/forget", serde_json::json!({"id": id}))
+            .await
+            .unwrap();
+        assert!(transport.manager.sessions.get(url.as_str()).is_none());
+        upstream.abort();
     }
 }

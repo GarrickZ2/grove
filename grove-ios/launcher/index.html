@@ -10,7 +10,7 @@
     * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
     html, body { height:100%; }
     body { margin:0; background:var(--bg); color:var(--text); font:16px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; -webkit-font-smoothing:antialiased;
-      padding: max(16px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
+      padding: max(16px, env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left)); }
     main { display:flex; flex-direction:column; min-height:100%; max-width:440px; margin:0 auto; }
     button, input { font:inherit; color:inherit; }
     button { cursor:pointer; }
@@ -19,13 +19,14 @@
     .pill { align-self:flex-start; display:flex; align-items:center; gap:7px; max-width:100%; height:40px; padding:0 12px; border:1px solid var(--border); border-radius:20px; background:var(--row); font-size:14px; color:var(--muted); }
     .pill span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .dot { width:8px; height:8px; flex:none; border-radius:50%; background:var(--off); }
-    .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); }
+    .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); } .dot.warn { background:#f59e0b; }
     .stage { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px; text-align:center; padding:24px 0; }
     .mark { width:96px; height:96px; border-radius:22px; background:var(--icon) center/cover; box-shadow:0 10px 30px rgb(0 0 0 / 10%); transition:opacity .3s; }
     .dim .mark { opacity:.45; }
     .bar { width:120px; height:3px; border-radius:2px; background:var(--soft); overflow:hidden; }
     .bar i { display:block; width:40%; height:100%; border-radius:2px; background:var(--ink); animation:load 1.1s ease-in-out infinite; }
     @keyframes load { from { transform:translateX(-100%); } to { transform:translateX(260%); } }
+    #busy { display:flex; flex-direction:column; align-items:center; gap:14px; }
     .label { font-size:14px; color:var(--muted); margin:0; }
     h1 { margin:0; font-size:21px; font-weight:650; letter-spacing:-.02em; }
     .reason { margin:6px 0 0; font-size:14px; line-height:1.5; color:var(--muted); max-width:320px; }
@@ -106,11 +107,36 @@
     const response = await fetch(path, { method:'POST', headers:{ 'Content-Type':'application/json', 'X-Grove-Setup':config.token }, body:JSON.stringify(body || {}) });
     if (response.status === 204) return {};
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || 'Something went wrong.');
+    if (!response.ok) throw Object.assign(new Error(result.error || 'Something went wrong.'), { signIn: result.sign_in ? result.server : null });
     return result;
   }
 
-  // Lets the address be typed the short way: 192.168.1.10 or host:port.
+  // Shows the server's sign-in page and waits. The app may be left for a code
+  // meanwhile, and calls fail while it is in the background: ask until there is an answer.
+  async function signIn(server) {
+    document.activeElement?.blur();
+    const { id } = await call('/_grove/sign-in', { server });
+    for (;;) {
+      await new Promise((done) => setTimeout(done, 600));
+      const now = await call('/_grove/sign-in/state').catch(() => null);
+      if (!now || (now.id === id && now.state === 'open')) continue;
+      if (now.id === id && now.state === 'done') return;
+      throw new Error(now.id === id && now.error ? now.error : 'Sign-in was closed');
+    }
+  }
+  async function connect(server, name) {
+    const to = (address) => call('/_grove/connect', { server:address, name });
+    const result = await to(server).catch(async (error) => {
+      if (!error.signIn) throw error;
+      await signIn(error.signIn);
+      return to(error.signIn);
+    });
+    location.replace(result.location);
+  }
+
+  // Lets the address be typed the short way: 192.168.1.10 means Grove's port, a public name https.
+  // Same rule as grove-web/src/ios/servers.ts.
+  const isLocalHost = (host) => !host.includes('.') || /^[\d.]+$/.test(host) || host.startsWith('[') || /\.(local|lan|home|internal|arpa|ts\.net)$/i.test(host);
   function origin(value) {
     let text = value.trim();
     if (!text) return '';
@@ -118,7 +144,7 @@
     if (bare) text = 'http://' + text;
     try {
       const url = new URL(text);
-      if (bare && !url.port) url.port = '3001';
+      if (bare && !url.port) { if (isLocalHost(url.hostname)) url.port = '3001'; else url.protocol = 'https:'; }
       return url.origin;
     } catch { return text; }
   }
@@ -135,23 +161,27 @@
   }
 
   let target = null;
-  async function open(profile) {
+  async function open(profile, asked) {
     target = profile;
     $('opening-name').textContent = profile.name;
     $('opening-dot').className = 'dot';
     $('busy-label').textContent = 'Connecting to ' + profile.name;
     show('opening');
     try {
-      const result = await call('/_grove/connect', { server:profile.server, name:profile.name });
-      location.replace(result.location);
+      // Opened on its own at launch, a sign-in waits to be asked for.
+      if (asked) await connect(profile.server, profile.name);
+      else location.replace((await call('/_grove/connect', { server:profile.server, name:profile.name })).location);
     } catch (error) {
-      $('opening-dot').className = 'dot bad';
-      $('failed-title').textContent = "Can't reach " + profile.name;
-      $('failed-reason').textContent = new URL(profile.server).host + ' — is Grove running there (grove remote), and on the same network?';
+      const host = new URL(profile.server).host;
+      const signing = error.signIn || /^Sign-in/.test(error.message);
+      $('opening-dot').className = signing ? 'dot warn' : 'dot bad';
+      $('failed-title').textContent = (signing ? 'Sign in to ' : "Can't reach ") + profile.name;
+      $('failed-reason').textContent = signing ? host : host + ' — is Grove running there (grove remote), and on the same network?';
+      $('retry').textContent = signing ? 'Sign in' : 'Try again';
       show('failed');
     }
   }
-  $('retry').addEventListener('click', () => target && open(target));
+  $('retry').addEventListener('click', () => target && open(target, true));
   document.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => show('servers')));
 
   let editing = null;
@@ -191,17 +221,17 @@
       button.className = 'open';
       const dot = document.createElement('i');
       const state = reach.get(profile.id);
-      dot.className = 'dot' + (state === true ? ' ok' : '');
+      dot.className = 'dot' + (state === 'ok' ? ' ok' : state === 'sign_in' ? ' warn' : '');
       const text = document.createElement('span'); text.className = 'text';
       const title = document.createElement('b'); title.textContent = profile.name;
       const detail = document.createElement('small');
-      detail.textContent = (state === false ? "Can't reach · " : '') + new URL(profile.server).host;
+      detail.textContent = (state === 'none' ? "Can't reach · " : state === 'sign_in' ? 'Sign in · ' : '') + new URL(profile.server).host;
       text.append(title, detail);
       button.append(dot, text);
       if (profile.id === config.current) {
         button.insertAdjacentHTML('beforeend', '<svg width="20" height="20" viewBox="0 0 20 20" aria-label="Current"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>');
       }
-      button.addEventListener('click', () => open(profile));
+      button.addEventListener('click', () => open(profile, true));
       const edit = document.createElement('button');
       edit.type = 'button'; edit.className = 'edit'; edit.setAttribute('aria-label', 'Edit ' + profile.name);
       edit.innerHTML = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="4" cy="9" r="1.5" fill="currentColor"/><circle cx="9" cy="9" r="1.5" fill="currentColor"/><circle cx="14" cy="9" r="1.5" fill="currentColor"/></svg>';
@@ -213,7 +243,7 @@
   function probeAll() {
     for (const profile of servers) {
       call('/_grove/probe', { server:profile.server })
-        .then((result) => { reach.set(profile.id, !!result.reachable); if (!editing) render(); })
+        .then((result) => { reach.set(profile.id, result.reachable ? 'ok' : result.sign_in ? 'sign_in' : 'none'); if (!editing) render(); })
         .catch(() => {});
     }
   }
@@ -232,7 +262,7 @@
       $('found').innerHTML = '<i class="dot"></i>Looking for Grove…';
       const result = await call('/_grove/probe', { server:value }).catch(() => ({}));
       if (ticket !== probing) return;
-      $('found').innerHTML = result.reachable ? '<i class="dot ok"></i>Found Grove' : "<i class=\"dot\"></i>No Grove answers here yet";
+      $('found').innerHTML = result.reachable ? '<i class="dot ok"></i>Found Grove' : result.sign_in ? '<i class="dot warn"></i>Found a sign-in page' : "<i class=\"dot\"></i>No Grove answers here yet";
     }, 500);
   });
   $('adding').addEventListener('submit', async (event) => {
@@ -243,8 +273,7 @@
     $('connect').textContent = 'Connecting…';
     $('add-error').textContent = '';
     try {
-      const result = await call('/_grove/connect', { server, name:$('name').value.trim() });
-      location.replace(result.location);
+      await connect(server, $('name').value.trim());
     } catch (error) {
       $('add-error').textContent = error.message;
       $('connect').disabled = false;

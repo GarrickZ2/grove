@@ -4,7 +4,7 @@
   --s-bg: #ffffff; --s-muted: #71717a; --s-border: #e4e4e7; --s-soft: #f4f4f5; --s-row: #fafafa; --s-ink: #18181b;
   --s-icon: var(--grove-ios-icon, url(/app-icons/pwa/classic-light-512.png));
   position: fixed; inset: 0; z-index: 1000; box-sizing: border-box;
-  padding: max(16px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  padding: max(16px, env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
   background: var(--s-bg); color: #18181b;
   font: 16px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; -webkit-font-smoothing: antialiased;
 }
@@ -20,5 +20,6 @@
 .ios-splash__bar { width: 120px; height: 3px; border-radius: 2px; background: var(--s-soft); overflow: hidden; }
 .ios-splash__bar i { display: block; width: 40%; height: 100%; border-radius: 2px; background: var(--s-ink); animation: ios-splash-load 1.1s ease-in-out infinite; }
 @keyframes ios-splash-load { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+.ios-splash__stage > div:last-child { display: flex; flex-direction: column; align-items: center; gap: 14px; }
 .ios-splash__label { margin: 0; font-size: 14px; color: var(--s-muted); }
 @media (prefers-reduced-motion: reduce) { .ios-splash__bar i { animation: none; width: 100%; } }
