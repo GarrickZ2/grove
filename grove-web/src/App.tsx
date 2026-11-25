@@ -5,7 +5,7 @@ import { BuddyLaunchContext } from "./components/Buddy/buddyLaunchContext";
 import { isTauriShell as inTauriShell } from "./utils/tauriShell";
 import { IosLiveActivity } from "./ios/IosLiveActivity";
 import { isIosClient } from "./utils/platform";
-import { useState, useContext, useEffect, useCallback, useRef, useSyncExternalStore, type CSSProperties } from "react";
+import { useState, useContext, useEffect, useLayoutEffect, useCallback, useRef, useSyncExternalStore, type CSSProperties } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -28,6 +28,8 @@ import { useOrbitDrawerSwipe } from "./components/Layout/useOrbitDrawerSwipe";
 import { useOrbitSidebarSwipe } from "./components/Layout/useOrbitSidebarSwipe";
 import { ORBIT_FOLD_MENU_EVENT, useBookFold, useLaptopFold } from "./hooks/useBookFold";
 import { OrbitNewChat } from "./components/Orbit/OrbitNewChat";
+import { beginNewSession, endNewSession, newSessionShown, useNewSession } from "./components/Orbit/newSessionDrafts";
+import { LOCAL_TASK_ID, resolveLocalTask } from "./utils/localTask";
 import { OrbitSettingsPage } from "./orbit/settings/OrbitSettingsPage";
 import { OrbitDashboardPage } from "./orbit/dashboard/OrbitDashboardPage";
 import { OrbitStatisticsPage } from "./orbit/statistics/OrbitStatisticsPage";
@@ -889,7 +891,24 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // task from Work). Mounted lazily on first visit so users who never open
   // Work don't pay for the Local Task chat at startup.
   const [workEverVisited, setWorkEverVisited] = useState(false);
-  if (activeItem === "work" && !workEverVisited) {
+  // Orbit desktop: a new Session is written in its Task's workspace, panels at
+  // hand. The New page is the Local Task's.
+  const orbitTaskDrafts = orbit && !orbitPhone && tasksMode === "zen";
+  const localProjectId = orbitTaskDrafts && selectedProject?.exists
+    && (selectedProject.projectType === "studio" ? selectedProject.localTask : resolveLocalTask(selectedProject))
+    ? selectedProject.id : "";
+  const newTaskId = navigationData?.taskId as string | undefined;
+  const newInLocal = !!localProjectId && activeItem === "new" && (!newTaskId || newTaskId === LOCAL_TASK_ID);
+  const localDraftOpen = useNewSession(localProjectId, LOCAL_TASK_ID);
+  useLayoutEffect(() => {
+    if (!localProjectId) return;
+    if (newInLocal) beginNewSession(localProjectId, LOCAL_TASK_ID);
+    else if (activeItem === "work") endNewSession(localProjectId, LOCAL_TASK_ID, "left");
+  }, [localProjectId, newInLocal, activeItem]);
+  // Mounted only once the draft is open, so its Sessions don't connect first.
+  const draftPending = newInLocal && !localDraftOpen;
+  const workShown = activeItem === "work" || newInLocal;
+  if (workShown && !draftPending && !workEverVisited) {
     setWorkEverVisited(true);
   }
 
@@ -1102,6 +1121,19 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
     // targetProject may come from the minimal project list (localTask: null),
     // so checking the id directly is the reliable fallback.
     let effectivePage = page;
+    // A new Session in a Task is written in that Task's workspace, panels at hand.
+    const draftTask = page === "new" && orbitTaskDrafts && data?.taskId
+      ? targetProject?.tasks?.find((task) => task.id === data?.taskId && task.status !== "archived")
+      : undefined;
+    if (targetProject && draftTask) {
+      beginNewSession(targetProject.id, draftTask.id);
+      setActiveItem("tasks");
+      setNavigationData({ taskId: draftTask.id, viewMode: "terminal" });
+      return;
+    }
+    if (page === "tasks" && targetProject && data?.taskId && data.chatId) {
+      endNewSession(targetProject.id, data.taskId as string, "left");
+    }
     // Orbit has no Tasks list page: a Tasks target without a known Task (or a
     // new-task request) lands on the New page instead of the Classic list.
     if (orbit && page === "tasks" && !data?.openNewTask) {
@@ -1140,11 +1172,13 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   useEffect(() => {
     const openNew = (event: Event) => {
       const taskId = (event as CustomEvent<{ taskId?: string }>).detail?.taskId;
-      handleNavigateRef.current("new", taskId ? { taskId } : undefined);
+      // The Task is already on screen; it may be too new for the project's list.
+      if (orbitTaskDrafts && selectedProject && taskId && taskId !== "_local") beginNewSession(selectedProject.id, taskId);
+      else handleNavigateRef.current("new", taskId ? { taskId } : undefined);
     };
     window.addEventListener("grove:orbit-open-new", openNew);
     return () => window.removeEventListener("grove:orbit-open-new", openNew);
-  }, []);
+  }, [orbitTaskDrafts, selectedProject]);
 
   const handleProjectSwitch = useCallback(
     (newProjectId?: string) => {
@@ -1448,14 +1482,14 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   useCommand(
     "agent.new.default",
     () => {
-      window.dispatchEvent(new CustomEvent("grove:new-session-default-agent"));
+      if (!newSessionShown()) window.dispatchEvent(new CustomEvent("grove:new-session-default-agent"));
     },
     [],
   );
   useCommand(
     "agent.picker.show",
     () => {
-      window.dispatchEvent(new CustomEvent("grove:show-agent-picker"));
+      if (!newSessionShown()) window.dispatchEvent(new CustomEvent("grove:show-agent-picker"));
     },
     [],
   );
@@ -1695,8 +1729,8 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
   // except when the collapsed sidebar's controls need a bar to sit on.
   // Both workspace layouts put their Orbit toolbar (panel toggles, git actions) in this header.
   // The laptop fold's workspace has no window header: its toolbar is on the lower screen.
-  const laptopWorkspace = laptopFolded && inWorkspace && (activeItem === "tasks" || activeItem === "work");
-  const orbitHeaderVisible = !laptopWorkspace && (activeItem === "tasks" || activeItem === "work" || effectiveSidebarMode === "collapsed");
+  const laptopWorkspace = laptopFolded && inWorkspace && (activeItem === "tasks" || workShown);
+  const orbitHeaderVisible = !laptopWorkspace && (activeItem === "tasks" || workShown || effectiveSidebarMode === "collapsed");
   // Orbit pages that own their whole surface (own scroll, no outer padding).
   const isOrbitEdgeToEdgePage = orbit && (activeItem === "settings" || activeItem === "dashboard" || activeItem === "skills" || activeItem === "memory" || activeItem === "automation" || activeItem === "statistics" || activeItem === "resource" || activeItem === "projects" || activeItem.startsWith("plugin:") || activeItem.startsWith("shared:"));
   const isFullWidthPage =
@@ -1999,18 +2033,18 @@ function AppContent({ pageVisible = true }: { pageVisible?: boolean }) {
               {/* WorkPage keep-alive — mirrors the TasksPage host above: mounts
                   on first visit, then only `display` flips across nav switches. */}
               <div
-                className={`h-full ${isMobile && !orbitPhone ? "p-3" : ""} ${!isMobile && activeItem === "work" && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? "ide-traffic-light-clearance" : ""}${orbitHandoffAt ? " orbit-handoff-enter" : ""}`}
-                style={{ display: activeItem === "work" ? "block" : "none" }}
+                className={`h-full ${isMobile && !orbitPhone ? "p-3" : ""} ${!isMobile && workShown && effectiveSidebarMode === "island" && shouldAvoidTrafficLightsInIsland ? "ide-traffic-light-clearance" : ""}${orbitHandoffAt ? " orbit-handoff-enter" : ""}`}
+                style={{ display: workShown ? "block" : "none" }}
               >
-                {workEverVisited && (
+                {workEverVisited && !draftPending && (
                   <WorkPage
-                    pageVisible={pageVisible && activeItem === "work"}
+                    pageVisible={pageVisible && workShown}
                     initialChatId={activeItem === "work" ? navigationData?.chatId as string | undefined : undefined}
                     onNavigationConsumed={() => setNavigationData(null)}
                   />
                 )}
               </div>
-              {activeItem !== "tasks" && activeItem !== "work" && (
+              {activeItem !== "tasks" && !workShown && (
                 <div className={`${isOrbitEdgeToEdgePage ? "h-full" : isMobile ? orbitPhone && activeItem === "new" ? "h-full" : activeItem === "ai" ? "h-full p-3" : isFullWidthPage ? "min-h-full p-3" : "max-w-5xl mx-auto p-3" : isFullWidthPage ? "h-full transition-[padding] duration-300 ease-out p-6" : "max-w-5xl mx-auto p-6"}${orbit ? " orbit-ui" : ""}`}>
                   {/* One shared enter transition for every routed page (pages don't animate their own root). */}
                   <motion.div

@@ -24,7 +24,8 @@ export interface OrbitToolItem {
 }
 
 interface OrbitWorkspaceBarProps {
-  title: string;
+  /** Left out while a new Session is being written: its composer names the task. */
+  title?: string;
   branch?: string;
   /** `working`: the agent is busy; `archived`: read-only task. */
   state?: "working" | "archived";
@@ -36,6 +37,8 @@ interface OrbitWorkspaceBarProps {
   menu?: PanelMenuItem[];
   /** Book fold: the right screen's width, which the tools keep to, clear of the crease. */
   foldRight?: number;
+  /** Bare icons on the page itself: no strip, dividers or header line. */
+  quiet?: boolean;
 }
 
 /** Room kept for the task's name before panel buttons move under ⋯. */
@@ -77,7 +80,7 @@ function overflowingTools(groups: OrbitToolItem[][], room: number, widthOf: (ite
   return hidden;
 }
 
-export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trailing, menu, foldRight }: OrbitWorkspaceBarProps) {
+export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trailing, menu, foldRight, quiet }: OrbitWorkspaceBarProps) {
   const [tip, setTip] = useState<{ item: OrbitToolItem; left: number; top: number } | null>(null);
   const tipTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(tipTimer.current), []);
@@ -155,12 +158,14 @@ export function OrbitWorkspaceBar({ title, branch, state, leading, groups, trail
   ];
 
   return (
-    <div ref={barRef} className={`ows-bar orbit-ui${foldRight ? " is-fold" : ""}`} style={foldRight ? ({ "--fold-right": `${foldRight}px` } as React.CSSProperties) : undefined}>
+    <div ref={barRef} className={`ows-bar orbit-ui${foldRight ? " is-fold" : ""}${quiet ? " is-quiet" : ""}`} style={foldRight ? ({ "--fold-right": `${foldRight}px` } as React.CSSProperties) : undefined}>
       {leading ? <div className="ows-bar-leading">{leading}</div> : null}
-      <h1 className="ows-bar-title" title={branch ? `${title} · ${branch}` : title}>
-        <span className="ows-bar-name">{title}</span>
-        {branch ? <small className="ows-bar-branch">{branch}</small> : null}
-      </h1>
+      {title ? (
+        <h1 className="ows-bar-title" title={branch ? `${title} · ${branch}` : title}>
+          <span className="ows-bar-name">{title}</span>
+          {branch ? <small className="ows-bar-branch">{branch}</small> : null}
+        </h1>
+      ) : null}
       {state === "working" ? (
         <span className="ows-state is-working"><i aria-hidden="true" />Working</span>
       ) : state === "archived" ? (

@@ -115,6 +115,26 @@ html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area .oc-bod
 .ows-dock.is-bottom.is-open{border-top:1px solid var(--o-border)}
 .ows-pane{display:flex;flex:1;min-width:0;min-height:0}
 
+/* ── A new Session being written ── One page: the header has no line of its
+   own, its icons float in a pane of the composer's material, and open panels
+   are cards beside the composer. */
+.orbit-window-header:has(.ows-bar.is-quiet){background:transparent;border-bottom-color:transparent}
+.ows-bar.is-quiet{padding-right:4px;--ows-pane:color-mix(in oklab,var(--color-bg-secondary) 78%,transparent)}
+.ows-bar.is-quiet .ows-tools{padding:3px;border-radius:999px;background:var(--ows-pane);box-shadow:0 0 0 1px color-mix(in oklab,var(--color-border) 62%,transparent),0 10px 24px -14px rgb(0 0 0/28%);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.ows-bar.is-quiet .ows-tsep{height:12px;margin:0 5px;background:color-mix(in oklab,var(--color-text) 12%,transparent)}
+.ows-bar.is-quiet .ows-tb{width:28px;height:24px;border-radius:999px;color:color-mix(in oklab,var(--color-text) 50%,transparent)}
+.ows-bar.is-quiet .ows-tb-icon{width:14px;height:14px;stroke-width:1.7}
+.ows-bar.is-quiet .ows-tb:hover:not(:disabled){background:color-mix(in oklab,var(--color-text) 7%,transparent);color:var(--color-text)}
+.ows-bar.is-quiet .ows-tb.is-on{background:var(--color-bg);color:var(--color-text);box-shadow:0 0 0 .5px color-mix(in oklab,var(--color-text) 12%,transparent),0 1px 3px rgb(0 0 0/10%)}
+.ows-bar.is-quiet .ows-bar-trailing{padding-left:0;margin-left:0;border-left:0}
+.ows-shell.is-new .ide-chat-surface{background:none}
+.ows-dock-inner{transition:padding 260ms var(--o-ease-out)}
+.ows-shell.is-new .ows-dock{border-color:transparent}
+.ows-shell.is-new .ows-dock.is-left .ows-dock-inner{padding:0 0 12px 12px}
+.ows-shell.is-new .ows-dock.is-right .ows-dock-inner{padding:0 12px 12px 0}
+.ows-shell.is-new .ows-dock.is-bottom .ows-dock-inner{padding:0 12px 12px}
+.ows-shell.is-new .ows-dock-inner>.ows-pane{overflow:hidden;border-radius:12px;border:1px solid var(--o-border)}
+
 /* Grips: a zero-size host between docks; the hairline itself is the dock's
    border, the grip shows a pill on hover over a 7px hit area. */
 .ows-grip-host{position:relative;z-index:6;flex-shrink:0}
@@ -185,5 +205,5 @@ html.grove-keyboard-open .ows-shell.is-fold-laptop .task-chat-input-area .oc-bod
 
 @media (prefers-reduced-motion:reduce){
   .ows-state,.ows-state i,.ows-tip{animation:none!important}
-  .ows-tb,.ows-grip::after{transition:none!important}
+  .ows-tb,.ows-grip::after,.ows-dock-inner{transition:none!important}
 }

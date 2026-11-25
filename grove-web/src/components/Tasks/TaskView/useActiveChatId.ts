@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
+import { newSessionShown } from "../../Orbit/newSessionDrafts";
 
 interface Result {
   activeChatId: string | null;
@@ -51,7 +52,8 @@ let activeChatTeardown: (() => void) | null = null;
  * behind it.
  */
 export function visibleChatPanel(): HTMLElement | null {
-  if (typeof document === "undefined") return null;
+  // A new Session being written has none yet; the one behind it is not the target.
+  if (typeof document === "undefined" || newSessionShown()) return null;
   const panels = Array.from(document.querySelectorAll<HTMLElement>('[data-grove-chat-panel="true"][data-grove-chat-id]'));
   return panels.find((panel) => panel.offsetParent !== null) ?? panels[0] ?? null;
 }

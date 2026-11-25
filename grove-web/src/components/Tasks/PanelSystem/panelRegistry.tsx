@@ -21,6 +21,7 @@ import type { FileNavRequest } from "../../Review";
 import type { Plugin } from "../../../api/plugins";
 import { PluginIcon } from "../../Plugins/PluginIcon";
 import { TaskChat } from "../TaskView/TaskChat";
+import { ChatOrNewSession } from "../../Orbit/ChatOrNewSession";
 import { OptionalPerfProfiler } from "../../../perf/profilerShim";
 import { TaskCodeReview } from "../TaskView/TaskCodeReview";
 import { LinkedTaskEditor } from "../TaskView/LinkedTaskEditor";
@@ -145,21 +146,25 @@ export const BUILT_IN_PANELS: PanelDescriptor[] = [
     // Orbit marks agents with Sparkle (as in Settings → Agents).
     orbit: { hue: PANEL_HUES.slate, glyph: Sparkle },
     render: (ctx) => (
-      <OptionalPerfProfiler id="TaskChat">
-        <TaskChat
-          key={`${ctx.projectId}:${ctx.task.id}`}
-          projectId={ctx.projectId}
-          taskId={ctx.task.id}
-          orbitHeader={ctx.orbitHeader}
-          pageActive={ctx.isActive ?? true}
-          finished={ctx.task.status === "archived"}
-          fullscreen
-          onNavigateToFile={ctx.navigateToFile}
-          onChatBecameIdle={ctx.onChatBecameIdle}
-          onUserMessageSent={ctx.onUserMessageSent}
-          onBusyStateChange={ctx.onBusyStateChange}
-        />
-      </OptionalPerfProfiler>
+      <ChatOrNewSession key={`${ctx.projectId}:${ctx.task.id}`} projectId={ctx.projectId} taskId={ctx.task.id} taskName={ctx.task.name} isActive={ctx.isActive ?? true}>
+        {(chatActive) => (
+          <OptionalPerfProfiler id="TaskChat">
+            <TaskChat
+              key={`${ctx.projectId}:${ctx.task.id}`}
+              projectId={ctx.projectId}
+              taskId={ctx.task.id}
+              orbitHeader={ctx.orbitHeader}
+              pageActive={chatActive}
+              finished={ctx.task.status === "archived"}
+              fullscreen
+              onNavigateToFile={ctx.navigateToFile}
+              onChatBecameIdle={ctx.onChatBecameIdle}
+              onUserMessageSent={ctx.onUserMessageSent}
+              onBusyStateChange={ctx.onBusyStateChange}
+            />
+          </OptionalPerfProfiler>
+        )}
+      </ChatOrNewSession>
     ),
   },
   {

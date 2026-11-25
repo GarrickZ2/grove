@@ -673,7 +673,6 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             toolbarTrailing={orbit && !isMobile ? (coarseTouch ? undefined : orbitWorkspaceActions) : workspaceActions}
             phoneActions={phoneActions}
             isActive={isActive}
-            onToggleLayoutMode={freeFallback ? undefined : toggleLayoutMode}
             toolbarMenu={orbit && !isMobile ? (coarseTouch ? orbitTouchMenu : orbitOverflow) : undefined}
           />
         ) : (
@@ -688,7 +687,6 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             toolbarLeading={orbit ? workspaceLeading : undefined}
             toolbarTrailing={orbit && !coarseTouch ? orbitWorkspaceActions : undefined}
             toolbarMenu={orbit ? (coarseTouch ? orbitTouchMenu : orbitOverflow) : undefined}
-            onToggleLayoutMode={toggleLayoutMode}
             onLayoutChange={handleFlexLayoutChange}
           />
         )}

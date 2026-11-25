@@ -3,6 +3,7 @@ import { motion, AnimatePresence, useIsPresent } from "framer-motion";
 import { Plus, GitBranch } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
+import { hasNewSession } from "../Orbit/newSessionDrafts";
 import { TaskView, type TaskViewHandle } from "./TaskView";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { TaskOperationDialogs } from "./TaskOperationDialogs";
@@ -217,7 +218,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, initi
       if (cancelled) return;
       if (task) {
         handleSelectTask(task);
-        if (orbit && initialChatId) pageHandlers.setPendingPanel("chat");
+        if (orbit && (initialChatId || hasNewSession(selectedProject.id, task.id))) pageHandlers.setPendingPanel("chat");
         if (initialShowDetail !== undefined) setMobileShowDetail(initialShowDetail);
       } else {
         setMobileShowDetail(false);

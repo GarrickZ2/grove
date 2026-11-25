@@ -194,6 +194,7 @@
    so the next folder pushes it out. Opaque, since the sessions slide beneath it. */
 .orbit-task-row { position: sticky; top: var(--orbit-section-heading-h); z-index: 1; display: flex; min-width: 0; align-items: center; border-radius: 6px; background: var(--orbit-surface); }
 .orbit-task-row:hover { background: color-mix(in oklab, var(--color-text) 9%, var(--orbit-surface)); }
+.orbit-task-row.is-selected { background: color-mix(in oklab, var(--color-text) 10%, var(--orbit-surface)); }
 .orbit-task-toggle { display: flex; align-items: center; gap: 7px; min-width: 0; height: 34px; flex: 1; padding: 0 8px; color: inherit; background: transparent; border: 0; font-size: 14px; text-align: left; cursor: pointer; }
 .orbit-task-toggle svg { flex: none; }
 .orbit-task-new { position: absolute; right: 2px; top: 2px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; color: var(--color-text-muted); background: transparent; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease; }

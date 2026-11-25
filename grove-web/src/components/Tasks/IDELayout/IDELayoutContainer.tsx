@@ -10,8 +10,6 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
-  MoveHorizontal,
-  LayoutGrid,
 } from "lucide-react";
 import "./ide-layout.css";
 import type {
@@ -26,6 +24,7 @@ import { MultiTabTerminalPanel } from "./MultiTabTerminalPanel";
 import { LaptopBenchContext, type LaptopBench } from "./LaptopBenchContext";
 import { OrbitFoldPanelPicker, OrbitLaptopStrip, OrbitPhonePanels, type OrbitPhonePanel } from "./OrbitPhonePanels";
 import { ORBIT_FOLD_MENU_EVENT, useBookFold, useLaptopFold } from "../../../hooks/useBookFold";
+import { newSessionEnd, useNewSession } from "../../Orbit/newSessionDrafts";
 import { OrbitWorkspaceBar, OrbitDock, OrbitGrip, OrbitFoldDeck, type OrbitToolItem } from "./OrbitWorkspace";
 import { useSlotElement } from "./useSlotElement";
 import { ORBIT_DUO_RAIL_SLOT, rightInset, useDuoRail } from "../../../hooks/useDuoRail";
@@ -543,7 +542,7 @@ function readWideScreen() {
 }
 
 export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainerProps>(
-  function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing, phoneActions, isActive = true, onToggleLayoutMode, toolbarMenu }, ref) {
+  function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing, phoneActions, isActive = true, toolbarMenu }, ref) {
     const { selectedProject, projects } = useProject();
     const { terminalAvailable, config } = useConfig();
     const { isMobile } = useIsMobile();
@@ -748,7 +747,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       window.addEventListener("resize", measure);
       return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
     }, [phoneFolded]);
-    // A book fold centres the floating title over the Agent's screen.
+    // A book fold keeps the floating header over the Agent's screen.
     const bookLeft = phoneBook ? Math.max(0, phoneBook.left - shellOrigin.x) : null;
     const bookGap = phoneBook?.gap ?? 0;
     useEffect(() => {
@@ -941,6 +940,34 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       update({ lastChatIdleAt: Date.now() });
     }, [update]);
 
+    // A new Session starts on the composer alone; panels already open when it
+    // starts from this workspace stay. What was put away comes back (and is
+    // what gets saved) unless the new Session is sent.
+    const writingNew = useNewSession(projectId, task.id) && orbitDesk;
+    const putAwayRef = useRef<Pick<IDELayoutInternalState, "auxVisible" | "infoVisible" | "bottomVisible" | "chatVisible"> | null>(null);
+    const wasWritingRef = useRef(false);
+    const wasActiveRef = useRef(false);
+    useLayoutEffect(() => {
+      const started = writingNew && !wasWritingRef.current;
+      const ended = !writingNew && wasWritingRef.current;
+      const alreadyHere = wasActiveRef.current;
+      wasWritingRef.current = writingNew;
+      wasActiveRef.current = isActive;
+      if (started) {
+        const { auxVisible, infoVisible, bottomVisible, chatVisible } = stateRef.current;
+        if (alreadyHere) {
+          update({ chatVisible: true });
+        } else {
+          putAwayRef.current = { auxVisible, infoVisible, bottomVisible, chatVisible };
+          update({ auxVisible: false, infoVisible: false, bottomVisible: false, chatVisible: true });
+        }
+      } else if (ended) {
+        const putAway = putAwayRef.current;
+        putAwayRef.current = null;
+        if (putAway && newSessionEnd(projectId, task.id) === "left") update(putAway);
+      }
+    }, [writingNew, isActive, projectId, task.id, update]);
+
     // Global listener: a SketchChip click dispatches OPEN_SKETCH_EVENT. When
     // the target task is this one, open the Sketch aux panel so the chip
     // feels like navigation. Only Studio tasks have a sketch panel.
@@ -1127,6 +1154,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       const current: SurfaceVisibility = {
         auxType: state.auxType, auxVisible: state.auxVisible, chatVisible: state.chatVisible, infoVisible: state.infoVisible,
       };
+      const putAway = putAwayRef.current;
+      if (putAway) Object.assign(current, { auxVisible: putAway.auxVisible, infoVisible: putAway.infoVisible, chatVisible: putAway.chatVisible });
       if (!isMobile) desktopVisibilityRef.current = current;
       const saved = visibilityToPersist(current, desktopVisibilityRef.current, isMobile, orbitLayout);
       savePersistedState(projectId, task.id, {
@@ -1139,7 +1168,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         terminalActiveId: state.terminalActiveId,
         auxWidth: Math.round(auxWidth),
         infoWidth: Math.round(infoWidth),
-        bottomVisible: state.bottomVisible,
+        bottomVisible: putAway ? putAway.bottomVisible : state.bottomVisible,
         bottomHeight: Math.round(bottomHeight),
       });
     }, [
@@ -1147,7 +1176,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       state.auxType, state.auxVisible, state.chatVisible,
       state.infoType, state.infoVisible,
       state.terminalTabs, state.terminalActiveId,
-      auxWidth, infoWidth, state.bottomVisible, bottomHeight, isMobile, orbitLayout,
+      auxWidth, infoWidth, state.bottomVisible, bottomHeight, isMobile, orbitLayout, writingNew,
     ]);
 
     const slotOf = useCallback((key: string): OrbitSlot =>
@@ -1550,7 +1579,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         && !(foldBook && orbitShowAux && state.chatVisible)
         && !(foldLaptop && orbitShowAux);
       // The Composer lives in the Agent's surface, so a laptop fold always keeps it; a panel covers the transcript.
-      const orbitShowChat = !!foldLaptop || state.chatVisible || !orbitShowAux;
+      const orbitShowChat = !!foldLaptop || writingNew || state.chatVisible || !orbitShowAux;
       // Panels on the left screen, the Agent on the right, as with a left panel.
       const foldDockLeft = !!foldBook && orbitShowDock && !orbitShowAux;
       const foldPicker = !!foldBook && !orbitShowAux && !orbitShowDock;
@@ -1558,7 +1587,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       const chatDescriptor = getPanelDescriptor("chat");
       // The Agent leads the strip. It can only be hidden behind a left panel,
       // so without one it reads as on and does nothing.
-      const agentTool: OrbitToolItem | null = chatDescriptor ? {
+      const agentTool: OrbitToolItem | null = chatDescriptor && !writingNew ? {
         key: "chat",
         label: "Agent",
         tip: foldLaptop ? "Agent" : !orbitShowAux ? "Agent · open a left panel to hide it" : orbitShowChat ? "Hide Agent" : "Show Agent",
@@ -1580,24 +1609,14 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       const bottomSize = fitOrbitBottom(shellSize.h, bottomHeight);
 
       // Workspace-level rows live in the toolbar's ⋯, never in a panel's.
-      const sizesChanged = auxWidth !== ORBIT_AUX_DEFAULT || infoWidth !== ORBIT_DOCK_DEFAULT || bottomHeight !== ORBIT_BOTTOM_DEFAULT;
       const workspaceMenu: PanelMenuItem[] = [
-        ...(orbitShowAux
+        ...(orbitShowAux && !writingNew
           ? [orbitShowChat
             ? { id: "hide-agent", label: "Hide Agent", icon: PanelLeftOpen, onSelect: () => update({ chatVisible: false }) }
             : { id: "show-agent", label: "Show Agent", icon: PanelLeftClose, onSelect: () => update({ chatVisible: true }) }]
           : []),
-        ...(sizesChanged
-          ? [{
-            id: "reset-sizes",
-            label: "Reset panel sizes",
-            icon: MoveHorizontal,
-            onSelect: () => { setAuxWidth(ORBIT_AUX_DEFAULT); setInfoWidth(ORBIT_DOCK_DEFAULT); setBottomHeight(ORBIT_BOTTOM_DEFAULT); },
-          }]
-          : []),
-        ...(onToggleLayoutMode ? [{ id: "free-layout", label: "Switch to free layout", icon: LayoutGrid, onSelect: onToggleLayoutMode }] : []),
       ];
-      const toolbarRows = (toolbarMenu ?? []).map((row, i) => (i === 0 && workspaceMenu.length ? { ...row, separator: true } : row));
+      const toolbarRows = (writingNew ? [] : toolbarMenu ?? []).map((row, i) => (i === 0 && workspaceMenu.length ? { ...row, separator: true } : row));
 
       const startOrbitResize = (which: "aux" | "dock" | "bottom", event: React.PointerEvent<HTMLDivElement>) => {
         event.preventDefault();
@@ -1645,14 +1664,15 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       ];
       const bar = (
         <OrbitWorkspaceBar
-          title={task.name}
-          branch={task.branch || undefined}
-          state={state.isChatBusy ? "working" : task.status === "archived" ? "archived" : undefined}
+          title={writingNew ? undefined : task.name}
+          branch={writingNew ? undefined : task.branch || undefined}
+          state={writingNew ? undefined : state.isChatBusy ? "working" : task.status === "archived" ? "archived" : undefined}
           leading={toolbarLeading}
           groups={duoRailTarget ? [] : railGroups}
-          trailing={toolbarTrailing}
+          trailing={writingNew ? undefined : toolbarTrailing}
           menu={[...workspaceMenu, ...toolbarRows]}
           foldRight={foldBook ? shellSize.w - foldBook.left : undefined}
+          quiet={writingNew}
         />
       );
 
@@ -1662,7 +1682,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           {duoRailTarget && createPortal(<OrbitDuoRailTools groups={railGroups} />, duoRailTarget)}
           <div
             ref={shellRef}
-            className={`ows-shell orbit-ui${foldBook ? " is-fold" : ""}${foldDockLeft ? " is-fold-dock-left" : ""}${foldLaptop ? " is-fold-laptop" : ""}`}
+            className={`ows-shell orbit-ui${foldBook ? " is-fold" : ""}${writingNew && !foldBook && !foldLaptop ? " is-new" : ""}${foldDockLeft ? " is-fold-dock-left" : ""}${foldLaptop ? " is-fold-laptop" : ""}`}
             style={foldLaptop ? ({ "--fold-top": `${foldLaptop.top + foldLaptop.gap}px` } as React.CSSProperties) : undefined}
           >
             {foldLaptop && (

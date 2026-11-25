@@ -19,9 +19,10 @@ import { useACPAvailability } from "../Tasks/TaskView/useACPAvailability";
 import type { ChatDropdownOption } from "../Tasks/TaskView/ChatConfigMenus";
 import { configCategoryMatches, configDropdownValues, quickConfigOptions, speedFirst } from "../Tasks/TaskView/sessionConfigOptions";
 import { buildDefaultSessionTitle } from "../Tasks/TaskView/useInitialChatLoad";
-import { AttachmentError, attachmentLabel, prepareFileAttachment, type Attachment } from "../Tasks/TaskView/chatAttachments";
+import { attachmentErrorMessage, attachmentLabel, prepareFileAttachment, type Attachment } from "../Tasks/TaskView/chatAttachments";
 import { promptConfigFromSelection, readSavedSelection, saveSelection } from "./orbitDraftConfig";
 import { setOrbitFirstMessage } from "./orbitFirstMessage";
+import { endNewSession } from "./newSessionDrafts";
 import { hasSeen, markSeen, STARTERS_DONE_KEY } from "../../orbit/firstrun/storage";
 import { useRecentSessions } from "../../orbit/dashboard/useRecentSessions";
 import { useLiveChats } from "../../orbit/dashboard/useLiveChats";
@@ -57,6 +58,10 @@ const STARTERS: Record<"code" | "studio", { label: string; icon: LucideIcon }[]>
 /** Desktop "Continue" row: the project's most recently active Sessions. */
 const CONTINUE_LIMIT = 3;
 const CLOCK_MS = 30_000;
+/** A tray list's height: its search field, its rows, up to `.picker-menu`'s max-height. */
+const pickerHeight = (rows: number) => Math.min(324, 56 + rows * 36);
+/** Attachments on their way to the Task or Project just picked in a workspace's tray. */
+let carriedAttachments: Attachment[] = [];
 
 /** An Agent's choice from the last visit, checked against what it offers now. */
 function restoredSelection(agentId: string, agent: InstalledAgentConfig | undefined): AgentConfigSelection {
@@ -152,6 +157,8 @@ function leaveComposerGhost(composer: HTMLElement | null): void {
 interface OrbitNewChatProps {
   /** Target Task; "_local" (default) is the project's Local Task. */
   initialTaskId?: string;
+  /** Set inside a Task's workspace, in its Agent's place: the Task's name. */
+  workspaceTask?: string;
   onNavigate: (page: string, data?: Record<string, unknown>) => void;
 }
 
@@ -162,8 +169,9 @@ interface OrbitNewChatProps {
  * capability snapshot, so an Agent that has never connected starts with its
  * defaults.
  */
-export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewChatProps) {
+export function OrbitNewChat({ initialTaskId = "_local", workspaceTask, onNavigate }: OrbitNewChatProps) {
   const { projects, selectedProject, selectProject } = useProject();
+  const inWorkspace = workspaceTask !== undefined;
   const { theme } = useTheme();
   // In Orbit only phones are "mobile"; tablets keep the desktop layout.
   const { isMobile: phone } = useIsMobile();
@@ -183,10 +191,16 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   const [handoffOffset, setHandoffOffset] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Kept in memory only (a reload drops them); uploaded by TaskChat when the first prompt is sent.
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const attachCountersRef = useRef({ image: 0, audio: 0, resource: 0 });
+  const [attachments, setAttachments] = useState<Attachment[]>(() => carriedAttachments);
+  useEffect(() => { carriedAttachments = []; }, []);
+  const attachCountersRef = useRef({
+    image: attachments.filter((item) => item.type === "image").length,
+    audio: attachments.filter((item) => item.type === "audio").length,
+    resource: attachments.filter((item) => item.type === "resource").length,
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const addFiles = (files: File[]) => {
+    if (files.length > 0) setError(null);
     for (const file of files) {
       void prepareFileAttachment(file)
         .then((prepared) => {
@@ -194,7 +208,10 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
           const label = attachmentLabel(prepared.type, attachCountersRef.current[prepared.type]);
           setAttachments((previous) => [...previous, { ...prepared, label }]);
         })
-        .catch((reason) => { if (reason instanceof AttachmentError) setError(reason.message); });
+        .catch((reason) => {
+          const message = attachmentErrorMessage(file, reason);
+          setError((previous) => previous && !previous.split("\n").includes(message) ? `${previous}\n${message}` : previous ?? message);
+        });
     }
   };
   const removeAttachment = (index: number) => setAttachments((previous) => {
@@ -217,6 +234,10 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     observer.observe(root);
     return () => observer.disconnect();
   }, [onLaptop, laptopFold]);
+  const leaveWorkspace = (page: string, data: Record<string, unknown>) => {
+    carriedAttachments = attachments;
+    onNavigate(page, data);
+  };
   const inputRef = useRef<MentionEditableHandle>(null);
 
   useEffect(() => {
@@ -336,7 +357,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
 
   // Desktop: the Dashboard's recent-session source, with live dots from the radio channel.
   const continueTaskIds = useMemo(() => ["_local", ...tasks.map((task) => task.id)], [tasks]);
-  const continueSessions = useRecentSessions(!phone && projectReady ? selectedProject?.id : undefined, continueTaskIds).sessions.slice(0, CONTINUE_LIMIT);
+  const continueSessions = useRecentSessions(!phone && (!inWorkspace || initialTaskId === LOCAL_TASK_ID) && projectReady ? selectedProject?.id : undefined, continueTaskIds).sessions.slice(0, CONTINUE_LIMIT);
   const liveChats = useLiveChats();
   const now = useNow(CLOCK_MS);
   const taskNames = new Map(tasks.map((task) => [task.id, task.name]));
@@ -362,7 +383,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   // A list fetched for another project is never shown.
   const recent = recentState && recentState.projectId === recentProjectId ? recentState.sessions : [];
   // A Task picked for one project is meaningless after switching to another.
-  const effectiveTaskId = taskId === "_local" || tasks.some((task) => task.id === taskId) ? taskId : "_local";
+  const effectiveTaskId = inWorkspace || taskId === "_local" || tasks.some((task) => task.id === taskId) ? taskId : "_local";
   const spawnAgents = useMemo(() => pickerOptions.map((option) => ({ value: option.value, label: option.label })), [pickerOptions]);
   const spawnPersonas = useMemo(() => customAgentPersonas.map((item) => ({ id: item.id, name: item.name, base_agent: item.base_agent, duty: item.duty })), [customAgentPersonas]);
   const mentionSources = useMentionSources({
@@ -380,7 +401,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
     setError(null);
     // Slide the composer to where the Session view docks it: TaskChat's composer
     // (chat-only layout) ends 12px above the bottom of <main>, same width and center.
-    const main = rootRef.current?.closest("main")?.getBoundingClientRect();
+    const main = (inWorkspace ? rootRef.current : rootRef.current?.closest("main"))?.getBoundingClientRect();
     const composer = composerRef.current?.getBoundingClientRect();
     if (main && composer) setHandoffOffset(Math.max(0, main.bottom - 12 - composer.bottom));
     try {
@@ -399,8 +420,11 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
       // its page becomes visible; a not-yet-mounted one picks up the pending chat.
       const target = { projectId: selectedProject.id, taskId: effectiveTaskId, chatId: chat.id };
       (window as unknown as Record<string, unknown>).__grove_pending_chat = target;
+      if (inWorkspace) endNewSession(target.projectId, target.taskId, "sent");
       window.dispatchEvent(new CustomEvent("grove:switch-chat", { detail: { ...target, chat } }));
-      onNavigate("tasks", { taskId: effectiveTaskId, chatId: chat.id, viewMode: "terminal", orbitHandoff: true });
+      if (!inWorkspace) onNavigate("tasks", { taskId: effectiveTaskId, chatId: chat.id, viewMode: "terminal", orbitHandoff: true });
+      // The New page is the Local Task's workspace already: only the page changes name.
+      else if (effectiveTaskId === LOCAL_TASK_ID) onNavigate("tasks", { taskId: LOCAL_TASK_ID });
     } catch (reason) {
       console.error("Failed to create session", reason);
       setError((reason as { message?: string })?.message || "Could not create a session. Please try again.");
@@ -459,7 +483,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
       ref={inputRef}
       sources={mentionSources}
       initialHtml={initialDraftHtml}
-      placeholder="Ask anything… use @ for mentions"
+      placeholder="Ask anything…"
       onFocus={() => setInputFocused(true)}
       onBlur={() => setInputFocused(false)}
       onChange={({ text: prompt, html }) => { setText(prompt); writeDraftHtml(html); }}
@@ -471,7 +495,7 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
   );
 
   return (
-    <div ref={rootRef} className={`orbit-new${phone ? " is-phone" : ""}${onLaptop ? " is-laptop" : ""}${handoffOffset !== null ? " is-handing-off" : ""}`}>
+    <div ref={rootRef} className={`orbit-new${phone ? " is-phone" : ""}${onLaptop ? " is-laptop" : ""}${inWorkspace ? " is-workspace" : ""}${handoffOffset !== null ? " is-handing-off" : ""}`}>
       {!phone && <div className="orbit-new__glow" aria-hidden="true"><i /><i /><i /></div>}
       <div className="orbit-new__inner">
         <h1 className="orbit-new__title">What should we work on?</h1>
@@ -527,12 +551,14 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
               selectedId={selectedProject?.id}
               onSelect={(id) => {
                 const project = projectItems.find((item) => item.id === id);
-                if (project && project.id !== selectedProject?.id) selectProject(project);
+                if (!project || project.id === selectedProject?.id) return;
+                if (inWorkspace) leaveWorkspace("new", { projectId: project.id });
+                else selectProject(project);
               }}
             />
             <TrayPicker
               icon={effectiveTaskId === "_local" ? <Laptop size={14} strokeWidth={1.7} /> : <GitBranch size={14} strokeWidth={1.7} />}
-              label={effectiveTaskId === "_local" ? "Local" : tasks.find((task) => task.id === effectiveTaskId)?.name ?? "Local"}
+              label={effectiveTaskId === "_local" ? "Local" : tasks.find((task) => task.id === effectiveTaskId)?.name ?? workspaceTask ?? "Local"}
               searchPlaceholder="Search tasks"
               opensUp={phone}
               items={[
@@ -540,7 +566,10 @@ export function OrbitNewChat({ initialTaskId = "_local", onNavigate }: OrbitNewC
                 ...tasks.map((task) => ({ id: task.id, label: task.name, icon: <GitBranch size={14} strokeWidth={1.7} /> })),
               ]}
               selectedId={effectiveTaskId}
-              onSelect={setTaskId}
+              onSelect={(id) => {
+                if (!inWorkspace) setTaskId(id);
+                else if (id !== effectiveTaskId) leaveWorkspace("new", { taskId: id });
+              }}
             />
           </div>
           {/* Starters stay put while typing (dimmed) so the page never jumps. */}
@@ -610,7 +639,15 @@ function TrayPicker({ icon, label, items, selectedId, searchPlaceholder, opensUp
   onSelect: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [noRoomBelow, setNoRoomBelow] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const toggle = () => {
+    const tray = rootRef.current?.getBoundingClientRect();
+    const page = rootRef.current?.closest(".orbit-new")?.getBoundingClientRect();
+    // A panel under the composer can leave too little of the page for the list.
+    if (tray && page) setNoRoomBelow(page.bottom - tray.bottom < pickerHeight(items.length) && tray.top - page.top > page.bottom - tray.bottom);
+    setOpen(!open);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -623,11 +660,11 @@ function TrayPicker({ icon, label, items, selectedId, searchPlaceholder, opensUp
 
   return (
     <div ref={rootRef} className="orbit-new__tray-picker relative">
-      <button type="button" className="orbit-new__chip" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button type="button" className="orbit-new__chip" aria-expanded={open} onClick={toggle}>
         {icon}<span className="orbit-new__label">{label}</span><ChevronDown size={12} />
       </button>
       {open && (
-        <PickerMenu items={items} selectedId={selectedId} placement={opensUp ? "up-left" : "down-left"} searchPlaceholder={searchPlaceholder} onEscape={() => setOpen(false)}
+        <PickerMenu items={items} selectedId={selectedId} placement={opensUp || noRoomBelow ? "up-left" : "down-left"} searchPlaceholder={searchPlaceholder} onEscape={() => setOpen(false)}
           onSelect={(id) => { onSelect(id); setOpen(false); }} />
       )}
     </div>

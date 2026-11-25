@@ -6,12 +6,13 @@ import type { IJsonModel, ITabRenderValues, ITabSetRenderValues } from 'flexlayo
 import {
   Terminal, MessageSquare, Code, FileCode,
   X, XCircle, Trash2,
-  Plus, Maximize, Minimize2, FolderOpen, Puzzle, PanelsTopLeft,
+  Plus, Maximize, Minimize2, FolderOpen, Puzzle,
 } from 'lucide-react';
 import { OrbitWorkspaceBar, type OrbitToolItem } from '../IDELayout/OrbitWorkspace';
 import { orbitTabTitle } from './orbitTabs';
 import { flexLayoutStorageKey, ORBIT_FREE_MIN_HEIGHT, ORBIT_FREE_MIN_WIDTH, ORBIT_FREE_SPLITTER, stripTabsetMins, tabsetHoldsAgent } from './orbitFit';
 import { ORBIT_CHAT_MIN } from '../IDELayout/orbitDock';
+import { useNewSession } from '../../Orbit/newSessionDrafts';
 import { useSlotElement } from '../IDELayout/useSlotElement';
 import type { PanelMenuItem } from '../../../orbit/ui';
 import 'flexlayout-react/style/light.css';
@@ -249,7 +250,6 @@ interface FlexLayoutContainerProps {
   toolbarTrailing?: React.ReactNode;
   /** Orbit: extra rows for the toolbar's ⋯ (git overflow actions). */
   toolbarMenu?: PanelMenuItem[];
-  onToggleLayoutMode?: () => void;
 }
 
 export interface FlexLayoutContainerHandle {
@@ -287,7 +287,7 @@ function savedGlobals(json: IJsonModel) {
 export const FlexLayoutContainer = forwardRef<
   FlexLayoutContainerHandle,
   FlexLayoutContainerProps
->(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen, isActive = true, toolbarLeading, toolbarTrailing, toolbarMenu, onToggleLayoutMode }, ref) => {
+>(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen, isActive = true, toolbarLeading, toolbarTrailing, toolbarMenu }, ref) => {
   const { terminalAvailable, config } = useConfig();
   const { isMobile } = useIsMobile();
   const orbit = !isMobile && config?.web?.interface === 'orbit';
@@ -301,6 +301,7 @@ export const FlexLayoutContainer = forwardRef<
 
   const layoutStorageKey = flexLayoutStorageKey(projectId, task.id);
 
+  const writingNew = useNewSession(projectId, task.id);
   // Orbit: the workspace toolbar lives in the window header slot.
   const orbitToolbarSlot = useSlotElement(orbit ? 'orbit-workspace-toolbar' : null, isActive);
 
@@ -1170,9 +1171,9 @@ export const FlexLayoutContainer = forwardRef<
     const rest = catalog.filter((d) => d.category !== 'info' && d.key !== 'graph' && d.key !== 'chat');
     return createPortal(
       <OrbitWorkspaceBar
-        title={task.name}
-        branch={task.branch || undefined}
-        state={isChatBusy ? 'working' : task.status === 'archived' ? 'archived' : undefined}
+        title={writingNew ? undefined : task.name}
+        branch={writingNew ? undefined : task.branch || undefined}
+        state={writingNew ? undefined : isChatBusy ? 'working' : task.status === 'archived' ? 'archived' : undefined}
         leading={toolbarLeading}
         groups={[
           agent.map((d) => {
@@ -1182,10 +1183,9 @@ export const FlexLayoutContainer = forwardRef<
           rest.map(toolFor),
           info.map(toolFor),
         ]}
-        trailing={toolbarTrailing}
+        trailing={writingNew ? undefined : toolbarTrailing}
         menu={[
-          ...(onToggleLayoutMode ? [{ id: 'docked-layout', label: 'Switch to docked layout', icon: PanelsTopLeft, onSelect: onToggleLayoutMode }] : []),
-          ...(toolbarMenu ?? []).map((row, i) => (i === 0 && onToggleLayoutMode ? { ...row, separator: true } : row)),
+          ...(writingNew ? [] : toolbarMenu ?? []),
         ]}
       />,
       orbitToolbarSlot,

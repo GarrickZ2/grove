@@ -9,6 +9,8 @@
 .orbit-new.is-handing-off .orbit-new__hint { opacity: 0; }
 .orbit-new__composer { z-index: 1; }
 .orbit-new__input { field-sizing: content; }
+/* The composer is contentEditable (for @-mention chips), so its placeholder is drawn here. */
+.orbit-new__input[data-empty]::before { content: attr(data-placeholder); display: block; height: 0; color: var(--color-text-muted); pointer-events: none; }
 /* Recessed tray under the composer, like a drawer pulled out from beneath it. */
 .orbit-new__context { display: flex; align-items: center; gap: 2px; margin: -18px 20px 0; padding: 22px 10px 6px; border-radius: 0 0 18px 18px; background: color-mix(in oklab, var(--color-text) 4%, var(--color-bg)); transition: opacity .2s ease; }
 .orbit-new__chip { display: inline-flex; max-width: 260px; height: 28px; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--color-text-muted); font-size: 12.5px; cursor: pointer; }
@@ -17,7 +19,7 @@
 .orbit-new__project-icon { display: inline-flex; width: 18px; height: 18px; flex: none; align-items: center; justify-content: center; border-radius: 5px; }
 .orbit-new__hint, .orbit-new__error { margin: 12px 20px 0; font-size: 12px; line-height: 1.5; }
 .orbit-new__hint { color: var(--color-text-muted); }
-.orbit-new__error { color: var(--color-error); }
+.orbit-new__error { color: var(--color-error); overflow-wrap: anywhere; white-space: pre-line; }
 /* Phone: the composer docks at the bottom like a chat app; the title centers in the space above. */
 .orbit-new.is-phone { display: block; min-height: 0; padding: 0 16px calc(10px + var(--grove-safe-bottom,env(safe-area-inset-bottom))); }
 .orbit-new.is-phone .orbit-new__inner { display: flex; height: 100%; flex-direction: column; }
@@ -125,3 +127,19 @@ html.grove-keyboard-open .orbit-new.is-phone.is-laptop .orbit-new__title { align
 
 /* Touch: the tray under the composer is the same glass as the composer. */
 .orbit-new.is-phone .orbit-new__context { background: var(--glass-fill); box-shadow: var(--glass-rim); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); }
+
+/* In a Task's workspace, in the Agent's place: the New page on the workspace's own ground. */
+.orbit-new-slot { position: relative; flex: 1; width: 100%; min-width: 0; height: 100%; min-height: 0; background: var(--color-bg); }
+[data-grove-chat-panel]:has(+ .orbit-new-slot) { display: none !important; }
+.orbit-new-slot > .orbit-new.is-workspace { background: transparent; border-radius: 0; }
+/* A panel beside or under the composer leaves it a part of the window. */
+.orbit-new.is-workspace { container: orbit-new / size; }
+@container orbit-new (max-height: 600px) { .orbit-new__continue { display: none; } }
+@container orbit-new (max-width: 700px) { .orbit-new__continue ul { grid-template-columns: minmax(0, 1fr); } }
+.orbit-new.is-workspace { flex-direction: column; align-items: center; justify-content: flex-start; min-height: 0; padding: 0 12px 12px; }
+.orbit-new.is-workspace::before { content: ""; flex: 1 1 0; }
+.orbit-new.is-workspace::after { content: ""; flex: 1.2 1 0; }
+.orbit-new.is-workspace .orbit-new__inner { flex: none; }
+/* Fades out inside its own box, so no edge of the column cuts it. */
+.orbit-new.is-workspace .orbit-new__glow { top: 46%; width: min(1100px, 100%); height: min(720px, 92%); filter: none; -webkit-mask-image: radial-gradient(closest-side, #000 20%, transparent); mask-image: radial-gradient(closest-side, #000 20%, transparent); }
+.orbit-new.is-workspace .orbit-new__glow i { filter: blur(70px); }

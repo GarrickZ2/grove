@@ -31,6 +31,7 @@ import type { Plugin } from "../../api/plugins";
 import { PluginIcon } from "../Plugins/PluginIcon";
 import { pluginPageEntries } from "../Plugins/pluginPages";
 import { SidebarResizer } from "./SidebarResizer";
+import { useShownNewSession } from "../Orbit/newSessionDrafts";
 import "./orbit-sidebar.css";
 
 interface OrbitSidebarProps {
@@ -84,6 +85,7 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
   const sessionRefreshGeneration = useRef<Record<string, number>>({});
   const [activity, dispatchActivity] = useReducer(sessionActivityReducer, {});
   const [selection, setSelection] = useState<Selection | null>(null);
+  const shownNewSession = useShownNewSession();
   const [error, setError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<Target | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -433,8 +435,12 @@ export function OrbitSidebar({ activeItem, variant, collapsed, onCollapse, onIte
               { id: "move-down", label: "Move down", icon: ArrowDown, disabled: index === ordered.length - 1, onClick: () => reorder.moveBy(task.id, 1) },
             ] : [];
             return <div key={task.id} className={`orbit-task${reorder.draggingId === task.id ? " is-dragging" : ""}${drop}`} {...reorder.dropTargetProps(task.id)}>
-              <div className="orbit-task-row" {...reorder.dragSourceProps(task.id, !isTouchDevice && ordered.length > 1)}>
-                <button type="button" className="orbit-task-toggle" aria-expanded={expanded} onClick={() => updateExpansion({ ...expansion, expandedTasks: expanded ? expandedTasks.filter((id) => id !== task.id) : [...expandedTasks, task.id] })}>
+              <div className={`orbit-task-row${shownNewSession === `${projectId}:${task.id}` ? " is-selected" : ""}`} {...reorder.dragSourceProps(task.id, !isTouchDevice && ordered.length > 1)}>
+                <button type="button" className="orbit-task-toggle" aria-expanded={expanded} onClick={() => {
+                  // A folder with nothing in it opens its Task instead.
+                  if (!drawer && sessions[`${projectId}:${task.id}`]?.length === 0) { newChat(task.id); return; }
+                  updateExpansion({ ...expansion, expandedTasks: expanded ? expandedTasks.filter((id) => id !== task.id) : [...expandedTasks, task.id] });
+                }}>
                   {expanded ? <FolderOpen size={17} strokeWidth={1.7} /> : <Folder size={17} strokeWidth={1.7} />}<span className="orbit-truncate">{task.name}</span>
                 </button>
                 <div className="orbit-row-menu"><DropdownMenu portal compact appearance="orbit" placement="bottom" ariaLabel={`More actions for ${task.name}`} triggerClassName="orbit-more-button" items={[
