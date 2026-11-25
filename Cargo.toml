@@ -1,6 +1,6 @@
 [package]
 name = "grove-rs"
-version = "0.15.3"
+version = "0.15.4"
 edition = "2021"
 description = "A Context Harness for every coding agent. Run agents in parallel, each in its own Git worktree, and steer them by capturing, organizing and injecting context."
 license = "MIT"

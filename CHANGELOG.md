@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.4] - 2026-11-25
+
+### Added
+
+- **Workspace toolbar** — Every panel on the toolbar shows its name. A few are on it and the rest are under More; drag panels between the two and into the order you want, kept apart for Coding and Studio.
+- **Fork from a reply** — Start a new session from any point of a conversation, with the history before it, where the agent supports it.
+- **Steering** — A queued message joins the running turn when the agent supports it.
+- **Prompt suggestions** — Shown as gray text in the empty composer; Tab or → takes one.
+- **Speed** — Fast mode sits next to the model.
+- **iOS app** — Sign in to a server behind a sign-in page.
+- **Agent replies** — Choose whether they fold into the work summary.
+
+### Improved
+
+- **New Session** — Written in its task's workspace, with the panels at hand.
+- **Comments** — One list and thread across Design, Sketch, previews and share links. A preview comment follows its text when the file is rewritten.
+- **Panel icons** — One icon for each panel on desktop, touch, share links and chat.
+- **Read-only tools** — Grove's read-only MCP tools are marked so agents can let them through without asking.
+- **Failed messages** — A file or message that could not be sent says why, in place.
+
+### Fixed
+
+- **View zoom** — A zoomed page fits the window again; the composer no longer falls below the edge.
+- **Free layout** — The toolbar shows which panels are open, and clicking an open one closes it instead of opening another.
+- **Agents** — Auto update runs at startup and after a manual refresh.
+- **Config** — Several Grove processes can change the config without losing each other's changes.
+- **Touch** — Split and fold headers stay over the conversation, and banners clear the safe area.
+
 ## [0.15.3] - 2026-11-20
 
 ### Added
